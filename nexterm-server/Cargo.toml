@@ -1,0 +1,22 @@
+[package]
+name = "nexterm-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+nexterm-proto = { path = "../nexterm-proto" }
+nexterm-vt = { path = "../nexterm-vt" }
+tokio = { workspace = true }
+portable-pty = { workspace = true }
+bincode = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

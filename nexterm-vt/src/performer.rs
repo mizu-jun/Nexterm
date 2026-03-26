@@ -1,0 +1,147 @@
+//! vte::Perform の実装 — VT シーケンスを Screen に反映する
+
+use vte::Perform;
+
+use crate::screen::Screen;
+
+impl Perform for Screen {
+    /// 印字可能文字の書き込み
+    fn print(&mut self, c: char) {
+        self.write_char(c);
+    }
+
+    /// 制御文字（C0/C1）の処理
+    fn execute(&mut self, byte: u8) {
+        match byte {
+            // BEL (ベル) — 無視
+            0x07 => {}
+            // BS (バックスペース)
+            0x08 => {
+                if self.cursor().0 > 0 {
+                    let (col, row) = self.cursor();
+                    self.move_cursor(col - 1, row);
+                }
+            }
+            // HT (水平タブ) — 次の8の倍数列へ
+            0x09 => {
+                let (col, row) = self.cursor();
+                let next_tab = ((col / 8) + 1) * 8;
+                self.move_cursor(next_tab.min(self.grid().width.saturating_sub(1)), row);
+            }
+            // LF / VT / FF (改行相当)
+            0x0A | 0x0B | 0x0C => {
+                self.advance_line();
+            }
+            // CR (キャリッジリターン)
+            0x0D => {
+                let (_, row) = self.cursor();
+                self.move_cursor(0, row);
+            }
+            _ => {} // その他の制御文字は無視
+        }
+    }
+
+    /// CSI シーケンス（エスケープコード）の処理
+    fn csi_dispatch(
+        &mut self,
+        params: &vte::Params,
+        _intermediates: &[u8],
+        _ignore: bool,
+        action: char,
+    ) {
+        // パラメータをフラットな Vec<u16> に変換する
+        let p: Vec<u16> = params
+            .iter()
+            .map(|sub| sub.first().copied().unwrap_or(0))
+            .collect();
+
+        // 第1・第2パラメータのデフォルト値を解決するヘルパー
+        let p1 = |default: u16| if p.is_empty() || p[0] == 0 { default } else { p[0] };
+        let p2 = |default: u16| if p.len() < 2 || p[1] == 0 { default } else { p[1] };
+
+        match action {
+            // CUP / HVP — カーソル位置移動（1始まり → 0始まり）
+            'H' | 'f' => {
+                let row = p1(1).saturating_sub(1);
+                let col = p2(1).saturating_sub(1);
+                self.move_cursor(col, row);
+            }
+            // CUU — カーソル上移動
+            'A' => {
+                let (col, row) = self.cursor();
+                self.move_cursor(col, row.saturating_sub(p1(1)));
+            }
+            // CUD — カーソル下移動
+            'B' => {
+                let (col, row) = self.cursor();
+                let new_row = (row + p1(1)).min(self.grid().height.saturating_sub(1));
+                self.move_cursor(col, new_row);
+            }
+            // CUF — カーソル右移動
+            'C' => {
+                let (col, row) = self.cursor();
+                let new_col = (col + p1(1)).min(self.grid().width.saturating_sub(1));
+                self.move_cursor(new_col, row);
+            }
+            // CUB — カーソル左移動
+            'D' => {
+                let (col, row) = self.cursor();
+                self.move_cursor(col.saturating_sub(p1(1)), row);
+            }
+            // CHA — カーソル列移動（1始まり）
+            'G' => {
+                let (_, row) = self.cursor();
+                self.move_cursor(p1(1).saturating_sub(1), row);
+            }
+            // VPA — カーソル行移動（1始まり）
+            'd' => {
+                let (col, _) = self.cursor();
+                self.move_cursor(col, p1(1).saturating_sub(1));
+            }
+            // ED — 画面消去
+            'J' => {
+                self.erase_in_display(p1(0));
+            }
+            // EL — 行消去
+            'K' => {
+                self.erase_in_line(p1(0));
+            }
+            // SGR — 属性設定
+            'm' => {
+                let sgr: Vec<u16> = params
+                    .iter()
+                    .map(|sub| sub.first().copied().unwrap_or(0))
+                    .collect();
+                self.apply_sgr(&sgr);
+            }
+            // DECSTBM — スクロール領域設定
+            'r' => {
+                let top = p1(1).saturating_sub(1);
+                let bottom = p2(self.grid().height).saturating_sub(1);
+                // Screen への直接アクセスが必要なため screen.rs のメソッドを呼ぶ
+                self.set_scroll_region(top, bottom);
+            }
+            _ => {} // 未対応の CSI シーケンスは無視
+        }
+    }
+
+    fn osc_dispatch(&mut self, _params: &[&[u8]], _bell_terminated: bool) {}
+    fn esc_dispatch(&mut self, _intermediates: &[u8], _ignore: bool, _byte: u8) {}
+
+    /// DCS 開始 — action == 'q' のとき Sixel
+    fn hook(&mut self, _params: &vte::Params, _intermediates: &[u8], _ignore: bool, action: char) {
+        if action == 'q' {
+            self.start_sixel();
+        }
+    }
+
+    /// DCS データバイト
+    fn put(&mut self, byte: u8) {
+        self.push_dcs_byte(byte);
+    }
+
+    /// DCS 終了 — Sixel デコードを確定する
+    fn unhook(&mut self) {
+        self.finish_sixel();
+    }
+}

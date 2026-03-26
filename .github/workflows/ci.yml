@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust ツールチェーンのセットアップ
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: キャッシュ設定
+        uses: Swatinem/rust-cache@v2
+
+      - name: フォーマットチェック
+        run: cargo fmt --all -- --check
+
+      - name: Clippy（警告をエラーとして扱う）
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: ビルド
+        run: cargo build --workspace --all-targets
+
+      - name: テスト
+        run: cargo test --workspace --all-targets
+
+  # Windows ConPTY 専用テスト
+  test-conpty:
+    name: Test ConPTY (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: ConPTY 統合テスト
+        run: cargo test --package nexterm-server --test '*' -- --nocapture
+        continue-on-error: true  # Phase 1 実装完了まで
