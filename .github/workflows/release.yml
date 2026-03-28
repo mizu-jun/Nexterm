@@ -50,12 +50,6 @@ jobs:
             name: macos-arm64
             archive_ext: tar.gz
 
-          # macOS Intel
-          - os: macos-13
-            target: x86_64-apple-darwin
-            name: macos-x86_64
-            archive_ext: tar.gz
-
           # Windows x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
