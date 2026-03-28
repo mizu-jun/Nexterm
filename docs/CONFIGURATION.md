@@ -119,6 +119,48 @@ widgets = ['os.date("%H:%M:%S")', '"nexterm"']
 
 評価は **1 秒ごと** に行われる（GPU クライアントの `about_to_wait` フック内）。
 
+### `[window]` — ウィンドウ外観
+
+| キー | 型 | デフォルト | 説明 |
+|-----|----|-----------|------|
+| `background_opacity` | float | `1.0` | ウィンドウ背景の不透明度（0.0 = 完全透明、1.0 = 不透明）。透過を有効にする場合はコンポジタが必要 |
+| `macos_window_background_blur` | u32 | `0` | macOS のウィンドウぼかし強度（0 = 無効） |
+| `decorations` | String | `"full"` | ウィンドウ装飾の種別 |
+
+#### `decorations` の値
+
+| 値 | 説明 |
+|----|------|
+| `"full"` | OS 標準のタイトルバーと境界線を表示 |
+| `"none"` | タイトルバーと境界線を非表示（ボーダーレス） |
+| `"notitle"` | タイトルバーのみ非表示 |
+
+```toml
+[window]
+background_opacity = 0.92
+macos_window_background_blur = 20
+decorations = "notitle"
+```
+
+### `[tab_bar]` — タブバー（WezTerm スタイル）
+
+| キー | 型 | デフォルト | 説明 |
+|-----|----|-----------|------|
+| `enabled` | bool | `true` | タブバーを表示する |
+| `height` | u32 | `28` | タブバーの高さ（ピクセル） |
+| `active_tab_bg` | String | `"#ae8b2d"` | アクティブタブの背景色（`#rrggbb` 形式） |
+| `inactive_tab_bg` | String | `"#5c6d74"` | 非アクティブタブの背景色（`#rrggbb` 形式） |
+| `separator` | String | `"❯"` | タブ間のセパレータ文字 |
+
+```toml
+[tab_bar]
+enabled = true
+height = 28
+active_tab_bg = "#ae8b2d"
+inactive_tab_bg = "#5c6d74"
+separator = "❯"
+```
+
 ### `[[keys]]` — キーバインド
 
 カスタムキーバインドを配列で定義する。デフォルトバインドを上書きしたい場合に使用する。
@@ -176,6 +218,18 @@ args = []
 [status_bar]
 enabled = true
 widgets = ['os.date("%H:%M:%S")', '"nexterm"']
+
+[window]
+background_opacity = 0.95
+macos_window_background_blur = 0
+decorations = "full"
+
+[tab_bar]
+enabled = true
+height = 28
+active_tab_bg = "#ae8b2d"
+inactive_tab_bg = "#5c6d74"
+separator = "❯"
 
 [[keys]]
 key = "ctrl+shift+\\"
@@ -285,5 +339,7 @@ local cfg = require("nexterm")
 | キーバインド | 即時（ホットリロード） | 次キーイベントから適用 |
 | ステータスバー設定 | 即時（ホットリロード） | `enabled` 変更は次フレームから反映 |
 | Lua ウィジェット式 | 1 秒ごとに再評価 | `nexterm.lua` の変更は次の評価サイクルで反映 |
+| ウィンドウ透過・装飾 | 再起動時 | `background_opacity` / `decorations` は起動時にウィンドウ属性として適用される |
+| タブバー設定 | 即時（ホットリロード） | `enabled` / 色 / セパレータは次フレームから反映 |
 
 > ホットリロードは `notify` クレートによるファイル監視で実装されている。変更検知から反映まで通常 100ms 以内。

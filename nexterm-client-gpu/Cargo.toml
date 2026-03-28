@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 nexterm-proto = { path = "../nexterm-proto" }
 nexterm-config = { path = "../nexterm-config" }
+nexterm-i18n = { path = "../nexterm-i18n" }
 tokio = { workspace = true }
 bincode = { workspace = true }
 serde = { workspace = true }

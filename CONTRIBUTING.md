@@ -1,16 +1,18 @@
-# nexterm へのコントリビューション
+# Contributing to nexterm
 
-## 前提条件
+> **日本語:** [CONTRIBUTING.ja.md](CONTRIBUTING.ja.md)
 
-| ツール | バージョン | 用途 |
-|--------|-----------|------|
-| Rust | 1.80 以上 | コンパイル |
-| cargo | （Rust 同梱） | ビルド・テスト |
+## Prerequisites
 
-### OS 別の追加要件
+| Tool | Version | Purpose |
+|------|---------|---------|
+| Rust | 1.80+ | Compilation |
+| cargo | (bundled with Rust) | Build & test |
+
+### OS-specific requirements
 
 **Windows**
-- Visual Studio Build Tools（C++ コンポーネント）
+- Visual Studio Build Tools (C++ components)
 
 **Linux**
 ```bash
@@ -18,180 +20,197 @@ sudo apt install libx11-dev libxkbcommon-dev libwayland-dev
 ```
 
 **macOS**
-- Xcode Command Line Tools（`xcode-select --install`）
+- Xcode Command Line Tools (`xcode-select --install`)
 
 ---
 
-## ビルド
+## Build
 
 ```bash
-# 全クレートをビルドする
+# Build all crates
 cargo build
 
-# リリースビルド
+# Release build
 cargo build --release
 
-# 特定クレートのみ
+# Specific crates
 cargo build -p nexterm-server
 cargo build -p nexterm-client-gpu
 cargo build -p nexterm-ctl
+cargo build -p nexterm-i18n
 ```
 
 ---
 
-## テスト
+## Test
 
 ```bash
-# 全テストを実行する
+# Run all tests
 cargo test
 
-# 特定クレートのみ
+# Specific crate
 cargo test -p nexterm-vt
 cargo test -p nexterm-server
 cargo test -p nexterm-ctl
+cargo test -p nexterm-i18n
 
-# テスト名でフィルタする
-cargo test bsp_垂直分割
+# Filter by test name
+cargo test bsp_split
 ```
 
 ---
 
-## Lint / フォーマット
+## Lint / Formatting
 
 ```bash
-# clippy（警告を全部エラーにして実行）
+# Clippy (warnings as errors)
 cargo clippy -- -D warnings
 
-# フォーマット確認
+# Check formatting
 cargo fmt --check
 
-# フォーマット適用
+# Apply formatting
 cargo fmt
 ```
 
-PR は `cargo clippy` と `cargo fmt --check` が通ることが必須条件。
+PRs must pass `cargo clippy` and `cargo fmt --check`.
 
 ---
 
-## クレート構成
+## Crate structure
 
 ```
 nexterm/
-├── nexterm-proto        # IPC メッセージ型・シリアライズ（共有クレート）
-├── nexterm-vt           # VT100 パーサ・仮想スクリーン・画像デコード
-├── nexterm-server       # PTY サーバー（IPC + セッション管理）
-├── nexterm-config       # 設定ロード（TOML + Lua）+ StatusBarEvaluator
-├── nexterm-client-tui   # TUI クライアント（ratatui + crossterm）
-├── nexterm-client-gpu   # GPU クライアント（wgpu + winit）
-└── nexterm-ctl          # セッション制御 CLI（list / new / attach / kill）
+├── nexterm-proto        # IPC message types and serialization (shared)
+├── nexterm-vt           # VT100 parser, virtual screen, image decode
+├── nexterm-server       # PTY server (IPC + session management)
+├── nexterm-config       # Config loader (TOML + Lua) + StatusBarEvaluator
+├── nexterm-client-tui   # TUI client (ratatui + crossterm)
+├── nexterm-client-gpu   # GPU client (wgpu + winit)
+├── nexterm-ctl          # Session management CLI (list / new / attach / kill)
+└── nexterm-i18n         # Localization (8 languages, embedded JSON)
 ```
 
-新機能を追加する際は、どのクレートが担当すべきかを `docs/ARCHITECTURE.md` の依存グラフを参照して判断する。
-`nexterm-proto` への変更はすべてのクレートに影響するため慎重に行うこと。
+When adding features, consult the dependency graph in `docs/ARCHITECTURE.md` to decide which crate owns the change.
+Changes to `nexterm-proto` affect all crates — handle with care.
 
 ---
 
-## コーディング規約
+## Coding conventions
 
-### 全般
+### General
 
-- 関数・型・フィールドに日本語コメントを付ける
-- 変数名・関数名は英語スネークケース / キャメルケース
-- `unwrap()` は禁止（`?` 演算子または `expect("理由")` を使う）
-- エラーは `anyhow::Result` で伝播する
+- Add doc comments to functions, types, and fields (English or Japanese)
+- Variable and function names: English `snake_case` / `CamelCase`
+- No `unwrap()` — use `?` or `expect("reason")`
+- Propagate errors with `anyhow::Result`
 
-### 非同期コード
+### Async code
 
-- `tokio::spawn` でタスクを生成する
-- ブロッキング処理は `tokio::task::spawn_blocking` を使う
-- `Arc<Mutex<T>>` は tokio の `Mutex` を使う（IPC 層）、同期処理は `std::sync::Mutex` を使う（PTY 読み取りスレッド）
+- Spawn tasks with `tokio::spawn`
+- Blocking operations: use `tokio::task::spawn_blocking`
+- `Arc<Mutex<T>>`: use tokio's `Mutex` for IPC, `std::sync::Mutex` for PTY read threads
 
-### テスト
+### Localization
 
-- テスト関数名は日本語で記述する（例: `fn bsp_垂直分割のレイアウト計算()`）
-- 新機能には必ずユニットテストを追加する
-- `cargo test` が全通過することを確認してから PR を作成する
+User-visible strings must use the `fl!` macro from `nexterm-i18n`:
 
----
+```rust
+use nexterm_i18n::fl;
 
-## ブランチ戦略
-
-| ブランチ | 用途 |
-|---------|------|
-| `main` | 安定版。直接プッシュ禁止 |
-| `feature/<name>` | 新機能開発 |
-| `fix/<name>` | バグ修正 |
-
----
-
-## PR のガイドライン
-
-1. **フィーチャーブランチ**から `main` へ PR を出す
-2. タイトルは日本語で `<type>: <内容>` 形式（例: `feat: マウスクリックフォーカスを追加`）
-3. `cargo test` と `cargo clippy` が通ること
-4. `docs/` の関連ドキュメントを更新すること
-
-### コミットメッセージ形式
-
-```
-<type>: <説明>
-
-<本文（任意）>
+println!("{}", fl!("ctl-no-sessions"));
+println!("{}", fl!("ctl-session-created", name = name));
 ```
 
-| type | 用途 |
-|------|------|
-| `feat` | 新機能 |
-| `fix` | バグ修正 |
-| `refactor` | リファクタリング |
-| `test` | テスト追加・修正 |
-| `docs` | ドキュメント |
-| `chore` | ビルド・依存関係の変更 |
-| `perf` | パフォーマンス改善 |
+Add new keys to all 8 locale files under `nexterm-i18n/locales/`.
+
+### Tests
+
+- New features must include unit tests
+- All tests must pass (`cargo test`) before submitting a PR
 
 ---
 
-## デバッグ
+## Branch strategy
 
-### ログの有効化
+| Branch | Purpose |
+|--------|---------|
+| `main` | Stable. No direct push. |
+| `feature/<name>` | New features |
+| `fix/<name>` | Bug fixes |
+
+---
+
+## PR guidelines
+
+1. Open a PR from a **feature branch** to `main`
+2. Title format: `<type>: <description>` (e.g. `feat: add mouse click focus`)
+3. `cargo test` and `cargo clippy` must pass
+4. Update relevant docs in `docs/`
+
+### Commit message format
+
+```
+<type>: <description>
+
+<body (optional)>
+```
+
+| type | Purpose |
+|------|---------|
+| `feat` | New feature |
+| `fix` | Bug fix |
+| `refactor` | Refactoring |
+| `test` | Add / update tests |
+| `docs` | Documentation |
+| `chore` | Build / dependency changes |
+| `perf` | Performance improvement |
+
+---
+
+## Debugging
+
+### Enable logging
 
 ```bash
-# サーバー
+# Server
 NEXTERM_LOG=debug nexterm-server
 
-# GPU クライアント
+# GPU client
 NEXTERM_LOG=debug nexterm-client-gpu
 
 # Windows
 set NEXTERM_LOG=debug && nexterm-server.exe
 ```
 
-ログレベル: `error` / `warn` / `info` / `debug` / `trace`
+Log levels: `error` / `warn` / `info` / `debug` / `trace`
 
-### IPC メッセージのデバッグ
+### IPC message debugging
 
-`NEXTERM_LOG=trace` で全 IPC メッセージが出力される（大量のログが出るため開発時のみ推奨）。
+`NEXTERM_LOG=trace` prints all IPC messages (very verbose — development only).
 
 ---
 
-## 主要な依存クレートのバージョン
+## Key dependencies
 
-| クレート | バージョン | 用途 |
-|---------|-----------|------|
-| `tokio` | 1 | 非同期ランタイム |
-| `bincode` | 1 | IPC シリアライズ |
-| `serde` | 1 | シリアライズ |
-| `anyhow` | 1 | エラーハンドリング |
-| `tracing` | 0.1 | ログ |
-| `portable-pty` | 0.8 | PTY 管理 |
-| `vte` | 0.13 | VT シーケンスパーサ |
-| `wgpu` | 22 | GPU レンダリング |
-| `winit` | 0.30 | ウィンドウ管理 |
-| `cosmic-text` | 0.12 | フォントレンダリング |
-| `ratatui` | 0.27 | TUI レンダリング |
-| `crossterm` | 0.27 | TUI 入出力 |
-| `mlua` | 0.10 | Lua 組み込み |
-| `toml` | 0.8 | TOML パーサ |
-| `notify` | 6 | ファイル監視 |
-| `arboard` | 3 | クリップボード操作 |
-| `clap` | 4 | CLI 引数パーサ |
+| Crate | Version | Purpose |
+|-------|---------|---------|
+| `tokio` | 1 | Async runtime |
+| `bincode` | 1 | IPC serialization |
+| `serde` | 1 | Serialization |
+| `anyhow` | 1 | Error handling |
+| `tracing` | 0.1 | Logging |
+| `portable-pty` | 0.8 | PTY management |
+| `vte` | 0.13 | VT sequence parser |
+| `wgpu` | 22 | GPU rendering |
+| `winit` | 0.30 | Window management |
+| `cosmic-text` | 0.12 | Font rendering |
+| `ratatui` | 0.29 | TUI rendering |
+| `crossterm` | 0.28 | TUI I/O |
+| `mlua` | 0.10 | Lua embedding |
+| `toml` | 0.8 | TOML parser |
+| `notify` | 6 | File watching |
+| `arboard` | 3 | Clipboard |
+| `clap` | 4 | CLI argument parser |
+| `serde_json` | 1 | Locale JSON parsing |
+| `sys-locale` | 0.3 | OS locale detection |

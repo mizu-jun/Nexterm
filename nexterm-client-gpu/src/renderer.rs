@@ -235,7 +235,7 @@ impl WgpuState {
                 force_fallback_adapter: false,
             })
             .await
-            .ok_or_else(|| anyhow::anyhow!("wgpu アダプターが見つかりません"))?;
+            .ok_or_else(|| anyhow::anyhow!("{}", nexterm_i18n::fl!("gpu-adapter-not-found")))?;
 
         let (device, queue) = adapter
             .request_device(
@@ -475,6 +475,7 @@ impl WgpuState {
         state: &ClientState,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
+        tab_bar_cfg: &nexterm_config::TabBarConfig,
     ) -> Result<()> {
         let output = match self.surface.get_current_texture() {
             Ok(t) => t,
@@ -544,6 +545,14 @@ impl WgpuState {
                     &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
                 );
             }
+        }
+
+        // ---- タブバー（設定で有効な場合）----
+        if tab_bar_cfg.enabled {
+            self.build_tab_bar_verts(
+                state, tab_bar_cfg, sw, sh, cell_w, cell_h, font, atlas,
+                &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
+            );
         }
 
         // ---- ステータスライン（常時表示） ----
@@ -932,6 +941,76 @@ impl WgpuState {
                 o.pane_id != layout.pane_id && o.row_offset == bottom_row
             }) {
                 add_px_rect(px, py + ph, pw, cell_h, color, sw, sh, bg_verts, bg_idx);
+            }
+        }
+    }
+
+    /// タブバー頂点を構築する（ウィンドウ最上行、WezTerm スタイル）
+    #[allow(clippy::too_many_arguments)]
+    fn build_tab_bar_verts(
+        &self,
+        state: &ClientState,
+        cfg: &nexterm_config::TabBarConfig,
+        sw: f32, sh: f32, cell_w: f32, cell_h: f32,
+        font: &mut FontManager,
+        atlas: &mut GlyphAtlas,
+        bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
+    ) {
+        let bar_h = cfg.height as f32;
+        let bar_y = 0.0_f32;
+
+        // タブバー全体の背景（非アクティブ色）
+        let inactive_bg = hex_to_rgba(&cfg.inactive_tab_bg, 1.0);
+        add_px_rect(0.0, bar_y, sw, bar_h, inactive_bg, sw, sh, bg_verts, bg_idx);
+
+        // フォーカスペインの ID で「アクティブタブ」を表示する
+        let focused_id = state.focused_pane_id.unwrap_or(0);
+        let active_bg = hex_to_rgba(&cfg.active_tab_bg, 1.0);
+        let text_fg = [0.95, 0.95, 0.95, 1.0];
+        let inactive_fg = [0.65, 0.65, 0.65, 1.0];
+
+        let mut x_offset = 0.0_f32;
+        let padding = cell_w;
+        let sep = &cfg.separator;
+
+        // ペイン ID 順にタブを並べる
+        let mut pane_ids: Vec<u32> = state.pane_layouts.keys().copied().collect();
+        pane_ids.sort();
+
+        for (i, &pane_id) in pane_ids.iter().enumerate() {
+            let is_active = pane_id == focused_id;
+            let label = format!(" pane:{} ", pane_id);
+            let label_w = label.chars().count() as f32 * cell_w + padding * 2.0;
+            let tab_bg = if is_active { active_bg } else { inactive_bg };
+
+            // タブ背景
+            add_px_rect(x_offset, bar_y, label_w, bar_h, tab_bg, sw, sh, bg_verts, bg_idx);
+
+            // タブラベル（垂直中央揃え）
+            let text_y = bar_y + (bar_h - cell_h) / 2.0;
+            let fg = if is_active { text_fg } else { inactive_fg };
+            add_string_verts(
+                &label, x_offset + padding, text_y, fg, is_active,
+                sw, sh, cell_w, font, atlas, &self.queue,
+                text_verts, text_idx,
+            );
+
+            x_offset += label_w;
+
+            // セパレータ（最後のタブの後は不要）
+            if i + 1 < pane_ids.len() {
+                let next_is_active = pane_ids[i + 1] == focused_id;
+                // セパレータの色: 現在タブの背景から次のタブへの遷移を表現する
+                let sep_bg = if is_active { active_bg } else if next_is_active { active_bg } else { inactive_bg };
+                let sep_w = cell_w;
+                add_px_rect(x_offset, bar_y, sep_w, bar_h, sep_bg, sw, sh, bg_verts, bg_idx);
+                add_string_verts(
+                    sep, x_offset, text_y, text_fg, false,
+                    sw, sh, cell_w, font, atlas, &self.queue,
+                    text_verts, text_idx,
+                );
+                x_offset += sep_w;
             }
         }
     }
@@ -1381,19 +1460,26 @@ impl ApplicationHandler for EventHandler {
     }
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // ウィンドウを作成する
+        // ウィンドウを作成する（設定に従って透過・ぼかし・装飾を適用する）
+        use nexterm_config::WindowDecorations;
+        let win_cfg = &self.app.config.window;
+        let transparent = win_cfg.background_opacity < 1.0;
+        let decorations = !matches!(win_cfg.decorations, WindowDecorations::None);
+
         let attrs = Window::default_attributes()
             .with_title("nexterm")
-            .with_inner_size(PhysicalSize::new(1280u32, 800u32));
+            .with_inner_size(PhysicalSize::new(1280u32, 800u32))
+            .with_transparent(transparent)
+            .with_decorations(decorations);
 
-        let window = Arc::new(event_loop.create_window(attrs).expect("ウィンドウ作成失敗"));
+        let window = Arc::new(event_loop.create_window(attrs).expect("Failed to create window"));
 
         // wgpu を非同期で初期化する（tokio runtime が必要）
         let wgpu_state = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current()
                 .block_on(WgpuState::new(Arc::clone(&window)))
         })
-        .expect("wgpu 初期化失敗");
+        .expect("Failed to initialize wgpu");
 
         let atlas = GlyphAtlas::new(&wgpu_state.device);
 
@@ -1417,11 +1503,11 @@ impl ApplicationHandler for EventHandler {
                             session_name: "main".to_string(),
                         });
                         let _ = conn.send_tx.try_send(ClientToServer::Resize { cols, rows });
-                        info!("nexterm サーバーに接続しました");
+                        info!("Connected to nexterm server");
                         Some(conn)
                     }
                     Err(e) => {
-                        warn!("サーバーへの接続に失敗しました（オフラインモード）: {}", e);
+                        warn!("Failed to connect to server (offline mode): {}", e);
                         None
                     }
                 }
@@ -1429,7 +1515,7 @@ impl ApplicationHandler for EventHandler {
         });
         self.connection = conn;
 
-        info!("wgpu レンダラーを初期化しました");
+        info!("wgpu renderer initialized");
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
@@ -1442,10 +1528,18 @@ impl ApplicationHandler for EventHandler {
             }
         }
 
+        // BEL を受信していればウィンドウ注目要求を発行する
+        if self.app.state.pending_bell {
+            self.app.state.pending_bell = false;
+            if let Some(w) = &self.window {
+                w.request_user_attention(Some(winit::window::UserAttentionType::Informational));
+            }
+        }
+
         // 設定ホットリロードをポーリングする（最新の設定を適用する）
         if let Some(rx) = &mut self.config_rx {
             if let Ok(new_config) = rx.try_recv() {
-                info!("設定を再ロードしました: フォント={} {}pt", new_config.font.family, new_config.font.size);
+                info!("Config reloaded: font={} {}pt", new_config.font.family, new_config.font.size);
                 // フォントサイズ変更時はグリフアトラスも再生成する
                 let font_changed = self.app.config.font != new_config.font;
                 self.app.config = new_config;
@@ -1515,7 +1609,7 @@ impl ApplicationHandler for EventHandler {
                 self.cursor_position = Some((position.x, position.y));
             }
 
-            // 左クリックでペインフォーカスを切り替える
+            // 左クリックでペインフォーカスを切り替える（Ctrl+クリックで URL を開く）
             WindowEvent::MouseInput {
                 button: MouseButton::Left,
                 state: ElementState::Released,
@@ -1526,6 +1620,15 @@ impl ApplicationHandler for EventHandler {
                     let cell_h = self.app.font.cell_height() as f64;
                     let click_col = (px / cell_w) as u16;
                     let click_row = (py / cell_h) as u16;
+
+                    // Ctrl+クリック: クリック位置の URL を開く
+                    if self.modifiers.control_key() {
+                        if let Some(url) = self.find_url_at(click_col, click_row) {
+                            open_url(&url);
+                            return;
+                        }
+                    }
+
                     // クリック座標が含まれるペインを探してフォーカスを移動する
                     let target_pane = self
                         .app
@@ -1617,9 +1720,9 @@ impl ApplicationHandler for EventHandler {
                     (&mut self.wgpu_state, &mut self.atlas)
                 {
                     if let Err(e) =
-                        wgpu.render(&self.app.state, &mut self.app.font, atlas)
+                        wgpu.render(&self.app.state, &mut self.app.font, atlas, &self.app.config.tab_bar)
                     {
-                        warn!("描画エラー: {}", e);
+                        warn!("Render error: {}", e);
                     }
                 }
             }
@@ -1679,6 +1782,25 @@ impl EventHandler {
             return true;
         }
 
+        // Ctrl+[ : コピーモードを開始する（tmux 互換）
+        if ctrl && code == WKeyCode::BracketLeft {
+            if !self.app.state.copy_mode.is_active {
+                let (col, row) = self
+                    .app
+                    .state
+                    .focused_pane()
+                    .map(|p| (p.cursor_col, p.cursor_row))
+                    .unwrap_or((0, 0));
+                self.app.state.copy_mode.enter(col, row);
+            }
+            return true;
+        }
+
+        // コピーモード中のキー処理
+        if self.app.state.copy_mode.is_active {
+            return self.handle_copy_mode_key(code);
+        }
+
         // PageUp / PageDown: スクロールバックをスクロールする
         if code == WKeyCode::PageUp {
             let scroll_lines = self.app.state.rows as usize / 2;
@@ -1730,14 +1852,154 @@ impl EventHandler {
             // 他のキーは消費しない（上の search.is_active ブロックで処理済み）
         }
 
+        // Ctrl++（Equal / Plus）: フォントサイズを大きくする
+        if ctrl && (code == WKeyCode::Equal || code == WKeyCode::NumpadAdd) {
+            self.change_font_size(1.0);
+            return true;
+        }
+
+        // Ctrl+- : フォントサイズを小さくする
+        if ctrl && (code == WKeyCode::Minus || code == WKeyCode::NumpadSubtract) {
+            self.change_font_size(-1.0);
+            return true;
+        }
+
+        // Ctrl+0 : フォントサイズをデフォルトに戻す
+        if ctrl && code == WKeyCode::Digit0 {
+            self.reset_font_size();
+            return true;
+        }
+
         false
+    }
+
+    /// クリック座標 (col, row) に URL があれば返す
+    fn find_url_at(&self, col: u16, row: u16) -> Option<String> {
+        use crate::state::detect_urls_in_row;
+        let pane = self.app.state.focused_pane()?;
+        let cells = pane.grid.rows.get(row as usize)?;
+        let urls = detect_urls_in_row(row, cells);
+        urls.into_iter().find(|u| u.contains(col, row)).map(|u| u.url)
+    }
+
+    /// コピーモードのキー入力を処理する（true = 消費済み）
+    fn handle_copy_mode_key(&mut self, code: WKeyCode) -> bool {
+        let cm = &mut self.app.state.copy_mode;
+        let max_col = self.app.state.cols.saturating_sub(1);
+        let max_row = self.app.state.rows.saturating_sub(1);
+
+        match code {
+            // q / Escape: コピーモードを終了する
+            WKeyCode::KeyQ | WKeyCode::Escape => {
+                cm.exit();
+            }
+            // h / Left: 左移動
+            WKeyCode::KeyH | WKeyCode::ArrowLeft => {
+                cm.cursor_col = cm.cursor_col.saturating_sub(1);
+            }
+            // l / Right: 右移動
+            WKeyCode::KeyL | WKeyCode::ArrowRight => {
+                if cm.cursor_col < max_col {
+                    cm.cursor_col += 1;
+                }
+            }
+            // j / Down: 下移動
+            WKeyCode::KeyJ | WKeyCode::ArrowDown => {
+                if cm.cursor_row < max_row {
+                    cm.cursor_row += 1;
+                }
+            }
+            // k / Up: 上移動
+            WKeyCode::KeyK | WKeyCode::ArrowUp => {
+                cm.cursor_row = cm.cursor_row.saturating_sub(1);
+            }
+            // 0: 行頭へ移動
+            WKeyCode::Digit0 => {
+                cm.cursor_col = 0;
+            }
+            // v: 選択開始/終了をトグル
+            WKeyCode::KeyV => {
+                cm.toggle_selection();
+            }
+            // y: 選択テキストをクリップボードにコピーして終了
+            WKeyCode::KeyY => {
+                self.yank_selection();
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// 選択範囲のテキストをクリップボードにコピーしてコピーモードを終了する
+    fn yank_selection(&mut self) {
+        let cm = &self.app.state.copy_mode;
+        if let Some(((sc, sr), (ec, er))) = cm.normalized_selection() {
+            // グリッドから選択テキストを抽出する
+            let text = if let Some(pane) = self.app.state.focused_pane() {
+                let mut lines = Vec::new();
+                for row_idx in sr..=er {
+                    if let Some(row) = pane.grid.rows.get(row_idx as usize) {
+                        let col_start = if row_idx == sr { sc as usize } else { 0 };
+                        let col_end = if row_idx == er {
+                            (ec + 1) as usize
+                        } else {
+                            row.len()
+                        };
+                        let line: String = row[col_start.min(row.len())..col_end.min(row.len())]
+                            .iter()
+                            .map(|c| c.ch)
+                            .collect();
+                        lines.push(line);
+                    }
+                }
+                lines.join("\n")
+            } else {
+                String::new()
+            };
+
+            if !text.is_empty() {
+                if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                    let _ = clipboard.set_text(text);
+                }
+            }
+        }
+        self.app.state.copy_mode.exit();
+    }
+
+    /// フォントサイズを delta pt だけ変更してグリフアトラスを再生成する
+    fn change_font_size(&mut self, delta: f32) {
+        let new_size = (self.app.config.font.size + delta).clamp(6.0, 72.0);
+        if (new_size - self.app.config.font.size).abs() < f32::EPSILON {
+            return;
+        }
+        self.app.config.font.size = new_size;
+        self.app.font =
+            crate::font::FontManager::new(&self.app.config.font.family, new_size);
+        if let Some(wgpu) = &self.wgpu_state {
+            self.atlas = Some(GlyphAtlas::new(&wgpu.device));
+        }
+        info!("Font size changed to {}pt", new_size);
+    }
+
+    /// フォントサイズを設定ファイルの初期値に戻す
+    fn reset_font_size(&mut self) {
+        // 設定ファイルの初期値は config 生成時のサイズを参照する手段がないため
+        // 慣例の 14pt をデフォルトとして使用する
+        let default_size = nexterm_config::Config::default().font.size;
+        self.app.config.font.size = default_size;
+        self.app.font =
+            crate::font::FontManager::new(&self.app.config.font.family, default_size);
+        if let Some(wgpu) = &self.wgpu_state {
+            self.atlas = Some(GlyphAtlas::new(&wgpu.device));
+        }
+        info!("Font size reset to {}pt", default_size);
     }
 
     fn execute_action(&mut self, action: &str, event_loop: &ActiveEventLoop) {
         match action {
             "Quit" => event_loop.exit(),
             "SearchScrollback" => self.app.state.start_search(),
-            _ => debug!("アクション実行: {}", action),
+            _ => debug!("Execute action: {}", action),
         }
     }
 
@@ -1882,6 +2144,25 @@ struct ImageEntry {
 // ---- ヘルパー関数 ----
 
 /// ペインのグリッド内容をプレーンテキストに変換する（Ctrl+Shift+C コピー用）
+/// URL をデフォルトブラウザで開く（プラットフォーム対応）
+fn open_url(url: &str) {
+    info!("Opening URL: {}", url);
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("cmd")
+            .args(["/c", "start", "", url])
+            .spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open").arg(url).spawn();
+    }
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    }
+}
+
 fn grid_to_text(pane: &crate::state::PaneState) -> String {
     let mut lines = Vec::with_capacity(pane.grid.rows.len());
     for row in &pane.grid.rows {
@@ -1890,6 +2171,15 @@ fn grid_to_text(pane: &crate::state::PaneState) -> String {
         lines.push(line.trim_end().to_string());
     }
     lines.join("\n")
+}
+
+/// `#rrggbb` 形式の16進カラー文字列を `[f32; 4]` RGBA に変換する
+fn hex_to_rgba(hex: &str, alpha: f32) -> [f32; 4] {
+    let hex = hex.trim_start_matches('#');
+    let r = u8::from_str_radix(hex.get(0..2).unwrap_or("80"), 16).unwrap_or(128) as f32 / 255.0;
+    let g = u8::from_str_radix(hex.get(2..4).unwrap_or("80"), 16).unwrap_or(128) as f32 / 255.0;
+    let b = u8::from_str_radix(hex.get(4..6).unwrap_or("80"), 16).unwrap_or(128) as f32 / 255.0;
+    [r, g, b, alpha]
 }
 
 /// NDC 矩形の背景頂点4つを追加する（三角形インデックスも追加）
@@ -2015,5 +2305,20 @@ mod tests {
         assert!(fg[0] > 0.5); // 前景は明るい
         let bg = resolve_color(&nexterm_proto::Color::Default, false);
         assert!(bg[0] < 0.5); // 背景は暗い
+    }
+
+    #[test]
+    fn hex_to_rgba_変換() {
+        let c = hex_to_rgba("#ae8b2d", 1.0);
+        assert!((c[0] - 0xae as f32 / 255.0).abs() < 1e-3);
+        assert!((c[1] - 0x8b as f32 / 255.0).abs() < 1e-3);
+        assert!((c[2] - 0x2d as f32 / 255.0).abs() < 1e-3);
+        assert_eq!(c[3], 1.0);
+    }
+
+    #[test]
+    fn hex_to_rgba_ハッシュなし() {
+        let c = hex_to_rgba("ffffff", 0.5);
+        assert_eq!(c, [1.0, 1.0, 1.0, 0.5]);
     }
 }

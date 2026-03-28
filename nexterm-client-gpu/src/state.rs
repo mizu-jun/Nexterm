@@ -81,6 +81,109 @@ impl SearchState {
     }
 }
 
+/// グリッド上の URL とその範囲（アンダーライン描画・クリック判定に使用）
+#[derive(Debug, Clone)]
+pub struct DetectedUrl {
+    pub row: u16,
+    pub col_start: u16,
+    pub col_end: u16,
+    pub url: String,
+}
+
+impl DetectedUrl {
+    /// 指定のグリッドセルがこの URL の範囲内にあるかどうかを返す
+    pub fn contains(&self, col: u16, row: u16) -> bool {
+        row == self.row && col >= self.col_start && col < self.col_end
+    }
+}
+
+/// グリッドの行テキストから URL を検出して返す
+pub fn detect_urls_in_row(row_idx: u16, cells: &[nexterm_proto::Cell]) -> Vec<DetectedUrl> {
+    let text: String = cells.iter().map(|c| c.ch).collect();
+    let mut urls = Vec::new();
+
+    // https:// または http:// から始まる URL を検出する
+    let prefixes = ["https://", "http://"];
+    for prefix in prefixes {
+        let mut search_from = 0;
+        while let Some(start) = text[search_from..].find(prefix) {
+            let abs_start = search_from + start;
+            // URL の終端はスペース・制御文字・括弧で区切られる
+            let end = text[abs_start..]
+                .find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | ')'))
+                .map(|i| abs_start + i)
+                .unwrap_or(text.len());
+            if end > abs_start {
+                urls.push(DetectedUrl {
+                    row: row_idx,
+                    col_start: abs_start as u16,
+                    col_end: end as u16,
+                    url: text[abs_start..end].to_string(),
+                });
+            }
+            search_from = abs_start + 1;
+        }
+    }
+    urls
+}
+
+/// コピーモード（Vim 風テキスト選択）の状態
+pub struct CopyModeState {
+    /// コピーモードが有効かどうか
+    pub is_active: bool,
+    /// カーソル列（グリッド座標、0始まり）
+    pub cursor_col: u16,
+    /// カーソル行（グリッド座標、0始まり）
+    pub cursor_row: u16,
+    /// 選択開始位置（v を押した時点のカーソル位置）
+    pub selection_start: Option<(u16, u16)>,
+}
+
+impl CopyModeState {
+    fn new() -> Self {
+        Self {
+            is_active: false,
+            cursor_col: 0,
+            cursor_row: 0,
+            selection_start: None,
+        }
+    }
+
+    /// コピーモードを開始してカーソルを現在のペインカーソルに合わせる
+    pub fn enter(&mut self, pane_cursor_col: u16, pane_cursor_row: u16) {
+        self.is_active = true;
+        self.cursor_col = pane_cursor_col;
+        self.cursor_row = pane_cursor_row;
+        self.selection_start = None;
+    }
+
+    /// コピーモードを終了する
+    pub fn exit(&mut self) {
+        self.is_active = false;
+        self.selection_start = None;
+    }
+
+    /// 選択開始/終了をトグルする（v キー）
+    pub fn toggle_selection(&mut self) {
+        if self.selection_start.is_some() {
+            self.selection_start = None;
+        } else {
+            self.selection_start = Some((self.cursor_col, self.cursor_row));
+        }
+    }
+
+    /// 選択範囲を正規化して返す（開始 ≤ 終了 を保証する）
+    pub fn normalized_selection(&self) -> Option<((u16, u16), (u16, u16))> {
+        let (sc, sr) = self.selection_start?;
+        let (ec, er) = (self.cursor_col, self.cursor_row);
+        if (sr, sc) <= (er, ec) {
+            Some(((sc, sr), (ec, er)))
+        } else {
+            Some(((ec, er), (sc, sr)))
+        }
+    }
+}
+
 /// GPU クライアント全体の状態
 pub struct ClientState {
     pub panes: HashMap<u32, PaneState>,
@@ -95,6 +198,10 @@ pub struct ClientState {
     pub scrollback_capacity: usize,
     /// Lua ステータスバーの最終評価テキスト（キャッシュ）
     pub status_bar_text: String,
+    /// BEL 受信フラグ（次の about_to_wait で OS 通知をトリガーする）
+    pub pending_bell: bool,
+    /// コピーモード（Vim 風テキスト選択）
+    pub copy_mode: CopyModeState,
 }
 
 impl ClientState {
@@ -109,6 +216,8 @@ impl ClientState {
             search: SearchState::new(),
             scrollback_capacity,
             status_bar_text: String::new(),
+            pending_bell: false,
+            copy_mode: CopyModeState::new(),
         }
     }
 
@@ -164,6 +273,11 @@ impl ClientState {
                     }
                 }
             }
+            ServerToClient::Bell { .. } => {
+                // OS のウィンドウ注目要求をトリガーするためフラグを立てる
+                self.pending_bell = true;
+            }
+            ServerToClient::RecordingStarted { .. } | ServerToClient::RecordingStopped { .. } => {}
             ServerToClient::LayoutChanged { panes, focused_pane_id } => {
                 // レイアウトを全更新する
                 self.pane_layouts.clear();

@@ -1,48 +1,67 @@
-//! nexterm-ctl — nexterm セッション制御 CLI
+//! nexterm-ctl — nexterm session management CLI
 //!
-//! # 使用例
+//! # Usage
 //!
 //! ```text
-//! nexterm-ctl list              # セッション一覧を表示する
-//! nexterm-ctl new <name>        # 新規セッションを作成する
-//! nexterm-ctl attach <name>     # セッションへのアタッチ方法を表示する
-//! nexterm-ctl kill <name>       # セッションを強制終了する
+//! nexterm-ctl list                          # List all sessions
+//! nexterm-ctl new <name>                    # Create a new session
+//! nexterm-ctl attach <name>                 # Show how to attach to a session
+//! nexterm-ctl kill <name>                   # Kill a session
+//! nexterm-ctl record start <session> <file> # Start recording PTY output
+//! nexterm-ctl record stop <session>         # Stop recording
 //! ```
 
 use anyhow::{bail, Result};
-use clap::{Parser, Subcommand};
+use clap::{Arg, Command};
+use nexterm_i18n::fl;
 use nexterm_proto::{ClientToServer, ServerToClient};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing_subscriber::EnvFilter;
 
-// ---- CLI 定義 ----
+// ---- CLI 定義（ビルダー形式でロケール対応） ----
 
-#[derive(Parser)]
-#[command(name = "nexterm-ctl", about = "nexterm セッション制御 CLI")]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    /// セッション一覧を表示する
-    List,
-    /// 新規セッションを作成する
-    New {
-        /// セッション名
-        name: String,
-    },
-    /// セッションへのアタッチ方法を案内する
-    Attach {
-        /// セッション名
-        name: String,
-    },
-    /// セッションを強制終了する
-    Kill {
-        /// セッション名
-        name: String,
-    },
+fn build_cli() -> Command {
+    Command::new("nexterm-ctl")
+        .about(fl!("ctl-about"))
+        .subcommand_required(true)
+        .arg_required_else_help(true)
+        .subcommand(Command::new("list").about(fl!("ctl-list-about")))
+        .subcommand(
+            Command::new("new")
+                .about(fl!("ctl-new-about"))
+                .arg(Arg::new("name").help(fl!("ctl-arg-name")).required(true)),
+        )
+        .subcommand(
+            Command::new("attach")
+                .about(fl!("ctl-attach-about"))
+                .arg(Arg::new("name").help(fl!("ctl-arg-name")).required(true)),
+        )
+        .subcommand(
+            Command::new("kill")
+                .about(fl!("ctl-kill-about"))
+                .arg(Arg::new("name").help(fl!("ctl-arg-name")).required(true)),
+        )
+        .subcommand(
+            Command::new("record")
+                .about(fl!("ctl-record-about"))
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .subcommand(
+                    Command::new("start")
+                        .about(fl!("ctl-record-start-about"))
+                        .arg(Arg::new("session").help(fl!("ctl-arg-name")).required(true))
+                        .arg(
+                            Arg::new("file")
+                                .help(fl!("ctl-record-arg-file"))
+                                .required(true),
+                        ),
+                )
+                .subcommand(
+                    Command::new("stop")
+                        .about(fl!("ctl-record-stop-about"))
+                        .arg(Arg::new("session").help(fl!("ctl-arg-name")).required(true)),
+                ),
+        )
 }
 
 // ---- エントリーポイント ----
@@ -53,13 +72,38 @@ async fn main() -> Result<()> {
         .with_env_filter(EnvFilter::from_env("NEXTERM_LOG"))
         .init();
 
-    let cli = Cli::parse();
+    // ロケールを検出してから CLI を構築する
+    nexterm_i18n::init();
 
-    match cli.command {
-        Commands::List => cmd_list().await,
-        Commands::New { name } => cmd_new(name).await,
-        Commands::Attach { name } => cmd_attach(&name),
-        Commands::Kill { name } => cmd_kill(name).await,
+    let matches = build_cli().get_matches();
+
+    match matches.subcommand() {
+        Some(("list", _)) => cmd_list().await,
+        Some(("new", sub)) => {
+            let name = sub.get_one::<String>("name").unwrap().clone();
+            cmd_new(name).await
+        }
+        Some(("attach", sub)) => {
+            let name = sub.get_one::<String>("name").unwrap();
+            cmd_attach(name)
+        }
+        Some(("kill", sub)) => {
+            let name = sub.get_one::<String>("name").unwrap().clone();
+            cmd_kill(name).await
+        }
+        Some(("record", sub)) => match sub.subcommand() {
+            Some(("start", s)) => {
+                let session = s.get_one::<String>("session").unwrap().clone();
+                let file = s.get_one::<String>("file").unwrap().clone();
+                cmd_record_start(session, file).await
+            }
+            Some(("stop", s)) => {
+                let session = s.get_one::<String>("session").unwrap().clone();
+                cmd_record_stop(session).await
+            }
+            _ => unreachable!(),
+        },
+        _ => unreachable!(),
     }
 }
 
@@ -73,17 +117,28 @@ async fn cmd_list() -> Result<()> {
     match conn.recv().await? {
         ServerToClient::SessionList { sessions } => {
             if sessions.is_empty() {
-                println!("セッションはありません。");
+                println!("{}", fl!("ctl-no-sessions"));
             } else {
-                println!("{:<20} {:<8} {}", "名前", "ウィンドウ数", "アタッチ状態");
-                println!("{}", "-".repeat(44));
+                println!(
+                    "{:<20} {:<12} {}",
+                    fl!("ctl-list-col-name"),
+                    fl!("ctl-list-col-windows"),
+                    fl!("ctl-list-col-status")
+                );
+                println!("{}", "-".repeat(48));
                 for s in &sessions {
-                    let state = if s.attached { "アタッチ中" } else { "デタッチ" };
-                    println!("{:<20} {:<8} {}", s.name, s.window_count, state);
+                    let status = if s.attached {
+                        fl!("ctl-status-attached")
+                    } else {
+                        fl!("ctl-status-detached")
+                    };
+                    println!("{:<20} {:<12} {}", s.name, s.window_count, status);
                 }
             }
         }
-        ServerToClient::Error { message } => bail!("サーバーエラー: {}", message),
+        ServerToClient::Error { message } => {
+            bail!("{}", fl!("ctl-server-error", message = message))
+        }
         _ => {}
     }
 
@@ -98,7 +153,7 @@ async fn cmd_new(name: String) -> Result<()> {
     })
     .await?;
 
-    // SessionList を受け取るまで最大8メッセージ読み飛ばす
+    // SessionList を受け取るまで最大 8 メッセージ読み飛ばす
     let mut created = false;
     for _ in 0..8 {
         match conn.recv().await? {
@@ -106,17 +161,19 @@ async fn cmd_new(name: String) -> Result<()> {
                 created = sessions.iter().any(|s| s.name == name);
                 break;
             }
-            ServerToClient::Error { message } => bail!("エラー: {}", message),
-            _ => {} // FullRefresh / LayoutChanged などは読み飛ばす
+            ServerToClient::Error { message } => {
+                bail!("{}", fl!("ctl-error", message = message))
+            }
+            _ => {}
         }
     }
     conn.send(ClientToServer::Detach).await?;
 
     if created {
-        println!("セッション '{}' を作成しました。", name);
-        println!("アタッチするには nexterm-client-tui または nexterm-client-gpu を起動してください。");
+        println!("{}", fl!("ctl-session-created", name = name));
+        println!("{}", fl!("ctl-session-created-hint"));
     } else {
-        bail!("セッション '{}' の作成を確認できませんでした。", name);
+        bail!("{}", fl!("ctl-session-create-failed", name = name));
     }
 
     Ok(())
@@ -124,9 +181,9 @@ async fn cmd_new(name: String) -> Result<()> {
 
 /// セッションへのアタッチ方法を案内する（ctl 自体はインタラクティブ端末ではない）
 fn cmd_attach(name: &str) -> Result<()> {
-    println!("セッション '{}' にアタッチするには:", name);
-    println!("  TUI クライアント: NEXTERM_SESSION={name} nexterm-client-tui");
-    println!("  GPU クライアント: NEXTERM_SESSION={name} nexterm-client-gpu");
+    println!("{}", fl!("ctl-attach-guide", name = name));
+    println!("{}", fl!("ctl-attach-tui", name = name));
+    println!("{}", fl!("ctl-attach-gpu", name = name));
     Ok(())
 }
 
@@ -136,9 +193,44 @@ async fn cmd_kill(name: String) -> Result<()> {
     conn.send(ClientToServer::KillSession { name: name.clone() }).await?;
     match conn.recv().await? {
         ServerToClient::SessionList { .. } => {
-            println!("セッション '{}' を終了しました。", name);
+            println!("{}", fl!("ctl-session-killed", name = name));
         }
-        ServerToClient::Error { message } => bail!("エラー: {}", message),
+        ServerToClient::Error { message } => bail!("{}", fl!("ctl-error", message = message)),
+        _ => {}
+    }
+    Ok(())
+}
+
+/// セッションのフォーカスペインで録音を開始する
+async fn cmd_record_start(session: String, file: String) -> Result<()> {
+    let mut conn = IpcConn::connect().await?;
+    conn.send(ClientToServer::StartRecording {
+        session_name: session.clone(),
+        output_path: file.clone(),
+    })
+    .await?;
+    match conn.recv().await? {
+        ServerToClient::RecordingStarted { pane_id, path } => {
+            println!(
+                "{}",
+                fl!("ctl-record-started", session = session, pane_id = pane_id, path = path)
+            );
+        }
+        ServerToClient::Error { message } => bail!("{}", fl!("ctl-error", message = message)),
+        _ => {}
+    }
+    Ok(())
+}
+
+/// セッションのフォーカスペインの録音を停止する
+async fn cmd_record_stop(session: String) -> Result<()> {
+    let mut conn = IpcConn::connect().await?;
+    conn.send(ClientToServer::StopRecording { session_name: session.clone() }).await?;
+    match conn.recv().await? {
+        ServerToClient::RecordingStopped { pane_id } => {
+            println!("{}", fl!("ctl-record-stopped", session = session, pane_id = pane_id));
+        }
+        ServerToClient::Error { message } => bail!("{}", fl!("ctl-error", message = message)),
         _ => {}
     }
     Ok(())
@@ -162,11 +254,7 @@ impl IpcConn {
                 std::env::var("USERNAME").unwrap_or_else(|_| "nexterm".to_string());
             let pipe = format!("\\\\.\\pipe\\nexterm-{}", username);
             let stream = ClientOptions::new().open(&pipe).map_err(|e| {
-                anyhow::anyhow!(
-                    "nexterm サーバーへの接続に失敗しました: {}\n\
-                     nexterm-server が起動しているか確認してください。",
-                    e
-                )
+                anyhow::anyhow!("{}", fl!("ctl-connect-failed", error = e))
             })?;
             let (r, w) = tokio::io::split(stream);
             Ok(Self { reader: Box::new(r), writer: Box::new(w) })
@@ -179,11 +267,7 @@ impl IpcConn {
                 .unwrap_or_else(|_| format!("/run/user/{}", uid));
             let path = format!("{}/nexterm.sock", dir);
             let stream = tokio::net::UnixStream::connect(&path).await.map_err(|e| {
-                anyhow::anyhow!(
-                    "nexterm サーバーへの接続に失敗しました: {}\n\
-                     nexterm-server が起動しているか確認してください。",
-                    e
-                )
+                anyhow::anyhow!("{}", fl!("ctl-connect-failed", error = e))
             })?;
             let (r, w) = tokio::io::split(stream);
             Ok(Self { reader: Box::new(r), writer: Box::new(w) })
@@ -215,7 +299,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn メッセージのbincode往復() {
+    fn bincode_roundtrip_list_sessions() {
         let msg = ClientToServer::ListSessions;
         let encoded = bincode::serialize(&msg).unwrap();
         let decoded: ClientToServer = bincode::deserialize(&encoded).unwrap();
@@ -223,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    fn kill_sessionのシリアライズ() {
+    fn bincode_roundtrip_kill_session() {
         let msg = ClientToServer::KillSession { name: "main".to_string() };
         let encoded = bincode::serialize(&msg).unwrap();
         let decoded: ClientToServer = bincode::deserialize(&encoded).unwrap();

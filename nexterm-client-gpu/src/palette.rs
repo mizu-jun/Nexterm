@@ -1,11 +1,12 @@
 //! コマンドパレット — Ctrl+Shift+P でフローティング UI を表示する
 
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
+use nexterm_i18n::fl;
 
 /// パレットに登録できるアクション
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaletteAction {
-    /// 表示ラベル
+    /// 表示ラベル（現在のロケールで翻訳済み）
     pub label: String,
     /// 実行アクション識別子
     pub action: String,
@@ -26,31 +27,31 @@ pub struct CommandPalette {
 }
 
 impl CommandPalette {
-    /// デフォルトアクション付きでパレットを生成する
+    /// デフォルトアクション付きでパレットを生成する（現在のロケールで翻訳する）
     pub fn new() -> Self {
         let actions = vec![
             PaletteAction {
-                label: "垂直分割".to_string(),
+                label: fl!("palette-split-vertical"),
                 action: "SplitVertical".to_string(),
             },
             PaletteAction {
-                label: "水平分割".to_string(),
+                label: fl!("palette-split-horizontal"),
                 action: "SplitHorizontal".to_string(),
             },
             PaletteAction {
-                label: "次のペインへ".to_string(),
+                label: fl!("palette-focus-next"),
                 action: "FocusNextPane".to_string(),
             },
             PaletteAction {
-                label: "前のペインへ".to_string(),
+                label: fl!("palette-focus-prev"),
                 action: "FocusPrevPane".to_string(),
             },
             PaletteAction {
-                label: "デタッチ".to_string(),
+                label: fl!("palette-detach"),
                 action: "Detach".to_string(),
             },
             PaletteAction {
-                label: "スクロールバック検索".to_string(),
+                label: fl!("palette-search-scrollback"),
                 action: "SearchScrollback".to_string(),
             },
         ];
@@ -145,23 +146,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn パレット生成時にデフォルトアクションがある() {
+    fn default_actions_exist() {
         let palette = CommandPalette::new();
         assert!(!palette.actions.is_empty());
     }
 
     #[test]
-    fn クエリなしで全アクションが返る() {
+    fn no_query_returns_all_actions() {
         let palette = CommandPalette::new();
         assert_eq!(palette.filtered().len(), palette.actions.len());
     }
 
     #[test]
-    fn fuzzyマッチが動作する() {
-        let palette = CommandPalette::new();
-        // "分割" で SplitVertical / SplitHorizontal がマッチする
+    fn fuzzy_match_works() {
+        // "split" は Split Vertical / Split Horizontal にマッチする（英語ロケール）
         let mut p = CommandPalette::new();
-        p.query = "分割".to_string();
+        p.query = "split".to_string();
         let results = p.filtered();
         assert!(results.len() >= 2);
         assert!(results.iter().any(|a| a.action == "SplitVertical"));
@@ -169,7 +169,20 @@ mod tests {
     }
 
     #[test]
-    fn 選択移動が折り返す() {
+    fn fuzzy_match_works_with_japanese_locale() {
+        // 日本語ロケールで "分割" がマッチすることを確認する
+        nexterm_i18n::set_locale("ja");
+        let mut p = CommandPalette::new();
+        p.query = "分割".to_string();
+        let results = p.filtered();
+        nexterm_i18n::set_locale("en"); // テスト後にリセット
+        assert!(results.len() >= 2);
+        assert!(results.iter().any(|a| a.action == "SplitVertical"));
+        assert!(results.iter().any(|a| a.action == "SplitHorizontal"));
+    }
+
+    #[test]
+    fn selection_wraps_around() {
         let mut p = CommandPalette::new();
         let total = p.filtered().len();
         // 末尾から次へ → 先頭に戻る
@@ -182,11 +195,11 @@ mod tests {
     }
 
     #[test]
-    fn カスタムアクション登録() {
+    fn register_custom_action() {
         let mut p = CommandPalette::new();
         let before = p.actions.len();
         p.register(PaletteAction {
-            label: "カスタム".to_string(),
+            label: "Custom".to_string(),
             action: "Custom".to_string(),
         });
         assert_eq!(p.actions.len(), before + 1);
