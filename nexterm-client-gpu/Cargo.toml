@@ -28,3 +28,6 @@ tracing-subscriber = { workspace = true }
 arboard = { workspace = true }
 # Phase 3: 設定ホットリロード監視
 notify = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

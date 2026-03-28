@@ -165,13 +165,19 @@ impl Pane {
                                 cursor_col,
                                 cursor_row,
                             };
-                            let _ = shared_tx_clone.lock().unwrap().blocking_send(msg);
+                            match shared_tx_clone.lock() {
+                                Ok(tx) => { let _ = tx.blocking_send(msg); }
+                                Err(e) => error!("ペイン {}: 送信チャネルのロック取得に失敗しました: {}", pane_id, e),
+                            }
                         }
 
                         // BEL を受信していればクライアントに通知する
                         if parser.screen_mut().take_pending_bell() {
                             let msg = ServerToClient::Bell { pane_id };
-                            let _ = shared_tx_clone.lock().unwrap().blocking_send(msg);
+                            match shared_tx_clone.lock() {
+                                Ok(tx) => { let _ = tx.blocking_send(msg); }
+                                Err(e) => error!("ペイン {}: BEL 送信チャネルのロック取得に失敗しました: {}", pane_id, e),
+                            }
                         }
 
                         // 画像データを送信する（Sixel / Kitty）
@@ -186,7 +192,10 @@ impl Pane {
                                 height: img.height,
                                 rgba: img.rgba,
                             };
-                            let _ = shared_tx_clone.lock().unwrap().blocking_send(msg);
+                            match shared_tx_clone.lock() {
+                                Ok(tx) => { let _ = tx.blocking_send(msg); }
+                                Err(e) => error!("ペイン {}: 画像送信チャネルのロック取得に失敗しました: {}", pane_id, e),
+                            }
                         }
                     }
                     Err(e) => {
@@ -216,12 +225,16 @@ impl Pane {
 
     /// PTY 出力チャネルを差し替える（クライアント再アタッチ時）
     pub fn update_tx(&self, new_tx: mpsc::Sender<ServerToClient>) {
-        *self.shared_tx.lock().unwrap() = new_tx;
+        match self.shared_tx.lock() {
+            Ok(mut guard) => *guard = new_tx,
+            Err(e) => error!("ペイン {}: shared_tx のロック取得に失敗しました: {}", self.id, e),
+        }
     }
 
     /// PTY にデータを書き込む（キー入力転送）
     pub fn write_input(&self, data: &[u8]) -> Result<()> {
-        let mut w = self.writer.lock().unwrap();
+        let mut w = self.writer.lock()
+            .map_err(|e| anyhow::anyhow!("writer ロック取得に失敗しました: {}", e))?;
         w.write_all(data)?;
         Ok(())
     }
@@ -231,7 +244,8 @@ impl Pane {
     /// 録音中の場合は前のファイルを閉じてから新しいファイルを開く。
     pub fn start_recording(&self, path: &str) -> Result<()> {
         let file = File::create(path)?;
-        let mut guard = self.log_writer.lock().expect("log_writer ロック取得");
+        let mut guard = self.log_writer.lock()
+            .map_err(|e| anyhow::anyhow!("log_writer ロック取得に失敗しました: {}", e))?;
         *guard = Some(BufWriter::new(file));
         info!("ペイン {} の録音を開始しました: {}", self.id, path);
         Ok(())
@@ -241,7 +255,8 @@ impl Pane {
     ///
     /// バッファをフラッシュしてからファイルを閉じる。
     pub fn stop_recording(&self) -> Result<()> {
-        let mut guard = self.log_writer.lock().expect("log_writer ロック取得");
+        let mut guard = self.log_writer.lock()
+            .map_err(|e| anyhow::anyhow!("log_writer ロック取得に失敗しました: {}", e))?;
         if let Some(mut w) = guard.take() {
             w.flush()?;
             info!("ペイン {} の録音を停止しました", self.id);

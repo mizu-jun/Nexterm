@@ -15,9 +15,11 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use mlua::prelude::*;
-use tracing::warn;
+use mlua::{HookTriggers, VmState};
+use tracing::{error, warn};
 
 /// ワーカースレッドへの評価リクエスト
 struct LuaRequest {
@@ -67,15 +69,43 @@ impl LuaWorker {
 
                 // リクエストを順番に処理する（チャネルが閉じられたら終了）
                 while let Ok(req) = rx.recv() {
+                    // 評価タイムアウト: 100ms を超えたら中断する
+                    let deadline = Instant::now() + Duration::from_millis(100);
+                    lua.set_hook(
+                        HookTriggers::new().every_nth_instruction(500),
+                        move |_lua, _debug| {
+                            if Instant::now() > deadline {
+                                Err(LuaError::RuntimeError(
+                                    "Lua 評価タイムアウト (100ms)".to_string(),
+                                ))
+                            } else {
+                                Ok(VmState::Continue)
+                            }
+                        },
+                    );
+
                     let parts: Vec<String> = req
                         .widgets
                         .iter()
                         .map(|expr| {
-                            lua.load(expr.as_str())
-                                .eval::<String>()
-                                .unwrap_or_default()
+                            match lua.load(expr.as_str()).eval::<String>() {
+                                Ok(s) => s,
+                                Err(LuaError::RuntimeError(ref msg))
+                                    if msg.contains("タイムアウト") =>
+                                {
+                                    warn!("Lua 評価タイムアウト: {}", expr);
+                                    String::new()
+                                }
+                                Err(e) => {
+                                    error!("Lua 評価エラー: {}", e);
+                                    String::new()
+                                }
+                            }
                         })
                         .collect();
+
+                    lua.remove_hook();
+
                     let result = parts.join("  ");
 
                     if let Ok(mut guard) = cache_clone.lock() {

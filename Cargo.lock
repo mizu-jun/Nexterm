@@ -1629,6 +1629,7 @@ dependencies = [
  "cosmic-text",
  "fuzzy-matcher",
  "image",
+ "libc",
  "nexterm-config",
  "nexterm-i18n",
  "nexterm-proto",
