@@ -8,7 +8,7 @@ use anyhow::{bail, Result};
 use tokio::sync::{mpsc, Mutex};
 use tracing::{info, warn};
 
-use nexterm_proto::{ServerToClient, SessionInfo};
+use nexterm_proto::{ServerToClient, SessionInfo, WindowInfo};
 
 use crate::snapshot::{
     ServerSnapshot, SessionSnapshot, SNAPSHOT_VERSION,
@@ -40,6 +40,8 @@ pub struct Session {
     /// デフォルト端末サイズ
     pub cols: u16,
     pub rows: u16,
+    /// ブロードキャストモードフラグ
+    broadcast: bool,
 }
 
 impl Session {
@@ -64,6 +66,7 @@ impl Session {
             shell,
             cols,
             rows,
+            broadcast: false,
         })
     }
 
@@ -110,11 +113,92 @@ impl Session {
         &self.shell
     }
 
+    /// 新しいウィンドウを追加する
+    pub fn add_window(&mut self, tx: mpsc::Sender<ServerToClient>) -> Result<u32> {
+        let window_id = new_window_id();
+        let name = format!("window-{}", window_id);
+        let window = Window::new(window_id, name, self.cols, self.rows, tx, &self.shell)?;
+        self.windows.insert(window_id, window);
+        self.focused_window_id = window_id;
+        Ok(window_id)
+    }
+
+    /// 指定ウィンドウを削除する（最後のウィンドウは削除不可）
+    pub fn remove_window(&mut self, window_id: u32) -> Result<()> {
+        if self.windows.len() <= 1 {
+            return Err(anyhow::anyhow!("最後のウィンドウは削除できません"));
+        }
+        if !self.windows.contains_key(&window_id) {
+            return Err(anyhow::anyhow!("ウィンドウ {} が見つかりません", window_id));
+        }
+        self.windows.remove(&window_id);
+        // フォーカスが削除されたウィンドウにあった場合、残ったウィンドウに移す
+        if self.focused_window_id == window_id {
+            self.focused_window_id = *self.windows.keys().next().unwrap();
+        }
+        Ok(())
+    }
+
+    /// 指定ウィンドウにフォーカスを移動する
+    pub fn focus_window(&mut self, window_id: u32) -> Result<()> {
+        if !self.windows.contains_key(&window_id) {
+            return Err(anyhow::anyhow!("ウィンドウ {} が見つかりません", window_id));
+        }
+        self.focused_window_id = window_id;
+        Ok(())
+    }
+
+    /// 指定ウィンドウをリネームする
+    pub fn rename_window(&mut self, window_id: u32, name: String) -> Result<()> {
+        let window = self.windows.get_mut(&window_id)
+            .ok_or_else(|| anyhow::anyhow!("ウィンドウ {} が見つかりません", window_id))?;
+        window.name = name;
+        Ok(())
+    }
+
+    /// ウィンドウ情報の一覧を返す
+    pub fn window_list(&self) -> Vec<WindowInfo> {
+        let mut list: Vec<WindowInfo> = self.windows.values().map(|w| WindowInfo {
+            window_id: w.id,
+            name: w.name.clone(),
+            pane_count: w.pane_count() as u32,
+            is_focused: w.id == self.focused_window_id,
+        }).collect();
+        list.sort_by_key(|w| w.window_id);
+        list
+    }
+
+    /// ブロードキャストモードを設定する
+    pub fn set_broadcast(&mut self, enabled: bool) {
+        self.broadcast = enabled;
+    }
+
+    /// ブロードキャストモードかどうかを返す
+    pub fn is_broadcast(&self) -> bool {
+        self.broadcast
+    }
+
+    /// ブロードキャストモード: フォーカスウィンドウの全ペインに書き込む
+    pub fn write_to_all(&self, data: &[u8]) -> Result<()> {
+        let window = self.focused_window()
+            .ok_or_else(|| anyhow::anyhow!("フォーカスウィンドウが見つかりません"))?;
+        for pane_id in window.pane_ids() {
+            if let Some(pane) = window.pane(pane_id) {
+                let _ = pane.write_input(data);
+            }
+        }
+        Ok(())
+    }
+
     /// フォーカスウィンドウのフォーカスペインに入力を書き込む
     pub fn write_to_focused(&self, data: &[u8]) -> Result<()> {
-        self.focused_window()
-            .ok_or_else(|| anyhow::anyhow!("フォーカスウィンドウが見つかりません"))?
-            .write_to_focused(data)
+        if self.broadcast {
+            self.write_to_all(data)
+        } else {
+            self.focused_window()
+                .ok_or_else(|| anyhow::anyhow!("フォーカスウィンドウが見つかりません"))?
+                .write_to_focused(data)
+        }
     }
 
     /// ウィンドウ全体をリサイズする（全ペインを BSP 計算で再配置する）
@@ -180,6 +264,7 @@ impl Session {
             shell: snap.shell.clone(),
             cols: snap.cols,
             rows: snap.rows,
+            broadcast: false,
         })
     }
 }

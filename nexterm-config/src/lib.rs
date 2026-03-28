@@ -7,6 +7,7 @@
 //!   4. ファイル変更監視 → ホットリロード
 
 pub mod defaults;
+pub mod keyring;
 pub mod loader;
 pub mod lua_worker;
 pub mod schema;
@@ -15,8 +16,8 @@ pub mod watcher;
 
 pub use loader::ConfigLoader;
 pub use schema::{
-    ColorScheme, Config, FontConfig, KeyBinding, ShellConfig, StatusBarConfig, TabBarConfig,
-    WindowConfig, WindowDecorations,
+    BuiltinScheme, ColorScheme, Config, CustomPalette, FontConfig, KeyBinding, LogConfig,
+    ShellConfig, StatusBarConfig, TabBarConfig, WindowConfig, WindowDecorations,
 };
 pub use status_bar::StatusBarEvaluator;
 pub use watcher::{watch_config, ConfigRx};

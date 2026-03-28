@@ -590,6 +590,213 @@ async fn dispatch(
                 }
             }
         }
+
+        ClosePane => {
+            if let Some(ref name) = *current_session {
+                let result = {
+                    let arc = manager.sessions();
+                    let mut sessions = arc.lock().await;
+                    if let Some(s) = sessions.get_mut(name) {
+                        let cols = s.cols;
+                        let rows = s.rows;
+                        s.focused_window_mut().map(|w| w.remove_focused_pane(cols, rows))
+                    } else {
+                        None
+                    }
+                };
+                match result {
+                    Some(Ok(removed_id)) => {
+                        let layout_msg = {
+                            let arc = manager.sessions();
+                            let sessions = arc.lock().await;
+                            sessions.get(name).and_then(|s| {
+                                s.focused_window().map(|w| w.layout_changed_msg(s.cols, s.rows))
+                            })
+                        };
+                        let _ = tx.send(ServerToClient::PaneClosed { pane_id: removed_id }).await;
+                        if let Some(msg) = layout_msg {
+                            let _ = tx.send(msg).await;
+                        }
+                    }
+                    Some(Err(e)) => {
+                        let _ = tx.send(ServerToClient::Error { message: e.to_string() }).await;
+                    }
+                    None => {}
+                }
+            }
+        }
+
+        ResizeSplit { delta } => {
+            if let Some(ref name) = *current_session {
+                let layout_msg = {
+                    let arc = manager.sessions();
+                    let mut sessions = arc.lock().await;
+                    if let Some(s) = sessions.get_mut(name) {
+                        let cols = s.cols;
+                        let rows = s.rows;
+                        if let Some(w) = s.focused_window_mut() {
+                            w.adjust_split_ratio(*delta, cols, rows);
+                            Some(w.layout_changed_msg(cols, rows))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+                if let Some(msg) = layout_msg {
+                    let _ = tx.send(msg).await;
+                }
+            }
+        }
+
+        NewWindow => {
+            if let Some(ref name) = *current_session {
+                let result = {
+                    let arc = manager.sessions();
+                    let mut sessions = arc.lock().await;
+                    if let Some(s) = sessions.get_mut(name) {
+                        let pane_tx = s.client_tx.clone();
+                        if let Some(pane_tx) = pane_tx {
+                            Some(s.add_window(pane_tx).map(|wid| (wid, s.window_list())))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+                match result {
+                    Some(Ok((_wid, windows))) => {
+                        let _ = tx.send(ServerToClient::WindowListChanged { windows }).await;
+                        // 新ウィンドウの最初のペインに FullRefresh を送る
+                        let refresh_msg = {
+                            let arc = manager.sessions();
+                            let sessions = arc.lock().await;
+                            sessions.get(name).and_then(|s| {
+                                s.focused_window().and_then(|w| {
+                                    let pid = w.focused_pane_id();
+                                    w.pane(pid).map(|p| {
+                                        let layout = w.layout_changed_msg(s.cols, s.rows);
+                                        let refresh = ServerToClient::FullRefresh { pane_id: p.id, grid: p.make_full_refresh() };
+                                        (refresh, layout)
+                                    })
+                                })
+                            })
+                        };
+                        if let Some((refresh, layout)) = refresh_msg {
+                            let _ = tx.send(refresh).await;
+                            let _ = tx.send(layout).await;
+                        }
+                    }
+                    Some(Err(e)) => {
+                        let _ = tx.send(ServerToClient::Error { message: e.to_string() }).await;
+                    }
+                    None => {}
+                }
+            }
+        }
+
+        CloseWindow { window_id } => {
+            if let Some(ref name) = *current_session {
+                let result = {
+                    let arc = manager.sessions();
+                    let mut sessions = arc.lock().await;
+                    if let Some(s) = sessions.get_mut(name) {
+                        let r = s.remove_window(*window_id);
+                        r.map(|_| s.window_list())
+                    } else {
+                        Ok(vec![])
+                    }
+                };
+                match result {
+                    Ok(windows) => {
+                        let _ = tx.send(ServerToClient::WindowListChanged { windows }).await;
+                    }
+                    Err(e) => {
+                        let _ = tx.send(ServerToClient::Error { message: e.to_string() }).await;
+                    }
+                }
+            }
+        }
+
+        FocusWindow { window_id } => {
+            if let Some(ref name) = *current_session {
+                let result = {
+                    let arc = manager.sessions();
+                    let mut sessions = arc.lock().await;
+                    if let Some(s) = sessions.get_mut(name) {
+                        let r = s.focus_window(*window_id);
+                        r.map(|_| {
+                            let windows = s.window_list();
+                            s.focused_window().map(|w| {
+                                let layout = w.layout_changed_msg(s.cols, s.rows);
+                                let pid = w.focused_pane_id();
+                                let refresh = w.pane(pid).map(|p| ServerToClient::FullRefresh { pane_id: p.id, grid: p.make_full_refresh() });
+                                (windows, layout, refresh)
+                            })
+                        })
+                    } else {
+                        Ok(None)
+                    }
+                };
+                match result {
+                    Ok(Some((windows, layout, refresh))) => {
+                        let _ = tx.send(ServerToClient::WindowListChanged { windows }).await;
+                        let _ = tx.send(layout).await;
+                        if let Some(r) = refresh {
+                            let _ = tx.send(r).await;
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        let _ = tx.send(ServerToClient::Error { message: e.to_string() }).await;
+                    }
+                }
+            }
+        }
+
+        RenameWindow { window_id, name: new_name } => {
+            if let Some(ref session_name) = *current_session {
+                let result = {
+                    let arc = manager.sessions();
+                    let mut sessions = arc.lock().await;
+                    if let Some(s) = sessions.get_mut(session_name) {
+                        let r = s.rename_window(*window_id, new_name.clone());
+                        r.map(|_| s.window_list())
+                    } else {
+                        Ok(vec![])
+                    }
+                };
+                match result {
+                    Ok(windows) => {
+                        let _ = tx.send(ServerToClient::WindowListChanged { windows }).await;
+                    }
+                    Err(e) => {
+                        let _ = tx.send(ServerToClient::Error { message: e.to_string() }).await;
+                    }
+                }
+            }
+        }
+
+        SetBroadcast { enabled } => {
+            if let Some(ref name) = *current_session {
+                let arc = manager.sessions();
+                let mut sessions = arc.lock().await;
+                if let Some(s) = sessions.get_mut(name) {
+                    s.set_broadcast(*enabled);
+                }
+            }
+        }
+
+        // SSH 接続（nexterm-ssh クレートで実装予定）
+        ConnectSsh { .. } => {
+            let _ = tx
+                .send(ServerToClient::Error {
+                    message: "SSH 接続は未実装です".to_string(),
+                })
+                .await;
+        }
     }
 }
 

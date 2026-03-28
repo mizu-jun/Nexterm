@@ -1,0 +1,11 @@
+[package]
+name = "nexterm-ssh"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+russh = "0.58"
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+zeroize = "1.8"

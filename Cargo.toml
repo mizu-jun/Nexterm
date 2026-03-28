@@ -8,6 +8,7 @@ members = [
     "nexterm-client-gpu",
     "nexterm-ctl",
     "nexterm-i18n",
+    "nexterm-ssh",
 ]
 resolver = "2"
 
@@ -69,3 +70,6 @@ clap = { version = "4", features = ["derive"] }
 
 # セッション永続化（JSON スナップショット）
 serde_json = "1"
+
+# Phase 3: CJK 幅計算
+unicode-width = "0.2"

@@ -127,7 +127,38 @@ impl Perform for Screen {
         }
     }
 
-    fn osc_dispatch(&mut self, _params: &[&[u8]], _bell_terminated: bool) {}
+    fn osc_dispatch(&mut self, params: &[&[u8]], _bell_terminated: bool) {
+        // params[0] がコード、params[1] 以降がデータ
+        if params.is_empty() {
+            return;
+        }
+        let code = match std::str::from_utf8(params[0]) {
+            Ok(s) => s.trim(),
+            Err(_) => return,
+        };
+        match code {
+            // OSC 0: アイコン名とウィンドウタイトルを設定
+            // OSC 1: アイコン名を設定（タイトルとして扱う）
+            // OSC 2: ウィンドウタイトルを設定
+            "0" | "1" | "2" => {
+                if let Some(title_bytes) = params.get(1) {
+                    if let Ok(title) = std::str::from_utf8(title_bytes) {
+                        self.set_pending_title(title.to_string());
+                    }
+                }
+            }
+            // OSC 9: iTerm2 互換デスクトップ通知
+            // フォーマット: ESC ] 9 ; <メッセージ> BEL
+            "9" => {
+                if let Some(msg_bytes) = params.get(1) {
+                    if let Ok(msg) = std::str::from_utf8(msg_bytes) {
+                        self.set_pending_notification("Nexterm".to_string(), msg.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
     fn esc_dispatch(&mut self, _intermediates: &[u8], _ignore: bool, _byte: u8) {}
 
     /// DCS 開始 — action == 'q' のとき Sixel

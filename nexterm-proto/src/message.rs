@@ -49,7 +49,7 @@ pub enum KeyCode {
 }
 
 /// クライアント → サーバー メッセージ
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ClientToServer {
     /// キー入力イベント
     KeyEvent {
@@ -89,6 +89,32 @@ pub enum ClientToServer {
     StartRecording { session_name: String, output_path: String },
     /// セッション録音を停止する
     StopRecording { session_name: String },
+    /// フォーカスペインを閉じる
+    ClosePane,
+    /// フォーカスペインの分割比率を変更する（正: 広げる、負: 縮める）
+    ResizeSplit { delta: f32 },
+    /// SSH 接続（設定済みホスト名を指定）
+    ConnectSsh {
+        host: String,
+        port: u16,
+        username: String,
+        /// 認証方式: "password", "key", "agent"
+        auth_type: String,
+        /// パスワード認証時のパスワード（平文、将来はキーチェーンから取得）
+        password: Option<String>,
+        /// 公開鍵認証時の秘密鍵パス
+        key_path: Option<String>,
+    },
+    /// 新しいウィンドウを作成する
+    NewWindow,
+    /// 指定ウィンドウを閉じる（最後のウィンドウは閉じられない）
+    CloseWindow { window_id: u32 },
+    /// 指定ウィンドウにフォーカスを移動する
+    FocusWindow { window_id: u32 },
+    /// 指定ウィンドウをリネームする
+    RenameWindow { window_id: u32, name: String },
+    /// ブロードキャストモードを設定する（true: 全ペインに入力、false: フォーカスペインのみ）
+    SetBroadcast { enabled: bool },
 }
 
 /// ペインのレイアウト情報（グリッド座標系）
@@ -158,6 +184,14 @@ pub enum ServerToClient {
     RecordingStarted { pane_id: u32, path: String },
     /// セッション録音停止通知
     RecordingStopped { pane_id: u32 },
+    /// ウィンドウ一覧変更通知
+    WindowListChanged { windows: Vec<WindowInfo> },
+    /// ペインが閉じられた通知（ウィンドウも一緒に閉じられた場合は pane_id を 0 にする）
+    PaneClosed { pane_id: u32 },
+    /// ウィンドウ/ペインタイトル変更通知
+    TitleChanged { pane_id: u32, title: String },
+    /// デスクトップ通知
+    DesktopNotification { pane_id: u32, title: String, body: String },
 }
 
 /// セッション情報
@@ -166,6 +200,15 @@ pub struct SessionInfo {
     pub name: String,
     pub window_count: u32,
     pub attached: bool,
+}
+
+/// ウィンドウ情報
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowInfo {
+    pub window_id: u32,
+    pub name: String,
+    pub pane_count: u32,
+    pub is_focused: bool,
 }
 
 #[cfg(test)]

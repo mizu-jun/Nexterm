@@ -99,6 +99,10 @@ impl ClientState {
             ServerToClient::Bell { .. } => {}
             // 録音状態通知は TUI では無視する
             ServerToClient::RecordingStarted { .. } | ServerToClient::RecordingStopped { .. } => {}
+            // ウィンドウ一覧変更・ペイン閉鎖通知は TUI では無視する
+            ServerToClient::WindowListChanged { .. } | ServerToClient::PaneClosed { .. } => {}
+            // タイトル変更・デスクトップ通知は TUI では無視する
+            ServerToClient::TitleChanged { .. } | ServerToClient::DesktopNotification { .. } => {}
         }
     }
 

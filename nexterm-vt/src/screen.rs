@@ -1,6 +1,7 @@
 //! 仮想スクリーン — グリッド + ダーティフラグ + カーソル状態
 
 use nexterm_proto::{Attrs, Cell, Color, DirtyRow, Grid};
+use unicode_width::UnicodeWidthChar;
 
 use crate::image::{decode_kitty, decode_sixel};
 
@@ -47,6 +48,10 @@ pub struct Screen {
     next_image_id: u32,
     /// BEL 受信フラグ（take_pending_bell で取り出す）
     pending_bell: bool,
+    /// タイトル変更通知（OSC 0/1/2 で設定）
+    pending_title: Option<String>,
+    /// デスクトップ通知（OSC 9 で設定）
+    pending_notification: Option<(String, String)>,
 }
 
 impl Screen {
@@ -69,6 +74,8 @@ impl Screen {
             pending_images: Vec::new(),
             next_image_id: 1,
             pending_bell: false,
+            pending_title: None,
+            pending_notification: None,
         }
     }
 
@@ -136,11 +143,21 @@ impl Screen {
 
     /// カーソル位置に文字を書き込み、カーソルを進める
     pub(crate) fn write_char(&mut self, ch: char) {
+        // 文字の表示幅を取得する（CJK 全角は 2、通常は 1）
+        let char_width = UnicodeWidthChar::width(ch).unwrap_or(1) as u16;
+
         if self.cursor_col >= self.grid.width {
             // 行末で折り返し
             self.cursor_col = 0;
             self.advance_line();
         }
+
+        // ワイド文字が行末からはみ出す場合は次行に折り返す
+        if char_width == 2 && self.cursor_col + 1 >= self.grid.width {
+            self.cursor_col = 0;
+            self.advance_line();
+        }
+
         let cell = Cell {
             ch,
             fg: self.current_fg,
@@ -152,6 +169,18 @@ impl Screen {
         self.grid.set(col, row, cell);
         self.mark_dirty(row);
         self.cursor_col += 1;
+
+        // ワイド文字の場合は次のカラムにプレースホルダーセルを配置する
+        if char_width == 2 && self.cursor_col < self.grid.width {
+            let placeholder = Cell {
+                ch: ' ',
+                fg: self.current_fg,
+                bg: self.current_bg,
+                attrs: self.current_attrs,
+            };
+            self.grid.set(self.cursor_col, row, placeholder);
+            self.cursor_col += 1;
+        }
     }
 
     /// カーソルを次の行へ進める（スクロール処理を含む）
@@ -395,5 +424,25 @@ impl Screen {
     /// BEL を設定する（performer から呼ばれる）
     pub(crate) fn set_pending_bell(&mut self) {
         self.pending_bell = true;
+    }
+
+    /// タイトル変更を設定する（performer から呼ばれる）
+    pub(crate) fn set_pending_title(&mut self, title: String) {
+        self.pending_title = Some(title);
+    }
+
+    /// タイトル変更を取り出してクリアする
+    pub fn take_pending_title(&mut self) -> Option<String> {
+        self.pending_title.take()
+    }
+
+    /// デスクトップ通知を設定する（performer から呼ばれる）
+    pub(crate) fn set_pending_notification(&mut self, title: String, body: String) {
+        self.pending_notification = Some((title, body));
+    }
+
+    /// デスクトップ通知を取り出してクリアする
+    pub fn take_pending_notification(&mut self) -> Option<(String, String)> {
+        self.pending_notification.take()
     }
 }

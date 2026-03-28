@@ -11,6 +11,9 @@ pub struct FontConfig {
     pub size: f32,
     /// リガチャを有効にするか
     pub ligatures: bool,
+    /// フォントフォールバックチェーン（グリフが見つからない場合に順番に試行）
+    #[serde(default)]
+    pub font_fallbacks: Vec<String>,
 }
 
 impl Default for FontConfig {
@@ -19,6 +22,7 @@ impl Default for FontConfig {
             family: "monospace".to_string(),
             size: 14.0,
             ligatures: true,
+            font_fallbacks: vec![],
         }
     }
 }
@@ -34,14 +38,27 @@ pub enum BuiltinScheme {
     Gruvbox,
 }
 
+/// カスタムカラーパレット（TOML で定義）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CustomPalette {
+    /// 前景色 (#RRGGBB)
+    pub foreground: String,
+    /// 背景色 (#RRGGBB)
+    pub background: String,
+    /// カーソル色 (#RRGGBB)
+    pub cursor: String,
+    /// ANSI 16色 (#RRGGBB × 16: black, red, green, yellow, blue, magenta, cyan, white, bright×8)
+    pub ansi: Vec<String>,
+}
+
 /// カラースキーム設定
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ColorScheme {
     /// 組み込みスキーム名
     Builtin(BuiltinScheme),
-    /// カスタム（将来拡張用）
-    Custom(String),
+    /// カスタムパレット
+    Custom(CustomPalette),
 }
 
 impl Default for ColorScheme {
@@ -161,6 +178,22 @@ impl Default for TabBarConfig {
     }
 }
 
+/// ログ設定
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Default)]
+pub struct LogConfig {
+    /// 自動ログ有効化
+    #[serde(default)]
+    pub auto_log: bool,
+    /// ログ保存ディレクトリ
+    pub log_dir: Option<String>,
+    /// タイムスタンプ付きログ
+    #[serde(default)]
+    pub timestamp: bool,
+    /// ANSI エスケープ除去
+    #[serde(default)]
+    pub strip_ansi: bool,
+}
+
 /// キーバインド定義
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeyBinding {
@@ -168,6 +201,33 @@ pub struct KeyBinding {
     pub key: String,
     /// アクション名（例: "CommandPalette"）
     pub action: String,
+}
+
+/// SSH ホスト設定
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Default)]
+pub struct HostConfig {
+    /// 表示名
+    pub name: String,
+    /// ホスト名または IP アドレス
+    pub host: String,
+    /// SSH ポート（デフォルト: 22）
+    #[serde(default = "default_ssh_port")]
+    pub port: u16,
+    /// ユーザー名
+    pub username: String,
+    /// 認証方式: "password", "key", "agent"
+    #[serde(default = "default_auth_type")]
+    pub auth_type: String,
+    /// 秘密鍵ファイルパス（auth_type = "key" の場合）
+    pub key_path: Option<String>,
+}
+
+fn default_ssh_port() -> u16 {
+    22
+}
+
+fn default_auth_type() -> String {
+    "key".to_string()
 }
 
 /// 設定 API バージョン
@@ -218,6 +278,14 @@ pub struct Config {
     /// タブバー設定
     #[serde(default)]
     pub tab_bar: TabBarConfig,
+
+    /// SSH ホスト一覧
+    #[serde(default)]
+    pub hosts: Vec<HostConfig>,
+
+    /// ログ設定
+    #[serde(default)]
+    pub log: LogConfig,
 }
 
 fn default_scrollback() -> usize {
@@ -236,6 +304,8 @@ impl Default for Config {
             scrollback_lines: default_scrollback(),
             window: WindowConfig::default(),
             tab_bar: TabBarConfig::default(),
+            hosts: Vec::new(),
+            log: LogConfig::default(),
         }
     }
 }

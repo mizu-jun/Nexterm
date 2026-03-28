@@ -522,7 +522,8 @@ impl WgpuState {
                         );
                     } else {
                         self.build_grid_verts_in_rect(
-                            pane, layout, is_focused, sw, sh, cell_w, cell_h, font, atlas,
+                            pane, layout, is_focused, &state.mouse_sel,
+                            sw, sh, cell_w, cell_h, font, atlas,
                             &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
                         );
                     }
@@ -541,7 +542,7 @@ impl WgpuState {
             } else {
                 // ---- 通常グリッド表示 ----
                 self.build_grid_verts(
-                    pane, sw, sh, cell_w, cell_h, font, atlas,
+                    pane, &state.mouse_sel, sw, sh, cell_w, cell_h, font, atlas,
                     &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
                 );
             }
@@ -700,12 +701,16 @@ impl WgpuState {
     fn build_grid_verts(
         &self,
         pane: &crate::state::PaneState,
+        mouse_sel: &crate::state::MouseSelection,
         sw: f32, sh: f32, cell_w: f32, cell_h: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
         text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
     ) {
+        // 選択ハイライト色（半透明の青）
+        const SEL_COLOR: [f32; 4] = [0.25, 0.55, 1.0, 0.40];
+
         let grid = &pane.grid;
         for row in 0..grid.height as usize {
             for col in 0..grid.width as usize {
@@ -714,6 +719,10 @@ impl WgpuState {
                 let py = row as f32 * cell_h;
                 let bg = resolve_color(&cell.bg, false);
                 add_px_rect(px, py, cell_w, cell_h, bg, sw, sh, bg_verts, bg_idx);
+                // 選択ハイライトオーバーレイ
+                if mouse_sel.contains(col as u16, row as u16) {
+                    add_px_rect(px, py, cell_w, cell_h, SEL_COLOR, sw, sh, bg_verts, bg_idx);
+                }
                 if cell.ch == ' ' { continue; }
                 let fg = resolve_color(&cell.fg, true);
                 let fg_u8 = [
@@ -801,12 +810,16 @@ impl WgpuState {
         pane: &crate::state::PaneState,
         layout: &nexterm_proto::PaneLayout,
         is_focused: bool,
+        mouse_sel: &crate::state::MouseSelection,
         sw: f32, sh: f32, cell_w: f32, cell_h: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
         text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
     ) {
+        // 選択ハイライト色（半透明の青）
+        const SEL_COLOR: [f32; 4] = [0.25, 0.55, 1.0, 0.40];
+
         let off_x = layout.col_offset as f32 * cell_w;
         let off_y = layout.row_offset as f32 * cell_h;
         // 非フォーカスペインを少し暗く表示する
@@ -821,6 +834,10 @@ impl WgpuState {
                 let bg = resolve_color(&cell.bg, false);
                 let bg = [bg[0] * dim, bg[1] * dim, bg[2] * dim, 1.0];
                 add_px_rect(px, py, cell_w, cell_h, bg, sw, sh, bg_verts, bg_idx);
+                // 選択ハイライトオーバーレイ（フォーカスペインのみ）
+                if is_focused && mouse_sel.contains(col as u16, row as u16) {
+                    add_px_rect(px, py, cell_w, cell_h, SEL_COLOR, sw, sh, bg_verts, bg_idx);
+                }
                 if cell.ch == ' ' { continue; }
                 let fg = resolve_color(&cell.fg, true);
                 let fg = [fg[0] * dim, fg[1] * dim, fg[2] * dim, fg[3]];
@@ -1403,7 +1420,7 @@ pub struct NextermApp {
 
 impl NextermApp {
     pub async fn new(config: Config) -> Result<Self> {
-        let font = FontManager::new(&config.font.family, config.font.size);
+        let font = FontManager::new(&config.font.family, config.font.size, &config.font.font_fallbacks);
         let state = ClientState::new(80, 24, config.scrollback_lines);
         Ok(Self { config, state, font })
     }
@@ -1547,6 +1564,7 @@ impl ApplicationHandler for EventHandler {
                     self.app.font = crate::font::FontManager::new(
                         &self.app.config.font.family,
                         self.app.config.font.size,
+                        &self.app.config.font.font_fallbacks,
                     );
                     if let Some(wgpu) = &self.wgpu_state {
                         self.atlas = Some(GlyphAtlas::new(&wgpu.device));
@@ -1604,12 +1622,37 @@ impl ApplicationHandler for EventHandler {
                 self.modifiers = mods.state();
             }
 
-            // マウスカーソル位置を追跡する
+            // マウスカーソル位置を追跡する（ドラッグ中は選択範囲を更新する）
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_position = Some((position.x, position.y));
+                if self.app.state.mouse_sel.is_dragging {
+                    let cell_w = self.app.font.cell_width() as f64;
+                    let cell_h = self.app.font.cell_height() as f64;
+                    let col = (position.x / cell_w) as u16;
+                    let row = (position.y / cell_h) as u16;
+                    self.app.state.mouse_sel.update(col, row);
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                }
             }
 
-            // 左クリックでペインフォーカスを切り替える（Ctrl+クリックで URL を開く）
+            // 左ボタン押下: 選択開始
+            WindowEvent::MouseInput {
+                button: MouseButton::Left,
+                state: ElementState::Pressed,
+                ..
+            } => {
+                if let Some((px, py)) = self.cursor_position {
+                    let cell_w = self.app.font.cell_width() as f64;
+                    let cell_h = self.app.font.cell_height() as f64;
+                    let col = (px / cell_w) as u16;
+                    let row = (py / cell_h) as u16;
+                    self.app.state.mouse_sel.begin(col, row);
+                }
+            }
+
+            // 左ボタンリリース: 選択確定 → クリップボードコピー or フォーカス切替
             WindowEvent::MouseInput {
                 button: MouseButton::Left,
                 state: ElementState::Released,
@@ -1621,7 +1664,45 @@ impl ApplicationHandler for EventHandler {
                     let click_col = (px / cell_w) as u16;
                     let click_row = (py / cell_h) as u16;
 
-                    // Ctrl+クリック: クリック位置の URL を開く
+                    // ドラッグ選択を終了して選択テキストをコピーする
+                    self.app.state.mouse_sel.update(click_col, click_row);
+                    self.app.state.mouse_sel.finish();
+
+                    if let Some(((sc, sr), (ec, er))) = self.app.state.mouse_sel.normalized() {
+                        // 選択範囲があればテキストを抽出してクリップボードにコピーする
+                        let text = if let Some(pane) = self.app.state.focused_pane() {
+                            let mut lines = Vec::new();
+                            for row_idx in sr..=er {
+                                if let Some(row) = pane.grid.rows.get(row_idx as usize) {
+                                    let col_start = if row_idx == sr { sc as usize } else { 0 };
+                                    let col_end = if row_idx == er {
+                                        (ec + 1) as usize
+                                    } else {
+                                        row.len()
+                                    };
+                                    let line: String =
+                                        row[col_start.min(row.len())..col_end.min(row.len())]
+                                            .iter()
+                                            .map(|c| c.ch)
+                                            .collect();
+                                    lines.push(line.trim_end().to_string());
+                                }
+                            }
+                            lines.join("\n")
+                        } else {
+                            String::new()
+                        };
+
+                        if !text.is_empty() {
+                            if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                                let _ = clipboard.set_text(text);
+                            }
+                        }
+                        // 選択後はリターン（ペインフォーカス切替を行わない）
+                        return;
+                    }
+
+                    // 選択なし（単純クリック）: Ctrl+クリックで URL を開く
                     if self.modifiers.control_key() {
                         if let Some(url) = self.find_url_at(click_col, click_row) {
                             open_url(&url);
@@ -1974,7 +2055,7 @@ impl EventHandler {
         }
         self.app.config.font.size = new_size;
         self.app.font =
-            crate::font::FontManager::new(&self.app.config.font.family, new_size);
+            crate::font::FontManager::new(&self.app.config.font.family, new_size, &self.app.config.font.font_fallbacks);
         if let Some(wgpu) = &self.wgpu_state {
             self.atlas = Some(GlyphAtlas::new(&wgpu.device));
         }
@@ -1988,7 +2069,7 @@ impl EventHandler {
         let default_size = nexterm_config::Config::default().font.size;
         self.app.config.font.size = default_size;
         self.app.font =
-            crate::font::FontManager::new(&self.app.config.font.family, default_size);
+            crate::font::FontManager::new(&self.app.config.font.family, default_size, &self.app.config.font.font_fallbacks);
         if let Some(wgpu) = &self.wgpu_state {
             self.atlas = Some(GlyphAtlas::new(&wgpu.device));
         }

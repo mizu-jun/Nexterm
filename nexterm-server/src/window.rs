@@ -36,6 +36,16 @@ pub struct PaneRect {
     pub rows: u16,
 }
 
+/// remove() の結果
+enum RemoveResult {
+    /// 自分自身が削除対象（呼び出し元が兄弟に置換する）
+    RemoveSelf,
+    /// 子孫の削除が完了した
+    Removed,
+    /// ターゲットが見つからなかった
+    NotFound,
+}
+
 /// BSP 分割ツリーのノード
 #[derive(Clone, Debug)]
 enum SplitNode {
@@ -99,6 +109,67 @@ impl SplitNode {
                     right.compute(col_off, row_off + top_rows + 1, cols, bot_rows, out);
                 }
             },
+        }
+    }
+
+    /// 指定ペインを BSP ツリーから削除し、兄弟ノードを親に昇格させる。
+    /// 削除に成功した場合は `Some(self_after_removal)` を返す。
+    /// `None` は「自分自身が削除対象だった」ことを示す（呼び出し元で兄弟に置換する）。
+    fn remove(&mut self, target_id: u32) -> RemoveResult {
+        match self {
+            SplitNode::Pane { pane_id } if *pane_id == target_id => RemoveResult::RemoveSelf,
+            SplitNode::Pane { .. } => RemoveResult::NotFound,
+            SplitNode::Split { left, right, .. } => {
+                match left.remove(target_id) {
+                    RemoveResult::RemoveSelf => {
+                        // 左を削除 → 右を自分の場所に昇格させる
+                        let sibling = std::mem::replace(right.as_mut(), SplitNode::Pane { pane_id: 0 });
+                        *self = sibling;
+                        RemoveResult::Removed
+                    }
+                    RemoveResult::Removed => RemoveResult::Removed,
+                    RemoveResult::NotFound => match right.remove(target_id) {
+                        RemoveResult::RemoveSelf => {
+                            // 右を削除 → 左を自分の場所に昇格させる
+                            let sibling = std::mem::replace(left.as_mut(), SplitNode::Pane { pane_id: 0 });
+                            *self = sibling;
+                            RemoveResult::Removed
+                        }
+                        other => other,
+                    },
+                }
+            }
+        }
+    }
+
+    /// フォーカスペインに最も近い Split ノードの ratio を delta だけ変更する。
+    /// delta > 0 でフォーカスペインを広げ、delta < 0 で縮める。
+    fn adjust_ratio_for(&mut self, target_id: u32, delta: f32) -> bool {
+        match self {
+            SplitNode::Pane { .. } => false,
+            SplitNode::Split { ratio, left, right, .. } => {
+                let in_left = left.contains(target_id);
+                let in_right = right.contains(target_id);
+                if in_left || in_right {
+                    let new_ratio = if in_left {
+                        (*ratio + delta).clamp(0.1, 0.9)
+                    } else {
+                        (*ratio - delta).clamp(0.1, 0.9)
+                    };
+                    *ratio = new_ratio;
+                    true
+                } else {
+                    left.adjust_ratio_for(target_id, delta) || right.adjust_ratio_for(target_id, delta)
+                }
+            }
+        }
+    }
+
+    /// 指定ペインがこのサブツリーに含まれるか確認する
+    fn contains(&self, target_id: u32) -> bool {
+        match self {
+            SplitNode::Pane { pane_id } => *pane_id == target_id,
+            SplitNode::Split { left, right, .. } => left.contains(target_id) || right.contains(target_id),
         }
     }
 
@@ -289,6 +360,54 @@ impl Window {
     /// 指定ペインへの参照を返す
     pub fn pane(&self, id: u32) -> Option<&Pane> {
         self.panes.get(&id)
+    }
+
+    /// フォーカスペインを BSP ツリーから削除する。
+    ///
+    /// ペインが 1 つしかない場合は `Err` を返す（最後のペインは削除不可）。
+    /// 成功した場合は削除されたペインの隣のペインにフォーカスが移る。
+    pub fn remove_focused_pane(&mut self, cols: u16, rows: u16) -> Result<u32> {
+        if self.panes.len() <= 1 {
+            return Err(anyhow::anyhow!("最後のペインは削除できません"));
+        }
+        let target_id = self.focused_pane_id;
+
+        // BSP ツリーから削除する
+        self.layout.remove(target_id);
+
+        // ペイン Map から削除する
+        self.panes.remove(&target_id);
+
+        // 残ったペインにフォーカスを移す（ID が最も小さいものを選ぶ）
+        let next_id = self.panes.keys().copied().min().unwrap();
+        self.focused_pane_id = next_id;
+
+        // 残ったペインをリサイズする
+        let layouts = self.compute_layouts(cols, rows);
+        for rect in &layouts {
+            if let Some(pane) = self.panes.get_mut(&rect.pane_id) {
+                let _ = pane.resize_pty(rect.cols, rect.rows);
+            }
+        }
+
+        Ok(target_id)
+    }
+
+    /// フォーカスペインに最も近い分割の比率を変更する。
+    pub fn adjust_split_ratio(&mut self, delta: f32, cols: u16, rows: u16) {
+        if self.layout.adjust_ratio_for(self.focused_pane_id, delta) {
+            let layouts = self.compute_layouts(cols, rows);
+            for rect in &layouts {
+                if let Some(pane) = self.panes.get_mut(&rect.pane_id) {
+                    let _ = pane.resize_pty(rect.cols, rect.rows);
+                }
+            }
+        }
+    }
+
+    /// ペイン数を返す
+    pub fn pane_count(&self) -> usize {
+        self.panes.len()
     }
 
     /// フォーカス中のペインに入力データを書き込む

@@ -9,4 +9,4 @@ pub mod message;
 
 pub use cell::{Attrs, Cell, Color};
 pub use grid::{DirtyRow, Grid};
-pub use message::{ClientToServer, KeyCode, Modifiers, PaneLayout, ServerToClient, SessionInfo};
+pub use message::{ClientToServer, KeyCode, Modifiers, PaneLayout, ServerToClient, SessionInfo, WindowInfo};

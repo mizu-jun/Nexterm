@@ -15,3 +15,5 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
+keyring = "3"
+zeroize = "1.8"

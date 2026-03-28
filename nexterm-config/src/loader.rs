@@ -174,7 +174,7 @@ pub fn parse_color_scheme(s: &str) -> ColorScheme {
         "tokyonight" => ColorScheme::Builtin(BuiltinScheme::TokyoNight),
         "solarized" => ColorScheme::Builtin(BuiltinScheme::Solarized),
         "gruvbox" => ColorScheme::Builtin(BuiltinScheme::Gruvbox),
-        other => ColorScheme::Custom(other.to_string()),
+        _other => ColorScheme::Builtin(BuiltinScheme::Dark),
     }
 }
 
@@ -192,7 +192,7 @@ fn config_to_lua_table(lua: &Lua, config: &Config) -> Result<LuaTable> {
     // colors（文字列として渡す）
     let scheme_str = match &config.colors {
         ColorScheme::Builtin(b) => format!("{:?}", b).to_lowercase(),
-        ColorScheme::Custom(s) => s.clone(),
+        ColorScheme::Custom(_) => "custom".to_string(),
     };
     tbl.set("colors", scheme_str).map_err(lua_err)?;
 

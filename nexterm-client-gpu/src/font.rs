@@ -11,8 +11,26 @@ pub struct FontManager {
 
 impl FontManager {
     /// 指定フォント設定でフォントマネージャーを作成する
-    pub fn new(_family: &str, size_pt: f32) -> Self {
-        let font_system = FontSystem::new();
+    ///
+    /// `family` はプライマリフォントファミリー名。
+    /// `fallbacks` はグリフが見つからない場合に順番に試行するフォントファミリーリスト。
+    /// `cosmic-text` の `FontSystem` はシステムフォントをすべてロード済みのため、
+    /// `fallbacks` に列挙されたフォントがシステムにインストールされていれば
+    /// 自動的にフォールバック候補として使用される。
+    pub fn new(family: &str, size_pt: f32, fallbacks: &[String]) -> Self {
+        let mut font_system = FontSystem::new();
+
+        // プライマリフォントを monospace エイリアスとして登録する
+        // （Family::Monospace を使用する場合のデフォルト解決先になる）
+        font_system.db_mut().set_monospace_family(family);
+
+        if !fallbacks.is_empty() {
+            tracing::debug!(
+                "フォントフォールバックチェーン: {} -> {}",
+                family,
+                fallbacks.join(" -> ")
+            );
+        }
 
         // セル高さ = size_pt * (4/3) px（72dpi 基準の概算）
         let line_height = size_pt * 4.0 / 3.0 * 1.2;
@@ -102,16 +120,24 @@ mod tests {
 
     #[test]
     fn フォントマネージャーが生成できる() {
-        let fm = FontManager::new("monospace", 14.0);
+        let fm = FontManager::new("monospace", 14.0, &[]);
         assert!(fm.cell_width() > 0.0);
         assert!(fm.cell_height() > 0.0);
     }
 
     #[test]
     fn セルサイズが正の値を持つ() {
-        let fm = FontManager::new("monospace", 16.0);
+        let fm = FontManager::new("monospace", 16.0, &[]);
         // 16pt → cell_w ≈ 9.6px, cell_h ≈ 25.6px
         assert!(fm.cell_width() > 5.0);
         assert!(fm.cell_height() > 10.0);
+    }
+
+    #[test]
+    fn フォールバックチェーン付きで生成できる() {
+        let fallbacks = vec!["Noto Sans CJK JP".to_string(), "Noto Color Emoji".to_string()];
+        let fm = FontManager::new("JetBrains Mono", 14.0, &fallbacks);
+        assert!(fm.cell_width() > 0.0);
+        assert!(fm.cell_height() > 0.0);
     }
 }

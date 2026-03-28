@@ -127,6 +127,81 @@ pub fn detect_urls_in_row(row_idx: u16, cells: &[nexterm_proto::Cell]) -> Vec<De
     urls
 }
 
+/// マウスドラッグによるテキスト選択状態
+pub struct MouseSelection {
+    /// ドラッグ中かどうか
+    pub is_dragging: bool,
+    /// 選択開始セル（グリッド座標）
+    pub start: (u16, u16),
+    /// 選択終了セル（グリッド座標、ドラッグ中は随時更新）
+    pub end: (u16, u16),
+}
+
+impl MouseSelection {
+    pub fn new() -> Self {
+        Self {
+            is_dragging: false,
+            start: (0, 0),
+            end: (0, 0),
+        }
+    }
+
+    /// ドラッグ開始
+    pub fn begin(&mut self, col: u16, row: u16) {
+        self.is_dragging = true;
+        self.start = (col, row);
+        self.end = (col, row);
+    }
+
+    /// ドラッグ中の終端更新
+    pub fn update(&mut self, col: u16, row: u16) {
+        if self.is_dragging {
+            self.end = (col, row);
+        }
+    }
+
+    /// ドラッグ終了
+    pub fn finish(&mut self) {
+        self.is_dragging = false;
+    }
+
+    /// 選択範囲を正規化して返す（start <= end を保証）
+    /// 何も選択されていない（start == end）場合は None を返す
+    pub fn normalized(&self) -> Option<((u16, u16), (u16, u16))> {
+        let (sc, sr) = self.start;
+        let (ec, er) = self.end;
+        if (sr, sc) == (er, ec) {
+            return None;
+        }
+        if (sr, sc) <= (er, ec) {
+            Some(((sc, sr), (ec, er)))
+        } else {
+            Some(((ec, er), (sc, sr)))
+        }
+    }
+
+    /// 指定セルが選択範囲内かどうかを返す
+    pub fn contains(&self, col: u16, row: u16) -> bool {
+        if let Some(((sc, sr), (ec, er))) = self.normalized() {
+            if row < sr || row > er {
+                return false;
+            }
+            if row == sr && row == er {
+                return col >= sc && col <= ec;
+            }
+            if row == sr {
+                return col >= sc;
+            }
+            if row == er {
+                return col <= ec;
+            }
+            true
+        } else {
+            false
+        }
+    }
+}
+
 /// コピーモード（Vim 風テキスト選択）の状態
 pub struct CopyModeState {
     /// コピーモードが有効かどうか
@@ -202,6 +277,8 @@ pub struct ClientState {
     pub pending_bell: bool,
     /// コピーモード（Vim 風テキスト選択）
     pub copy_mode: CopyModeState,
+    /// マウスドラッグ選択
+    pub mouse_sel: MouseSelection,
 }
 
 impl ClientState {
@@ -218,6 +295,7 @@ impl ClientState {
             status_bar_text: String::new(),
             pending_bell: false,
             copy_mode: CopyModeState::new(),
+            mouse_sel: MouseSelection::new(),
         }
     }
 
@@ -278,6 +356,9 @@ impl ClientState {
                 self.pending_bell = true;
             }
             ServerToClient::RecordingStarted { .. } | ServerToClient::RecordingStopped { .. } => {}
+            ServerToClient::WindowListChanged { .. } | ServerToClient::PaneClosed { .. } => {}
+            // タイトル変更・デスクトップ通知は GPU クライアントでは未実装
+            ServerToClient::TitleChanged { .. } | ServerToClient::DesktopNotification { .. } => {}
             ServerToClient::LayoutChanged { panes, focused_pane_id } => {
                 // レイアウトを全更新する
                 self.pane_layouts.clear();
