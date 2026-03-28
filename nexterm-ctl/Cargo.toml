@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 nexterm-proto = { path = "../nexterm-proto" }
+nexterm-i18n = { path = "../nexterm-i18n" }
 tokio = { workspace = true }
 bincode = { workspace = true }
 serde = { workspace = true }

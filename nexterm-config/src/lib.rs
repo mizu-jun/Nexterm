@@ -8,11 +8,15 @@
 
 pub mod defaults;
 pub mod loader;
+pub mod lua_worker;
 pub mod schema;
 pub mod status_bar;
 pub mod watcher;
 
 pub use loader::ConfigLoader;
-pub use schema::{ColorScheme, Config, FontConfig, KeyBinding, ShellConfig, StatusBarConfig};
+pub use schema::{
+    ColorScheme, Config, FontConfig, KeyBinding, ShellConfig, StatusBarConfig, TabBarConfig,
+    WindowConfig, WindowDecorations,
+};
 pub use status_bar::StatusBarEvaluator;
 pub use watcher::{watch_config, ConfigRx};

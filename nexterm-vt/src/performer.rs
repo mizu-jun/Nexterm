@@ -13,8 +13,10 @@ impl Perform for Screen {
     /// 制御文字（C0/C1）の処理
     fn execute(&mut self, byte: u8) {
         match byte {
-            // BEL (ベル) — 無視
-            0x07 => {}
+            // BEL (ベル) — 通知フラグを立てる
+            0x07 => {
+                self.set_pending_bell();
+            }
             // BS (バックスペース)
             0x08 => {
                 if self.cursor().0 > 0 {

@@ -11,6 +11,7 @@ use tokio::sync::mpsc;
 use nexterm_proto::{PaneLayout, ServerToClient};
 
 use crate::pane::Pane;
+use crate::snapshot::{SplitDirSnapshot, SplitNodeSnapshot, WindowSnapshot};
 
 // ---- 分割方向 ----
 
@@ -97,6 +98,41 @@ impl SplitNode {
                     left.compute(col_off, row_off, cols, top_rows, out);
                     right.compute(col_off, row_off + top_rows + 1, cols, bot_rows, out);
                 }
+            },
+        }
+    }
+
+    /// BSP ツリーをスナップショットに変換する（CWD は Window::to_snapshot() で後から填入）
+    fn to_snapshot(&self) -> SplitNodeSnapshot {
+        match self {
+            SplitNode::Pane { pane_id } => SplitNodeSnapshot::Pane {
+                pane_id: *pane_id,
+                cwd: None,
+            },
+            SplitNode::Split { dir, ratio, left, right } => SplitNodeSnapshot::Split {
+                dir: match dir {
+                    SplitDir::Vertical => SplitDirSnapshot::Vertical,
+                    SplitDir::Horizontal => SplitDirSnapshot::Horizontal,
+                },
+                ratio: *ratio,
+                left: Box::new(left.to_snapshot()),
+                right: Box::new(right.to_snapshot()),
+            },
+        }
+    }
+
+    /// スナップショットから BSP ツリーを再構築する
+    fn from_snapshot(snap: &SplitNodeSnapshot) -> Self {
+        match snap {
+            SplitNodeSnapshot::Pane { pane_id, .. } => SplitNode::Pane { pane_id: *pane_id },
+            SplitNodeSnapshot::Split { dir, ratio, left, right } => SplitNode::Split {
+                dir: match dir {
+                    SplitDirSnapshot::Vertical => SplitDir::Vertical,
+                    SplitDirSnapshot::Horizontal => SplitDir::Horizontal,
+                },
+                ratio: *ratio,
+                left: Box::new(SplitNode::from_snapshot(left)),
+                right: Box::new(SplitNode::from_snapshot(right)),
             },
         }
     }
@@ -289,6 +325,139 @@ impl Window {
             pane.update_tx(tx.clone());
         }
     }
+
+    /// フォーカスペインの録音を開始する（Phase 5-A で完全実装）
+    pub fn start_recording(&self, path: &str) -> Result<u32> {
+        let pane = self
+            .panes
+            .get(&self.focused_pane_id)
+            .ok_or_else(|| anyhow::anyhow!("フォーカスペインが見つかりません"))?;
+        pane.start_recording(path)?;
+        Ok(self.focused_pane_id)
+    }
+
+    /// フォーカスペインの録音を停止する（Phase 5-A で完全実装）
+    pub fn stop_recording(&self) -> Result<u32> {
+        let pane = self
+            .panes
+            .get(&self.focused_pane_id)
+            .ok_or_else(|| anyhow::anyhow!("フォーカスペインが見つかりません"))?;
+        pane.stop_recording()?;
+        Ok(self.focused_pane_id)
+    }
+
+    // ---- スナップショット ----
+
+    /// ウィンドウをスナップショットに変換する
+    pub fn to_snapshot(&self) -> WindowSnapshot {
+        let mut layout = self.layout.to_snapshot();
+        // 各ペインの作業ディレクトリをスナップショットに填入する
+        self.fill_cwd_in_snapshot(&mut layout);
+        WindowSnapshot {
+            id: self.id,
+            name: self.name.clone(),
+            focused_pane_id: self.focused_pane_id,
+            layout,
+        }
+    }
+
+    /// スナップショットからウィンドウを復元する
+    ///
+    /// 各ペインは保存されたシェル・作業ディレクトリで新規 PTY として起動する。
+    pub fn restore_from_snapshot(
+        snap: &WindowSnapshot,
+        tx: &mpsc::Sender<ServerToClient>,
+        shell: &str,
+        cols: u16,
+        rows: u16,
+    ) -> Result<Self> {
+        // BSP ツリーを再構築する
+        let layout = SplitNode::from_snapshot(&snap.layout);
+
+        // 各ペインのサイズを BSP 計算で求めてから PTY を起動する
+        let mut size_map = Vec::new();
+        compute_pane_sizes(&snap.layout, 0, 0, cols, rows, &mut size_map);
+
+        let mut panes = HashMap::new();
+        for (pane_id, pane_cols, pane_rows) in size_map {
+            let cwd = find_cwd_in_snapshot(&snap.layout, pane_id);
+            let pane = match cwd {
+                Some(ref cwd_path) => {
+                    Pane::spawn_with_cwd(pane_id, pane_cols, pane_rows, tx.clone(), shell, cwd_path)?
+                }
+                None => Pane::spawn_with_id(pane_id, pane_cols, pane_rows, tx.clone(), shell)?,
+            };
+            panes.insert(pane_id, pane);
+        }
+
+        Ok(Self {
+            id: snap.id,
+            name: snap.name.clone(),
+            panes,
+            focused_pane_id: snap.focused_pane_id,
+            layout,
+        })
+    }
+
+    /// BSP スナップショット内の各ペインに作業ディレクトリを填入する
+    fn fill_cwd_in_snapshot(&self, node: &mut SplitNodeSnapshot) {
+        match node {
+            SplitNodeSnapshot::Pane { pane_id, cwd } => {
+                if let Some(pane) = self.panes.get(pane_id) {
+                    *cwd = pane.working_dir();
+                }
+            }
+            SplitNodeSnapshot::Split { left, right, .. } => {
+                self.fill_cwd_in_snapshot(left);
+                self.fill_cwd_in_snapshot(right);
+            }
+        }
+    }
+}
+
+/// BSP スナップショットから各ペインのサイズを計算する
+fn compute_pane_sizes(
+    node: &SplitNodeSnapshot,
+    col_off: u16,
+    row_off: u16,
+    cols: u16,
+    rows: u16,
+    out: &mut Vec<(u32, u16, u16)>,
+) {
+    match node {
+        SplitNodeSnapshot::Pane { pane_id, .. } => {
+            out.push((*pane_id, cols, rows));
+        }
+        SplitNodeSnapshot::Split { dir, ratio, left, right } => match dir {
+            SplitDirSnapshot::Vertical => {
+                let lc = ((cols as f32 * ratio) as u16).max(1).min(cols.saturating_sub(2));
+                let rc = cols.saturating_sub(lc + 1).max(1);
+                compute_pane_sizes(left, col_off, row_off, lc, rows, out);
+                compute_pane_sizes(right, col_off + lc + 1, row_off, rc, rows, out);
+            }
+            SplitDirSnapshot::Horizontal => {
+                let lr = ((rows as f32 * ratio) as u16).max(1).min(rows.saturating_sub(2));
+                let rr = rows.saturating_sub(lr + 1).max(1);
+                compute_pane_sizes(left, col_off, row_off, cols, lr, out);
+                compute_pane_sizes(right, col_off, row_off + lr + 1, cols, rr, out);
+            }
+        },
+    }
+}
+
+/// BSP スナップショット内の指定ペインの作業ディレクトリを返す
+fn find_cwd_in_snapshot(
+    node: &SplitNodeSnapshot,
+    target_id: u32,
+) -> Option<std::path::PathBuf> {
+    match node {
+        SplitNodeSnapshot::Pane { pane_id, cwd } if *pane_id == target_id => cwd.clone(),
+        SplitNodeSnapshot::Pane { .. } => None,
+        SplitNodeSnapshot::Split { left, right, .. } => {
+            find_cwd_in_snapshot(left, target_id)
+                .or_else(|| find_cwd_in_snapshot(right, target_id))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -341,5 +510,23 @@ mod tests {
         let pos = ids.iter().position(|&id| id == 10).unwrap();
         let prev = if pos == 0 { ids.len() - 1 } else { pos - 1 };
         assert_eq!(ids[prev], 30);
+    }
+
+    #[test]
+    fn スナップショット変換の往復整合性() {
+        let snap_before = SplitNodeSnapshot::Split {
+            dir: SplitDirSnapshot::Vertical,
+            ratio: 0.5,
+            left: Box::new(SplitNodeSnapshot::Pane { pane_id: 1, cwd: None }),
+            right: Box::new(SplitNodeSnapshot::Pane { pane_id: 2, cwd: None }),
+        };
+        // スナップショット → SplitNode → スナップショット の往復を確認する
+        let node = SplitNode::from_snapshot(&snap_before);
+        let snap_after = node.to_snapshot();
+        let mut sizes_before = Vec::new();
+        let mut sizes_after = Vec::new();
+        compute_pane_sizes(&snap_before, 0, 0, 80, 24, &mut sizes_before);
+        compute_pane_sizes(&snap_after, 0, 0, 80, 24, &mut sizes_after);
+        assert_eq!(sizes_before, sizes_after);
     }
 }

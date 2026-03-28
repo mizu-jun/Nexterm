@@ -100,6 +100,67 @@ impl Default for StatusBarConfig {
     }
 }
 
+/// ウィンドウ装飾の種別
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowDecorations {
+    /// OS 標準のタイトルバーと境界線を表示する
+    #[default]
+    Full,
+    /// タイトルバーなし・境界線なし（ボーダーレス）
+    None,
+    /// タイトルバーのみ非表示
+    NoTitle,
+}
+
+/// ウィンドウ設定（透過・ぼかし・装飾）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WindowConfig {
+    /// ウィンドウの不透明度（0.0 = 完全透明、1.0 = 不透明）
+    pub background_opacity: f32,
+    /// macOS のウィンドウぼかし強度（0 = なし）
+    pub macos_window_background_blur: u32,
+    /// ウィンドウ装飾
+    pub decorations: WindowDecorations,
+}
+
+impl Default for WindowConfig {
+    fn default() -> Self {
+        Self {
+            background_opacity: 1.0,
+            macos_window_background_blur: 0,
+            decorations: WindowDecorations::Full,
+        }
+    }
+}
+
+/// タブバー設定（WezTerm スタイル）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TabBarConfig {
+    /// タブバーを表示するか
+    pub enabled: bool,
+    /// タブバーの高さ（ピクセル）
+    pub height: u32,
+    /// アクティブタブの背景色（RRGGBB）
+    pub active_tab_bg: String,
+    /// 非アクティブタブの背景色（RRGGBB）
+    pub inactive_tab_bg: String,
+    /// タブセパレータ文字
+    pub separator: String,
+}
+
+impl Default for TabBarConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            height: 28,
+            active_tab_bg: "#ae8b2d".to_string(),
+            inactive_tab_bg: "#5c6d74".to_string(),
+            separator: "❯".to_string(),
+        }
+    }
+}
+
 /// キーバインド定義
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeyBinding {
@@ -149,6 +210,14 @@ pub struct Config {
     /// スクロールバック行数
     #[serde(default = "default_scrollback")]
     pub scrollback_lines: usize,
+
+    /// ウィンドウ設定（透過・ぼかし・装飾）
+    #[serde(default)]
+    pub window: WindowConfig,
+
+    /// タブバー設定
+    #[serde(default)]
+    pub tab_bar: TabBarConfig,
 }
 
 fn default_scrollback() -> usize {
@@ -165,6 +234,8 @@ impl Default for Config {
             keys: default_keybindings(),
             status_bar: StatusBarConfig::default(),
             scrollback_lines: default_scrollback(),
+            window: WindowConfig::default(),
+            tab_bar: TabBarConfig::default(),
         }
     }
 }

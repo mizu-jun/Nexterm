@@ -1,197 +1,278 @@
 # nexterm
 
-Rust 製のターミナルマルチプレクサ。tmux/zellij インスパイアで、wgpu による GPU レンダリングと Lua 設定システムを搭載する。
+A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU rendering via wgpu and a Lua configuration system.
 
-## 特徴
+> **日本語ドキュメント:** [README.ja.md](README.ja.md)
 
-- **GPU レンダリング** — wgpu + cosmic-text による高速フォントレンダリング
-- **デーモンレス設計** — サーバープロセスが PTY を保持し、クライアント再接続時にセッションを復元
-- **BSP 分割レイアウト** — Binary Space Partition で任意深さのペイン分割に対応
-- **Lua + TOML 設定** — TOML でデフォルト値、Lua で動的オーバーライド。ファイル変更を自動検知してリアルタイム反映
-- **マウス操作** — クリックでペインフォーカス切り替え、ホイールでスクロールバック操作
-- **クリップボード統合** — Ctrl+Shift+C でコピー、Ctrl+Shift+V でペースト（arboard）
-- **Lua ステータスバー** — `os.date()` 等の Lua 式をステータスラインに 1 秒ごとに表示
-- **nexterm-ctl** — セッションの一覧・作成・終了を行う CLI ツール
-- **画像プロトコル** — Sixel / Kitty 両形式の画像表示に対応
-- **TUI フォールバック** — GPU クライアントが使えない環境向けに ratatui ベースの TUI クライアントを同梱
-- **クロスプラットフォーム** — Linux / macOS / Windows 対応（Windows は ConPTY + Named Pipe を使用）
+[![CI](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml/badge.svg)](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml)
 
-## 実装状況
+## Features
 
-### Phase 1: コア基盤（完成）
+- **GPU rendering** — High-performance font rendering with wgpu + cosmic-text
+- **Daemonless design** — Server process holds PTYs; sessions survive client disconnects
+- **BSP split layout** — Binary Space Partition for arbitrarily deep pane splitting
+- **Lua + TOML config** — TOML for defaults, Lua for dynamic overrides; hot-reload on save
+- **Mouse support** — Click to focus panes, scroll wheel for scrollback; Ctrl+Click to open URLs
+- **Clipboard integration** — Ctrl+Shift+C to copy, Ctrl+Shift+V to paste (arboard)
+- **Copy mode** — Vim-style text selection (Ctrl+[, hjkl, v, y)
+- **Lua status bar** — Evaluate Lua expressions (e.g. `os.date()`) on the status line every second
+- **Tab bar** — WezTerm-style tab bar with pane labels and `❯` separators
+- **Session recording** — `nexterm-ctl record start/stop` saves raw PTY output to file
+- **Bell notification** — VT BEL (\x07) triggers an OS window attention request
+- **Font size** — Ctrl+= / Ctrl+- / Ctrl+0 to change font size at runtime
+- **Window transparency** — Configurable opacity, borderless mode, and macOS blur
+- **URL detection** — URLs in the grid are underlined; Ctrl+Click opens them in the browser
+- **nexterm-ctl** — CLI tool for listing, creating, killing, and recording sessions
+- **Image protocol** — Sixel and Kitty image display
+- **TUI fallback** — ratatui-based TUI client for environments without GPU support
+- **Cross-platform** — Linux / macOS / Windows (ConPTY + Named Pipe on Windows)
+- **Localization** — UI in English, French, German, Spanish, Italian, Simplified Chinese, Japanese, Korean
 
-| コンポーネント | 内容 | 状態 |
-|--------------|------|------|
-| `nexterm-proto` | IPC プロトコル型定義 (bincode) | ✅ |
-| `nexterm-vt` | VT100/ANSI パーサ + Sixel/Kitty デコード | ✅ |
-| `nexterm-server` | PTY サーバー (セッション・ウィンドウ・ペイン管理) | ✅ |
-| `nexterm-client-tui` | TUI クライアント (ratatui + crossterm) | ✅ |
+## Implementation status
 
-### Phase 2: GPU クライアント & 設定（完成）
+### Phase 1: Core foundation (complete)
 
-| ステップ | 内容 | 状態 |
-|---------|------|------|
-| 2-1 | nexterm-config — TOML + Lua 設定 + ホットリロード | ✅ |
-| 2-2 | nexterm-client-gpu — wgpu レンダラー基盤 | ✅ |
-| 2-3 | Sixel / Kitty 画像プロトコル対応 | ✅ |
-| 2-4 | スクロールバック & インクリメンタル検索 | ✅ |
-| 2-5 | コマンドパレット (fuzzy マッチ) | ✅ |
+| Crate | Description | Status |
+|-------|-------------|--------|
+| `nexterm-proto` | IPC protocol types (bincode) | ✅ |
+| `nexterm-vt` | VT100/ANSI parser + Sixel/Kitty decode | ✅ |
+| `nexterm-server` | PTY server (session / window / pane management) | ✅ |
+| `nexterm-client-tui` | TUI client (ratatui + crossterm) | ✅ |
 
-### Phase 3: マルチペイン & 拡張（完成）
+### Phase 2: GPU client & configuration (complete)
 
-| ステップ | 内容 | 状態 |
-|---------|------|------|
-| 3-1 | サーバー側 BSP レイアウトモデル | ✅ |
-| 3-2 | プロトコル拡張 (LayoutChanged / FocusPane / PasteText) | ✅ |
-| 3-3 | GPU クライアント マルチペイン分割表示 | ✅ |
-| 3-4 | マウスサポート (クリックフォーカス / ホイールスクロール) | ✅ |
-| 3-5 | クリップボード統合 (Ctrl+Shift+C/V) | ✅ |
-| 3-6 | nexterm-ctl CLI ツール (list / new / attach / kill) | ✅ |
-| 3-7 | 設定ホットリロード → GPU クライアント即時反映 | ✅ |
-| 3-8 | Lua ステータスバーウィジェット | ✅ |
+| Step | Description | Status |
+|------|-------------|--------|
+| 2-1 | nexterm-config — TOML + Lua config + hot-reload | ✅ |
+| 2-2 | nexterm-client-gpu — wgpu renderer foundation | ✅ |
+| 2-3 | Sixel / Kitty image protocol support | ✅ |
+| 2-4 | Scrollback & incremental search | ✅ |
+| 2-5 | Command palette (fuzzy match) | ✅ |
 
-**テスト**: 69 件、全通過
+### Phase 3: Multi-pane & extensions (complete)
 
-## クレート構成
+| Step | Description | Status |
+|------|-------------|--------|
+| 3-1 | Server-side BSP layout model | ✅ |
+| 3-2 | Protocol extensions (LayoutChanged / FocusPane / PasteText) | ✅ |
+| 3-3 | GPU client multi-pane split rendering | ✅ |
+| 3-4 | Mouse support (click focus / wheel scroll) | ✅ |
+| 3-5 | Clipboard integration (Ctrl+Shift+C/V) | ✅ |
+| 3-6 | nexterm-ctl CLI (list / new / attach / kill) | ✅ |
+| 3-7 | Config hot-reload → GPU client live update | ✅ |
+| 3-8 | Lua status bar widget | ✅ |
+
+### Phase 4: Localization & project structure (complete)
+
+| Step | Description | Status |
+|------|-------------|--------|
+| 4-1 | Standard OSS directory structure (.github, examples, tests) | ✅ |
+| 4-2 | nexterm-i18n crate (embedded JSON locales, sys-locale detection) | ✅ |
+| 4-3 | UI string localization (8 languages) | ✅ |
+| 4-4 | English README / documentation | ✅ |
+
+### Phase 5: UX enhancements (complete)
+
+| Step | Description | Status |
+|------|-------------|--------|
+| 5-A | Session recording (`nexterm-ctl record start/stop`) | ✅ |
+| 5-B | WezTerm-style tab bar with `❯` separators | ✅ |
+| 5-C | Window transparency, blur, and borderless mode | ✅ |
+| 5-D | Vim-style copy mode (Ctrl+[, hjkl, v to select, y to yank) | ✅ |
+| 5-E | Runtime font size change (Ctrl+= / Ctrl+- / Ctrl+0) | ✅ |
+| 5-F | URL detection + Ctrl+Click to open in browser | ✅ |
+| 5-G | VT BEL notification → OS window attention request | ✅ |
+
+### Phase 6: Security & reliability (complete)
+
+| Step | Description | Status |
+|------|-------------|--------|
+| 6-1 | IPC peer UID verification (Linux: SO_PEERCRED, macOS: getpeereid) | ✅ |
+| 6-2 | Path traversal prevention for `StartRecording` | ✅ |
+| 6-3 | Windows Named Pipe: reject remote clients | ✅ |
+| 6-4 | LuaWorker background thread (no main-thread blocking) | ✅ |
+| 6-5 | Session snapshot persistence (JSON, auto-save/restore) | ✅ |
+
+**Tests**: 86+ passing
+
+## Crate structure
 
 ```
 nexterm/
-├── nexterm-proto        # IPC メッセージ型・シリアライズ
-├── nexterm-vt           # VT100 パーサ・仮想スクリーン・画像デコード
-├── nexterm-server       # PTY サーバー (IPC + セッション管理)
-├── nexterm-config       # 設定ロード (TOML + Lua) + StatusBarEvaluator
-├── nexterm-client-tui   # TUI クライアント
-├── nexterm-client-gpu   # GPU クライアント (wgpu + winit)
-└── nexterm-ctl          # セッション制御 CLI
+├── nexterm-proto        # IPC message types and serialization
+├── nexterm-vt           # VT100 parser, virtual screen, image decode
+├── nexterm-server       # PTY server (IPC + session management)
+├── nexterm-config       # Config loader (TOML + Lua) + StatusBarEvaluator
+├── nexterm-client-tui   # TUI client
+├── nexterm-client-gpu   # GPU client (wgpu + winit)
+├── nexterm-ctl          # Session management CLI
+└── nexterm-i18n         # Localization support (8 languages)
 ```
 
-## ビルド
+## Build
 
-### 前提条件
+### Prerequisites
 
-- Rust 1.80 以上
-- Windows の場合: Visual Studio Build Tools (C++ コンパイラ)
-- Linux の場合: `libx11-dev`, `libxkbcommon-dev`, `libwayland-dev`（winit 依存）
+- Rust 1.80 or later
+- **Windows**: Visual Studio Build Tools (C++ components)
+- **Linux**: `libx11-dev libxkbcommon-dev libwayland-dev`
+- **macOS**: Xcode Command Line Tools (`xcode-select --install`)
 
-### ビルド
+### Build commands
 
 ```bash
-# 全クレートをビルド
+# Build all crates
 cargo build --release
 
-# サーバーのみ
+# Server only
 cargo build --release -p nexterm-server
 
-# GPU クライアントのみ
+# GPU client only
 cargo build --release -p nexterm-client-gpu
+
+# CLI tool only
+cargo build --release -p nexterm-ctl
 ```
 
-### テスト
+### Test
 
 ```bash
 cargo test
 ```
 
-## 使い方
+## Usage
 
-### サーバーを起動する
+### Start the server
 
 ```bash
-# デバッグログ付きで起動
+# With debug logging
 NEXTERM_LOG=info nexterm-server
 
 # Windows
 set NEXTERM_LOG=info && nexterm-server.exe
 ```
 
-サーバーは以下のソケットをリッスンする：
+The server listens on the following socket:
 
-| OS | パス |
+| OS | Path |
 |----|------|
 | Linux / macOS | `$XDG_RUNTIME_DIR/nexterm.sock` |
 | Windows | `\\.\pipe\nexterm-<USERNAME>` |
 
-### GPU クライアントを起動する
+### Start the GPU client
 
 ```bash
 nexterm-client-gpu
 ```
 
-起動時に自動的にサーバーへ接続し、`main` セッションにアタッチする。サーバーが起動していない場合はオフラインモードで起動する。
+Connects to the server automatically on launch and attaches to the `main` session. Starts in offline mode if the server is not running.
 
-### TUI クライアントを起動する
+### Start the TUI client
 
 ```bash
 nexterm-client-tui
 ```
 
-## キーバインド（GPU クライアント）
+## Key bindings (GPU client)
 
-### 全般
+### General
 
-| キー | 動作 |
-|------|------|
-| `Ctrl+Shift+P` | コマンドパレットを開く／閉じる |
-| `Ctrl+F` | スクロールバック検索を開始する |
-| `PageUp` | スクロールバックを上にスクロール |
-| `PageDown` | スクロールバックを下にスクロール |
-| `Escape` | 検索・パレットを閉じる |
-| `Enter`（検索中） | 次のマッチへ移動 |
-| 通常のキー入力 | フォーカスペインの PTY へ転送 |
+| Key | Action |
+|-----|--------|
+| `Ctrl+Shift+P` | Open / close command palette |
+| `Ctrl+F` | Start scrollback search |
+| `PageUp` | Scroll up in scrollback |
+| `PageDown` | Scroll down in scrollback |
+| `Escape` | Close search / palette |
+| `Enter` (in search) | Jump to next match |
+| Regular key input | Forward to focused pane PTY |
 
-### クリップボード
+### Font size
 
-| キー | 動作 |
-|------|------|
-| `Ctrl+Shift+C` | フォーカスペインの可視グリッドをクリップボードにコピー |
-| `Ctrl+Shift+V` | クリップボードの内容をフォーカスペインにペースト |
+| Key | Action |
+|-----|--------|
+| `Ctrl+=` | Increase font size by 1 pt |
+| `Ctrl+-` | Decrease font size by 1 pt |
+| `Ctrl+0` | Reset font size to config value |
 
-### マウス操作
+### Clipboard
 
-| 操作 | 動作 |
-|------|------|
-| 左クリック | クリックしたペインにフォーカスを移動 |
-| ホイール上 | スクロールバックを上にスクロール（3行単位） |
-| ホイール下 | スクロールバックを下にスクロール（3行単位） |
+| Key | Action |
+|-----|--------|
+| `Ctrl+Shift+C` | Copy visible grid of focused pane to clipboard |
+| `Ctrl+Shift+V` | Paste clipboard content into focused pane |
 
-### ペイン操作（サーバー側プロトコル経由）
+### Copy mode (Vim-style)
 
-| メッセージ | 動作 |
-|-----------|------|
-| `SplitVertical` | フォーカスペインを左右に分割 |
-| `SplitHorizontal` | フォーカスペインを上下に分割 |
-| `FocusNextPane` | 次のペインにフォーカス移動 |
-| `FocusPrevPane` | 前のペインにフォーカス移動 |
-| `FocusPane { pane_id }` | 指定ペインにフォーカス移動（マウスクリック時） |
+| Key | Action |
+|-----|--------|
+| `Ctrl+[` | Enter copy mode |
+| `h` / `j` / `k` / `l` | Move cursor left / down / up / right |
+| `v` | Toggle selection start |
+| `y` | Yank (copy) selection to clipboard and exit |
+| `q` / `Escape` | Exit copy mode |
 
-## nexterm-ctl の使い方
+### Mouse
 
-サーバーが起動しているときに使用できるセッション制御 CLI。
+| Action | Effect |
+|--------|--------|
+| Left click | Move focus to clicked pane |
+| `Ctrl` + Left click | Open URL under cursor in browser |
+| Wheel up | Scroll up in scrollback (3 lines) |
+| Wheel down | Scroll down in scrollback (3 lines) |
+
+### Pane operations (via server protocol)
+
+| Message | Action |
+|---------|--------|
+| `SplitVertical` | Split focused pane left/right |
+| `SplitHorizontal` | Split focused pane top/bottom |
+| `FocusNextPane` | Move focus to next pane |
+| `FocusPrevPane` | Move focus to previous pane |
+
+## nexterm-ctl
+
+Session management CLI (requires server to be running).
 
 ```bash
-# セッション一覧を表示する
+# List all sessions
 nexterm-ctl list
 
-# 新規セッション 'work' を作成する
+# Create a new session named 'work'
 nexterm-ctl new work
 
-# セッション 'work' へのアタッチ方法を確認する
+# Show how to attach to session 'work'
 nexterm-ctl attach work
 
-# セッション 'work' を強制終了する
+# Kill session 'work'
 nexterm-ctl kill work
+
+# Start recording PTY output to a file
+nexterm-ctl record start work output.log
+
+# Stop recording
+nexterm-ctl record stop work
 ```
 
-## 設定
+### Language override
 
-設定ファイルは以下のパスから自動検索される：
+```bash
+# Force a specific UI language
+NEXTERM_LANG=ja nexterm-ctl list
+```
 
-| OS | パス |
+Supported values: `en`, `fr`, `de`, `es`, `it`, `zh-CN`, `ja`, `ko`
+
+## Configuration
+
+Config files are searched in order:
+
+| OS | Path |
 |----|------|
 | Linux / macOS | `~/.config/nexterm/config.toml` |
 | Windows | `%APPDATA%\nexterm\config.toml` |
 
-### nexterm.toml の例
+### nexterm.toml example
 
 ```toml
 scrollback_lines = 50000
@@ -210,56 +291,67 @@ program = "/usr/bin/fish"
 [status_bar]
 enabled = true
 widgets = ['os.date("%H:%M:%S")', '"nexterm"']
+
+[window]
+background_opacity = 0.95
+decorations = "full"   # "full" | "none" | "notitle"
+
+[tab_bar]
+enabled = true
+height = 28
+active_tab_bg = "#ae8b2d"
+inactive_tab_bg = "#5c6d74"
+separator = "❯"
 ```
 
-### nexterm.lua オーバーライドの例
+### nexterm.lua override example
 
 ```lua
 -- ~/.config/nexterm/nexterm.lua
 local cfg = require("nexterm")
 
--- フォントサイズをランタイムで変更する
+-- Change font size at runtime
 cfg.font.size = 16.0
 
--- ステータスバーに時刻とセッション名を表示する
+-- Show time and session name in status bar
 cfg.status_bar.enabled = true
 cfg.status_bar.widgets = { 'os.date("%H:%M")', '"main"' }
 
 return cfg
 ```
 
-> 設定ファイルを保存するとリアルタイムで反映されます（ホットリロード）。
+> Configuration changes are applied immediately via hot-reload.
 
-## アーキテクチャ概要
+## Architecture overview
 
 ```
-┌─────────────────────────────────────┐
-│         nexterm-client-gpu          │
-│  wgpu レンダラー / winit イベントループ  │
-└──────────────┬──────────────────────┘
-               │ IPC (bincode / Named Pipe / Unix Socket)
-┌──────────────▼──────────────────────┐
-│         nexterm-server              │
-│  セッション → ウィンドウ → ペイン(PTY) │
-│  BSP レイアウトエンジン               │
-└──────────────┬──────────────────────┘
-               │ portable-pty
-┌──────────────▼──────────────────────┐
-│       OS PTY (ConPTY / Unix)        │
-│       シェル / アプリケーション        │
-└─────────────────────────────────────┘
+┌──────────────────────────────────────┐
+│         nexterm-client-gpu           │
+│   wgpu renderer / winit event loop   │
+└───────────────┬──────────────────────┘
+                │ IPC (bincode / Named Pipe / Unix Socket)
+┌───────────────▼──────────────────────┐
+│         nexterm-server               │
+│  Session → Window → Pane (PTY)       │
+│  BSP layout engine                   │
+└───────────────┬──────────────────────┘
+                │ portable-pty
+┌───────────────▼──────────────────────┐
+│       OS PTY (ConPTY / Unix)         │
+│       Shell / application            │
+└──────────────────────────────────────┘
 ```
 
-詳細は各ドキュメントを参照：
+For details, see the documentation:
 
-| ドキュメント | 内容 |
-|------------|------|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | クレート構成・データフロー・レンダリングパイプライン |
-| [docs/PROTOCOL.md](docs/PROTOCOL.md) | IPC プロトコル仕様（メッセージ型・フレーミング・シーケンス図） |
-| [docs/DESIGN.md](docs/DESIGN.md) | 基本設計書・ADR（設計判断の記録） |
-| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | TOML / Lua 設定の全フィールドリファレンス |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | ビルド手順・コーディング規約・PR ガイドライン |
+| Document | Contents |
+|----------|----------|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Crate layout, data flow, rendering pipeline |
+| [docs/PROTOCOL.md](docs/PROTOCOL.md) | IPC protocol spec (message types, framing, sequence diagrams) |
+| [docs/DESIGN.md](docs/DESIGN.md) | Design document and ADRs |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Full TOML / Lua configuration reference |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Build instructions, coding conventions, PR guidelines |
 
-## ライセンス
+## License
 
 MIT OR Apache-2.0

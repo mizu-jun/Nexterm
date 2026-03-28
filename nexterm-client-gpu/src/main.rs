@@ -22,8 +22,10 @@ async fn main() -> Result<()> {
 
     // 設定ロード（TOML → Lua）
     let config = ConfigLoader::load()?;
+    nexterm_i18n::init();
+
     info!(
-        "設定をロードしました: フォント={} {}pt",
+        "Config loaded: font={} {}pt",
         config.font.family, config.font.size
     );
 

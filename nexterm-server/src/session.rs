@@ -6,16 +6,24 @@ use std::sync::Arc;
 
 use anyhow::{bail, Result};
 use tokio::sync::{mpsc, Mutex};
-use tracing::info;
+use tracing::{info, warn};
 
 use nexterm_proto::{ServerToClient, SessionInfo};
 
+use crate::snapshot::{
+    ServerSnapshot, SessionSnapshot, SNAPSHOT_VERSION,
+};
 use crate::window::Window;
 
 static NEXT_WINDOW_ID: AtomicU32 = AtomicU32::new(1);
 
 fn new_window_id() -> u32 {
     NEXT_WINDOW_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+/// スナップショット復元後にウィンドウ ID カウンターを更新する
+pub fn set_min_window_id(min_id: u32) {
+    NEXT_WINDOW_ID.fetch_max(min_id, Ordering::Relaxed);
 }
 
 /// セッション
@@ -119,6 +127,61 @@ impl Session {
         window.resize_all_panes(cols, rows);
         Ok(())
     }
+
+    // ---- スナップショット ----
+
+    /// セッションをスナップショットに変換する
+    pub fn to_snapshot(&self) -> SessionSnapshot {
+        SessionSnapshot {
+            name: self.name.clone(),
+            shell: self.shell.clone(),
+            cols: self.cols,
+            rows: self.rows,
+            windows: self.windows.values().map(|w| w.to_snapshot()).collect(),
+            focused_window_id: self.focused_window_id,
+        }
+    }
+
+    /// スナップショットからセッションを復元する
+    ///
+    /// クライアントは未接続の状態で復元する。
+    /// クライアントが接続したときに `attach()` で TX を設定する。
+    pub fn restore_from_snapshot(snap: &SessionSnapshot) -> Result<Self> {
+        // PTY 出力を受け取る一時チャネル（受信側を即 drop → 送信は無視される）
+        let (tx, _rx) = mpsc::channel::<ServerToClient>(64);
+
+        let mut windows = HashMap::new();
+        for win_snap in &snap.windows {
+            match Window::restore_from_snapshot(win_snap, &tx, &snap.shell, snap.cols, snap.rows) {
+                Ok(window) => {
+                    windows.insert(win_snap.id, window);
+                }
+                Err(e) => {
+                    warn!(
+                        "ウィンドウ '{}' の復元に失敗しました: {}",
+                        win_snap.name, e
+                    );
+                }
+            }
+        }
+
+        if windows.is_empty() {
+            bail!(
+                "セッション '{}' のウィンドウが 1 つも復元できませんでした",
+                snap.name
+            );
+        }
+
+        Ok(Self {
+            name: snap.name.clone(),
+            windows,
+            focused_window_id: snap.focused_window_id,
+            client_tx: None,
+            shell: snap.shell.clone(),
+            cols: snap.cols,
+            rows: snap.rows,
+        })
+    }
 }
 
 /// セッションマネージャー（全セッションを管理）
@@ -209,6 +272,84 @@ impl SessionManager {
         } else {
             bail!("セッション '{}' が見つかりません", name)
         }
+    }
+
+    /// セッションのフォーカスペインで録音を開始する（Phase 5-A で完全実装）
+    pub async fn start_recording(&self, name: &str, path: &str) -> Result<u32> {
+        let sessions = self.sessions.lock().await;
+        let session = sessions
+            .get(name)
+            .ok_or_else(|| anyhow::anyhow!("セッション '{}' が見つかりません", name))?;
+        let window = session
+            .focused_window()
+            .ok_or_else(|| anyhow::anyhow!("ウィンドウが見つかりません"))?;
+        let pane_id = window.start_recording(path)?;
+        Ok(pane_id)
+    }
+
+    /// セッションのフォーカスペインで録音を停止する（Phase 5-A で完全実装）
+    pub async fn stop_recording(&self, name: &str) -> Result<u32> {
+        let sessions = self.sessions.lock().await;
+        let session = sessions
+            .get(name)
+            .ok_or_else(|| anyhow::anyhow!("セッション '{}' が見つかりません", name))?;
+        let window = session
+            .focused_window()
+            .ok_or_else(|| anyhow::anyhow!("ウィンドウが見つかりません"))?;
+        let pane_id = window.stop_recording()?;
+        Ok(pane_id)
+    }
+
+    // ---- スナップショット ----
+
+    /// 全セッションをスナップショットに変換する
+    pub async fn to_snapshot(&self) -> ServerSnapshot {
+        let sessions = self.sessions.lock().await;
+        let saved_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        ServerSnapshot {
+            version: SNAPSHOT_VERSION,
+            sessions: sessions.values().map(|s| s.to_snapshot()).collect(),
+            saved_at,
+        }
+    }
+
+    /// スナップショットから全セッションを復元する
+    ///
+    /// バージョン不一致や復元エラーのセッションは警告を出してスキップする。
+    /// 復元に成功したセッション名のリストを返す。
+    pub async fn restore_from_snapshot(&self, snap: &ServerSnapshot) -> Vec<String> {
+        if snap.version != SNAPSHOT_VERSION {
+            warn!(
+                "スナップショットのバージョン不一致（expected={}, got={}）。復元をスキップします",
+                SNAPSHOT_VERSION, snap.version
+            );
+            return Vec::new();
+        }
+
+        let mut sessions = self.sessions.lock().await;
+        let mut restored = Vec::new();
+
+        for sess_snap in &snap.sessions {
+            if sessions.contains_key(&sess_snap.name) {
+                info!("セッション '{}' は既に存在するためスキップします", sess_snap.name);
+                continue;
+            }
+            match Session::restore_from_snapshot(sess_snap) {
+                Ok(session) => {
+                    sessions.insert(sess_snap.name.clone(), session);
+                    restored.push(sess_snap.name.clone());
+                    info!("セッション '{}' を復元しました", sess_snap.name);
+                }
+                Err(e) => {
+                    warn!("セッション '{}' の復元に失敗しました: {}", sess_snap.name, e);
+                }
+            }
+        }
+
+        restored
     }
 }
 

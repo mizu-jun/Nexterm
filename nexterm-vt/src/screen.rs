@@ -45,6 +45,8 @@ pub struct Screen {
     pending_images: Vec<PendingImage>,
     /// 次の画像 ID
     next_image_id: u32,
+    /// BEL 受信フラグ（take_pending_bell で取り出す）
+    pending_bell: bool,
 }
 
 impl Screen {
@@ -66,6 +68,7 @@ impl Screen {
             dcs_cursor: (0, 0),
             pending_images: Vec::new(),
             next_image_id: 1,
+            pending_bell: false,
         }
     }
 
@@ -382,5 +385,15 @@ impl Screen {
     /// 蓄積された画像を取り出してキューをクリアする
     pub fn take_pending_images(&mut self) -> Vec<PendingImage> {
         std::mem::take(&mut self.pending_images)
+    }
+
+    /// BEL フラグを取り出してクリアする
+    pub fn take_pending_bell(&mut self) -> bool {
+        std::mem::replace(&mut self.pending_bell, false)
+    }
+
+    /// BEL を設定する（performer から呼ばれる）
+    pub(crate) fn set_pending_bell(&mut self) {
+        self.pending_bell = true;
     }
 }

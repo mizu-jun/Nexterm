@@ -95,6 +95,10 @@ impl ClientState {
             ServerToClient::LayoutChanged { focused_pane_id, .. } => {
                 self.focused_pane_id = Some(focused_pane_id);
             }
+            // TUI ではベル通知は無視する
+            ServerToClient::Bell { .. } => {}
+            // 録音状態通知は TUI では無視する
+            ServerToClient::RecordingStarted { .. } | ServerToClient::RecordingStopped { .. } => {}
         }
     }
 

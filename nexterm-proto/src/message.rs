@@ -85,6 +85,10 @@ pub enum ClientToServer {
     ListSessions,
     /// セッションを強制終了する
     KillSession { name: String },
+    /// セッション録音を開始する
+    StartRecording { session_name: String, output_path: String },
+    /// セッション録音を停止する
+    StopRecording { session_name: String },
 }
 
 /// ペインのレイアウト情報（グリッド座標系）
@@ -148,6 +152,12 @@ pub enum ServerToClient {
         panes: Vec<PaneLayout>,
         focused_pane_id: u32,
     },
+    /// BEL 通知（\x07 を受信したペインから発行）
+    Bell { pane_id: u32 },
+    /// セッション録音開始通知
+    RecordingStarted { pane_id: u32, path: String },
+    /// セッション録音停止通知
+    RecordingStopped { pane_id: u32 },
 }
 
 /// セッション情報

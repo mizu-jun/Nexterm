@@ -3,6 +3,8 @@
 use anyhow::Result;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{error, info};
+#[cfg(unix)]
+use tracing::warn;
 
 use nexterm_proto::{ClientToServer, KeyCode, Modifiers, ServerToClient};
 use crate::window::SplitDir;
@@ -33,11 +35,20 @@ async fn serve_unix(manager: std::sync::Arc<SessionManager>) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))?;
 
+    // サーバー自身の UID を取得する（接続元 UID の検証基準）
+    // SAFETY: getuid() は常に成功し、安全である
+    let server_uid = unsafe { libc::getuid() };
+
     info!("Unix ソケットでリッスン中: {}", socket_path);
 
     loop {
         match listener.accept().await {
             Ok((stream, _addr)) => {
+                // 接続元の UID がサーバー UID と一致しない場合は拒否する
+                if !verify_peer_uid(&stream, server_uid) {
+                    warn!("UID 不一致の接続を拒否しました（サーバー UID={}）", server_uid);
+                    continue;
+                }
                 let manager = std::sync::Arc::clone(&manager);
                 tokio::spawn(async move {
                     if let Err(e) = handle_client(stream, manager).await {
@@ -48,6 +59,78 @@ async fn serve_unix(manager: std::sync::Arc<SessionManager>) -> Result<()> {
             Err(e) => error!("接続受け付けエラー: {}", e),
         }
     }
+}
+
+/// Unix ドメインソケットの接続元 UID を検証する
+///
+/// 取得に成功した場合: `peer_uid == expected_uid` を返す。
+/// 取得に失敗した場合（非対応 OS 等）: `true` を返し、0600 パーミッションに依存する。
+#[cfg(unix)]
+fn verify_peer_uid(stream: &tokio::net::UnixStream, expected_uid: libc::uid_t) -> bool {
+    match peer_uid_impl(stream) {
+        Some(uid) => uid == expected_uid,
+        None => true, // 取得不可の環境ではパーミッション 0600 に依存する
+    }
+}
+
+/// Linux: SO_PEERCRED で接続元の UID を取得する
+#[cfg(target_os = "linux")]
+fn peer_uid_impl(stream: &tokio::net::UnixStream) -> Option<libc::uid_t> {
+    use std::os::unix::io::AsRawFd;
+    let fd = stream.as_raw_fd();
+    let mut cred = libc::ucred { pid: 0, uid: 0, gid: 0 };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    // SAFETY: fd は有効な Unix ドメインソケット。cred のサイズは SO_PEERCRED に適合。
+    let ret = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            &mut cred as *mut libc::ucred as *mut libc::c_void,
+            &mut len,
+        )
+    };
+    if ret == 0 {
+        Some(cred.uid)
+    } else {
+        warn!("SO_PEERCRED の取得に失敗しました (errno={})", unsafe { *libc::__errno_location() });
+        None
+    }
+}
+
+/// macOS / FreeBSD / NetBSD / OpenBSD: getpeereid() で接続元の UID を取得する
+#[cfg(any(
+    target_os = "macos",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+))]
+fn peer_uid_impl(stream: &tokio::net::UnixStream) -> Option<libc::uid_t> {
+    use std::os::unix::io::AsRawFd;
+    let fd = stream.as_raw_fd();
+    let mut uid: libc::uid_t = 0;
+    let mut gid: libc::gid_t = 0;
+    // SAFETY: fd は有効な Unix ドメインソケット。
+    let ret = unsafe { libc::getpeereid(fd, &mut uid, &mut gid) };
+    if ret == 0 {
+        Some(uid)
+    } else {
+        warn!("getpeereid の取得に失敗しました");
+        None
+    }
+}
+
+/// 上記以外の Unix 環境: UID 取得は非対応（パーミッション 0600 に依存）
+#[cfg(all(
+    unix,
+    not(target_os = "linux"),
+    not(target_os = "macos"),
+    not(target_os = "freebsd"),
+    not(target_os = "netbsd"),
+    not(target_os = "openbsd"),
+))]
+fn peer_uid_impl(_stream: &tokio::net::UnixStream) -> Option<libc::uid_t> {
+    None
 }
 
 #[cfg(unix)]
@@ -70,6 +153,8 @@ async fn serve_named_pipe(manager: std::sync::Arc<SessionManager>) -> Result<()>
     loop {
         let server = ServerOptions::new()
             .first_pipe_instance(false)
+            // リモートクライアントを明示的に拒否する（同一マシンのみ許可）
+            .reject_remote_clients(true)
             .create(&pipe_name)?;
 
         server.connect().await?;
@@ -153,6 +238,25 @@ where
         }
     }
 
+    Ok(())
+}
+
+/// 録音出力パスのバリデーション（ディレクトリトラバーサル攻撃を防ぐ）
+fn validate_recording_path(output_path: &str) -> Result<()> {
+    use std::path::{Component, Path};
+    if output_path.is_empty() {
+        return Err(anyhow::anyhow!("出力パスが空です"));
+    }
+    // ".." コンポーネントを含むパスを禁止する
+    if Path::new(output_path)
+        .components()
+        .any(|c| matches!(c, Component::ParentDir))
+    {
+        return Err(anyhow::anyhow!(
+            "セキュリティエラー: パスに '..' を含めることはできません: {}",
+            output_path
+        ));
+    }
     Ok(())
 }
 
@@ -448,6 +552,44 @@ async fn dispatch(
                 }
             }
         }
+
+        // 録音コマンド（パストラバーサルを検証してからセッション側に委譲する）
+        StartRecording { session_name, output_path } => {
+            // セキュリティ: ".." を含むパスを拒否する
+            if let Err(e) = validate_recording_path(output_path) {
+                let _ = tx
+                    .send(ServerToClient::Error { message: e.to_string() })
+                    .await;
+                return;
+            }
+            match manager.start_recording(session_name, output_path).await {
+                Ok(pane_id) => {
+                    let _ = tx
+                        .send(ServerToClient::RecordingStarted { pane_id, path: output_path.to_string() })
+                        .await;
+                }
+                Err(e) => {
+                    let _ = tx
+                        .send(ServerToClient::Error { message: e.to_string() })
+                        .await;
+                }
+            }
+        }
+
+        StopRecording { session_name } => {
+            match manager.stop_recording(session_name).await {
+                Ok(pane_id) => {
+                    let _ = tx
+                        .send(ServerToClient::RecordingStopped { pane_id })
+                        .await;
+                }
+                Err(e) => {
+                    let _ = tx
+                        .send(ServerToClient::Error { message: e.to_string() })
+                        .await;
+                }
+            }
+        }
     }
 }
 
@@ -494,5 +636,29 @@ fn key_to_bytes(code: &KeyCode, mods: Modifiers) -> Vec<u8> {
             12 => b"\x1b[24~".to_vec(),
             _ => vec![],
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn パストラバーサルを含むパスは拒否される() {
+        assert!(validate_recording_path("../../etc/passwd").is_err());
+        assert!(validate_recording_path("../secret.txt").is_err());
+        assert!(validate_recording_path("foo/../bar.txt").is_err());
+    }
+
+    #[test]
+    fn 正常なパスは通過する() {
+        assert!(validate_recording_path("/home/user/recording.txt").is_ok());
+        assert!(validate_recording_path("recording.txt").is_ok());
+        assert!(validate_recording_path("/tmp/nexterm/session.rec").is_ok());
+    }
+
+    #[test]
+    fn 空パスは拒否される() {
+        assert!(validate_recording_path("").is_err());
     }
 }
