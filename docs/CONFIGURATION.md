@@ -33,12 +33,14 @@
 | `family` | String | `"monospace"` | フォントファミリー名 |
 | `size` | float | `14.0` | フォントサイズ（pt） |
 | `ligatures` | bool | `true` | プログラミングリガチャを有効にする |
+| `font_fallbacks` | String[] | `[]` | グリフが見つからない場合に順番に試行するフォールバックフォントのリスト |
 
 ```toml
 [font]
 family = "JetBrains Mono"
 size = 14.0
 ligatures = true
+font_fallbacks = ["Noto Sans CJK JP", "Noto Color Emoji", "Symbols Nerd Font"]
 ```
 
 ### `[colors]` — カラースキーム
@@ -195,6 +197,89 @@ key = "ctrl+shift+p"
 action = "CommandPalette"
 ```
 
+### `[[hosts]]` — SSH ホスト登録
+
+SSH 接続先を事前登録する。コマンドパレットから選択して接続できる。
+
+| キー | 型 | デフォルト | 説明 |
+|-----|----|-----------|------|
+| `name` | String | — | 表示名（必須） |
+| `host` | String | — | ホスト名または IP アドレス（必須） |
+| `port` | u16 | `22` | SSH ポート番号 |
+| `username` | String | — | ユーザー名（必須） |
+| `auth_type` | String | `"key"` | 認証方式: `"password"` または `"key"` |
+| `key_path` | String | — | 秘密鍵ファイルパス（`auth_type = "key"` の場合） |
+
+パスワードは設定ファイルに平文保存せず、OS キーチェーンに安全保存する（`nexterm-config::keyring` 参照）。
+
+```toml
+[[hosts]]
+name = "本番サーバー"
+host = "192.168.1.100"
+port = 22
+username = "deploy"
+auth_type = "key"
+key_path = "~/.ssh/id_ed25519"
+
+[[hosts]]
+name = "開発サーバー"
+host = "dev.example.com"
+port = 2222
+username = "ubuntu"
+auth_type = "password"
+# パスワードは OS キーチェーンに保存される
+```
+
+---
+
+### `[log]` — ログ設定
+
+PTY 出力のログ記録設定。
+
+| キー | 型 | デフォルト | 説明 |
+|-----|----|-----------|------|
+| `auto_log` | bool | `false` | セッション開始時に自動的にログを開始する |
+| `log_dir` | String | — | ログファイルの保存ディレクトリ |
+| `timestamp` | bool | `false` | 各行の先頭に `[HH:MM:SS]` タイムスタンプを付与する |
+| `strip_ansi` | bool | `false` | ログファイルから ANSI エスケープシーケンスを除去する |
+
+```toml
+[log]
+auto_log = true
+log_dir = "~/nexterm-logs"
+timestamp = true
+strip_ansi = true
+```
+
+---
+
+### `[colors.custom]` — カスタムカラーパレット
+
+`scheme = "custom"` のときに使用するカスタム 16 色パレット。
+
+| キー | 型 | 説明 |
+|-----|----|------|
+| `foreground` | String | 前景色（`#rrggbb`） |
+| `background` | String | 背景色（`#rrggbb`） |
+| `cursor` | String | カーソル色（`#rrggbb`） |
+| `ansi` | String[16] | ANSI 16 色（黒・赤・緑・黄・青・マゼンタ・シアン・白、各通常+明るい） |
+
+```toml
+[colors]
+scheme = "custom"
+
+[colors.custom]
+foreground = "#cdd6f4"
+background = "#1e1e2e"
+cursor = "#f5e0dc"
+ansi = [
+  "#45475a", "#f38ba8", "#a6e3a1", "#f9e2af",
+  "#89b4fa", "#f5c2e7", "#94e2d5", "#bac2de",
+  "#585b70", "#f38ba8", "#a6e3a1", "#f9e2af",
+  "#89b4fa", "#f5c2e7", "#94e2d5", "#a6adc8",
+]
+```
+
 ---
 
 ## 完全な nexterm.toml の例
@@ -207,6 +292,7 @@ scrollback_lines = 10000
 family = "JetBrains Mono"
 size = 14.0
 ligatures = true
+font_fallbacks = ["Noto Sans CJK JP", "Noto Color Emoji"]
 
 [colors]
 scheme = "tokyonight"
@@ -238,6 +324,19 @@ action = "SplitVertical"
 [[keys]]
 key = "ctrl+shift+-"
 action = "SplitHorizontal"
+
+[[hosts]]
+name = "my-server"
+host = "192.168.1.100"
+port = 22
+username = "admin"
+auth_type = "key"
+key_path = "~/.ssh/id_ed25519"
+
+[log]
+auto_log = false
+timestamp = true
+strip_ansi = true
 ```
 
 ---

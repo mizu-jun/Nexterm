@@ -27,6 +27,19 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 - **TUI fallback** — ratatui-based TUI client for environments without GPU support
 - **Cross-platform** — Linux / macOS / Windows (ConPTY + Named Pipe on Windows)
 - **Localization** — UI in English, French, German, Spanish, Italian, Simplified Chinese, Japanese, Korean
+- **SSH client** — Built-in SSH via russh; password and public-key auth; host registry in TOML
+- **OS keychain** — SSH passwords saved to macOS Keychain / Windows Credential Store / Linux Secret Service
+- **Mouse selection copy** — Drag to select text, auto-copy to clipboard (blue highlight)
+- **Pane close** — Close the focused pane; sibling promoted in BSP tree
+- **Pane resize** — Keyboard-adjustable split ratio
+- **Window management** — Create, close, rename, and switch windows via IPC
+- **Broadcast input** — Send keystrokes to all panes simultaneously (like tmux's synchronize-panes)
+- **Timestamp logging** — Per-line `[HH:MM:SS]` timestamps with optional ANSI strip
+- **OSC notifications** — OSC 0/2 window title change; OSC 9 desktop notifications
+- **Custom color scheme** — Define a 16-color palette in TOML via `[colors.custom]`
+- **CJK width** — Full-width characters (CJK, emoji) correctly occupy 2 columns
+- **Font fallback chain** — `font_fallbacks` config lists fonts tried when a glyph is missing
+- **macOS session restore** — CWD preserved on reconnect via `lsof`
 
 ## Implementation status
 
@@ -93,6 +106,26 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 | 6-4 | LuaWorker background thread (no main-thread blocking) | ✅ |
 | 6-5 | Session snapshot persistence (JSON, auto-save/restore) | ✅ |
 
+### Phase 7: Competitive feature parity (complete)
+
+Based on comparison with rlogin, Tera Term, WezTerm, and tmux.
+
+| Step | Description | Status |
+|------|-------------|--------|
+| 7-1 | Pane close + resize (BSP node removal, ratio adjustment) | ✅ |
+| 7-2 | Full window operations (new / close / focus / rename) | ✅ |
+| 7-3 | Mouse drag text selection → clipboard | ✅ |
+| 7-4 | macOS CWD preservation via lsof | ✅ |
+| 7-5 | SSH client (nexterm-ssh, russh 0.58, password + pubkey) | ✅ |
+| 7-6 | SSH host registry (`[[hosts]]` in TOML) | ✅ |
+| 7-7 | OS keychain integration (keyring crate) | ✅ |
+| 7-8 | Timestamp logging with ANSI strip | ✅ |
+| 7-9 | Broadcast input to all panes | ✅ |
+| 7-10 | OSC 0/2 title + OSC 9 desktop notifications | ✅ |
+| 7-11 | Custom 16-color palette in TOML | ✅ |
+| 7-12 | CJK / wide character width (unicode-width) | ✅ |
+| 7-13 | Font fallback chain (font_fallbacks config) | ✅ |
+
 **Tests**: 86+ passing
 
 ## Crate structure
@@ -106,7 +139,8 @@ nexterm/
 ├── nexterm-client-tui   # TUI client
 ├── nexterm-client-gpu   # GPU client (wgpu + winit)
 ├── nexterm-ctl          # Session management CLI
-└── nexterm-i18n         # Localization support (8 languages)
+├── nexterm-i18n         # Localization support (8 languages)
+└── nexterm-ssh          # SSH client (russh) — connection, auth, PTY channel
 ```
 
 ## Build
@@ -217,6 +251,7 @@ nexterm-client-tui
 | Action | Effect |
 |--------|--------|
 | Left click | Move focus to clicked pane |
+| Left drag | Select text (blue highlight), auto-copy to clipboard on release |
 | `Ctrl` + Left click | Open URL under cursor in browser |
 | Wheel up | Scroll up in scrollback (3 lines) |
 | Wheel down | Scroll down in scrollback (3 lines) |
@@ -229,6 +264,14 @@ nexterm-client-tui
 | `SplitHorizontal` | Split focused pane top/bottom |
 | `FocusNextPane` | Move focus to next pane |
 | `FocusPrevPane` | Move focus to previous pane |
+| `ClosePane` | Close focused pane (sibling promoted) |
+| `ResizeSplit { delta: f32 }` | Adjust focused split ratio |
+| `NewWindow` | Create a new window (tab) |
+| `CloseWindow { window_id }` | Close specified window |
+| `FocusWindow { window_id }` | Switch to specified window |
+| `RenameWindow { window_id, name }` | Rename specified window |
+| `SetBroadcast { enabled: bool }` | Toggle broadcast input mode |
+| `ConnectSsh { host, port, username, auth_type, ... }` | Open SSH connection in new pane |
 
 ## nexterm-ctl
 
@@ -281,6 +324,7 @@ scrollback_lines = 50000
 family = "JetBrains Mono"
 size = 14.0
 ligatures = true
+font_fallbacks = ["Noto Sans CJK JP", "Noto Color Emoji"]
 
 [colors]
 scheme = "tokyonight"
@@ -302,6 +346,31 @@ height = 28
 active_tab_bg = "#ae8b2d"
 inactive_tab_bg = "#5c6d74"
 separator = "❯"
+
+[[hosts]]
+name = "my-server"
+host = "192.168.1.100"
+port = 22
+username = "deploy"
+auth_type = "key"
+key_path = "~/.ssh/id_ed25519"
+
+[log]
+auto_log = false
+timestamp = true
+strip_ansi = true
+log_dir = "~/nexterm-logs"
+
+[colors.custom]
+foreground = "#cdd6f4"
+background = "#1e1e2e"
+cursor = "#f5e0dc"
+ansi = [
+  "#45475a", "#f38ba8", "#a6e3a1", "#f9e2af",
+  "#89b4fa", "#f5c2e7", "#94e2d5", "#bac2de",
+  "#585b70", "#f38ba8", "#a6e3a1", "#f9e2af",
+  "#89b4fa", "#f5c2e7", "#94e2d5", "#a6adc8",
+]
 ```
 
 ### nexterm.lua override example
