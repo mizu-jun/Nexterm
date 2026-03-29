@@ -6,40 +6,103 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 
 [![CI](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml/badge.svg)](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml)
 
+## What's New in v0.3.0
+
+**SSH & Security Enhancements**
+- Known hosts host key verification (replaces insecure accept-all behavior)
+- SSH agent authentication support via SSH_AUTH_SOCK
+- Local port forwarding through SSH tunnels
+- ProxyJump multi-hop connection support
+- SOCKS5 proxy support
+
+**Terminal & Display Improvements**
+- Full alternate screen buffer support (SMCUP/RMCUP, DEC modes 47/1047/1049)
+- OSC 0/1/2 window title support
+- OSC 9 desktop notifications
+- CJK wide character rendering fixes
+
+**GPU Client Features**
+- IME input support for Japanese, Chinese, and Korean
+- Keybinding customization with custom action execution
+- Right-click context menu (Copy/Paste/Split/ClosePane)
+- Pane number overlay in display-panes mode
+- Mouse selection with automatic clipboard copy
+
+**Server Enhancements**
+- Multi-client session sharing (tmux-style attach)
+- Broadcast input mode for synchronized pane input
+- Asciicast v2 format recording (`nexterm-ctl record start-cast/stop-cast`)
+- Size-based log rotation
+
+**CLI Improvements**
+- `nexterm-ctl theme import <path>` — Import color schemes from:
+  - iTerm2 .itermcolors
+  - Alacritty YAML
+  - base16 TOML format
+
 ## Features
 
+### SSH & Security
+- **SSH client** — Built-in SSH via russh; password and public-key auth; host registry in TOML
+- **SSH agent authentication** — SSH_AUTH_SOCK support for agent-based auth
+- **Known hosts verification** — Host key verification against ~/.ssh/known_hosts (replaces accept-all)
+- **Local port forwarding** — Forward local ports through SSH tunnels
+- **ProxyJump support** — Multi-hop SSH connections
+- **SOCKS5 proxy** — Route connections through SOCKS5 proxies
+- **OS keychain** — SSH passwords saved to macOS Keychain / Windows Credential Store / Linux Secret Service
+
+### GPU Rendering & UI
 - **GPU rendering** — High-performance font rendering with wgpu + cosmic-text
+- **Alternate screen buffer** — Full support for SMCUP/RMCUP and DEC modes 47/1047/1049
+- **IME input** — Japanese, Chinese, Korean input method support
+- **Right-click context menu** — Copy/Paste/Split/ClosePane operations
+- **Pane number overlay** — Display-panes mode for pane navigation
+- **Mouse selection copy** — Drag to select text, auto-copy to clipboard (blue highlight)
+- **CJK width** — Full-width characters (CJK, emoji) correctly occupy 2 columns
+
+### Core Features
 - **Daemonless design** — Server process holds PTYs; sessions survive client disconnects
+- **Multi-client session sharing** — tmux-style session attach with synchronized clients
+- **Broadcast input mode** — Send keystrokes to all panes simultaneously
 - **BSP split layout** — Binary Space Partition for arbitrarily deep pane splitting
+- **Window management** — Create, close, rename, and switch windows via IPC
+- **Pane operations** — Close panes, resize splits, navigate with keyboard or mouse
+- **Tab bar** — WezTerm-style tab bar with pane labels and `❯` separators
+- **Copy mode** — Vim-style text selection (Ctrl+[, hjkl, v, y)
+
+### Configuration & Input
 - **Lua + TOML config** — TOML for defaults, Lua for dynamic overrides; hot-reload on save
+- **Keybinding customization** — Execute custom actions on key combinations
+- **Lua status bar** — Evaluate Lua expressions (e.g. `os.date()`) on the status line every second
+- **Font size runtime** — Ctrl+= / Ctrl+- / Ctrl+0 to change font size at runtime
+- **Color scheme import** — `nexterm-ctl theme import` supports iTerm2 .itermcolors, Alacritty YAML, base16 TOML
+- **Custom color scheme** — Define a 16-color palette in TOML via `[colors.custom]`
+
+### Logging & Recording
+- **Asciicast v2 recording** — `nexterm-ctl record start-cast/stop-cast` for asciinema format
+- **Log rotation** — Size-based automatic log file rotation
+- **Timestamp logging** — Per-line `[HH:MM:SS]` timestamps with optional ANSI strip
+- **Session recording** — `nexterm-ctl record start/stop` saves raw PTY output to file
+
+### Terminal & Display
+- **OSC 0/1/2 window title** — Dynamic window/tab title via escape sequences
+- **OSC 9 desktop notifications** — System notifications from terminal
+- **Bell notification** — VT BEL (\x07) triggers an OS window attention request
+- **URL detection** — URLs in the grid are underlined; Ctrl+Click opens them in the browser
+- **Image protocol** — Sixel and Kitty image display
+- **Window transparency** — Configurable opacity, borderless mode, and macOS blur
+- **Font fallback chain** — `font_fallbacks` config lists fonts tried when a glyph is missing
+
+### Platform & Accessibility
 - **Mouse support** — Click to focus panes, scroll wheel for scrollback; Ctrl+Click to open URLs
 - **Clipboard integration** — Ctrl+Shift+C to copy, Ctrl+Shift+V to paste (arboard)
-- **Copy mode** — Vim-style text selection (Ctrl+[, hjkl, v, y)
-- **Lua status bar** — Evaluate Lua expressions (e.g. `os.date()`) on the status line every second
-- **Tab bar** — WezTerm-style tab bar with pane labels and `❯` separators
-- **Session recording** — `nexterm-ctl record start/stop` saves raw PTY output to file
-- **Bell notification** — VT BEL (\x07) triggers an OS window attention request
-- **Font size** — Ctrl+= / Ctrl+- / Ctrl+0 to change font size at runtime
-- **Window transparency** — Configurable opacity, borderless mode, and macOS blur
-- **URL detection** — URLs in the grid are underlined; Ctrl+Click opens them in the browser
-- **nexterm-ctl** — CLI tool for listing, creating, killing, and recording sessions
-- **Image protocol** — Sixel and Kitty image display
 - **TUI fallback** — ratatui-based TUI client for environments without GPU support
 - **Cross-platform** — Linux / macOS / Windows (ConPTY + Named Pipe on Windows)
 - **Localization** — UI in English, French, German, Spanish, Italian, Simplified Chinese, Japanese, Korean
-- **SSH client** — Built-in SSH via russh; password and public-key auth; host registry in TOML
-- **OS keychain** — SSH passwords saved to macOS Keychain / Windows Credential Store / Linux Secret Service
-- **Mouse selection copy** — Drag to select text, auto-copy to clipboard (blue highlight)
-- **Pane close** — Close the focused pane; sibling promoted in BSP tree
-- **Pane resize** — Keyboard-adjustable split ratio
-- **Window management** — Create, close, rename, and switch windows via IPC
-- **Broadcast input** — Send keystrokes to all panes simultaneously (like tmux's synchronize-panes)
-- **Timestamp logging** — Per-line `[HH:MM:SS]` timestamps with optional ANSI strip
-- **OSC notifications** — OSC 0/2 window title change; OSC 9 desktop notifications
-- **Custom color scheme** — Define a 16-color palette in TOML via `[colors.custom]`
-- **CJK width** — Full-width characters (CJK, emoji) correctly occupy 2 columns
-- **Font fallback chain** — `font_fallbacks` config lists fonts tried when a glyph is missing
 - **macOS session restore** — CWD preserved on reconnect via `lsof`
+
+### CLI Tool
+- **nexterm-ctl** — Session management CLI (list, create, attach, kill, record, import themes)
 
 ## Implementation status
 
@@ -219,6 +282,7 @@ nexterm-client-tui
 | `PageDown` | Scroll down in scrollback |
 | `Escape` | Close search / palette |
 | `Enter` (in search) | Jump to next match |
+| `Ctrl+G` | Enter display-panes mode (show pane numbers) |
 | Regular key input | Forward to focused pane PTY |
 
 ### Font size
@@ -253,8 +317,18 @@ nexterm-client-tui
 | Left click | Move focus to clicked pane |
 | Left drag | Select text (blue highlight), auto-copy to clipboard on release |
 | `Ctrl` + Left click | Open URL under cursor in browser |
+| Right click | Show context menu (Copy/Paste/Split/Close) |
 | Wheel up | Scroll up in scrollback (3 lines) |
 | Wheel down | Scroll down in scrollback (3 lines) |
+
+### Display Panes mode
+
+| Key | Action |
+|-----|--------|
+| Digit key (0-9) | Jump to pane with that number |
+| Arrow keys | Navigate between panes (preview mode) |
+| `Enter` | Confirm pane selection |
+| `Escape` | Exit display-panes mode |
 
 ### Pane operations (via server protocol)
 
@@ -275,26 +349,27 @@ nexterm-client-tui
 
 ## nexterm-ctl
 
-Session management CLI (requires server to be running).
+Session and configuration management CLI (requires server to be running for most commands).
 
 ```bash
-# List all sessions
-nexterm-ctl list
+# Session management
+nexterm-ctl list                           # List all sessions
+nexterm-ctl new work                       # Create a new session named 'work'
+nexterm-ctl attach work                    # Show how to attach to session 'work'
+nexterm-ctl kill work                      # Kill session 'work'
 
-# Create a new session named 'work'
-nexterm-ctl new work
+# Recording (raw PTY output)
+nexterm-ctl record start work output.log   # Start recording to file
+nexterm-ctl record stop work               # Stop recording
 
-# Show how to attach to session 'work'
-nexterm-ctl attach work
+# Recording (asciinema v2 format)
+nexterm-ctl record start-cast work cast.cast   # Start recording in asciicast v2 format
+nexterm-ctl record stop-cast work             # Stop asciicast recording
 
-# Kill session 'work'
-nexterm-ctl kill work
-
-# Start recording PTY output to a file
-nexterm-ctl record start work output.log
-
-# Stop recording
-nexterm-ctl record stop work
+# Theme import
+nexterm-ctl theme import ~/.iTerm2/colorscheme.itermcolors
+nexterm-ctl theme import ~/.config/alacritty/color.yaml
+nexterm-ctl theme import ~/.config/base16.toml
 ```
 
 ### Language override
