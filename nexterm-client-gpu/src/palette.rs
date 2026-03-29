@@ -54,6 +54,10 @@ impl CommandPalette {
                 label: fl!("palette-search-scrollback"),
                 action: "SearchScrollback".to_string(),
             },
+            PaletteAction {
+                label: fl!("palette-display-panes"),
+                action: "DisplayPanes".to_string(),
+            },
         ];
 
         Self {

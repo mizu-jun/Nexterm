@@ -220,6 +220,14 @@ pub struct HostConfig {
     pub auth_type: String,
     /// 秘密鍵ファイルパス（auth_type = "key" の場合）
     pub key_path: Option<String>,
+    /// ローカルポートフォワーディング設定（例: "8080:localhost:80"）
+    #[serde(default)]
+    pub forward_local: Vec<String>,
+    /// リモートポートフォワーディング設定（例: "9090:localhost:9090"）
+    #[serde(default)]
+    pub forward_remote: Vec<String>,
+    /// ProxyJump ホスト名（hosts に登録されたエントリ名）
+    pub proxy_jump: Option<String>,
 }
 
 fn default_ssh_port() -> u16 {

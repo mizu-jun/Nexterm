@@ -103,6 +103,10 @@ impl ClientState {
             ServerToClient::WindowListChanged { .. } | ServerToClient::PaneClosed { .. } => {}
             // タイトル変更・デスクトップ通知は TUI では無視する
             ServerToClient::TitleChanged { .. } | ServerToClient::DesktopNotification { .. } => {}
+            // ブロードキャストモード変更は TUI では無視する
+            ServerToClient::BroadcastModeChanged { .. } => {}
+            // asciicast 録音状態通知は TUI では無視する
+            ServerToClient::AsciicastStarted { .. } | ServerToClient::AsciicastStopped { .. } => {}
         }
     }
 

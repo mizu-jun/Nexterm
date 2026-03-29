@@ -115,6 +115,12 @@ pub enum ClientToServer {
     RenameWindow { window_id: u32, name: String },
     /// ブロードキャストモードを設定する（true: 全ペインに入力、false: フォーカスペインのみ）
     SetBroadcast { enabled: bool },
+    /// ペイン番号オーバーレイを表示/非表示
+    DisplayPanes { show: bool },
+    /// asciicast v2 形式での録画を開始する
+    StartAsciicast { session_name: String, output_path: String },
+    /// asciicast v2 形式での録画を停止する
+    StopAsciicast { session_name: String },
 }
 
 /// ペインのレイアウト情報（グリッド座標系）
@@ -192,6 +198,12 @@ pub enum ServerToClient {
     TitleChanged { pane_id: u32, title: String },
     /// デスクトップ通知
     DesktopNotification { pane_id: u32, title: String, body: String },
+    /// ブロードキャストモード状態通知
+    BroadcastModeChanged { enabled: bool },
+    /// asciicast v2 録画開始通知
+    AsciicastStarted { pane_id: u32, path: String },
+    /// asciicast v2 録画停止通知
+    AsciicastStopped { pane_id: u32 },
 }
 
 /// セッション情報

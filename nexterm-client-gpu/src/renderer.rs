@@ -18,13 +18,17 @@ use tracing::{debug, info, warn};
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalSize,
-    event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, StartCause, WindowEvent},
+    event::{ElementState, Ime, KeyEvent, MouseButton, MouseScrollDelta, StartCause, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow},
     keyboard::{KeyCode as WKeyCode, ModifiersState, PhysicalKey},
     window::{Window, WindowId},
 };
 
-use crate::{connection::Connection, font::FontManager, state::ClientState};
+use crate::{
+    connection::Connection,
+    font::FontManager,
+    state::{ClientState, ContextMenu, ContextMenuAction},
+};
 
 // ---- 頂点型 ----
 
@@ -548,6 +552,43 @@ impl WgpuState {
             }
         }
 
+        // ---- ペイン番号オーバーレイ（display_panes_mode 有効時） ----
+        if state.display_panes_mode {
+            let mut sorted_pane_ids: Vec<u32> = state.pane_layouts.keys().copied().collect();
+            sorted_pane_ids.sort();
+            for (number, pane_id) in sorted_pane_ids.iter().enumerate() {
+                if let Some(layout) = state.pane_layouts.get(pane_id) {
+                    let px = layout.col_offset as f32 * cell_w;
+                    let py = layout.row_offset as f32 * cell_h;
+                    let badge_w = cell_w * 2.0;
+                    let badge_h = cell_h;
+                    // 黄色背景バッジ
+                    add_px_rect(px, py, badge_w, badge_h, [0.9, 0.75, 0.0, 0.90], sw, sh, &mut bg_verts, &mut bg_idx);
+                    // ペイン番号テキスト（1 始まり）
+                    let label = (number + 1).to_string();
+                    add_string_verts(
+                        &label, px + 2.0, py,
+                        [0.0, 0.0, 0.0, 1.0], true,
+                        sw, sh, cell_w, font, atlas, &self.queue,
+                        &mut text_verts, &mut text_idx,
+                    );
+                }
+            }
+            // レイアウト情報がない場合（フォールバック: フォーカスペインのみ）
+            if state.pane_layouts.is_empty() {
+                if let Some(focused_id) = state.focused_pane_id {
+                    add_px_rect(0.0, 0.0, cell_w * 2.0, cell_h, [0.9, 0.75, 0.0, 0.90], sw, sh, &mut bg_verts, &mut bg_idx);
+                    let label = focused_id.to_string();
+                    add_string_verts(
+                        &label, 2.0, 0.0,
+                        [0.0, 0.0, 0.0, 1.0], true,
+                        sw, sh, cell_w, font, atlas, &self.queue,
+                        &mut text_verts, &mut text_idx,
+                    );
+                }
+            }
+        }
+
         // ---- タブバー（設定で有効な場合）----
         if tab_bar_cfg.enabled {
             self.build_tab_bar_verts(
@@ -576,6 +617,34 @@ impl WgpuState {
                 state, sw, sh, cell_w, cell_h, font, atlas,
                 &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
             );
+        }
+
+        // ---- コンテキストメニュー（右クリック時） ----
+        if let Some(ref menu) = state.context_menu {
+            self.build_context_menu_verts(
+                menu, sw, sh, cell_w, cell_h, font, atlas,
+                &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
+            );
+        }
+
+        // ---- IME プリエディットオーバーレイ（変換中テキスト） ----
+        if let Some(ref preedit) = state.ime_preedit {
+            if let Some(pane) = state.focused_pane() {
+                let px = pane.cursor_col as f32 * cell_w;
+                let py = (pane.cursor_row + 1) as f32 * cell_h;
+                // プリエディット背景（やや明るいグレー）
+                let text_width = preedit.chars().count() as f32 * cell_w;
+                add_px_rect(px, py, text_width.max(cell_w), cell_h, [0.25, 0.25, 0.30, 0.90], sw, sh, &mut bg_verts, &mut bg_idx);
+                // アンダーライン（黄色）
+                add_px_rect(px, py + cell_h - 2.0, text_width.max(cell_w), 2.0, [1.0, 0.85, 0.2, 1.0], sw, sh, &mut bg_verts, &mut bg_idx);
+                // プリエディットテキスト
+                add_string_verts(
+                    preedit, px, py,
+                    [1.0, 1.0, 0.6, 1.0], false,
+                    sw, sh, cell_w, font, atlas, &self.queue,
+                    &mut text_verts, &mut text_idx,
+                );
+            }
         }
 
         // ---- GPU バッファへアップロード ----
@@ -1180,6 +1249,40 @@ impl WgpuState {
         }
     }
 
+    /// コンテキストメニュー頂点を構築する（右クリック時のポップアップ）
+    #[allow(clippy::too_many_arguments)]
+    fn build_context_menu_verts(
+        &self,
+        menu: &ContextMenu,
+        sw: f32, sh: f32, cell_w: f32, cell_h: f32,
+        font: &mut FontManager,
+        atlas: &mut GlyphAtlas,
+        bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
+    ) {
+        let menu_w = 8.0 * cell_w;
+        let menu_h = menu.items.len() as f32 * cell_h;
+
+        // メニュー全体の背景（濃いグレー、半透明）
+        add_px_rect(menu.x, menu.y, menu_w, menu_h, [0.15, 0.15, 0.18, 0.95], sw, sh, bg_verts, bg_idx);
+        // 上端のアクセント線
+        add_px_rect(menu.x, menu.y, menu_w, 2.0, [0.4, 0.6, 1.0, 1.0], sw, sh, bg_verts, bg_idx);
+
+        for (i, item) in menu.items.iter().enumerate() {
+            let item_y = menu.y + i as f32 * cell_h;
+            // 項目区切り線（最初以外）
+            if i > 0 {
+                add_px_rect(menu.x, item_y, menu_w, 1.0, [0.30, 0.30, 0.35, 1.0], sw, sh, bg_verts, bg_idx);
+            }
+            add_string_verts(
+                &item.label, menu.x + cell_w * 0.5, item_y,
+                [0.9, 0.9, 0.9, 1.0], false,
+                sw, sh, cell_w, font, atlas, &self.queue,
+                text_verts, text_idx,
+            );
+        }
+    }
+
     /// 画像テクスチャをキャッシュに登録する（初回のみ作成）
     fn ensure_image_texture(&mut self, id: u32, img: &crate::state::PlacedImage) {
         if self.image_textures.contains_key(&id) {
@@ -1491,6 +1594,9 @@ impl ApplicationHandler for EventHandler {
 
         let window = Arc::new(event_loop.create_window(attrs).expect("Failed to create window"));
 
+        // IME 入力を有効にする
+        window.set_ime_allowed(true);
+
         // wgpu を非同期で初期化する（tokio runtime が必要）
         let wgpu_state = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current()
@@ -1637,6 +1743,21 @@ impl ApplicationHandler for EventHandler {
                 }
             }
 
+            // 右ボタン押下: コンテキストメニューを開く
+            WindowEvent::MouseInput {
+                button: MouseButton::Right,
+                state: ElementState::Pressed,
+                ..
+            } => {
+                if let Some((px, py)) = self.cursor_position {
+                    self.app.state.context_menu =
+                        Some(ContextMenu::new_default(px as f32, py as f32));
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                }
+            }
+
             // 左ボタン押下: 選択開始
             WindowEvent::MouseInput {
                 button: MouseButton::Left,
@@ -1658,6 +1779,30 @@ impl ApplicationHandler for EventHandler {
                 state: ElementState::Released,
                 ..
             } => {
+                // コンテキストメニューが開いている場合はクリックで処理する
+                if let Some((px, py)) = self.cursor_position {
+                    if let Some(menu) = self.app.state.context_menu.take() {
+                        let cell_w = self.app.font.cell_width() as f32;
+                        let cell_h = self.app.font.cell_height() as f32;
+                        let menu_w = 8.0 * cell_w;
+                        let fx = px as f32;
+                        let fy = py as f32;
+                        if fx >= menu.x && fx <= menu.x + menu_w {
+                            for (i, item) in menu.items.iter().enumerate() {
+                                let item_y = menu.y + i as f32 * cell_h;
+                                if fy >= item_y && fy < item_y + cell_h {
+                                    self.execute_context_menu_action(&item.action);
+                                    break;
+                                }
+                            }
+                        }
+                        if let Some(w) = &self.window {
+                            w.request_redraw();
+                        }
+                        return;
+                    }
+                }
+
                 if let Some((px, py)) = self.cursor_position {
                     let cell_w = self.app.font.cell_width() as f64;
                     let cell_h = self.app.font.cell_height() as f64;
@@ -1793,6 +1938,52 @@ impl ApplicationHandler for EventHandler {
                 // ローカルで消費されなかった場合はサーバーへ転送する
                 if !consumed {
                     self.forward_key_to_server(physical_key, text.as_deref());
+                }
+            }
+
+            // IME イベントを処理する（日本語・中国語などの入力に対応）
+            WindowEvent::Ime(ime_event) => {
+                match ime_event {
+                    Ime::Enabled => {
+                        // IME が有効になった（特別な処理は不要）
+                    }
+                    Ime::Preedit(text, _cursor_range) => {
+                        // 変換中テキストを state に保存して再描画する
+                        if text.is_empty() {
+                            self.app.state.ime_preedit = None;
+                        } else {
+                            self.app.state.ime_preedit = Some(text);
+                        }
+                        if let Some(w) = &self.window {
+                            w.request_redraw();
+                        }
+                    }
+                    Ime::Commit(text) => {
+                        // 確定テキストをプリエディットクリア + PTY 送信
+                        self.app.state.ime_preedit = None;
+                        if let Some(conn) = &self.connection {
+                            let _ = conn.send_tx.try_send(ClientToServer::PasteText { text });
+                        }
+                        if let Some(w) = &self.window {
+                            w.request_redraw();
+                        }
+                    }
+                    Ime::Disabled => {
+                        self.app.state.ime_preedit = None;
+                    }
+                }
+                // IME カーソルエリアをフォーカスペインのカーソル位置に更新する
+                if let Some(pane) = self.app.state.focused_pane() {
+                    let cell_w = self.app.font.cell_width();
+                    let cell_h = self.app.font.cell_height();
+                    let ime_x = pane.cursor_col as f32 * cell_w;
+                    let ime_y = (pane.cursor_row + 1) as f32 * cell_h;
+                    if let Some(w) = &self.window {
+                        w.set_ime_cursor_area(
+                            winit::dpi::PhysicalPosition::new(ime_x as i32, ime_y as i32),
+                            winit::dpi::PhysicalSize::new(cell_w as u32, cell_h as u32),
+                        );
+                    }
                 }
             }
 
@@ -1951,6 +2142,11 @@ impl EventHandler {
             return true;
         }
 
+        // 設定ファイルのカスタムキーバインドをチェックする
+        if self.check_config_keybindings(code, event_loop) {
+            return true;
+        }
+
         false
     }
 
@@ -2080,8 +2276,110 @@ impl EventHandler {
         match action {
             "Quit" => event_loop.exit(),
             "SearchScrollback" => self.app.state.start_search(),
+            "SplitVertical" => {
+                if let Some(conn) = &self.connection {
+                    let _ = conn.send_tx.try_send(ClientToServer::SplitVertical);
+                }
+            }
+            "SplitHorizontal" => {
+                if let Some(conn) = &self.connection {
+                    let _ = conn.send_tx.try_send(ClientToServer::SplitHorizontal);
+                }
+            }
+            "FocusNextPane" => {
+                if let Some(conn) = &self.connection {
+                    let _ = conn.send_tx.try_send(ClientToServer::FocusNextPane);
+                }
+            }
+            "FocusPrevPane" => {
+                if let Some(conn) = &self.connection {
+                    let _ = conn.send_tx.try_send(ClientToServer::FocusPrevPane);
+                }
+            }
+            "ClosePane" => {
+                if let Some(conn) = &self.connection {
+                    let _ = conn.send_tx.try_send(ClientToServer::ClosePane);
+                }
+            }
+            "NewWindow" => {
+                if let Some(conn) = &self.connection {
+                    let _ = conn.send_tx.try_send(ClientToServer::NewWindow);
+                }
+            }
+            "Detach" => {
+                if let Some(conn) = &self.connection {
+                    let _ = conn.send_tx.try_send(ClientToServer::Detach);
+                }
+            }
+            "CommandPalette" => {
+                self.app.state.toggle_palette();
+            }
+            "SetBroadcastOn" => {
+                if let Some(conn) = &self.connection {
+                    let _ = conn.send_tx.try_send(ClientToServer::SetBroadcast { enabled: true });
+                }
+            }
+            "SetBroadcastOff" => {
+                if let Some(conn) = &self.connection {
+                    let _ = conn.send_tx.try_send(ClientToServer::SetBroadcast { enabled: false });
+                }
+            }
             _ => debug!("Execute action: {}", action),
         }
+    }
+
+    /// コンテキストメニューのアクションを実行する
+    fn execute_context_menu_action(&mut self, action: &ContextMenuAction) {
+        match action {
+            ContextMenuAction::Copy => {
+                // フォーカスペインの可視グリッドをクリップボードにコピーする
+                if let Some(pane) = self.app.state.focused_pane() {
+                    let text = grid_to_text(pane);
+                    if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                        let _ = clipboard.set_text(text);
+                    }
+                }
+            }
+            ContextMenuAction::Paste => {
+                if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                    if let Ok(text) = clipboard.get_text() {
+                        if let Some(conn) = &self.connection {
+                            let _ = conn.send_tx.try_send(ClientToServer::PasteText { text });
+                        }
+                    }
+                }
+            }
+            ContextMenuAction::SplitVertical => {
+                if let Some(conn) = &self.connection {
+                    let _ = conn.send_tx.try_send(ClientToServer::SplitVertical);
+                }
+            }
+            ContextMenuAction::SplitHorizontal => {
+                if let Some(conn) = &self.connection {
+                    let _ = conn.send_tx.try_send(ClientToServer::SplitHorizontal);
+                }
+            }
+            ContextMenuAction::ClosePane => {
+                if let Some(conn) = &self.connection {
+                    let _ = conn.send_tx.try_send(ClientToServer::ClosePane);
+                }
+            }
+        }
+    }
+
+    /// 設定のキーバインド一覧から一致するものを探してアクションを実行する
+    /// 消費した場合は true を返す
+    fn check_config_keybindings(&mut self, code: WKeyCode, event_loop: &ActiveEventLoop) -> bool {
+        // config.keys を走査してマッチするバインドを探す
+        let bindings = self.app.config.keys.clone();
+        for binding in &bindings {
+            if config_key_matches(&binding.key, code, self.modifiers) {
+                let action = binding.action.clone();
+                self.execute_action(&action, event_loop);
+                return true;
+            }
+        }
+        false
     }
 
     /// キー入力をサーバーの PTY に転送する
@@ -2357,6 +2655,142 @@ fn add_string_verts(
             ch, px + i as f32 * cell_w, py, fg, bold,
             sw, sh, font, atlas, queue, text_verts, text_idx,
         );
+    }
+}
+
+/// 設定キー文字列（例: "ctrl+shift+p", "ctrl+b d"）と winit キーイベントを照合する
+///
+/// フォーマット: 修飾キー（ctrl/shift/alt/meta）と最終キー文字を `+` で区切る。
+/// スペース区切りのプレフィックス（tmux 風: "ctrl+b d"）は先頭の修飾シーケンス + 末尾の単一文字として扱う。
+fn config_key_matches(key_str: &str, code: WKeyCode, mods: ModifiersState) -> bool {
+    // スペース区切りで最後のトークンをメインキーとして扱う（tmux プレフィックス互換は未実装 → 最後トークンのみ比較）
+    let last_token = key_str.split_whitespace().last().unwrap_or(key_str);
+
+    // `+` で分割して修飾キーとメインキーを取得する
+    let parts: Vec<&str> = last_token.split('+').collect();
+    if parts.is_empty() {
+        return false;
+    }
+
+    let mut need_ctrl = false;
+    let mut need_shift = false;
+    let mut need_alt = false;
+    let mut need_meta = false;
+    let main_key = parts.last().unwrap();
+
+    for part in &parts[..parts.len() - 1] {
+        match part.to_lowercase().as_str() {
+            "ctrl" | "control" => need_ctrl = true,
+            "shift" => need_shift = true,
+            "alt" | "option" => need_alt = true,
+            "meta" | "super" | "cmd" | "command" => need_meta = true,
+            _ => {}
+        }
+    }
+
+    // 修飾キーが一致しなければ false
+    if need_ctrl != mods.control_key() { return false; }
+    if need_shift != mods.shift_key() { return false; }
+    if need_alt != mods.alt_key() { return false; }
+    if need_meta != mods.super_key() { return false; }
+
+    // メインキー文字列を winit KeyCode に変換して比較する
+    key_str_to_keycode(main_key) == Some(code)
+}
+
+/// キー文字列を winit の KeyCode に変換する（簡易実装）
+fn key_str_to_keycode(s: &str) -> Option<WKeyCode> {
+    // 1 文字の場合は英数字として処理する
+    if s.len() == 1 {
+        let ch = s.chars().next().unwrap();
+        return char_to_keycode(ch);
+    }
+    // 特殊キー名
+    match s.to_lowercase().as_str() {
+        "enter" | "return" => Some(WKeyCode::Enter),
+        "backspace" => Some(WKeyCode::Backspace),
+        "delete" | "del" => Some(WKeyCode::Delete),
+        "escape" | "esc" => Some(WKeyCode::Escape),
+        "tab" => Some(WKeyCode::Tab),
+        "space" => Some(WKeyCode::Space),
+        "up" => Some(WKeyCode::ArrowUp),
+        "down" => Some(WKeyCode::ArrowDown),
+        "left" => Some(WKeyCode::ArrowLeft),
+        "right" => Some(WKeyCode::ArrowRight),
+        "home" => Some(WKeyCode::Home),
+        "end" => Some(WKeyCode::End),
+        "pageup" => Some(WKeyCode::PageUp),
+        "pagedown" => Some(WKeyCode::PageDown),
+        "insert" => Some(WKeyCode::Insert),
+        "f1" => Some(WKeyCode::F1),
+        "f2" => Some(WKeyCode::F2),
+        "f3" => Some(WKeyCode::F3),
+        "f4" => Some(WKeyCode::F4),
+        "f5" => Some(WKeyCode::F5),
+        "f6" => Some(WKeyCode::F6),
+        "f7" => Some(WKeyCode::F7),
+        "f8" => Some(WKeyCode::F8),
+        "f9" => Some(WKeyCode::F9),
+        "f10" => Some(WKeyCode::F10),
+        "f11" => Some(WKeyCode::F11),
+        "f12" => Some(WKeyCode::F12),
+        _ => None,
+    }
+}
+
+/// 1文字を winit の KeyCode に変換する
+fn char_to_keycode(ch: char) -> Option<WKeyCode> {
+    match ch {
+        'a' | 'A' => Some(WKeyCode::KeyA),
+        'b' | 'B' => Some(WKeyCode::KeyB),
+        'c' | 'C' => Some(WKeyCode::KeyC),
+        'd' | 'D' => Some(WKeyCode::KeyD),
+        'e' | 'E' => Some(WKeyCode::KeyE),
+        'f' | 'F' => Some(WKeyCode::KeyF),
+        'g' | 'G' => Some(WKeyCode::KeyG),
+        'h' | 'H' => Some(WKeyCode::KeyH),
+        'i' | 'I' => Some(WKeyCode::KeyI),
+        'j' | 'J' => Some(WKeyCode::KeyJ),
+        'k' | 'K' => Some(WKeyCode::KeyK),
+        'l' | 'L' => Some(WKeyCode::KeyL),
+        'm' | 'M' => Some(WKeyCode::KeyM),
+        'n' | 'N' => Some(WKeyCode::KeyN),
+        'o' | 'O' => Some(WKeyCode::KeyO),
+        'p' | 'P' => Some(WKeyCode::KeyP),
+        'q' | 'Q' => Some(WKeyCode::KeyQ),
+        'r' | 'R' => Some(WKeyCode::KeyR),
+        's' | 'S' => Some(WKeyCode::KeyS),
+        't' | 'T' => Some(WKeyCode::KeyT),
+        'u' | 'U' => Some(WKeyCode::KeyU),
+        'v' | 'V' => Some(WKeyCode::KeyV),
+        'w' | 'W' => Some(WKeyCode::KeyW),
+        'x' | 'X' => Some(WKeyCode::KeyX),
+        'y' | 'Y' => Some(WKeyCode::KeyY),
+        'z' | 'Z' => Some(WKeyCode::KeyZ),
+        '0' => Some(WKeyCode::Digit0),
+        '1' => Some(WKeyCode::Digit1),
+        '2' => Some(WKeyCode::Digit2),
+        '3' => Some(WKeyCode::Digit3),
+        '4' => Some(WKeyCode::Digit4),
+        '5' => Some(WKeyCode::Digit5),
+        '6' => Some(WKeyCode::Digit6),
+        '7' => Some(WKeyCode::Digit7),
+        '8' => Some(WKeyCode::Digit8),
+        '9' => Some(WKeyCode::Digit9),
+        '%' => Some(WKeyCode::Digit5),    // Shift+5 = %
+        '"' => Some(WKeyCode::Quote),
+        '\'' => Some(WKeyCode::Quote),
+        '[' => Some(WKeyCode::BracketLeft),
+        ']' => Some(WKeyCode::BracketRight),
+        '\\' => Some(WKeyCode::Backslash),
+        '/' => Some(WKeyCode::Slash),
+        '-' => Some(WKeyCode::Minus),
+        '=' => Some(WKeyCode::Equal),
+        ',' => Some(WKeyCode::Comma),
+        '.' => Some(WKeyCode::Period),
+        ';' => Some(WKeyCode::Semicolon),
+        '`' => Some(WKeyCode::Backquote),
+        _ => None,
     }
 }
 

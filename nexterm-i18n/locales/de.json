@@ -35,6 +35,7 @@
   "palette-focus-prev": "Vorheriger Bereich",
   "palette-detach": "Trennen",
   "palette-search-scrollback": "Verlauf durchsuchen",
+  "palette-display-panes": "Bereichsnummern anzeigen",
 
   "gpu-adapter-not-found": "Kein wgpu-Adapter gefunden. Bitte überprüfen Sie Ihre GPU-Treiber.",
   "gpu-window-create-failed": "Fenster konnte nicht erstellt werden",

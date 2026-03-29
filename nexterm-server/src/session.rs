@@ -33,8 +33,8 @@ pub struct Session {
     windows: HashMap<u32, Window>,
     /// 現在フォーカス中のウィンドウ ID
     focused_window_id: u32,
-    /// クライアントへの送信チャネル（アタッチ中は Some）
-    pub client_tx: Option<mpsc::Sender<ServerToClient>>,
+    /// アタッチ中のクライアント送信チャネル一覧（複数クライアント同時接続対応）
+    pub client_txs: Vec<mpsc::Sender<ServerToClient>>,
     /// デフォルトシェル
     shell: String,
     /// デフォルト端末サイズ
@@ -62,7 +62,7 @@ impl Session {
             name,
             windows,
             focused_window_id: window_id,
-            client_tx: Some(tx),
+            client_txs: vec![tx],
             shell,
             cols,
             rows,
@@ -75,7 +75,7 @@ impl Session {
         SessionInfo {
             name: self.name.clone(),
             window_count: self.windows.len() as u32,
-            attached: self.client_tx.is_some(),
+            attached: !self.client_txs.is_empty(),
         }
     }
 
@@ -89,23 +89,65 @@ impl Session {
         self.windows.get_mut(&self.focused_window_id)
     }
 
-    /// クライアントをアタッチする（再接続）
+    /// クライアントをアタッチする（新規または再接続）
+    ///
+    /// 複数クライアントの同時接続に対応する。PTY 出力はファンアウト TX を通じて
+    /// 全クライアントにブロードキャストされる。
     pub fn attach(&mut self, tx: mpsc::Sender<ServerToClient>) {
-        // 全ウィンドウの全ペインの PTY 出力チャネルを新しいクライアントへ向ける
+        self.client_txs.push(tx);
+        // ファンアウト TX を再構築して全ペインに設定する
+        let fanout_tx = self.build_fanout_tx();
         for window in self.windows.values() {
-            window.update_tx_for_all(&tx);
+            window.update_tx_for_all(&fanout_tx);
         }
-        self.client_tx = Some(tx);
     }
 
-    /// クライアントをデタッチする
-    pub fn detach(&mut self) {
-        self.client_tx = None;
+    /// 指定の TX を持つクライアントをデタッチする（切断時に使用）
+    pub fn detach_one(&mut self, tx: &mpsc::Sender<ServerToClient>) {
+        // 送信先アドレスで比較して該当 TX を削除する
+        self.client_txs.retain(|t| !t.same_channel(tx));
+        // ファンアウト TX を再構築する
+        if !self.client_txs.is_empty() {
+            let fanout_tx = self.build_fanout_tx();
+            for window in self.windows.values() {
+                window.update_tx_for_all(&fanout_tx);
+            }
+        }
+    }
+
+    /// 全クライアントをデタッチする（セッション停止など）
+    pub fn detach_all(&mut self) {
+        self.client_txs.clear();
     }
 
     /// アタッチ中かどうかを返す
     pub fn is_attached(&self) -> bool {
-        self.client_tx.is_some()
+        !self.client_txs.is_empty()
+    }
+
+    /// 全クライアントへのブロードキャスト用ファンアウト TX を構築する
+    ///
+    /// 新しい mpsc チャネルを生成し、受信タスクが全 client_txs にメッセージを転送する。
+    fn build_fanout_tx(&self) -> mpsc::Sender<ServerToClient> {
+        let txs: Vec<mpsc::Sender<ServerToClient>> = self.client_txs.clone();
+        let (fanout_tx, mut fanout_rx) = mpsc::channel::<ServerToClient>(256);
+        tokio::spawn(async move {
+            while let Some(msg) = fanout_rx.recv().await {
+                for t in &txs {
+                    // クローズされたチャネルへの送信エラーは無視する
+                    let _ = t.try_send(msg.clone());
+                }
+            }
+        });
+        fanout_tx
+    }
+
+    /// 先頭クライアントの TX を返す（SplitVertical 等のペイン追加用）
+    ///
+    /// クライアントが未接続の場合は None を返す。
+    /// ペイン追加後は build_fanout_tx で再ブロードキャスト設定を行うこと。
+    pub fn first_client_tx(&self) -> Option<&mpsc::Sender<ServerToClient>> {
+        self.client_txs.first()
     }
 
     /// デフォルトシェルを返す
@@ -260,7 +302,7 @@ impl Session {
             name: snap.name.clone(),
             windows,
             focused_window_id: snap.focused_window_id,
-            client_tx: None,
+            client_txs: Vec::new(),
             shell: snap.shell.clone(),
             cols: snap.cols,
             rows: snap.rows,
@@ -382,6 +424,32 @@ impl SessionManager {
             .focused_window()
             .ok_or_else(|| anyhow::anyhow!("ウィンドウが見つかりません"))?;
         let pane_id = window.stop_recording()?;
+        Ok(pane_id)
+    }
+
+    /// セッションのフォーカスペインで asciicast 録画を開始する
+    pub async fn start_asciicast(&self, name: &str, path: &str) -> Result<u32> {
+        let sessions = self.sessions.lock().await;
+        let session = sessions
+            .get(name)
+            .ok_or_else(|| anyhow::anyhow!("セッション '{}' が見つかりません", name))?;
+        let window = session
+            .focused_window()
+            .ok_or_else(|| anyhow::anyhow!("ウィンドウが見つかりません"))?;
+        let pane_id = window.start_asciicast(path)?;
+        Ok(pane_id)
+    }
+
+    /// セッションのフォーカスペインで asciicast 録画を停止する
+    pub async fn stop_asciicast(&self, name: &str) -> Result<u32> {
+        let sessions = self.sessions.lock().await;
+        let session = sessions
+            .get(name)
+            .ok_or_else(|| anyhow::anyhow!("セッション '{}' が見つかりません", name))?;
+        let window = session
+            .focused_window()
+            .ok_or_else(|| anyhow::anyhow!("ウィンドウが見つかりません"))?;
+        let pane_id = window.stop_asciicast()?;
         Ok(pane_id)
     }
 

@@ -35,6 +35,7 @@
   "palette-focus-prev": "Volet précédent",
   "palette-detach": "Déconnecter",
   "palette-search-scrollback": "Rechercher dans l'historique",
+  "palette-display-panes": "Afficher les numéros de volet",
 
   "gpu-adapter-not-found": "Aucun adaptateur wgpu trouvé. Vérifiez vos pilotes GPU.",
   "gpu-window-create-failed": "Échec de la création de la fenêtre",

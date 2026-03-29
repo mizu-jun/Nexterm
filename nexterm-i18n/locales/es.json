@@ -35,6 +35,7 @@
   "palette-focus-prev": "Panel anterior",
   "palette-detach": "Desconectar",
   "palette-search-scrollback": "Buscar en el historial",
+  "palette-display-panes": "Mostrar números de panel",
 
   "gpu-adapter-not-found": "No se encontró ningún adaptador wgpu. Compruebe los controladores de su GPU.",
   "gpu-window-create-failed": "Error al crear la ventana",

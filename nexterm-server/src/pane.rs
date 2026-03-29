@@ -6,6 +6,7 @@
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
 use std::path::Path;
+use std::time::Instant;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -28,27 +29,72 @@ struct LogWriterInner {
     strip_ansi: bool,
     /// 行バッファ（改行が来るまで蓄積する）
     line_buf: Vec<u8>,
+    /// ログファイルのパス（ローテーション用）
+    path: String,
+    /// 現在のファイルに書き込んだバイト数
+    written_bytes: u64,
+    /// ローテーション上限バイト数（0 = 無制限）
+    max_bytes: u64,
+    /// 保持する最大ファイル数
+    max_files: u32,
 }
 
 impl LogWriterInner {
-    fn new(file: File, timestamp: bool, strip_ansi: bool) -> Self {
+    fn new(file: File, timestamp: bool, strip_ansi: bool, path: String, max_bytes: u64, max_files: u32) -> Self {
         Self {
             writer: BufWriter::new(file),
             timestamp,
             strip_ansi,
             line_buf: Vec::new(),
+            path,
+            written_bytes: 0,
+            max_bytes,
+            max_files,
         }
+    }
+
+    /// ローテーションが必要かどうかを確認して実行する
+    fn rotate_if_needed(&mut self) -> std::io::Result<()> {
+        if self.max_bytes == 0 || self.written_bytes < self.max_bytes {
+            return Ok(());
+        }
+        // バッファをフラッシュしてからローテーション
+        self.writer.flush()?;
+        // 古いファイルをシフト: .{max_files-1} を削除、.N を .{N+1} にリネーム
+        let path = self.path.clone();
+        let max = self.max_files;
+        // 一番古いファイルを削除
+        let oldest = format!("{}.{}", path, max);
+        let _ = std::fs::remove_file(&oldest);
+        // N-1 → N にシフト
+        for i in (1..max).rev() {
+            let from = format!("{}.{}", path, i);
+            let to = format!("{}.{}", path, i + 1);
+            let _ = std::fs::rename(&from, &to);
+        }
+        // 現在のファイルを .1 にリネーム
+        let _ = std::fs::rename(&path, format!("{}.1", path));
+        // 新しいファイルを作成
+        let new_file = File::create(&path)?;
+        self.writer = BufWriter::new(new_file);
+        self.written_bytes = 0;
+        Ok(())
     }
 
     /// バイト列を書き込む（改行単位でタイムスタンプ付加・ANSI 除去を適用）
     fn write(&mut self, data: &[u8]) -> std::io::Result<()> {
+        // ローテーションが必要か確認する
+        self.rotate_if_needed()?;
+
         if !self.timestamp && !self.strip_ansi {
             // 最適化: 特別な処理なしに直接書き込む
+            self.written_bytes += data.len() as u64;
             return self.writer.write_all(data);
         }
 
         for &byte in data {
             self.line_buf.push(byte);
+            self.written_bytes += 1;
             if byte == b'\n' {
                 self.flush_line()?;
             }
@@ -153,6 +199,48 @@ fn strip_ansi_escapes(input: &[u8]) -> Vec<u8> {
 
 type LogWriter = Arc<Mutex<Option<LogWriterInner>>>;
 
+/// asciicast v2 形式ライター
+pub struct AsciicastWriter {
+    file: BufWriter<File>,
+    started_at: Instant,
+}
+
+impl AsciicastWriter {
+    /// 新しい AsciicastWriter を作成してヘッダー行を書き込む
+    pub fn new(path: &str, cols: u16, rows: u16) -> Result<Self> {
+        let file = File::create(path)?;
+        let mut w = BufWriter::new(file);
+        let unix_start = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        writeln!(
+            w,
+            r#"{{"version":2,"width":{},"height":{},"timestamp":{},"title":"nexterm"}}"#,
+            cols, rows, unix_start
+        )?;
+        Ok(Self { file: w, started_at: Instant::now() })
+    }
+
+    /// PTY 出力データを asciicast イベント行として書き込む
+    pub fn write_output(&mut self, data: &[u8]) -> std::io::Result<()> {
+        let elapsed = self.started_at.elapsed().as_secs_f64();
+        let text = String::from_utf8_lossy(data);
+        // serde_json で JSON 文字列にエスケープする
+        let escaped = serde_json::to_string(&*text)
+            .unwrap_or_else(|_| "\"\"".to_string());
+        writeln!(self.file, "[{:.6},\"o\",{}]", elapsed, escaped)?;
+        Ok(())
+    }
+
+    /// バッファをフラッシュする
+    pub fn flush(&mut self) -> std::io::Result<()> {
+        self.file.flush()
+    }
+}
+
+type AsciicastWriterHandle = Arc<Mutex<Option<AsciicastWriter>>>;
+
 /// ペイン ID を新規発行する
 pub fn new_pane_id() -> u32 {
     NEXT_PANE_ID.fetch_add(1, Ordering::Relaxed)
@@ -184,6 +272,8 @@ pub struct Pane {
     writer: Mutex<Box<dyn Write + Send>>,
     /// ログファイルライター（録音中のみ Some）
     log_writer: LogWriter,
+    /// asciicast v2 ライター（録音中のみ Some）
+    asciicast_writer: AsciicastWriterHandle,
 }
 
 impl Pane {
@@ -261,6 +351,10 @@ impl Pane {
         let log_writer: LogWriter = Arc::new(Mutex::new(None));
         let log_writer_clone = Arc::clone(&log_writer);
 
+        // asciicast ライターを Arc<Mutex> で共有する
+        let asciicast_writer: AsciicastWriterHandle = Arc::new(Mutex::new(None));
+        let asciicast_writer_clone = Arc::clone(&asciicast_writer);
+
         // PTY 読み取りスレッドを起動する
         tokio::task::spawn_blocking(move || {
             let mut parser = VtParser::new(cols, rows);
@@ -281,6 +375,16 @@ impl Pane {
                                 if let Err(e) = w.write(&buf[..n]) {
                                     error!("ログ書き込みエラー: {}", e);
                                     // エラー時は録音を停止する
+                                    *guard = None;
+                                }
+                            }
+                        }
+
+                        // asciicast 録音中であれば書き込む
+                        if let Ok(mut guard) = asciicast_writer_clone.lock() {
+                            if let Some(w) = guard.as_mut() {
+                                if let Err(e) = w.write_output(&buf[..n]) {
+                                    error!("asciicast 書き込みエラー: {}", e);
                                     *guard = None;
                                 }
                             }
@@ -364,6 +468,7 @@ impl Pane {
             master,
             writer,
             log_writer,
+            asciicast_writer,
         })
     }
 
@@ -402,10 +507,25 @@ impl Pane {
         timestamp: bool,
         strip_ansi: bool,
     ) -> Result<()> {
+        self.start_recording_with_rotation(path, timestamp, strip_ansi, 0, 5)
+    }
+
+    /// PTY 出力のファイル録音をローテーション設定付きで開始する
+    ///
+    /// `max_size_mb` が 0 の場合はローテーションしない。`max_files` は保持ファイル数。
+    pub fn start_recording_with_rotation(
+        &self,
+        path: &str,
+        timestamp: bool,
+        strip_ansi: bool,
+        max_size_mb: u64,
+        max_files: u32,
+    ) -> Result<()> {
         let file = File::create(path)?;
+        let max_bytes = max_size_mb.saturating_mul(1024 * 1024);
         let mut guard = self.log_writer.lock()
             .map_err(|e| anyhow::anyhow!("log_writer ロック取得に失敗しました: {}", e))?;
-        *guard = Some(LogWriterInner::new(file, timestamp, strip_ansi));
+        *guard = Some(LogWriterInner::new(file, timestamp, strip_ansi, path.to_string(), max_bytes, max_files));
         info!("ペイン {} の録音を開始しました: {}", self.id, path);
         Ok(())
     }
@@ -419,6 +539,29 @@ impl Pane {
         if let Some(mut w) = guard.take() {
             w.flush()?;
             info!("ペイン {} の録音を停止しました", self.id);
+        }
+        Ok(())
+    }
+
+    /// asciicast v2 形式での録画を開始する
+    pub fn start_asciicast(&self, path: &str) -> Result<()> {
+        let writer = AsciicastWriter::new(path, self.cols, self.rows)?;
+        let mut guard = self.asciicast_writer.lock()
+            .map_err(|e| anyhow::anyhow!("asciicast_writer ロック取得に失敗しました: {}", e))?;
+        *guard = Some(writer);
+        info!("ペイン {} の asciicast 録画を開始しました: {}", self.id, path);
+        Ok(())
+    }
+
+    /// asciicast v2 形式での録画を停止する
+    ///
+    /// バッファをフラッシュしてからファイルを閉じる。
+    pub fn stop_asciicast(&self) -> Result<()> {
+        let mut guard = self.asciicast_writer.lock()
+            .map_err(|e| anyhow::anyhow!("asciicast_writer ロック取得に失敗しました: {}", e))?;
+        if let Some(mut w) = guard.take() {
+            w.flush()?;
+            info!("ペイン {} の asciicast 録画を停止しました", self.id);
         }
         Ok(())
     }

@@ -259,6 +259,55 @@ impl CopyModeState {
     }
 }
 
+/// コンテキストメニューの各項目が実行するアクション
+#[derive(Debug, Clone, PartialEq)]
+pub enum ContextMenuAction {
+    Copy,
+    Paste,
+    SplitVertical,
+    SplitHorizontal,
+    ClosePane,
+}
+
+/// コンテキストメニューの1項目
+#[derive(Debug, Clone)]
+pub struct ContextMenuItem {
+    pub label: String,
+    pub action: ContextMenuAction,
+}
+
+/// 右クリックで表示するコンテキストメニュー
+#[derive(Debug, Clone)]
+pub struct ContextMenu {
+    /// メニューを表示するピクセル座標（左上）
+    pub x: f32,
+    pub y: f32,
+    pub items: Vec<ContextMenuItem>,
+}
+
+impl ContextMenu {
+    /// 標準メニュー項目を持つコンテキストメニューを生成する
+    pub fn new_default(x: f32, y: f32) -> Self {
+        Self {
+            x,
+            y,
+            items: vec![
+                ContextMenuItem { label: "Copy".to_string(), action: ContextMenuAction::Copy },
+                ContextMenuItem { label: "Paste".to_string(), action: ContextMenuAction::Paste },
+                ContextMenuItem {
+                    label: "Split Vertical".to_string(),
+                    action: ContextMenuAction::SplitVertical,
+                },
+                ContextMenuItem {
+                    label: "Split Horizontal".to_string(),
+                    action: ContextMenuAction::SplitHorizontal,
+                },
+                ContextMenuItem { label: "Close Pane".to_string(), action: ContextMenuAction::ClosePane },
+            ],
+        }
+    }
+}
+
 /// GPU クライアント全体の状態
 pub struct ClientState {
     pub panes: HashMap<u32, PaneState>,
@@ -279,6 +328,14 @@ pub struct ClientState {
     pub copy_mode: CopyModeState,
     /// マウスドラッグ選択
     pub mouse_sel: MouseSelection,
+    /// IME 変換中テキスト（プリエディット）
+    pub ime_preedit: Option<String>,
+    /// ブロードキャストモード中か
+    pub broadcast_mode: bool,
+    /// ペイン番号オーバーレイ表示中か
+    pub display_panes_mode: bool,
+    /// 右クリックで開いたコンテキストメニュー（None = 非表示）
+    pub context_menu: Option<ContextMenu>,
 }
 
 impl ClientState {
@@ -296,6 +353,10 @@ impl ClientState {
             pending_bell: false,
             copy_mode: CopyModeState::new(),
             mouse_sel: MouseSelection::new(),
+            ime_preedit: None,
+            broadcast_mode: false,
+            display_panes_mode: false,
+            context_menu: None,
         }
     }
 
@@ -359,6 +420,10 @@ impl ClientState {
             ServerToClient::WindowListChanged { .. } | ServerToClient::PaneClosed { .. } => {}
             // タイトル変更・デスクトップ通知は GPU クライアントでは未実装
             ServerToClient::TitleChanged { .. } | ServerToClient::DesktopNotification { .. } => {}
+            ServerToClient::BroadcastModeChanged { enabled } => {
+                self.broadcast_mode = enabled;
+            }
+            ServerToClient::AsciicastStarted { .. } | ServerToClient::AsciicastStopped { .. } => {}
             ServerToClient::LayoutChanged { panes, focused_pane_id } => {
                 // レイアウトを全更新する
                 self.pane_layouts.clear();
@@ -403,6 +468,15 @@ impl ClientState {
     pub fn focused_pane_mut(&mut self) -> Option<&mut PaneState> {
         self.focused_pane_id
             .and_then(|id| self.panes.get_mut(&id))
+    }
+
+    /// コマンドパレットをトグルする
+    pub fn toggle_palette(&mut self) {
+        if self.palette.is_open {
+            self.palette.close();
+        } else {
+            self.palette.open();
+        }
     }
 
     /// スクロールバック検索を開始する

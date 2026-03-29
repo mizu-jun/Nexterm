@@ -35,6 +35,7 @@
   "palette-focus-prev": "Focus Previous Pane",
   "palette-detach": "Detach",
   "palette-search-scrollback": "Search Scrollback",
+  "palette-display-panes": "Display Pane Numbers",
 
   "gpu-adapter-not-found": "No wgpu adapter found. Please check your GPU drivers.",
   "gpu-window-create-failed": "Failed to create window",

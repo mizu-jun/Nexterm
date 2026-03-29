@@ -465,6 +465,26 @@ impl Window {
         Ok(self.focused_pane_id)
     }
 
+    /// フォーカスペインの asciicast 録画を開始する
+    pub fn start_asciicast(&self, path: &str) -> Result<u32> {
+        let pane = self
+            .panes
+            .get(&self.focused_pane_id)
+            .ok_or_else(|| anyhow::anyhow!("フォーカスペインが見つかりません"))?;
+        pane.start_asciicast(path)?;
+        Ok(self.focused_pane_id)
+    }
+
+    /// フォーカスペインの asciicast 録画を停止する
+    pub fn stop_asciicast(&self) -> Result<u32> {
+        let pane = self
+            .panes
+            .get(&self.focused_pane_id)
+            .ok_or_else(|| anyhow::anyhow!("フォーカスペインが見つかりません"))?;
+        pane.stop_asciicast()?;
+        Ok(self.focused_pane_id)
+    }
+
     // ---- スナップショット ----
 
     /// ウィンドウをスナップショットに変換する

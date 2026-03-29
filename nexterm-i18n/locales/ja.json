@@ -35,6 +35,7 @@
   "palette-focus-prev": "前のペインへ",
   "palette-detach": "デタッチ",
   "palette-search-scrollback": "スクロールバック検索",
+  "palette-display-panes": "ペイン番号を表示",
 
   "gpu-adapter-not-found": "wgpu アダプターが見つかりません。GPU ドライバーを確認してください。",
   "gpu-window-create-failed": "ウィンドウの作成に失敗しました",

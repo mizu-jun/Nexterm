@@ -47,10 +47,25 @@ impl Perform for Screen {
     fn csi_dispatch(
         &mut self,
         params: &vte::Params,
-        _intermediates: &[u8],
+        intermediates: &[u8],
         _ignore: bool,
         action: char,
     ) {
+        // DEC プライベートモード（`?` プレフィックス付き）を処理する
+        if intermediates.first() == Some(&b'?') {
+            match action {
+                'h' => {
+                    self.dec_private_mode(params, true);
+                    return;
+                }
+                'l' => {
+                    self.dec_private_mode(params, false);
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         // パラメータをフラットな Vec<u16> に変換する
         let p: Vec<u16> = params
             .iter()
@@ -176,5 +191,33 @@ impl Perform for Screen {
     /// DCS 終了 — Sixel デコードを確定する
     fn unhook(&mut self) {
         self.finish_sixel();
+    }
+}
+
+impl Screen {
+    /// DEC プライベートモードの設定（`?` プレフィックス付き CSI h / l）
+    fn dec_private_mode(&mut self, params: &vte::Params, enable: bool) {
+        for param in params.iter() {
+            let mode = param.first().copied().unwrap_or(0);
+            match mode {
+                // DEC Private Mode 47 / 1047: 代替画面バッファ（カーソル保存なし）
+                47 | 1047 => {
+                    if enable {
+                        self.switch_to_alt();
+                    } else {
+                        self.switch_to_primary();
+                    }
+                }
+                // DEC Private Mode 1049: 代替画面バッファ（カーソル保存付き）
+                1049 => {
+                    if enable {
+                        self.switch_to_alt();
+                    } else {
+                        self.switch_to_primary();
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 }

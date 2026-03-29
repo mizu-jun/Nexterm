@@ -35,6 +35,7 @@
   "palette-focus-prev": "이전 창",
   "palette-detach": "분리",
   "palette-search-scrollback": "스크롤백 검색",
+  "palette-display-panes": "창 번호 표시",
 
   "gpu-adapter-not-found": "wgpu 어댑터를 찾을 수 없습니다. GPU 드라이버를 확인하세요.",
   "gpu-window-create-failed": "창 생성 실패",

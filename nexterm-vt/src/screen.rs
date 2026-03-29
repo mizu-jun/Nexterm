@@ -15,6 +15,13 @@ pub struct PendingImage {
     pub rgba: Vec<u8>,
 }
 
+/// スクリーンバッファの内容（主画面と代替画面で共有）
+struct ScreenBuffer {
+    rows: Vec<Vec<Cell>>,
+    cursor_col: u16,
+    cursor_row: u16,
+}
+
 /// 仮想スクリーン（PTY 出力を反映する内部状態）
 pub struct Screen {
     /// セル配列と寸法
@@ -52,6 +59,10 @@ pub struct Screen {
     pending_title: Option<String>,
     /// デスクトップ通知（OSC 9 で設定）
     pending_notification: Option<(String, String)>,
+    /// 代替スクリーンバッファ（None = 主画面モード）
+    alt_screen: Option<Box<ScreenBuffer>>,
+    /// 代替画面モード中か
+    pub alt_mode: bool,
 }
 
 impl Screen {
@@ -76,7 +87,49 @@ impl Screen {
             pending_bell: false,
             pending_title: None,
             pending_notification: None,
+            alt_screen: None,
+            alt_mode: false,
         }
+    }
+
+    /// 代替画面バッファに切り替える（SMCUP / DEC Private Mode 47/1047/1049）
+    pub(crate) fn switch_to_alt(&mut self) {
+        if self.alt_mode {
+            return;
+        }
+        // 現在の主画面内容を保存する
+        let saved = ScreenBuffer {
+            rows: self.grid.rows.clone(),
+            cursor_col: self.cursor_col,
+            cursor_row: self.cursor_row,
+        };
+        self.alt_screen = Some(Box::new(saved));
+        // 代替バッファを空白で初期化する
+        let cols = self.grid.width;
+        let rows = self.grid.height;
+        self.grid = Grid::new(cols, rows);
+        self.dirty = vec![true; rows as usize];
+        self.cursor_col = 0;
+        self.cursor_row = 0;
+        self.scroll_top = 0;
+        self.scroll_bottom = rows.saturating_sub(1);
+        self.alt_mode = true;
+    }
+
+    /// 主画面バッファに戻る（RMCUP / DEC Private Mode 47/1047/1049 リセット）
+    pub(crate) fn switch_to_primary(&mut self) {
+        if !self.alt_mode {
+            return;
+        }
+        if let Some(saved) = self.alt_screen.take() {
+            self.grid.rows = saved.rows;
+            self.cursor_col = saved.cursor_col;
+            self.cursor_row = saved.cursor_row;
+            self.dirty = vec![true; self.grid.height as usize];
+        }
+        self.scroll_top = 0;
+        self.scroll_bottom = self.grid.height.saturating_sub(1);
+        self.alt_mode = false;
     }
 
     /// グリッドへの参照を返す

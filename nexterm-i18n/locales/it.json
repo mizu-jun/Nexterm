@@ -35,6 +35,7 @@
   "palette-focus-prev": "Pannello precedente",
   "palette-detach": "Disconnetti",
   "palette-search-scrollback": "Cerca nella cronologia",
+  "palette-display-panes": "Mostra numeri pannello",
 
   "gpu-adapter-not-found": "Nessun adattatore wgpu trovato. Verificare i driver GPU.",
   "gpu-window-create-failed": "Creazione della finestra non riuscita",

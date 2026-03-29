@@ -228,13 +228,13 @@ where
         dispatch(&msg, &manager, tx.clone(), &mut current_session).await;
     }
 
-    // クリーンアップ: セッションをデタッチ
+    // クリーンアップ: 自分の TX だけセッションからデタッチする（他のクライアントは継続）
     if let Some(ref name) = current_session {
         let arc = manager.sessions();
         let mut sessions = arc.lock().await;
         if let Some(session) = sessions.get_mut(name) {
-            session.detach();
-            info!("切断によりセッション '{}' をデタッチしました", name);
+            session.detach_one(&tx);
+            info!("切断によりセッション '{}' から TX をデタッチしました", name);
         }
     }
 
@@ -334,7 +334,7 @@ async fn dispatch(
                 let arc = manager.sessions();
                 let mut sessions = arc.lock().await;
                 if let Some(s) = sessions.get_mut(&name) {
-                    s.detach();
+                    s.detach_all();
                     info!("セッション '{}' をデタッチしました", name);
                 }
             }
@@ -389,7 +389,7 @@ async fn dispatch(
                         let cols = s.cols;
                         let rows = s.rows;
                         let shell = s.shell().to_string();
-                        let pane_tx = s.client_tx.clone();
+                        let pane_tx = s.first_client_tx().cloned();
                         if let Some(pane_tx) = pane_tx {
                             s.focused_window_mut()
                                 .map(|w| w.add_pane(cols, rows, pane_tx, &shell, dir))
@@ -656,7 +656,7 @@ async fn dispatch(
                     let arc = manager.sessions();
                     let mut sessions = arc.lock().await;
                     if let Some(s) = sessions.get_mut(name) {
-                        let pane_tx = s.client_tx.clone();
+                        let pane_tx = s.first_client_tx().cloned();
                         if let Some(pane_tx) = pane_tx {
                             Some(s.add_window(pane_tx).map(|wid| (wid, s.window_list())))
                         } else {
@@ -785,6 +785,48 @@ async fn dispatch(
                 let mut sessions = arc.lock().await;
                 if let Some(s) = sessions.get_mut(name) {
                     s.set_broadcast(*enabled);
+                    let _ = tx.send(ServerToClient::BroadcastModeChanged { enabled: *enabled }).await;
+                }
+            }
+        }
+
+        DisplayPanes { .. } => {
+            // サーバー側での処理は不要（クライアント側のオーバーレイ表示のみ）
+        }
+
+        StartAsciicast { session_name, output_path } => {
+            // セキュリティ: ".." を含むパスを拒否する
+            if let Err(e) = validate_recording_path(output_path) {
+                let _ = tx
+                    .send(ServerToClient::Error { message: e.to_string() })
+                    .await;
+                return;
+            }
+            match manager.start_asciicast(session_name, output_path).await {
+                Ok(pane_id) => {
+                    let _ = tx
+                        .send(ServerToClient::AsciicastStarted { pane_id, path: output_path.to_string() })
+                        .await;
+                }
+                Err(e) => {
+                    let _ = tx
+                        .send(ServerToClient::Error { message: e.to_string() })
+                        .await;
+                }
+            }
+        }
+
+        StopAsciicast { session_name } => {
+            match manager.stop_asciicast(session_name).await {
+                Ok(pane_id) => {
+                    let _ = tx
+                        .send(ServerToClient::AsciicastStopped { pane_id })
+                        .await;
+                }
+                Err(e) => {
+                    let _ = tx
+                        .send(ServerToClient::Error { message: e.to_string() })
+                        .await;
                 }
             }
         }

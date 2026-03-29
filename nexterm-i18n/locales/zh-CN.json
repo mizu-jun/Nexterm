@@ -35,6 +35,7 @@
   "palette-focus-prev": "上一个窗格",
   "palette-detach": "断开连接",
   "palette-search-scrollback": "搜索滚动缓冲区",
+  "palette-display-panes": "显示窗格编号",
 
   "gpu-adapter-not-found": "未找到 wgpu 适配器，请检查您的 GPU 驱动程序。",
   "gpu-window-create-failed": "创建窗口失败",
