@@ -6,6 +6,26 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 
 [![CI](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml/badge.svg)](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml)
 
+## What's New in v0.5.0
+
+**SSH & Connectivity**
+- SSH multi-tab connections — SSH Host Manager (`Ctrl+Shift+H`) now opens each host in a new tab
+- X11 forwarding — `x11_forward = true` / `x11_trusted = true` in `[[hosts]]` (equivalent to `ssh -X` / `ssh -Y`)
+
+**UX**
+- In-app Settings GUI — `Ctrl+,` opens a Font / Colors / Window panel; changes write back to `nexterm.toml` instantly
+- Settings action added to command palette (now 17 actions)
+
+**Web Terminal**
+- Embedded web terminal — enable with `[web] enabled = true`; xterm.js served at `ws://localhost:7681`
+- Token-based auth (`token = "..."` in config), disabled by default
+
+**Package Distribution**
+- Homebrew tap formula (`pkg/homebrew/nexterm.rb`)
+- Scoop bucket manifest (`pkg/scoop/nexterm.json`)
+- winget manifest (`pkg/winget/mizu-jun.Nexterm.yaml`)
+- GitHub Pages documentation site auto-deployed via CI (`mizu-jun.github.io/Nexterm`)
+
 ## What's New in v0.4.0
 
 **SSH & Connectivity**
@@ -74,7 +94,8 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 
 ### SSH & Connectivity
 - **SSH client** — Built-in SSH via russh; password and public-key auth; host registry in TOML
-- **SSH Host Manager** — `Ctrl+Shift+H` opens a fuzzy-searchable host list for one-keystroke connect
+- **SSH Host Manager** — `Ctrl+Shift+H` opens a fuzzy-searchable host list; each host opens in a new tab
+- **X11 forwarding** — `x11_forward = true` (`ssh -X`) and `x11_trusted = true` (`ssh -Y`) per host
 - **SSH agent authentication** — SSH_AUTH_SOCK support for agent-based auth
 - **Known hosts verification** — Host key verification against ~/.ssh/known_hosts (replaces accept-all)
 - **Local port forwarding** — Forward local ports through SSH tunnels
@@ -110,6 +131,7 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 - **Lua status bar** — Evaluate Lua expressions (e.g. `os.date()`) on the status line every second
 - **Lua event hooks** — `on_session_start`, `on_attach`, `on_pane_open` callbacks in `nexterm.lua`
 - **Lua Macro Picker** — Define `[[macros]]` in TOML; `Ctrl+Shift+M` opens fuzzy picker; output piped to pane
+- **Settings GUI** — `Ctrl+,` opens in-app Font / Colors / Window settings panel; writes back to `nexterm.toml`
 - **Font size runtime** — Ctrl+= / Ctrl+- / Ctrl+0 to change font size at runtime
 - **Color scheme import** — `nexterm-ctl theme import` supports iTerm2 .itermcolors, Alacritty YAML, base16 TOML
 - **Custom color scheme** — Define a 16-color palette in TOML via `[colors.custom]`
@@ -133,6 +155,7 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 - **Mouse support** — Click to focus panes, scroll wheel for scrollback; Ctrl+Click to open URLs
 - **Clipboard integration** — Ctrl+Shift+C to copy, Ctrl+Shift+V to paste (arboard)
 - **TUI fallback** — ratatui-based TUI client for environments without GPU support
+- **Web terminal** — Browser-accessible terminal via embedded WebSocket server + xterm.js (`[web] enabled = true`)
 - **Cross-platform** — Linux / macOS / Windows (ConPTY + Named Pipe on Windows)
 - **Localization** — UI in English, French, German, Spanish, Italian, Simplified Chinese, Japanese, Korean
 - **macOS session restore** — CWD preserved on reconnect via `lsof`
@@ -268,6 +291,19 @@ Based on comparison with rlogin, Tera Term, WezTerm, and tmux.
 | W-5 | PowerShell default args (`-NoLogo`) + cmd.exe fallback | ✅ |
 | W-7 | Windows Quick Start documentation | ✅ |
 | W-10 | Snapshot save path unified to `%APPDATA%\nexterm` | ✅ |
+
+### Phase 12: Distribution & extensibility (complete)
+
+| Item | Description | Status |
+|------|-------------|--------|
+| 12-1 | SSH multi-tab connections (HostManager → NewWindow + ConnectSsh) | ✅ |
+| 12-2 | X11 forwarding per host (`x11_forward`, `x11_trusted` in `[[hosts]]`) | ✅ |
+| 12-3 | In-app settings GUI panel (`Ctrl+,`, writes nexterm.toml via toml_edit) | ✅ |
+| 12-4 | Embedded web terminal (axum WebSocket + xterm.js, token auth) | ✅ |
+| 12-5 | Homebrew tap formula | ✅ |
+| 12-6 | Scoop bucket manifest | ✅ |
+| 12-7 | winget manifest | ✅ |
+| 12-8 | GitHub Pages documentation site (mdBook, CI auto-deploy) | ✅ |
 
 **Tests**: 100+ passing
 
@@ -470,6 +506,7 @@ nexterm-client-tui
 
 | Key | Action |
 |-----|--------|
+| `Ctrl+,` | Open settings panel |
 | `Ctrl+Shift+P` | Open / close command palette |
 | `Ctrl+F` | Start scrollback search |
 | `PageUp` | Scroll up in scrollback |
@@ -637,6 +674,7 @@ port = 22
 username = "deploy"
 auth_type = "key"
 key_path = "~/.ssh/id_ed25519"
+x11_forward = false   # true = ssh -X (untrusted), x11_trusted = true = ssh -Y
 
 [[macros]]
 name = "top"
@@ -647,6 +685,11 @@ lua_fn = "macro_top"
 name = "git status"
 description = "Show git status"
 lua_fn = "macro_git_status"
+
+[web]
+enabled = false       # set true to enable browser terminal at ws://localhost:7681
+port = 7681
+# token = "change-me"  # optional; if set, ?token= param is required
 
 [log]
 auto_log = false
