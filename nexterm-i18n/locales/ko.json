@@ -5,7 +5,6 @@
   "ctl-attach-about": "세션 연결 방법 안내",
   "ctl-kill-about": "세션 강제 종료",
   "ctl-arg-name": "세션 이름",
-
   "ctl-no-sessions": "세션이 없습니다.",
   "ctl-list-col-name": "이름",
   "ctl-list-col-windows": "창 수",
@@ -28,7 +27,6 @@
   "ctl-record-arg-file": "출력 파일 경로",
   "ctl-record-started": "녹화 시작됨: 세션 '{session}' 창 {pane_id} → {path}",
   "ctl-record-stopped": "녹화 중지됨: 세션 '{session}' 창 {pane_id}",
-
   "palette-split-vertical": "수직 분할",
   "palette-split-horizontal": "수평 분할",
   "palette-focus-next": "다음 창",
@@ -36,8 +34,16 @@
   "palette-detach": "분리",
   "palette-search-scrollback": "스크롤백 검색",
   "palette-display-panes": "창 번호 표시",
-
   "gpu-adapter-not-found": "wgpu 어댑터를 찾을 수 없습니다. GPU 드라이버를 확인하세요.",
   "gpu-window-create-failed": "창 생성 실패",
-  "gpu-init-failed": "wgpu 초기화 실패"
+  "gpu-init-failed": "wgpu 초기화 실패",
+  "palette-toggle-zoom": "창 확대/축소",
+  "palette-swap-pane-next": "창 교환 (다음)",
+  "palette-swap-pane-prev": "창 교환 (이전)",
+  "palette-break-pane": "창을 새 윈도우로 분리",
+  "palette-connect-serial": "시리얼 포트 연결",
+  "palette-show-host-manager": "SSH 호스트 관리자",
+  "palette-show-macro-picker": "Lua 매크로 선택기",
+  "palette-sftp-upload": "SFTP 업로드...",
+  "palette-sftp-download": "SFTP 다운로드..."
 }

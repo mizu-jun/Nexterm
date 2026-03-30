@@ -54,8 +54,8 @@ impl LuaWorker {
                 // Lua インスタンスをこのスレッド内で生成する（!Send のため move 不可）
                 let lua = Lua::new();
 
-                if let Some(path) = lua_script_path {
-                    if path.exists() {
+                if let Some(path) = lua_script_path
+                    && path.exists() {
                         match std::fs::read_to_string(&path) {
                             Ok(script) => {
                                 if let Err(e) = lua.load(&script).exec() {
@@ -65,7 +65,6 @@ impl LuaWorker {
                             Err(e) => warn!("Lua ワーカー: ファイル読み込みエラー: {}", e),
                         }
                     }
-                }
 
                 // リクエストを順番に処理する（チャネルが閉じられたら終了）
                 while let Ok(req) = rx.recv() {

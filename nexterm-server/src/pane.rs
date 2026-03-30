@@ -1,7 +1,7 @@
 //! ペイン — PTY プロセスと仮想グリッドを管理する最小単位
 //!
-//! PTY 出力チャネルは `Arc<Mutex<Sender>>` で保持し、
-//! クライアント再アタッチ時に `update_tx` で差し替えられる。
+//! PTY 出力チャネルは `Arc<broadcast::Sender>` で保持する。
+//! broadcast により複数クライアントへ同時送信でき、再アタッチ時の差し替え不要。
 
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
@@ -11,8 +11,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
+#[cfg(unix)]
 use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySystem};
-use tokio::sync::mpsc;
+use tokio::sync::broadcast;
 use tracing::{debug, error, info};
 
 use nexterm_proto::{Grid, ServerToClient};
@@ -151,6 +152,53 @@ impl LogWriterInner {
     }
 }
 
+/// ログファイル名テンプレートを展開する
+///
+/// 利用可能なプレースホルダー:
+///   {session}  — セッション名
+///   {pane}     — ペイン ID
+///   {datetime} — 起動時刻 (YYYYMMDD_HHMMSS)
+pub fn expand_log_filename_template(
+    template: &str,
+    session: &str,
+    pane_id: u32,
+) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    // UTC 時刻を手動計算する（chrono 不使用）
+    let secs_in_day = now % 86400;
+    let h = secs_in_day / 3600;
+    let m = (secs_in_day / 60) % 60;
+    let s = secs_in_day % 60;
+    // 簡易日付計算（Unix エポックから日数 → 年月日）
+    let days = now / 86400;
+    let (year, month, day) = days_to_ymd(days);
+    let datetime = format!("{:04}{:02}{:02}_{:02}{:02}{:02}", year, month, day, h, m, s);
+
+    template
+        .replace("{session}", session)
+        .replace("{pane}", &pane_id.to_string())
+        .replace("{datetime}", &datetime)
+}
+
+/// Unix エポックからの日数を年月日に変換する（グレゴリオ暦）
+fn days_to_ymd(days: u64) -> (u32, u32, u32) {
+    // アルゴリズム: http://howardhinnant.github.io/date_algorithms.html
+    let z = days as i64 + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y as u32, m as u32, d as u32)
+}
+
 /// ANSI エスケープシーケンスを除去する（ESC[ ... 終端文字 の形式に対応）
 fn strip_ansi_escapes(input: &[u8]) -> Vec<u8> {
     let mut output = Vec::with_capacity(input.len());
@@ -253,8 +301,8 @@ pub fn set_min_pane_id(min_id: u32) {
     NEXT_PANE_ID.fetch_max(min_id, Ordering::Relaxed);
 }
 
-/// 動的に差し替え可能な送信チャネル
-type SharedTx = Arc<Mutex<mpsc::Sender<ServerToClient>>>;
+/// 全クライアントへのブロードキャスト送信チャネル（sync 送信、Mutex 不要）
+type SharedTx = Arc<broadcast::Sender<ServerToClient>>;
 
 /// ペインの状態
 pub struct Pane {
@@ -265,13 +313,16 @@ pub struct Pane {
     #[allow(dead_code)]
     pid: Option<u32>,
     /// PTY 出力先チャネル（再アタッチ時に差し替え可能）
+    #[allow(dead_code)]
     shared_tx: SharedTx,
     /// PTY マスタ（リサイズ用）
     master: Box<dyn MasterPty + Send>,
     /// PTY 書き込みハンドル（キー入力転送用）
     writer: Mutex<Box<dyn Write + Send>>,
-    /// ログファイルライター（録音中のみ Some）
+    /// テキストログファイルライター（録音中のみ Some）
     log_writer: LogWriter,
+    /// バイナリログファイルライター（binary_log=true 時のみ Some）
+    binary_log_writer: LogWriter,
     /// asciicast v2 ライター（録音中のみ Some）
     asciicast_writer: AsciicastWriterHandle,
 }
@@ -281,7 +332,7 @@ impl Pane {
     pub fn spawn(
         cols: u16,
         rows: u16,
-        initial_tx: mpsc::Sender<ServerToClient>,
+        initial_tx: broadcast::Sender<ServerToClient>,
         shell: &str,
     ) -> Result<Self> {
         Self::spawn_impl(new_pane_id(), cols, rows, initial_tx, shell, None)
@@ -292,7 +343,7 @@ impl Pane {
         id: u32,
         cols: u16,
         rows: u16,
-        initial_tx: mpsc::Sender<ServerToClient>,
+        initial_tx: broadcast::Sender<ServerToClient>,
         shell: &str,
     ) -> Result<Self> {
         Self::spawn_impl(id, cols, rows, initial_tx, shell, None)
@@ -303,7 +354,7 @@ impl Pane {
         id: u32,
         cols: u16,
         rows: u16,
-        initial_tx: mpsc::Sender<ServerToClient>,
+        initial_tx: broadcast::Sender<ServerToClient>,
         shell: &str,
         cwd: &Path,
     ) -> Result<Self> {
@@ -315,7 +366,7 @@ impl Pane {
         id: u32,
         cols: u16,
         rows: u16,
-        initial_tx: mpsc::Sender<ServerToClient>,
+        initial_tx: broadcast::Sender<ServerToClient>,
         shell: &str,
         cwd: Option<&Path>,
     ) -> Result<Self> {
@@ -342,14 +393,18 @@ impl Pane {
         let mut reader = pair.master.try_clone_reader()?;
         let master = pair.master;
 
-        // 動的チャネルを Arc<Mutex> で共有する
-        let shared_tx: SharedTx = Arc::new(Mutex::new(initial_tx));
+        // broadcast::Sender を Arc で共有する（Mutex 不要、sync 送信）
+        let shared_tx: SharedTx = Arc::new(initial_tx);
         let shared_tx_clone = Arc::clone(&shared_tx);
         let pane_id = id;
 
         // ログライターを Arc<Mutex> で共有する
         let log_writer: LogWriter = Arc::new(Mutex::new(None));
         let log_writer_clone = Arc::clone(&log_writer);
+
+        // バイナリログライターを Arc<Mutex> で共有する
+        let binary_log_writer: LogWriter = Arc::new(Mutex::new(None));
+        let binary_log_writer_clone = Arc::clone(&binary_log_writer);
 
         // asciicast ライターを Arc<Mutex> で共有する
         let asciicast_writer: AsciicastWriterHandle = Arc::new(Mutex::new(None));
@@ -359,6 +414,15 @@ impl Pane {
         tokio::task::spawn_blocking(move || {
             let mut parser = VtParser::new(cols, rows);
             let mut buf = [0u8; 4096];
+
+            /// broadcast::Sender でメッセージを送信するヘルパー（sync、待機なし）
+            fn send_msg(
+                tx: &broadcast::Sender<ServerToClient>,
+                msg: ServerToClient,
+            ) {
+                // 受信者がいない場合は無視（クライアント未接続時）
+                let _ = tx.send(msg);
+            }
 
             loop {
                 match reader.read(&mut buf) {
@@ -370,25 +434,28 @@ impl Pane {
                         parser.advance(&buf[..n]);
 
                         // 録音中であれば生バイト列をログファイルに書き込む
-                        if let Ok(mut guard) = log_writer_clone.lock() {
-                            if let Some(w) = guard.as_mut() {
-                                if let Err(e) = w.write(&buf[..n]) {
+                        if let Ok(mut guard) = log_writer_clone.lock()
+                            && let Some(w) = guard.as_mut()
+                                && let Err(e) = w.write(&buf[..n]) {
                                     error!("ログ書き込みエラー: {}", e);
-                                    // エラー時は録音を停止する
                                     *guard = None;
                                 }
-                            }
-                        }
+
+                        // バイナリログ: raw PTY bytes をそのまま保存する
+                        if let Ok(mut guard) = binary_log_writer_clone.lock()
+                            && let Some(w) = guard.as_mut()
+                                && let Err(e) = w.write(&buf[..n]) {
+                                    error!("バイナリログ書き込みエラー: {}", e);
+                                    *guard = None;
+                                }
 
                         // asciicast 録音中であれば書き込む
-                        if let Ok(mut guard) = asciicast_writer_clone.lock() {
-                            if let Some(w) = guard.as_mut() {
-                                if let Err(e) = w.write_output(&buf[..n]) {
+                        if let Ok(mut guard) = asciicast_writer_clone.lock()
+                            && let Some(w) = guard.as_mut()
+                                && let Err(e) = w.write_output(&buf[..n]) {
                                     error!("asciicast 書き込みエラー: {}", e);
                                     *guard = None;
                                 }
-                            }
-                        }
 
                         // グリッド差分を送信する
                         let dirty = parser.screen_mut().take_dirty_rows();
@@ -400,37 +467,25 @@ impl Pane {
                                 cursor_col,
                                 cursor_row,
                             };
-                            match shared_tx_clone.lock() {
-                                Ok(tx) => { let _ = tx.blocking_send(msg); }
-                                Err(e) => error!("ペイン {}: 送信チャネルのロック取得に失敗しました: {}", pane_id, e),
-                            }
+                            send_msg(&shared_tx_clone, msg);
                         }
 
                         // BEL を受信していればクライアントに通知する
                         if parser.screen_mut().take_pending_bell() {
                             let msg = ServerToClient::Bell { pane_id };
-                            match shared_tx_clone.lock() {
-                                Ok(tx) => { let _ = tx.blocking_send(msg); }
-                                Err(e) => error!("ペイン {}: BEL 送信チャネルのロック取得に失敗しました: {}", pane_id, e),
-                            }
+                            send_msg(&shared_tx_clone, msg);
                         }
 
                         // タイトル変更通知を送信する（OSC 0/1/2）
                         if let Some(title) = parser.screen_mut().take_pending_title() {
                             let msg = ServerToClient::TitleChanged { pane_id, title };
-                            match shared_tx_clone.lock() {
-                                Ok(tx) => { let _ = tx.blocking_send(msg); }
-                                Err(e) => error!("ペイン {}: タイトル送信チャネルのロック取得に失敗しました: {}", pane_id, e),
-                            }
+                            send_msg(&shared_tx_clone, msg);
                         }
 
                         // デスクトップ通知を送信する（OSC 9）
                         if let Some((title, body)) = parser.screen_mut().take_pending_notification() {
                             let msg = ServerToClient::DesktopNotification { pane_id, title, body };
-                            match shared_tx_clone.lock() {
-                                Ok(tx) => { let _ = tx.blocking_send(msg); }
-                                Err(e) => error!("ペイン {}: 通知送信チャネルのロック取得に失敗しました: {}", pane_id, e),
-                            }
+                            send_msg(&shared_tx_clone, msg);
                         }
 
                         // 画像データを送信する（Sixel / Kitty）
@@ -445,10 +500,7 @@ impl Pane {
                                 height: img.height,
                                 rgba: img.rgba,
                             };
-                            match shared_tx_clone.lock() {
-                                Ok(tx) => { let _ = tx.blocking_send(msg); }
-                                Err(e) => error!("ペイン {}: 画像送信チャネルのロック取得に失敗しました: {}", pane_id, e),
-                            }
+                            send_msg(&shared_tx_clone, msg);
                         }
                     }
                     Err(e) => {
@@ -457,6 +509,19 @@ impl Pane {
                     }
                 }
             }
+
+            // Fix 2: PTY EOF 時にプロセスグループへ SIGHUP を送信してゾンビプロセスを防ぐ
+            #[cfg(unix)]
+            if let Some(pid_val) = pid
+                && pid_val > 0 {
+                    // SAFETY: kill() は有効な pid に対して安全。pgid は pid と同一（setsid 未使用）。
+                    unsafe { libc::kill(pid_val as libc::pid_t, libc::SIGHUP) };
+                    debug!("ペイン {}: PID {} に SIGHUP を送信しました", pane_id, pid_val);
+                }
+
+            // Fix 1: PTY EOF / シェル終了時に PaneClosed を送信する
+            debug!("ペイン {} の PTY ループが終了しました。PaneClosed を送信します", pane_id);
+            send_msg(&shared_tx_clone, ServerToClient::PaneClosed { pane_id });
         });
 
         Ok(Self {
@@ -468,6 +533,7 @@ impl Pane {
             master,
             writer,
             log_writer,
+            binary_log_writer,
             asciicast_writer,
         })
     }
@@ -477,12 +543,10 @@ impl Pane {
         Grid::new(self.cols, self.rows)
     }
 
-    /// PTY 出力チャネルを差し替える（クライアント再アタッチ時）
-    pub fn update_tx(&self, new_tx: mpsc::Sender<ServerToClient>) {
-        match self.shared_tx.lock() {
-            Ok(mut guard) => *guard = new_tx,
-            Err(e) => error!("ペイン {}: shared_tx のロック取得に失敗しました: {}", self.id, e),
-        }
+    /// PTY 出力チャネルを差し替える — broadcast では再アタッチ時の差し替えは不要（no-op）
+    #[allow(dead_code)]
+    pub fn update_tx(&self, _new_tx: broadcast::Sender<ServerToClient>) {
+        // broadcast::Sender は共有されるため、クライアント再アタッチ時に差し替え不要
     }
 
     /// PTY にデータを書き込む（キー入力転送）
@@ -540,6 +604,50 @@ impl Pane {
             w.flush()?;
             info!("ペイン {} の録音を停止しました", self.id);
         }
+        Ok(())
+    }
+
+    /// LogConfig の設定（テンプレート・バイナリログ）を使って録音を開始する
+    ///
+    /// `base_path` はテンプレートを使わない場合のデフォルトパス。
+    pub fn start_recording_with_config(
+        &self,
+        base_path: &str,
+        session: &str,
+        log_config: &nexterm_config::LogConfig,
+    ) -> Result<()> {
+        // テンプレートが設定されていれば展開する
+        let resolved_path = if let Some(ref tmpl) = log_config.file_name_template {
+            // テンプレートを使用してファイル名を生成する
+            let filename = expand_log_filename_template(tmpl, session, self.id);
+            if let Some(log_dir) = &log_config.log_dir {
+                format!("{}/{}", log_dir.trim_end_matches('/'), filename)
+            } else {
+                filename
+            }
+        } else {
+            base_path.to_string()
+        };
+
+        // 親ディレクトリを作成する
+        if let Some(parent) = std::path::Path::new(&resolved_path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        // テキストログを開始する
+        self.start_recording_with_options(&resolved_path, log_config.timestamp, log_config.strip_ansi)?;
+
+        // バイナリログが有効な場合は raw バイナリファイルも開始する
+        if log_config.binary_log {
+            let bin_path = format!("{}.bin", resolved_path.trim_end_matches(".log"));
+            let bin_file = File::create(&bin_path)?;
+            // バイナリログは timestamp/strip_ansi なしで raw bytes を保存する
+            let mut guard = self.binary_log_writer.lock()
+                .map_err(|e| anyhow::anyhow!("binary_log_writer ロック取得失敗: {}", e))?;
+            *guard = Some(LogWriterInner::new(bin_file, false, false, bin_path.clone(), 0, 0));
+            info!("ペイン {} のバイナリログを開始しました: {}", self.id, bin_path);
+        }
+
         Ok(())
     }
 
@@ -616,8 +724,31 @@ impl Pane {
         None
     }
 
-    /// Linux・macOS 以外: 作業ディレクトリ取得は非対応
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    /// Windows 実装: PowerShell で子プロセスの CWD を取得する
+    #[cfg(windows)]
+    fn read_working_dir(&self) -> Option<std::path::PathBuf> {
+        let pid = self.pid?;
+        // PowerShell の (Get-Process).Path はバイナリパスなので Split-Path で親を取得する
+        let script = format!(
+            "(Get-Process -Id {} -ErrorAction SilentlyContinue).Path | Split-Path -Parent",
+            pid
+        );
+        let output = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()
+            .ok()?;
+        if output.status.success() {
+            let path_str = String::from_utf8_lossy(&output.stdout);
+            let trimmed = path_str.trim();
+            if !trimmed.is_empty() {
+                return Some(std::path::PathBuf::from(trimmed));
+            }
+        }
+        None
+    }
+
+    /// その他の OS: 作業ディレクトリ取得は非対応
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     fn read_working_dir(&self) -> Option<std::path::PathBuf> {
         None
     }

@@ -31,7 +31,7 @@ impl Perform for Screen {
                 self.move_cursor(next_tab.min(self.grid().width.saturating_sub(1)), row);
             }
             // LF / VT / FF (改行相当)
-            0x0A | 0x0B | 0x0C => {
+            0x0A..=0x0C => {
                 self.advance_line();
             }
             // CR (キャリッジリターン)
@@ -156,20 +156,18 @@ impl Perform for Screen {
             // OSC 1: アイコン名を設定（タイトルとして扱う）
             // OSC 2: ウィンドウタイトルを設定
             "0" | "1" | "2" => {
-                if let Some(title_bytes) = params.get(1) {
-                    if let Ok(title) = std::str::from_utf8(title_bytes) {
+                if let Some(title_bytes) = params.get(1)
+                    && let Ok(title) = std::str::from_utf8(title_bytes) {
                         self.set_pending_title(title.to_string());
                     }
-                }
             }
             // OSC 9: iTerm2 互換デスクトップ通知
             // フォーマット: ESC ] 9 ; <メッセージ> BEL
             "9" => {
-                if let Some(msg_bytes) = params.get(1) {
-                    if let Ok(msg) = std::str::from_utf8(msg_bytes) {
+                if let Some(msg_bytes) = params.get(1)
+                    && let Ok(msg) = std::str::from_utf8(msg_bytes) {
                         self.set_pending_notification("Nexterm".to_string(), msg.to_string());
                     }
-                }
             }
             _ => {}
         }

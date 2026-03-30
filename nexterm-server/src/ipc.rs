@@ -13,19 +13,30 @@ use tokio::sync::mpsc;
 use crate::session::SessionManager;
 
 /// IPC サーバーを起動してクライアント接続を受け付ける
-pub async fn serve(manager: std::sync::Arc<SessionManager>) -> Result<()> {
-
+pub async fn serve(
+    manager: std::sync::Arc<SessionManager>,
+    hooks: std::sync::Arc<nexterm_config::HooksConfig>,
+    lua: std::sync::Arc<nexterm_config::LuaHookRunner>,
+    log_config: std::sync::Arc<nexterm_config::LogConfig>,
+    hosts: std::sync::Arc<Vec<nexterm_config::HostConfig>>,
+) -> Result<()> {
     #[cfg(unix)]
-    return serve_unix(manager).await;
+    return serve_unix(manager, hooks, lua, log_config, hosts).await;
 
     #[cfg(windows)]
-    return serve_named_pipe(manager).await;
+    return serve_named_pipe(manager, hooks, lua, log_config, hosts).await;
 }
 
 // ---- Unix Domain Socket 実装 ----
 
 #[cfg(unix)]
-async fn serve_unix(manager: std::sync::Arc<SessionManager>) -> Result<()> {
+async fn serve_unix(
+    manager: std::sync::Arc<SessionManager>,
+    hooks: std::sync::Arc<nexterm_config::HooksConfig>,
+    lua: std::sync::Arc<nexterm_config::LuaHookRunner>,
+    log_config: std::sync::Arc<nexterm_config::LogConfig>,
+    hosts: std::sync::Arc<Vec<nexterm_config::HostConfig>>,
+) -> Result<()> {
     use tokio::net::UnixListener;
 
     let socket_path = unix_socket_path();
@@ -50,8 +61,12 @@ async fn serve_unix(manager: std::sync::Arc<SessionManager>) -> Result<()> {
                     continue;
                 }
                 let manager = std::sync::Arc::clone(&manager);
+                let hooks = std::sync::Arc::clone(&hooks);
+                let lua = std::sync::Arc::clone(&lua);
+                let log_config = std::sync::Arc::clone(&log_config);
+                let hosts = std::sync::Arc::clone(&hosts);
                 tokio::spawn(async move {
-                    if let Err(e) = handle_client(stream, manager).await {
+                    if let Err(e) = handle_client(stream, manager, hooks, lua, log_config, hosts).await {
                         error!("クライアント処理エラー: {}", e);
                     }
                 });
@@ -144,7 +159,13 @@ fn unix_socket_path() -> String {
 // ---- Windows Named Pipe 実装 ----
 
 #[cfg(windows)]
-async fn serve_named_pipe(manager: std::sync::Arc<SessionManager>) -> Result<()> {
+async fn serve_named_pipe(
+    manager: std::sync::Arc<SessionManager>,
+    hooks: std::sync::Arc<nexterm_config::HooksConfig>,
+    lua: std::sync::Arc<nexterm_config::LuaHookRunner>,
+    log_config: std::sync::Arc<nexterm_config::LogConfig>,
+    hosts: std::sync::Arc<Vec<nexterm_config::HostConfig>>,
+) -> Result<()> {
     use tokio::net::windows::named_pipe::ServerOptions;
 
     let pipe_name = named_pipe_name();
@@ -160,8 +181,12 @@ async fn serve_named_pipe(manager: std::sync::Arc<SessionManager>) -> Result<()>
         server.connect().await?;
 
         let manager = std::sync::Arc::clone(&manager);
+        let hooks = std::sync::Arc::clone(&hooks);
+        let lua = std::sync::Arc::clone(&lua);
+        let log_config = std::sync::Arc::clone(&log_config);
+        let hosts = std::sync::Arc::clone(&hosts);
         tokio::spawn(async move {
-            if let Err(e) = handle_client(server, manager).await {
+            if let Err(e) = handle_client(server, manager, hooks, lua, log_config, hosts).await {
                 error!("クライアント処理エラー: {}", e);
             }
         });
@@ -177,7 +202,14 @@ fn named_pipe_name() -> String {
 // ---- 共通クライアントハンドラ ----
 
 /// 接続済みクライアントの読み書きを処理する
-async fn handle_client<S>(stream: S, manager: std::sync::Arc<SessionManager>) -> Result<()>
+async fn handle_client<S>(
+    stream: S,
+    manager: std::sync::Arc<SessionManager>,
+    hooks: std::sync::Arc<nexterm_config::HooksConfig>,
+    lua: std::sync::Arc<nexterm_config::LuaHookRunner>,
+    log_config: std::sync::Arc<nexterm_config::LogConfig>,
+    hosts: std::sync::Arc<Vec<nexterm_config::HostConfig>>,
+) -> Result<()>
 where
     S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 'static,
 {
@@ -205,6 +237,9 @@ where
     // 接続中のセッション名（Attach で設定される）
     let mut current_session: Option<String> = None;
 
+    // broadcast forwarder タスクのハンドル（Attach 時に設定、切断時に abort）
+    let mut bcast_forwarder: Option<tokio::task::AbortHandle> = None;
+
     // クライアント → サーバー 受信ループ
     loop {
         let mut len_buf = [0u8; 4];
@@ -225,17 +260,22 @@ where
             }
         };
 
-        dispatch(&msg, &manager, tx.clone(), &mut current_session).await;
+        dispatch(&msg, &manager, tx.clone(), &mut current_session, &hooks, std::sync::Arc::clone(&lua), &log_config, &hosts, &mut bcast_forwarder).await;
     }
 
-    // クリーンアップ: 自分の TX だけセッションからデタッチする（他のクライアントは継続）
+    // クリーンアップ: broadcast forwarder を停止する（broadcast::Receiver は自動 drop）
+    if let Some(h) = bcast_forwarder.take() {
+        h.abort();
+    }
     if let Some(ref name) = current_session {
         let arc = manager.sessions();
         let mut sessions = arc.lock().await;
         if let Some(session) = sessions.get_mut(name) {
-            session.detach_one(&tx);
-            info!("切断によりセッション '{}' から TX をデタッチしました", name);
+            session.detach_one(&tx); // no-op: broadcast では Receiver が drop されるだけ
+            info!("切断によりセッション '{}' からデタッチしました", name);
         }
+        // on_detach フック（切断時）
+        crate::hooks::on_detach(&hooks, &lua, name);
     }
 
     Ok(())
@@ -257,7 +297,65 @@ fn validate_recording_path(output_path: &str) -> Result<()> {
             output_path
         ));
     }
+
+    // 許可ディレクトリ: ~/nexterm/recordings/ または $TMPDIR/nexterm/
+    let allowed = allowed_recording_dirs();
+    let input_path = Path::new(output_path);
+
+    // 絶対パスの場合のみ許可ディレクトリチェックを行う
+    if input_path.is_absolute() {
+        let parent = input_path.parent().unwrap_or(input_path);
+        let is_allowed = allowed.iter().any(|dir| {
+            // ディレクトリが許可プレフィックスで始まるか確認する
+            parent.starts_with(dir)
+        });
+        if !is_allowed {
+            // 許可ディレクトリを自動作成してから再チェック
+            let first_allowed = &allowed[0];
+            std::fs::create_dir_all(first_allowed).ok();
+            return Err(anyhow::anyhow!(
+                "セキュリティエラー: 録音ファイルは {} または {} 内に保存してください (指定パス: {})",
+                allowed[0].display(),
+                allowed.get(1).map(|p| p.display().to_string()).unwrap_or_default(),
+                output_path
+            ));
+        }
+        // 親ディレクトリを作成する
+        std::fs::create_dir_all(parent)?;
+    }
+
     Ok(())
+}
+
+/// 録音ファイルを保存できる許可ディレクトリ一覧を返す
+fn allowed_recording_dirs() -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+
+    // ~/nexterm/recordings/
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        let rec_dir = std::path::PathBuf::from(home).join("nexterm").join("recordings");
+        std::fs::create_dir_all(&rec_dir).ok();
+        dirs.push(rec_dir);
+    }
+
+    // $TMPDIR/nexterm/ または /tmp/nexterm/
+    let tmp_base = std::env::var_os("TMPDIR")
+        .or_else(|| std::env::var_os("TEMP"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+    let tmp_dir = tmp_base.join("nexterm");
+    std::fs::create_dir_all(&tmp_dir).ok();
+    dirs.push(tmp_dir);
+
+    // /tmp/nexterm/ を常に許可する（macOS では $TMPDIR が /var/folders/... のため明示追加）
+    #[cfg(unix)]
+    {
+        let unix_tmp = std::path::PathBuf::from("/tmp/nexterm");
+        std::fs::create_dir_all(&unix_tmp).ok();
+        dirs.push(unix_tmp);
+    }
+
+    dirs
 }
 
 /// クライアントからのメッセージをディスパッチする
@@ -266,6 +364,11 @@ async fn dispatch(
     manager: &SessionManager,
     tx: mpsc::Sender<ServerToClient>,
     current_session: &mut Option<String>,
+    hooks: &nexterm_config::HooksConfig,
+    lua: std::sync::Arc<nexterm_config::LuaHookRunner>,
+    log_config: &nexterm_config::LogConfig,
+    hosts: &[nexterm_config::HostConfig],
+    bcast_forwarder: &mut Option<tokio::task::AbortHandle>,
 ) {
     use ClientToServer::*;
 
@@ -276,12 +379,20 @@ async fn dispatch(
 
         Attach { session_name } => {
             // セッションが存在しない場合は新規作成してアタッチ
+            let is_new_session = {
+                let arc = manager.sessions();
+                let sessions = arc.lock().await;
+                !sessions.contains_key(session_name.as_str())
+            };
             match manager
-                .get_or_create_and_attach(session_name, 80, 24, tx.clone())
+                .get_or_create_and_attach(session_name, 80, 24)
                 .await
             {
                 Ok(()) => {
                     *current_session = Some(session_name.clone());
+                    if is_new_session {
+                        crate::hooks::on_session_start(hooks, &lua, session_name);
+                    }
 
                     // Full Refresh を送信する
                     let refresh = {
@@ -318,6 +429,41 @@ async fn dispatch(
                     let _ = tx
                         .send(ServerToClient::SessionList { sessions: list })
                         .await;
+
+                    // on_attach フック
+                    crate::hooks::on_attach(hooks, &lua, session_name);
+
+                    // broadcast forwarder タスクを起動する
+                    // PTY 出力（GridDiff, Bell 等）を broadcast → 本クライアントの mpsc に転送する
+                    let bcast_rx = {
+                        let arc = manager.sessions();
+                        let sessions = arc.lock().await;
+                        sessions.get(session_name).map(|s| s.attach())
+                    };
+                    if let Some(mut bcast_rx) = bcast_rx {
+                        let fwd_tx = tx.clone();
+                        // 既存の forwarder を中断してから新しいものを起動する
+                        if let Some(h) = bcast_forwarder.take() {
+                            let _: () = h.abort();
+                        }
+                        let handle = tokio::spawn(async move {
+                            loop {
+                                match bcast_rx.recv().await {
+                                    Ok(msg) => {
+                                        if fwd_tx.send(msg).await.is_err() {
+                                            break; // クライアント切断
+                                        }
+                                    }
+                                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                        tracing::warn!("broadcast: {} メッセージをスキップしました（バッファ溢れ）", n);
+                                        continue;
+                                    }
+                                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                                }
+                            }
+                        });
+                        *bcast_forwarder = Some(handle.abort_handle());
+                    }
                 }
                 Err(e) => {
                     let _ = tx
@@ -346,11 +492,10 @@ async fn dispatch(
                 if !bytes.is_empty() {
                     let arc = manager.sessions();
                     let sessions = arc.lock().await;
-                    if let Some(s) = sessions.get(name) {
-                        if let Err(e) = s.write_to_focused(&bytes) {
+                    if let Some(s) = sessions.get(name)
+                        && let Err(e) = s.write_to_focused(&bytes) {
                             error!("PTY 書き込みエラー: {}", e);
                         }
-                    }
                 }
             }
         }
@@ -389,19 +534,28 @@ async fn dispatch(
                         let cols = s.cols;
                         let rows = s.rows;
                         let shell = s.shell().to_string();
-                        let pane_tx = s.first_client_tx().cloned();
-                        if let Some(pane_tx) = pane_tx {
-                            s.focused_window_mut()
-                                .map(|w| w.add_pane(cols, rows, pane_tx, &shell, dir))
-                        } else {
-                            None
-                        }
+                        let pane_tx = s.broadcast_sender();
+                        s.focused_window_mut()
+                            .map(|w| w.add_pane(cols, rows, pane_tx, &shell, dir))
                     } else {
                         None
                     }
                 };
                 match split_result {
                     Some(Ok(pane_id)) => {
+                        // on_pane_open フック
+                        crate::hooks::on_pane_open(hooks, &lua, name, pane_id);
+                        // auto_log が有効なら新ペインの録音を自動開始する
+                        if log_config.auto_log {
+                            if let Some(log_dir) = &log_config.log_dir {
+                                if let Err(e) = manager
+                                    .start_recording_with_log_config(name, log_dir, log_config)
+                                    .await
+                                {
+                                    tracing::warn!("auto_log 録音開始失敗 (pane={}): {}", pane_id, e);
+                                }
+                            }
+                        }
                         // FullRefresh と LayoutChanged を送信する
                         let msgs = {
                             let arc = manager.sessions();
@@ -523,11 +677,10 @@ async fn dispatch(
             if let Some(ref name) = *current_session {
                 let arc = manager.sessions();
                 let sessions = arc.lock().await;
-                if let Some(s) = sessions.get(name) {
-                    if let Err(e) = s.write_to_focused(text.as_bytes()) {
+                if let Some(s) = sessions.get(name)
+                    && let Err(e) = s.write_to_focused(text.as_bytes()) {
                         error!("ペーストエラー: {}", e);
                     }
-                }
             }
         }
 
@@ -655,16 +808,7 @@ async fn dispatch(
                 let result = {
                     let arc = manager.sessions();
                     let mut sessions = arc.lock().await;
-                    if let Some(s) = sessions.get_mut(name) {
-                        let pane_tx = s.first_client_tx().cloned();
-                        if let Some(pane_tx) = pane_tx {
-                            Some(s.add_window(pane_tx).map(|wid| (wid, s.window_list())))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
+                    sessions.get_mut(name).map(|s| s.add_window().map(|wid| (wid, s.window_list())))
                 };
                 match result {
                     Some(Ok((_wid, windows))) => {
@@ -831,15 +975,485 @@ async fn dispatch(
             }
         }
 
-        // SSH 接続（nexterm-ssh クレートで実装予定）
-        ConnectSsh { .. } => {
-            let _ = tx
-                .send(ServerToClient::Error {
-                    message: "SSH 接続は未実装です".to_string(),
-                })
-                .await;
+        // レイアウトテンプレートを現在のセッションから保存する
+        SaveTemplate { name } => {
+            let result: anyhow::Result<String> = async {
+                let session_name = current_session.as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("セッションにアタッチしていません"))?;
+                let (window_titles, pane_counts) = {
+                    let arc = manager.sessions();
+                    let sessions = arc.lock().await;
+                    let session = sessions.get(session_name)
+                        .ok_or_else(|| anyhow::anyhow!("セッションが見つかりません: {}", session_name))?;
+                    let info = session.window_list();
+                    let titles: Vec<String> = info.iter().map(|w| w.name.clone()).collect();
+                    let counts: Vec<usize> = info.iter().map(|w| w.pane_count as usize).collect();
+                    (titles, counts)
+                };
+                let template = crate::template::template_from_session_info(name, window_titles, pane_counts);
+                let path = template.save()?;
+                Ok(path)
+            }.await;
+            match result {
+                Ok(path) => {
+                    let _ = tx.send(ServerToClient::TemplateSaved { name: name.clone(), path }).await;
+                }
+                Err(e) => {
+                    let _ = tx.send(ServerToClient::Error { message: e.to_string() }).await;
+                }
+            }
+        }
+
+        // 保存済みテンプレートを読み込む（現バージョンでは通知のみ、ペイン生成は将来実装）
+        LoadTemplate { name } => {
+            match crate::template::LayoutTemplate::load(name) {
+                Ok(_template) => {
+                    let _ = tx.send(ServerToClient::TemplateLoaded { name: name.clone() }).await;
+                }
+                Err(e) => {
+                    let _ = tx.send(ServerToClient::Error { message: e.to_string() }).await;
+                }
+            }
+        }
+
+        // 保存済みテンプレート一覧を返す
+        ListTemplates => {
+            match crate::template::LayoutTemplate::list() {
+                Ok(names) => {
+                    let _ = tx.send(ServerToClient::TemplateList { names }).await;
+                }
+                Err(e) => {
+                    let _ = tx.send(ServerToClient::Error { message: e.to_string() }).await;
+                }
+            }
+        }
+
+        ConnectSsh { host, port, username, auth_type, password, key_path, remote_forwards } => {
+            use nexterm_ssh::{SshAuth, SshConfig, SshSession};
+            use zeroize::Zeroizing;
+
+            // 認証方式をパースする
+            let auth = match auth_type.as_str() {
+                "password" => {
+                    let pw = password.clone().unwrap_or_default();
+                    SshAuth::Password(Zeroizing::new(pw))
+                }
+                "key" => {
+                    let kp = key_path.clone().unwrap_or_else(|| {
+                        std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))
+                            .map(|h| std::path::PathBuf::from(h).join(".ssh").join("id_rsa"))
+                            .map(|p| p.to_string_lossy().to_string())
+                            .unwrap_or_default()
+                    });
+                    SshAuth::PrivateKey {
+                        key_path: std::path::PathBuf::from(kp),
+                        passphrase: None,
+                    }
+                }
+                _ => SshAuth::Agent,
+            };
+
+            let ssh_config = SshConfig {
+                host: host.clone(),
+                port: *port,
+                username: username.clone(),
+                auth,
+                proxy_jump: None,
+                proxy_socks5: None,
+            };
+
+            match SshSession::connect(&ssh_config).await {
+                Ok(mut session) => {
+                    match session.authenticate(&ssh_config).await {
+                        Ok(()) => {
+                            // リモートポートフォワーディングを起動する
+                            for spec in remote_forwards {
+                                if let Err(e) = session.start_remote_forward(spec).await {
+                                    tracing::warn!("リモートフォワーディング失敗 '{}': {}", spec, e);
+                                }
+                            }
+
+                            // SSH シェルを開く（ペイン生成はシェル接続後に実装予定）
+                            let _ = tx
+                                .send(ServerToClient::Error {
+                                    message: "SSH 認証成功。シェル統合は開発中です".to_string(),
+                                })
+                                .await;
+                        }
+                        Err(e) => {
+                            let _ = tx
+                                .send(ServerToClient::Error {
+                                    message: format!("SSH 認証失敗: {}", e),
+                                })
+                                .await;
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = tx
+                        .send(ServerToClient::Error {
+                            message: format!("SSH 接続失敗: {}", e),
+                        })
+                        .await;
+                }
+            }
+        }
+
+        ToggleZoom => {
+            if let Some(ref name) = *current_session {
+                let result = {
+                    let arc = manager.sessions();
+                    let mut sessions = arc.lock().await;
+                    if let Some(s) = sessions.get_mut(name) {
+                        let cols = s.cols;
+                        let rows = s.rows;
+                        s.focused_window_mut().map(|w| {
+                            let is_zoomed = w.toggle_zoom(cols, rows);
+                            let layout_msg = w.layout_changed_msg(cols, rows);
+                            (is_zoomed, layout_msg)
+                        })
+                    } else {
+                        None
+                    }
+                };
+                if let Some((is_zoomed, layout_msg)) = result {
+                    let _ = tx.send(ServerToClient::ZoomChanged { is_zoomed }).await;
+                    let _ = tx.send(layout_msg).await;
+                }
+            }
+        }
+
+        SwapPane { target_pane_id } => {
+            if let Some(ref name) = *current_session {
+                let layout_msg = {
+                    let arc = manager.sessions();
+                    let mut sessions = arc.lock().await;
+                    if let Some(s) = sessions.get_mut(name) {
+                        let cols = s.cols;
+                        let rows = s.rows;
+                        if let Some(w) = s.focused_window_mut() {
+                            w.swap_focused_with(*target_pane_id);
+                            Some(w.layout_changed_msg(cols, rows))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+                if let Some(msg) = layout_msg {
+                    let _ = tx.send(msg).await;
+                }
+            }
+        }
+
+        BreakPane => {
+            if let Some(ref name) = *current_session {
+                let result = {
+                    let arc = manager.sessions();
+                    let mut sessions = arc.lock().await;
+                    if let Some(s) = sessions.get_mut(name) {
+                        let cols = s.cols;
+                        let rows = s.rows;
+                        // 元ウィンドウのレイアウトを先に取得（borrow checker 対策）
+                        let old_layout = s.focused_window().map(|w| w.layout_changed_msg(cols, rows));
+                        s.break_pane().ok().map(|new_win_id| {
+                            let pane_id = s.focused_window()
+                                .and_then(|w| Some(w.focused_pane_id()))
+                                .unwrap_or(0);
+                            let new_layout = s.focused_window()
+                                .map(|w| w.layout_changed_msg(cols, rows));
+                            let windows = s.window_list();
+                            (new_win_id, pane_id, old_layout, new_layout, windows)
+                        })
+                    } else {
+                        None
+                    }
+                };
+                if let Some((new_win_id, pane_id, old_layout, new_layout, windows)) = result {
+                    let _ = tx.send(ServerToClient::PaneBroken { new_window_id: new_win_id, pane_id }).await;
+                    let _ = tx.send(ServerToClient::WindowListChanged { windows }).await;
+                    if let Some(msg) = old_layout {
+                        let _ = tx.send(msg).await;
+                    }
+                    if let Some(msg) = new_layout {
+                        let _ = tx.send(msg).await;
+                    }
+                }
+            }
+        }
+
+        JoinPane { target_window_id } => {
+            if let Some(ref name) = *current_session {
+                let result = {
+                    let arc = manager.sessions();
+                    let mut sessions = arc.lock().await;
+                    if let Some(s) = sessions.get_mut(name) {
+                        let cols = s.cols;
+                        let rows = s.rows;
+                        s.join_pane(*target_window_id).ok().map(|pane_id| {
+                            let new_layout = s.focused_window()
+                                .map(|w| w.layout_changed_msg(cols, rows));
+                            let windows = s.window_list();
+                            (pane_id, new_layout, windows)
+                        })
+                    } else {
+                        None
+                    }
+                };
+                if let Some((pane_id, new_layout, windows)) = result {
+                    let _ = tx.send(ServerToClient::WindowListChanged { windows }).await;
+                    if let Some(msg) = new_layout {
+                        let _ = tx.send(msg).await;
+                    }
+                    // 移動したペインのグリッドを再送する
+                    let refresh = {
+                        let arc = manager.sessions();
+                        let sessions = arc.lock().await;
+                        sessions.get(name).and_then(|s| {
+                            s.focused_window().and_then(|w| {
+                                w.pane(pane_id).map(|p| ServerToClient::FullRefresh { pane_id, grid: p.make_full_refresh() })
+                            })
+                        })
+                    };
+                    if let Some(r) = refresh {
+                        let _ = tx.send(r).await;
+                    }
+                }
+            }
+        }
+
+        SftpUpload { host_name, local_path, remote_path } => {
+            // 設定ファイルからホスト設定を探す
+            if let Some(host_cfg) = hosts.iter().find(|h| &h.name == host_name) {
+                let host_cfg = host_cfg.clone();
+                let local = local_path.clone();
+                let remote = remote_path.clone();
+                let tx2 = tx.clone();
+                let display = local_path.clone();
+
+                tokio::spawn(async move {
+                    let result = run_sftp_upload(&host_cfg, &local, &remote, tx2.clone()).await;
+                    let _ = tx2.send(ServerToClient::SftpDone {
+                        path: display,
+                        error: result.err().map(|e| e.to_string()),
+                    }).await;
+                });
+            } else {
+                let _ = tx.send(ServerToClient::Error {
+                    message: format!("SFTP: ホスト '{}' が設定に見つかりません", host_name),
+                }).await;
+            }
+        }
+        SftpDownload { host_name, remote_path, local_path } => {
+            if let Some(host_cfg) = hosts.iter().find(|h| &h.name == host_name) {
+                let host_cfg = host_cfg.clone();
+                let remote = remote_path.clone();
+                let local = local_path.clone();
+                let tx2 = tx.clone();
+                let display = remote_path.clone();
+
+                tokio::spawn(async move {
+                    let result = run_sftp_download(&host_cfg, &remote, &local, tx2.clone()).await;
+                    let _ = tx2.send(ServerToClient::SftpDone {
+                        path: display,
+                        error: result.err().map(|e| e.to_string()),
+                    }).await;
+                });
+            } else {
+                let _ = tx.send(ServerToClient::Error {
+                    message: format!("SFTP: ホスト '{}' が設定に見つかりません", host_name),
+                }).await;
+            }
+        }
+        RunMacro { macro_fn, display_name } => {
+            // Lua マクロを実行してフォーカスペインに PTY 入力として送信する
+            if let Some(ref name) = *current_session {
+                let focused_pane_id = {
+                    let arc = manager.sessions();
+                    let sessions = arc.lock().await;
+                    sessions.get(name)
+                        .and_then(|s| s.focused_window())
+                        .map(|w| w.focused_pane_id())
+                };
+                if let Some(pane_id) = focused_pane_id {
+                    tracing::info!("RunMacro: {} (fn={})", display_name, macro_fn);
+                    // Lua マクロ呼び出し（spawn_blocking で同期 API を呼ぶ）
+                    let lua_ref = lua.clone();
+                    let fn_name = macro_fn.clone();
+                    let session_name = name.clone();
+                    let output = tokio::task::spawn_blocking(move || {
+                        lua_ref.call_macro(&fn_name, &session_name, pane_id)
+                    })
+                    .await
+                    .unwrap_or(None);
+
+                    if let Some(text) = output {
+                        // マクロの出力をフォーカスペインの PTY に書き込む
+                        let arc = manager.sessions();
+                        let sessions = arc.lock().await;
+                        if let Some(session) = sessions.get(name) {
+                            if let Some(window) = session.focused_window() {
+                                if let Some(pane) = window.pane(pane_id) {
+                                    let _ = pane.write_input(text.as_bytes());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        ConnectSerial { port, baud_rate, data_bits, stop_bits, parity } => {
+            if let Some(ref name) = *current_session {
+                let result = manager.connect_serial(
+                    name,
+                    port,
+                    *baud_rate,
+                    *data_bits,
+                    *stop_bits,
+                    parity,
+                ).await;
+                match result {
+                    Ok(pane_id) => {
+                        let _ = tx.send(ServerToClient::SerialConnected {
+                            pane_id,
+                            port: port.clone(),
+                        }).await;
+                        // レイアウト更新を送信する
+                        let layout_msg = {
+                            let arc = manager.sessions();
+                            let sessions = arc.lock().await;
+                            sessions.get(name).and_then(|s| {
+                                s.focused_window().map(|w| w.layout_changed_msg(s.cols, s.rows))
+                            })
+                        };
+                        if let Some(msg) = layout_msg {
+                            let _ = tx.send(msg).await;
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx.send(ServerToClient::Error { message: e.to_string() }).await;
+                    }
+                }
+            }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// SFTP ヘルパー関数
+// ---------------------------------------------------------------------------
+
+/// HostConfig から SshConfig を構築してアップロードを実行する
+async fn run_sftp_upload(
+    host: &nexterm_config::HostConfig,
+    local_path: &str,
+    remote_path: &str,
+    tx: tokio::sync::mpsc::Sender<ServerToClient>,
+) -> anyhow::Result<()> {
+    use nexterm_ssh::{SshAuth, SshConfig, SshSession};
+    use std::path::PathBuf;
+    use zeroize::Zeroizing;
+
+    let auth = match host.auth_type.as_str() {
+        "password" => SshAuth::Password(Zeroizing::new(String::new())),
+        "key" => SshAuth::PrivateKey {
+            key_path: PathBuf::from(host.key_path.clone().unwrap_or_else(|| {
+                let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_default();
+                format!("{}/.ssh/id_rsa", home)
+            })),
+            passphrase: None,
+        },
+        _ => SshAuth::Agent,
+    };
+
+    let ssh_config = SshConfig {
+        host: host.host.clone(),
+        port: host.port,
+        username: host.username.clone(),
+        auth,
+        proxy_jump: host.proxy_jump.clone(),
+        proxy_socks5: None,
+    };
+
+    let mut session = SshSession::connect(&ssh_config).await?;
+    session.authenticate(&ssh_config).await?;
+
+    // 進捗チャネル
+    let (prog_tx, mut prog_rx) = tokio::sync::mpsc::channel::<(u64, u64)>(32);
+    let tx2 = tx.clone();
+    let path_display = local_path.to_string();
+    tokio::spawn(async move {
+        while let Some((transferred, total)) = prog_rx.recv().await {
+            let _ = tx2.send(ServerToClient::SftpProgress {
+                path: path_display.clone(),
+                transferred,
+                total,
+            }).await;
+        }
+    });
+
+    session.upload_file(
+        std::path::Path::new(local_path),
+        remote_path,
+        Some(prog_tx),
+    ).await
+}
+
+/// HostConfig から SshConfig を構築してダウンロードを実行する
+async fn run_sftp_download(
+    host: &nexterm_config::HostConfig,
+    remote_path: &str,
+    local_path: &str,
+    tx: tokio::sync::mpsc::Sender<ServerToClient>,
+) -> anyhow::Result<()> {
+    use nexterm_ssh::{SshAuth, SshConfig, SshSession};
+    use std::path::PathBuf;
+    use zeroize::Zeroizing;
+
+    let auth = match host.auth_type.as_str() {
+        "password" => SshAuth::Password(Zeroizing::new(String::new())),
+        "key" => SshAuth::PrivateKey {
+            key_path: PathBuf::from(host.key_path.clone().unwrap_or_else(|| {
+                let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_default();
+                format!("{}/.ssh/id_rsa", home)
+            })),
+            passphrase: None,
+        },
+        _ => SshAuth::Agent,
+    };
+
+    let ssh_config = SshConfig {
+        host: host.host.clone(),
+        port: host.port,
+        username: host.username.clone(),
+        auth,
+        proxy_jump: host.proxy_jump.clone(),
+        proxy_socks5: None,
+    };
+
+    let mut session = SshSession::connect(&ssh_config).await?;
+    session.authenticate(&ssh_config).await?;
+
+    // 進捗チャネル
+    let (prog_tx, mut prog_rx) = tokio::sync::mpsc::channel::<(u64, u64)>(32);
+    let tx2 = tx.clone();
+    let path_display = remote_path.to_string();
+    tokio::spawn(async move {
+        while let Some((transferred, total)) = prog_rx.recv().await {
+            let _ = tx2.send(ServerToClient::SftpProgress {
+                path: path_display.clone(),
+                transferred,
+                total,
+            }).await;
+        }
+    });
+
+    session.download_file(
+        remote_path,
+        std::path::Path::new(local_path),
+        Some(prog_tx),
+    ).await
 }
 
 /// キーコードと修飾キーを VT100/xterm エスケープシーケンスに変換する
@@ -901,9 +1515,16 @@ mod tests {
 
     #[test]
     fn 正常なパスは通過する() {
-        assert!(validate_recording_path("/home/user/recording.txt").is_ok());
+        // 相対パスは許可ディレクトリチェックをスキップ（実行時のCWD依存）
         assert!(validate_recording_path("recording.txt").is_ok());
+        // 許可ディレクトリ内の絶対パスは通過する
         assert!(validate_recording_path("/tmp/nexterm/session.rec").is_ok());
+    }
+
+    #[test]
+    fn 許可外の絶対パスは拒否される() {
+        assert!(validate_recording_path("/home/user/recording.txt").is_err());
+        assert!(validate_recording_path("/etc/passwd").is_err());
     }
 
     #[test]

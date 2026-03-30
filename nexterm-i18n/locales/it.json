@@ -5,7 +5,6 @@
   "ctl-attach-about": "Mostra come collegarsi a una sessione",
   "ctl-kill-about": "Termina una sessione",
   "ctl-arg-name": "Nome sessione",
-
   "ctl-no-sessions": "Nessuna sessione trovata.",
   "ctl-list-col-name": "Nome",
   "ctl-list-col-windows": "Finestre",
@@ -28,7 +27,6 @@
   "ctl-record-arg-file": "Percorso del file di output",
   "ctl-record-started": "Registrazione avviata: sessione '{session}' riquadro {pane_id} → {path}",
   "ctl-record-stopped": "Registrazione arrestata: sessione '{session}' riquadro {pane_id}",
-
   "palette-split-vertical": "Dividi verticalmente",
   "palette-split-horizontal": "Dividi orizzontalmente",
   "palette-focus-next": "Pannello successivo",
@@ -36,8 +34,16 @@
   "palette-detach": "Disconnetti",
   "palette-search-scrollback": "Cerca nella cronologia",
   "palette-display-panes": "Mostra numeri pannello",
-
   "gpu-adapter-not-found": "Nessun adattatore wgpu trovato. Verificare i driver GPU.",
   "gpu-window-create-failed": "Creazione della finestra non riuscita",
-  "gpu-init-failed": "Inizializzazione di wgpu non riuscita"
+  "gpu-init-failed": "Inizializzazione di wgpu non riuscita",
+  "palette-toggle-zoom": "Attiva/disattiva zoom",
+  "palette-swap-pane-next": "Scambia pannello (successivo)",
+  "palette-swap-pane-prev": "Scambia pannello (precedente)",
+  "palette-break-pane": "Sposta pannello in nuova finestra",
+  "palette-connect-serial": "Connetti porta seriale",
+  "palette-show-host-manager": "Gestione host SSH",
+  "palette-show-macro-picker": "Selettore macro Lua",
+  "palette-sftp-upload": "Carica SFTP...",
+  "palette-sftp-download": "Scarica SFTP..."
 }

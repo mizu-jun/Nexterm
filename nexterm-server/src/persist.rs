@@ -75,13 +75,13 @@ pub fn load_snapshot() -> Option<ServerSnapshot> {
 }
 
 /// スナップショットファイルを削除する（クリーンシャットダウン時）
+#[allow(dead_code)]
 pub fn clear_snapshot() {
     let path = snapshot_path();
-    if path.exists() {
-        if let Err(e) = std::fs::remove_file(&path) {
+    if path.exists()
+        && let Err(e) = std::fs::remove_file(&path) {
             warn!("スナップショットファイルの削除に失敗しました: {}", e);
         }
-    }
 }
 
 #[cfg(test)]

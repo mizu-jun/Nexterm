@@ -6,7 +6,7 @@ use anyhow::Result;
 use mlua::prelude::*;
 use tracing::{debug, info, warn};
 
-use crate::schema::{ColorScheme, Config, FontConfig, KeyBinding, ShellConfig, StatusBarConfig};
+use crate::schema::{ColorScheme, Config, FontConfig, HooksConfig, KeyBinding, ShellConfig, StatusBarConfig, TabBarConfig};
 
 /// 設定ディレクトリのパスを返す
 pub fn config_dir() -> PathBuf {
@@ -69,7 +69,10 @@ impl ConfigLoader {
                     info!("Lua 設定を適用しました: {}", lua_path.display());
                 }
                 Err(e) => {
-                    warn!("Lua 設定の適用に失敗しました（TOML 設定を使用）: {}", e);
+                    let msg = format!("Lua 設定エラー ({}): {}", lua_path.display(), e);
+                    warn!("{}", msg);
+                    // クライアントへ通知するためにエラーを収集する
+                    config.config_errors.push(msg);
                 }
             }
         }
@@ -132,6 +135,8 @@ pub struct TomlConfig {
     pub keys: Option<Vec<KeyBinding>>,
     pub status_bar: Option<StatusBarConfig>,
     pub scrollback_lines: Option<usize>,
+    pub tab_bar: Option<TabBarConfig>,
+    pub hooks: Option<HooksConfig>,
 }
 
 /// TOML の colors セクション
@@ -145,11 +150,10 @@ pub fn merge_toml(mut base: Config, toml: TomlConfig) -> Config {
     if let Some(font) = toml.font {
         base.font = font;
     }
-    if let Some(colors) = toml.colors {
-        if let Some(scheme) = colors.scheme {
+    if let Some(colors) = toml.colors
+        && let Some(scheme) = colors.scheme {
             base.colors = parse_color_scheme(&scheme);
         }
-    }
     if let Some(shell) = toml.shell {
         base.shell = shell;
     }
@@ -161,6 +165,12 @@ pub fn merge_toml(mut base: Config, toml: TomlConfig) -> Config {
     }
     if let Some(lines) = toml.scrollback_lines {
         base.scrollback_lines = lines;
+    }
+    if let Some(tab_bar) = toml.tab_bar {
+        base.tab_bar = tab_bar;
+    }
+    if let Some(hooks) = toml.hooks {
+        base.hooks = hooks;
     }
     base
 }
@@ -207,6 +217,24 @@ fn config_to_lua_table(lua: &Lua, config: &Config) -> Result<LuaTable> {
     tbl.set("scrollback_lines", config.scrollback_lines)
         .map_err(lua_err)?;
 
+    // tab_bar テーブル
+    let tab_bar = lua.create_table().map_err(lua_err)?;
+    tab_bar.set("enabled", config.tab_bar.enabled).map_err(lua_err)?;
+    tab_bar.set("height", config.tab_bar.height).map_err(lua_err)?;
+    tab_bar.set("active_tab_bg", config.tab_bar.active_tab_bg.clone()).map_err(lua_err)?;
+    tab_bar.set("inactive_tab_bg", config.tab_bar.inactive_tab_bg.clone()).map_err(lua_err)?;
+    tab_bar.set("separator", config.tab_bar.separator.clone()).map_err(lua_err)?;
+    tbl.set("tab_bar", tab_bar).map_err(lua_err)?;
+
+    // hooks テーブル（nil = 未設定）
+    let hooks = lua.create_table().map_err(lua_err)?;
+    hooks.set("on_pane_open", config.hooks.on_pane_open.clone()).map_err(lua_err)?;
+    hooks.set("on_pane_close", config.hooks.on_pane_close.clone()).map_err(lua_err)?;
+    hooks.set("on_session_start", config.hooks.on_session_start.clone()).map_err(lua_err)?;
+    hooks.set("on_attach", config.hooks.on_attach.clone()).map_err(lua_err)?;
+    hooks.set("on_detach", config.hooks.on_detach.clone()).map_err(lua_err)?;
+    tbl.set("hooks", hooks).map_err(lua_err)?;
+
     Ok(tbl)
 }
 
@@ -231,15 +259,42 @@ pub fn apply_lua_table_to_config(config: &mut Config, tbl: &LuaTable) -> Result<
     }
 
     // shell
-    if let Ok(LuaValue::Table(shell)) = tbl.get("shell") {
-        if let Ok(program) = shell.get::<String>("program") {
+    if let Ok(LuaValue::Table(shell)) = tbl.get("shell")
+        && let Ok(program) = shell.get::<String>("program") {
             config.shell.program = program;
         }
-    }
 
     // scrollback_lines
     if let Ok(lines) = tbl.get::<usize>("scrollback_lines") {
         config.scrollback_lines = lines;
+    }
+
+    // tab_bar
+    if let Ok(LuaValue::Table(tab_bar)) = tbl.get("tab_bar") {
+        if let Ok(enabled) = tab_bar.get::<bool>("enabled") {
+            config.tab_bar.enabled = enabled;
+        }
+        if let Ok(height) = tab_bar.get::<u32>("height") {
+            config.tab_bar.height = height;
+        }
+        if let Ok(active_tab_bg) = tab_bar.get::<String>("active_tab_bg") {
+            config.tab_bar.active_tab_bg = active_tab_bg;
+        }
+        if let Ok(inactive_tab_bg) = tab_bar.get::<String>("inactive_tab_bg") {
+            config.tab_bar.inactive_tab_bg = inactive_tab_bg;
+        }
+        if let Ok(separator) = tab_bar.get::<String>("separator") {
+            config.tab_bar.separator = separator;
+        }
+    }
+
+    // hooks
+    if let Ok(LuaValue::Table(hooks)) = tbl.get("hooks") {
+        config.hooks.on_pane_open = hooks.get::<Option<String>>("on_pane_open").ok().flatten();
+        config.hooks.on_pane_close = hooks.get::<Option<String>>("on_pane_close").ok().flatten();
+        config.hooks.on_session_start = hooks.get::<Option<String>>("on_session_start").ok().flatten();
+        config.hooks.on_attach = hooks.get::<Option<String>>("on_attach").ok().flatten();
+        config.hooks.on_detach = hooks.get::<Option<String>>("on_detach").ok().flatten();
     }
 
     Ok(())
@@ -312,12 +367,15 @@ ligatures = false
                 family: "Fira Code".to_string(),
                 size: 13.0,
                 ligatures: true,
+                font_fallbacks: vec![],
             }),
             colors: None,
             shell: None,
             keys: None,
             status_bar: None,
             scrollback_lines: Some(20000),
+            tab_bar: None,
+            hooks: None,
         };
         let merged = merge_toml(base, toml);
         assert_eq!(merged.font.family, "Fira Code");
@@ -348,9 +406,10 @@ ligatures = false
             parse_color_scheme("tokyonight"),
             ColorScheme::Builtin(BuiltinScheme::TokyoNight)
         ));
+        // 未知のスキーム名はデフォルト (Dark) にフォールバックする
         assert!(matches!(
             parse_color_scheme("custom_theme"),
-            ColorScheme::Custom(_)
+            ColorScheme::Builtin(BuiltinScheme::Dark)
         ));
     }
 }

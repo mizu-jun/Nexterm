@@ -82,32 +82,139 @@ jobs:
           -p nexterm-client-gpu
           -p nexterm-client-tui
           -p nexterm-ctl
+          -p nexterm-launcher
 
       # ── Unix 向けパッケージング ──
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
           mkdir dist
-          cp target/${{ matrix.target }}/release/nexterm-server     dist/
+          cp target/${{ matrix.target }}/release/nexterm            dist/
+          cp target/${{ matrix.target }}/release/nexterm-server      dist/
           cp target/${{ matrix.target }}/release/nexterm-client-gpu  dist/
           cp target/${{ matrix.target }}/release/nexterm-client-tui  dist/
           cp target/${{ matrix.target }}/release/nexterm-ctl         dist/
           tar -czf nexterm-${{ github.ref_name }}-${{ matrix.name }}.tar.gz -C dist .
 
-      # ── Windows 向けパッケージング ──
-      - name: Package (Windows)
+      # ── Windows 向けパッケージング（ZIP）──
+      - name: Package (Windows ZIP)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path dist | Out-Null
+          Copy-Item target/${{ matrix.target }}/release/nexterm.exe            dist/
           Copy-Item target/${{ matrix.target }}/release/nexterm-server.exe     dist/
-          Copy-Item target/${{ matrix.target }}/release/nexterm-client-gpu.exe  dist/
-          Copy-Item target/${{ matrix.target }}/release/nexterm-client-tui.exe  dist/
-          Copy-Item target/${{ matrix.target }}/release/nexterm-ctl.exe         dist/
+          Copy-Item target/${{ matrix.target }}/release/nexterm-client-gpu.exe dist/
+          Copy-Item target/${{ matrix.target }}/release/nexterm-client-tui.exe dist/
+          Copy-Item target/${{ matrix.target }}/release/nexterm-ctl.exe        dist/
+          Copy-Item scripts/install-service.ps1                                dist/
+          Copy-Item scripts/uninstall-service.ps1                              dist/
           Compress-Archive -Path dist/* -DestinationPath nexterm-${{ github.ref_name }}-${{ matrix.name }}.zip
 
+      # ── Windows コード署名（証明書が Secrets に設定されている場合のみ）──
+      - name: Sign binaries (Windows)
+        if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != ''
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        shell: pwsh
+        run: |
+          # Base64 エンコードされた PFX 証明書をデコードしてファイルに保存
+          $certBytes = [System.Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+          $certPath  = Join-Path $env:RUNNER_TEMP "nexterm-sign.pfx"
+          [System.IO.File]::WriteAllBytes($certPath, $certBytes)
+
+          # signtool.exe でバイナリを署名
+          $signtool = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe"
+          $targets = @(
+            "dist\nexterm.exe",
+            "dist\nexterm-server.exe",
+            "dist\nexterm-client-gpu.exe",
+            "dist\nexterm-client-tui.exe",
+            "dist\nexterm-ctl.exe"
+          )
+          foreach ($t in $targets) {
+            & $signtool sign `
+              /f $certPath `
+              /p $env:WINDOWS_CERTIFICATE_PASSWORD `
+              /tr http://timestamp.digicert.com `
+              /td sha256 /fd sha256 `
+              $t
+          }
+
+          # 証明書ファイルを削除
+          Remove-Item $certPath -Force
+
+      # ── Windows MSI インストーラービルド ──
+      - name: Build MSI installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # WiX Toolset v3 のインストール
+          choco install wixtoolset --version 3.14.1 -y --no-progress
+          $env:Path += ";C:\Program Files (x86)\WiX Toolset v3.14\bin"
+
+          # バイナリを所定の場所に配置（WiX がパスを参照）
+          # MSI のバージョンを Cargo.toml から取得
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' |
+                      Select-Object -First 1).Matches.Groups[1].Value
+
+          # アイコンのプレースホルダー確認（なければダミーを作成）
+          if (-not (Test-Path "assets\nexterm.ico")) {
+            New-Item -ItemType Directory -Path assets -Force | Out-Null
+            # 最小限の有効な ICO ファイル（16x16 単色）を生成
+            $icoBytes = [byte[]](
+              0,0,1,0,1,0,16,16,0,0,1,0,32,0,104,4,0,0,22,0,0,0,
+              40,0,0,0,16,0,0,0,32,0,0,0,1,0,32,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            ) + [byte[]](0) * 1024
+            [System.IO.File]::WriteAllBytes("assets\nexterm.ico", $icoBytes)
+          }
+
+          # candle.exe + light.exe でMSIをビルド
+          $wixDir = "C:\Program Files (x86)\WiX Toolset v3.14\bin"
+          & "$wixDir\candle.exe" `
+            -arch x64 `
+            -dVersion=$version `
+            -out build\ `
+            wix\main.wxs
+
+          & "$wixDir\light.exe" `
+            -ext WixUIExtension `
+            -ext WixUtilExtension `
+            -cultures:ja-JP `
+            -out "nexterm-${{ github.ref_name }}-${{ matrix.name }}.msi" `
+            build\main.wixobj
+
+      # ── MSI 署名（証明書が設定されている場合）──
+      - name: Sign MSI (Windows)
+        if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != ''
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        shell: pwsh
+        run: |
+          $certBytes = [System.Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+          $certPath  = Join-Path $env:RUNNER_TEMP "nexterm-sign.pfx"
+          [System.IO.File]::WriteAllBytes($certPath, $certBytes)
+
+          $signtool = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe"
+          & $signtool sign `
+            /f $certPath `
+            /p $env:WINDOWS_CERTIFICATE_PASSWORD `
+            /tr http://timestamp.digicert.com `
+            /td sha256 /fd sha256 `
+            "nexterm-${{ github.ref_name }}-${{ matrix.name }}.msi"
+
+          Remove-Item $certPath -Force
+
       # ── GitHub Release にアーカイブを添付 ──
-      - name: Upload to GitHub Release
+      - name: Upload ZIP to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: nexterm-${{ github.ref_name }}-${{ matrix.name }}.${{ matrix.archive_ext }}
+
+      - name: Upload MSI to GitHub Release
+        if: runner.os == 'Windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: nexterm-${{ github.ref_name }}-${{ matrix.name }}.msi

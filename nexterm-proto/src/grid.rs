@@ -47,11 +47,10 @@ impl Grid {
 
     /// 指定セルへ書き込み（範囲外は無視）
     pub fn set(&mut self, col: u16, row: u16, cell: Cell) {
-        if let Some(r) = self.rows.get_mut(row as usize) {
-            if let Some(c) = r.get_mut(col as usize) {
+        if let Some(r) = self.rows.get_mut(row as usize)
+            && let Some(c) = r.get_mut(col as usize) {
                 *c = cell;
             }
-        }
     }
 }
 

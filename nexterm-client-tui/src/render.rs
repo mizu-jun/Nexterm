@@ -5,7 +5,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use nexterm_proto::{Attrs, Color};
+use nexterm_proto::Color;
 
 use crate::state::ClientState;
 
@@ -37,8 +37,7 @@ fn draw_pane(frame: &mut Frame, area: Rect, pane: &crate::state::PaneState) {
         let row = &grid.rows[row_idx];
         let mut spans: Vec<Span> = Vec::with_capacity(width);
 
-        for col_idx in 0..width {
-            let cell = &row[col_idx];
+        for cell in row.iter().take(width) {
             let style = cell_to_style(cell);
             spans.push(Span::styled(cell.ch.to_string(), style));
         }

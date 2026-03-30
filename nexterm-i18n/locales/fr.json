@@ -5,7 +5,6 @@
   "ctl-attach-about": "Afficher comment rejoindre une session",
   "ctl-kill-about": "Terminer une session",
   "ctl-arg-name": "Nom de la session",
-
   "ctl-no-sessions": "Aucune session trouvée.",
   "ctl-list-col-name": "Nom",
   "ctl-list-col-windows": "Fenêtres",
@@ -28,7 +27,6 @@
   "ctl-record-arg-file": "Chemin du fichier de sortie",
   "ctl-record-started": "Enregistrement démarré : session '{session}' volet {pane_id} → {path}",
   "ctl-record-stopped": "Enregistrement arrêté : session '{session}' volet {pane_id}",
-
   "palette-split-vertical": "Division verticale",
   "palette-split-horizontal": "Division horizontale",
   "palette-focus-next": "Volet suivant",
@@ -36,8 +34,16 @@
   "palette-detach": "Déconnecter",
   "palette-search-scrollback": "Rechercher dans l'historique",
   "palette-display-panes": "Afficher les numéros de volet",
-
   "gpu-adapter-not-found": "Aucun adaptateur wgpu trouvé. Vérifiez vos pilotes GPU.",
   "gpu-window-create-failed": "Échec de la création de la fenêtre",
-  "gpu-init-failed": "Échec de l'initialisation de wgpu"
+  "gpu-init-failed": "Échec de l'initialisation de wgpu",
+  "palette-toggle-zoom": "Basculer le zoom",
+  "palette-swap-pane-next": "Échanger volet (suivant)",
+  "palette-swap-pane-prev": "Échanger volet (précédent)",
+  "palette-break-pane": "Déplacer volet dans nouvelle fenêtre",
+  "palette-connect-serial": "Connecter port série",
+  "palette-show-host-manager": "Gestionnaire d'hôtes SSH",
+  "palette-show-macro-picker": "Sélecteur de macros Lua",
+  "palette-sftp-upload": "Upload SFTP...",
+  "palette-sftp-download": "Télécharger SFTP..."
 }

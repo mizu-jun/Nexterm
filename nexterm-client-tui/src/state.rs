@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use nexterm_proto::{Cell, Grid, ServerToClient};
+use nexterm_proto::{Grid, ServerToClient};
 
 /// ペインの描画状態
 pub struct PaneState {
@@ -107,6 +107,16 @@ impl ClientState {
             ServerToClient::BroadcastModeChanged { .. } => {}
             // asciicast 録音状態通知は TUI では無視する
             ServerToClient::AsciicastStarted { .. } | ServerToClient::AsciicastStopped { .. } => {}
+            // テンプレート操作結果は TUI では無視する
+            ServerToClient::TemplateSaved { .. }
+            | ServerToClient::TemplateLoaded { .. }
+            | ServerToClient::TemplateList { .. } => {}
+            // ズーム・ペイン分離・シリアル接続は TUI では無視する
+            ServerToClient::ZoomChanged { .. }
+            | ServerToClient::PaneBroken { .. }
+            | ServerToClient::SerialConnected { .. }
+            | ServerToClient::SftpProgress { .. }
+            | ServerToClient::SftpDone { .. } => {}
         }
     }
 

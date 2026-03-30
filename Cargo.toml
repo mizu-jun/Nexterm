@@ -9,11 +9,12 @@ members = [
     "nexterm-ctl",
     "nexterm-i18n",
     "nexterm-ssh",
+    "nexterm-launcher",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = []
@@ -73,3 +74,6 @@ serde_json = "1"
 
 # Phase 3: CJK 幅計算
 unicode-width = "0.2"
+
+# Phase 8: シリアルポート接続
+serialport = "4"

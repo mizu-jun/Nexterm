@@ -53,6 +53,7 @@ impl Scrollback {
     }
 
     /// 空かどうかを返す
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -83,6 +84,7 @@ impl Scrollback {
     /// 正規表現パターンで全行を検索する
     ///
     /// 戻り値: `(行インデックス, マッチ開始列, マッチ終了列)` のリスト
+    #[allow(dead_code)]
     pub fn search(&self, pattern: &str) -> Vec<(usize, usize, usize)> {
         let Ok(re) = Regex::new(pattern) else {
             return vec![];

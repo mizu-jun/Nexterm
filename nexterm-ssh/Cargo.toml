@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 russh = "0.58"
+russh-sftp = "2"
 tokio = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }

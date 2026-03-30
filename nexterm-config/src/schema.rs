@@ -79,21 +79,37 @@ pub struct ShellConfig {
 impl Default for ShellConfig {
     fn default() -> Self {
         #[cfg(windows)]
-        let program = if std::path::Path::new(
-            "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
-        )
-        .exists()
         {
-            "C:\\Program Files\\PowerShell\\7\\pwsh.exe".to_string()
-        } else {
-            "powershell.exe".to_string()
-        };
+            // PowerShell 7 → PowerShell 5 → cmd.exe の優先順でデフォルトシェルを選択する
+            let (program, args) =
+                if std::path::Path::new("C:\\Program Files\\PowerShell\\7\\pwsh.exe").exists() {
+                    (
+                        "C:\\Program Files\\PowerShell\\7\\pwsh.exe".to_string(),
+                        vec!["-NoLogo".to_string()],
+                    )
+                } else if std::path::Path::new(
+                    "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+                )
+                .exists()
+                {
+                    (
+                        "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+                            .to_string(),
+                        vec!["-NoLogo".to_string()],
+                    )
+                } else {
+                    // 最終フォールバック: cmd.exe
+                    (
+                        "C:\\Windows\\System32\\cmd.exe".to_string(),
+                        vec![],
+                    )
+                };
+            return Self { program, args };
+        }
 
         #[cfg(not(windows))]
-        let program = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-
         Self {
-            program,
+            program: std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string()),
             args: vec![],
         }
     }
@@ -101,6 +117,7 @@ impl Default for ShellConfig {
 
 /// ステータスバー設定
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct StatusBarConfig {
     /// ステータスバーを表示するか（Phase 3 で使用）
     pub enabled: bool,
@@ -108,14 +125,6 @@ pub struct StatusBarConfig {
     pub widgets: Vec<String>,
 }
 
-impl Default for StatusBarConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            widgets: vec![],
-        }
-    }
-}
 
 /// ウィンドウ装飾の種別
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -192,6 +201,58 @@ pub struct LogConfig {
     /// ANSI エスケープ除去
     #[serde(default)]
     pub strip_ansi: bool,
+    /// ログファイル名テンプレート
+    ///
+    /// 利用可能なプレースホルダー:
+    ///   {session}  — セッション名
+    ///   {pane}     — ペイン ID
+    ///   {datetime} — 起動時刻 (YYYYMMDD_HHMMSS)
+    ///
+    /// 例: "{session}_{pane}_{datetime}.log"
+    /// デフォルト: None（ディレクトリ + 固定名）
+    pub file_name_template: Option<String>,
+    /// raw PTY バイト列をバイナリファイル (.bin) にも保存するか
+    #[serde(default)]
+    pub binary_log: bool,
+}
+
+/// シリアルポート設定（接続プリセット）
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct SerialPortConfig {
+    /// 表示名
+    pub name: String,
+    /// デバイスパス（例: "/dev/ttyUSB0", "COM3"）
+    pub port: String,
+    /// ボーレート
+    #[serde(default = "default_baud_rate")]
+    pub baud_rate: u32,
+    /// データビット: 5, 6, 7, 8
+    #[serde(default = "default_data_bits")]
+    pub data_bits: u8,
+    /// ストップビット: 1, 2
+    #[serde(default = "default_stop_bits")]
+    pub stop_bits: u8,
+    /// パリティ: "none", "odd", "even"
+    #[serde(default = "default_parity")]
+    pub parity: String,
+}
+
+fn default_baud_rate() -> u32 { 115200 }
+fn default_data_bits() -> u8 { 8 }
+fn default_stop_bits() -> u8 { 1 }
+fn default_parity() -> String { "none".to_string() }
+
+/// Lua マクロ定義（設定ファイルで [[macros]] として登録する）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MacroConfig {
+    /// コマンドパレット / マクロピッカーに表示する名前
+    pub name: String,
+    /// マクロの説明文（オプション）
+    #[serde(default)]
+    pub description: String,
+    /// nexterm.lua 内の Lua 関数名
+    /// この関数は `function(session: string, pane_id: number) -> string` のシグネチャを持つ
+    pub lua_fn: String,
 }
 
 /// キーバインド定義
@@ -238,6 +299,37 @@ fn default_auth_type() -> String {
     "key".to_string()
 }
 
+/// ターミナルフック設定 — イベント発生時に実行するシェルコマンドまたは Lua 関数
+///
+/// シェルコマンドフック: 文字列で指定（`sh -c` で実行）
+///   `$NEXTERM_PANE_ID` / `$NEXTERM_SESSION` 環境変数が利用可能
+///
+/// Lua 関数フック: `lua_on_*` フィールドに Lua 関数名を指定
+///   設定ファイル内で `function on_pane_open(session, pane_id) ... end` のように定義する
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct HooksConfig {
+    /// 新しいペインが開かれたときに実行するシェルコマンド
+    pub on_pane_open: Option<String>,
+    /// ペインが閉じられたときに実行するシェルコマンド
+    pub on_pane_close: Option<String>,
+    /// 新しいセッションが開始されたときに実行するシェルコマンド
+    pub on_session_start: Option<String>,
+    /// セッションにクライアントがアタッチしたときに実行するシェルコマンド
+    pub on_attach: Option<String>,
+    /// クライアントがセッションからデタッチしたときに実行するシェルコマンド
+    pub on_detach: Option<String>,
+    /// ペインが開かれたときに呼び出す Lua 関数名（例: "on_pane_open"）
+    pub lua_on_pane_open: Option<String>,
+    /// ペインが閉じられたときに呼び出す Lua 関数名
+    pub lua_on_pane_close: Option<String>,
+    /// セッション開始時に呼び出す Lua 関数名
+    pub lua_on_session_start: Option<String>,
+    /// アタッチ時に呼び出す Lua 関数名
+    pub lua_on_attach: Option<String>,
+    /// デタッチ時に呼び出す Lua 関数名
+    pub lua_on_detach: Option<String>,
+}
+
 /// 設定 API バージョン
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApiVersion(pub String);
@@ -251,6 +343,11 @@ impl Default for ApiVersion {
 /// nexterm のトップレベル設定
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
+    /// 設定ロード時に発生したエラー一覧（Lua/TOML パースエラー）
+    /// シリアライズ対象外 — ランタイムのみで使用する
+    #[serde(skip)]
+    pub config_errors: Vec<String>,
+
     /// 設定 API バージョン（SemVer 管理）
     #[serde(default)]
     pub api_version: ApiVersion,
@@ -291,9 +388,21 @@ pub struct Config {
     #[serde(default)]
     pub hosts: Vec<HostConfig>,
 
+    /// Lua マクロ一覧（[[macros]] テーブルで定義）
+    #[serde(default)]
+    pub macros: Vec<MacroConfig>,
+
+    /// シリアルポートプリセット一覧
+    #[serde(default)]
+    pub serial_ports: Vec<SerialPortConfig>,
+
     /// ログ設定
     #[serde(default)]
     pub log: LogConfig,
+
+    /// ターミナルフック（イベント駆動シェルコマンド）
+    #[serde(default)]
+    pub hooks: HooksConfig,
 }
 
 fn default_scrollback() -> usize {
@@ -303,6 +412,7 @@ fn default_scrollback() -> usize {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            config_errors: Vec::new(),
             api_version: ApiVersion::default(),
             font: FontConfig::default(),
             colors: ColorScheme::default(),
@@ -313,7 +423,10 @@ impl Default for Config {
             window: WindowConfig::default(),
             tab_bar: TabBarConfig::default(),
             hosts: Vec::new(),
+            macros: Vec::new(),
+            serial_ports: Vec::new(),
             log: LogConfig::default(),
+            hooks: HooksConfig::default(),
         }
     }
 }
@@ -340,6 +453,26 @@ fn default_keybindings() -> Vec<KeyBinding> {
         KeyBinding {
             key: "ctrl+shift+p".to_string(),
             action: "CommandPalette".to_string(),
+        },
+        KeyBinding {
+            key: "ctrl+b z".to_string(),
+            action: "ToggleZoom".to_string(),
+        },
+        KeyBinding {
+            key: "ctrl+b {".to_string(),
+            action: "SwapPanePrev".to_string(),
+        },
+        KeyBinding {
+            key: "ctrl+b }".to_string(),
+            action: "SwapPaneNext".to_string(),
+        },
+        KeyBinding {
+            key: "ctrl+b !".to_string(),
+            action: "BreakPane".to_string(),
+        },
+        KeyBinding {
+            key: "ctrl+shift+space".to_string(),
+            action: "QuickSelect".to_string(),
         },
     ]
 }

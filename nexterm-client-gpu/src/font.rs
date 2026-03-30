@@ -83,7 +83,7 @@ impl FontManager {
             &mut self.font_system,
             &mut self.swash_cache,
             color,
-            |x, y, w, h, c| {
+            |x, y, _w, _h, c| {
                 // バッファ範囲内にクリップして書き込む
                 let px = x as u32;
                 let py = y as u32;

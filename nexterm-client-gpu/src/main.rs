@@ -2,6 +2,8 @@
 
 mod connection;
 mod font;
+mod host_manager;
+mod macro_picker;
 mod palette;
 mod renderer;
 mod scrollback;

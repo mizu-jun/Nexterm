@@ -58,6 +58,42 @@ impl CommandPalette {
                 label: fl!("palette-display-panes"),
                 action: "DisplayPanes".to_string(),
             },
+            PaletteAction {
+                label: fl!("palette-toggle-zoom"),
+                action: "ToggleZoom".to_string(),
+            },
+            PaletteAction {
+                label: fl!("palette-swap-pane-next"),
+                action: "SwapPaneNext".to_string(),
+            },
+            PaletteAction {
+                label: fl!("palette-swap-pane-prev"),
+                action: "SwapPanePrev".to_string(),
+            },
+            PaletteAction {
+                label: fl!("palette-break-pane"),
+                action: "BreakPane".to_string(),
+            },
+            PaletteAction {
+                label: fl!("palette-connect-serial"),
+                action: "ConnectSerialPrompt".to_string(),
+            },
+            PaletteAction {
+                label: fl!("palette-show-host-manager"),
+                action: "ShowHostManager".to_string(),
+            },
+            PaletteAction {
+                label: fl!("palette-show-macro-picker"),
+                action: "ShowMacroPicker".to_string(),
+            },
+            PaletteAction {
+                label: fl!("palette-sftp-upload"),
+                action: "SftpUploadDialog".to_string(),
+            },
+            PaletteAction {
+                label: fl!("palette-sftp-download"),
+                action: "SftpDownloadDialog".to_string(),
+            },
         ];
 
         Self {
@@ -83,12 +119,14 @@ impl CommandPalette {
     }
 
     /// クエリ文字を追加する
+    #[allow(dead_code)]
     pub fn push_char(&mut self, ch: char) {
         self.query.push(ch);
         self.selected = 0;
     }
 
     /// クエリの末尾を削除する
+    #[allow(dead_code)]
     pub fn pop_char(&mut self) {
         self.query.pop();
         self.selected = 0;
@@ -140,6 +178,7 @@ impl CommandPalette {
     }
 
     /// カスタムアクションを登録する
+    #[allow(dead_code)]
     pub fn register(&mut self, action: PaletteAction) {
         self.actions.push(action);
     }
@@ -148,6 +187,10 @@ impl CommandPalette {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// ロケール変更テストの排他制御（グローバルロケールのレース防止）
+    static LOCALE_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn default_actions_exist() {
@@ -164,6 +207,8 @@ mod tests {
     #[test]
     fn fuzzy_match_works() {
         // "split" は Split Vertical / Split Horizontal にマッチする（英語ロケール）
+        let _guard = LOCALE_MUTEX.lock().unwrap();
+        nexterm_i18n::set_locale("en");
         let mut p = CommandPalette::new();
         p.query = "split".to_string();
         let results = p.filtered();
@@ -175,6 +220,7 @@ mod tests {
     #[test]
     fn fuzzy_match_works_with_japanese_locale() {
         // 日本語ロケールで "分割" がマッチすることを確認する
+        let _guard = LOCALE_MUTEX.lock().unwrap();
         nexterm_i18n::set_locale("ja");
         let mut p = CommandPalette::new();
         p.query = "分割".to_string();

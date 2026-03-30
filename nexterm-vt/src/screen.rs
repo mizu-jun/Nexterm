@@ -449,6 +449,7 @@ impl Screen {
     }
 
     /// Kitty APC 画像をデコードして pending_images に積む
+    #[allow(dead_code)]
     pub(crate) fn handle_kitty_apc(&mut self, data: &[u8]) {
         if let Some(img) = decode_kitty(data) {
             let id = self.next_image_id;

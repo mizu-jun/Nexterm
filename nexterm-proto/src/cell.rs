@@ -30,8 +30,10 @@ impl Attrs {
 
 /// 端末カラー（256色 + TrueColor 対応）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum Color {
     /// デフォルト色（端末設定に従う）
+    #[default]
     Default,
     /// ANSI 16色（0〜15）
     Indexed(u8),
@@ -39,11 +41,6 @@ pub enum Color {
     Rgb(u8, u8, u8),
 }
 
-impl Default for Color {
-    fn default() -> Self {
-        Self::Default
-    }
-}
 
 /// ターミナルの1セル
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

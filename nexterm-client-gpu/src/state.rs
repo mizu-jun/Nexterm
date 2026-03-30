@@ -4,6 +4,8 @@ use std::collections::HashMap;
 
 use nexterm_proto::{Grid, PaneLayout, ServerToClient};
 
+use crate::host_manager::HostManager;
+use crate::macro_picker::MacroPicker;
 use crate::palette::CommandPalette;
 use crate::scrollback::Scrollback;
 
@@ -308,6 +310,176 @@ impl ContextMenu {
     }
 }
 
+/// ファイル転送ダイアログの状態
+pub struct FileTransferDialog {
+    pub is_open: bool,
+    /// "upload" または "download"
+    pub mode: String,
+    /// 入力フィールドのインデックス（0 = ホスト名, 1 = ローカルパス, 2 = リモートパス）
+    pub field: usize,
+    pub host_name: String,
+    pub local_path: String,
+    pub remote_path: String,
+}
+
+impl FileTransferDialog {
+    pub fn new() -> Self {
+        Self {
+            is_open: false,
+            mode: "upload".to_string(),
+            field: 0,
+            host_name: String::new(),
+            local_path: String::new(),
+            remote_path: String::new(),
+        }
+    }
+
+    pub fn open_upload(&mut self) {
+        self.mode = "upload".to_string();
+        self.field = 0;
+        self.host_name.clear();
+        self.local_path.clear();
+        self.remote_path.clear();
+        self.is_open = true;
+    }
+
+    pub fn open_download(&mut self) {
+        self.mode = "download".to_string();
+        self.field = 0;
+        self.host_name.clear();
+        self.local_path.clear();
+        self.remote_path.clear();
+        self.is_open = true;
+    }
+
+    pub fn close(&mut self) {
+        self.is_open = false;
+    }
+
+    pub fn current_field_mut(&mut self) -> &mut String {
+        match self.field {
+            0 => &mut self.host_name,
+            1 => &mut self.local_path,
+            _ => &mut self.remote_path,
+        }
+    }
+
+    pub fn next_field(&mut self) {
+        self.field = (self.field + 1).min(2);
+    }
+
+    pub fn prev_field(&mut self) {
+        self.field = self.field.saturating_sub(1);
+    }
+}
+
+/// Quick Select モードのマッチ結果
+#[derive(Debug, Clone)]
+pub struct QuickSelectMatch {
+    pub row: u16,
+    pub col_start: u16,
+    pub col_end: u16,
+    pub text: String,
+    /// 選択ラベル（a, b, c, ... / aa, ab, ...）
+    pub label: String,
+}
+
+/// Quick Select モードの状態
+pub struct QuickSelectState {
+    pub is_active: bool,
+    pub matches: Vec<QuickSelectMatch>,
+    /// 現在タイプ中のラベル
+    pub typed_label: String,
+}
+
+impl QuickSelectState {
+    fn new() -> Self {
+        Self {
+            is_active: false,
+            matches: Vec::new(),
+            typed_label: String::new(),
+        }
+    }
+
+    pub fn enter(&mut self, grid_rows: &[Vec<nexterm_proto::Cell>]) {
+        self.is_active = true;
+        self.typed_label.clear();
+        self.matches = find_quick_select_matches(grid_rows);
+    }
+
+    pub fn exit(&mut self) {
+        self.is_active = false;
+        self.matches.clear();
+        self.typed_label.clear();
+    }
+
+    /// タイプされたラベルが一致するマッチを返す
+    pub fn accept(&self) -> Option<&QuickSelectMatch> {
+        if self.typed_label.is_empty() {
+            return None;
+        }
+        self.matches.iter().find(|m| m.label == self.typed_label)
+    }
+}
+
+/// グリッドから Quick Select マッチを検索する（URL・パス・単語）
+fn find_quick_select_matches(rows: &[Vec<nexterm_proto::Cell>]) -> Vec<QuickSelectMatch> {
+    let patterns: &[(&str, &str)] = &[
+        // URL
+        (r#"https?://[^\s<>"'\]]+"#, "url"),
+        // ファイルパス (Unix)
+        (r"(?:^|[\s(])((?:/[^\s/:]+)+/?)", "path"),
+        // IPv4 アドレス
+        (r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b", "ip"),
+        // SHA / Git ハッシュ (7-40 hex)
+        (r"\b[0-9a-f]{7,40}\b", "hash"),
+        // 数字
+        (r"\b\d+\b", "num"),
+    ];
+
+    let mut all_matches: Vec<QuickSelectMatch> = Vec::new();
+    let label_chars: Vec<char> = "abcdefghijklmnopqrstuvwxyz".chars().collect();
+
+    for (row_idx, cells) in rows.iter().enumerate() {
+        let line: String = cells.iter().map(|c| c.ch).collect();
+        for (pat_str, _) in patterns {
+            if let Ok(re) = regex::Regex::new(pat_str) {
+                for m in re.find_iter(&line) {
+                    all_matches.push(QuickSelectMatch {
+                        row: row_idx as u16,
+                        col_start: m.start() as u16,
+                        col_end: m.end() as u16,
+                        text: m.as_str().to_string(),
+                        label: String::new(), // will be filled below
+                    });
+                }
+            }
+        }
+    }
+
+    // ラベルを割り当てる（a, b, ..., z, aa, ab, ...）
+    let n = all_matches.len();
+    for (i, m) in all_matches.iter_mut().enumerate() {
+        m.label = index_to_label(i, n, &label_chars);
+    }
+
+    all_matches
+}
+
+fn index_to_label(i: usize, total: usize, chars: &[char]) -> String {
+    let base = chars.len();
+    if total <= base {
+        return chars[i % base].to_string();
+    }
+    let second = i / base;
+    let first = i % base;
+    if second == 0 {
+        chars[first].to_string()
+    } else {
+        format!("{}{}", chars[second - 1], chars[first])
+    }
+}
+
 /// GPU クライアント全体の状態
 pub struct ClientState {
     pub panes: HashMap<u32, PaneState>,
@@ -336,6 +508,16 @@ pub struct ClientState {
     pub display_panes_mode: bool,
     /// 右クリックで開いたコンテキストメニュー（None = 非表示）
     pub context_menu: Option<ContextMenu>,
+    /// ペインズームが有効かどうか
+    pub is_zoomed: bool,
+    /// Quick Select モード
+    pub quick_select: QuickSelectState,
+    /// ホストマネージャ UI
+    pub host_manager: HostManager,
+    /// Lua マクロピッカー UI
+    pub macro_picker: MacroPicker,
+    /// SFTP ファイル転送ダイアログ
+    pub file_transfer: FileTransferDialog,
 }
 
 impl ClientState {
@@ -357,6 +539,11 @@ impl ClientState {
             broadcast_mode: false,
             display_panes_mode: false,
             context_menu: None,
+            is_zoomed: false,
+            quick_select: QuickSelectState::new(),
+            host_manager: HostManager::new(vec![]),
+            macro_picker: MacroPicker::new(vec![]),
+            file_transfer: FileTransferDialog::new(),
         }
     }
 
@@ -424,6 +611,26 @@ impl ClientState {
                 self.broadcast_mode = enabled;
             }
             ServerToClient::AsciicastStarted { .. } | ServerToClient::AsciicastStopped { .. } => {}
+            ServerToClient::TemplateSaved { .. }
+            | ServerToClient::TemplateLoaded { .. }
+            | ServerToClient::TemplateList { .. } => {}
+            ServerToClient::ZoomChanged { is_zoomed } => {
+                self.is_zoomed = is_zoomed;
+            }
+            // ペイン分離・シリアル接続はサーバーから LayoutChanged / WindowListChanged が後続するため状態更新不要
+            ServerToClient::PaneBroken { .. } | ServerToClient::SerialConnected { .. } => {}
+            // SFTP 転送進捗・完了はステータスバーに表示する
+            ServerToClient::SftpProgress { path, transferred, total } => {
+                let pct = if total > 0 { transferred * 100 / total } else { 0 };
+                self.status_bar_text = format!("SFTP {} {}%", path, pct);
+            }
+            ServerToClient::SftpDone { path, error } => {
+                if let Some(err) = error {
+                    self.status_bar_text = format!("SFTP ERR: {}", err);
+                } else {
+                    self.status_bar_text = format!("SFTP OK: {}", path);
+                }
+            }
             ServerToClient::LayoutChanged { panes, focused_pane_id } => {
                 // レイアウトを全更新する
                 self.pane_layouts.clear();
@@ -440,6 +647,7 @@ impl ClientState {
     }
 
     /// フォーカスペインを切り替え、アクティビティフラグをクリアする
+    #[allow(dead_code)]
     pub fn set_focused_pane(&mut self, pane_id: u32) {
         self.focused_pane_id = Some(pane_id);
         if let Some(pane) = self.panes.get_mut(&pane_id) {
@@ -511,11 +719,10 @@ impl ClientState {
             .focused_pane_mut()
             .and_then(|pane| pane.scrollback.search_next(&query, from));
         self.search.current_match = result;
-        if let Some(row) = result {
-            if let Some(pane) = self.focused_pane_mut() {
+        if let Some(row) = result
+            && let Some(pane) = self.focused_pane_mut() {
                 pane.scroll_offset = row;
             }
-        }
     }
 
     /// スクロールバックを1画面分上にスクロールする

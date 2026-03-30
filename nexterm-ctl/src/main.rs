@@ -10,6 +10,9 @@
 //! nexterm-ctl record start <session> <file> # Start recording PTY output
 //! nexterm-ctl record stop <session>         # Stop recording
 //! nexterm-ctl theme import <path>           # Import a color theme from file
+//! nexterm-ctl template save <name>          # Save current session layout as template
+//! nexterm-ctl template load <name>          # Load and apply a saved template
+//! nexterm-ctl template list                 # List all saved templates
 //! ```
 
 use anyhow::{bail, Context, Result};
@@ -79,6 +82,25 @@ fn build_cli() -> Command {
                         ),
                 ),
         )
+        .subcommand(
+            Command::new("template")
+                .about("Layout template management")
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .subcommand(
+                    Command::new("save")
+                        .about("Save current session layout as a template")
+                        .arg(Arg::new("name").help("Template name").required(true))
+                        .arg(Arg::new("session").help("Session name").required(true)),
+                )
+                .subcommand(
+                    Command::new("load")
+                        .about("Load and apply a saved template")
+                        .arg(Arg::new("name").help("Template name").required(true))
+                        .arg(Arg::new("session").help("Session name").required(true)),
+                )
+                .subcommand(Command::new("list").about("List all saved templates")),
+        )
 }
 
 // ---- エントリーポイント ----
@@ -97,34 +119,48 @@ async fn main() -> Result<()> {
     match matches.subcommand() {
         Some(("list", _)) => cmd_list().await,
         Some(("new", sub)) => {
-            let name = sub.get_one::<String>("name").unwrap().clone();
+            let name = sub.get_one::<String>("name").expect("clap required arg").clone();
             cmd_new(name).await
         }
         Some(("attach", sub)) => {
-            let name = sub.get_one::<String>("name").unwrap();
+            let name = sub.get_one::<String>("name").expect("clap required arg");
             cmd_attach(name)
         }
         Some(("kill", sub)) => {
-            let name = sub.get_one::<String>("name").unwrap().clone();
+            let name = sub.get_one::<String>("name").expect("clap required arg").clone();
             cmd_kill(name).await
         }
         Some(("record", sub)) => match sub.subcommand() {
             Some(("start", s)) => {
-                let session = s.get_one::<String>("session").unwrap().clone();
-                let file = s.get_one::<String>("file").unwrap().clone();
+                let session = s.get_one::<String>("session").expect("clap required arg").clone();
+                let file = s.get_one::<String>("file").expect("clap required arg").clone();
                 cmd_record_start(session, file).await
             }
             Some(("stop", s)) => {
-                let session = s.get_one::<String>("session").unwrap().clone();
+                let session = s.get_one::<String>("session").expect("clap required arg").clone();
                 cmd_record_stop(session).await
             }
             _ => unreachable!(),
         },
         Some(("theme", sub)) => match sub.subcommand() {
             Some(("import", s)) => {
-                let path = s.get_one::<String>("path").unwrap().clone();
+                let path = s.get_one::<String>("path").expect("clap required arg").clone();
                 cmd_theme_import(path)
             }
+            _ => unreachable!(),
+        },
+        Some(("template", sub)) => match sub.subcommand() {
+            Some(("save", s)) => {
+                let name = s.get_one::<String>("name").expect("clap required arg").clone();
+                let session = s.get_one::<String>("session").expect("clap required arg").clone();
+                cmd_template_save(name, session).await
+            }
+            Some(("load", s)) => {
+                let name = s.get_one::<String>("name").expect("clap required arg").clone();
+                let session = s.get_one::<String>("session").expect("clap required arg").clone();
+                cmd_template_load(name, session).await
+            }
+            Some(("list", _)) => cmd_template_list().await,
             _ => unreachable!(),
         },
         _ => unreachable!(),
@@ -255,6 +291,77 @@ async fn cmd_record_stop(session: String) -> Result<()> {
             println!("{}", fl!("ctl-record-stopped", session = session, pane_id = pane_id));
         }
         ServerToClient::Error { message } => bail!("{}", fl!("ctl-error", message = message)),
+        _ => {}
+    }
+    Ok(())
+}
+
+// ---- テンプレート管理 ----
+
+/// 現在のセッションレイアウトをテンプレートとして保存する
+async fn cmd_template_save(name: String, session: String) -> Result<()> {
+    let mut conn = IpcConn::connect().await?;
+    // セッションにアタッチしてから SaveTemplate を送信する
+    conn.send(ClientToServer::Attach { session_name: session.clone() }).await?;
+    // Attach の応答（FullRefresh, LayoutChanged, SessionList）を読み飛ばす
+    for _ in 0..8 {
+        match conn.recv().await? {
+            ServerToClient::SessionList { .. } => break,
+            ServerToClient::Error { message } => bail!("{}", message),
+            _ => {}
+        }
+    }
+    conn.send(ClientToServer::SaveTemplate { name: name.clone() }).await?;
+    match conn.recv().await? {
+        ServerToClient::TemplateSaved { name: saved_name, path } => {
+            println!("テンプレート '{}' を保存しました: {}", saved_name, path);
+        }
+        ServerToClient::Error { message } => bail!("{}", message),
+        _ => {}
+    }
+    conn.send(ClientToServer::Detach).await?;
+    Ok(())
+}
+
+/// 保存済みテンプレートを読み込む
+async fn cmd_template_load(name: String, session: String) -> Result<()> {
+    let mut conn = IpcConn::connect().await?;
+    conn.send(ClientToServer::Attach { session_name: session.clone() }).await?;
+    for _ in 0..8 {
+        match conn.recv().await? {
+            ServerToClient::SessionList { .. } => break,
+            ServerToClient::Error { message } => bail!("{}", message),
+            _ => {}
+        }
+    }
+    conn.send(ClientToServer::LoadTemplate { name: name.clone() }).await?;
+    match conn.recv().await? {
+        ServerToClient::TemplateLoaded { name: loaded_name } => {
+            println!("テンプレート '{}' を読み込みました", loaded_name);
+        }
+        ServerToClient::Error { message } => bail!("{}", message),
+        _ => {}
+    }
+    conn.send(ClientToServer::Detach).await?;
+    Ok(())
+}
+
+/// 保存済みテンプレート一覧を表示する
+async fn cmd_template_list() -> Result<()> {
+    let mut conn = IpcConn::connect().await?;
+    conn.send(ClientToServer::ListTemplates).await?;
+    match conn.recv().await? {
+        ServerToClient::TemplateList { names } => {
+            if names.is_empty() {
+                println!("保存済みテンプレートはありません");
+            } else {
+                println!("保存済みテンプレート:");
+                for name in &names {
+                    println!("  {}", name);
+                }
+            }
+        }
+        ServerToClient::Error { message } => bail!("{}", message),
         _ => {}
     }
     Ok(())
@@ -497,30 +604,27 @@ fn parse_alacritty_yaml(content: &str) -> Result<ImportedPalette> {
                 if let Some(hex) = yaml_extract_hex(trimmed) {
                     background = hex;
                 }
-            } else if trimmed.starts_with("foreground:") {
-                if let Some(hex) = yaml_extract_hex(trimmed) {
+            } else if trimmed.starts_with("foreground:")
+                && let Some(hex) = yaml_extract_hex(trimmed) {
                     foreground = hex;
                 }
-            }
         }
 
         if in_normal {
             for (name, idx) in normal_map {
-                if trimmed.starts_with(name) {
-                    if let Some(hex) = yaml_extract_hex(trimmed) {
+                if trimmed.starts_with(name)
+                    && let Some(hex) = yaml_extract_hex(trimmed) {
                         ansi[*idx] = hex;
                     }
-                }
             }
         }
 
         if in_bright {
             for (name, idx) in bright_map {
-                if trimmed.starts_with(name) {
-                    if let Some(hex) = yaml_extract_hex(trimmed) {
+                if trimmed.starts_with(name)
+                    && let Some(hex) = yaml_extract_hex(trimmed) {
                         ansi[*idx] = hex;
                     }
-                }
             }
         }
 

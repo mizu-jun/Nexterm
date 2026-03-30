@@ -19,6 +19,7 @@ impl Connection {
         return connect_named_pipe().await;
     }
 
+    #[allow(dead_code)]
     pub async fn send(&mut self, msg: ClientToServer) -> Result<()> {
         self.send_tx
             .send(msg)
@@ -26,6 +27,7 @@ impl Connection {
             .map_err(|_| anyhow::anyhow!("サーバーとの接続が切断されました"))
     }
 
+    #[allow(dead_code)]
     pub fn try_recv(&mut self) -> Result<ServerToClient, mpsc::error::TryRecvError> {
         self.recv_rx.try_recv()
     }
@@ -64,11 +66,10 @@ where
             if read_half.read_exact(&mut payload).await.is_err() {
                 break;
             }
-            if let Ok(msg) = bincode::deserialize::<ServerToClient>(&payload) {
-                if recv_tx.send(msg).await.is_err() {
+            if let Ok(msg) = bincode::deserialize::<ServerToClient>(&payload)
+                && recv_tx.send(msg).await.is_err() {
                     break;
                 }
-            }
         }
     });
 

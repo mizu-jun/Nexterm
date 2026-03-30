@@ -41,13 +41,18 @@ pub enum SshAuth {
 // 実装1: known_hosts によるホスト鍵検証
 // ---------------------------------------------------------------------------
 
-/// ~/.ssh/known_hosts によるホスト鍵検証
-struct KnownHostsVerifier {
+/// リモートポートフォワーディングのマッピング: remote_port → (local_host, local_port)
+type ForwardMap = Arc<std::sync::Mutex<std::collections::HashMap<u32, (String, u16)>>>;
+
+/// ~/.ssh/known_hosts によるホスト鍵検証とリモートフォワーディング処理
+struct SshHandler {
     host: String,
     port: u16,
+    /// リモートフォワーディング: サーバー側ポート → (ローカルホスト, ローカルポート)
+    forward_map: ForwardMap,
 }
 
-impl client::Handler for KnownHostsVerifier {
+impl client::Handler for SshHandler {
     type Error = russh::Error;
 
     async fn check_server_key(
@@ -87,6 +92,57 @@ impl client::Handler for KnownHostsVerifier {
             }
         }
     }
+
+    /// SSH サーバーがリモートフォワーディングの接続を通知してきた際に呼び出される
+    async fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: russh::Channel<russh::client::Msg>,
+        connected_address: &str,
+        connected_port: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        _session: &mut russh::client::Session,
+    ) -> Result<(), Self::Error> {
+        // forward_map からローカル転送先を取得する
+        let dest = {
+            let map = self.forward_map.lock().unwrap();
+            map.get(&connected_port).cloned()
+        };
+
+        let Some((local_host, local_port)) = dest else {
+            warn!(
+                "リモートフォワーディング: ポート {} のマッピングが見つかりません",
+                connected_port
+            );
+            return Ok(());
+        };
+
+        debug!(
+            "リモートフォワーディング: {}:{} → {}:{}",
+            connected_address, connected_port, local_host, local_port
+        );
+
+        tokio::spawn(async move {
+            let mut local_stream = match tokio::net::TcpStream::connect((local_host.as_str(), local_port)).await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!("リモートフォワーディング: ローカル接続失敗 ({}:{}): {}", local_host, local_port, e);
+                    return;
+                }
+            };
+            let mut ssh_stream = channel.into_stream();
+            match tokio::io::copy_bidirectional(&mut local_stream, &mut ssh_stream).await {
+                Ok((sent, recv)) => {
+                    debug!("リモートフォワーディング終了: sent={} recv={}", sent, recv);
+                }
+                Err(e) => {
+                    debug!("リモートフォワーディング I/O エラー: {}", e);
+                }
+            }
+        });
+
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -98,7 +154,9 @@ impl client::Handler for KnownHostsVerifier {
 /// `Handle` は `Clone` を実装していないため、ポートフォワーディングなど
 /// バックグラウンドタスクからもアクセスできるよう `Arc<Mutex<...>>` で保持する。
 pub struct SshSession {
-    handle: Arc<Mutex<Handle<KnownHostsVerifier>>>,
+    handle: Arc<Mutex<Handle<SshHandler>>>,
+    /// リモートポートフォワーディングのポートマッピング（ハンドラと共有）
+    forward_map: ForwardMap,
 }
 
 impl SshSession {
@@ -114,28 +172,32 @@ impl SshSession {
             ..Default::default()
         });
 
-        let verifier = KnownHostsVerifier {
+        let forward_map: ForwardMap = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+
+        let handler = SshHandler {
             host: config.host.clone(),
             port: config.port,
+            forward_map: Arc::clone(&forward_map),
         };
 
         // SOCKS5 プロキシ経由接続
         if let Some(socks5_url) = &config.proxy_socks5 {
-            let handle = connect_via_socks5(ssh_config, socks5_url, config, verifier).await?;
-            return Ok(Self { handle: Arc::new(Mutex::new(handle)) });
+            let handle = connect_via_socks5(ssh_config, socks5_url, config, handler).await?;
+            return Ok(Self { handle: Arc::new(Mutex::new(handle)), forward_map });
         }
 
         // ProxyJump 経由接続
         if let Some(jump_spec) = &config.proxy_jump {
-            let handle = connect_via_jump(ssh_config, jump_spec, config, verifier).await?;
-            return Ok(Self { handle: Arc::new(Mutex::new(handle)) });
+            let handle = connect_via_jump(ssh_config, jump_spec, config, handler).await?;
+            return Ok(Self { handle: Arc::new(Mutex::new(handle)), forward_map });
         }
 
         // 直接接続
         let addr = (config.host.as_str(), config.port);
-        let handle = client::connect(ssh_config, addr, verifier).await?;
+        let handle = client::connect(ssh_config, addr, handler).await?;
         Ok(Self {
             handle: Arc::new(Mutex::new(handle)),
+            forward_map,
         })
     }
 
@@ -295,6 +357,45 @@ impl SshSession {
     // 実装3: ローカルポートフォワーディング
     // ---------------------------------------------------------------------------
 
+    /// リモートポートフォワーディングを開始する (-R)
+    ///
+    /// `spec` フォーマット: "remote_port:local_host:local_port"
+    ///
+    /// SSH サーバーの `remote_port` への接続を
+    /// ローカルの `local_host:local_port` に転送する。
+    pub async fn start_remote_forward(&self, spec: &str) -> Result<()> {
+        let (remote_port, local_host, local_port) = parse_forward_spec(spec)?;
+
+        // forward_map にマッピングを登録する（ハンドラのコールバックで参照される）
+        {
+            let mut map = self.forward_map.lock().unwrap();
+            map.insert(remote_port as u32, (local_host.clone(), local_port));
+        }
+
+        // SSH サーバーにリモートポートの待ち受けをリクエストする
+        {
+            let guard = self.handle.lock().await;
+            guard
+                .tcpip_forward("127.0.0.1", remote_port as u32)
+                .await
+                .with_context(|| {
+                    format!(
+                        "リモートポートフォワーディング: SSH サーバーへのリモートポート {} のバインドに失敗しました",
+                        remote_port
+                    )
+                })?;
+        }
+
+        debug!(
+            "リモートポートフォワーディング開始: remote:{} → {}:{}",
+            remote_port, local_host, local_port
+        );
+
+        // 実際の接続処理は SshHandler::server_channel_open_forwarded_tcpip で行われる
+
+        Ok(())
+    }
+
     /// ローカルポートフォワーディングを開始する
     ///
     /// `spec` フォーマット: "local_port:remote_host:remote_port"
@@ -363,6 +464,120 @@ impl SshSession {
 
         Ok(())
     }
+
+    // ---------------------------------------------------------------------------
+    // 実装4: SFTP ファイル転送
+    // ---------------------------------------------------------------------------
+
+    /// ローカルファイルをリモートにアップロードする（SFTP）
+    ///
+    /// `local_path`: アップロードするローカルファイルのパス
+    /// `remote_path`: サーバー上の保存先パス（例: "/home/user/file.txt"）
+    /// `progress_tx`: (transferred_bytes, total_bytes) を報告するチャネル（None = 報告なし）
+    pub async fn upload_file(
+        &self,
+        local_path: &std::path::Path,
+        remote_path: &str,
+        progress_tx: Option<tokio::sync::mpsc::Sender<(u64, u64)>>,
+    ) -> Result<()> {
+        use russh_sftp::client::SftpSession;
+        use tokio::io::AsyncReadExt;
+
+        // SFTP サブシステムチャネルを開く
+        let channel = {
+            let handle = self.handle.lock().await;
+            handle.channel_open_session().await?
+        };
+
+        let sftp = SftpSession::new(channel.into_stream()).await
+            .context("SFTP セッションの開始に失敗しました")?;
+
+        // ローカルファイルを開く
+        let mut local_file = tokio::fs::File::open(local_path).await
+            .with_context(|| format!("ローカルファイルのオープンに失敗しました: {}", local_path.display()))?;
+        let total = local_file.metadata().await.map(|m| m.len()).unwrap_or(0);
+
+        // リモートファイルを作成して書き込む
+        let mut remote_file = sftp
+            .create(remote_path)
+            .await
+            .with_context(|| format!("リモートファイルの作成に失敗しました: {}", remote_path))?;
+
+        let mut buf = vec![0u8; 32 * 1024]; // 32KB チャンク
+        let mut transferred: u64 = 0;
+
+        loop {
+            let n = local_file.read(&mut buf).await?;
+            if n == 0 {
+                break;
+            }
+            use tokio::io::AsyncWriteExt;
+            remote_file.write_all(&buf[..n]).await?;
+            transferred += n as u64;
+            if let Some(ref tx) = progress_tx {
+                let _ = tx.try_send((transferred, total));
+            }
+        }
+
+        debug!("SFTP アップロード完了: {} → {} ({} bytes)", local_path.display(), remote_path, transferred);
+        Ok(())
+    }
+
+    /// リモートファイルをローカルにダウンロードする（SFTP）
+    ///
+    /// `remote_path`: ダウンロードするサーバー上のファイルパス
+    /// `local_path`: ローカル保存先パス
+    /// `progress_tx`: (transferred_bytes, total_bytes) を報告するチャネル（None = 報告なし）
+    pub async fn download_file(
+        &self,
+        remote_path: &str,
+        local_path: &std::path::Path,
+        progress_tx: Option<tokio::sync::mpsc::Sender<(u64, u64)>>,
+    ) -> Result<()> {
+        use russh_sftp::client::SftpSession;
+        use tokio::io::AsyncReadExt;
+
+        // SFTP サブシステムチャネルを開く
+        let channel = {
+            let handle = self.handle.lock().await;
+            handle.channel_open_session().await?
+        };
+
+        let sftp = SftpSession::new(channel.into_stream()).await
+            .context("SFTP セッションの開始に失敗しました")?;
+
+        // リモートファイルのメタデータを取得してサイズを得る
+        let total = sftp.metadata(remote_path).await.map(|m| m.size.unwrap_or(0)).unwrap_or(0);
+
+        // リモートファイルを開く
+        let mut remote_file = sftp
+            .open(remote_path)
+            .await
+            .with_context(|| format!("リモートファイルのオープンに失敗しました: {}", remote_path))?;
+
+        // ローカルファイルに書き込む
+        let mut local_file = tokio::fs::File::create(local_path).await
+            .with_context(|| format!("ローカルファイルの作成に失敗しました: {}", local_path.display()))?;
+
+        let mut buf = vec![0u8; 32 * 1024]; // 32KB チャンク
+        let mut transferred: u64 = 0;
+
+        loop {
+            let n = remote_file.read(&mut buf).await?;
+            if n == 0 {
+                break;
+            }
+            use tokio::io::AsyncWriteExt;
+            local_file.write_all(&buf[..n]).await?;
+            transferred += n as u64;
+            if let Some(ref tx) = progress_tx {
+                let _ = tx.try_send((transferred, total));
+            }
+        }
+
+        debug!("SFTP ダウンロード完了: {} → {} ({} bytes)", remote_path, local_path.display(), transferred);
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -408,8 +623,8 @@ async fn connect_via_jump(
     ssh_config: Arc<client::Config>,
     jump_spec: &str,
     target: &SshConfig,
-    target_verifier: KnownHostsVerifier,
-) -> Result<client::Handle<KnownHostsVerifier>> {
+    target_verifier: SshHandler,
+) -> Result<client::Handle<SshHandler>> {
     let (jump_user, jump_host, jump_port) = parse_jump_spec(jump_spec)?;
 
     debug!(
@@ -417,10 +632,11 @@ async fn connect_via_jump(
         jump_user, jump_host, jump_port, target.host, target.port
     );
 
-    // ジャンプホストへの接続
-    let jump_verifier = KnownHostsVerifier {
+    // ジャンプホストへの接続（フォワーディングは対象ホスト側のみ、ジャンプホストには不要）
+    let jump_verifier = SshHandler {
         host: jump_host.clone(),
         port: jump_port,
+        forward_map: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
     let jump_addr = (jump_host.as_str(), jump_port);
     let mut jump_handle = client::connect(ssh_config.clone(), jump_addr, jump_verifier).await?;
@@ -482,22 +698,29 @@ async fn connect_via_socks5(
     ssh_config: Arc<client::Config>,
     socks5_url: &str,
     target: &SshConfig,
-    target_verifier: KnownHostsVerifier,
-) -> Result<client::Handle<KnownHostsVerifier>> {
+    target_verifier: SshHandler,
+) -> Result<client::Handle<SshHandler>> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    // "socks5://host:port" をパースする
+    // "socks5://[user:pass@]host:port" をパースする
     let without_scheme = socks5_url
         .strip_prefix("socks5://")
         .unwrap_or(socks5_url);
 
-    let (socks_host, socks_port) = if let Some(colon) = without_scheme.rfind(':') {
-        let port: u16 = without_scheme[colon + 1..]
+    // "@" がある場合は認証情報を除去してホスト部だけ取り出す
+    let host_part = if let Some(at_pos) = without_scheme.find('@') {
+        &without_scheme[at_pos + 1..]
+    } else {
+        without_scheme
+    };
+
+    let (socks_host, socks_port) = if let Some(colon) = host_part.rfind(':') {
+        let port: u16 = host_part[colon + 1..]
             .parse()
             .with_context(|| format!("SOCKS5 プロキシのポート番号が不正です: {}", socks5_url))?;
-        (without_scheme[..colon].to_string(), port)
+        (host_part[..colon].to_string(), port)
     } else {
-        (without_scheme.to_string(), 1080u16)
+        (host_part.to_string(), 1080u16)
     };
 
     debug!(
@@ -510,18 +733,65 @@ async fn connect_via_socks5(
         .await
         .with_context(|| format!("SOCKS5 プロキシへの接続に失敗しました: {}:{}", socks_host, socks_port))?;
 
-    // SOCKS5 ネゴシエーション: 認証なし
+    // socks5_url から認証情報を抽出する（"socks5://user:pass@host:port"）
+    let (socks_user, socks_pass) = parse_socks5_credentials(socks5_url);
+
+    // SOCKS5 ネゴシエーション: 認証なし(0x00) + ユーザー名/パスワード(0x02) の両方を提案
     // +----+----------+----------+
     // |VER | NMETHODS | METHODS  |
     // +----+----------+----------+
     // | 1  |    1     | 1 to 255 |
     // +----+----------+----------+
-    stream.write_all(&[0x05, 0x01, 0x00]).await?; // VER=5, NMETHODS=1, METHOD=0(no auth)
+    let methods: &[u8] = if socks_user.is_some() {
+        &[0x05, 0x02, 0x00, 0x02] // no-auth + user/pass
+    } else {
+        &[0x05, 0x01, 0x00]       // no-auth のみ
+    };
+    stream.write_all(methods).await?;
 
     let mut resp = [0u8; 2];
     stream.read_exact(&mut resp).await?;
-    if resp[0] != 0x05 || resp[1] != 0x00 {
-        bail!("SOCKS5: 認証ネゴシエーションに失敗しました (応答: {:?})", resp);
+    if resp[0] != 0x05 {
+        bail!("SOCKS5: バージョンが不正です (応答: {:?})", resp);
+    }
+
+    match resp[1] {
+        0x00 => {
+            // 認証不要 — そのまま続行
+            debug!("SOCKS5: 認証なしで接続します");
+        }
+        0x02 => {
+            // RFC 1929 ユーザー名/パスワード認証
+            let user = socks_user.as_deref().unwrap_or("");
+            let pass = socks_pass.as_deref().unwrap_or("");
+            debug!("SOCKS5: ユーザー名/パスワード認証を実行します (user={})", user);
+
+            let user_bytes = user.as_bytes();
+            let pass_bytes = pass.as_bytes();
+            if user_bytes.len() > 255 || pass_bytes.len() > 255 {
+                bail!("SOCKS5: ユーザー名またはパスワードが長すぎます (最大255バイト)");
+            }
+
+            let mut auth_req = vec![0x01u8]; // VER=1 (sub-negotiation version)
+            auth_req.push(user_bytes.len() as u8);
+            auth_req.extend_from_slice(user_bytes);
+            auth_req.push(pass_bytes.len() as u8);
+            auth_req.extend_from_slice(pass_bytes);
+            stream.write_all(&auth_req).await?;
+
+            let mut auth_resp = [0u8; 2];
+            stream.read_exact(&mut auth_resp).await?;
+            if auth_resp[1] != 0x00 {
+                bail!("SOCKS5: 認証に失敗しました (user={}, status=0x{:02x})", user, auth_resp[1]);
+            }
+            debug!("SOCKS5: 認証成功");
+        }
+        0xFF => {
+            bail!("SOCKS5: サーバーが利用可能な認証方式を拒否しました");
+        }
+        other => {
+            bail!("SOCKS5: 認証ネゴシエーションに失敗しました (選択された方式: 0x{:02x})", other);
+        }
     }
 
     // SOCKS5 CONNECT リクエスト
@@ -568,6 +838,29 @@ async fn connect_via_socks5(
     // トンネルが確立されたので SSH 接続を行う
     let handle = client::connect_stream(ssh_config, stream, target_verifier).await?;
     Ok(handle)
+}
+
+/// SOCKS5 URL から認証情報を抽出する
+///
+/// "socks5://user:pass@host:port" → (Some("user"), Some("pass"))
+/// "socks5://host:port"           → (None, None)
+fn parse_socks5_credentials(url: &str) -> (Option<String>, Option<String>) {
+    // "socks5://" を除去する
+    let rest = url.strip_prefix("socks5://").unwrap_or(url);
+
+    // "@" が含まれる場合は "user:pass@host:port" 形式
+    if let Some(at_pos) = rest.find('@') {
+        let userinfo = &rest[..at_pos];
+        if let Some(colon_pos) = userinfo.find(':') {
+            let user = &userinfo[..colon_pos];
+            let pass = &userinfo[colon_pos + 1..];
+            return (Some(user.to_string()), Some(pass.to_string()));
+        }
+        // コロンなし → ユーザー名のみ
+        return (Some(userinfo.to_string()), None);
+    }
+
+    (None, None)
 }
 
 /// "local_port:remote_host:remote_port" 形式のフォワーディング仕様をパースする

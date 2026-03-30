@@ -5,7 +5,6 @@
   "ctl-attach-about": "セッションへのアタッチ方法を案内する",
   "ctl-kill-about": "セッションを強制終了する",
   "ctl-arg-name": "セッション名",
-
   "ctl-no-sessions": "セッションはありません。",
   "ctl-list-col-name": "名前",
   "ctl-list-col-windows": "ウィンドウ数",
@@ -28,7 +27,6 @@
   "ctl-record-arg-file": "出力ファイルパス",
   "ctl-record-started": "セッション '{session}' ペイン {pane_id} の録音を開始しました → {path}",
   "ctl-record-stopped": "セッション '{session}' ペイン {pane_id} の録音を停止しました",
-
   "palette-split-vertical": "垂直分割",
   "palette-split-horizontal": "水平分割",
   "palette-focus-next": "次のペインへ",
@@ -36,8 +34,16 @@
   "palette-detach": "デタッチ",
   "palette-search-scrollback": "スクロールバック検索",
   "palette-display-panes": "ペイン番号を表示",
-
   "gpu-adapter-not-found": "wgpu アダプターが見つかりません。GPU ドライバーを確認してください。",
   "gpu-window-create-failed": "ウィンドウの作成に失敗しました",
-  "gpu-init-failed": "wgpu の初期化に失敗しました"
+  "gpu-init-failed": "wgpu の初期化に失敗しました",
+  "palette-toggle-zoom": "ペインをズームトグル",
+  "palette-swap-pane-next": "ペインを入れ替え（次）",
+  "palette-swap-pane-prev": "ペインを入れ替え（前）",
+  "palette-break-pane": "ペインを新ウィンドウに分離",
+  "palette-connect-serial": "シリアルポートに接続",
+  "palette-show-host-manager": "SSH ホストマネージャ",
+  "palette-show-macro-picker": "Lua マクロピッカー",
+  "palette-sftp-upload": "SFTP アップロード...",
+  "palette-sftp-download": "SFTP ダウンロード..."
 }

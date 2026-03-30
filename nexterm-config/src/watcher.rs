@@ -1,11 +1,8 @@
 //! 設定ファイルのホットリロード監視
 
-use std::sync::Arc;
-use std::time::Duration;
-
 use anyhow::Result;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use crate::loader::{config_dir, ConfigLoader};

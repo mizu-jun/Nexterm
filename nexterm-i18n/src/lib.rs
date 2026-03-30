@@ -31,13 +31,13 @@ static TRANSLATIONS: LazyLock<HashMap<&'static str, HashMap<String, String>>> =
     LazyLock::new(|| {
         LOCALE_DATA
             .iter()
-            .filter_map(|(locale, json)| {
+            .map(|(locale, json)| {
                 let map: HashMap<String, String> = serde_json::from_str(json)
                     .unwrap_or_else(|e| {
                         eprintln!("nexterm-i18n: failed to parse locale '{locale}': {e}");
                         HashMap::new()
                     });
-                Some((*locale, map))
+                (*locale, map)
             })
             .collect()
     });

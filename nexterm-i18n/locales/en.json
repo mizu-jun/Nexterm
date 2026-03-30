@@ -5,7 +5,6 @@
   "ctl-attach-about": "Show how to attach to a session",
   "ctl-kill-about": "Kill a session",
   "ctl-arg-name": "Session name",
-
   "ctl-no-sessions": "No sessions found.",
   "ctl-list-col-name": "Name",
   "ctl-list-col-windows": "Windows",
@@ -28,7 +27,6 @@
   "ctl-record-arg-file": "Output file path",
   "ctl-record-started": "Recording started for session '{session}' pane {pane_id} → {path}",
   "ctl-record-stopped": "Recording stopped for session '{session}' pane {pane_id}",
-
   "palette-split-vertical": "Split Vertical",
   "palette-split-horizontal": "Split Horizontal",
   "palette-focus-next": "Focus Next Pane",
@@ -36,8 +34,16 @@
   "palette-detach": "Detach",
   "palette-search-scrollback": "Search Scrollback",
   "palette-display-panes": "Display Pane Numbers",
-
   "gpu-adapter-not-found": "No wgpu adapter found. Please check your GPU drivers.",
   "gpu-window-create-failed": "Failed to create window",
-  "gpu-init-failed": "Failed to initialize wgpu"
+  "gpu-init-failed": "Failed to initialize wgpu",
+  "palette-toggle-zoom": "Toggle Zoom",
+  "palette-swap-pane-next": "Swap Pane (Next)",
+  "palette-swap-pane-prev": "Swap Pane (Previous)",
+  "palette-break-pane": "Break Pane to New Window",
+  "palette-connect-serial": "Connect Serial Port",
+  "palette-show-host-manager": "SSH Host Manager",
+  "palette-show-macro-picker": "Lua Macro Picker",
+  "palette-sftp-upload": "SFTP Upload...",
+  "palette-sftp-download": "SFTP Download..."
 }

@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use anyhow::{bail, Result};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc, Mutex};
 use tracing::{info, warn};
 
 use nexterm_proto::{ServerToClient, SessionInfo, WindowInfo};
@@ -33,14 +33,14 @@ pub struct Session {
     windows: HashMap<u32, Window>,
     /// 現在フォーカス中のウィンドウ ID
     focused_window_id: u32,
-    /// アタッチ中のクライアント送信チャネル一覧（複数クライアント同時接続対応）
-    pub client_txs: Vec<mpsc::Sender<ServerToClient>>,
+    /// PTY 出力のブロードキャスト送信チャネル（全クライアントへ同時配信）
+    broadcast_tx: broadcast::Sender<ServerToClient>,
     /// デフォルトシェル
     shell: String,
     /// デフォルト端末サイズ
     pub cols: u16,
     pub rows: u16,
-    /// ブロードキャストモードフラグ
+    /// ブロードキャストモードフラグ（全ペインへの入力転送）
     broadcast: bool,
 }
 
@@ -50,11 +50,11 @@ impl Session {
         name: String,
         cols: u16,
         rows: u16,
-        tx: mpsc::Sender<ServerToClient>,
         shell: String,
     ) -> Result<Self> {
+        let (broadcast_tx, _) = broadcast::channel::<ServerToClient>(512);
         let window_id = new_window_id();
-        let window = Window::new(window_id, "window-1".to_string(), cols, rows, tx.clone(), &shell)?;
+        let window = Window::new(window_id, "window-1".to_string(), cols, rows, broadcast_tx.clone(), &shell)?;
         let mut windows = HashMap::new();
         windows.insert(window_id, window);
 
@@ -62,7 +62,7 @@ impl Session {
             name,
             windows,
             focused_window_id: window_id,
-            client_txs: vec![tx],
+            broadcast_tx,
             shell,
             cols,
             rows,
@@ -75,7 +75,7 @@ impl Session {
         SessionInfo {
             name: self.name.clone(),
             window_count: self.windows.len() as u32,
-            attached: !self.client_txs.is_empty(),
+            attached: self.broadcast_tx.receiver_count() > 0,
         }
     }
 
@@ -89,65 +89,34 @@ impl Session {
         self.windows.get_mut(&self.focused_window_id)
     }
 
-    /// クライアントをアタッチする（新規または再接続）
+    /// クライアントをアタッチする — broadcast::Receiver を返す
     ///
-    /// 複数クライアントの同時接続に対応する。PTY 出力はファンアウト TX を通じて
-    /// 全クライアントにブロードキャストされる。
-    pub fn attach(&mut self, tx: mpsc::Sender<ServerToClient>) {
-        self.client_txs.push(tx);
-        // ファンアウト TX を再構築して全ペインに設定する
-        let fanout_tx = self.build_fanout_tx();
-        for window in self.windows.values() {
-            window.update_tx_for_all(&fanout_tx);
-        }
+    /// 複数クライアントの同時接続に対応する。PTY 出力は broadcast::Sender 経由で
+    /// 全 Receiver に自動配信される。ファンアウトタスクの生成は不要。
+    pub fn attach(&self) -> broadcast::Receiver<ServerToClient> {
+        self.broadcast_tx.subscribe()
     }
 
-    /// 指定の TX を持つクライアントをデタッチする（切断時に使用）
-    pub fn detach_one(&mut self, tx: &mpsc::Sender<ServerToClient>) {
-        // 送信先アドレスで比較して該当 TX を削除する
-        self.client_txs.retain(|t| !t.same_channel(tx));
-        // ファンアウト TX を再構築する
-        if !self.client_txs.is_empty() {
-            let fanout_tx = self.build_fanout_tx();
-            for window in self.windows.values() {
-                window.update_tx_for_all(&fanout_tx);
-            }
-        }
+    /// 指定クライアントをデタッチする — broadcast では Receiver を drop するだけでよいため no-op
+    pub fn detach_one(&mut self, _tx: &mpsc::Sender<ServerToClient>) {
+        // broadcast::Receiver は drop 時に自動的に購読解除される
     }
 
-    /// 全クライアントをデタッチする（セッション停止など）
+    /// 全クライアントをデタッチする — broadcast では Receiver を全て drop するだけ（no-op）
     pub fn detach_all(&mut self) {
-        self.client_txs.clear();
+        // broadcast チャネルは Sender が生きている限り継続する
+        // クライアントが全員 Receiver を drop すると receiver_count() が 0 になる
     }
 
-    /// アタッチ中かどうかを返す
+    /// アタッチ中かどうかを返す（broadcast の受信者数で判定）
+    #[allow(dead_code)]
     pub fn is_attached(&self) -> bool {
-        !self.client_txs.is_empty()
+        self.broadcast_tx.receiver_count() > 0
     }
 
-    /// 全クライアントへのブロードキャスト用ファンアウト TX を構築する
-    ///
-    /// 新しい mpsc チャネルを生成し、受信タスクが全 client_txs にメッセージを転送する。
-    fn build_fanout_tx(&self) -> mpsc::Sender<ServerToClient> {
-        let txs: Vec<mpsc::Sender<ServerToClient>> = self.client_txs.clone();
-        let (fanout_tx, mut fanout_rx) = mpsc::channel::<ServerToClient>(256);
-        tokio::spawn(async move {
-            while let Some(msg) = fanout_rx.recv().await {
-                for t in &txs {
-                    // クローズされたチャネルへの送信エラーは無視する
-                    let _ = t.try_send(msg.clone());
-                }
-            }
-        });
-        fanout_tx
-    }
-
-    /// 先頭クライアントの TX を返す（SplitVertical 等のペイン追加用）
-    ///
-    /// クライアントが未接続の場合は None を返す。
-    /// ペイン追加後は build_fanout_tx で再ブロードキャスト設定を行うこと。
-    pub fn first_client_tx(&self) -> Option<&mpsc::Sender<ServerToClient>> {
-        self.client_txs.first()
+    /// broadcast::Sender を返す（新規ペイン/ウィンドウ生成時に使用）
+    pub fn broadcast_sender(&self) -> broadcast::Sender<ServerToClient> {
+        self.broadcast_tx.clone()
     }
 
     /// デフォルトシェルを返す
@@ -156,10 +125,10 @@ impl Session {
     }
 
     /// 新しいウィンドウを追加する
-    pub fn add_window(&mut self, tx: mpsc::Sender<ServerToClient>) -> Result<u32> {
+    pub fn add_window(&mut self) -> Result<u32> {
         let window_id = new_window_id();
         let name = format!("window-{}", window_id);
-        let window = Window::new(window_id, name, self.cols, self.rows, tx, &self.shell)?;
+        let window = Window::new(window_id, name, self.cols, self.rows, self.broadcast_tx.clone(), &self.shell)?;
         self.windows.insert(window_id, window);
         self.focused_window_id = window_id;
         Ok(window_id)
@@ -176,7 +145,8 @@ impl Session {
         self.windows.remove(&window_id);
         // フォーカスが削除されたウィンドウにあった場合、残ったウィンドウに移す
         if self.focused_window_id == window_id {
-            self.focused_window_id = *self.windows.keys().next().unwrap();
+            self.focused_window_id = *self.windows.keys().next()
+                .expect("windows が空でないことは len() > 1 チェック済み");
         }
         Ok(())
     }
@@ -210,12 +180,60 @@ impl Session {
         list
     }
 
+    /// フォーカスペインを新しいウィンドウとして切り離す（break-pane）
+    ///
+    /// 成功した場合は新ウィンドウ ID を返す。
+    /// フォーカスウィンドウにペインが 1 つしかない場合は `Err` を返す。
+    pub fn break_pane(&mut self) -> Result<u32> {
+        let cols = self.cols;
+        let rows = self.rows;
+        let pane = {
+            let w = self.focused_window_mut()
+                .ok_or_else(|| anyhow::anyhow!("フォーカスウィンドウが見つかりません"))?;
+            w.take_focused_pane(cols, rows)
+                .ok_or_else(|| anyhow::anyhow!("最後のペインは切り離せません"))?
+        };
+        let new_window_id = new_window_id();
+        let new_window = Window::new_with_pane(new_window_id, "window-broken".to_string(), pane)?;
+        self.windows.insert(new_window_id, new_window);
+        self.focused_window_id = new_window_id;
+        Ok(new_window_id)
+    }
+
+    /// フォーカスペインを指定ウィンドウに移動する（join-pane）
+    ///
+    /// 成功した場合は移動したペイン ID を返す。
+    pub fn join_pane(&mut self, target_window_id: u32) -> Result<u32> {
+        let cols = self.cols;
+        let rows = self.rows;
+        // フォーカスウィンドウ ID を退避（borrow checker 対策）
+        let focused_win_id = self.focused_window_id;
+        if focused_win_id == target_window_id {
+            return Err(anyhow::anyhow!("移動先が現在のウィンドウと同じです"));
+        }
+        // ペインを取り出す
+        let pane = {
+            let w = self.windows.get_mut(&focused_win_id)
+                .ok_or_else(|| anyhow::anyhow!("フォーカスウィンドウが見つかりません"))?;
+            w.take_focused_pane(cols, rows)
+                .ok_or_else(|| anyhow::anyhow!("最後のペインは移動できません"))?
+        };
+        let pane_id = pane.id;
+        // 移動先ウィンドウに挿入する
+        let target = self.windows.get_mut(&target_window_id)
+            .ok_or_else(|| anyhow::anyhow!("ウィンドウ {} が見つかりません", target_window_id))?;
+        target.insert_pane(pane, cols, rows, crate::window::SplitDir::Vertical);
+        self.focused_window_id = target_window_id;
+        Ok(pane_id)
+    }
+
     /// ブロードキャストモードを設定する
     pub fn set_broadcast(&mut self, enabled: bool) {
         self.broadcast = enabled;
     }
 
     /// ブロードキャストモードかどうかを返す
+    #[allow(dead_code)]
     pub fn is_broadcast(&self) -> bool {
         self.broadcast
     }
@@ -273,12 +291,12 @@ impl Session {
     /// クライアントは未接続の状態で復元する。
     /// クライアントが接続したときに `attach()` で TX を設定する。
     pub fn restore_from_snapshot(snap: &SessionSnapshot) -> Result<Self> {
-        // PTY 出力を受け取る一時チャネル（受信側を即 drop → 送信は無視される）
-        let (tx, _rx) = mpsc::channel::<ServerToClient>(64);
+        // broadcast チャネルを生成する（クライアント未接続時は Receiver なし）
+        let (broadcast_tx, _) = broadcast::channel::<ServerToClient>(512);
 
         let mut windows = HashMap::new();
         for win_snap in &snap.windows {
-            match Window::restore_from_snapshot(win_snap, &tx, &snap.shell, snap.cols, snap.rows) {
+            match Window::restore_from_snapshot(win_snap, &broadcast_tx, &snap.shell, snap.cols, snap.rows) {
                 Ok(window) => {
                     windows.insert(win_snap.id, window);
                 }
@@ -302,7 +320,7 @@ impl Session {
             name: snap.name.clone(),
             windows,
             focused_window_id: snap.focused_window_id,
-            client_txs: Vec::new(),
+            broadcast_tx,
             shell: snap.shell.clone(),
             cols: snap.cols,
             rows: snap.rows,
@@ -329,12 +347,12 @@ impl SessionManager {
     }
 
     /// 新規セッションを作成する
+    #[allow(dead_code)]
     pub async fn create_session(
         &self,
         name: String,
         cols: u16,
         rows: u16,
-        tx: mpsc::Sender<ServerToClient>,
     ) -> Result<()> {
         let mut sessions = self.sessions.lock().await;
         if sessions.contains_key(&name) {
@@ -342,25 +360,25 @@ impl SessionManager {
         }
         // デフォルトシェルを決定する（OS 依存）
         let shell = default_shell();
-        let session = Session::new(name.clone(), cols, rows, tx, shell)?;
+        let session = Session::new(name.clone(), cols, rows, shell)?;
         sessions.insert(name.clone(), session);
         info!("セッション '{}' を作成しました", name);
         Ok(())
     }
 
-    /// 既存セッションにアタッチする
+    /// 既存セッションにアタッチする（broadcast::Receiver を返す）
+    #[allow(dead_code)]
     pub async fn attach_session(
         &self,
         name: &str,
-        tx: mpsc::Sender<ServerToClient>,
-    ) -> Result<()> {
-        let mut sessions = self.sessions.lock().await;
+    ) -> Result<broadcast::Receiver<ServerToClient>> {
+        let sessions = self.sessions.lock().await;
         let session = sessions
-            .get_mut(name)
+            .get(name)
             .ok_or_else(|| anyhow::anyhow!("セッション '{}' が見つかりません", name))?;
-        session.attach(tx);
+        let rx = session.attach();
         info!("セッション '{}' にアタッチしました", name);
-        Ok(())
+        Ok(rx)
     }
 
     /// セッション一覧を返す
@@ -375,17 +393,15 @@ impl SessionManager {
         name: &str,
         cols: u16,
         rows: u16,
-        tx: mpsc::Sender<ServerToClient>,
     ) -> Result<()> {
         let mut sessions = self.sessions.lock().await;
-        if let Some(session) = sessions.get_mut(name) {
-            session.attach(tx);
+        if sessions.contains_key(name) {
             info!("セッション '{}' に再アタッチしました", name);
         } else {
             let shell = default_shell();
-            let session = Session::new(name.to_string(), cols, rows, tx, shell)?;
+            let session = Session::new(name.to_string(), cols, rows, shell)?;
             sessions.insert(name.to_string(), session);
-            info!("セッション '{}' を新規作成してアタッチしました", name);
+            info!("セッション '{}' を新規作成しました", name);
         }
         Ok(())
     }
@@ -401,7 +417,7 @@ impl SessionManager {
         }
     }
 
-    /// セッションのフォーカスペインで録音を開始する（Phase 5-A で完全実装）
+    /// セッションのフォーカスペインで録音を開始する
     pub async fn start_recording(&self, name: &str, path: &str) -> Result<u32> {
         let sessions = self.sessions.lock().await;
         let session = sessions
@@ -412,6 +428,33 @@ impl SessionManager {
             .ok_or_else(|| anyhow::anyhow!("ウィンドウが見つかりません"))?;
         let pane_id = window.start_recording(path)?;
         Ok(pane_id)
+    }
+
+    /// ログ設定（テンプレート・バイナリログ）を使って録音を開始する
+    ///
+    /// `log_config.file_name_template` が設定されている場合はテンプレートを展開してファイル名を生成する。
+    pub async fn start_recording_with_log_config(
+        &self,
+        session_name: &str,
+        base_dir: &str,
+        log_config: &nexterm_config::LogConfig,
+    ) -> Result<u32> {
+        let sessions = self.sessions.lock().await;
+        let session = sessions
+            .get(session_name)
+            .ok_or_else(|| anyhow::anyhow!("セッション '{}' が見つかりません", session_name))?;
+        let window = session
+            .focused_window()
+            .ok_or_else(|| anyhow::anyhow!("ウィンドウが見つかりません"))?;
+        let pane = window
+            .pane(window.focused_pane_id())
+            .ok_or_else(|| anyhow::anyhow!("フォーカスペインが見つかりません"))?;
+        pane.start_recording_with_config(
+            base_dir,
+            session_name,
+            log_config,
+        )?;
+        Ok(pane.id)
     }
 
     /// セッションのフォーカスペインで録音を停止する（Phase 5-A で完全実装）
@@ -451,6 +494,32 @@ impl SessionManager {
             .ok_or_else(|| anyhow::anyhow!("ウィンドウが見つかりません"))?;
         let pane_id = window.stop_asciicast()?;
         Ok(pane_id)
+    }
+
+    /// シリアルポートペインを作成してフォーカスウィンドウに追加する
+    pub async fn connect_serial(
+        &self,
+        session_name: &str,
+        port: &str,
+        baud_rate: u32,
+        data_bits: u8,
+        stop_bits: u8,
+        parity: &str,
+    ) -> Result<u32> {
+        let mut sessions = self.sessions.lock().await;
+        let session = sessions
+            .get_mut(session_name)
+            .ok_or_else(|| anyhow::anyhow!("セッション '{}' が見つかりません", session_name))?;
+        let cols = session.cols;
+        let rows = session.rows;
+        let tx = session.broadcast_sender();
+        let window = session
+            .focused_window_mut()
+            .ok_or_else(|| anyhow::anyhow!("フォーカスウィンドウが見つかりません"))?;
+        window.add_serial_pane(
+            cols, rows, tx, port, baud_rate, data_bits, stop_bits, parity,
+            crate::window::SplitDir::Vertical,
+        )
     }
 
     // ---- スナップショット ----

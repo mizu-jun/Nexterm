@@ -31,11 +31,10 @@ pub fn poll_input() -> Result<Option<Action>> {
             let modifiers = convert_modifiers(key_event.modifiers);
 
             // Ctrl+Q で終了
-            if modifiers.0 & Modifiers::CTRL != 0 {
-                if let CKC::Char('q') = key_event.code {
+            if modifiers.0 & Modifiers::CTRL != 0
+                && let CKC::Char('q') = key_event.code {
                     return Ok(Some(Action::Quit));
                 }
-            }
 
             // キーコードを変換する
             if let Some(code) = convert_key_code(key_event.code) {

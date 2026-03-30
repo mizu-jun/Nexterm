@@ -5,7 +5,6 @@
   "ctl-attach-about": "Mostrar cómo conectarse a una sesión",
   "ctl-kill-about": "Terminar una sesión",
   "ctl-arg-name": "Nombre de sesión",
-
   "ctl-no-sessions": "No se encontraron sesiones.",
   "ctl-list-col-name": "Nombre",
   "ctl-list-col-windows": "Ventanas",
@@ -28,7 +27,6 @@
   "ctl-record-arg-file": "Ruta del archivo de salida",
   "ctl-record-started": "Grabación iniciada: sesión '{session}' panel {pane_id} → {path}",
   "ctl-record-stopped": "Grabación detenida: sesión '{session}' panel {pane_id}",
-
   "palette-split-vertical": "División vertical",
   "palette-split-horizontal": "División horizontal",
   "palette-focus-next": "Panel siguiente",
@@ -36,8 +34,16 @@
   "palette-detach": "Desconectar",
   "palette-search-scrollback": "Buscar en el historial",
   "palette-display-panes": "Mostrar números de panel",
-
   "gpu-adapter-not-found": "No se encontró ningún adaptador wgpu. Compruebe los controladores de su GPU.",
   "gpu-window-create-failed": "Error al crear la ventana",
-  "gpu-init-failed": "Error al inicializar wgpu"
+  "gpu-init-failed": "Error al inicializar wgpu",
+  "palette-toggle-zoom": "Alternar zoom",
+  "palette-swap-pane-next": "Intercambiar panel (siguiente)",
+  "palette-swap-pane-prev": "Intercambiar panel (anterior)",
+  "palette-break-pane": "Mover panel a nueva ventana",
+  "palette-connect-serial": "Conectar puerto serie",
+  "palette-show-host-manager": "Administrador de hosts SSH",
+  "palette-show-macro-picker": "Selector de macros Lua",
+  "palette-sftp-upload": "Subir por SFTP...",
+  "palette-sftp-download": "Descargar por SFTP..."
 }

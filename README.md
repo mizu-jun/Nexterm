@@ -6,6 +6,36 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 
 [![CI](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml/badge.svg)](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml)
 
+## What's New in v0.4.0
+
+**SSH & Connectivity**
+- SSH Host Manager — fuzzy-searchable host list (`Ctrl+Shift+H`); connects with one keystroke
+- SFTP Upload / Download dialogs (`Ctrl+Shift+U` / `Ctrl+Shift+D`) with live progress bar
+- Remote port forwarding (`-R`) over SSH sessions
+- Serial port connections (`ConnectSerial` via command palette)
+
+**UX & Pane Management**
+- Command palette (Ctrl+Shift+P) extended with 16 actions including SFTP and host manager
+- Lua Macro Picker — fuzzy-searchable macro list (`Ctrl+Shift+M`); one-key execution
+- Quick Select mode (`Ctrl+Shift+Space`) — highlight URLs, paths, IPs, and hashes
+- Pane zoom toggle (`Ctrl+B Z`) — focus a single pane full-screen
+- Swap pane with next/previous sibling (`Ctrl+B {` / `Ctrl+B }`)
+- Break pane to new window (`Ctrl+B !`)
+
+**Automation**
+- Lua event hooks: `on_session_start`, `on_attach`, `on_pane_open` fire Lua callbacks
+- Lua Macro engine: define `[[macros]]` in TOML, execute via picker; output piped to active pane
+
+**Logging**
+- Log filename templates (`{session}`, `{date}`, `{time}` placeholders)
+- Binary PTY log mode — raw bytes recorded alongside text session log
+
+**Windows**
+- MSI installer built with WiX Toolset v3 (CI-automated)
+- Windows Service install/uninstall scripts (`install-service.ps1`)
+- Automatic code signing via `signtool.exe` when CI secrets are configured
+- `nexterm-launcher` — single `nexterm.exe` auto-starts server + opens GPU client
+
 ## What's New in v0.3.0
 
 **SSH & Security Enhancements**
@@ -42,14 +72,18 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 
 ## Features
 
-### SSH & Security
+### SSH & Connectivity
 - **SSH client** — Built-in SSH via russh; password and public-key auth; host registry in TOML
+- **SSH Host Manager** — `Ctrl+Shift+H` opens a fuzzy-searchable host list for one-keystroke connect
 - **SSH agent authentication** — SSH_AUTH_SOCK support for agent-based auth
 - **Known hosts verification** — Host key verification against ~/.ssh/known_hosts (replaces accept-all)
 - **Local port forwarding** — Forward local ports through SSH tunnels
+- **Remote port forwarding** — `-R` style remote-side port forwarding over SSH
 - **ProxyJump support** — Multi-hop SSH connections
 - **SOCKS5 proxy** — Route connections through SOCKS5 proxies
 - **OS keychain** — SSH passwords saved to macOS Keychain / Windows Credential Store / Linux Secret Service
+- **SFTP transfer** — `Ctrl+Shift+U/D` opens Upload / Download dialogs with live progress
+- **Serial port** — Connect to serial devices via command palette (`ConnectSerial`)
 
 ### GPU Rendering & UI
 - **GPU rendering** — High-performance font rendering with wgpu + cosmic-text
@@ -70,10 +104,12 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 - **Tab bar** — WezTerm-style tab bar with pane labels and `❯` separators
 - **Copy mode** — Vim-style text selection (Ctrl+[, hjkl, v, y)
 
-### Configuration & Input
+### Configuration & Automation
 - **Lua + TOML config** — TOML for defaults, Lua for dynamic overrides; hot-reload on save
 - **Keybinding customization** — Execute custom actions on key combinations
 - **Lua status bar** — Evaluate Lua expressions (e.g. `os.date()`) on the status line every second
+- **Lua event hooks** — `on_session_start`, `on_attach`, `on_pane_open` callbacks in `nexterm.lua`
+- **Lua Macro Picker** — Define `[[macros]]` in TOML; `Ctrl+Shift+M` opens fuzzy picker; output piped to pane
 - **Font size runtime** — Ctrl+= / Ctrl+- / Ctrl+0 to change font size at runtime
 - **Color scheme import** — `nexterm-ctl theme import` supports iTerm2 .itermcolors, Alacritty YAML, base16 TOML
 - **Custom color scheme** — Define a 16-color palette in TOML via `[colors.custom]`
@@ -189,7 +225,51 @@ Based on comparison with rlogin, Tera Term, WezTerm, and tmux.
 | 7-12 | CJK / wide character width (unicode-width) | ✅ |
 | 7-13 | Font fallback chain (font_fallbacks config) | ✅ |
 
-**Tests**: 86+ passing
+### Phase 8: Advanced UX (complete)
+
+| Step | Description | Status |
+|------|-------------|--------|
+| 8-1 | Pane zoom toggle (toggle-zoom, `Ctrl+B Z`) | ✅ |
+| 8-2 | Quick Select mode — URL / path / IP / hash highlight (`Ctrl+Shift+Space`) | ✅ |
+| 8-3 | SSH Host Manager UI — fuzzy search, one-key connect (`Ctrl+Shift+H`) | ✅ |
+| 8-4 | Lua Macro execution engine — `[[macros]]` in TOML, picker UI (`Ctrl+Shift+M`) | ✅ |
+
+### Phase 9: Pane management (complete)
+
+| Step | Description | Status |
+|------|-------------|--------|
+| 9-1 | Swap pane with next / previous sibling (`Ctrl+B {` / `Ctrl+B }`) | ✅ |
+| 9-2 | Break pane to new window / join pane (`Ctrl+B !`) | ✅ |
+
+### Phase 10: Connectivity (complete)
+
+| Step | Description | Status |
+|------|-------------|--------|
+| 10-1 | Remote port forwarding (`-R`) over SSH sessions | ✅ |
+| 10-3 | SFTP Upload / Download dialogs with live progress (`Ctrl+Shift+U/D`) | ✅ |
+| 10-4 | Serial port connections via command palette (`ConnectSerial`) | ✅ |
+
+### Phase 11: Logging & hooks (complete)
+
+| Step | Description | Status |
+|------|-------------|--------|
+| 11-1 | Lua event hooks — `on_session_start`, `on_attach`, `on_pane_open` | ✅ |
+| 11-3 | Log filename templates (`{session}`, `{date}`, `{time}` placeholders) | ✅ |
+| 11-4 | Binary PTY log mode | ✅ |
+
+### Windows (complete)
+
+| Item | Description | Status |
+|------|-------------|--------|
+| W-1 | MSI installer (WiX Toolset v3, CI-automated) | ✅ |
+| W-2 | Code signing workflow (`signtool.exe`, CI secrets) | ✅ |
+| W-3 | `nexterm-launcher` — single `nexterm.exe` entry point | ✅ |
+| W-4 | Windows Service install / uninstall scripts | ✅ |
+| W-5 | PowerShell default args (`-NoLogo`) + cmd.exe fallback | ✅ |
+| W-7 | Windows Quick Start documentation | ✅ |
+| W-10 | Snapshot save path unified to `%APPDATA%\nexterm` | ✅ |
+
+**Tests**: 100+ passing
 
 ## Crate structure
 
@@ -201,10 +281,124 @@ nexterm/
 ├── nexterm-config       # Config loader (TOML + Lua) + StatusBarEvaluator
 ├── nexterm-client-tui   # TUI client
 ├── nexterm-client-gpu   # GPU client (wgpu + winit)
+├── nexterm-launcher     # nexterm.exe — auto-starts server + opens GPU client
 ├── nexterm-ctl          # Session management CLI
 ├── nexterm-i18n         # Localization support (8 languages)
 └── nexterm-ssh          # SSH client (russh) — connection, auth, PTY channel
 ```
+
+## Windows Quick Start
+
+### System Requirements
+
+| Requirement | Minimum |
+|-------------|---------|
+| Windows version | **Windows 10 1809 (October 2018 Update) or later** |
+| Architecture | x86-64 |
+| ConPTY | Built into Windows 10 1809+ |
+| GPU | DirectX 11 compatible (wgpu requirement) |
+
+> **Why Windows 10 1809+?**
+> Nexterm uses the **ConPTY** (Pseudo Console) API introduced in Windows 10 1809 to provide
+> proper terminal emulation for PowerShell and cmd.exe. Earlier versions of Windows are not supported.
+
+### Install with MSI (recommended)
+
+1. Download `nexterm-vX.Y.Z-windows-x86_64.msi` from the [Releases](https://github.com/kusanagi-jn/nexterm/releases) page.
+2. Double-click the MSI to launch the installer wizard.
+3. Follow the prompts — Nexterm will be installed to `C:\Program Files\Nexterm` and added to `PATH`.
+4. Launch from the **Start menu** or by typing `nexterm` in any terminal.
+
+> **SmartScreen warning**: Because Nexterm is an open-source project without an EV code-signing
+> certificate, Windows Defender SmartScreen may display an "Unknown publisher" warning.
+> Click **"More info" → "Run anyway"** to proceed. To verify the binary, check the SHA-256
+> checksum published on the Releases page.
+
+### Install from ZIP (portable)
+
+1. Download `nexterm-vX.Y.Z-windows-x86_64.zip` from the Releases page.
+2. Extract to any directory (e.g. `C:\Nexterm`).
+3. Add the directory to your `PATH` (optional):
+   ```powershell
+   $env:Path += ";C:\Nexterm"
+   [System.Environment]::SetEnvironmentVariable("Path", $env:Path, "Machine")
+   ```
+
+### Launch
+
+```powershell
+# Single command — auto-starts the server and opens the GPU client
+nexterm.exe
+```
+
+`nexterm.exe` is the **launcher** — it detects whether `nexterm-server` is already running,
+starts it in the background if needed, then opens `nexterm-client-gpu`.
+
+To start the server separately (e.g. for debugging):
+
+```powershell
+# Start server in a background window
+Start-Process -NoNewWindow nexterm-server.exe
+
+# Start GPU client
+nexterm-client-gpu.exe
+
+# Or start TUI client (no GPU required)
+nexterm-client-tui.exe
+```
+
+### Run as a Windows Service (optional)
+
+Register `nexterm-server` as a Windows Service so it starts automatically at boot, without needing a user session:
+
+```powershell
+# Run as Administrator
+.\install-service.ps1
+
+# Stop / start / uninstall
+Stop-Service NextermServer
+Start-Service NextermServer
+.\uninstall-service.ps1
+```
+
+### Default shell
+
+On Windows, Nexterm selects the default shell in this order:
+
+| Priority | Shell | Path |
+|----------|-------|------|
+| 1 | PowerShell 7 | `C:\Program Files\PowerShell\7\pwsh.exe` |
+| 2 | PowerShell 5 | `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe` |
+| 3 | cmd.exe | `C:\Windows\System32\cmd.exe` |
+
+To override, set `shell.program` in your config:
+
+```toml
+# %APPDATA%\nexterm\nexterm.toml
+[shell]
+program = "C:\\Windows\\System32\\cmd.exe"
+```
+
+### Code signing
+
+Nexterm's binaries are not commercially code-signed by default. To suppress SmartScreen warnings in
+a corporate environment, sign the binaries yourself with `signtool.exe`:
+
+```powershell
+# Using a self-signed certificate (development / internal use)
+$cert = New-SelfSignedCertificate -Subject "CN=Nexterm" -Type CodeSigning -CertStoreLocation Cert:\CurrentUser\My
+Set-AuthenticodeSignature -FilePath nexterm.exe -Certificate $cert
+```
+
+For production deployments, set the following GitHub Actions secrets in your fork to enable
+automatic signing in CI:
+
+| Secret | Description |
+|--------|-------------|
+| `WINDOWS_CERTIFICATE` | Base64-encoded `.pfx` certificate |
+| `WINDOWS_CERTIFICATE_PASSWORD` | Certificate password |
+
+---
 
 ## Build
 
@@ -283,6 +477,15 @@ nexterm-client-tui
 | `Escape` | Close search / palette |
 | `Enter` (in search) | Jump to next match |
 | `Ctrl+G` | Enter display-panes mode (show pane numbers) |
+| `Ctrl+Shift+H` | Open SSH Host Manager |
+| `Ctrl+Shift+M` | Open Lua Macro Picker |
+| `Ctrl+Shift+U` | Open SFTP Upload dialog |
+| `Ctrl+Shift+D` | Open SFTP Download dialog |
+| `Ctrl+Shift+Space` | Enter Quick Select mode (URL / path / IP / hash) |
+| `Ctrl+B Z` | Toggle zoom on focused pane |
+| `Ctrl+B {` | Swap focused pane with previous |
+| `Ctrl+B }` | Swap focused pane with next |
+| `Ctrl+B !` | Break focused pane to new window |
 | Regular key input | Forward to focused pane PTY |
 
 ### Font size
@@ -346,6 +549,11 @@ nexterm-client-tui
 | `RenameWindow { window_id, name }` | Rename specified window |
 | `SetBroadcast { enabled: bool }` | Toggle broadcast input mode |
 | `ConnectSsh { host, port, username, auth_type, ... }` | Open SSH connection in new pane |
+| `ToggleZoom` | Toggle zoom on focused pane |
+| `SwapPaneNext` | Swap focused pane with next sibling |
+| `SwapPanePrev` | Swap focused pane with previous sibling |
+| `BreakPane` | Move focused pane to a new window |
+| `ConnectSerial { path, baud }` | Open serial port in new pane |
 
 ## nexterm-ctl
 
@@ -429,6 +637,16 @@ port = 22
 username = "deploy"
 auth_type = "key"
 key_path = "~/.ssh/id_ed25519"
+
+[[macros]]
+name = "top"
+description = "Run top on focused pane"
+lua_fn = "macro_top"
+
+[[macros]]
+name = "git status"
+description = "Show git status"
+lua_fn = "macro_git_status"
 
 [log]
 auto_log = false

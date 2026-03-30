@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Nexterm MSI インストーラー定義 (WiX v3)
+  ビルド: cargo wix --package nexterm-launcher --nocapture
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+
+  <Product
+    Id="*"
+    Name="Nexterm"
+    Language="1041"
+    Version="!(bind.fileVersion.nexterm_server_exe)"
+    Manufacturer="Nexterm Project"
+    UpgradeCode="E2A7F3B1-4C8D-4E5F-9A2B-7D6E1F0C3A45">
+
+    <Package
+      InstallerVersion="500"
+      Compressed="yes"
+      InstallScope="perMachine"
+      Description="Nexterm — multiplexed terminal emulator"
+      Comments="GPU-accelerated terminal with session persistence, Lua config, and SSH support." />
+
+    <!-- アップグレード設定 -->
+    <MajorUpgrade
+      DowngradeErrorMessage="新しいバージョンの Nexterm が既にインストールされています。"
+      Schedule="afterInstallInitialize" />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- プログラムグループ -->
+    <Feature Id="ProductFeature" Title="Nexterm" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+      <ComponentGroupRef Id="ShortcutComponents" />
+    </Feature>
+
+    <!-- インストール先ディレクトリ -->
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="Nexterm" />
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="Nexterm" />
+      </Directory>
+    </Directory>
+
+    <!-- 実行ファイル一式 -->
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+
+      <!-- nexterm.exe (ランチャー) -->
+      <Component Id="nexterm_exe" Guid="A1B2C3D4-E5F6-7890-ABCD-EF1234567890">
+        <File Id="nexterm_launcher_exe"
+              Source="target\x86_64-pc-windows-msvc\release\nexterm.exe"
+              KeyPath="yes" />
+        <!-- PATH に追加 -->
+        <Environment Id="PATH_nexterm"
+                     Name="PATH"
+                     Value="[INSTALLFOLDER]"
+                     Permanent="no"
+                     Part="last"
+                     Action="set"
+                     System="yes" />
+      </Component>
+
+      <!-- nexterm-server.exe -->
+      <Component Id="nexterm_server_exe" Guid="B2C3D4E5-F6A7-8901-BCDE-F12345678901">
+        <File Id="nexterm_server_exe"
+              Source="target\x86_64-pc-windows-msvc\release\nexterm-server.exe"
+              KeyPath="yes" />
+      </Component>
+
+      <!-- nexterm-client-gpu.exe -->
+      <Component Id="nexterm_client_gpu_exe" Guid="C3D4E5F6-A7B8-9012-CDEF-123456789012">
+        <File Id="nexterm_client_gpu_exe"
+              Source="target\x86_64-pc-windows-msvc\release\nexterm-client-gpu.exe"
+              KeyPath="yes" />
+      </Component>
+
+      <!-- nexterm-client-tui.exe -->
+      <Component Id="nexterm_client_tui_exe" Guid="D4E5F6A7-B8C9-0123-DEF0-234567890123">
+        <File Id="nexterm_client_tui_exe"
+              Source="target\x86_64-pc-windows-msvc\release\nexterm-client-tui.exe"
+              KeyPath="yes" />
+      </Component>
+
+      <!-- nexterm-ctl.exe -->
+      <Component Id="nexterm_ctl_exe" Guid="E5F6A7B8-C9D0-1234-EF01-345678901234">
+        <File Id="nexterm_ctl_exe"
+              Source="target\x86_64-pc-windows-msvc\release\nexterm-ctl.exe"
+              KeyPath="yes" />
+      </Component>
+
+      <!-- サービス登録スクリプト -->
+      <Component Id="service_scripts" Guid="F6A7B8C9-D0E1-2345-F012-456789012345">
+        <File Id="install_service_ps1"
+              Source="scripts\install-service.ps1"
+              KeyPath="yes" />
+        <File Id="uninstall_service_ps1"
+              Source="scripts\uninstall-service.ps1" />
+      </Component>
+
+    </ComponentGroup>
+
+    <!-- スタートメニュー・デスクトップショートカット -->
+    <ComponentGroup Id="ShortcutComponents" Directory="ApplicationProgramsFolder">
+
+      <Component Id="ApplicationShortcut" Guid="A7B8C9D0-E1F2-3456-0123-567890123456">
+        <!-- スタートメニュー -->
+        <Shortcut Id="StartMenuShortcut"
+                  Name="Nexterm"
+                  Description="GPU-accelerated multiplexed terminal"
+                  Target="[INSTALLFOLDER]nexterm.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="NextermIcon" />
+        <!-- アンインストール -->
+        <Shortcut Id="UninstallShortcut"
+                  Name="Nexterm のアンインストール"
+                  Target="[SystemFolder]msiexec.exe"
+                  Arguments="/x [ProductCode]" />
+        <RemoveFolder Id="ApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\Nexterm"
+                       Name="installed"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+
+    </ComponentGroup>
+
+    <!-- アイコン -->
+    <Icon Id="NextermIcon" SourceFile="assets\nexterm.ico" />
+    <Property Id="ARPPRODUCTICON" Value="NextermIcon" />
+
+    <!-- Add/Remove Programs の情報 -->
+    <Property Id="ARPHELPLINK" Value="https://github.com/kusanagi-jn/nexterm" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/kusanagi-jn/nexterm" />
+
+  </Product>
+</Wix>

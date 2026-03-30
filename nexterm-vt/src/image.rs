@@ -146,7 +146,7 @@ fn ensure_bands(buf: &mut Vec<Vec<Option<[u8; 3]>>>, band: usize) {
 }
 
 /// Sixel の1列ピクセル（6ビット）をバッファに書き込む
-fn paint_col(buf: &mut Vec<Vec<Option<[u8; 3]>>>, x: usize, band: usize, bits: u8, color: [u8; 3]) {
+fn paint_col(buf: &mut [Vec<Option<[u8; 3]>>], x: usize, band: usize, bits: u8, color: [u8; 3]) {
     for bit in 0..6usize {
         if bits & (1 << bit) != 0 {
             let row = band * 6 + bit;

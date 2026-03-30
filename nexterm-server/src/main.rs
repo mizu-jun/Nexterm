@@ -1,10 +1,13 @@
 //! nexterm-server entry point
 
+mod hooks;
 mod ipc;
 mod pane;
 mod persist;
+mod serial;
 mod session;
 mod snapshot;
+mod template;
 mod window;
 
 use std::sync::Arc;
@@ -41,9 +44,17 @@ async fn main() -> Result<()> {
 
     let manager_for_ipc = Arc::clone(&manager);
 
+    // 設定を読み込んでフック設定・ログ設定・ホスト設定を抽出する
+    let (hooks, lua_runner, log_config, hosts) = {
+        let cfg = nexterm_config::ConfigLoader::load().unwrap_or_default();
+        let lua_script = nexterm_config::lua_path();
+        let runner = nexterm_config::LuaHookRunner::new(Some(lua_script));
+        (Arc::new(cfg.hooks), Arc::new(runner), Arc::new(cfg.log), Arc::new(cfg.hosts))
+    };
+
     // Run IPC server and wait for shutdown signal
     tokio::select! {
-        result = ipc::serve(manager_for_ipc) => {
+        result = ipc::serve(manager_for_ipc, hooks, lua_runner, log_config, hosts) => {
             result?;
         }
         _ = shutdown_signal() => {
@@ -53,11 +64,10 @@ async fn main() -> Result<()> {
 
     // シャットダウン時にスナップショットを保存する
     let snap = manager.to_snapshot().await;
-    if !snap.sessions.is_empty() {
-        if let Err(e) = persist::save_snapshot(&snap) {
+    if !snap.sessions.is_empty()
+        && let Err(e) = persist::save_snapshot(&snap) {
             tracing::warn!("スナップショットの保存に失敗しました: {}", e);
         }
-    }
 
     info!("nexterm-server stopped");
     Ok(())

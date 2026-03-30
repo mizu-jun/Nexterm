@@ -6,11 +6,12 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use tokio::sync::mpsc;
+use tokio::sync::broadcast;
 
 use nexterm_proto::{PaneLayout, ServerToClient};
 
 use crate::pane::Pane;
+use crate::serial::SerialPane;
 use crate::snapshot::{SplitDirSnapshot, SplitNodeSnapshot, WindowSnapshot};
 
 // ---- 分割方向 ----
@@ -165,6 +166,51 @@ impl SplitNode {
         }
     }
 
+    /// BSP ツリー内の 2 つのペイン ID を入れ替える
+    fn swap_ids(&mut self, id_a: u32, id_b: u32) -> bool {
+        match self {
+            SplitNode::Pane { pane_id } => {
+                if *pane_id == id_a {
+                    *pane_id = id_b;
+                    true
+                } else if *pane_id == id_b {
+                    *pane_id = id_a;
+                    true
+                } else {
+                    false
+                }
+            }
+            SplitNode::Split { left, right, .. } => {
+                left.swap_ids(id_a, id_b) | right.swap_ids(id_a, id_b)
+            }
+        }
+    }
+
+    /// 隣接するペイン ID を返す（フォーカスペインの兄弟ノード）
+    fn neighbor_id(&self, target_id: u32) -> Option<u32> {
+        match self {
+            SplitNode::Pane { .. } => None,
+            SplitNode::Split { left, right, .. } => {
+                if left.contains(target_id) {
+                    right.first_pane_id()
+                } else if right.contains(target_id) {
+                    left.first_pane_id()
+                } else {
+                    left.neighbor_id(target_id)
+                        .or_else(|| right.neighbor_id(target_id))
+                }
+            }
+        }
+    }
+
+    /// サブツリー内の最初のペイン ID を返す
+    fn first_pane_id(&self) -> Option<u32> {
+        match self {
+            SplitNode::Pane { pane_id } => Some(*pane_id),
+            SplitNode::Split { left, .. } => left.first_pane_id(),
+        }
+    }
+
     /// 指定ペインがこのサブツリーに含まれるか確認する
     fn contains(&self, target_id: u32) -> bool {
         match self {
@@ -215,12 +261,16 @@ impl SplitNode {
 pub struct Window {
     pub id: u32,
     pub name: String,
-    /// ペインの Map（ID → Pane）
+    /// PTY ペインの Map（ID → Pane）
     panes: HashMap<u32, Pane>,
+    /// シリアルポートペインの Map（ID → SerialPane）
+    serial_panes: HashMap<u32, SerialPane>,
     /// 現在フォーカス中のペイン ID
     focused_pane_id: u32,
     /// BSP 分割ツリー
     layout: SplitNode,
+    /// ズーム中か（フォーカスペインがウィンドウ全体を占有する）
+    zoomed: bool,
 }
 
 impl Window {
@@ -230,7 +280,7 @@ impl Window {
         name: String,
         cols: u16,
         rows: u16,
-        tx: mpsc::Sender<ServerToClient>,
+        tx: broadcast::Sender<ServerToClient>,
         shell: &str,
     ) -> Result<Self> {
         let pane = Pane::spawn(cols, rows, tx, shell)?;
@@ -239,7 +289,16 @@ impl Window {
         let mut panes = HashMap::new();
         panes.insert(pane.id, pane);
 
-        Ok(Self { id, name, panes, focused_pane_id, layout })
+        Ok(Self { id, name, panes, serial_panes: HashMap::new(), focused_pane_id, layout, zoomed: false })
+    }
+
+    /// 既存のペインを持つウィンドウを生成する（break-pane 用）
+    pub fn new_with_pane(id: u32, name: String, pane: Pane) -> Result<Self> {
+        let focused_pane_id = pane.id;
+        let layout = SplitNode::Pane { pane_id: focused_pane_id };
+        let mut panes = HashMap::new();
+        panes.insert(pane.id, pane);
+        Ok(Self { id, name, panes, serial_panes: HashMap::new(), focused_pane_id, layout, zoomed: false })
     }
 
     /// フォーカス中のペイン ID を返す
@@ -247,9 +306,11 @@ impl Window {
         self.focused_pane_id
     }
 
-    /// ペイン一覧の ID を返す
+    /// ペイン一覧の ID を返す（PTY + シリアル）
     pub fn pane_ids(&self) -> Vec<u32> {
-        self.panes.keys().copied().collect()
+        let mut ids: Vec<u32> = self.panes.keys().copied().collect();
+        ids.extend(self.serial_panes.keys().copied());
+        ids
     }
 
     /// 新しいペインを BSP ツリーで分割して追加する
@@ -260,7 +321,7 @@ impl Window {
         &mut self,
         total_cols: u16,
         total_rows: u16,
-        tx: mpsc::Sender<ServerToClient>,
+        tx: broadcast::Sender<ServerToClient>,
         shell: &str,
         dir: SplitDir,
     ) -> Result<u32> {
@@ -289,11 +350,10 @@ impl Window {
 
         // 4. 既存ペインを新しいサイズにリサイズする
         for rect in &layouts {
-            if rect.pane_id != new_id {
-                if let Some(p) = self.panes.get_mut(&rect.pane_id) {
+            if rect.pane_id != new_id
+                && let Some(p) = self.panes.get_mut(&rect.pane_id) {
                     let _ = p.resize_pty(rect.cols, rect.rows);
                 }
-            }
         }
 
         Ok(new_id)
@@ -308,6 +368,20 @@ impl Window {
 
     /// LayoutChanged メッセージを生成する（IPC 送信用）
     pub fn layout_changed_msg(&self, cols: u16, rows: u16) -> ServerToClient {
+        // ズーム中はフォーカスペインのみをウィンドウ全体サイズで返す
+        if self.zoomed {
+            return ServerToClient::LayoutChanged {
+                panes: vec![PaneLayout {
+                    pane_id: self.focused_pane_id,
+                    col_offset: 0,
+                    row_offset: 0,
+                    cols,
+                    rows,
+                    is_focused: true,
+                }],
+                focused_pane_id: self.focused_pane_id,
+            };
+        }
         let rects = self.compute_layouts(cols, rows);
         ServerToClient::LayoutChanged {
             panes: rects
@@ -323,6 +397,28 @@ impl Window {
                 .collect(),
             focused_pane_id: self.focused_pane_id,
         }
+    }
+
+    /// フォーカスペインのズームをトグルする。
+    /// ズーム中はフォーカスペインをウィンドウ全体に拡大し、他のペインは非表示になる。
+    /// 戻り値: ズーム後の状態 (true = ズーム中)
+    pub fn toggle_zoom(&mut self, cols: u16, rows: u16) -> bool {
+        self.zoomed = !self.zoomed;
+        // ズーム時はフォーカスペインをウィンドウサイズにリサイズする
+        if self.zoomed {
+            if let Some(pane) = self.panes.get_mut(&self.focused_pane_id) {
+                let _ = pane.resize_pty(cols, rows);
+            }
+        } else {
+            // アンズーム時は全ペインを正規レイアウトに戻す
+            self.resize_all_panes(cols, rows);
+        }
+        self.zoomed
+    }
+
+    /// ズーム状態を返す
+    pub fn is_zoomed(&self) -> bool {
+        self.zoomed
     }
 
     /// 指定ペインにフォーカスを移動する（クリック等）
@@ -375,8 +471,9 @@ impl Window {
         // BSP ツリーから削除する
         self.layout.remove(target_id);
 
-        // ペイン Map から削除する
+        // ペイン Map から削除する（PTY またはシリアルポート）
         self.panes.remove(&target_id);
+        self.serial_panes.remove(&target_id);
 
         // 残ったペインにフォーカスを移す（ID が最も小さいものを選ぶ）
         let next_id = self.panes.keys().copied().min().unwrap();
@@ -405,21 +502,107 @@ impl Window {
         }
     }
 
-    /// ペイン数を返す
-    pub fn pane_count(&self) -> usize {
-        self.panes.len()
+    /// フォーカスペインと指定ペインを BSP ツリー内で入れ替える
+    pub fn swap_focused_with(&mut self, target_pane_id: u32) {
+        let focused = self.focused_pane_id;
+        if focused != target_pane_id {
+            self.layout.swap_ids(focused, target_pane_id);
+        }
     }
 
-    /// フォーカス中のペインに入力データを書き込む
+    /// フォーカスペインと隣接ペイン（next 方向）を入れ替える
+    pub fn swap_with_next(&mut self) {
+        let focused = self.focused_pane_id;
+        let ids: Vec<u32> = {
+            let mut v: Vec<u32> = self.panes.keys().copied().collect();
+            v.sort();
+            v
+        };
+        if let Some(pos) = ids.iter().position(|&id| id == focused) {
+            let next_id = ids[(pos + 1) % ids.len()];
+            self.layout.swap_ids(focused, next_id);
+        }
+    }
+
+    /// フォーカスペインと隣接ペイン（prev 方向）を入れ替える
+    pub fn swap_with_prev(&mut self) {
+        let focused = self.focused_pane_id;
+        let ids: Vec<u32> = {
+            let mut v: Vec<u32> = self.panes.keys().copied().collect();
+            v.sort();
+            v
+        };
+        if let Some(pos) = ids.iter().position(|&id| id == focused) {
+            let prev_id = if pos == 0 { ids[ids.len() - 1] } else { ids[pos - 1] };
+            self.layout.swap_ids(focused, prev_id);
+        }
+    }
+
+    /// フォーカスペインを Pane Map から取り出す（break-pane / join-pane 用）
+    ///
+    /// ペインが1つしかない場合は `None` を返す（最後のペインは取り出せない）。
+    /// BSP ツリーからは削除してフォーカスを隣接ペインに移動する。
+    pub fn take_focused_pane(&mut self, cols: u16, rows: u16) -> Option<Pane> {
+        if self.panes.len() <= 1 {
+            return None;
+        }
+        let target_id = self.focused_pane_id;
+        // BSP ツリーから削除する
+        self.layout.remove(target_id);
+        // シリアルペインは break-pane できない（PTY のみ対応）
+        if self.serial_panes.contains_key(&target_id) {
+            return None;
+        }
+        // ペイン Map から取り出す
+        let pane = self.panes.remove(&target_id)?;
+        // フォーカスを残ったペインの最小 ID に移す
+        let next_id = self.panes.keys().copied().min().unwrap();
+        self.focused_pane_id = next_id;
+        self.zoomed = false;
+        // 残ったペインをリサイズする
+        let layouts = self.compute_layouts(cols, rows);
+        for rect in &layouts {
+            if let Some(p) = self.panes.get_mut(&rect.pane_id) {
+                let _ = p.resize_pty(rect.cols, rect.rows);
+            }
+        }
+        Some(pane)
+    }
+
+    /// 外部から持ち込まれたペインをフォーカスペインの後に追加する（join-pane 用）
+    pub fn insert_pane(&mut self, pane: Pane, total_cols: u16, total_rows: u16, dir: SplitDir) {
+        let new_id = pane.id;
+        self.layout.insert_after(self.focused_pane_id, new_id, dir);
+        self.panes.insert(new_id, pane);
+        self.focused_pane_id = new_id;
+        self.zoomed = false;
+        // 全ペインをリサイズする
+        let layouts = self.compute_layouts(total_cols, total_rows);
+        for rect in &layouts {
+            if let Some(p) = self.panes.get_mut(&rect.pane_id) {
+                let _ = p.resize_pty(rect.cols, rect.rows);
+            }
+        }
+    }
+
+    /// ペイン数を返す（PTY + シリアル）
+    pub fn pane_count(&self) -> usize {
+        self.panes.len() + self.serial_panes.len()
+    }
+
+    /// フォーカス中のペインに入力データを書き込む（PTY またはシリアルポート）
     pub fn write_to_focused(&self, data: &[u8]) -> Result<()> {
-        let pane = self
-            .panes
-            .get(&self.focused_pane_id)
-            .ok_or_else(|| anyhow::anyhow!("フォーカスペインが見つかりません"))?;
-        pane.write_input(data)
+        if let Some(pane) = self.panes.get(&self.focused_pane_id) {
+            return pane.write_input(data);
+        }
+        if let Some(sp) = self.serial_panes.get(&self.focused_pane_id) {
+            return sp.write_input(data);
+        }
+        Err(anyhow::anyhow!("フォーカスペインが見つかりません"))
     }
 
     /// フォーカス中のペインのみをリサイズする（後方互換・単一ペイン用）
+    #[allow(dead_code)]
     pub fn resize_focused(&mut self, cols: u16, rows: u16) -> Result<()> {
         let pane = self
             .panes
@@ -434,15 +617,37 @@ impl Window {
         for rect in &layouts {
             if let Some(pane) = self.panes.get_mut(&rect.pane_id) {
                 let _ = pane.resize_pty(rect.cols, rect.rows);
+            } else if let Some(sp) = self.serial_panes.get_mut(&rect.pane_id) {
+                let _ = sp.resize_pty(rect.cols, rect.rows);
             }
         }
     }
 
-    /// 全ペインの PTY 出力チャネルを差し替える（クライアント再アタッチ時）
-    pub fn update_tx_for_all(&self, tx: &mpsc::Sender<ServerToClient>) {
-        for pane in self.panes.values() {
-            pane.update_tx(tx.clone());
-        }
+    /// シリアルポートペインを BSP ツリーに追加する
+    pub fn add_serial_pane(
+        &mut self,
+        total_cols: u16,
+        total_rows: u16,
+        tx: broadcast::Sender<ServerToClient>,
+        port_name: &str,
+        baud_rate: u32,
+        data_bits: u8,
+        stop_bits: u8,
+        parity: &str,
+        dir: SplitDir,
+    ) -> Result<u32> {
+        let sp = SerialPane::spawn(port_name, baud_rate, data_bits, stop_bits, parity, total_cols, total_rows, tx)?;
+        let new_id = sp.id;
+        self.layout.insert_after(self.focused_pane_id, new_id, dir);
+        self.serial_panes.insert(new_id, sp);
+        self.focused_pane_id = new_id;
+        Ok(new_id)
+    }
+
+    /// 全ペインの PTY 出力チャネルを差し替える — broadcast では再アタッチ時の差し替えは不要（no-op）
+    #[allow(dead_code)]
+    pub fn update_tx_for_all(&self, _tx: &broadcast::Sender<ServerToClient>) {
+        // broadcast::Sender は共有されるため、クライアント再アタッチ時に差し替え不要
     }
 
     /// フォーカスペインの録音を開始する（Phase 5-A で完全実装）
@@ -505,7 +710,7 @@ impl Window {
     /// 各ペインは保存されたシェル・作業ディレクトリで新規 PTY として起動する。
     pub fn restore_from_snapshot(
         snap: &WindowSnapshot,
-        tx: &mpsc::Sender<ServerToClient>,
+        tx: &broadcast::Sender<ServerToClient>,
         shell: &str,
         cols: u16,
         rows: u16,
@@ -515,7 +720,7 @@ impl Window {
 
         // 各ペインのサイズを BSP 計算で求めてから PTY を起動する
         let mut size_map = Vec::new();
-        compute_pane_sizes(&snap.layout, 0, 0, cols, rows, &mut size_map);
+        compute_pane_sizes(&snap.layout, cols, rows, &mut size_map);
 
         let mut panes = HashMap::new();
         for (pane_id, pane_cols, pane_rows) in size_map {
@@ -533,8 +738,10 @@ impl Window {
             id: snap.id,
             name: snap.name.clone(),
             panes,
+            serial_panes: HashMap::new(),
             focused_pane_id: snap.focused_pane_id,
             layout,
+            zoomed: false,
         })
     }
 
@@ -544,6 +751,8 @@ impl Window {
             SplitNodeSnapshot::Pane { pane_id, cwd } => {
                 if let Some(pane) = self.panes.get(pane_id) {
                     *cwd = pane.working_dir();
+                } else if let Some(sp) = self.serial_panes.get(pane_id) {
+                    *cwd = sp.working_dir();
                 }
             }
             SplitNodeSnapshot::Split { left, right, .. } => {
@@ -557,8 +766,6 @@ impl Window {
 /// BSP スナップショットから各ペインのサイズを計算する
 fn compute_pane_sizes(
     node: &SplitNodeSnapshot,
-    col_off: u16,
-    row_off: u16,
     cols: u16,
     rows: u16,
     out: &mut Vec<(u32, u16, u16)>,
@@ -571,14 +778,14 @@ fn compute_pane_sizes(
             SplitDirSnapshot::Vertical => {
                 let lc = ((cols as f32 * ratio) as u16).max(1).min(cols.saturating_sub(2));
                 let rc = cols.saturating_sub(lc + 1).max(1);
-                compute_pane_sizes(left, col_off, row_off, lc, rows, out);
-                compute_pane_sizes(right, col_off + lc + 1, row_off, rc, rows, out);
+                compute_pane_sizes(left, lc, rows, out);
+                compute_pane_sizes(right, rc, rows, out);
             }
             SplitDirSnapshot::Horizontal => {
                 let lr = ((rows as f32 * ratio) as u16).max(1).min(rows.saturating_sub(2));
                 let rr = rows.saturating_sub(lr + 1).max(1);
-                compute_pane_sizes(left, col_off, row_off, cols, lr, out);
-                compute_pane_sizes(right, col_off, row_off + lr + 1, cols, rr, out);
+                compute_pane_sizes(left, cols, lr, out);
+                compute_pane_sizes(right, cols, rr, out);
             }
         },
     }
@@ -664,8 +871,8 @@ mod tests {
         let snap_after = node.to_snapshot();
         let mut sizes_before = Vec::new();
         let mut sizes_after = Vec::new();
-        compute_pane_sizes(&snap_before, 0, 0, 80, 24, &mut sizes_before);
-        compute_pane_sizes(&snap_after, 0, 0, 80, 24, &mut sizes_after);
+        compute_pane_sizes(&snap_before, 80, 24, &mut sizes_before);
+        compute_pane_sizes(&snap_after, 80, 24, &mut sizes_after);
         assert_eq!(sizes_before, sizes_after);
     }
 }
