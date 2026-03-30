@@ -11,7 +11,6 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-#[cfg(unix)]
 use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySystem};
 use tokio::sync::broadcast;
 use tracing::{debug, error, info};

@@ -21,6 +21,7 @@ libc = "0.2"
 # Windows API: Named Pipe の存在確認・プロセス起動
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
+    "Win32_Security",
     "Win32_System_Threading",
     "Win32_Storage_FileSystem",
 ] }

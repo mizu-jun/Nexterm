@@ -68,12 +68,10 @@ fn libc_getuid() -> libc::uid_t {
 fn named_pipe_exists(pipe_name: &str) -> bool {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{GENERIC_READ, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, OPEN_EXISTING,
-        FILE_SHARE_READ, FILE_SHARE_WRITE,
-        GENERIC_READ,
+        CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
     };
-    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
 
     let wide: Vec<u16> = OsStr::new(pipe_name)
         .encode_wide()

@@ -6,6 +6,16 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 
 [![CI](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml/badge.svg)](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml)
 
+## What's New in v0.5.1
+
+**Windows bug fixes** — patch release that unblocks the Windows binary which was absent from v0.5.0 due to four build/test failures:
+
+- `nexterm-launcher`: Added missing `Win32_Security` feature for `windows-sys 0.59` and fixed `GENERIC_READ` import path (`Win32::Foundation` not `Win32::Storage::FileSystem`)
+- `nexterm-server/pane.rs`: Removed `#[cfg(unix)]` guard on `portable_pty` imports — `MasterPty`, `NativePtySystem` etc. are also needed on Windows (ConPTY)
+- `nexterm-server/ipc.rs`: Path-validation tests now use platform-appropriate absolute paths (`%TEMP%\nexterm\…` on Windows) so the "reject forbidden paths" assertion is meaningful on both OSes
+
+All 93 unit tests pass on `x86_64-pc-windows-msvc`. See [CHANGELOG.md](CHANGELOG.md) for the full fix table.
+
 ## What's New in v0.5.0
 
 **SSH & Connectivity**

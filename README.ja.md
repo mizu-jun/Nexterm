@@ -4,6 +4,17 @@
 
 Rust 製のターミナルマルチプレクサ。tmux/zellij インスパイアで、wgpu による GPU レンダリングと Lua 設定システムを搭載する。
 
+## v0.5.1 の新機能
+
+**Windows バグ修正** — v0.5.0 で Windows バイナリが生成されなかった原因となったビルド・テスト失敗 4 件を修正するパッチリリース。
+
+- `nexterm-launcher`: `windows-sys 0.59` に必要な `Win32_Security` フィーチャーの追加、`GENERIC_READ` のインポート先を `Win32::Foundation` へ修正
+- `nexterm-server/pane.rs`: `portable_pty` インポートの `#[cfg(unix)]` ガードを削除 — Windows (ConPTY) でも同型が必要
+- `nexterm-server/ipc.rs`: パス検証テストをプラットフォーム別に分岐（Windows は `%TEMP%\nexterm\…` 形式）
+- `nexterm-client-gpu/host_manager.rs`: テストヘルパーの `HostConfig` 初期化子に `x11_forward` / `x11_trusted` フィールドを追加
+
+`x86_64-pc-windows-msvc` で全 93 テスト合格。詳細は [CHANGELOG.md](CHANGELOG.md) を参照。
+
 ## v0.5.0 の新機能
 
 **SSH・接続**

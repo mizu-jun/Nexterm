@@ -123,6 +123,8 @@ mod tests {
             forward_local: vec![],
             forward_remote: vec![],
             proxy_jump: None,
+            x11_forward: false,
+            x11_trusted: false,
         }
     }
 

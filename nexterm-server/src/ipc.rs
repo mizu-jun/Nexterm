@@ -1518,13 +1518,30 @@ mod tests {
         // 相対パスは許可ディレクトリチェックをスキップ（実行時のCWD依存）
         assert!(validate_recording_path("recording.txt").is_ok());
         // 許可ディレクトリ内の絶対パスは通過する
+        #[cfg(unix)]
         assert!(validate_recording_path("/tmp/nexterm/session.rec").is_ok());
+        #[cfg(windows)]
+        {
+            let tmp = std::env::var("TEMP")
+                .or_else(|_| std::env::var("TMP"))
+                .unwrap_or_else(|_| "C:\\Temp".to_string());
+            let allowed = format!("{}\\nexterm\\session.rec", tmp);
+            assert!(validate_recording_path(&allowed).is_ok());
+        }
     }
 
     #[test]
     fn 許可外の絶対パスは拒否される() {
-        assert!(validate_recording_path("/home/user/recording.txt").is_err());
-        assert!(validate_recording_path("/etc/passwd").is_err());
+        #[cfg(unix)]
+        {
+            assert!(validate_recording_path("/home/user/recording.txt").is_err());
+            assert!(validate_recording_path("/etc/passwd").is_err());
+        }
+        #[cfg(windows)]
+        {
+            assert!(validate_recording_path("D:\\secret\\recording.txt").is_err());
+            assert!(validate_recording_path("C:\\Windows\\System32\\recording.txt").is_err());
+        }
     }
 
     #[test]
