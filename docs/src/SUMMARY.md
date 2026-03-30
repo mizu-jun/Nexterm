@@ -1,0 +1,25 @@
+# Summary
+
+[Introduction](README.md)
+
+# Getting Started
+- [Installation](install.md)
+- [Quick Start](quickstart.md)
+- [Windows Quick Start](windows.md)
+
+# Features
+- [Terminal Emulation](features/terminal.md)
+- [Session Management](features/sessions.md)
+- [SSH & Connectivity](features/ssh.md)
+- [SFTP File Transfer](features/sftp.md)
+- [Serial Port](features/serial.md)
+- [Web Terminal](features/web.md)
+
+# Configuration
+- [Overview](config/overview.md)
+- [TOML Reference](config/toml.md)
+- [Lua Scripting](config/lua.md)
+- [Key Bindings](config/keybindings.md)
+
+# Architecture
+- [Architecture Overview](architecture.md)

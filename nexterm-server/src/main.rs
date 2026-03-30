@@ -8,6 +8,7 @@ mod serial;
 mod session;
 mod snapshot;
 mod template;
+mod web;
 mod window;
 
 use std::sync::Arc;
@@ -45,12 +46,18 @@ async fn main() -> Result<()> {
     let manager_for_ipc = Arc::clone(&manager);
 
     // 設定を読み込んでフック設定・ログ設定・ホスト設定を抽出する
-    let (hooks, lua_runner, log_config, hosts) = {
+    let (hooks, lua_runner, log_config, hosts, web_config) = {
         let cfg = nexterm_config::ConfigLoader::load().unwrap_or_default();
         let lua_script = nexterm_config::lua_path();
         let runner = nexterm_config::LuaHookRunner::new(Some(lua_script));
-        (Arc::new(cfg.hooks), Arc::new(runner), Arc::new(cfg.log), Arc::new(cfg.hosts))
+        (Arc::new(cfg.hooks), Arc::new(runner), Arc::new(cfg.log), Arc::new(cfg.hosts), cfg.web)
     };
+
+    // Web ターミナルが有効な場合はバックグラウンドで起動する
+    if web_config.enabled {
+        let web_manager = Arc::clone(&manager);
+        tokio::spawn(web::start_web_server(web_config, web_manager));
+    }
 
     // Run IPC server and wait for shutdown signal
     tokio::select! {

@@ -1028,7 +1028,7 @@ async fn dispatch(
             }
         }
 
-        ConnectSsh { host, port, username, auth_type, password, key_path, remote_forwards } => {
+        ConnectSsh { host, port, username, auth_type, password, key_path, remote_forwards, x11_forward, x11_trusted } => {
             use nexterm_ssh::{SshAuth, SshConfig, SshSession};
             use zeroize::Zeroizing;
 

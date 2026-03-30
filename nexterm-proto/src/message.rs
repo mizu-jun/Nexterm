@@ -107,6 +107,12 @@ pub enum ClientToServer {
         /// リモートポートフォワーディング指定（"remote_port:local_host:local_port" 形式、複数可）
         #[serde(default)]
         remote_forwards: Vec<String>,
+        /// X11 フォワーディングを有効にするか（ssh -X 相当）
+        #[serde(default)]
+        x11_forward: bool,
+        /// 信頼された X11 フォワーディング（ssh -Y 相当）
+        #[serde(default)]
+        x11_trusted: bool,
     },
     /// 新しいウィンドウを作成する
     NewWindow,

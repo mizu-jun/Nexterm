@@ -307,12 +307,16 @@ impl SshSession {
     /// `output_tx`: サーバーからのデータ（PTY 出力）を送信するチャネル
     /// `input_rx`: クライアントからのデータ（キー入力）を受信するチャネル
     /// `cols`, `rows`: 初期端末サイズ
+    /// `x11_forward`: X11 フォワーディングを有効にするか（ssh -X 相当）
+    /// `x11_trusted`: 信頼された X11 フォワーディング（ssh -Y 相当）
     pub async fn open_shell(
         self,
         cols: u16,
         rows: u16,
         output_tx: mpsc::Sender<Vec<u8>>,
         mut input_rx: mpsc::Receiver<Vec<u8>>,
+        x11_forward: bool,
+        x11_trusted: bool,
     ) -> Result<()> {
         let handle = self.handle.lock().await;
         let mut channel = handle.channel_open_session().await?;
@@ -321,6 +325,24 @@ impl SshSession {
         channel
             .request_pty(false, "xterm-256color", cols as u32, rows as u32, 0, 0, &[])
             .await?;
+
+        // X11 フォワーディングのリクエスト（PTY リクエスト後、シェル起動前に行う）
+        if x11_forward {
+            // want_reply: false（応答を待たない）
+            // single_connection: 信頼された転送 (-Y) では false、非信頼 (-X) では true
+            let want_reply = false;
+            let single_connection = !x11_trusted;
+            let auth_protocol = "MIT-MAGIC-COOKIE-1";
+            // ダミークッキー（実際の X11 認証は将来の実装で行う）
+            let auth_cookie = "00000000000000000000000000000000";
+            let screen_number = 0u32;
+            if let Err(e) = channel
+                .request_x11(want_reply, single_connection, auth_protocol, auth_cookie, screen_number)
+                .await
+            {
+                warn!("X11 フォワーディングのリクエストに失敗しました: {}", e);
+            }
+        }
 
         channel.request_shell(false).await?;
 

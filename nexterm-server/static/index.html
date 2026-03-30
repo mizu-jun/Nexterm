@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>nexterm web</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5/css/xterm.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5/lib/xterm.js"></script>
+  <style>body{margin:0;background:#000} #terminal{height:100vh}</style>
+</head>
+<body>
+<div id="terminal"></div>
+<script>
+  const term = new Terminal({cursorBlink:true});
+  term.open(document.getElementById('terminal'));
+  const params = new URLSearchParams(location.search);
+  const session = params.get('session') || 'main';
+  const token = params.get('token') || '';
+  const ws = new WebSocket(`ws://${location.host}/ws?session=${session}&token=${token}`);
+  ws.onmessage = e => term.write(e.data);
+  term.onData(d => ws.send(d));
+  ws.onclose = () => term.write('\r\n[disconnected]\r\n');
+</script>
+</body>
+</html>

@@ -45,5 +45,6 @@
   "palette-show-host-manager": "Gestionnaire d'hôtes SSH",
   "palette-show-macro-picker": "Sélecteur de macros Lua",
   "palette-sftp-upload": "Upload SFTP...",
-  "palette-sftp-download": "Télécharger SFTP..."
+  "palette-sftp-download": "Télécharger SFTP...",
+  "palette-show-settings": "Ouvrir les paramètres"
 }

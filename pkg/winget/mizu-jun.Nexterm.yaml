@@ -1,0 +1,26 @@
+PackageIdentifier: mizu-jun.Nexterm
+PackageVersion: 0.4.0
+PackageName: Nexterm
+Publisher: mizu-jun
+PublisherUrl: https://github.com/mizu-jun/Nexterm
+License: MIT OR Apache-2.0
+LicenseUrl: https://github.com/mizu-jun/Nexterm/blob/master/LICENSE
+ShortDescription: GPU-accelerated terminal multiplexer with SSH, SFTP, and Lua scripting
+Description: |-
+  Nexterm is a Rust-based terminal multiplexer inspired by tmux/zellij.
+  Features GPU rendering (wgpu), built-in SSH client, SFTP transfer, Lua automation,
+  serial port connections, and an 8-language UI.
+  Supports Windows 10 1809+ with ConPTY, MSI installer, and Windows Service registration.
+Tags:
+  - terminal
+  - multiplexer
+  - ssh
+  - rust
+ManifestType: singleton
+ManifestVersion: 1.4.0
+Installers:
+  - Architecture: x64
+    InstallerType: msi
+    InstallerUrl: https://github.com/mizu-jun/Nexterm/releases/download/v0.4.0/nexterm-v0.4.0-windows-x86_64.msi
+    InstallerSha256: PLACEHOLDER_MSI_SHA256
+    ProductCode: "{PLACEHOLDER-GUID}"

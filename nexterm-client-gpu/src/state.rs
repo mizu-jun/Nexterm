@@ -8,6 +8,7 @@ use crate::host_manager::HostManager;
 use crate::macro_picker::MacroPicker;
 use crate::palette::CommandPalette;
 use crate::scrollback::Scrollback;
+use crate::settings_panel::SettingsPanel;
 
 /// 配置済み画像
 pub struct PlacedImage {
@@ -518,6 +519,8 @@ pub struct ClientState {
     pub macro_picker: MacroPicker,
     /// SFTP ファイル転送ダイアログ
     pub file_transfer: FileTransferDialog,
+    /// 設定パネル（Ctrl+,）
+    pub settings_panel: SettingsPanel,
 }
 
 impl ClientState {
@@ -544,6 +547,7 @@ impl ClientState {
             host_manager: HostManager::new(vec![]),
             macro_picker: MacroPicker::new(vec![]),
             file_transfer: FileTransferDialog::new(),
+            settings_panel: SettingsPanel::default(),
         }
     }
 

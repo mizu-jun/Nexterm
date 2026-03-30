@@ -1,0 +1,12 @@
+[book]
+title = "Nexterm Documentation"
+description = "GPU-accelerated terminal multiplexer"
+authors = ["mizu-jun"]
+language = "en"
+multilingual = false
+src = "docs/src"
+
+[output.html]
+site-url = "/Nexterm/"
+git-repository-url = "https://github.com/mizu-jun/Nexterm"
+edit-url-template = "https://github.com/mizu-jun/Nexterm/edit/master/{path}"

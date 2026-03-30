@@ -23,6 +23,9 @@ serde_json = { workspace = true }
 
 serialport = { workspace = true }
 zeroize = "1.8"
+axum = { version = "0.7", features = ["ws"] }
+tower = "0.4"
+rust-embed = { version = "8", features = ["include-exclude"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

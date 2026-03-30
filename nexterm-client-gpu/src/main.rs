@@ -7,6 +7,7 @@ mod macro_picker;
 mod palette;
 mod renderer;
 mod scrollback;
+mod settings_panel;
 mod state;
 
 use anyhow::Result;

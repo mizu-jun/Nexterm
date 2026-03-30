@@ -652,6 +652,14 @@ impl WgpuState {
             );
         }
 
+        // ---- 設定パネル（Ctrl+, でオープン） ----
+        if state.settings_panel.is_open {
+            self.build_settings_panel_verts(
+                state, sw, sh, cell_w, cell_h, font, atlas,
+                &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
+            );
+        }
+
         // ---- コンテキストメニュー（右クリック時） ----
         if let Some(ref menu) = state.context_menu {
             self.build_context_menu_verts(
@@ -1300,6 +1308,142 @@ impl WgpuState {
         }
     }
 
+    /// 設定パネル頂点を構築する（Ctrl+, でオープン）
+    ///
+    /// タブ 0=Font, 1=Colors, 2=Window のパネルを表示する。
+    #[allow(clippy::too_many_arguments)]
+    fn build_settings_panel_verts(
+        &self,
+        state: &ClientState,
+        sw: f32, sh: f32, cell_w: f32, cell_h: f32,
+        font: &mut FontManager,
+        atlas: &mut GlyphAtlas,
+        bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
+    ) {
+        let sp = &state.settings_panel;
+        if !sp.is_open {
+            return;
+        }
+
+        let panel_cols: f32 = 44.0;
+        let panel_rows: f32 = 10.0;
+        let pw = panel_cols * cell_w;
+        let ph = panel_rows * cell_h;
+        let px = (sw - pw) / 2.0;
+        let py = (sh - ph) / 2.0;
+
+        // パネル背景
+        add_px_rect(px, py, pw, ph, [0.12, 0.13, 0.16, 0.97], sw, sh, bg_verts, bg_idx);
+        // 上端のアクセント線
+        add_px_rect(px, py, pw, 2.0, [0.4, 0.7, 1.0, 1.0], sw, sh, bg_verts, bg_idx);
+
+        // タイトル
+        add_string_verts(
+            "Settings", px + cell_w, py + cell_h * 0.1,
+            [1.0, 1.0, 1.0, 1.0], true,
+            sw, sh, cell_w, font, atlas, &self.queue,
+            text_verts, text_idx,
+        );
+
+        // タブバー
+        let tab_labels = ["[Font]", "[Colors]", "[Window]"];
+        for (i, label) in tab_labels.iter().enumerate() {
+            let tab_x = px + cell_w * (i as f32 * 10.0 + 12.0);
+            let tab_y = py + cell_h * 0.1;
+            let is_active = sp.tab == i;
+            if is_active {
+                add_px_rect(tab_x - cell_w * 0.3, tab_y, label.len() as f32 * cell_w + cell_w * 0.6, cell_h, [0.25, 0.45, 0.75, 1.0], sw, sh, bg_verts, bg_idx);
+            }
+            let fg = if is_active { [1.0, 1.0, 1.0, 1.0] } else { [0.6, 0.65, 0.7, 1.0] };
+            add_string_verts(
+                label, tab_x, tab_y,
+                fg, is_active,
+                sw, sh, cell_w, font, atlas, &self.queue,
+                text_verts, text_idx,
+            );
+        }
+
+        // タブ区切り線
+        add_px_rect(px, py + cell_h * 1.2, pw, 1.0, [0.30, 0.30, 0.35, 1.0], sw, sh, bg_verts, bg_idx);
+
+        // タブコンテンツ
+        let content_y = py + cell_h * 1.5;
+        match sp.tab {
+            0 => {
+                // Font タブ
+                let family_line = format!("  Font: {}", sp.font_family);
+                add_string_verts(
+                    &family_line, px + cell_w, content_y,
+                    [0.8, 0.85, 0.9, 1.0], false,
+                    sw, sh, cell_w, font, atlas, &self.queue,
+                    text_verts, text_idx,
+                );
+                let size_line = format!("  Size: {:.1}pt   (↑/↓ to change)", sp.font_size);
+                add_string_verts(
+                    &size_line, px + cell_w, content_y + cell_h * 1.2,
+                    [0.9, 0.95, 1.0, 1.0], false,
+                    sw, sh, cell_w, font, atlas, &self.queue,
+                    text_verts, text_idx,
+                );
+            }
+            1 => {
+                // Colors タブ
+                let scheme_line = format!("  Scheme: {}   (←/→ to change)", sp.scheme_name());
+                add_string_verts(
+                    &scheme_line, px + cell_w, content_y,
+                    [0.9, 0.95, 1.0, 1.0], false,
+                    sw, sh, cell_w, font, atlas, &self.queue,
+                    text_verts, text_idx,
+                );
+                // スキームドット（5個）
+                let dot_y = content_y + cell_h * 1.4;
+                let schemes_colors: [[f32; 4]; 5] = [
+                    [0.15, 0.15, 0.18, 1.0], // dark
+                    [0.95, 0.95, 0.92, 1.0], // light
+                    [0.10, 0.10, 0.20, 1.0], // tokyonight
+                    [0.00, 0.17, 0.21, 1.0], // solarized
+                    [0.28, 0.26, 0.22, 1.0], // gruvbox
+                ];
+                for (i, &col) in schemes_colors.iter().enumerate() {
+                    let dot_x = px + cell_w * (2.0 + i as f32 * 3.0);
+                    let is_sel = sp.scheme_index == i;
+                    let dot_size = if is_sel { cell_w * 1.4 } else { cell_w };
+                    if is_sel {
+                        add_px_rect(dot_x - 2.0, dot_y - 2.0, dot_size + 4.0, cell_h + 4.0, [0.4, 0.7, 1.0, 1.0], sw, sh, bg_verts, bg_idx);
+                    }
+                    add_px_rect(dot_x, dot_y, dot_size, cell_h, col, sw, sh, bg_verts, bg_idx);
+                }
+            }
+            _ => {
+                // Window タブ
+                let opacity_line = format!("  Opacity: {:.2}   (↑/↓ to change)", sp.opacity);
+                add_string_verts(
+                    &opacity_line, px + cell_w, content_y,
+                    [0.9, 0.95, 1.0, 1.0], false,
+                    sw, sh, cell_w, font, atlas, &self.queue,
+                    text_verts, text_idx,
+                );
+                // 不透明度バー
+                let bar_y = content_y + cell_h * 1.4;
+                let bar_w = pw - cell_w * 4.0;
+                add_px_rect(px + cell_w * 2.0, bar_y, bar_w, cell_h * 0.4, [0.30, 0.30, 0.35, 1.0], sw, sh, bg_verts, bg_idx);
+                add_px_rect(px + cell_w * 2.0, bar_y, bar_w * sp.opacity, cell_h * 0.4, [0.4, 0.7, 1.0, 1.0], sw, sh, bg_verts, bg_idx);
+            }
+        }
+
+        // ボトムヒント
+        let hint_y = py + ph - cell_h * 1.1;
+        add_px_rect(px, hint_y, pw, 1.0, [0.30, 0.30, 0.35, 1.0], sw, sh, bg_verts, bg_idx);
+        add_string_verts(
+            "  Enter=save  Esc=cancel  Tab=next tab",
+            px + cell_w, hint_y + cell_h * 0.1,
+            [0.5, 0.55, 0.60, 1.0], false,
+            sw, sh, cell_w, font, atlas, &self.queue,
+            text_verts, text_idx,
+        );
+    }
+
     /// SFTP ファイル転送ダイアログ頂点を構築する
     ///
     /// ホスト名・ローカルパス・リモートパスの 3 フィールドを入力する。
@@ -1867,6 +2011,8 @@ impl NextermApp {
         state.host_manager = crate::host_manager::HostManager::new(config.hosts.clone());
         // 設定ファイルの Lua マクロ一覧をマクロピッカーに渡す
         state.macro_picker = crate::macro_picker::MacroPicker::new(config.macros.clone());
+        // 設定パネルを設定値で初期化する
+        state.settings_panel = crate::settings_panel::SettingsPanel::new(&config);
         Ok(Self { config, state, font })
     }
 
@@ -2410,6 +2556,16 @@ impl EventHandler {
             return true;
         }
 
+        // Ctrl+,: 設定パネルをトグルする
+        if ctrl && code == WKeyCode::Comma {
+            if self.app.state.settings_panel.is_open {
+                self.app.state.settings_panel.close();
+            } else {
+                self.app.state.settings_panel.open();
+            }
+            return true;
+        }
+
         // Ctrl+F: スクロールバック検索を開始する
         if ctrl && code == WKeyCode::KeyF {
             self.app.state.start_search();
@@ -2523,7 +2679,10 @@ impl EventHandler {
 
         // Escape: 検索・パレット・ホストマネージャを閉じる
         if code == WKeyCode::Escape {
-            if self.app.state.palette.is_open {
+            if self.app.state.settings_panel.is_open {
+                self.app.state.settings_panel.close();
+                return true;
+            } else if self.app.state.palette.is_open {
                 self.app.state.palette.close();
                 return true;
             } else if self.app.state.host_manager.is_open {
@@ -2541,6 +2700,47 @@ impl EventHandler {
             }
             // パレット・検索が開いていなければ PTY に転送する
             return false;
+        }
+
+        // 設定パネルが開いているときのナビゲーション（全キーを消費）
+        if self.app.state.settings_panel.is_open {
+            match code {
+                WKeyCode::Tab | WKeyCode::ArrowRight => self.app.state.settings_panel.next_tab(),
+                WKeyCode::ArrowLeft => self.app.state.settings_panel.prev_tab(),
+                WKeyCode::ArrowUp => {
+                    match self.app.state.settings_panel.tab {
+                        0 => self.app.state.settings_panel.increase_font_size(),
+                        2 => self.app.state.settings_panel.increase_opacity(),
+                        _ => {}
+                    }
+                }
+                WKeyCode::ArrowDown => {
+                    match self.app.state.settings_panel.tab {
+                        0 => self.app.state.settings_panel.decrease_font_size(),
+                        2 => self.app.state.settings_panel.decrease_opacity(),
+                        _ => {}
+                    }
+                }
+                WKeyCode::BracketRight => {
+                    if self.app.state.settings_panel.tab == 1 {
+                        self.app.state.settings_panel.next_scheme();
+                    }
+                }
+                WKeyCode::BracketLeft => {
+                    if self.app.state.settings_panel.tab == 1 {
+                        self.app.state.settings_panel.prev_scheme();
+                    }
+                }
+                WKeyCode::Enter => {
+                    let _ = self.app.state.settings_panel.save_to_toml();
+                    self.app.state.settings_panel.close();
+                }
+                WKeyCode::Escape => {
+                    self.app.state.settings_panel.close();
+                }
+                _ => {}
+            }
+            return true;
         }
 
         // パレットが開いているときのナビゲーション（全キーを消費）
@@ -2571,7 +2771,7 @@ impl EventHandler {
                     if let Some(host) = self.app.state.host_manager.selected_host() {
                         let host = host.clone();
                         self.app.state.host_manager.close();
-                        self.connect_ssh_host(&host);
+                        self.connect_ssh_host_new_tab(&host);
                     }
                 }
                 _ => {
@@ -2872,6 +3072,9 @@ impl EventHandler {
                     let _ = conn.send_tx.try_send(ClientToServer::BreakPane);
                 }
             }
+            "ShowSettings" => {
+                self.app.state.settings_panel.open();
+            }
             "ShowHostManager" => {
                 self.app.state.host_manager.reload(self.app.config.hosts.clone());
                 self.app.state.host_manager.open();
@@ -2951,7 +3154,7 @@ impl EventHandler {
         }
     }
 
-    /// HostConfig から ConnectSsh メッセージを送信する
+    /// HostConfig から ConnectSsh メッセージを送信する（現在のペインに接続）
     fn connect_ssh_host(&self, host: &nexterm_config::HostConfig) {
         let Some(conn) = &self.connection else { return };
         let _ = conn.send_tx.try_send(ClientToServer::ConnectSsh {
@@ -2962,6 +3165,26 @@ impl EventHandler {
             password: None,
             key_path: host.key_path.clone(),
             remote_forwards: host.forward_remote.clone(),
+            x11_forward: host.x11_forward,
+            x11_trusted: host.x11_trusted,
+        });
+    }
+
+    /// HostConfig から新しいタブを開いて ConnectSsh メッセージを送信する
+    fn connect_ssh_host_new_tab(&self, host: &nexterm_config::HostConfig) {
+        let Some(conn) = &self.connection else { return };
+        // 先に新しいウィンドウ（タブ）を作成してから SSH 接続を要求する
+        let _ = conn.send_tx.try_send(ClientToServer::NewWindow);
+        let _ = conn.send_tx.try_send(ClientToServer::ConnectSsh {
+            host: host.host.clone(),
+            port: host.port,
+            username: host.username.clone(),
+            auth_type: host.auth_type.clone(),
+            password: None,
+            key_path: host.key_path.clone(),
+            remote_forwards: host.forward_remote.clone(),
+            x11_forward: host.x11_forward,
+            x11_trusted: host.x11_trusted,
         });
     }
 

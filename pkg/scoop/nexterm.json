@@ -1,0 +1,26 @@
+{
+  "version": "0.4.0",
+  "description": "GPU-accelerated terminal multiplexer with SSH, SFTP, Lua scripting",
+  "homepage": "https://github.com/mizu-jun/Nexterm",
+  "license": "MIT OR Apache-2.0",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/mizu-jun/Nexterm/releases/download/v0.4.0/nexterm-v0.4.0-windows-x86_64.zip",
+      "hash": "PLACEHOLDER_SHA256"
+    }
+  },
+  "bin": ["nexterm.exe", "nexterm-server.exe", "nexterm-client-gpu.exe", "nexterm-client-tui.exe", "nexterm-ctl.exe"],
+  "shortcuts": [
+    ["nexterm-client-gpu.exe", "Nexterm"]
+  ],
+  "checkver": {
+    "github": "https://github.com/mizu-jun/Nexterm"
+  },
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/mizu-jun/Nexterm/releases/download/v$version/nexterm-v$version-windows-x86_64.zip"
+      }
+    }
+  }
+}

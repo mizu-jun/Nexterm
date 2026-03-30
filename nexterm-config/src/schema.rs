@@ -289,6 +289,12 @@ pub struct HostConfig {
     pub forward_remote: Vec<String>,
     /// ProxyJump ホスト名（hosts に登録されたエントリ名）
     pub proxy_jump: Option<String>,
+    /// X11 フォワーディングを有効にするか（ssh -X 相当）
+    #[serde(default)]
+    pub x11_forward: bool,
+    /// 信頼された X11 フォワーディング（ssh -Y 相当）
+    #[serde(default)]
+    pub x11_trusted: bool,
 }
 
 fn default_ssh_port() -> u16 {
@@ -328,6 +334,33 @@ pub struct HooksConfig {
     pub lua_on_attach: Option<String>,
     /// デタッチ時に呼び出す Lua 関数名
     pub lua_on_detach: Option<String>,
+}
+
+/// Web ターミナル設定（WebSocket + xterm.js）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WebConfig {
+    /// Web ターミナルを有効にするか（デフォルト: false）
+    #[serde(default)]
+    pub enabled: bool,
+    /// 待ち受けポート（デフォルト: 7681）
+    #[serde(default = "default_web_port")]
+    pub port: u16,
+    /// 認証トークン（None の場合は認証なし）
+    pub token: Option<String>,
+}
+
+fn default_web_port() -> u16 {
+    7681
+}
+
+impl Default for WebConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: default_web_port(),
+            token: None,
+        }
+    }
 }
 
 /// 設定 API バージョン
@@ -403,6 +436,10 @@ pub struct Config {
     /// ターミナルフック（イベント駆動シェルコマンド）
     #[serde(default)]
     pub hooks: HooksConfig,
+
+    /// Web ターミナル設定（WebSocket + xterm.js）
+    #[serde(default)]
+    pub web: WebConfig,
 }
 
 fn default_scrollback() -> usize {
@@ -427,6 +464,7 @@ impl Default for Config {
             serial_ports: Vec::new(),
             log: LogConfig::default(),
             hooks: HooksConfig::default(),
+            web: WebConfig::default(),
         }
     }
 }

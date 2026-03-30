@@ -94,6 +94,10 @@ impl CommandPalette {
                 label: fl!("palette-sftp-download"),
                 action: "SftpDownloadDialog".to_string(),
             },
+            PaletteAction {
+                label: fl!("palette-show-settings"),
+                action: "ShowSettings".to_string(),
+            },
         ];
 
         Self {

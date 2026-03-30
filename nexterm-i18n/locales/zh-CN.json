@@ -45,5 +45,6 @@
   "palette-show-host-manager": "SSH 主机管理器",
   "palette-show-macro-picker": "Lua 宏选择器",
   "palette-sftp-upload": "SFTP 上传...",
-  "palette-sftp-download": "SFTP 下载..."
+  "palette-sftp-download": "SFTP 下载...",
+  "palette-show-settings": "打开设置"
 }

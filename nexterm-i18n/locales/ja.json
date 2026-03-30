@@ -45,5 +45,6 @@
   "palette-show-host-manager": "SSH ホストマネージャ",
   "palette-show-macro-picker": "Lua マクロピッカー",
   "palette-sftp-upload": "SFTP アップロード...",
-  "palette-sftp-download": "SFTP ダウンロード..."
+  "palette-sftp-download": "SFTP ダウンロード...",
+  "palette-show-settings": "設定を開く"
 }
