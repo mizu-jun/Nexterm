@@ -269,6 +269,57 @@ description = "Show git status in current pane"
 lua_fn      = "macro_git_status"
 ```
 
+## `[web]` — Web terminal
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the web terminal server |
+| `port` | u16 | `7681` | TCP port to listen on |
+| `token` | String | — | Legacy static token (passed as `?token=` query param) |
+
+```toml
+[web]
+enabled = true
+port    = 7681
+```
+
+## `[web.auth]` — TOTP / OTP authentication
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `totp_enabled` | bool | `false` | Require TOTP authentication for all browser access |
+| `totp_secret` | String | — | Base32-encoded TOTP secret. Auto-written after first-run setup at `/setup`. |
+| `issuer` | String | `"Nexterm"` | Issuer name displayed in authenticator apps |
+
+```toml
+[web.auth]
+totp_enabled = true
+issuer       = "Nexterm"
+# totp_secret is written automatically after /setup verification
+```
+
+> First-run: leave `totp_secret` unset and open `/setup` in a browser to scan the QR code and register the secret.
+
+## `[web.tls]` — HTTPS / TLS
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable HTTPS (WSS for WebSocket) |
+| `cert_file` | String | — | Path to PEM certificate. Omit to auto-generate a self-signed cert. |
+| `key_file` | String | — | Path to PEM private key (required when `cert_file` is set). |
+
+```toml
+# Auto-generated self-signed certificate (stored in ~/.config/nexterm/tls/)
+[web.tls]
+enabled = true
+
+# Custom certificate (e.g. Let's Encrypt)
+[web.tls]
+enabled   = true
+cert_file = "/etc/nexterm/tls/fullchain.pem"
+key_file  = "/etc/nexterm/tls/privkey.pem"
+```
+
 ## `[log]` — PTY logging
 
 | Key | Type | Default | Description |

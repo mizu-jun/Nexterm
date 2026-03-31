@@ -2847,7 +2847,7 @@ dependencies = [
 
 [[package]]
 name = "nexterm-client-gpu"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "arboard",
@@ -2874,7 +2874,7 @@ dependencies = [
 
 [[package]]
 name = "nexterm-client-tui"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "bincode",
@@ -2891,7 +2891,7 @@ dependencies = [
 
 [[package]]
 name = "nexterm-config"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "keyring",
@@ -2907,7 +2907,7 @@ dependencies = [
 
 [[package]]
 name = "nexterm-ctl"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "bincode",
@@ -2923,7 +2923,7 @@ dependencies = [
 
 [[package]]
 name = "nexterm-i18n"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "serde_json",
  "sys-locale",
@@ -2931,7 +2931,7 @@ dependencies = [
 
 [[package]]
 name = "nexterm-launcher"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "libc",
@@ -2940,7 +2940,7 @@ dependencies = [
 
 [[package]]
 name = "nexterm-proto"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "bincode",
  "serde",
@@ -2949,7 +2949,7 @@ dependencies = [
 
 [[package]]
 name = "nexterm-server"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "axum",
@@ -2982,7 +2982,7 @@ dependencies = [
 
 [[package]]
 name = "nexterm-ssh"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "russh",
@@ -2994,7 +2994,7 @@ dependencies = [
 
 [[package]]
 name = "nexterm-vt"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "nexterm-proto",
  "thiserror 2.0.18",
