@@ -157,7 +157,8 @@ jobs:
           }
           $wixInstalled = Get-ChildItem "C:\Program Files (x86)\WiX Toolset*" -Directory -ErrorAction SilentlyContinue |
                           Sort-Object Name -Descending | Select-Object -First 1
-          if ($wixInstalled) { $env:Path += ";$($wixInstalled.FullName)\bin" }
+          if (-not $wixInstalled) { throw "WiX Toolset not found" }
+          $env:Path += ";$($wixInstalled.FullName)\bin"
 
           # MSI のバージョンを Cargo.toml から取得
           $matchResult = Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' |
@@ -182,15 +183,17 @@ jobs:
           }
 
           # candle.exe + light.exe でMSIをビルド
-          $wixDir = ($wixInstalled.FullName + "\bin")
+          $wixDir = "$($wixInstalled.FullName)\bin"
           New-Item -ItemType Directory -Path build -Force | Out-Null
-          & "$wixDir\candle.exe" -arch x64 -out build\ $wixPath
+          & "$wixDir\candle.exe" -arch x64 -out "build\" $wixPath
+          if ($LASTEXITCODE -ne 0) { throw "candle.exe failed" }
 
           & "$wixDir\light.exe" `
             -ext WixUIExtension `
             -ext WixUtilExtension `
             -out "nexterm-${{ github.ref_name }}-${{ matrix.name }}.msi" `
-            build\main.wixobj
+            "build\main.wixobj"
+          if ($LASTEXITCODE -ne 0) { throw "light.exe failed" }
 
       # ── MSI 署名（証明書が設定されている場合）──
       - name: Sign MSI (Windows)
