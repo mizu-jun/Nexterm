@@ -9,6 +9,7 @@
     Id="*"
     Name="Nexterm"
     Language="1041"
+    Codepage="65001"
     Version="$(var.Version)"
     Manufacturer="Nexterm Project"
     UpgradeCode="E2A7F3B1-4C8D-4E5F-9A2B-7D6E1F0C3A45">
@@ -17,7 +18,7 @@
       InstallerVersion="500"
       Compressed="yes"
       InstallScope="perMachine"
-      Description="Nexterm — multiplexed terminal emulator"
+      Description="Nexterm - multiplexed terminal emulator"
       Comments="GPU-accelerated terminal with session persistence, Lua config, and SSH support." />
 
     <!-- アップグレード設定 -->
