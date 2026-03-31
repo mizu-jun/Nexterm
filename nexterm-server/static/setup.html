@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>nexterm — TOTP setup</title>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0d0d0d;
+      color: #c0caf5;
+      font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .card {
+      background: #13131a;
+      border: 1px solid #2a2a3d;
+      border-radius: 8px;
+      padding: 2.5rem 2rem;
+      width: 100%;
+      max-width: 380px;
+      box-shadow: 0 0 40px rgba(122,162,247,0.08);
+    }
+
+    .logo {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: #7aa2f7;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.3rem;
+    }
+
+    .logo span { color: #bb9af7; }
+
+    .subtitle {
+      font-size: 0.75rem;
+      color: #565f89;
+      margin-bottom: 1.75rem;
+    }
+
+    .step {
+      font-size: 0.7rem;
+      color: #9ece6a;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 0.4rem;
+    }
+
+    .instruction {
+      font-size: 0.8rem;
+      color: #a9b1d6;
+      margin-bottom: 1.25rem;
+      line-height: 1.5;
+    }
+
+    .qr-wrapper {
+      background: #fff;
+      border-radius: 6px;
+      display: inline-block;
+      padding: 10px;
+      margin-bottom: 1rem;
+    }
+
+    .qr-wrapper img { display: block; }
+
+    .secret-box {
+      background: #1a1b26;
+      border: 1px solid #2a2a3d;
+      border-radius: 4px;
+      padding: 0.6rem 0.75rem;
+      font-size: 0.75rem;
+      color: #e0af68;
+      word-break: break-all;
+      margin-bottom: 1.5rem;
+      letter-spacing: 0.05em;
+    }
+
+    .secret-label {
+      font-size: 0.65rem;
+      color: #565f89;
+      margin-bottom: 0.35rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    label {
+      display: block;
+      font-size: 0.7rem;
+      color: #565f89;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 0.5rem;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      background: #1a1b26;
+      border: 1px solid #2a2a3d;
+      border-radius: 4px;
+      color: #c0caf5;
+      font-family: inherit;
+      font-size: 1.5rem;
+      letter-spacing: 0.3em;
+      padding: 0.65rem 0.75rem;
+      text-align: center;
+      outline: none;
+      transition: border-color 0.2s;
+      margin-bottom: 1.25rem;
+    }
+
+    input[type="text"]:focus { border-color: #7aa2f7; }
+    input[type="text"]::placeholder { color: #3b3d57; letter-spacing: 0.2em; }
+
+    button {
+      width: 100%;
+      background: #9ece6a;
+      border: none;
+      border-radius: 4px;
+      color: #1a1b26;
+      font-family: inherit;
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      padding: 0.75rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    button:hover { background: #b9e083; }
+    button:disabled { background: #3b3d57; cursor: default; }
+
+    .error {
+      margin-top: 1rem;
+      padding: 0.5rem 0.75rem;
+      background: rgba(247,118,142,0.1);
+      border: 1px solid rgba(247,118,142,0.3);
+      border-radius: 4px;
+      color: #f7768e;
+      font-size: 0.75rem;
+      display: none;
+    }
+
+    .error.show { display: block; }
+
+    .loading { color: #565f89; font-size: 0.8rem; margin-bottom: 1rem; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">nex<span>term</span></div>
+    <div class="subtitle">web terminal — initial TOTP setup</div>
+
+    <div class="step">step 1 — scan</div>
+    <div class="instruction">
+      Open Google Authenticator, Authy, or any TOTP app and scan the QR code below.
+    </div>
+
+    <div id="qr-container">
+      <div class="loading">Generating QR code...</div>
+    </div>
+
+    <div id="manual-section" style="display:none">
+      <div class="secret-label">or enter manually</div>
+      <div class="secret-box" id="secret-text"></div>
+    </div>
+
+    <div class="step">step 2 — verify</div>
+    <div class="instruction">Enter the 6-digit code from your authenticator app to confirm setup.</div>
+
+    <form method="POST" action="/setup/verify">
+      <label for="code">verification code</label>
+      <input
+        type="text"
+        id="code"
+        name="code"
+        placeholder="000000"
+        maxlength="6"
+        autocomplete="one-time-code"
+        inputmode="numeric"
+        pattern="[0-9]{6}"
+        autofocus
+        required
+      >
+      <button type="submit" id="submit-btn">verify &amp; activate</button>
+    </form>
+
+    <div class="error" id="err"></div>
+  </div>
+
+  <script>
+    // Show error from query param
+    const params = new URLSearchParams(location.search);
+    const err = document.getElementById('err');
+    if (params.get('error') === 'invalid_code') {
+      err.textContent = 'Invalid code — please wait for the next 30-second window and try again.';
+      err.classList.add('show');
+    } else if (params.get('error') === 'internal') {
+      err.textContent = 'Internal error during setup. Check server logs.';
+      err.classList.add('show');
+    }
+
+    // Fetch the otpauth URL from the server and generate a QR code
+    fetch('/auth/setup-url')
+      .then(r => r.json())
+      .then(data => {
+        const container = document.getElementById('qr-container');
+
+        try {
+          const qr = qrcode(0, 'M');
+          qr.addData(data.url);
+          qr.make();
+          container.innerHTML = '<div class="qr-wrapper">' + qr.createImgTag(4) + '</div>';
+        } catch (e) {
+          container.innerHTML = '<div class="instruction" style="color:#f7768e">QR generation failed. Use manual entry below.</div>';
+        }
+
+        const manualSection = document.getElementById('manual-section');
+        manualSection.style.display = 'block';
+        document.getElementById('secret-text').textContent = data.secret;
+      })
+      .catch(() => {
+        document.getElementById('qr-container').innerHTML =
+          '<div class="instruction" style="color:#f7768e">Could not load setup data. Reload the page.</div>';
+      });
+
+    // Auto-submit when 6 digits entered
+    document.getElementById('code').addEventListener('input', function() {
+      if (this.value.replace(/\D/g,'').length === 6) {
+        this.form.submit();
+      }
+    });
+  </script>
+</body>
+</html>

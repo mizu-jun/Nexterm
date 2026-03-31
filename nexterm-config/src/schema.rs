@@ -336,6 +336,55 @@ pub struct HooksConfig {
     pub lua_on_detach: Option<String>,
 }
 
+/// TOTP 認証設定
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WebAuthConfig {
+    /// TOTP 認証を有効にするか（デフォルト: false）
+    #[serde(default)]
+    pub totp_enabled: bool,
+    /// TOTP シークレット（Base32 エンコード）。未設定の場合は初回起動時に生成してブラウザで設定
+    pub totp_secret: Option<String>,
+    /// 認証アプリに表示する発行者名（デフォルト: "Nexterm"）
+    #[serde(default = "default_totp_issuer")]
+    pub issuer: String,
+}
+
+fn default_totp_issuer() -> String {
+    "Nexterm".to_string()
+}
+
+impl Default for WebAuthConfig {
+    fn default() -> Self {
+        Self {
+            totp_enabled: false,
+            totp_secret: None,
+            issuer: default_totp_issuer(),
+        }
+    }
+}
+
+/// TLS / HTTPS 設定
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TlsConfig {
+    /// HTTPS を有効にするか（デフォルト: false）
+    #[serde(default)]
+    pub enabled: bool,
+    /// 証明書ファイルパス（PEM）。省略時は自己署名証明書を自動生成
+    pub cert_file: Option<String>,
+    /// 秘密鍵ファイルパス（PEM）
+    pub key_file: Option<String>,
+}
+
+impl Default for TlsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            cert_file: None,
+            key_file: None,
+        }
+    }
+}
+
 /// Web ターミナル設定（WebSocket + xterm.js）
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WebConfig {
@@ -345,8 +394,14 @@ pub struct WebConfig {
     /// 待ち受けポート（デフォルト: 7681）
     #[serde(default = "default_web_port")]
     pub port: u16,
-    /// 認証トークン（None の場合は認証なし）
+    /// 認証トークン — 後方互換性のために残す（TOTP と併用不可）
     pub token: Option<String>,
+    /// TOTP 認証設定
+    #[serde(default)]
+    pub auth: WebAuthConfig,
+    /// TLS / HTTPS 設定
+    #[serde(default)]
+    pub tls: TlsConfig,
 }
 
 fn default_web_port() -> u16 {
@@ -359,6 +414,8 @@ impl Default for WebConfig {
             enabled: false,
             port: default_web_port(),
             token: None,
+            auth: WebAuthConfig::default(),
+            tls: TlsConfig::default(),
         }
     }
 }

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>nexterm — login</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0d0d0d;
+      color: #c0caf5;
+      font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .card {
+      background: #13131a;
+      border: 1px solid #2a2a3d;
+      border-radius: 8px;
+      padding: 2.5rem 2rem;
+      width: 100%;
+      max-width: 340px;
+      box-shadow: 0 0 40px rgba(122,162,247,0.08);
+    }
+
+    .logo {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: #7aa2f7;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.3rem;
+    }
+
+    .logo span { color: #bb9af7; }
+
+    .subtitle {
+      font-size: 0.75rem;
+      color: #565f89;
+      margin-bottom: 2rem;
+    }
+
+    label {
+      display: block;
+      font-size: 0.7rem;
+      color: #565f89;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 0.5rem;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      background: #1a1b26;
+      border: 1px solid #2a2a3d;
+      border-radius: 4px;
+      color: #c0caf5;
+      font-family: inherit;
+      font-size: 1.5rem;
+      letter-spacing: 0.3em;
+      padding: 0.65rem 0.75rem;
+      text-align: center;
+      outline: none;
+      transition: border-color 0.2s;
+      margin-bottom: 1.25rem;
+    }
+
+    input[type="text"]:focus { border-color: #7aa2f7; }
+
+    input[type="text"]::placeholder { color: #3b3d57; letter-spacing: 0.2em; }
+
+    button {
+      width: 100%;
+      background: #7aa2f7;
+      border: none;
+      border-radius: 4px;
+      color: #1a1b26;
+      font-family: inherit;
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      padding: 0.75rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    button:hover { background: #9cb8ff; }
+
+    .error {
+      margin-top: 1rem;
+      padding: 0.5rem 0.75rem;
+      background: rgba(247,118,142,0.1);
+      border: 1px solid rgba(247,118,142,0.3);
+      border-radius: 4px;
+      color: #f7768e;
+      font-size: 0.75rem;
+      display: none;
+    }
+
+    .error.show { display: block; }
+
+    .hint {
+      margin-top: 1.5rem;
+      font-size: 0.7rem;
+      color: #3b3d57;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">nex<span>term</span></div>
+    <div class="subtitle">web terminal — authentication required</div>
+
+    <form method="POST" action="/auth/login">
+      <label for="code">authenticator code</label>
+      <input
+        type="text"
+        id="code"
+        name="code"
+        placeholder="000000"
+        maxlength="6"
+        autocomplete="one-time-code"
+        inputmode="numeric"
+        pattern="[0-9]{6}"
+        autofocus
+        required
+      >
+      <button type="submit">connect</button>
+    </form>
+
+    <div class="error" id="err"></div>
+    <div class="hint">Open your authenticator app and enter the 6-digit code.</div>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const err = document.getElementById('err');
+    if (params.get('error') === 'invalid_code') {
+      err.textContent = 'Invalid code. Please try again.';
+      err.classList.add('show');
+    } else if (params.get('error') === 'not_configured') {
+      err.textContent = 'TOTP is not configured. Visit /setup first.';
+      err.classList.add('show');
+    }
+
+    // Auto-submit when 6 digits are entered
+    document.getElementById('code').addEventListener('input', function() {
+      if (this.value.replace(/\D/g,'').length === 6) {
+        this.form.submit();
+      }
+    });
+  </script>
+</body>
+</html>

@@ -22,10 +22,22 @@ tracing-subscriber = { workspace = true }
 serde_json = { workspace = true }
 
 serialport = { workspace = true }
+toml_edit = { workspace = true }
 zeroize = "1.8"
 axum = { version = "0.7", features = ["ws"] }
 tower = "0.4"
 rust-embed = { version = "8", features = ["include-exclude"] }
+
+# TOTP authentication
+totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
+rand = "0.8"
+
+# HTTPS / TLS
+hyper-util = { version = "0.1", features = ["tokio", "server-auto", "service"] }
+tokio-rustls = "0.26"
+rustls = "0.23"
+rustls-pemfile = "2"
+rcgen = "0.13"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

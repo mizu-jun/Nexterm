@@ -14,7 +14,9 @@
   const params = new URLSearchParams(location.search);
   const session = params.get('session') || 'main';
   const token = params.get('token') || '';
-  const ws = new WebSocket(`ws://${location.host}/ws?session=${session}&token=${token}`);
+  // Auto-select wss:// when served over HTTPS
+  const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${wsProto}://${location.host}/ws?session=${session}&token=${token}`);
   ws.onmessage = e => term.write(e.data);
   term.onData(d => ws.send(d));
   ws.onclose = () => term.write('\r\n[disconnected]\r\n');
