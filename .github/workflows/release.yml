@@ -73,7 +73,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libx11-dev libxkbcommon-dev libwayland-dev \
-            libasound2-dev libpulse-dev
+            libasound2-dev libpulse-dev \
+            libudev-dev
 
       - name: Build release binaries
         run: >
@@ -150,9 +151,13 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # WiX Toolset v3 のインストール
-          choco install wixtoolset --version 3.14.1 -y --no-progress
-          $env:Path += ";C:\Program Files (x86)\WiX Toolset v3.14\bin"
+          # WiX Toolset v3 のインストール（未インストールの場合のみ）
+          if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) {
+            choco install wixtoolset -y --no-progress
+          }
+          $wixInstalled = Get-ChildItem "C:\Program Files (x86)\WiX Toolset*" -Directory -ErrorAction SilentlyContinue |
+                          Sort-Object Name -Descending | Select-Object -First 1
+          if ($wixInstalled) { $env:Path += ";$($wixInstalled.FullName)\bin" }
 
           # バイナリを所定の場所に配置（WiX がパスを参照）
           # MSI のバージョンを Cargo.toml から取得
@@ -171,7 +176,7 @@ jobs:
           }
 
           # candle.exe + light.exe でMSIをビルド
-          $wixDir = "C:\Program Files (x86)\WiX Toolset v3.14\bin"
+          $wixDir = ($wixInstalled.FullName + "\bin")
           & "$wixDir\candle.exe" `
             -arch x64 `
             -dVersion=$version `
