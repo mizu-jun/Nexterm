@@ -172,16 +172,6 @@ jobs:
           (Get-Content $wixPath -Raw) -replace '\$\(var\.Version\)', $version |
             Set-Content $wixPath -Encoding UTF8
 
-          # アイコンのプレースホルダー確認（なければダミーを作成）
-          if (-not (Test-Path "assets\nexterm.ico")) {
-            New-Item -ItemType Directory -Path assets -Force | Out-Null
-            $icoBytes = [byte[]](
-              0,0,1,0,1,0,16,16,0,0,1,0,32,0,104,4,0,0,22,0,0,0,
-              40,0,0,0,16,0,0,0,32,0,0,0,1,0,32,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            ) + [byte[]](0) * 1024
-            [System.IO.File]::WriteAllBytes("assets\nexterm.ico", $icoBytes)
-          }
-
           # candle.exe + light.exe でMSIをビルド
           $wixDir = "$($wixInstalled.FullName)\bin"
           New-Item -ItemType Directory -Path build -Force | Out-Null
@@ -189,8 +179,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "candle.exe failed" }
 
           & "$wixDir\light.exe" `
-            -ext WixUIExtension `
-            -ext WixUtilExtension `
             -out "nexterm-${{ github.ref_name }}-${{ matrix.name }}.msi" `
             "build\main.wixobj"
           if ($LASTEXITCODE -ne 0) { throw "light.exe failed" }

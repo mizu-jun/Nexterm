@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   Nexterm MSI installer definition (WiX v3)
-  Build: cargo wix -p nexterm-launcher -nocapture
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
 
@@ -96,8 +95,7 @@
                   Name="Nexterm"
                   Description="GPU-accelerated multiplexed terminal"
                   Target="[INSTALLFOLDER]nexterm.exe"
-                  WorkingDirectory="INSTALLFOLDER"
-                  Icon="NextermIcon" />
+                  WorkingDirectory="INSTALLFOLDER" />
         <Shortcut Id="UninstallShortcut"
                   Name="Uninstall Nexterm"
                   Target="[SystemFolder]msiexec.exe"
@@ -112,9 +110,6 @@
       </Component>
 
     </ComponentGroup>
-
-    <Icon Id="NextermIcon" SourceFile="assets\nexterm.ico" />
-    <Property Id="ARPPRODUCTICON" Value="NextermIcon" />
 
     <Property Id="ARPHELPLINK" Value="https://github.com/mizu-jun/Nexterm" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/mizu-jun/Nexterm" />
