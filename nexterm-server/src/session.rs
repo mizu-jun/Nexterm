@@ -579,12 +579,32 @@ impl SessionManager {
 fn default_shell() -> String {
     #[cfg(windows)]
     {
-        // PowerShell 7 が優先。なければ Windows PowerShell
-        if std::path::Path::new("C:\\Program Files\\PowerShell\\7\\pwsh.exe").exists() {
-            "C:\\Program Files\\PowerShell\\7\\pwsh.exe".to_string()
-        } else {
-            "powershell.exe".to_string()
+        // PowerShell 7 を優先: %ProgramFiles%\PowerShell\* 配下を検索
+        let prog_files = std::env::var("ProgramFiles")
+            .unwrap_or_else(|_| "C:\\Program Files".to_string());
+        let ps_root = std::path::Path::new(&prog_files).join("PowerShell");
+        if let Ok(entries) = std::fs::read_dir(&ps_root) {
+            let mut pwsh: Option<std::path::PathBuf> = None;
+            for e in entries.flatten() {
+                let candidate = e.path().join("pwsh.exe");
+                if candidate.exists() {
+                    // 最大バージョン番号のディレクトリを選ぶ
+                    if pwsh.as_ref().map_or(true, |prev| candidate > *prev) {
+                        pwsh = Some(candidate);
+                    }
+                }
+            }
+            if let Some(path) = pwsh {
+                return path.to_string_lossy().into_owned();
+            }
         }
+        // 次点: Windows PowerShell 5 (フルパス)
+        let ps5 = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+        if std::path::Path::new(ps5).exists() {
+            return ps5.to_string();
+        }
+        // 最終フォールバック: PATH 経由
+        "powershell.exe".to_string()
     }
     #[cfg(not(windows))]
     {

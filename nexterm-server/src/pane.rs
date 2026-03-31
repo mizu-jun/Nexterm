@@ -379,8 +379,16 @@ impl Pane {
         })?;
 
         let mut cmd = CommandBuilder::new(shell);
-        if let Some(cwd) = cwd {
-            cmd.cwd(cwd);
+        // 明示的な CWD がなければユーザーのホームディレクトリを使う
+        let home_buf: Option<std::path::PathBuf> = cwd.is_none().then(|| {
+            #[cfg(windows)]
+            { std::env::var("USERPROFILE").ok().map(std::path::PathBuf::from) }
+            #[cfg(not(windows))]
+            { std::env::var("HOME").ok().map(std::path::PathBuf::from) }
+        }).flatten();
+        let effective_cwd = cwd.or_else(|| home_buf.as_deref());
+        if let Some(c) = effective_cwd {
+            cmd.cwd(c);
         }
 
         let child = pair.slave.spawn_command(cmd)?;

@@ -55,10 +55,12 @@ impl ConfigLoader {
                 }
             }
         } else {
-            debug!(
-                "TOML 設定ファイルが見つかりません（デフォルト使用）: {}",
-                toml_path.display()
-            );
+            // 初回起動: デフォルト設定ファイルを生成する
+            if let Err(e) = Self::write_default_config(&toml_path) {
+                warn!("デフォルト設定ファイルの生成に失敗しました: {}", e);
+            } else {
+                info!("デフォルト設定ファイルを生成しました: {}", toml_path.display());
+            }
         }
 
         // Step 2: Lua を実行してマージ
@@ -78,6 +80,15 @@ impl ConfigLoader {
         }
 
         Ok(config)
+    }
+
+    /// デフォルト設定ファイルを書き出す（初回起動時のみ呼ばれる）
+    fn write_default_config(path: &std::path::Path) -> Result<()> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(path, DEFAULT_CONFIG_TOML)?;
+        Ok(())
     }
 
     /// TOML ファイルを読み込む
@@ -330,6 +341,45 @@ mod dirs_next {
         }
     }
 }
+
+/// 初回起動時に生成するデフォルト設定テンプレート
+const DEFAULT_CONFIG_TOML: &str = r#"# Nexterm configuration file
+# Documentation: https://github.com/mizu-jun/Nexterm
+# This file was auto-generated on first launch. Edit freely.
+
+# Number of scrollback lines to retain per pane
+scrollback_lines = 10000
+
+[font]
+# Font family name (use a monospace/nerd font for best results)
+family = "monospace"
+size = 14.0
+ligatures = true
+# font_fallbacks = ["Noto Color Emoji"]
+
+[color_scheme]
+# Built-in themes: "dark", "light", "tokyonight", "solarized", "gruvbox"
+builtin = "tokyonight"
+
+[shell]
+# Override the default shell. Leave commented to use the OS default.
+# Windows: "C:\\Program Files\\PowerShell\\7\\pwsh.exe"
+# macOS/Linux: auto-detected from $SHELL
+# program = ""
+# args = ["-NoLogo"]
+
+[tab_bar]
+show = true
+position = "top"
+
+[status_bar]
+show = true
+position = "bottom"
+
+# [hooks]
+# on_pane_open  = "/path/to/script"
+# on_pane_close = "/path/to/script"
+"#;
 
 #[cfg(test)]
 mod tests {

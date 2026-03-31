@@ -95,7 +95,8 @@
                   Name="Nexterm"
                   Description="GPU-accelerated multiplexed terminal"
                   Target="[INSTALLFOLDER]nexterm.exe"
-                  WorkingDirectory="INSTALLFOLDER" />
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="NextermIcon" />
         <Shortcut Id="UninstallShortcut"
                   Name="Uninstall Nexterm"
                   Target="[SystemFolder]msiexec.exe"
@@ -111,6 +112,8 @@
 
     </ComponentGroup>
 
+    <Icon Id="NextermIcon" SourceFile="assets\nexterm.ico" />
+    <Property Id="ARPPRODUCTICON" Value="NextermIcon" />
     <Property Id="ARPHELPLINK" Value="https://github.com/mizu-jun/Nexterm" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/mizu-jun/Nexterm" />
 
