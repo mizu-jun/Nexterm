@@ -4,6 +4,40 @@
 
 Rust 製のターミナルマルチプレクサ。tmux/zellij インスパイアで、wgpu による GPU レンダリングと Lua 設定システムを搭載する。
 
+## v0.5.5 の新機能
+
+**Windows — GPU クライアントのフォントレンダリングを修正**
+
+GPU クライアントで "Wi ndows Power She l l" のように文字間に余分なスペースが入っていた問題を修正。
+
+- `cell_w = font_size × 0.6` という固定係数を廃止し、基準文字 `'0'` を実際に
+  ラスタライズして advance width を計測する方式に変更。
+- `FontManager::new()` に `scale_factor: f32` を追加し、DPI 拡大率（125%・150%）に
+  応じた正確な物理ピクセルサイズを算出するようになった。
+- `rasterize_char` クロージャ内の負値座標ラップバグ（`x as u32`）を修正。
+- `WindowEvent::ScaleFactorChanged` イベントでフォントとグリフアトラスを自動再生成。
+
+**Windows 11 — Acrylic すりガラス背景**
+
+- ウィンドウ作成後に `DwmSetWindowAttribute(DWMWA_SYSTEMBACKDROP_TYPE, DWMWCP_ACRYLIC)` を呼び出し、Windows Terminal に似たすりガラス効果を適用。
+- wgpu Surface の composite alpha mode を `PreMultiplied` に設定。
+- Windows 10 や非 Windows 環境には影響なし（`#[cfg(windows)]` ガード済み）。
+
+## v0.5.4 の新機能
+
+**Windows — 起動時の余分なコンソールウィンドウを解消**
+
+`nexterm.exe`、`nexterm-server`、`nexterm-client-gpu` にリリースビルド限定で `windows_subsystem = "windows"` を追加。エクスプローラーや MSI から起動しても黒いコンソールが開かなくなった。
+
+- ログは `%LOCALAPPDATA%\nexterm\nexterm-server.log` / `nexterm-client.log` に出力。
+- エラーは `MessageBoxW` ダイアログで通知。
+
+**macOS — バイナリを ad-hoc 署名 & Intel Mac 対応**
+
+- すべての macOS リリースバイナリを `codesign --sign -` で署名。
+  `xattr -dr com.apple.quarantine <ファイル>` だけで Gatekeeper をバイパスして起動可能。
+- `macos-13`（Intel ランナー）で `x86_64-apple-darwin` バイナリを追加。
+
 ## v0.5.1 の新機能
 
 **Windows バグ修正** — v0.5.0 で Windows バイナリが生成されなかった原因となったビルド・テスト失敗 4 件を修正するパッチリリース。

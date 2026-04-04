@@ -6,6 +6,28 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 
 [![CI](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml/badge.svg)](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml)
 
+## What's New in v0.5.5
+
+**Windows — GPU client font rendering fixed**
+
+The GPU client previously rendered text with extra spaces between characters
+("Wi ndows Power She l l"). Root causes and fixes:
+
+- Replaced the `cell_w = font_size × 0.6` heuristic with an actual glyph-width
+  measurement by rasterizing `'0'` at runtime via cosmic-text `buffer.draw()`.
+- Added `scale_factor: f32` to `FontManager::new()` so high-DPI displays
+  (125 %, 150 % Windows scaling) use the correct physical font size.
+- Fixed a negative-coordinate wrap bug (`x as u32` on a signed i32) in the
+  `rasterize_char` pixel write loop.
+- `WindowEvent::ScaleFactorChanged` now triggers font and glyph-atlas regeneration.
+
+**Windows 11 — Acrylic frosted-glass background**
+
+- `DwmSetWindowAttribute(DWMWA_SYSTEMBACKDROP_TYPE, DWMWCP_ACRYLIC)` is called
+  after window creation to apply the same frosted-glass effect as Windows Terminal.
+- wgpu surface composite alpha mode set to `PreMultiplied` for correct blending.
+- No effect on Windows 10 or non-Windows platforms (code is `#[cfg(windows)]` guarded).
+
 ## What's New in v0.5.4
 
 **Windows — Console window eliminated**
