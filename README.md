@@ -6,15 +6,21 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 
 [![CI](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml/badge.svg)](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml)
 
-## What's New in v0.5.1
+## What's New in v0.5.4
 
-**Windows bug fixes** — patch release that unblocks the Windows binary which was absent from v0.5.0 due to four build/test failures:
+**Windows — Console window eliminated**
 
-- `nexterm-launcher`: Added missing `Win32_Security` feature for `windows-sys 0.59` and fixed `GENERIC_READ` import path (`Win32::Foundation` not `Win32::Storage::FileSystem`)
-- `nexterm-server/pane.rs`: Removed `#[cfg(unix)]` guard on `portable_pty` imports — `MasterPty`, `NativePtySystem` etc. are also needed on Windows (ConPTY)
-- `nexterm-server/ipc.rs`: Path-validation tests now use platform-appropriate absolute paths (`%TEMP%\nexterm\…` on Windows) so the "reject forbidden paths" assertion is meaningful on both OSes
+Launching `nexterm.exe` no longer opens a stray black console window alongside the terminal. All three executables (`nexterm`, `nexterm-server`, `nexterm-client-gpu`) now use the Windows GUI subsystem in release builds. Logs are written to `%LOCALAPPDATA%\nexterm\` instead.
 
-All 93 unit tests pass on `x86_64-pc-windows-msvc`. See [CHANGELOG.md](CHANGELOG.md) for the full fix table.
+**macOS — Binaries are ad-hoc signed + Intel Mac support**
+
+- macOS release binaries are now ad-hoc code-signed. Remove the quarantine flag and they launch without Gatekeeper blocking them:
+  ```sh
+  xattr -dr com.apple.quarantine nexterm-v0.5.4-macos-arm64.tar.gz
+  ```
+- Added `nexterm-v0.5.4-macos-x86_64.tar.gz` for Intel Mac users.
+
+See [CHANGELOG.md](CHANGELOG.md) for the full fix list.
 
 ## What's New in v0.5.0
 

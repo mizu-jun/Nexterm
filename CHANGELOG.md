@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.4] - 2026-04-05
+
+### Fixed
+
+**Windows — 起動時のコンソールウィンドウが表示されなくなった**
+
+`nexterm.exe`、`nexterm-server`、`nexterm-client-gpu` にリリースビルド限定で
+`#[windows_subsystem = "windows"]` 属性を追加。MSI インストーラーや
+エクスプローラーから `nexterm.exe` を起動した際に、ターミナルウィンドウ以外の
+余分なコンソールウィンドウが表示されなくなった。
+
+- ログは `%LOCALAPPDATA%\nexterm\nexterm-server.log` / `nexterm-client.log`
+  に日次ローテーションで書き出す（`tracing-appender` 採用）。
+- エラーは `MessageBoxW` ダイアログで通知する。
+
+**macOS — バイナリが ad-hoc 署名済みになり、Intel Mac に対応**
+
+- すべての macOS リリースバイナリを `codesign --sign -`（ad-hoc）で署名。
+  `xattr -dr com.apple.quarantine <ファイル>` を実行するだけで
+  Gatekeeper をバイパスして起動できる。
+- `macos-13`（Intel ランナー）で `x86_64-apple-darwin` ターゲットをビルドし
+  `nexterm-vX.Y.Z-macos-x86_64.tar.gz` をリリースアセットに追加。
+
+---
+
 ## [0.5.1] - 2026-03-31
 
 ### Fixed — Windows build & test (4 bugs)
