@@ -269,7 +269,13 @@ impl WgpuState {
             width: size.width.max(1),
             height: size.height.max(1),
             present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: surface_caps.alpha_modes[0],
+            // 透過合成のために PreMultiplied を優先する（非対応時は最初のモードにフォールバック）
+            alpha_mode: surface_caps
+                .alpha_modes
+                .iter()
+                .copied()
+                .find(|m| *m == wgpu::CompositeAlphaMode::PreMultiplied)
+                .unwrap_or(surface_caps.alpha_modes[0]),
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
@@ -733,7 +739,7 @@ impl WgpuState {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.05, g: 0.05, b: 0.05, a: 1.0,
+                            r: 0.0, g: 0.0, b: 0.0, a: 0.0,
                         }),
                         store: wgpu::StoreOp::Store,
                     },
@@ -1996,6 +2002,33 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
 // ---- アプリケーション本体 ----
 
+/// Windows 11 の Acrylic（すりガラス）効果をウィンドウに適用する
+///
+/// DwmSetWindowAttribute で DWMWA_SYSTEMBACKDROP_TYPE = 4 (DWMWCP_ACRYLIC) を指定する。
+/// Windows 10 や旧バージョンでは API が存在しないため何も起きない。
+#[cfg(windows)]
+fn apply_acrylic_blur(window: &winit::window::Window) {
+    use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let Ok(handle) = window.window_handle() else { return };
+    let RawWindowHandle::Win32(h) = handle.as_raw() else { return };
+    let hwnd = h.hwnd.get() as isize;
+
+    // DWMWA_SYSTEMBACKDROP_TYPE = 38; 4 = DWMWCP_ACRYLIC（Windows 11 22H2+）
+    let backdrop_type: u32 = 4;
+    // SAFETY: hwnd は winit から取得した有効なウィンドウハンドル。
+    //         DwmSetWindowAttribute は失敗しても戻り値を無視して続行する。
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            38,
+            &backdrop_type as *const _ as *const _,
+            std::mem::size_of::<u32>() as u32,
+        );
+    }
+}
+
 /// GPU アプリケーション（winit EventLoop に渡す）
 pub struct NextermApp {
     config: Config,
@@ -2005,7 +2038,7 @@ pub struct NextermApp {
 
 impl NextermApp {
     pub async fn new(config: Config) -> Result<Self> {
-        let font = FontManager::new(&config.font.family, config.font.size, &config.font.font_fallbacks);
+        let font = FontManager::new(&config.font.family, config.font.size, &config.font.font_fallbacks, 1.0);
         let mut state = ClientState::new(80, 24, config.scrollback_lines);
         // 設定ファイルのホスト一覧をホストマネージャに渡す
         state.host_manager = crate::host_manager::HostManager::new(config.hosts.clone());
@@ -2034,6 +2067,7 @@ impl NextermApp {
             _config_watcher: config_watcher,
             status_eval,
             last_status_eval: Instant::now(),
+            scale_factor: 1.0,
         }
     }
 }
@@ -2057,6 +2091,8 @@ pub struct EventHandler {
     status_eval: Option<StatusBarEvaluator>,
     /// ステータスバーの最終評価時刻
     last_status_eval: Instant,
+    /// ディスプレイの DPI スケール係数（winit より取得）
+    scale_factor: f32,
 }
 
 impl ApplicationHandler for EventHandler {
@@ -2084,6 +2120,20 @@ impl ApplicationHandler for EventHandler {
 
         // IME 入力を有効にする
         window.set_ime_allowed(true);
+
+        // DPI スケール係数を取得し、フォントを実スケールで再生成する
+        let scale_factor = window.scale_factor() as f32;
+        self.scale_factor = scale_factor;
+        self.app.font = FontManager::new(
+            &self.app.config.font.family,
+            self.app.config.font.size,
+            &self.app.config.font.font_fallbacks,
+            scale_factor,
+        );
+
+        // Acrylic（すりガラス）背景を適用する（Windows 11 のみ有効）
+        #[cfg(windows)]
+        apply_acrylic_blur(&window);
 
         // wgpu を非同期で初期化する（tokio runtime が必要）
         let wgpu_state = tokio::task::block_in_place(|| {
@@ -2159,6 +2209,7 @@ impl ApplicationHandler for EventHandler {
                         &self.app.config.font.family,
                         self.app.config.font.size,
                         &self.app.config.font.font_fallbacks,
+                        self.scale_factor,
                     );
                     if let Some(wgpu) = &self.wgpu_state {
                         self.atlas = Some(GlyphAtlas::new(&wgpu.device));
@@ -2205,6 +2256,20 @@ impl ApplicationHandler for EventHandler {
                 // サーバーにリサイズを通知する
                 if let Some(conn) = &self.connection {
                     let _ = conn.send_tx.try_send(ClientToServer::Resize { cols, rows });
+                }
+            }
+
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                self.scale_factor = scale_factor as f32;
+                self.app.font = crate::font::FontManager::new(
+                    &self.app.config.font.family,
+                    self.app.config.font.size,
+                    &self.app.config.font.font_fallbacks,
+                    self.scale_factor,
+                );
+                // スケール変更でグリフが無効化されるためアトラスをクリアする
+                if let Some(wgpu) = &self.wgpu_state {
+                    self.atlas = Some(GlyphAtlas::new(&wgpu.device));
                 }
             }
 
@@ -2917,7 +2982,7 @@ impl EventHandler {
         }
         self.app.config.font.size = new_size;
         self.app.font =
-            crate::font::FontManager::new(&self.app.config.font.family, new_size, &self.app.config.font.font_fallbacks);
+            crate::font::FontManager::new(&self.app.config.font.family, new_size, &self.app.config.font.font_fallbacks, self.scale_factor);
         if let Some(wgpu) = &self.wgpu_state {
             self.atlas = Some(GlyphAtlas::new(&wgpu.device));
         }
@@ -2962,7 +3027,7 @@ impl EventHandler {
         let default_size = nexterm_config::Config::default().font.size;
         self.app.config.font.size = default_size;
         self.app.font =
-            crate::font::FontManager::new(&self.app.config.font.family, default_size, &self.app.config.font.font_fallbacks);
+            crate::font::FontManager::new(&self.app.config.font.family, default_size, &self.app.config.font.font_fallbacks, self.scale_factor);
         if let Some(wgpu) = &self.wgpu_state {
             self.atlas = Some(GlyphAtlas::new(&wgpu.device));
         }

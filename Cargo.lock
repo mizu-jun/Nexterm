@@ -2892,6 +2892,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "wgpu",
+ "windows-sys 0.59.0",
  "winit",
 ]
 
