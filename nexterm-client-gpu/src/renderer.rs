@@ -2013,8 +2013,9 @@ fn apply_acrylic_blur(window: &winit::window::Window) {
 
     let Ok(handle) = window.window_handle() else { return };
     let RawWindowHandle::Win32(h) = handle.as_raw() else { return };
-    // windows-sys 0.59 では HWND = *mut c_void。as isize キャストは不要
-    let hwnd = h.hwnd.get();
+    // raw-window-handle 0.6 の hwnd は NonZeroIsize (= isize)。
+    // windows-sys 0.59 では HWND = *mut c_void なので isize から変換する。
+    let hwnd = h.hwnd.get() as *mut ::core::ffi::c_void;
 
     // DWMWA_SYSTEMBACKDROP_TYPE = 38; 4 = DWMWCP_ACRYLIC（Windows 11 22H2+）
     let backdrop_type: u32 = 4;
