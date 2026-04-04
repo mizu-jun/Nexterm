@@ -19,6 +19,7 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+tracing-appender = "0.2"
 serde_json = { workspace = true }
 
 serialport = { workspace = true }
@@ -41,3 +42,6 @@ rcgen = "0.13"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+dirs = "5"

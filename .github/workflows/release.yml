@@ -50,6 +50,12 @@ jobs:
             name: macos-arm64
             archive_ext: tar.gz
 
+          # macOS Intel
+          - os: macos-13
+            target: x86_64-apple-darwin
+            name: macos-x86_64
+            archive_ext: tar.gz
+
           # Windows x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -84,6 +90,17 @@ jobs:
           -p nexterm-client-tui
           -p nexterm-ctl
           -p nexterm-launcher
+
+      # ── macOS: ad-hoc コード署名（Gatekeeper の quarantine 除去後に起動可能にする）──
+      - name: Ad-hoc code sign (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          for bin in nexterm nexterm-server nexterm-client-gpu nexterm-client-tui nexterm-ctl; do
+            BIN_PATH="target/${{ matrix.target }}/release/$bin"
+            if [ -f "$BIN_PATH" ]; then
+              codesign --force --sign - "$BIN_PATH"
+            fi
+          done
 
       # ── Unix 向けパッケージング ──
       - name: Package (Unix)

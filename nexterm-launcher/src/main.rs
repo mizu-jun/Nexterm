@@ -1,3 +1,4 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 //! Nexterm ランチャー
 //!
 //! `nexterm` コマンド 1本でサーバーを自動起動し、GPU クライアントを開く。
@@ -14,9 +15,40 @@ use std::time::{Duration, Instant};
 
 fn main() {
     if let Err(e) = run() {
-        eprintln!("nexterm: {}", e);
+        show_error(&format!("nexterm: {}", e));
         std::process::exit(1);
     }
+}
+
+/// エラーメッセージを表示する。
+/// リリースビルド（Windows）では stderr が無効なため MessageBox を使う。
+#[cfg(all(windows, not(debug_assertions)))]
+fn show_error(msg: &str) {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    let wide: Vec<u16> = OsStr::new(msg)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let title: Vec<u16> = OsStr::new("Nexterm")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: Windows API の正規呼び出し。ポインタはスタック上で有効
+    unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::MessageBoxW(
+            std::ptr::null_mut(),
+            wide.as_ptr(),
+            title.as_ptr(),
+            windows_sys::Win32::UI::WindowsAndMessaging::MB_OK
+                | windows_sys::Win32::UI::WindowsAndMessaging::MB_ICONERROR,
+        );
+    }
+}
+
+#[cfg(not(all(windows, not(debug_assertions))))]
+fn show_error(msg: &str) {
+    eprintln!("{}", msg);
 }
 
 fn run() -> anyhow::Result<()> {
@@ -41,8 +73,8 @@ fn server_is_running() -> bool {
     #[cfg(unix)]
     {
         let uid = libc_getuid();
-        let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-            .unwrap_or_else(|_| format!("/run/user/{}", uid));
+        let runtime_dir =
+            std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/run/user/{}", uid));
         std::path::Path::new(&format!("{}/nexterm.sock", runtime_dir)).exists()
     }
 
@@ -132,7 +164,6 @@ fn start_server(exe_dir: &PathBuf) -> anyhow::Result<()> {
             .map_err(|e| anyhow::anyhow!("nexterm-server の起動に失敗: {}", e))?;
     }
 
-    eprintln!("nexterm-server を起動しました");
     Ok(())
 }
 
