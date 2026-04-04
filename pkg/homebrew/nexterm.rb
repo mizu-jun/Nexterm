@@ -1,7 +1,7 @@
 class Nexterm < Formula
   desc "GPU-accelerated terminal multiplexer with SSH, SFTP, Lua scripting"
   homepage "https://github.com/mizu-jun/Nexterm"
-  version "0.5.4"
+  version "0.5.5"
 
   on_macos do
     on_arm do

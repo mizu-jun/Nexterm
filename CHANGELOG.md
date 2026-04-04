@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.5] - 2026-04-05
+
+### Fixed
+
+**Windows — GPU クライアントのフォントが正しく描画されるようになった**
+
+- `cell_w = font_size * 0.6` という誤った固定係数を廃止し、基準文字 `'0'` を
+  実際にラスタライズして advance width を計測する方式に変更。
+  "Wi ndows Power She l l" のような文字間の余分なスペースが解消される。
+- `FontManager::new()` に `scale_factor: f32` パラメーターを追加し、
+  winit の `window.scale_factor()` を渡すことで DPI 拡大率（125%・150%）に
+  応じた正確なフォントサイズを計算するようになった。
+- `rasterize_char` クロージャ内で `x as u32`（負値のラップ）していた
+  バグを修正し、`if x < 0 || y < 0 { return; }` ガードを追加。
+- `WindowEvent::ScaleFactorChanged` を処理し、DPI 変更時にフォントと
+  グリフアトラスを自動再生成するようになった。
+
+**Windows 11 — GPU クライアントに Acrylic すりガラス背景を追加**
+
+- `DwmSetWindowAttribute(DWMWA_SYSTEMBACKDROP_TYPE, DWMWCP_ACRYLIC)` を呼び出し、
+  Windows Terminal に似たすりガラス効果をウィンドウ背景に適用。
+- wgpu Surface の composite alpha mode を `PreMultiplied` に設定し、
+  透明合成が正しく動作するようにした。
+- Windows 10 や他 OS では追加コードは実行されず、動作に影響しない。
+
+---
+
 ## [0.5.4] - 2026-04-05
 
 ### Fixed

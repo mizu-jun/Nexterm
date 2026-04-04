@@ -1,5 +1,5 @@
 PackageIdentifier: mizu-jun.Nexterm
-PackageVersion: 0.5.4
+PackageVersion: 0.5.5
 PackageName: Nexterm
 Publisher: mizu-jun
 PublisherUrl: https://github.com/mizu-jun/Nexterm
@@ -21,6 +21,6 @@ ManifestVersion: 1.4.0
 Installers:
   - Architecture: x64
     InstallerType: msi
-    InstallerUrl: https://github.com/mizu-jun/Nexterm/releases/download/v0.5.4/nexterm-v0.5.4-windows-x86_64.msi
+    InstallerUrl: https://github.com/mizu-jun/Nexterm/releases/download/v0.5.5/nexterm-v0.5.5-windows-x86_64.msi
     InstallerSha256: PLACEHOLDER_MSI_SHA256
     ProductCode: "{PLACEHOLDER-GUID}"
