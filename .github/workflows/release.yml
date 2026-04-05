@@ -113,14 +113,9 @@ jobs:
       - name: Ad-hoc code sign (macOS)
         if: runner.os == 'macOS'
         run: |
-          # .app バンドル内のバイナリを署名してからバンドルごと署名
-          for bin in nexterm nexterm-server nexterm-client-gpu nexterm-client-tui nexterm-ctl; do
-            BIN_PATH="dist/Nexterm.app/Contents/MacOS/$bin"
-            if [ -f "$BIN_PATH" ]; then
-              codesign --force --sign - "$BIN_PATH"
-            fi
-          done
-          codesign --force --sign - dist/Nexterm.app
+          # --deep でバンドル内の全バイナリを再帰的に一括署名する
+          # （個別署名後にバンドルを署名すると subcomponent エラーになるため）
+          codesign --force --deep --sign - dist/Nexterm.app
 
       # ── Unix 向けパッケージング ──
       - name: Package (Unix)
