@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.4] - 2026-04-06
+
+### Fixed
+
+**Windows GPU クライアント: CJK全角文字の文字間スペース問題を修正**
+- `rasterize_char()` に `wide: bool` パラメータを追加し、CJK等の全角文字（Unicode幅≥2）は 2 セル分のバッファ（`display_cols = 2.0`）でレンダリングするように変更。
+- `GlyphKey` に `wide` フィールドを追加し、全角・半角を別々にアトラスキャッシュ。
+- 日本語・中国語・韓国語等の文字が等間隔で正しく表示されるようになった。
+
+**Windows GPU クライアント: タブバーとターミナルコンテンツの重なり問題を修正**
+- タブバー（上部）と1行目ターミナルコンテンツが同じ y=0 に描画され重なっていた問題を修正。
+- `build_grid_verts` / `build_scrollback_verts` に `y_offset: f32` パラメータを追加。
+- マルチペイン用 `_in_rect` 関数も `off_y = row_offset * cell_h + tab_bar_h` に修正。
+- ペイン境界線・番号バッジもタブバー高さを考慮するよう更新。
+
+**Windows GPU クライアント: 右側の黒帯（未使用領域）を修正**
+- ターミナルの行数計算（`rows`）がウィンドウ高さ全体を使用していたため、タブバー・ステータスバーと重なっていた問題を修正。
+- `rows = (height - tab_bar_h - status_bar_h) / cell_h` で正確な有効行数を算出。
+- ウィンドウ初期化時・リサイズイベント時の両方を修正。
+- マウスクリック座標→セル座標変換でも `tab_bar_h` を減算して正確な行選択を実現。
+
+---
+
 ## [0.7.3] - 2026-04-06
 
 ### Fixed
