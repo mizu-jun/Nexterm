@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+**フローティングペイン**
+- `OpenFloatingPane` / `CloseFloatingPane` / `MoveFloatingPane` / `ResizeFloatingPane` IPC コマンドを追加。
+- GPU クライアントに `FloatRect` キャッシュと `floating_pane_rects` フィールドを追加。
+
+**WASM プラグインシステム**
+- `nexterm-plugin` クレートを新規作成（wasmi 0.38 ベース）。
+- ビルトインプラグイン API: `nexterm_on_output`, `nexterm_on_command`, ホストインポート `nexterm.log` / `nexterm.write_pane`。
+- 設定に `plugin_dir` / `plugins_disabled` フィールドを追加。
+
+**ステータスバーウィジェット強化**
+- ビルトインウィジェット: `"time"`, `"date"`, `"hostname"`, `"session"`, `"pane_id"`。
+- `right_widgets`（右寄せ）・`separator` フィールドを `StatusBarConfig` に追加。
+- `WidgetContext` でセッション名・ペイン ID をウィジェットに渡せるように。
+
+**Linux パッケージング**
+- `linux/AppRun`: AppImage エントリーポイントスクリプト。
+- `pkg/flatpak/`: Flatpak マニフェスト + AppStream メタデータ。
+- GitHub Actions に AppImage ビルド・アップロードステップを追加。
+- `.github/workflows/flatpak.yml`: Flatpak 専用ビルドワークフロー。
+
+**テストカバレッジ向上**
+- 全テスト数 145 → 178 件（+33件）。
+- 追加対象: nexterm-proto, nexterm-client-tui, nexterm-vt, nexterm-config, nexterm-plugin。
+
 ---
 
 ## [0.6.0] - 2026-04-05
