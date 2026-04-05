@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+**カラースキーム 4 種追加（Catppuccin / Dracula / Nord / One Dark）**
+
+- `nexterm-config`: `BuiltinScheme` に `Catppuccin`・`Dracula`・`Nord`・`OneDark` を追加。
+- 全 9 スキームの fg/bg/ANSI[16] カラーパレットを定義し、GPU レンダラーのターミナル描画に反映。
+- Settings パネル（`[Colors]` タブ）でスキームドット 9 個表示に拡張。
+
+**シェル補完スクリプト生成**
+
+- `nexterm-ctl completions <shell>` コマンドを追加。
+  bash / zsh / fish / powershell / elvish の補完スクリプトを標準出力に出力する。
+
+**man ページ生成**
+
+- `nexterm-ctl man` コマンドを追加。
+  troff 形式の man ページを標準出力に出力する（`nexterm-ctl man > nexterm-ctl.1` で保存可能）。
+
+**ブラケットペーストモード（DEC ?2004）実装**
+
+- VT パーサが `CSI ?2004h` / `CSI ?2004l` を解釈してブラケットペーストモードを追跡。
+- ペースト時にモードが有効な場合、テキストを `ESC[200~` … `ESC[201~` で囲んで PTY に送信。
+  zsh・fish・vim など多くのシェル/エディタでペースト内容が誤実行されなくなる。
+
+**SSH `~/.ssh/config` 自動読み込み**
+
+- ホストマネージャ（`Ctrl+Shift+H`）起動時に `~/.ssh/config` を解析し、
+  `[[hosts]]` エントリと合わせてホスト一覧に表示する。
+- `Host *` ワイルドカードは除外。`nexterm.toml` に同じホスト+ポートがある場合は重複しない。
+
+### Changed
+
+- `nexterm-client-gpu`: `Settings` パネルのスキーム選択が 9 種に対応。
+
+### Tests
+
+- `nexterm-vt`: ブラケットペーストモード有効化 / 無効化テスト追加。
+- `nexterm-server`: BSP 4 分割レイアウト・セッション管理 API・SSH config パーサのテスト追加。
+
+---
+
 ## [0.5.5] - 2026-04-05
 
 ### Fixed
