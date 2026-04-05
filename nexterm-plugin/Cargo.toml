@@ -1,0 +1,18 @@
+[package]
+name = "nexterm-plugin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Nexterm WASM プラグインホストランタイム"
+
+[dependencies]
+anyhow.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# WASM ランタイム（純粋 Rust 実装、クロスプラットフォーム）
+wasmi = "0.38"
+
+[dev-dependencies]
+tempfile = "3"

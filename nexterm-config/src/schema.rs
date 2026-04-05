@@ -811,6 +811,15 @@ pub struct Config {
     /// 現在アクティブなプロファイル名（None = デフォルト設定を使用）
     #[serde(default)]
     pub active_profile: Option<String>,
+
+    /// WASM プラグインを格納するディレクトリ（None = デフォルトディレクトリを使用）
+    /// デフォルト: `~/.config/nexterm/plugins`（Linux/macOS）/ `%APPDATA%\nexterm\plugins`（Windows）
+    #[serde(default)]
+    pub plugin_dir: Option<String>,
+
+    /// プラグインを無効にするかどうか
+    #[serde(default)]
+    pub plugins_disabled: bool,
 }
 
 fn default_scrollback() -> usize {
@@ -838,6 +847,8 @@ impl Default for Config {
             web: WebConfig::default(),
             profiles: Vec::new(),
             active_profile: None,
+            plugin_dir: None,
+            plugins_disabled: false,
         }
     }
 }

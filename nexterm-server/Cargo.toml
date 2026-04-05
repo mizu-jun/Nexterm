@@ -11,6 +11,7 @@ nexterm-proto = { path = "../nexterm-proto" }
 nexterm-vt = { path = "../nexterm-vt" }
 nexterm-config = { path = "../nexterm-config" }
 nexterm-ssh = { path = "../nexterm-ssh" }
+nexterm-plugin = { path = "../nexterm-plugin" }
 tokio = { workspace = true }
 portable-pty = { workspace = true }
 bincode = { workspace = true }

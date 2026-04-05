@@ -49,6 +49,24 @@ async fn main() -> Result<()> {
         let cfg = nexterm_config::ConfigLoader::load().unwrap_or_default();
         let lua_script = nexterm_config::lua_path();
         let runner = nexterm_config::LuaHookRunner::new(Some(lua_script));
+
+        // WASM プラグインをロードする
+        if !cfg.plugins_disabled {
+            let plugin_dir = cfg.plugin_dir.as_deref()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(nexterm_plugin::default_plugin_dir);
+            let mgr = nexterm_plugin::PluginManager::new(
+                std::sync::Arc::new(|_pane_id, _data| {
+                    // TODO: セッションマネージャーへの書き込みはフェーズ 2 で実装
+                }),
+            );
+            match mgr.load_dir(&plugin_dir) {
+                Ok(n) if n > 0 => info!("{} 個の WASM プラグインをロードしました", n),
+                Ok(_) => {}
+                Err(e) => tracing::warn!("プラグインのロードに失敗しました: {}", e),
+            }
+        }
+
         (Arc::new(cfg.hooks), Arc::new(runner), Arc::new(cfg.log), Arc::new(cfg.hosts), cfg.web)
     };
 
