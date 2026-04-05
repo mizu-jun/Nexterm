@@ -51,7 +51,7 @@ jobs:
             archive_ext: tar.gz
 
           # macOS Intel
-          - os: macos-13
+          - os: macos-latest
             target: x86_64-apple-darwin
             name: macos-x86_64
             archive_ext: tar.gz
