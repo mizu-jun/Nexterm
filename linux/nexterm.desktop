@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Nexterm
+GenericName=Terminal Multiplexer
+Comment=GPU-accelerated terminal multiplexer with SSH, SFTP, and Lua scripting
+Exec=nexterm
+Icon=utilities-terminal
+Type=Application
+Categories=System;TerminalEmulator;
+Terminal=false
+Keywords=terminal;ssh;multiplexer;tmux;
+StartupNotify=true

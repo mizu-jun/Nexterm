@@ -361,6 +361,77 @@ nexterm/
 └── nexterm-ssh          # SSH client (russh) — connection, auth, PTY channel
 ```
 
+## macOS Quick Start
+
+> **TL;DR** — run `nexterm`. That's it. You do not need to start any other executable manually.
+
+### Install with Homebrew (recommended)
+
+```sh
+brew install mizu-jun/nexterm/nexterm
+nexterm
+```
+
+### Install from tarball
+
+1. Download `nexterm-vX.Y.Z-macos-arm64.tar.gz` (Apple Silicon) or
+   `nexterm-vX.Y.Z-macos-x86_64.tar.gz` (Intel) from the [Releases](https://github.com/mizu-jun/Nexterm/releases) page.
+
+2. Extract and remove the quarantine flag:
+   ```sh
+   tar xzf nexterm-vX.Y.Z-macos-arm64.tar.gz
+   xattr -dr com.apple.quarantine Nexterm.app
+   ```
+
+3. **Option A — GUI (Finder):** Move `Nexterm.app` to `/Applications` and double-click it.
+
+4. **Option B — Terminal:**
+   ```sh
+   # Copy all binaries to a directory on your PATH
+   sudo cp nexterm nexterm-server nexterm-client-gpu nexterm-client-tui nexterm-ctl /usr/local/bin/
+   nexterm
+   ```
+
+`nexterm` auto-starts `nexterm-server` in the background if it is not already running,
+then opens `nexterm-client-gpu`. The other binaries (`nexterm-server`, `nexterm-client-gpu`, etc.)
+are for advanced use only.
+
+---
+
+## Linux Quick Start
+
+> **TL;DR** — run `nexterm`. That's it. You do not need to start any other executable manually.
+
+### Install from tarball
+
+1. Download `nexterm-vX.Y.Z-linux-x86_64.tar.gz` from the [Releases](https://github.com/mizu-jun/Nexterm/releases) page.
+
+2. Extract and run the install script:
+   ```sh
+   tar xzf nexterm-vX.Y.Z-linux-x86_64.tar.gz
+   ./install.sh
+   ```
+   This copies all binaries to `~/.local/bin/` and installs a `.desktop` entry so Nexterm
+   appears in your application launcher. Use `sudo ./install.sh` to install system-wide to
+   `/usr/local/bin/`.
+
+3. Launch:
+   ```sh
+   nexterm
+   ```
+
+`nexterm` auto-starts `nexterm-server` in the background if it is not already running,
+then opens `nexterm-client-gpu`.
+
+### Uninstall
+
+```sh
+./install.sh --uninstall       # user install
+sudo ./install.sh --uninstall  # system-wide install
+```
+
+---
+
 ## Windows Quick Start
 
 ### System Requirements
