@@ -80,11 +80,11 @@ impl FontManager {
         // "monospace" ジェネリック名の場合は Family::Monospace、
         // 具体的なフォント名の場合は Family::Name で直接指定する。
         // どちらも SansSerif フォールバックを防いで正確なセル幅を計測できる。
-        let family_owned;
+        // family_owned はすべてのパスで有効なライフタイムを持つよう事前宣言する。
+        let family_owned = family.to_string();
         let attrs = if family.eq_ignore_ascii_case("monospace") || family.is_empty() {
             Attrs::new().family(Family::Monospace)
         } else {
-            family_owned = family.to_string();
             Attrs::new().family(Family::Name(&family_owned))
         };
         buf.set_text(font_system, "0", attrs, Shaping::Advanced);
@@ -134,12 +134,12 @@ impl FontManager {
 
         // "monospace" ジェネリック名の場合は Family::Monospace、
         // 具体的なフォント名の場合は Family::Name で直接指定する（SansSerif フォールバックを防ぐ）
-        let family_owned;
+        // family_owned はすべてのパスで有効なライフタイムを持つよう事前宣言する。
+        let family_owned = self.family.clone();
         let base_attrs = if self.family.eq_ignore_ascii_case("monospace") || self.family.is_empty()
         {
             Attrs::new().family(Family::Monospace)
         } else {
-            family_owned = self.family.clone();
             Attrs::new().family(Family::Name(&family_owned))
         };
         let attrs = base_attrs

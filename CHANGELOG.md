@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.5] - 2026-04-06
+
+### Fixed
+
+**GPU クライアント: 描画総点検による品質修正**
+- スクロールバック表示の `visible_rows` 計算にステータスバー高さ（`cell_h`）を追加。最下行がステータスバーと重なっていた問題を修正。
+- `ScaleFactorChanged`（DPI 変更）イベントで `cols/rows` を再計算しサーバーへ Resize 通知を送るよう修正。高 DPI ディスプレイへの移動時にレイアウトがずれる問題を解消。
+- 右クリックコンテキストメニューの y 座標に `tab_bar_h` を反映。タブバー有効時にメニュー位置がズレる問題を修正。
+- `GlyphAtlas` 満杯時に `cleared_this_frame` フラグを追加。次フレーム開始時にフラグをリセットすることで、UV 不整合によるグリフ化けを防止。
+- `font.rs` の `family_owned` をすべてのパスで事前宣言し、ライフタイム構造を明確化。
+
+---
+
 ## [0.7.4] - 2026-04-06
 
 ### Fixed

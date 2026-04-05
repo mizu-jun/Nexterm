@@ -91,6 +91,9 @@ struct GlyphAtlas {
     row_height: u32,
     /// キャッシュ済みグリフ
     cache: HashMap<GlyphKey, GlyphRect>,
+    /// フレーム内でアトラスをリセットした場合 true
+    /// 次フレームで再描画が必要なことを示す（UV 不整合防止）
+    cleared_this_frame: bool,
 }
 
 impl GlyphAtlas {
@@ -132,6 +135,7 @@ impl GlyphAtlas {
             cursor_y: 0,
             row_height: 0,
             cache: HashMap::new(),
+            cleared_this_frame: false,
         }
     }
 
@@ -155,12 +159,16 @@ impl GlyphAtlas {
             self.row_height = 0;
         }
 
-        // アトラスが満杯の場合は原点に戻す（簡易 LRU の代わり）
+        // アトラスが満杯の場合: キャッシュをリセットして原点から再開する。
+        // cleared_this_frame = true をセットし、次フレームでの再描画を促す。
+        // これにより「クリア前に書いたUV」と「クリア後に上書きされた内容」の
+        // 不整合（グリフ化け）を防ぐ。
         if self.cursor_y + height > self.size {
             self.cursor_x = 0;
             self.cursor_y = 0;
             self.row_height = 0;
             self.cache.clear();
+            self.cleared_this_frame = true;
         }
 
         // テクスチャへ書き込む
@@ -596,6 +604,10 @@ impl WgpuState {
             }
         }
         self.last_frame_at = Instant::now();
+
+        // フレーム開始時にアトラスのリセットフラグをクリアする
+        // （前フレームでリセットされていても、このフレームで正しいUVを使って再描画する）
+        atlas.cleared_this_frame = false;
 
         // カラースキームからパレットを導出する（毎フレーム; コストは小さい）
         let scheme_palette: Option<nexterm_config::SchemePalette> = match color_scheme {
@@ -1096,7 +1108,8 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
-        let visible_rows = ((sh - y_offset) / cell_h) as usize;
+        // ステータスバー（下部1セル）も除外した有効表示行数
+        let visible_rows = ((sh - y_offset - cell_h) / cell_h).max(0.0) as usize;
         let offset = pane.scroll_offset;
 
         for visual_row in 0..visible_rows {
@@ -2971,9 +2984,25 @@ impl ApplicationHandler for EventHandler {
                     &self.app.config.font.font_fallbacks,
                     self.scale_factor,
                 );
-                // スケール変更でグリフが無効化されるためアトラスをクリアする
+                // スケール変更でグリフが無効化されるためアトラスを再生成する
                 if let Some(wgpu) = &self.wgpu_state {
                     self.atlas = Some(GlyphAtlas::new(&wgpu.device));
+                }
+                // DPI 変更後のセルサイズ変更に合わせて cols/rows を再計算してサーバーに通知する
+                if let Some(win) = &self.window {
+                    let size = win.inner_size();
+                    let cell_h_sf = self.app.font.cell_height();
+                    let tab_bar_h_sf = if self.app.config.tab_bar.enabled {
+                        self.app.config.tab_bar.height as f32
+                    } else {
+                        0.0
+                    };
+                    let cols = (size.width as f32 / self.app.font.cell_width()).max(1.0) as u16;
+                    let rows = ((size.height as f32 - tab_bar_h_sf - cell_h_sf) / cell_h_sf).max(1.0) as u16;
+                    self.app.state.resize(cols, rows);
+                    if let Some(conn) = &self.connection {
+                        let _ = conn.send_tx.try_send(ClientToServer::Resize { cols, rows });
+                    }
                 }
             }
 
@@ -3018,8 +3047,15 @@ impl ApplicationHandler for EventHandler {
                 ..
             } => {
                 if let Some((px, py)) = self.cursor_position {
+                    // タブバー有効時は y 座標をタブバー高さ分ずらしてターミナル内相対位置に変換する
+                    let tab_bar_h_ctx = if self.app.config.tab_bar.enabled {
+                        self.app.config.tab_bar.height as f64
+                    } else {
+                        0.0_f64
+                    };
+                    let menu_y = (py - tab_bar_h_ctx).max(0.0) as f32;
                     self.app.state.context_menu =
-                        Some(ContextMenu::new_default(px as f32, py as f32));
+                        Some(ContextMenu::new_default(px as f32, menu_y));
                     if let Some(w) = &self.window {
                         w.request_redraw();
                     }
