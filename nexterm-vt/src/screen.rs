@@ -77,6 +77,10 @@ pub struct Screen {
     pending_images: Vec<PendingImage>,
     /// 次の画像 ID
     next_image_id: u32,
+    /// Kitty 分割転送のペイロード累積バッファ（m=1 チャンク）
+    kitty_chunk_payload: Vec<u8>,
+    /// Kitty 分割転送の最初のチャンクパラメータ（m=1 時に保存）
+    kitty_chunk_params: Option<Vec<u8>>,
     /// BEL 受信フラグ（take_pending_bell で取り出す）
     pending_bell: bool,
     /// タイトル変更通知（OSC 0/1/2 で設定）
@@ -122,6 +126,8 @@ impl Screen {
             dcs_cursor: (0, 0),
             pending_images: Vec::new(),
             next_image_id: 1,
+            kitty_chunk_payload: Vec::new(),
+            kitty_chunk_params: None,
             pending_bell: false,
             pending_title: None,
             pending_notification: None,
@@ -506,20 +512,64 @@ impl Screen {
         self.dcs_buf.clear();
     }
 
-    /// Kitty APC 画像をデコードして pending_images に積む
-    #[allow(dead_code)]
+    /// Kitty APC 画像シーケンスを処理して pending_images に積む
+    ///
+    /// Kitty グラフィックスプロトコルの分割転送（m=1/m=0）にも対応する。
+    /// data は ESC _ と ESC \ を除いた APC 内容（先頭は 'G'）。
     pub(crate) fn handle_kitty_apc(&mut self, data: &[u8]) {
-        if let Some(img) = decode_kitty(data) {
-            let id = self.next_image_id;
-            self.next_image_id += 1;
-            self.pending_images.push(PendingImage {
-                id,
-                col: self.cursor_col,
-                row: self.cursor_row,
-                width: img.width,
-                height: img.height,
-                rgba: img.rgba,
-            });
+        if data.first() != Some(&b'G') {
+            return;
+        }
+        let inner = &data[1..];
+        let sep = inner.iter().position(|&b| b == b';').unwrap_or(inner.len());
+        let params_bytes = &inner[..sep];
+        let payload = if sep < inner.len() {
+            &inner[sep + 1..]
+        } else {
+            &[] as &[u8]
+        };
+
+        // m=1 フラグを確認する（more_data: 続きのチャンクあり）
+        let more_data = params_bytes.split(|&b| b == b',').any(|p| p == b"m=1");
+
+        if more_data {
+            // 分割転送中: 最初のチャンクのパラメータを保存し、ペイロードを累積する
+            if self.kitty_chunk_params.is_none() {
+                self.kitty_chunk_params = Some(params_bytes.to_vec());
+            }
+            self.kitty_chunk_payload.extend_from_slice(payload);
+        } else {
+            // 最終チャンク（または単一チャンク）: デコードして登録する
+            let (decode_params, full_payload) =
+                if let Some(first_params) = self.kitty_chunk_params.take() {
+                    // 分割転送の最終チャンク — 蓄積分と結合する
+                    self.kitty_chunk_payload.extend_from_slice(payload);
+                    let combined_payload = std::mem::take(&mut self.kitty_chunk_payload);
+                    (first_params, combined_payload)
+                } else {
+                    // 単一チャンク
+                    (params_bytes.to_vec(), payload.to_vec())
+                };
+
+            // decode_kitty が期待する形式 `G<params>;<payload>` に組み立てる
+            let mut full_apc = Vec::with_capacity(decode_params.len() + full_payload.len() + 2);
+            full_apc.push(b'G');
+            full_apc.extend_from_slice(&decode_params);
+            full_apc.push(b';');
+            full_apc.extend_from_slice(&full_payload);
+
+            if let Some(img) = decode_kitty(&full_apc) {
+                let id = self.next_image_id;
+                self.next_image_id += 1;
+                self.pending_images.push(PendingImage {
+                    id,
+                    col: self.cursor_col,
+                    row: self.cursor_row,
+                    width: img.width,
+                    height: img.height,
+                    rgba: img.rgba,
+                });
+            }
         }
     }
 

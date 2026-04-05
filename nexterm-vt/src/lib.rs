@@ -13,6 +13,12 @@ pub use screen::{PendingImage, Screen, SemanticMark, SemanticMarkKind};
 pub struct VtParser {
     parser: vte::Parser,
     screen: Screen,
+    /// APC シーケンス（Kitty グラフィックス）受信中フラグ
+    apc_active: bool,
+    /// APC データ累積バッファ
+    apc_buf: Vec<u8>,
+    /// 直前のバイトが ESC (0x1B) だったかどうか
+    apc_pending_esc: bool,
 }
 
 impl VtParser {
@@ -21,13 +27,61 @@ impl VtParser {
         Self {
             parser: vte::Parser::new(),
             screen: Screen::new(cols, rows),
+            apc_active: false,
+            apc_buf: Vec::new(),
+            apc_pending_esc: false,
         }
     }
 
     /// バイト列を処理してグリッドを更新する
+    ///
+    /// vte 0.13 は APC コールバックを持たないため、APC シーケンス（Kitty グラフィックス）を
+    /// ここでインターセプトして Screen へ渡す。APC 以外のバイト列は vte に委譲する。
     pub fn advance(&mut self, bytes: &[u8]) {
         for &byte in bytes {
-            self.parser.advance(&mut self.screen, byte);
+            // ESC の次のバイトで APC 開始 / 終了を判定する
+            if self.apc_pending_esc {
+                self.apc_pending_esc = false;
+                match byte {
+                    b'_' => {
+                        // ESC _ = APC 開始
+                        self.apc_active = true;
+                        self.apc_buf.clear();
+                        continue;
+                    }
+                    b'\\' if self.apc_active => {
+                        // ESC \ = ST（String Terminator）= APC 終了
+                        let data = std::mem::take(&mut self.apc_buf);
+                        self.screen.handle_kitty_apc(&data);
+                        self.apc_active = false;
+                        continue;
+                    }
+                    _ => {
+                        // APC 以外の ESC シーケンス — vte に ESC + 現在バイトを渡す
+                        if self.apc_active {
+                            // APC 中の孤立 ESC はバッファに追加する
+                            self.apc_buf.push(0x1b);
+                            self.apc_buf.push(byte);
+                        } else {
+                            self.parser.advance(&mut self.screen, 0x1b);
+                            self.parser.advance(&mut self.screen, byte);
+                        }
+                        continue;
+                    }
+                }
+            }
+
+            if byte == 0x1b {
+                // ESC: 次のバイトで判定するため保留する
+                self.apc_pending_esc = true;
+                continue;
+            }
+
+            if self.apc_active {
+                self.apc_buf.push(byte);
+            } else {
+                self.parser.advance(&mut self.screen, byte);
+            }
         }
     }
 
@@ -198,5 +252,60 @@ mod tests {
         assert_eq!(span.row, 0);
         assert_eq!(span.col_start, 0);
         assert_eq!(span.col_end, 5); // "Click" は 5 文字
+    }
+
+    // ---- Kitty グラフィックスプロトコル テスト ----
+
+    /// 1x1 RGBA 画像の base64: [R=255, G=0, B=0, A=255]
+    fn kitty_rgba_1x1_base64() -> &'static str {
+        // RGBA [255, 0, 0, 255] を base64 エンコード = "/wAA/w=="
+        "/wAA/w=="
+    }
+
+    #[test]
+    fn kitty単一チャンクRGBA画像がデコードされる() {
+        let mut parser = VtParser::new(80, 24);
+        // ESC _ G a=T,f=32,s=1,v=1;<base64> ESC \
+        let payload = kitty_rgba_1x1_base64();
+        let seq = format!("\x1b_Ga=T,f=32,s=1,v=1;{}\x1b\\", payload);
+        parser.advance(seq.as_bytes());
+        let images = parser.screen_mut().take_pending_images();
+        assert_eq!(images.len(), 1, "1枚の画像が登録されること");
+        assert_eq!(images[0].width, 1);
+        assert_eq!(images[0].height, 1);
+        assert_eq!(images[0].rgba[0], 255); // R
+        assert_eq!(images[0].rgba[1], 0);   // G
+        assert_eq!(images[0].rgba[2], 0);   // B
+        assert_eq!(images[0].rgba[3], 255); // A
+    }
+
+    #[test]
+    fn kitty分割チャンク転送がデコードされる() {
+        let mut parser = VtParser::new(80, 24);
+        // 1x1 RGBA を 2 チャンクに分割して送る
+        // "/wAA/w==" を "/wAA" + "/w==" に分割
+        // チャンク1: m=1（続きあり）— サイズパラメータを含む
+        parser.advance(b"\x1b_Ga=T,f=32,s=1,v=1,m=1;/wAA\x1b\\");
+        // チャンク2: m=0（最終チャンク）
+        parser.advance(b"\x1b_Gm=0;/w==\x1b\\");
+        let images = parser.screen_mut().take_pending_images();
+        assert_eq!(images.len(), 1, "分割チャンクから1枚の画像が組み立てられること");
+        assert_eq!(images[0].width, 1);
+        assert_eq!(images[0].height, 1);
+    }
+
+    #[test]
+    fn kittyシーケンス後も通常テキストが処理される() {
+        let mut parser = VtParser::new(80, 24);
+        // Kitty APC の前後にテキストを配置する
+        let payload = kitty_rgba_1x1_base64();
+        let seq = format!("Hi\x1b_Ga=T,f=32,s=1,v=1;{}\x1b\\Bye", payload);
+        parser.advance(seq.as_bytes());
+        let grid = parser.screen().grid();
+        assert_eq!(grid.get(0, 0).unwrap().ch, 'H');
+        assert_eq!(grid.get(1, 0).unwrap().ch, 'i');
+        assert_eq!(grid.get(2, 0).unwrap().ch, 'B');
+        assert_eq!(grid.get(3, 0).unwrap().ch, 'y');
+        assert_eq!(grid.get(4, 0).unwrap().ch, 'e');
     }
 }
