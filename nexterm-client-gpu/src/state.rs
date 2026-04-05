@@ -10,6 +10,15 @@ use crate::palette::CommandPalette;
 use crate::scrollback::Scrollback;
 use crate::settings_panel::SettingsPanel;
 
+/// フローティングペインの位置・サイズ情報
+#[derive(Clone, Debug)]
+pub struct FloatRect {
+    pub col_off: u16,
+    pub row_off: u16,
+    pub cols: u16,
+    pub rows: u16,
+}
+
 /// 配置済み画像
 pub struct PlacedImage {
     pub col: u16,
@@ -527,6 +536,8 @@ pub struct ClientState {
     pub settings_panel: SettingsPanel,
     /// マウスレポーティングモード（サーバーから通知される: 0=無効, 1=X11, 2=SGR）
     pub mouse_reporting_mode: u8,
+    /// フローティングペインの位置情報キャッシュ
+    pub floating_pane_rects: HashMap<u32, FloatRect>,
 }
 
 impl ClientState {
@@ -555,6 +566,7 @@ impl ClientState {
             file_transfer: FileTransferDialog::new(),
             settings_panel: SettingsPanel::default(),
             mouse_reporting_mode: 0,
+            floating_pane_rects: HashMap::new(),
         }
     }
 
@@ -653,6 +665,23 @@ impl ClientState {
                         }
                     }
                 }
+            }
+            // フローティングペインイベント — 位置情報をキャッシュするが、
+            // レンダラー側での描画は renderer.rs で別途実装する
+            ServerToClient::FloatingPaneOpened { pane_id, col_off, row_off, cols, rows } => {
+                self.floating_pane_rects.insert(
+                    pane_id,
+                    FloatRect { col_off, row_off, cols, rows },
+                );
+            }
+            ServerToClient::FloatingPaneMoved { pane_id, col_off, row_off, cols, rows } => {
+                self.floating_pane_rects.insert(
+                    pane_id,
+                    FloatRect { col_off, row_off, cols, rows },
+                );
+            }
+            ServerToClient::FloatingPaneClosed { pane_id } => {
+                self.floating_pane_rects.remove(&pane_id);
             }
             ServerToClient::LayoutChanged { panes, focused_pane_id } => {
                 // レイアウトを全更新する

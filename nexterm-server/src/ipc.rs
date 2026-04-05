@@ -1367,6 +1367,100 @@ async fn dispatch(
             }
         }
 
+        OpenFloatingPane => {
+            if let Some(ref name) = *current_session {
+                let result = {
+                    let arc = manager.sessions();
+                    let mut sessions = arc.lock().await;
+                    if let Some(s) = sessions.get_mut(name) {
+                        let cols = s.cols;
+                        let rows = s.rows;
+                        let shell = s.shell().to_string();
+                        let sender = s.broadcast_sender();
+                        s.focused_window_mut().map(|w| {
+                            w.open_floating_pane(cols, rows, sender, &shell)
+                        })
+                    } else {
+                        None
+                    }
+                };
+                match result {
+                    Some(Ok((pane_id, rect))) => {
+                        let _ = tx.send(ServerToClient::FloatingPaneOpened {
+                            pane_id,
+                            col_off: rect.col_off,
+                            row_off: rect.row_off,
+                            cols: rect.cols,
+                            rows: rect.rows,
+                        }).await;
+                    }
+                    Some(Err(e)) => {
+                        let _ = tx.send(ServerToClient::Error { message: e.to_string() }).await;
+                    }
+                    None => {}
+                }
+            }
+        }
+
+        CloseFloatingPane { pane_id } => {
+            if let Some(ref name) = *current_session {
+                let closed = {
+                    let arc = manager.sessions();
+                    let mut sessions = arc.lock().await;
+                    sessions.get_mut(name).and_then(|s| {
+                        s.focused_window_mut().map(|w| w.close_floating_pane(*pane_id))
+                    })
+                };
+                if closed == Some(true) {
+                    let _ = tx.send(ServerToClient::FloatingPaneClosed { pane_id: *pane_id }).await;
+                }
+            }
+        }
+
+        MoveFloatingPane { pane_id, col_off, row_off } => {
+            if let Some(ref name) = *current_session {
+                let rect_opt = {
+                    let arc = manager.sessions();
+                    let mut sessions = arc.lock().await;
+                    sessions.get_mut(name).and_then(|s| {
+                        s.focused_window_mut()
+                            .and_then(|w| w.move_floating_pane(*pane_id, *col_off, *row_off))
+                    })
+                };
+                if let Some(rect) = rect_opt {
+                    let _ = tx.send(ServerToClient::FloatingPaneMoved {
+                        pane_id: *pane_id,
+                        col_off: rect.col_off,
+                        row_off: rect.row_off,
+                        cols: rect.cols,
+                        rows: rect.rows,
+                    }).await;
+                }
+            }
+        }
+
+        ResizeFloatingPane { pane_id, cols, rows } => {
+            if let Some(ref name) = *current_session {
+                let rect_opt = {
+                    let arc = manager.sessions();
+                    let mut sessions = arc.lock().await;
+                    sessions.get_mut(name).and_then(|s| {
+                        s.focused_window_mut()
+                            .and_then(|w| w.resize_floating_pane(*pane_id, *cols, *rows))
+                    })
+                };
+                if let Some(rect) = rect_opt {
+                    let _ = tx.send(ServerToClient::FloatingPaneMoved {
+                        pane_id: *pane_id,
+                        col_off: rect.col_off,
+                        row_off: rect.row_off,
+                        cols: rect.cols,
+                        rows: rect.rows,
+                    }).await;
+                }
+            }
+        }
+
         ConnectSerial { port, baud_rate, data_bits, stop_bits, parity } => {
             if let Some(ref name) = *current_session {
                 let result = manager.connect_serial(

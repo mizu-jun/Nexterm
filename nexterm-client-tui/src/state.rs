@@ -126,6 +126,10 @@ impl ClientState {
             | ServerToClient::SftpProgress { .. }
             | ServerToClient::SftpDone { .. }
             | ServerToClient::SemanticMark { .. } => {}
+            // フローティングペインイベントは TUI では無視する（GPU クライアント専用）
+            ServerToClient::FloatingPaneOpened { .. }
+            | ServerToClient::FloatingPaneMoved { .. }
+            | ServerToClient::FloatingPaneClosed { .. } => {}
         }
     }
 
