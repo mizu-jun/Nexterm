@@ -261,6 +261,13 @@ impl Session {
         }
     }
 
+    /// フォーカスペインのブラケットペーストモードが有効かどうかを返す
+    pub fn focused_bracketed_paste_mode(&self) -> bool {
+        self.focused_window()
+            .map(|w| w.focused_bracketed_paste_mode())
+            .unwrap_or(false)
+    }
+
     /// ウィンドウ全体をリサイズする（全ペインを BSP 計算で再配置する）
     pub fn resize_focused(&mut self, cols: u16, rows: u16) -> Result<()> {
         self.cols = cols;

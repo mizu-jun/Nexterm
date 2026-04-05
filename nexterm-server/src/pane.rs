@@ -324,6 +324,8 @@ pub struct Pane {
     binary_log_writer: LogWriter,
     /// asciicast v2 ライター（録音中のみ Some）
     asciicast_writer: AsciicastWriterHandle,
+    /// ブラケットペーストモード（DEC ?2004）が有効かどうか
+    pub bracketed_paste: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Pane {
@@ -417,6 +419,11 @@ impl Pane {
         let asciicast_writer: AsciicastWriterHandle = Arc::new(Mutex::new(None));
         let asciicast_writer_clone = Arc::clone(&asciicast_writer);
 
+        // ブラケットペーストモードフラグを Arc<AtomicBool> で共有する
+        let bracketed_paste: Arc<std::sync::atomic::AtomicBool> =
+            Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let bracketed_paste_clone = Arc::clone(&bracketed_paste);
+
         // PTY 読み取りスレッドを起動する
         tokio::task::spawn_blocking(move || {
             let mut parser = VtParser::new(cols, rows);
@@ -439,6 +446,12 @@ impl Pane {
                     }
                     Ok(n) => {
                         parser.advance(&buf[..n]);
+
+                        // ブラケットペーストモードの変化を AtomicBool に反映する
+                        bracketed_paste_clone.store(
+                            parser.bracketed_paste_mode(),
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
 
                         // 録音中であれば生バイト列をログファイルに書き込む
                         if let Ok(mut guard) = log_writer_clone.lock()
@@ -542,6 +555,7 @@ impl Pane {
             log_writer,
             binary_log_writer,
             asciicast_writer,
+            bracketed_paste,
         })
     }
 

@@ -63,6 +63,8 @@ pub struct Screen {
     alt_screen: Option<Box<ScreenBuffer>>,
     /// 代替画面モード中か
     pub alt_mode: bool,
+    /// ブラケットペーストモード（DEC ?2004）が有効か
+    bracketed_paste: bool,
 }
 
 impl Screen {
@@ -89,6 +91,7 @@ impl Screen {
             pending_notification: None,
             alt_screen: None,
             alt_mode: false,
+            bracketed_paste: false,
         }
     }
 
@@ -293,9 +296,7 @@ impl Screen {
                     if params.get(i + 1) == Some(&5) && params.get(i + 2).is_some() {
                         self.current_fg = Color::Indexed(params[i + 2] as u8);
                         i += 2;
-                    } else if params.get(i + 1) == Some(&2)
-                        && i + 4 < params.len()
-                    {
+                    } else if params.get(i + 1) == Some(&2) && i + 4 < params.len() {
                         self.current_fg = Color::Rgb(
                             params[i + 2] as u8,
                             params[i + 3] as u8,
@@ -311,9 +312,7 @@ impl Screen {
                     if params.get(i + 1) == Some(&5) && params.get(i + 2).is_some() {
                         self.current_bg = Color::Indexed(params[i + 2] as u8);
                         i += 2;
-                    } else if params.get(i + 1) == Some(&2)
-                        && i + 4 < params.len()
-                    {
+                    } else if params.get(i + 1) == Some(&2) && i + 4 < params.len() {
                         self.current_bg = Color::Rgb(
                             params[i + 2] as u8,
                             params[i + 3] as u8,
@@ -498,5 +497,15 @@ impl Screen {
     /// デスクトップ通知を取り出してクリアする
     pub fn take_pending_notification(&mut self) -> Option<(String, String)> {
         self.pending_notification.take()
+    }
+
+    /// ブラケットペーストモード（DEC ?2004）の状態を返す
+    pub fn bracketed_paste_mode(&self) -> bool {
+        self.bracketed_paste
+    }
+
+    /// ブラケットペーストモードを設定する（performer から呼び出す）
+    pub(crate) fn set_bracketed_paste(&mut self, enabled: bool) {
+        self.bracketed_paste = enabled;
     }
 }

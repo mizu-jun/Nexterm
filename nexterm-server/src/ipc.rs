@@ -677,10 +677,20 @@ async fn dispatch(
             if let Some(ref name) = *current_session {
                 let arc = manager.sessions();
                 let sessions = arc.lock().await;
-                if let Some(s) = sessions.get(name)
-                    && let Err(e) = s.write_to_focused(text.as_bytes()) {
+                if let Some(s) = sessions.get(name) {
+                    // ブラケットペーストモード有効時は ESC[200~ / ESC[201~ で囲む
+                    let data: Vec<u8> = if s.focused_bracketed_paste_mode() {
+                        let mut v = b"\x1b[200~".to_vec();
+                        v.extend_from_slice(text.as_bytes());
+                        v.extend_from_slice(b"\x1b[201~");
+                        v
+                    } else {
+                        text.as_bytes().to_vec()
+                    };
+                    if let Err(e) = s.write_to_focused(&data) {
                         error!("ペーストエラー: {}", e);
                     }
+                }
             }
         }
 

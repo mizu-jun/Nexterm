@@ -601,6 +601,14 @@ impl Window {
         Err(anyhow::anyhow!("フォーカスペインが見つかりません"))
     }
 
+    /// フォーカスペインのブラケットペーストモードが有効かどうかを返す
+    pub fn focused_bracketed_paste_mode(&self) -> bool {
+        self.panes
+            .get(&self.focused_pane_id)
+            .map(|p| p.bracketed_paste.load(std::sync::atomic::Ordering::Relaxed))
+            .unwrap_or(false)
+    }
+
     /// フォーカス中のペインのみをリサイズする（後方互換・単一ペイン用）
     #[allow(dead_code)]
     pub fn resize_focused(&mut self, cols: u16, rows: u16) -> Result<()> {

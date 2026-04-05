@@ -40,6 +40,11 @@ impl VtParser {
     pub fn screen_mut(&mut self) -> &mut Screen {
         &mut self.screen
     }
+
+    /// ブラケットペーストモード（DEC ?2004）が有効かどうかを返す
+    pub fn bracketed_paste_mode(&self) -> bool {
+        self.screen.bracketed_paste_mode()
+    }
 }
 
 #[cfg(test)]

@@ -214,6 +214,10 @@ impl Screen {
                         self.switch_to_primary();
                     }
                 }
+                // DEC Private Mode 2004: ブラケットペーストモード
+                2004 => {
+                    self.set_bracketed_paste(enable);
+                }
                 _ => {}
             }
         }
