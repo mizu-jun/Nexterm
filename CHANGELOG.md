@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.3] - 2026-04-06
+
+### Fixed
+
+**Windows GPU クライアント: フォント文字間隔ずれを修正**
+- `Attrs::new()` のデフォルトが `Family::SansSerif` のため、Windows 上でプロポーショナルフォント（Segoe UI 等）にフォールバックしていた問題を修正。
+- `measure_char_width` と `rasterize_char` で `Family::Monospace` または `Family::Name(family)` を明示的に指定。
+- 設定フォント名が `"monospace"` の場合は `Family::Monospace`（fontdb がシステムの等幅フォントを選択）、具体名（`Consolas`, `JetBrains Mono` 等）は `Family::Name` で直接指定。
+- セル幅計測を `Buffer::draw()` のインクピクセル計測から `layout_runs()` の advance width 取得に変更。right bearing を含む正確なセル幅を算出することで文字間隔が正確になった。
+- 「Wi ndows PowerShe l l」のように文字の間に余分なスペースが入る問題を解消。
+
+**シェーダーホットリロード・ギャラリー・移行ツール**
+- `WgpuState::reload_shader_pipelines()` を追加: WGSL ファイル変更時にシェーダーをホットリロード（再起動不要）。
+- `examples/shaders/`: CRT・Matrix・Glow（背景）/ Grayscale・Amber（テキスト）のサンプル WGSL シェーダーを同梱。
+- `nexterm-ctl import-ghostty`: Ghostty 設定ファイルをインポートして nexterm config に変換。
+- `nexterm-ctl service install/uninstall/status`: systemd（Linux）/ launchd（macOS）自動起動サービス管理。
+
+---
+
 ## [0.7.2] - 2026-04-05
 
 ### Added
