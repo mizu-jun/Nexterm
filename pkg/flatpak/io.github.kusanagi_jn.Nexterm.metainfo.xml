@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.kusanagi_jn.Nexterm</id>
+  <name>Nexterm</name>
+  <summary>GPU-accelerated terminal multiplexer with SSH, SFTP, and Lua scripting</summary>
+  <description>
+    <p>
+      Nexterm is a modern, GPU-accelerated terminal multiplexer built in Rust.
+      It supports SSH connections, SFTP file transfers, Lua scripting for automation,
+      and WASM plugins for extensibility.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>GPU-accelerated rendering via wgpu</li>
+      <li>SSH / SFTP support</li>
+      <li>Lua scripting and status bar widgets</li>
+      <li>WASM plugin system</li>
+      <li>Kitty graphics protocol</li>
+      <li>Floating and tiling pane layouts</li>
+      <li>256-color and True Color support</li>
+    </ul>
+  </description>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+  <url type="homepage">https://github.com/kusanagi-jn/nexterm</url>
+  <url type="bugtracker">https://github.com/kusanagi-jn/nexterm/issues</url>
+  <releases>
+    <release version="0.6.0" date="2026-04-05">
+      <description>
+        <p>v0.6.0 release: Kitty graphics protocol, ANSI 256-color, tiling layouts,
+        floating panes, WASM plugins, and status bar widgets.</p>
+      </description>
+    </release>
+  </releases>
+  <categories>
+    <category>System</category>
+    <category>TerminalEmulator</category>
+  </categories>
+  <keywords>
+    <keyword>terminal</keyword>
+    <keyword>ssh</keyword>
+    <keyword>multiplexer</keyword>
+    <keyword>tmux</keyword>
+    <keyword>gpu</keyword>
+  </keywords>
+  <launchable type="desktop-id">io.github.kusanagi_jn.Nexterm.desktop</launchable>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Nexterm GPU client with multiple panes</caption>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1"/>
+</component>

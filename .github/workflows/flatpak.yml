@@ -1,0 +1,56 @@
+name: Flatpak
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  flatpak:
+    name: Build Flatpak
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub/flatpak-builder-lint:latest
+      options: --privileged
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install flatpak-builder
+        run: |
+          apt-get update -y
+          apt-get install -y flatpak flatpak-builder elfutils
+
+      - name: Add Flathub remote
+        run: |
+          flatpak remote-add --if-not-exists flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+
+      - name: Install freedesktop SDK
+        run: |
+          flatpak install -y flathub \
+            org.freedesktop.Platform//23.08 \
+            org.freedesktop.Sdk//23.08 \
+            org.freedesktop.Sdk.Extension.rust-stable//23.08
+
+      - name: Build Flatpak bundle
+        run: |
+          flatpak-builder \
+            --repo=repo \
+            --force-clean \
+            builddir \
+            pkg/flatpak/io.github.kusanagi_jn.Nexterm.yaml
+
+          flatpak build-bundle repo \
+            "nexterm-${{ github.ref_name }}-linux-x86_64.flatpak" \
+            io.github.kusanagi_jn.Nexterm
+
+      - name: Upload Flatpak to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: nexterm-${{ github.ref_name }}-linux-x86_64.flatpak

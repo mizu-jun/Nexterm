@@ -140,6 +140,56 @@ jobs:
           fi
           tar -czf nexterm-${{ github.ref_name }}-${{ matrix.name }}.tar.gz -C dist .
 
+      # ── Linux AppImage ビルド ──
+      - name: Build AppImage (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          # appimagetool をダウンロードする
+          APPIMAGETOOL_URL="https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
+          curl -sSL "$APPIMAGETOOL_URL" -o /tmp/appimagetool
+          chmod +x /tmp/appimagetool
+
+          # AppDir を組み立てる
+          APPDIR=/tmp/Nexterm.AppDir
+          mkdir -p "${APPDIR}/usr/bin"
+
+          # バイナリを配置する
+          for bin in nexterm nexterm-server nexterm-client-gpu nexterm-client-tui nexterm-ctl; do
+            BIN_PATH="target/${{ matrix.target }}/release/$bin"
+            if [ -f "$BIN_PATH" ]; then
+              cp "$BIN_PATH" "${APPDIR}/usr/bin/"
+            fi
+          done
+
+          # AppRun スクリプト（エントリーポイント）
+          cp linux/AppRun "${APPDIR}/AppRun"
+          chmod +x "${APPDIR}/AppRun"
+
+          # .desktop ファイルと アイコン
+          cp linux/nexterm.desktop "${APPDIR}/nexterm.desktop"
+          # アイコンが存在する場合のみコピーする
+          if [ -f "assets/icon.png" ]; then
+            cp assets/icon.png "${APPDIR}/nexterm.png"
+          else
+            # ダミーアイコン（1x1 透過 PNG）を生成する
+            printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82' > "${APPDIR}/nexterm.png"
+          fi
+
+          # FUSE が利用できない CI 環境では --appimage-extract-and-run を使う
+          ARCH=x86_64 /tmp/appimagetool \
+            --appimage-extract-and-run \
+            "${APPDIR}" \
+            "nexterm-${{ github.ref_name }}-${{ matrix.name }}.AppImage" || \
+          ARCH=x86_64 /tmp/appimagetool \
+            "${APPDIR}" \
+            "nexterm-${{ github.ref_name }}-${{ matrix.name }}.AppImage"
+
+      - name: Upload AppImage to GitHub Release
+        if: runner.os == 'Linux'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: nexterm-${{ github.ref_name }}-${{ matrix.name }}.AppImage
+
       # ── Windows 向けパッケージング（ZIP）──
       - name: Package (Windows ZIP)
         if: runner.os == 'Windows'
