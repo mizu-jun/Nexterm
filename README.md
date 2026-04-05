@@ -6,7 +6,29 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 
 [![CI](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml/badge.svg)](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml)
 
-## What's New in v0.7.0 (Unreleased)
+## What's New in v0.7.2
+
+**Custom WGSL Shaders**
+- Add `[gpu]` section to `nexterm.toml` with `custom_bg_shader` and `custom_text_shader` paths.
+- Write WGSL shaders for effects like CRT scanlines, glow text, or any visual treatment.
+- Falls back to built-in shaders on load failure — never crashes on bad shader code.
+
+**GPU Renderer Performance**
+- Vertex/index buffers are now **reused across frames** (`COPY_DST` + `write_buffer`).
+  Previous code allocated 4 new GPU buffers per frame; now zero allocations per frame.
+- ASCII printable glyphs (0x20–0x7E) are **pre-warmed** into the glyph atlas at startup — eliminates first-keystroke render latency.
+- `gpu.fps_limit` (default 60) caps frame rate to reduce CPU/GPU load on idle terminals.
+
+**Faster Startup**
+- Launcher `wait_for_server` now uses **exponential backoff** (10 ms → 100 ms) instead of fixed 100 ms polling.
+  Average server-ready detection drops from ~100 ms to ~30 ms.
+
+**Documentation**
+- New pages: Sixel/Kitty graphics guide, WASM plugin dev guide, custom shader reference, performance tuning.
+
+---
+
+## What's New in v0.7.0
 
 **Floating Panes**
 - Open a floating overlay pane with `Ctrl-B f` (centered, 60%×70% of the window).
