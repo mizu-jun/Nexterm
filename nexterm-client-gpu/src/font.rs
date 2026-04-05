@@ -1,14 +1,16 @@
 //! フォント管理 — cosmic-text によるグリフレンダリング
 
-use cosmic_text::{Attrs, Buffer, Color, FontSystem, Metrics, Shaping, SwashCache};
+use cosmic_text::{Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, SwashCache};
 
 /// フォントシステムのラッパー
 pub struct FontManager {
     pub font_system: FontSystem,
     pub swash_cache: SwashCache,
     pub metrics: Metrics,
-    /// 実計測による1セルの幅（ピクセル）
+    /// 実計測による1セルの幅（物理ピクセル）
     cell_w: f32,
+    /// 設定されたフォントファミリー名（Attrs に渡す）
+    family: String,
 }
 
 impl FontManager {
@@ -20,7 +22,8 @@ impl FontManager {
     pub fn new(family: &str, size_pt: f32, fallbacks: &[String], scale_factor: f32) -> Self {
         let mut font_system = FontSystem::new();
 
-        // プライマリフォントを monospace エイリアスとして登録する
+        // プライマリフォントを monospace ジェネリックとして登録する。
+        // Attrs::new().family(Family::Monospace) で参照される。
         font_system.db_mut().set_monospace_family(family);
 
         if !fallbacks.is_empty() {
@@ -39,11 +42,14 @@ impl FontManager {
 
         let mut swash_cache = SwashCache::new();
 
-        // ASCII 基準文字 '0' を実際に描画してセル幅を計測する（0.6 係数廃止）
-        let cell_w = Self::measure_char_width(&mut font_system, &mut swash_cache, metrics);
+        // 基準文字 '0' の advance width（アドバンス幅）を layout_runs() で計測する。
+        // Attrs::new() のデフォルトは Family::SansSerif なので Family::Monospace を明示する。
+        // "monospace" 以外の名前が指定された場合は Family::Name で直接指定する。
+        let cell_w = Self::measure_char_width(&mut font_system, &mut swash_cache, metrics, family);
 
         tracing::debug!(
-            "フォント初期化: {}pt × scale={} → {}px, cell_w={}px, cell_h={}px",
+            "フォント初期化: family={} {}pt × scale={} → {}px, cell_w={:.1}px, cell_h={:.1}px",
+            family,
             size_pt,
             scale_factor,
             font_size_px,
@@ -56,17 +62,32 @@ impl FontManager {
             swash_cache,
             metrics,
             cell_w,
+            family: family.to_string(),
         }
     }
 
-    /// ASCII 基準文字 '0' をラスタライズして実際の advance width を計測する
+    /// ASCII 基準文字 '0' のアドバンス幅を計測する
+    ///
+    /// `Buffer::draw()` はインクピクセルのみを提供するため advance width と一致しない。
+    /// `layout_runs()` の `glyph.x + glyph.w` を使って正確なセル幅を取得する。
     fn measure_char_width(
         font_system: &mut FontSystem,
-        swash_cache: &mut SwashCache,
+        _swash_cache: &mut SwashCache,
         metrics: Metrics,
+        family: &str,
     ) -> f32 {
         let mut buf = Buffer::new(font_system, metrics);
-        buf.set_text(font_system, "0", Attrs::new(), Shaping::Advanced);
+        // "monospace" ジェネリック名の場合は Family::Monospace、
+        // 具体的なフォント名の場合は Family::Name で直接指定する。
+        // どちらも SansSerif フォールバックを防いで正確なセル幅を計測できる。
+        let family_owned;
+        let attrs = if family.eq_ignore_ascii_case("monospace") || family.is_empty() {
+            Attrs::new().family(Family::Monospace)
+        } else {
+            family_owned = family.to_string();
+            Attrs::new().family(Family::Name(&family_owned))
+        };
+        buf.set_text(font_system, "0", attrs, Shaping::Advanced);
         buf.set_size(
             font_system,
             Some(metrics.font_size * 4.0),
@@ -74,21 +95,24 @@ impl FontManager {
         );
         buf.shape_until_scroll(font_system, false);
 
-        // 描画された最大 x + w をアドバンス幅とする
-        let mut max_x: i32 = 0;
-        buf.draw(
-            font_system,
-            swash_cache,
-            Color::rgba(255, 255, 255, 255),
-            |x, _y, w, _h, _c| {
-                max_x = max_x.max(x + w as i32);
-            },
+        // layout_runs() のグリフ hitbox（x + w）からアドバンス幅を取得する
+        // これはフォントの正確な advance width（left bearing + ink + right bearing）
+        let mut advance = 0.0f32;
+        for run in buf.layout_runs() {
+            for glyph in run.glyphs.iter() {
+                advance = advance.max(glyph.x + glyph.w);
+            }
+        }
+
+        tracing::debug!(
+            "measure_char_width: advance={:.2}px (font_size={:.2}px)",
+            advance,
+            metrics.font_size
         );
 
         // 計測失敗の場合は line_height * 0.5 を安全策として返す
-        let measured = max_x as f32;
-        if measured > 1.0 {
-            measured
+        if advance > 1.0 {
+            advance
         } else {
             metrics.line_height * 0.5
         }
@@ -106,7 +130,17 @@ impl FontManager {
     ) -> (u32, u32, Vec<u8>) {
         let mut buffer = Buffer::new(&mut self.font_system, self.metrics);
 
-        let attrs = Attrs::new()
+        // "monospace" ジェネリック名の場合は Family::Monospace、
+        // 具体的なフォント名の場合は Family::Name で直接指定する（SansSerif フォールバックを防ぐ）
+        let family_owned;
+        let base_attrs = if self.family.eq_ignore_ascii_case("monospace") || self.family.is_empty()
+        {
+            Attrs::new().family(Family::Monospace)
+        } else {
+            family_owned = self.family.clone();
+            Attrs::new().family(Family::Name(&family_owned))
+        };
+        let attrs = base_attrs
             .weight(if bold {
                 cosmic_text::Weight::BOLD
             } else {
@@ -161,14 +195,19 @@ impl FontManager {
         (cell_w, cell_h, pixels)
     }
 
-    /// 1セルの幅（ピクセル）を返す — 実計測値
+    /// 1セルの幅（物理ピクセル）を返す — advance width の実計測値
     pub fn cell_width(&self) -> f32 {
         self.cell_w
     }
 
-    /// 1セルの高さ（ピクセル）を返す
+    /// 1セルの高さ（物理ピクセル）を返す
     pub fn cell_height(&self) -> f32 {
         self.metrics.line_height
+    }
+
+    /// 設定されているフォントファミリー名を返す
+    pub fn family(&self) -> &str {
+        &self.family
     }
 }
 
@@ -207,5 +246,17 @@ mod tests {
         let fm125 = FontManager::new("monospace", 14.0, &[], 1.25);
         assert!(fm125.cell_width() > fm1.cell_width());
         assert!(fm125.cell_height() > fm1.cell_height());
+    }
+
+    #[test]
+    fn advance_width_が_ink_width_以上であること() {
+        // layout_runs() 計測は ink width と等しいか大きい（right bearing を含む）
+        let fm = FontManager::new("monospace", 14.0, &[], 1.0);
+        // monospace フォントなのですべての文字が同じ幅のはず
+        let cell_w = fm.cell_width();
+        assert!(cell_w > 0.0, "cell_w should be positive: {}", cell_w);
+        // 14pt @ 96dpi = 18.67px, advance ≈ 0.6 × font_size ≈ 11px
+        assert!(cell_w > 5.0, "cell_w should be > 5px: {}", cell_w);
+        assert!(cell_w < 40.0, "cell_w should be < 40px: {}", cell_w);
     }
 }
