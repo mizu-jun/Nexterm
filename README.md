@@ -655,17 +655,24 @@ nexterm-client-tui
 |-----|--------|
 | `Ctrl+[` | Enter copy mode |
 | `h` / `j` / `k` / `l` | Move cursor left / down / up / right |
+| `w` | Move forward to start of next word |
+| `b` | Move backward to start of previous word |
+| `$` | Move to end of line |
+| `0` | Move to beginning of line |
 | `v` | Toggle selection start |
 | `y` | Yank (copy) selection to clipboard and exit |
+| `Y` | Yank entire current line to clipboard and exit |
+| `/` | Enter incremental search mode |
+| `n` | Jump to next search match |
 | `q` / `Escape` | Exit copy mode |
 
 ### Mouse
 
 | Action | Effect |
 |--------|--------|
-| Left click | Move focus to clicked pane |
+| Left click | Move focus to clicked pane / send mouse event (when mouse reporting active) |
 | Left drag | Select text (blue highlight), auto-copy to clipboard on release |
-| `Ctrl` + Left click | Open URL under cursor in browser |
+| `Ctrl` + Left click | Open URL / OSC 8 hyperlink under cursor in browser |
 | Right click | Show context menu (Copy/Paste/Split/Close) |
 | Wheel up | Scroll up in scrollback (3 lines) |
 | Wheel down | Scroll down in scrollback (3 lines) |
