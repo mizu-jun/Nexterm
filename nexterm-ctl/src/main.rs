@@ -17,6 +17,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Arg, Command};
+use clap_complete::{Shell, generate};
 use nexterm_i18n::fl;
 use nexterm_proto::{ClientToServer, ServerToClient};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -80,6 +81,16 @@ fn build_cli() -> Command {
                                 .help("Path to the theme file")
                                 .required(true),
                         ),
+                ),
+        )
+        .subcommand(
+            Command::new("completions")
+                .about("Generate shell completion scripts")
+                .arg(
+                    Arg::new("shell")
+                        .help("Shell type: bash, zsh, fish, powershell, elvish")
+                        .required(true)
+                        .value_parser(["bash", "zsh", "fish", "powershell", "elvish"]),
                 ),
         )
         .subcommand(
@@ -149,6 +160,12 @@ async fn main() -> Result<()> {
             }
             _ => unreachable!(),
         },
+        Some(("completions", sub)) => {
+            let shell_str = sub.get_one::<String>("shell").expect("clap required arg");
+            let shell: Shell = shell_str.parse().expect("valid shell");
+            generate(shell, &mut build_cli(), "nexterm-ctl", &mut std::io::stdout());
+            Ok(())
+        }
         Some(("template", sub)) => match sub.subcommand() {
             Some(("save", s)) => {
                 let name = s.get_one::<String>("name").expect("clap required arg").clone();
