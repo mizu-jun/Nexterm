@@ -372,4 +372,53 @@ mod tests {
         // ロード試行自体はエラーを返すだけでパニックしない
         let _ = mgr.load(tmp.path());
     }
+
+    #[test]
+    fn test_list_info_empty() {
+        let mgr = PluginManager::new(noop_write_pane());
+        let info = mgr.list_info();
+        assert!(info.is_empty());
+    }
+
+    #[test]
+    fn test_plugin_paths_empty() {
+        let mgr = PluginManager::new(noop_write_pane());
+        assert!(mgr.plugin_paths().is_empty());
+    }
+
+    #[test]
+    fn test_load_dir_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = PluginManager::new(noop_write_pane());
+        // 空のディレクトリでは 0 件
+        let count = mgr.load_dir(dir.path()).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_load_dir_skips_non_wasm_files() {
+        let dir = tempfile::tempdir().unwrap();
+        // .wasm でないファイルを置く
+        std::fs::write(dir.path().join("script.sh"), b"#!/bin/sh\necho hello").unwrap();
+        std::fs::write(dir.path().join("config.toml"), b"[plugin]\nname = \"test\"").unwrap();
+        let mgr = PluginManager::new(noop_write_pane());
+        let count = mgr.load_dir(dir.path()).unwrap();
+        // .wasm ファイルがないので 0 件（.sh/.toml はスキップ）
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_on_output_returns_false_without_plugins() {
+        let mgr = PluginManager::new(noop_write_pane());
+        // 長いデータでも false を返す
+        let data = b"Hello, World! This is a test output from a pane.";
+        assert!(!mgr.on_output(42, data));
+    }
+
+    #[test]
+    fn test_on_command_returns_false_without_plugins() {
+        let mgr = PluginManager::new(noop_write_pane());
+        assert!(!mgr.on_command(":open-split horizontal"));
+        assert!(!mgr.on_command(":zoom"));
+    }
 }

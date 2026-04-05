@@ -99,4 +99,48 @@ mod tests {
         let decoded: Cell = bincode::deserialize(&encoded).unwrap();
         assert_eq!(cell, decoded);
     }
+
+    #[test]
+    fn attrs_全フラグを個別にテスト() {
+        assert!(Attrs(Attrs::BOLD).is_bold());
+        assert!(!Attrs(Attrs::BOLD).is_italic());
+        assert!(Attrs(Attrs::ITALIC).is_italic());
+        assert!(Attrs(Attrs::UNDERLINE).is_underline());
+        assert!(Attrs(Attrs::REVERSE).is_reverse());
+        // BLINK と STRIKETHROUGH は専用 getter がないためビット演算で確認
+        assert_ne!(Attrs(Attrs::BLINK).0 & Attrs::BLINK, 0);
+        assert_ne!(Attrs(Attrs::STRIKETHROUGH).0 & Attrs::STRIKETHROUGH, 0);
+    }
+
+    #[test]
+    fn attrs_複合フラグのビット演算() {
+        let all = Attrs(Attrs::BOLD | Attrs::ITALIC | Attrs::UNDERLINE | Attrs::REVERSE);
+        assert!(all.is_bold());
+        assert!(all.is_italic());
+        assert!(all.is_underline());
+        assert!(all.is_reverse());
+    }
+
+    #[test]
+    fn color_バリアントの等値比較() {
+        assert_eq!(Color::Default, Color::Default);
+        assert_eq!(Color::Indexed(42), Color::Indexed(42));
+        assert_ne!(Color::Indexed(42), Color::Indexed(43));
+        assert_eq!(Color::Rgb(255, 128, 0), Color::Rgb(255, 128, 0));
+        assert_ne!(Color::Rgb(255, 128, 0), Color::Rgb(0, 128, 255));
+    }
+
+    #[test]
+    fn cell_日本語文字のシリアライズ往復() {
+        let cell = Cell {
+            ch: '日',
+            fg: Color::Default,
+            bg: Color::Rgb(0, 0, 255),
+            attrs: Attrs(Attrs::ITALIC),
+        };
+        let encoded = bincode::serialize(&cell).unwrap();
+        let decoded: Cell = bincode::deserialize(&encoded).unwrap();
+        assert_eq!(cell, decoded);
+        assert_eq!(decoded.ch, '日');
+    }
 }

@@ -405,14 +405,21 @@ pub enum WindowDecorations {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WindowConfig {
     /// ウィンドウの不透明度（0.0 = 完全透明、1.0 = 不透明）
+    #[serde(default = "default_background_opacity")]
     pub background_opacity: f32,
     /// macOS のウィンドウぼかし強度（0 = なし）
+    #[serde(default)]
     pub macos_window_background_blur: u32,
     /// ウィンドウ装飾
+    #[serde(default)]
     pub decorations: WindowDecorations,
     /// ペインレイアウトモード: "bsp"（手動分割・デフォルト）または "tiling"（均等自動配置）
     #[serde(default = "default_layout_mode")]
     pub layout_mode: String,
+}
+
+fn default_background_opacity() -> f32 {
+    1.0
 }
 
 fn default_layout_mode() -> String {
@@ -1035,5 +1042,66 @@ ligatures = false
         let font = parsed.profiles[0].font.as_ref().unwrap();
         assert_eq!(font.size, 12.0);
         assert!(!font.ligatures);
+    }
+
+    #[test]
+    fn status_bar_config_デフォルト値() {
+        let sb = StatusBarConfig::default();
+        assert!(!sb.enabled);
+        assert!(sb.widgets.is_empty());
+        // right_widgets にデフォルトで "time" が含まれること
+        assert!(sb.right_widgets.contains(&"time".to_string()));
+        assert_eq!(sb.separator, "  ");
+    }
+
+    #[test]
+    fn status_bar_config_toml往復() {
+        let toml_str = r#"
+[status_bar]
+enabled = true
+widgets = ["session", "pane_id"]
+right_widgets = ["time", "date"]
+separator = " | "
+"#;
+        let parsed: Config = toml::from_str(toml_str).unwrap();
+        assert!(parsed.status_bar.enabled);
+        assert_eq!(parsed.status_bar.widgets, vec!["session", "pane_id"]);
+        assert_eq!(parsed.status_bar.right_widgets, vec!["time", "date"]);
+        assert_eq!(parsed.status_bar.separator, " | ");
+    }
+
+    #[test]
+    fn plugin_dir_はデフォルトnone() {
+        let config = Config::default();
+        assert!(config.plugin_dir.is_none());
+        assert!(!config.plugins_disabled);
+    }
+
+    #[test]
+    fn window_config_デフォルト値() {
+        let w = WindowConfig::default();
+        assert_eq!(w.background_opacity, 1.0);
+        assert_eq!(w.macos_window_background_blur, 0);
+        assert_eq!(w.decorations, WindowDecorations::Full);
+        assert_eq!(w.layout_mode, "bsp");
+    }
+
+    #[test]
+    fn window_config_layout_modeをtomlで設定() {
+        let toml_str = r#"
+[window]
+background_opacity = 0.9
+layout_mode = "tiling"
+"#;
+        let parsed: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.window.layout_mode, "tiling");
+        assert!((parsed.window.background_opacity - 0.9).abs() < 0.001);
+    }
+
+    #[test]
+    fn builtin_scheme_display_names() {
+        assert_eq!(BuiltinScheme::Dark.display_name(), "Dark");
+        assert_eq!(BuiltinScheme::TokyoNight.display_name(), "Tokyo Night");
+        assert_eq!(BuiltinScheme::OneDark.display_name(), "One Dark");
     }
 }

@@ -189,4 +189,70 @@ mod tests {
         assert_eq!(pane.grid.rows[0][0].ch, 'X');
         assert_eq!(pane.cursor_col, 1);
     }
+
+    #[test]
+    fn resizeで端末サイズが更新される() {
+        let mut state = ClientState::new();
+        state.resize(120, 40);
+        assert_eq!(state.cols, 120);
+        assert_eq!(state.rows, 40);
+    }
+
+    #[test]
+    fn focused_pane_ペインなしはnone() {
+        let state = ClientState::new();
+        assert!(state.focused_pane().is_none());
+    }
+
+    #[test]
+    fn 複数ペインの登録と最初のフォーカス() {
+        let mut state = ClientState::new();
+        state.apply_server_message(ServerToClient::FullRefresh {
+            pane_id: 1,
+            grid: Grid::new(80, 24),
+        });
+        state.apply_server_message(ServerToClient::FullRefresh {
+            pane_id: 2,
+            grid: Grid::new(80, 24),
+        });
+        // 最初の FullRefresh のペインがフォーカスされること
+        assert_eq!(state.focused_pane_id, Some(1));
+        assert!(state.panes.contains_key(&2));
+    }
+
+    #[test]
+    fn pong_はパニックしない() {
+        let mut state = ClientState::new();
+        // Pong を受信してもパニックしないこと
+        state.apply_server_message(ServerToClient::Pong);
+    }
+
+    #[test]
+    fn error_はパニックしない() {
+        let mut state = ClientState::new();
+        state.apply_server_message(ServerToClient::Error {
+            message: "test error".to_string(),
+        });
+    }
+
+    #[test]
+    fn floating_pane_events_は無視される() {
+        let mut state = ClientState::new();
+        // フローティングペインイベントを受信してもパニックしないこと
+        state.apply_server_message(ServerToClient::FloatingPaneOpened {
+            pane_id: 99,
+            col_off: 5,
+            row_off: 3,
+            cols: 40,
+            rows: 20,
+        });
+        state.apply_server_message(ServerToClient::FloatingPaneMoved {
+            pane_id: 99,
+            col_off: 10,
+            row_off: 5,
+            cols: 40,
+            rows: 20,
+        });
+        state.apply_server_message(ServerToClient::FloatingPaneClosed { pane_id: 99 });
+    }
 }

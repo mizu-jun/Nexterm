@@ -359,4 +359,79 @@ mod tests {
         assert_eq!(grid.get(3, 0).unwrap().ch, 'y');
         assert_eq!(grid.get(4, 0).unwrap().ch, 'e');
     }
+
+    // ---- 追加 VT シーケンステスト ----
+
+    #[test]
+    fn sgr_bold属性が設定される() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b[1mB");
+        let cell = parser.screen().grid().get(0, 0).unwrap();
+        assert_eq!(cell.ch, 'B');
+        assert!(cell.attrs.is_bold());
+    }
+
+    #[test]
+    fn sgr_reset後に属性がクリアされる() {
+        let mut parser = VtParser::new(80, 24);
+        // BOLD を設定してからリセット
+        parser.advance(b"\x1b[1m\x1b[0mX");
+        let cell = parser.screen().grid().get(0, 0).unwrap();
+        assert_eq!(cell.ch, 'X');
+        assert!(!cell.attrs.is_bold());
+    }
+
+    #[test]
+    fn ed_画面消去でセルがクリアされる() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"Hello");
+        // CSI 2J = 画面全体消去
+        parser.advance(b"\x1b[2J");
+        let grid = parser.screen().grid();
+        assert_eq!(grid.get(0, 0).unwrap().ch, ' ');
+    }
+
+    #[test]
+    fn el_行消去でセルがクリアされる() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"Hello");
+        // CSI 1G でカーソルを行頭へ
+        parser.advance(b"\x1b[1G");
+        // CSI 2K = 行全体消去
+        parser.advance(b"\x1b[2K");
+        let grid = parser.screen().grid();
+        assert_eq!(grid.get(0, 0).unwrap().ch, ' ');
+    }
+
+    #[test]
+    fn 長いテキストが行末で折り返す() {
+        let mut parser = VtParser::new(10, 5); // 幅 10 の狭い端末
+        // 11文字書くと2行目に折り返す
+        parser.advance(b"0123456789A");
+        let grid = parser.screen().grid();
+        // 1行目に 0〜9
+        assert_eq!(grid.get(9, 0).unwrap().ch, '9');
+        // 11文字目 'A' は2行目へ
+        assert_eq!(grid.get(0, 1).unwrap().ch, 'A');
+    }
+
+    #[test]
+    fn vtparser_new後の初期カーソル位置() {
+        let parser = VtParser::new(80, 24);
+        let grid = parser.screen().grid();
+        assert_eq!(grid.cursor_col, 0);
+        assert_eq!(grid.cursor_row, 0);
+    }
+
+    #[test]
+    fn tab文字でカーソルが8の倍数に移動する() {
+        let mut parser = VtParser::new(80, 24);
+        // TAB の前に文字を書いてからカーソル位置を確認する
+        // TAB 後に文字を書いて位置が 8 以降であることを確認する
+        parser.advance(b"\tX");
+        let grid = parser.screen().grid();
+        // TAB 後に 'X' が書かれる位置は col=8 以降であること
+        // （TAB が col=8 に移動し、X が col=8 に書かれる）
+        assert_eq!(grid.get(8, 0).unwrap().ch, 'X');
+    }
 }

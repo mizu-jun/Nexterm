@@ -113,4 +113,46 @@ mod tests {
         let decoded: Grid = bincode::deserialize(&encoded).unwrap();
         assert_eq!(grid, decoded);
     }
+
+    #[test]
+    fn 範囲外セットは無視される() {
+        let mut grid = Grid::new(5, 5);
+        // 範囲外への書き込みはパニックせず無視される
+        grid.set(100, 100, Cell::default());
+        // 既存セルが変わっていないこと
+        assert_eq!(grid.get(0, 0).unwrap().ch, ' ');
+    }
+
+    #[test]
+    fn カーソル位置の初期値は0_0() {
+        let grid = Grid::new(80, 24);
+        assert_eq!(grid.cursor_col, 0);
+        assert_eq!(grid.cursor_row, 0);
+    }
+
+    #[test]
+    fn dirty_row_シリアライズ往復() {
+        let row = DirtyRow {
+            row: 3,
+            cells: vec![
+                Cell { ch: 'A', fg: Color::Default, bg: Color::Default, attrs: Attrs::default() },
+                Cell { ch: 'B', fg: Color::Rgb(255, 0, 0), bg: Color::Default, attrs: Attrs(Attrs::BOLD) },
+            ],
+        };
+        let encoded = bincode::serialize(&row).unwrap();
+        let decoded: DirtyRow = bincode::deserialize(&encoded).unwrap();
+        assert_eq!(row, decoded);
+    }
+
+    #[test]
+    fn hyperlink_span_フィールド確認() {
+        let span = HyperlinkSpan {
+            row: 1,
+            col_start: 5,
+            col_end: 15,
+            url: "https://example.com".to_string(),
+        };
+        assert_eq!(span.url, "https://example.com");
+        assert_eq!(span.col_end - span.col_start, 10);
+    }
 }
