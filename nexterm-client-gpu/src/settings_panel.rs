@@ -69,12 +69,16 @@ impl SettingsPanel {
     }
 
     pub fn next_scheme(&mut self) {
-        self.scheme_index = (self.scheme_index + 1) % 5;
+        self.scheme_index = (self.scheme_index + 1) % 9;
         self.dirty = true;
     }
 
     pub fn prev_scheme(&mut self) {
-        self.scheme_index = if self.scheme_index == 0 { 4 } else { self.scheme_index - 1 };
+        self.scheme_index = if self.scheme_index == 0 {
+            8
+        } else {
+            self.scheme_index - 1
+        };
         self.dirty = true;
     }
 
@@ -90,8 +94,18 @@ impl SettingsPanel {
 
     /// scheme_index からスキーム名を返す
     pub fn scheme_name(&self) -> &str {
-        const SCHEMES: [&str; 5] = ["dark", "light", "tokyonight", "solarized", "gruvbox"];
-        SCHEMES[self.scheme_index % 5]
+        const SCHEMES: [&str; 9] = [
+            "dark",
+            "light",
+            "tokyonight",
+            "solarized",
+            "gruvbox",
+            "catppuccin",
+            "dracula",
+            "nord",
+            "onedark",
+        ];
+        SCHEMES[self.scheme_index % 9]
     }
 
     /// 現在の設定を nexterm.toml に書き込む
@@ -136,6 +150,10 @@ fn scheme_name_to_index(colors: &nexterm_config::ColorScheme) -> usize {
             BuiltinScheme::TokyoNight => 2,
             BuiltinScheme::Solarized => 3,
             BuiltinScheme::Gruvbox => 4,
+            BuiltinScheme::Catppuccin => 5,
+            BuiltinScheme::Dracula => 6,
+            BuiltinScheme::Nord => 7,
+            BuiltinScheme::OneDark => 8,
         },
         ColorScheme::Custom(_) => 0,
     }
@@ -179,12 +197,18 @@ mod tests {
     fn scheme_wraps() {
         let config = Config::default();
         let mut panel = SettingsPanel::new(&config);
-        panel.scheme_index = 4;
+        panel.scheme_index = 8;
         panel.next_scheme();
-        assert_eq!(panel.scheme_index, 0, "インデックス 4 の次は 0 にラップする");
+        assert_eq!(
+            panel.scheme_index, 0,
+            "インデックス 8 の次は 0 にラップする"
+        );
 
         panel.scheme_index = 0;
         panel.prev_scheme();
-        assert_eq!(panel.scheme_index, 4, "インデックス 0 の前は 4 にラップする");
+        assert_eq!(
+            panel.scheme_index, 8,
+            "インデックス 0 の前は 8 にラップする"
+        );
     }
 }

@@ -488,7 +488,30 @@ impl WgpuState {
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         tab_bar_cfg: &nexterm_config::TabBarConfig,
+        color_scheme: &nexterm_config::ColorScheme,
     ) -> Result<()> {
+        // カラースキームからパレットを導出する（毎フレーム; コストは小さい）
+        let scheme_palette: Option<nexterm_config::SchemePalette> = match color_scheme {
+            nexterm_config::ColorScheme::Builtin(s) => Some(s.palette()),
+            nexterm_config::ColorScheme::Custom(p) => {
+                // Custom パレットを SchemePalette に変換
+                let parse_hex = |s: &str| -> [u8; 3] {
+                    let s = s.trim_start_matches('#');
+                    let v = u32::from_str_radix(s, 16).unwrap_or(0);
+                    [((v >> 16) & 0xFF) as u8, ((v >> 8) & 0xFF) as u8, (v & 0xFF) as u8]
+                };
+                let mut ansi = [[0u8; 3]; 16];
+                for (i, hex) in p.ansi.iter().enumerate().take(16) {
+                    ansi[i] = parse_hex(hex);
+                }
+                Some(nexterm_config::SchemePalette {
+                    fg: parse_hex(&p.foreground),
+                    bg: parse_hex(&p.background),
+                    ansi,
+                })
+            }
+        };
+        let palette_ref = scheme_palette.as_ref();
         let output = match self.surface.get_current_texture() {
             Ok(t) => t,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
@@ -529,14 +552,37 @@ impl WgpuState {
                 ) {
                     if pane.scroll_offset > 0 && is_focused {
                         self.build_scrollback_verts_in_rect(
-                            pane, layout, sw, sh, cell_w, cell_h, font, atlas,
-                            &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
+                            pane,
+                            layout,
+                            sw,
+                            sh,
+                            cell_w,
+                            cell_h,
+                            font,
+                            atlas,
+                            palette_ref,
+                            &mut bg_verts,
+                            &mut bg_idx,
+                            &mut text_verts,
+                            &mut text_idx,
                         );
                     } else {
                         self.build_grid_verts_in_rect(
-                            pane, layout, is_focused, &state.mouse_sel,
-                            sw, sh, cell_w, cell_h, font, atlas,
-                            &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
+                            pane,
+                            layout,
+                            is_focused,
+                            &state.mouse_sel,
+                            sw,
+                            sh,
+                            cell_w,
+                            cell_h,
+                            font,
+                            atlas,
+                            palette_ref,
+                            &mut bg_verts,
+                            &mut bg_idx,
+                            &mut text_verts,
+                            &mut text_idx,
                         );
                     }
                 }
@@ -548,14 +594,35 @@ impl WgpuState {
             if pane.scroll_offset > 0 {
                 // ---- スクロールバック表示モード ----
                 self.build_scrollback_verts(
-                    pane, sw, sh, cell_w, cell_h, font, atlas,
-                    &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
+                    pane,
+                    sw,
+                    sh,
+                    cell_w,
+                    cell_h,
+                    font,
+                    atlas,
+                    palette_ref,
+                    &mut bg_verts,
+                    &mut bg_idx,
+                    &mut text_verts,
+                    &mut text_idx,
                 );
             } else {
                 // ---- 通常グリッド表示 ----
                 self.build_grid_verts(
-                    pane, &state.mouse_sel, sw, sh, cell_w, cell_h, font, atlas,
-                    &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
+                    pane,
+                    &state.mouse_sel,
+                    sw,
+                    sh,
+                    cell_w,
+                    cell_h,
+                    font,
+                    atlas,
+                    palette_ref,
+                    &mut bg_verts,
+                    &mut bg_idx,
+                    &mut text_verts,
+                    &mut text_idx,
                 );
             }
         }
@@ -818,11 +885,17 @@ impl WgpuState {
         &self,
         pane: &crate::state::PaneState,
         mouse_sel: &crate::state::MouseSelection,
-        sw: f32, sh: f32, cell_w: f32, cell_h: f32,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
-        bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
-        text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
+        palette: Option<&nexterm_config::SchemePalette>,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
     ) {
         // 選択ハイライト色（半透明の青）
         const SEL_COLOR: [f32; 4] = [0.25, 0.55, 1.0, 0.40];
@@ -830,24 +903,41 @@ impl WgpuState {
         let grid = &pane.grid;
         for row in 0..grid.height as usize {
             for col in 0..grid.width as usize {
-                let Some(cell) = grid.get(col as u16, row as u16) else { continue };
+                let Some(cell) = grid.get(col as u16, row as u16) else {
+                    continue;
+                };
                 let px = col as f32 * cell_w;
                 let py = row as f32 * cell_h;
-                let bg = resolve_color(&cell.bg, false);
+                let bg = resolve_color(&cell.bg, false, palette);
                 add_px_rect(px, py, cell_w, cell_h, bg, sw, sh, bg_verts, bg_idx);
                 // 選択ハイライトオーバーレイ
                 if mouse_sel.contains(col as u16, row as u16) {
                     add_px_rect(px, py, cell_w, cell_h, SEL_COLOR, sw, sh, bg_verts, bg_idx);
                 }
-                if cell.ch == ' ' { continue; }
-                let fg = resolve_color(&cell.fg, true);
+                if cell.ch == ' ' {
+                    continue;
+                }
+                let fg = resolve_color(&cell.fg, true, palette);
                 let fg_u8 = [
-                    (fg[0] * 255.0) as u8, (fg[1] * 255.0) as u8,
-                    (fg[2] * 255.0) as u8, (fg[3] * 255.0) as u8,
+                    (fg[0] * 255.0) as u8,
+                    (fg[1] * 255.0) as u8,
+                    (fg[2] * 255.0) as u8,
+                    (fg[3] * 255.0) as u8,
                 ];
-                let key = GlyphKey { ch: cell.ch, bold: cell.attrs.is_bold(), italic: cell.attrs.is_italic() };
-                let (gw, gh, pixels) = font.rasterize_char(cell.ch, cell.attrs.is_bold(), cell.attrs.is_italic(), fg_u8);
-                if gw == 0 || gh == 0 || pixels.is_empty() { continue; }
+                let key = GlyphKey {
+                    ch: cell.ch,
+                    bold: cell.attrs.is_bold(),
+                    italic: cell.attrs.is_italic(),
+                };
+                let (gw, gh, pixels) = font.rasterize_char(
+                    cell.ch,
+                    cell.attrs.is_bold(),
+                    cell.attrs.is_italic(),
+                    fg_u8,
+                );
+                if gw == 0 || gh == 0 || pixels.is_empty() {
+                    continue;
+                }
                 let rect = atlas.get_or_insert(key, &pixels, gw, gh, &self.queue);
                 let tx0 = px / sw * 2.0 - 1.0;
                 let ty0 = 1.0 - py / sh * 2.0;
@@ -855,12 +945,28 @@ impl WgpuState {
                 let ty1 = 1.0 - (py + gh as f32) / sh * 2.0;
                 let base = text_verts.len() as u16;
                 text_verts.extend_from_slice(&[
-                    TextVertex { position: [tx0, ty0], uv: rect.uv_min, color: fg },
-                    TextVertex { position: [tx1, ty0], uv: [rect.uv_max[0], rect.uv_min[1]], color: fg },
-                    TextVertex { position: [tx1, ty1], uv: rect.uv_max, color: fg },
-                    TextVertex { position: [tx0, ty1], uv: [rect.uv_min[0], rect.uv_max[1]], color: fg },
+                    TextVertex {
+                        position: [tx0, ty0],
+                        uv: rect.uv_min,
+                        color: fg,
+                    },
+                    TextVertex {
+                        position: [tx1, ty0],
+                        uv: [rect.uv_max[0], rect.uv_min[1]],
+                        color: fg,
+                    },
+                    TextVertex {
+                        position: [tx1, ty1],
+                        uv: rect.uv_max,
+                        color: fg,
+                    },
+                    TextVertex {
+                        position: [tx0, ty1],
+                        uv: [rect.uv_min[0], rect.uv_max[1]],
+                        color: fg,
+                    },
                 ]);
-                text_idx.extend_from_slice(&[base, base+1, base+2, base, base+2, base+3]);
+                text_idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
             }
         }
 
@@ -875,34 +981,53 @@ impl WgpuState {
     fn build_scrollback_verts(
         &self,
         pane: &crate::state::PaneState,
-        sw: f32, sh: f32, cell_w: f32, cell_h: f32,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
-        bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
-        text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
+        palette: Option<&nexterm_config::SchemePalette>,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
     ) {
         let visible_rows = (sh / cell_h) as usize;
         let offset = pane.scroll_offset;
 
         for visual_row in 0..visible_rows {
             let sb_row = offset + visual_row;
-            let Some(line) = pane.scrollback.get(sb_row) else { continue };
+            let Some(line) = pane.scrollback.get(sb_row) else {
+                continue;
+            };
             let py = visual_row as f32 * cell_h;
             for (col, cell) in line.iter().enumerate() {
                 let px = col as f32 * cell_w;
                 // スクロールバック行は背景を少し暗くする
-                let bg = resolve_color(&cell.bg, false);
+                let bg = resolve_color(&cell.bg, false, palette);
                 let dim_bg = [bg[0] * 0.75, bg[1] * 0.75, bg[2] * 0.75, 1.0];
                 add_px_rect(px, py, cell_w, cell_h, dim_bg, sw, sh, bg_verts, bg_idx);
-                if cell.ch == ' ' { continue; }
-                let fg = resolve_color(&cell.fg, true);
+                if cell.ch == ' ' {
+                    continue;
+                }
+                let fg = resolve_color(&cell.fg, true, palette);
                 let fg_u8 = [
-                    (fg[0] * 255.0) as u8, (fg[1] * 255.0) as u8,
-                    (fg[2] * 255.0) as u8, (fg[3] * 255.0) as u8,
+                    (fg[0] * 255.0) as u8,
+                    (fg[1] * 255.0) as u8,
+                    (fg[2] * 255.0) as u8,
+                    (fg[3] * 255.0) as u8,
                 ];
-                let key = GlyphKey { ch: cell.ch, bold: cell.attrs.is_bold(), italic: false };
-                let (gw, gh, pixels) = font.rasterize_char(cell.ch, cell.attrs.is_bold(), false, fg_u8);
-                if gw == 0 || gh == 0 || pixels.is_empty() { continue; }
+                let key = GlyphKey {
+                    ch: cell.ch,
+                    bold: cell.attrs.is_bold(),
+                    italic: false,
+                };
+                let (gw, gh, pixels) =
+                    font.rasterize_char(cell.ch, cell.attrs.is_bold(), false, fg_u8);
+                if gw == 0 || gh == 0 || pixels.is_empty() {
+                    continue;
+                }
                 let rect = atlas.get_or_insert(key, &pixels, gw, gh, &self.queue);
                 let tx0 = px / sw * 2.0 - 1.0;
                 let ty0 = 1.0 - py / sh * 2.0;
@@ -910,12 +1035,28 @@ impl WgpuState {
                 let ty1 = 1.0 - (py + gh as f32) / sh * 2.0;
                 let base = text_verts.len() as u16;
                 text_verts.extend_from_slice(&[
-                    TextVertex { position: [tx0, ty0], uv: rect.uv_min, color: fg },
-                    TextVertex { position: [tx1, ty0], uv: [rect.uv_max[0], rect.uv_min[1]], color: fg },
-                    TextVertex { position: [tx1, ty1], uv: rect.uv_max, color: fg },
-                    TextVertex { position: [tx0, ty1], uv: [rect.uv_min[0], rect.uv_max[1]], color: fg },
+                    TextVertex {
+                        position: [tx0, ty0],
+                        uv: rect.uv_min,
+                        color: fg,
+                    },
+                    TextVertex {
+                        position: [tx1, ty0],
+                        uv: [rect.uv_max[0], rect.uv_min[1]],
+                        color: fg,
+                    },
+                    TextVertex {
+                        position: [tx1, ty1],
+                        uv: rect.uv_max,
+                        color: fg,
+                    },
+                    TextVertex {
+                        position: [tx0, ty1],
+                        uv: [rect.uv_min[0], rect.uv_max[1]],
+                        color: fg,
+                    },
                 ]);
-                text_idx.extend_from_slice(&[base, base+1, base+2, base, base+2, base+3]);
+                text_idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
             }
         }
     }
@@ -928,11 +1069,17 @@ impl WgpuState {
         layout: &nexterm_proto::PaneLayout,
         is_focused: bool,
         mouse_sel: &crate::state::MouseSelection,
-        sw: f32, sh: f32, cell_w: f32, cell_h: f32,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
-        bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
-        text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
+        palette: Option<&nexterm_config::SchemePalette>,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
     ) {
         // 選択ハイライト色（半透明の青）
         const SEL_COLOR: [f32; 4] = [0.25, 0.55, 1.0, 0.40];
@@ -945,26 +1092,43 @@ impl WgpuState {
 
         for row in 0..layout.rows.min(grid.height) as usize {
             for col in 0..layout.cols.min(grid.width) as usize {
-                let Some(cell) = grid.get(col as u16, row as u16) else { continue };
+                let Some(cell) = grid.get(col as u16, row as u16) else {
+                    continue;
+                };
                 let px = off_x + col as f32 * cell_w;
                 let py = off_y + row as f32 * cell_h;
-                let bg = resolve_color(&cell.bg, false);
+                let bg = resolve_color(&cell.bg, false, palette);
                 let bg = [bg[0] * dim, bg[1] * dim, bg[2] * dim, 1.0];
                 add_px_rect(px, py, cell_w, cell_h, bg, sw, sh, bg_verts, bg_idx);
                 // 選択ハイライトオーバーレイ（フォーカスペインのみ）
                 if is_focused && mouse_sel.contains(col as u16, row as u16) {
                     add_px_rect(px, py, cell_w, cell_h, SEL_COLOR, sw, sh, bg_verts, bg_idx);
                 }
-                if cell.ch == ' ' { continue; }
-                let fg = resolve_color(&cell.fg, true);
+                if cell.ch == ' ' {
+                    continue;
+                }
+                let fg = resolve_color(&cell.fg, true, palette);
                 let fg = [fg[0] * dim, fg[1] * dim, fg[2] * dim, fg[3]];
                 let fg_u8 = [
-                    (fg[0] * 255.0) as u8, (fg[1] * 255.0) as u8,
-                    (fg[2] * 255.0) as u8, (fg[3] * 255.0) as u8,
+                    (fg[0] * 255.0) as u8,
+                    (fg[1] * 255.0) as u8,
+                    (fg[2] * 255.0) as u8,
+                    (fg[3] * 255.0) as u8,
                 ];
-                let key = GlyphKey { ch: cell.ch, bold: cell.attrs.is_bold(), italic: cell.attrs.is_italic() };
-                let (gw, gh, pixels) = font.rasterize_char(cell.ch, cell.attrs.is_bold(), cell.attrs.is_italic(), fg_u8);
-                if gw == 0 || gh == 0 || pixels.is_empty() { continue; }
+                let key = GlyphKey {
+                    ch: cell.ch,
+                    bold: cell.attrs.is_bold(),
+                    italic: cell.attrs.is_italic(),
+                };
+                let (gw, gh, pixels) = font.rasterize_char(
+                    cell.ch,
+                    cell.attrs.is_bold(),
+                    cell.attrs.is_italic(),
+                    fg_u8,
+                );
+                if gw == 0 || gh == 0 || pixels.is_empty() {
+                    continue;
+                }
                 let rect = atlas.get_or_insert(key, &pixels, gw, gh, &self.queue);
                 let tx0 = px / sw * 2.0 - 1.0;
                 let ty0 = 1.0 - py / sh * 2.0;
@@ -972,12 +1136,28 @@ impl WgpuState {
                 let ty1 = 1.0 - (py + gh as f32) / sh * 2.0;
                 let base = text_verts.len() as u16;
                 text_verts.extend_from_slice(&[
-                    TextVertex { position: [tx0, ty0], uv: rect.uv_min, color: fg },
-                    TextVertex { position: [tx1, ty0], uv: [rect.uv_max[0], rect.uv_min[1]], color: fg },
-                    TextVertex { position: [tx1, ty1], uv: rect.uv_max, color: fg },
-                    TextVertex { position: [tx0, ty1], uv: [rect.uv_min[0], rect.uv_max[1]], color: fg },
+                    TextVertex {
+                        position: [tx0, ty0],
+                        uv: rect.uv_min,
+                        color: fg,
+                    },
+                    TextVertex {
+                        position: [tx1, ty0],
+                        uv: [rect.uv_max[0], rect.uv_min[1]],
+                        color: fg,
+                    },
+                    TextVertex {
+                        position: [tx1, ty1],
+                        uv: rect.uv_max,
+                        color: fg,
+                    },
+                    TextVertex {
+                        position: [tx0, ty1],
+                        uv: [rect.uv_min[0], rect.uv_max[1]],
+                        color: fg,
+                    },
                 ]);
-                text_idx.extend_from_slice(&[base, base+1, base+2, base, base+2, base+3]);
+                text_idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
             }
         }
 
@@ -995,11 +1175,17 @@ impl WgpuState {
         &self,
         pane: &crate::state::PaneState,
         layout: &nexterm_proto::PaneLayout,
-        sw: f32, sh: f32, cell_w: f32, cell_h: f32,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
-        bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
-        text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
+        palette: Option<&nexterm_config::SchemePalette>,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
     ) {
         let off_x = layout.col_offset as f32 * cell_w;
         let off_y = layout.row_offset as f32 * cell_h;
@@ -1007,22 +1193,35 @@ impl WgpuState {
 
         for visual_row in 0..layout.rows as usize {
             let sb_row = offset + visual_row;
-            let Some(line) = pane.scrollback.get(sb_row) else { continue };
+            let Some(line) = pane.scrollback.get(sb_row) else {
+                continue;
+            };
             let py = off_y + visual_row as f32 * cell_h;
             for (col, cell) in line.iter().enumerate().take(layout.cols as usize) {
                 let px = off_x + col as f32 * cell_w;
-                let bg = resolve_color(&cell.bg, false);
+                let bg = resolve_color(&cell.bg, false, palette);
                 let dim_bg = [bg[0] * 0.75, bg[1] * 0.75, bg[2] * 0.75, 1.0];
                 add_px_rect(px, py, cell_w, cell_h, dim_bg, sw, sh, bg_verts, bg_idx);
-                if cell.ch == ' ' { continue; }
-                let fg = resolve_color(&cell.fg, true);
+                if cell.ch == ' ' {
+                    continue;
+                }
+                let fg = resolve_color(&cell.fg, true, palette);
                 let fg_u8 = [
-                    (fg[0] * 255.0) as u8, (fg[1] * 255.0) as u8,
-                    (fg[2] * 255.0) as u8, (fg[3] * 255.0) as u8,
+                    (fg[0] * 255.0) as u8,
+                    (fg[1] * 255.0) as u8,
+                    (fg[2] * 255.0) as u8,
+                    (fg[3] * 255.0) as u8,
                 ];
-                let key = GlyphKey { ch: cell.ch, bold: cell.attrs.is_bold(), italic: false };
-                let (gw, gh, pixels) = font.rasterize_char(cell.ch, cell.attrs.is_bold(), false, fg_u8);
-                if gw == 0 || gh == 0 || pixels.is_empty() { continue; }
+                let key = GlyphKey {
+                    ch: cell.ch,
+                    bold: cell.attrs.is_bold(),
+                    italic: false,
+                };
+                let (gw, gh, pixels) =
+                    font.rasterize_char(cell.ch, cell.attrs.is_bold(), false, fg_u8);
+                if gw == 0 || gh == 0 || pixels.is_empty() {
+                    continue;
+                }
                 let rect = atlas.get_or_insert(key, &pixels, gw, gh, &self.queue);
                 let tx0 = px / sw * 2.0 - 1.0;
                 let ty0 = 1.0 - py / sh * 2.0;
@@ -1030,12 +1229,28 @@ impl WgpuState {
                 let ty1 = 1.0 - (py + gh as f32) / sh * 2.0;
                 let base = text_verts.len() as u16;
                 text_verts.extend_from_slice(&[
-                    TextVertex { position: [tx0, ty0], uv: rect.uv_min, color: fg },
-                    TextVertex { position: [tx1, ty0], uv: [rect.uv_max[0], rect.uv_min[1]], color: fg },
-                    TextVertex { position: [tx1, ty1], uv: rect.uv_max, color: fg },
-                    TextVertex { position: [tx0, ty1], uv: [rect.uv_min[0], rect.uv_max[1]], color: fg },
+                    TextVertex {
+                        position: [tx0, ty0],
+                        uv: rect.uv_min,
+                        color: fg,
+                    },
+                    TextVertex {
+                        position: [tx1, ty0],
+                        uv: [rect.uv_max[0], rect.uv_min[1]],
+                        color: fg,
+                    },
+                    TextVertex {
+                        position: [tx1, ty1],
+                        uv: rect.uv_max,
+                        color: fg,
+                    },
+                    TextVertex {
+                        position: [tx0, ty1],
+                        uv: [rect.uv_min[0], rect.uv_max[1]],
+                        color: fg,
+                    },
                 ]);
-                text_idx.extend_from_slice(&[base, base+1, base+2, base, base+2, base+3]);
+                text_idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
             }
         }
     }
@@ -1402,14 +1617,18 @@ impl WgpuState {
                     sw, sh, cell_w, font, atlas, &self.queue,
                     text_verts, text_idx,
                 );
-                // スキームドット（5個）
+                // スキームドット（9個）
                 let dot_y = content_y + cell_h * 1.4;
-                let schemes_colors: [[f32; 4]; 5] = [
+                let schemes_colors: [[f32; 4]; 9] = [
                     [0.15, 0.15, 0.18, 1.0], // dark
                     [0.95, 0.95, 0.92, 1.0], // light
                     [0.10, 0.10, 0.20, 1.0], // tokyonight
                     [0.00, 0.17, 0.21, 1.0], // solarized
                     [0.28, 0.26, 0.22, 1.0], // gruvbox
+                    [0.19, 0.17, 0.23, 1.0], // catppuccin
+                    [0.16, 0.13, 0.23, 1.0], // dracula
+                    [0.18, 0.20, 0.25, 1.0], // nord
+                    [0.16, 0.18, 0.22, 1.0], // onedark
                 ];
                 for (i, &col) in schemes_colors.iter().enumerate() {
                     let dot_x = px + cell_w * (2.0 + i as f32 * 3.0);
@@ -1855,20 +2074,40 @@ fn build_image_verts(
 }
 
 /// nexterm-proto の Color を RGBA [0, 1] に変換する
-fn resolve_color(color: &nexterm_proto::Color, is_fg: bool) -> [f32; 4] {
+///
+/// `palette` が Some のとき、Color::Default と Color::Indexed(0..15) はスキームの
+/// 色を優先して使用する。
+fn resolve_color(
+    color: &nexterm_proto::Color,
+    is_fg: bool,
+    palette: Option<&nexterm_config::SchemePalette>,
+) -> [f32; 4] {
     use nexterm_proto::Color;
+    let u8_to_f32 = |v: u8| v as f32 / 255.0;
     match color {
         Color::Default => {
-            if is_fg {
-                [0.85, 0.85, 0.85, 1.0] // デフォルト前景: ライトグレー
+            if let Some(p) = palette {
+                let c = if is_fg { p.fg } else { p.bg };
+                [u8_to_f32(c[0]), u8_to_f32(c[1]), u8_to_f32(c[2]), 1.0]
+            } else if is_fg {
+                [0.85, 0.85, 0.85, 1.0]
             } else {
-                [0.05, 0.05, 0.05, 1.0] // デフォルト背景: ほぼ黒
+                [0.05, 0.05, 0.05, 1.0]
             }
         }
         Color::Rgb(r, g, b) => {
-            [*r as f32 / 255.0, *g as f32 / 255.0, *b as f32 / 255.0, 1.0]
+            [u8_to_f32(*r), u8_to_f32(*g), u8_to_f32(*b), 1.0]
         }
-        Color::Indexed(n) => ansi_256_to_rgb(*n),
+        Color::Indexed(n) => {
+            // ANSI 0-15: スキームパレットを優先する
+            if *n < 16 {
+                if let Some(p) = palette {
+                    let c = p.ansi[*n as usize];
+                    return [u8_to_f32(c[0]), u8_to_f32(c[1]), u8_to_f32(c[2]), 1.0];
+                }
+            }
+            ansi_256_to_rgb(*n)
+        }
     }
 }
 
@@ -2535,7 +2774,13 @@ impl ApplicationHandler for EventHandler {
                 if let (Some(wgpu), Some(atlas)) =
                     (&mut self.wgpu_state, &mut self.atlas)
                     && let Err(e) =
-                        wgpu.render(&self.app.state, &mut self.app.font, atlas, &self.app.config.tab_bar)
+                        wgpu.render(
+                            &self.app.state,
+                            &mut self.app.font,
+                            atlas,
+                            &self.app.config.tab_bar,
+                            &self.app.config.colors,
+                        )
                     {
                         warn!("Render error: {}", e);
                     }
@@ -3704,9 +3949,9 @@ mod tests {
 
     #[test]
     fn デフォルト色の解決() {
-        let fg = resolve_color(&nexterm_proto::Color::Default, true);
+        let fg = resolve_color(&nexterm_proto::Color::Default, true, None);
         assert!(fg[0] > 0.5); // 前景は明るい
-        let bg = resolve_color(&nexterm_proto::Color::Default, false);
+        let bg = resolve_color(&nexterm_proto::Color::Default, false, None);
         assert!(bg[0] < 0.5); // 背景は暗い
     }
 

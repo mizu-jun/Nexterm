@@ -27,6 +27,17 @@ impl Default for FontConfig {
     }
 }
 
+/// カラースキームのパレット（前景・背景・ANSI 16色）
+#[derive(Debug, Clone)]
+pub struct SchemePalette {
+    /// デフォルト前景色 [R, G, B]
+    pub fg: [u8; 3],
+    /// デフォルト背景色 [R, G, B]
+    pub bg: [u8; 3],
+    /// ANSI 16色パレット（0=black … 15=bright white）
+    pub ansi: [[u8; 3]; 16],
+}
+
 /// 組み込みカラースキーム
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -36,6 +47,233 @@ pub enum BuiltinScheme {
     TokyoNight,
     Solarized,
     Gruvbox,
+    Catppuccin,
+    Dracula,
+    Nord,
+    #[serde(rename = "onedark")]
+    OneDark,
+}
+
+impl BuiltinScheme {
+    /// スキームの表示名を返す
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Dark => "Dark",
+            Self::Light => "Light",
+            Self::TokyoNight => "Tokyo Night",
+            Self::Solarized => "Solarized",
+            Self::Gruvbox => "Gruvbox",
+            Self::Catppuccin => "Catppuccin",
+            Self::Dracula => "Dracula",
+            Self::Nord => "Nord",
+            Self::OneDark => "One Dark",
+        }
+    }
+
+    /// スキームのカラーパレットを返す
+    pub fn palette(&self) -> SchemePalette {
+        match self {
+            Self::Dark => SchemePalette {
+                fg: [0xD8, 0xD8, 0xD8],
+                bg: [0x0D, 0x0D, 0x0D],
+                ansi: [
+                    [0x00, 0x00, 0x00],
+                    [0x80, 0x00, 0x00],
+                    [0x00, 0x80, 0x00],
+                    [0x80, 0x80, 0x00],
+                    [0x00, 0x00, 0x80],
+                    [0x80, 0x00, 0x80],
+                    [0x00, 0x80, 0x80],
+                    [0xC0, 0xC0, 0xC0],
+                    [0x80, 0x80, 0x80],
+                    [0xFF, 0x00, 0x00],
+                    [0x00, 0xFF, 0x00],
+                    [0xFF, 0xFF, 0x00],
+                    [0x00, 0x00, 0xFF],
+                    [0xFF, 0x00, 0xFF],
+                    [0x00, 0xFF, 0xFF],
+                    [0xFF, 0xFF, 0xFF],
+                ],
+            },
+            Self::Light => SchemePalette {
+                fg: [0x2C, 0x2C, 0x2C],
+                bg: [0xF2, 0xF2, 0xF2],
+                ansi: [
+                    [0x00, 0x00, 0x00],
+                    [0xC0, 0x00, 0x00],
+                    [0x00, 0x80, 0x00],
+                    [0x80, 0x80, 0x00],
+                    [0x00, 0x00, 0xC0],
+                    [0xC0, 0x00, 0xC0],
+                    [0x00, 0x80, 0x80],
+                    [0xC0, 0xC0, 0xC0],
+                    [0x60, 0x60, 0x60],
+                    [0xFF, 0x40, 0x40],
+                    [0x00, 0xC0, 0x00],
+                    [0xC0, 0xC0, 0x00],
+                    [0x40, 0x40, 0xFF],
+                    [0xFF, 0x40, 0xFF],
+                    [0x00, 0xC0, 0xC0],
+                    [0xFF, 0xFF, 0xFF],
+                ],
+            },
+            Self::TokyoNight => SchemePalette {
+                fg: [0xC0, 0xCA, 0xF5],
+                bg: [0x1A, 0x1B, 0x26],
+                ansi: [
+                    [0x15, 0x16, 0x20],
+                    [0xF7, 0x76, 0x8E],
+                    [0x9E, 0xCE, 0x6A],
+                    [0xE0, 0xAF, 0x68],
+                    [0x7A, 0xA2, 0xF7],
+                    [0xBB, 0x9A, 0xF7],
+                    [0x7D, 0xCF, 0xFF],
+                    [0xA9, 0xB1, 0xD6],
+                    [0x41, 0x4B, 0x67],
+                    [0xF7, 0x76, 0x8E],
+                    [0x9E, 0xCE, 0x6A],
+                    [0xE0, 0xAF, 0x68],
+                    [0x7A, 0xA2, 0xF7],
+                    [0xBB, 0x9A, 0xF7],
+                    [0x7D, 0xCF, 0xFF],
+                    [0xC0, 0xCA, 0xF5],
+                ],
+            },
+            Self::Solarized => SchemePalette {
+                fg: [0x83, 0x94, 0x96],
+                bg: [0x00, 0x2B, 0x36],
+                ansi: [
+                    [0x07, 0x36, 0x42],
+                    [0xDC, 0x32, 0x2F],
+                    [0x85, 0x99, 0x00],
+                    [0xB5, 0x89, 0x00],
+                    [0x26, 0x8B, 0xD2],
+                    [0xD3, 0x36, 0x82],
+                    [0x2A, 0xA1, 0x98],
+                    [0xEE, 0xE8, 0xD5],
+                    [0x00, 0x2B, 0x36],
+                    [0xCB, 0x4B, 0x16],
+                    [0x58, 0x6E, 0x75],
+                    [0x65, 0x7B, 0x83],
+                    [0x83, 0x94, 0x96],
+                    [0x6C, 0x71, 0xC4],
+                    [0x93, 0xA1, 0xA1],
+                    [0xFD, 0xF6, 0xE3],
+                ],
+            },
+            Self::Gruvbox => SchemePalette {
+                fg: [0xEB, 0xDB, 0xB2],
+                bg: [0x28, 0x28, 0x28],
+                ansi: [
+                    [0x28, 0x28, 0x28],
+                    [0xCC, 0x24, 0x1D],
+                    [0x98, 0x97, 0x1A],
+                    [0xD7, 0x99, 0x21],
+                    [0x45, 0x85, 0x88],
+                    [0xB1, 0x62, 0x86],
+                    [0x68, 0x9D, 0x6A],
+                    [0xA8, 0x99, 0x84],
+                    [0x92, 0x83, 0x74],
+                    [0xFB, 0x49, 0x34],
+                    [0xB8, 0xBB, 0x26],
+                    [0xFA, 0xBD, 0x2F],
+                    [0x83, 0xA5, 0x98],
+                    [0xD3, 0x86, 0x9B],
+                    [0x8E, 0xC0, 0x7C],
+                    [0xEB, 0xDB, 0xB2],
+                ],
+            },
+            Self::Catppuccin => SchemePalette {
+                // Catppuccin Mocha
+                fg: [0xCD, 0xD6, 0xF4],
+                bg: [0x1E, 0x1E, 0x2E],
+                ansi: [
+                    [0x45, 0x47, 0x5A],
+                    [0xF3, 0x8B, 0xA8],
+                    [0xA6, 0xE3, 0xA1],
+                    [0xF9, 0xE2, 0xAF],
+                    [0x89, 0xB4, 0xFA],
+                    [0xF5, 0xC2, 0xE7],
+                    [0x94, 0xE2, 0xD5],
+                    [0xBA, 0xC2, 0xDE],
+                    [0x58, 0x5B, 0x70],
+                    [0xF3, 0x8B, 0xA8],
+                    [0xA6, 0xE3, 0xA1],
+                    [0xF9, 0xE2, 0xAF],
+                    [0x89, 0xB4, 0xFA],
+                    [0xF5, 0xC2, 0xE7],
+                    [0x94, 0xE2, 0xD5],
+                    [0xA6, 0xAD, 0xC8],
+                ],
+            },
+            Self::Dracula => SchemePalette {
+                fg: [0xF8, 0xF8, 0xF2],
+                bg: [0x28, 0x2A, 0x36],
+                ansi: [
+                    [0x21, 0x22, 0x2C],
+                    [0xFF, 0x55, 0x55],
+                    [0x50, 0xFA, 0x7B],
+                    [0xF1, 0xFA, 0x8C],
+                    [0xBD, 0x93, 0xF9],
+                    [0xFF, 0x79, 0xC6],
+                    [0x8B, 0xE9, 0xFD],
+                    [0xF8, 0xF8, 0xF2],
+                    [0x6B, 0x72, 0x89],
+                    [0xFF, 0x6E, 0x6E],
+                    [0x69, 0xFF, 0x94],
+                    [0xFF, 0xFF, 0xA5],
+                    [0xD6, 0xAC, 0xFF],
+                    [0xFF, 0x92, 0xDF],
+                    [0xA4, 0xFF, 0xFF],
+                    [0xFF, 0xFF, 0xFF],
+                ],
+            },
+            Self::Nord => SchemePalette {
+                fg: [0xD8, 0xDE, 0xE9],
+                bg: [0x2E, 0x34, 0x40],
+                ansi: [
+                    [0x3B, 0x42, 0x52],
+                    [0xBF, 0x61, 0x6A],
+                    [0xA3, 0xBE, 0x8C],
+                    [0xEB, 0xCB, 0x8B],
+                    [0x81, 0xA1, 0xC1],
+                    [0xB4, 0x8E, 0xAD],
+                    [0x88, 0xC0, 0xD0],
+                    [0xE5, 0xE9, 0xF0],
+                    [0x4C, 0x56, 0x6A],
+                    [0xBF, 0x61, 0x6A],
+                    [0xA3, 0xBE, 0x8C],
+                    [0xEB, 0xCB, 0x8B],
+                    [0x81, 0xA1, 0xC1],
+                    [0xB4, 0x8E, 0xAD],
+                    [0x8F, 0xBD, 0xBB],
+                    [0xEC, 0xEF, 0xF4],
+                ],
+            },
+            Self::OneDark => SchemePalette {
+                fg: [0xAB, 0xB2, 0xBF],
+                bg: [0x28, 0x2C, 0x34],
+                ansi: [
+                    [0x28, 0x2C, 0x34],
+                    [0xE0, 0x6C, 0x75],
+                    [0x98, 0xC3, 0x79],
+                    [0xE5, 0xC0, 0x7B],
+                    [0x61, 0xAF, 0xEF],
+                    [0xC6, 0x78, 0xDD],
+                    [0x56, 0xB6, 0xC2],
+                    [0xAB, 0xB2, 0xBF],
+                    [0x5C, 0x63, 0x70],
+                    [0xE0, 0x6C, 0x75],
+                    [0x98, 0xC3, 0x79],
+                    [0xE5, 0xC0, 0x7B],
+                    [0x61, 0xAF, 0xEF],
+                    [0xC6, 0x78, 0xDD],
+                    [0x56, 0xB6, 0xC2],
+                    [0xFF, 0xFF, 0xFF],
+                ],
+            },
+        }
+    }
 }
 
 /// カスタムカラーパレット（TOML で定義）
@@ -99,10 +337,7 @@ impl Default for ShellConfig {
                     )
                 } else {
                     // 最終フォールバック: cmd.exe
-                    (
-                        "C:\\Windows\\System32\\cmd.exe".to_string(),
-                        vec![],
-                    )
+                    ("C:\\Windows\\System32\\cmd.exe".to_string(), vec![])
                 };
             return Self { program, args };
         }
@@ -116,15 +351,13 @@ impl Default for ShellConfig {
 }
 
 /// ステータスバー設定
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct StatusBarConfig {
     /// ステータスバーを表示するか（Phase 3 で使用）
     pub enabled: bool,
     /// 表示する Lua ウィジェットリスト
     pub widgets: Vec<String>,
 }
-
 
 /// ウィンドウ装飾の種別
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -237,10 +470,18 @@ pub struct SerialPortConfig {
     pub parity: String,
 }
 
-fn default_baud_rate() -> u32 { 115200 }
-fn default_data_bits() -> u8 { 8 }
-fn default_stop_bits() -> u8 { 1 }
-fn default_parity() -> String { "none".to_string() }
+fn default_baud_rate() -> u32 {
+    115200
+}
+fn default_data_bits() -> u8 {
+    8
+}
+fn default_stop_bits() -> u8 {
+    1
+}
+fn default_parity() -> String {
+    "none".to_string()
+}
 
 /// Lua マクロ定義（設定ファイルで [[macros]] として登録する）
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

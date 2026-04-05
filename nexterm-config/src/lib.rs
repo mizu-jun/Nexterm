@@ -19,8 +19,9 @@ pub use loader::{ConfigLoader, lua_path, toml_path};
 pub use lua_hooks::{HookEvent, LuaHookRunner};
 pub use schema::{
     BuiltinScheme, ColorScheme, Config, CustomPalette, FontConfig, HooksConfig, HostConfig,
-    KeyBinding, LogConfig, MacroConfig, SerialPortConfig, ShellConfig, StatusBarConfig,
-    TabBarConfig, TlsConfig, WebAuthConfig, WebConfig, WindowConfig, WindowDecorations,
+    KeyBinding, LogConfig, MacroConfig, SchemePalette, SerialPortConfig, ShellConfig,
+    StatusBarConfig, TabBarConfig, TlsConfig, WebAuthConfig, WebConfig, WindowConfig,
+    WindowDecorations,
 };
 pub use status_bar::StatusBarEvaluator;
 pub use watcher::{watch_config, ConfigRx};
