@@ -105,4 +105,28 @@ mod tests {
         assert_eq!(grid.width, 120);
         assert_eq!(grid.height, 40);
     }
+
+    #[test]
+    fn ブラケットペーストモードが初期状態で無効() {
+        let parser = VtParser::new(80, 24);
+        assert!(!parser.bracketed_paste_mode());
+    }
+
+    #[test]
+    fn ブラケットペーストモードを有効化できる() {
+        let mut parser = VtParser::new(80, 24);
+        // CSI ?2004h — ブラケットペーストモード有効化
+        parser.advance(b"\x1b[?2004h");
+        assert!(parser.bracketed_paste_mode(), "?2004h で有効になるべき");
+    }
+
+    #[test]
+    fn ブラケットペーストモードを無効化できる() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b[?2004h");
+        assert!(parser.bracketed_paste_mode());
+        // CSI ?2004l — 無効化
+        parser.advance(b"\x1b[?2004l");
+        assert!(!parser.bracketed_paste_mode(), "?2004l で無効になるべき");
+    }
 }

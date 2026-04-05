@@ -867,6 +867,24 @@ mod tests {
     }
 
     #[test]
+    fn bsp_4分割のレイアウト計算() {
+        let mut tree = SplitNode::Pane { pane_id: 1 };
+        tree.insert_after(1, 2, SplitDir::Vertical);
+        tree.insert_after(1, 3, SplitDir::Horizontal);
+        tree.insert_after(2, 4, SplitDir::Horizontal);
+        let mut out = Vec::new();
+        tree.compute(0, 0, 80, 24, &mut out);
+        assert_eq!(out.len(), 4, "4 ペインが計算されるべき");
+        // 全ペインの col オフセットと row オフセットが有効範囲内
+        for p in &out {
+            assert!(p.col_off < 80);
+            assert!(p.row_off < 24);
+            assert!(p.cols > 0);
+            assert!(p.rows > 0);
+        }
+    }
+
+    #[test]
     fn スナップショット変換の往復整合性() {
         let snap_before = SplitNodeSnapshot::Split {
             dir: SplitDirSnapshot::Vertical,

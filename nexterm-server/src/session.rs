@@ -635,4 +635,26 @@ mod tests {
         let list = manager.list_sessions().await;
         assert!(list.is_empty());
     }
+
+    #[tokio::test]
+    async fn セッション取得で存在しない名前はNone() {
+        let manager = SessionManager::new();
+        let arc = manager.sessions();
+        let sessions = arc.lock().await;
+        assert!(sessions.get("nonexistent").is_none());
+    }
+
+    #[tokio::test]
+    async fn セッション削除で存在しない名前はErr() {
+        let manager = SessionManager::new();
+        let result = manager.kill_session("nonexistent").await;
+        assert!(result.is_err(), "存在しないセッションの kill は Err を返すべき");
+    }
+
+    #[tokio::test]
+    async fn セッション一覧が初期状態では空() {
+        let manager = SessionManager::new();
+        let list = manager.list_sessions().await;
+        assert_eq!(list.len(), 0, "初期状態では空のリストを返すべき");
+    }
 }
