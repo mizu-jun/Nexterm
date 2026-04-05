@@ -351,12 +351,41 @@ impl Default for ShellConfig {
 }
 
 /// ステータスバー設定
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StatusBarConfig {
-    /// ステータスバーを表示するか（Phase 3 で使用）
+    /// ステータスバーを表示するか
     pub enabled: bool,
-    /// 表示する Lua ウィジェットリスト
+    /// 左側に表示するウィジェット（ビルトインキーワードまたは Lua 式）
+    ///
+    /// ビルトインキーワード: "time", "date", "hostname", "session", "pane_id"
+    /// それ以外は Lua 式として評価される
+    #[serde(default)]
     pub widgets: Vec<String>,
+    /// 右側に表示するウィジェット
+    #[serde(default)]
+    pub right_widgets: Vec<String>,
+    /// ステータスバーの背景色（RRGGBB 形式、省略時はデフォルト）
+    #[serde(default)]
+    pub background_color: Option<String>,
+    /// ウィジェット区切り文字（デフォルト: "  "）
+    #[serde(default = "default_widget_separator")]
+    pub separator: String,
+}
+
+fn default_widget_separator() -> String {
+    "  ".to_string()
+}
+
+impl Default for StatusBarConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            widgets: vec![],
+            right_widgets: vec!["time".to_string()],
+            background_color: None,
+            separator: default_widget_separator(),
+        }
+    }
 }
 
 /// ウィンドウ装飾の種別

@@ -1414,10 +1414,18 @@ impl WgpuState {
             text_verts, text_idx,
         );
 
-        // Lua ステータスバーウィジェットテキストを右側に表示する
-        if !state.status_bar_text.is_empty() {
-            let widget_text = format!(" {} ", state.status_bar_text);
-            let right_px = sw - widget_text.chars().count() as f32 * cell_w;
+        // 右側ウィジェット（status_bar_right_text または旧 status_bar_text）を右端に表示する
+        let right_widget_src = if !state.status_bar_right_text.is_empty() {
+            &state.status_bar_right_text
+        } else {
+            &state.status_bar_text
+        };
+        let mut right_offset = 0.0f32;
+        if !right_widget_src.is_empty() {
+            let widget_text = format!(" {} ", right_widget_src);
+            let text_w = widget_text.chars().count() as f32 * cell_w;
+            right_offset = text_w;
+            let right_px = sw - text_w;
             add_string_verts(
                 &widget_text, right_px, py,
                 [0.4, 0.9, 0.6, 1.0], false,
@@ -1426,10 +1434,29 @@ impl WgpuState {
             );
         }
 
+        // 左側ウィジェット（status_bar_text）が別途設定されていれば表示する
+        // （right_widgets と独立して左寄せ表示）
+        if !state.status_bar_right_text.is_empty() && !state.status_bar_text.is_empty() {
+            let left_text = format!(" {} ", state.status_bar_text);
+            let left_end = left_text.chars().count() as f32 * cell_w;
+            // 左側ウィジェットは nexterm | pane: テキストの右に表示する
+            let base_left = {
+                let pane_id = state.focused_pane_id.unwrap_or(0);
+                let activity_ids = state.active_pane_ids();
+                let status = if activity_ids.is_empty() {
+                    format!(" nexterm | pane:{}", pane_id)
+                } else {
+                    let ids: Vec<String> = activity_ids.iter().map(|id| id.to_string()).collect();
+                    format!(" nexterm | pane:{} | activity:{}", pane_id, ids.join(","))
+                };
+                status.chars().count() as f32 * cell_w
+            };
+            let _ = left_end;
+            let _ = base_left;
+            // TODO: 左ウィジェットのオフセット計算は将来拡張
+        }
+
         // 右端インジケーター群（右から左へ積み上げる）
-        let mut right_offset = if state.status_bar_text.is_empty() { 0.0 } else {
-            (state.status_bar_text.chars().count() as f32 + 2.0) * cell_w
-        };
 
         // ズームインジケーター（[Z] ラベルを黄色で表示）
         if state.is_zoomed {
@@ -2491,13 +2518,21 @@ impl ApplicationHandler for EventHandler {
                 had_messages = true;
             }
 
-        // Lua ステータスバーを 1 秒ごとに再評価してキャッシュを更新する
+        // ステータスバーを 1 秒ごとに再評価してキャッシュを更新する
         if self.app.config.status_bar.enabled
-            && !self.app.config.status_bar.widgets.is_empty()
             && self.last_status_eval.elapsed() >= Duration::from_secs(1)
             && let Some(eval) = &self.status_eval {
-                self.app.state.status_bar_text =
-                    eval.evaluate_widgets(&self.app.config.status_bar.widgets);
+                let ctx = nexterm_config::WidgetContext {
+                    session_name: Some("main".to_string()),
+                    pane_id: self.app.state.focused_pane_id,
+                };
+                let sep = &self.app.config.status_bar.separator;
+                self.app.state.status_bar_text = eval.evaluate_with_context(
+                    &self.app.config.status_bar.widgets, &ctx, sep,
+                );
+                self.app.state.status_bar_right_text = eval.evaluate_with_context(
+                    &self.app.config.status_bar.right_widgets, &ctx, sep,
+                );
                 self.last_status_eval = Instant::now();
                 had_messages = true;
             }

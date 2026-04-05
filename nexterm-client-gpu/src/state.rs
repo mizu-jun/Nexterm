@@ -506,8 +506,10 @@ pub struct ClientState {
     pub search: SearchState,
     /// 設定で指定されたスクロールバック行数
     pub scrollback_capacity: usize,
-    /// Lua ステータスバーの最終評価テキスト（キャッシュ）
+    /// ステータスバー左側ウィジェットの最終評価テキスト（キャッシュ）
     pub status_bar_text: String,
+    /// ステータスバー右側ウィジェットの最終評価テキスト（キャッシュ）
+    pub status_bar_right_text: String,
     /// BEL 受信フラグ（次の about_to_wait で OS 通知をトリガーする）
     pub pending_bell: bool,
     /// コピーモード（Vim 風テキスト選択）
@@ -552,6 +554,7 @@ impl ClientState {
             search: SearchState::new(),
             scrollback_capacity,
             status_bar_text: String::new(),
+            status_bar_right_text: String::new(),
             pending_bell: false,
             copy_mode: CopyModeState::new(),
             mouse_sel: MouseSelection::new(),
