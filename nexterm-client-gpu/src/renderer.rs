@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use bytemuck::{Pod, Zeroable};
 use nexterm_config::{Config, StatusBarEvaluator};
+use unicode_width::UnicodeWidthChar;
 use nexterm_proto::ClientToServer;
 use nexterm_proto::KeyCode as ProtoKeyCode;
 use tracing::{debug, info, warn};
@@ -59,6 +60,7 @@ struct GlyphKey {
     ch: char,
     bold: bool,
     italic: bool,
+    wide: bool,
 }
 
 /// グリフアトラス内の矩形
@@ -640,6 +642,9 @@ impl WgpuState {
         let cell_w = font.cell_width();
         let cell_h = font.cell_height();
 
+        // タブバー高さ（有効時のみ）: ターミナルコンテンツのy-offsetとして使用
+        let tab_bar_h = if tab_bar_cfg.enabled { tab_bar_cfg.height as f32 } else { 0.0 };
+
         let mut bg_verts: Vec<BgVertex> = Vec::new();
         let mut bg_idx: Vec<u16> = Vec::new();
         let mut text_verts: Vec<TextVertex> = Vec::new();
@@ -663,6 +668,7 @@ impl WgpuState {
                             sh,
                             cell_w,
                             cell_h,
+                            tab_bar_h,
                             font,
                             atlas,
                             palette_ref,
@@ -681,6 +687,7 @@ impl WgpuState {
                             sh,
                             cell_w,
                             cell_h,
+                            tab_bar_h,
                             font,
                             atlas,
                             palette_ref,
@@ -693,7 +700,7 @@ impl WgpuState {
                 }
             }
             // ペイン境界線を描画する
-            self.build_border_verts(state, sw, sh, cell_w, cell_h, &mut bg_verts, &mut bg_idx);
+            self.build_border_verts(state, sw, sh, cell_w, cell_h, tab_bar_h, &mut bg_verts, &mut bg_idx);
         } else if let Some(pane) = state.focused_pane() {
             // フォールバック: レイアウト情報なし（接続直後など）
             if pane.scroll_offset > 0 {
@@ -704,6 +711,7 @@ impl WgpuState {
                     sh,
                     cell_w,
                     cell_h,
+                    tab_bar_h,
                     font,
                     atlas,
                     palette_ref,
@@ -721,6 +729,7 @@ impl WgpuState {
                     sh,
                     cell_w,
                     cell_h,
+                    tab_bar_h,
                     font,
                     atlas,
                     palette_ref,
@@ -739,7 +748,7 @@ impl WgpuState {
             for (number, pane_id) in sorted_pane_ids.iter().enumerate() {
                 if let Some(layout) = state.pane_layouts.get(pane_id) {
                     let px = layout.col_offset as f32 * cell_w;
-                    let py = layout.row_offset as f32 * cell_h;
+                    let py = layout.row_offset as f32 * cell_h + tab_bar_h;
                     let badge_w = cell_w * 2.0;
                     let badge_h = cell_h;
                     // 黄色背景バッジ
@@ -757,10 +766,10 @@ impl WgpuState {
             // レイアウト情報がない場合（フォールバック: フォーカスペインのみ）
             if state.pane_layouts.is_empty()
                 && let Some(focused_id) = state.focused_pane_id {
-                    add_px_rect(0.0, 0.0, cell_w * 2.0, cell_h, [0.9, 0.75, 0.0, 0.90], sw, sh, &mut bg_verts, &mut bg_idx);
+                    add_px_rect(0.0, tab_bar_h, cell_w * 2.0, cell_h, [0.9, 0.75, 0.0, 0.90], sw, sh, &mut bg_verts, &mut bg_idx);
                     let label = focused_id.to_string();
                     add_string_verts(
-                        &label, 2.0, 0.0,
+                        &label, 2.0, tab_bar_h,
                         [0.0, 0.0, 0.0, 1.0], true,
                         sw, sh, cell_w, font, atlas, &self.queue,
                         &mut text_verts, &mut text_idx,
@@ -977,6 +986,7 @@ impl WgpuState {
         sh: f32,
         cell_w: f32,
         cell_h: f32,
+        y_offset: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         palette: Option<&nexterm_config::SchemePalette>,
@@ -995,7 +1005,7 @@ impl WgpuState {
                     continue;
                 };
                 let px = col as f32 * cell_w;
-                let py = row as f32 * cell_h;
+                let py = row as f32 * cell_h + y_offset;
                 let bg = resolve_color(&cell.bg, false, palette);
                 add_px_rect(px, py, cell_w, cell_h, bg, sw, sh, bg_verts, bg_idx);
                 // 選択ハイライトオーバーレイ
@@ -1012,16 +1022,20 @@ impl WgpuState {
                     (fg[2] * 255.0) as u8,
                     (fg[3] * 255.0) as u8,
                 ];
+                // 全角文字（CJK 等、Unicode width = 2）は 2 セル幅でレンダリングする
+                let is_wide = UnicodeWidthChar::width(cell.ch).unwrap_or(1) >= 2;
                 let key = GlyphKey {
                     ch: cell.ch,
                     bold: cell.attrs.is_bold(),
                     italic: cell.attrs.is_italic(),
+                    wide: is_wide,
                 };
                 let (gw, gh, pixels) = font.rasterize_char(
                     cell.ch,
                     cell.attrs.is_bold(),
                     cell.attrs.is_italic(),
                     fg_u8,
+                    is_wide,
                 );
                 if gw == 0 || gh == 0 || pixels.is_empty() {
                     continue;
@@ -1060,7 +1074,7 @@ impl WgpuState {
 
         // カーソル矩形（半透明の白いオーバーレイ）
         let cx = pane.cursor_col as f32 * cell_w;
-        let cy = pane.cursor_row as f32 * cell_h;
+        let cy = pane.cursor_row as f32 * cell_h + y_offset;
         add_px_rect(cx, cy, cell_w, cell_h, [1.0, 1.0, 1.0, 0.35], sw, sh, bg_verts, bg_idx);
     }
 
@@ -1073,6 +1087,7 @@ impl WgpuState {
         sh: f32,
         cell_w: f32,
         cell_h: f32,
+        y_offset: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         palette: Option<&nexterm_config::SchemePalette>,
@@ -1081,7 +1096,7 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
-        let visible_rows = (sh / cell_h) as usize;
+        let visible_rows = ((sh - y_offset) / cell_h) as usize;
         let offset = pane.scroll_offset;
 
         for visual_row in 0..visible_rows {
@@ -1089,7 +1104,7 @@ impl WgpuState {
             let Some(line) = pane.scrollback.get(sb_row) else {
                 continue;
             };
-            let py = visual_row as f32 * cell_h;
+            let py = visual_row as f32 * cell_h + y_offset;
             for (col, cell) in line.iter().enumerate() {
                 let px = col as f32 * cell_w;
                 // スクロールバック行は背景を少し暗くする
@@ -1106,13 +1121,15 @@ impl WgpuState {
                     (fg[2] * 255.0) as u8,
                     (fg[3] * 255.0) as u8,
                 ];
+                let is_wide = UnicodeWidthChar::width(cell.ch).unwrap_or(1) >= 2;
                 let key = GlyphKey {
                     ch: cell.ch,
                     bold: cell.attrs.is_bold(),
                     italic: false,
+                    wide: is_wide,
                 };
                 let (gw, gh, pixels) =
-                    font.rasterize_char(cell.ch, cell.attrs.is_bold(), false, fg_u8);
+                    font.rasterize_char(cell.ch, cell.attrs.is_bold(), false, fg_u8, is_wide);
                 if gw == 0 || gh == 0 || pixels.is_empty() {
                     continue;
                 }
@@ -1161,6 +1178,7 @@ impl WgpuState {
         sh: f32,
         cell_w: f32,
         cell_h: f32,
+        tab_bar_h: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         palette: Option<&nexterm_config::SchemePalette>,
@@ -1173,7 +1191,7 @@ impl WgpuState {
         const SEL_COLOR: [f32; 4] = [0.25, 0.55, 1.0, 0.40];
 
         let off_x = layout.col_offset as f32 * cell_w;
-        let off_y = layout.row_offset as f32 * cell_h;
+        let off_y = layout.row_offset as f32 * cell_h + tab_bar_h;
         // 非フォーカスペインを少し暗く表示する
         let dim = if is_focused { 1.0f32 } else { 0.70f32 };
         let grid = &pane.grid;
@@ -1203,16 +1221,20 @@ impl WgpuState {
                     (fg[2] * 255.0) as u8,
                     (fg[3] * 255.0) as u8,
                 ];
+                // 全角文字（CJK 等、Unicode width = 2）は 2 セル幅でレンダリングする
+                let is_wide = UnicodeWidthChar::width(cell.ch).unwrap_or(1) >= 2;
                 let key = GlyphKey {
                     ch: cell.ch,
                     bold: cell.attrs.is_bold(),
                     italic: cell.attrs.is_italic(),
+                    wide: is_wide,
                 };
                 let (gw, gh, pixels) = font.rasterize_char(
                     cell.ch,
                     cell.attrs.is_bold(),
                     cell.attrs.is_italic(),
                     fg_u8,
+                    is_wide,
                 );
                 if gw == 0 || gh == 0 || pixels.is_empty() {
                     continue;
@@ -1267,6 +1289,7 @@ impl WgpuState {
         sh: f32,
         cell_w: f32,
         cell_h: f32,
+        tab_bar_h: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         palette: Option<&nexterm_config::SchemePalette>,
@@ -1276,7 +1299,7 @@ impl WgpuState {
         text_idx: &mut Vec<u16>,
     ) {
         let off_x = layout.col_offset as f32 * cell_w;
-        let off_y = layout.row_offset as f32 * cell_h;
+        let off_y = layout.row_offset as f32 * cell_h + tab_bar_h;
         let offset = pane.scroll_offset;
 
         for visual_row in 0..layout.rows as usize {
@@ -1300,13 +1323,15 @@ impl WgpuState {
                     (fg[2] * 255.0) as u8,
                     (fg[3] * 255.0) as u8,
                 ];
+                let is_wide = UnicodeWidthChar::width(cell.ch).unwrap_or(1) >= 2;
                 let key = GlyphKey {
                     ch: cell.ch,
                     bold: cell.attrs.is_bold(),
                     italic: false,
+                    wide: is_wide,
                 };
                 let (gw, gh, pixels) =
-                    font.rasterize_char(cell.ch, cell.attrs.is_bold(), false, fg_u8);
+                    font.rasterize_char(cell.ch, cell.attrs.is_bold(), false, fg_u8, is_wide);
                 if gw == 0 || gh == 0 || pixels.is_empty() {
                     continue;
                 }
@@ -1349,6 +1374,7 @@ impl WgpuState {
         &self,
         state: &ClientState,
         sw: f32, sh: f32, cell_w: f32, cell_h: f32,
+        tab_bar_h: f32,
         bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
     ) {
         if state.pane_layouts.len() <= 1 {
@@ -1359,7 +1385,7 @@ impl WgpuState {
 
         for layout in state.pane_layouts.values() {
             let px = layout.col_offset as f32 * cell_w;
-            let py = layout.row_offset as f32 * cell_h;
+            let py = layout.row_offset as f32 * cell_h + tab_bar_h;
             let pw = layout.cols as f32 * cell_w;
             let ph = layout.rows as f32 * cell_h;
             let is_focused = state.focused_pane_id == Some(layout.pane_id);
@@ -2781,8 +2807,8 @@ impl ApplicationHandler for EventHandler {
         // 初回のキーストローク遅延を排除し、起動直後からスムーズな描画を実現する。
         for ch in ' '..='~' {
             for bold in [false, true] {
-                let key = GlyphKey { ch, bold, italic: false };
-                let (w, h, pixels) = self.app.font.rasterize_char(ch, bold, false, [220, 220, 220, 255]);
+                let key = GlyphKey { ch, bold, italic: false, wide: false };
+                let (w, h, pixels) = self.app.font.rasterize_char(ch, bold, false, [220, 220, 220, 255], false);
                 if w > 0 && h > 0 {
                     atlas.get_or_insert(key, &pixels, w, h, &wgpu_state.queue);
                 }
@@ -2790,9 +2816,17 @@ impl ApplicationHandler for EventHandler {
         }
 
         // ウィンドウサイズからセル数を計算してステートを初期化する
+        // タブバー（上部）とステータスバー（下部1セル）を除いた領域でセル数を計算する
         let size = window.inner_size();
+        let cell_h_init = self.app.font.cell_height();
+        let tab_bar_h_init = if self.app.config.tab_bar.enabled {
+            self.app.config.tab_bar.height as f32
+        } else {
+            0.0
+        };
+        let status_bar_h_init = cell_h_init;
         let cols = (size.width as f32 / self.app.font.cell_width()).max(1.0) as u16;
-        let rows = (size.height as f32 / self.app.font.cell_height()).max(1.0) as u16;
+        let rows = ((size.height as f32 - tab_bar_h_init - status_bar_h_init) / cell_h_init).max(1.0) as u16;
         self.app.state.resize(cols, rows);
 
         self.window = Some(Arc::clone(&window));
@@ -2911,8 +2945,14 @@ impl ApplicationHandler for EventHandler {
             }
 
             WindowEvent::Resized(size) => {
+                let cell_h_r = self.app.font.cell_height();
+                let tab_bar_h_r = if self.app.config.tab_bar.enabled {
+                    self.app.config.tab_bar.height as f32
+                } else {
+                    0.0
+                };
                 let cols = (size.width as f32 / self.app.font.cell_width()).max(1.0) as u16;
-                let rows = (size.height as f32 / self.app.font.cell_height()).max(1.0) as u16;
+                let rows = ((size.height as f32 - tab_bar_h_r - cell_h_r) / cell_h_r).max(1.0) as u16;
                 if let Some(wgpu) = &mut self.wgpu_state {
                     wgpu.resize(size);
                 }
@@ -2946,8 +2986,13 @@ impl ApplicationHandler for EventHandler {
                 self.cursor_position = Some((position.x, position.y));
                 let cell_w = self.app.font.cell_width() as f64;
                 let cell_h = self.app.font.cell_height() as f64;
+                let tab_bar_h_f64 = if self.app.config.tab_bar.enabled {
+                    self.app.config.tab_bar.height as f64
+                } else {
+                    0.0_f64
+                };
                 let col = (position.x / cell_w) as u16;
-                let row = (position.y / cell_h) as u16;
+                let row = ((position.y - tab_bar_h_f64).max(0.0) / cell_h) as u16;
                 if self.app.state.mouse_sel.is_dragging {
                     self.app.state.mouse_sel.update(col, row);
                     if let Some(w) = &self.window {
@@ -2990,8 +3035,13 @@ impl ApplicationHandler for EventHandler {
                 if let Some((px, py)) = self.cursor_position {
                     let cell_w = self.app.font.cell_width() as f64;
                     let cell_h = self.app.font.cell_height() as f64;
+                    let tab_bar_h_f64 = if self.app.config.tab_bar.enabled {
+                        self.app.config.tab_bar.height as f64
+                    } else {
+                        0.0_f64
+                    };
                     let col = (px / cell_w) as u16;
-                    let row = (py / cell_h) as u16;
+                    let row = ((py - tab_bar_h_f64).max(0.0) / cell_h) as u16;
                     self.app.state.mouse_sel.begin(col, row);
                     // マウスレポーティングが有効なら PTY にイベントを送信する
                     if let Some(conn) = &self.connection {
@@ -3038,8 +3088,13 @@ impl ApplicationHandler for EventHandler {
                 if let Some((px, py)) = self.cursor_position {
                     let cell_w = self.app.font.cell_width() as f64;
                     let cell_h = self.app.font.cell_height() as f64;
+                    let tab_bar_h_f64 = if self.app.config.tab_bar.enabled {
+                        self.app.config.tab_bar.height as f64
+                    } else {
+                        0.0_f64
+                    };
                     let click_col = (px / cell_w) as u16;
-                    let click_row = (py / cell_h) as u16;
+                    let click_row = ((py - tab_bar_h_f64).max(0.0) / cell_h) as u16;
 
                     // ドラッグ選択を終了して選択テキストをコピーする
                     self.app.state.mouse_sel.update(click_col, click_row);
@@ -4442,14 +4497,14 @@ fn add_char_verts(
     if ch == ' ' {
         return;
     }
-    let key = GlyphKey { ch, bold, italic: false };
+    let key = GlyphKey { ch, bold, italic: false, wide: false };
     let fg_u8 = [
         (fg[0] * 255.0) as u8,
         (fg[1] * 255.0) as u8,
         (fg[2] * 255.0) as u8,
         255u8,
     ];
-    let (gw, gh, pixels) = font.rasterize_char(ch, bold, false, fg_u8);
+    let (gw, gh, pixels) = font.rasterize_char(ch, bold, false, fg_u8, false);
     if gw == 0 || gh == 0 || pixels.is_empty() {
         return;
     }

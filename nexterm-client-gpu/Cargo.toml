@@ -33,6 +33,7 @@ notify = { workspace = true }
 toml_edit = { workspace = true }
 # シェルパス展開（~ → ホームディレクトリ）
 shellexpand = "3"
+unicode-width = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

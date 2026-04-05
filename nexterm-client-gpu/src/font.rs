@@ -120,6 +120,7 @@ impl FontManager {
 
     /// 1文字のグリフをラスタライズして RGBA ピクセル列を返す
     ///
+    /// `wide` が true の場合は全角文字（CJK 等）として2セル幅のバッファを使用する。
     /// 戻り値: `(width, height, rgba_pixels)`
     pub fn rasterize_char(
         &mut self,
@@ -127,6 +128,7 @@ impl FontManager {
         bold: bool,
         italic: bool,
         fg: [u8; 4],
+        wide: bool,
     ) -> (u32, u32, Vec<u8>) {
         let mut buffer = Buffer::new(&mut self.font_system, self.metrics);
 
@@ -153,16 +155,18 @@ impl FontManager {
             });
 
         let text = ch.to_string();
+        // 全角文字は 2 セル分の幅でレンダリングする（バッファ幅を 2× に設定）
+        let display_cols = if wide { 2.0 } else { 1.0 };
         buffer.set_text(&mut self.font_system, &text, attrs, Shaping::Advanced);
         buffer.set_size(
             &mut self.font_system,
-            Some(self.metrics.font_size * 4.0),
+            Some(self.metrics.font_size * 4.0 * display_cols),
             Some(self.metrics.line_height),
         );
         buffer.shape_until_scroll(&mut self.font_system, false);
 
-        // セルサイズは実計測値を使う
-        let cell_w = self.cell_w.ceil() as u32;
+        // セルサイズ: 全角文字は 2 セル幅
+        let cell_w = (self.cell_w * display_cols).ceil() as u32;
         let cell_h = self.metrics.line_height.ceil() as u32;
         let mut pixels = vec![0u8; (cell_w * cell_h * 4) as usize];
 
