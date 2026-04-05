@@ -80,7 +80,8 @@ jobs:
           sudo apt-get install -y \
             libx11-dev libxkbcommon-dev libwayland-dev \
             libasound2-dev libpulse-dev \
-            libudev-dev
+            libudev-dev \
+            libfuse2
 
       - name: Build release binaries
         run: >
@@ -165,9 +166,11 @@ jobs:
           cp linux/AppRun "${APPDIR}/AppRun"
           chmod +x "${APPDIR}/AppRun"
 
-          # .desktop ファイルと アイコン
-          cp linux/nexterm.desktop "${APPDIR}/nexterm.desktop"
-          # アイコンが存在する場合のみコピーする
+          # .desktop ファイルを AppDir にコピーし、Icon= を "nexterm" に書き換える
+          # （appimagetool は AppDir 内の <Icon>.png を探すため、Icon 名とファイル名を一致させる）
+          sed 's/^Icon=.*/Icon=nexterm/' linux/nexterm.desktop > "${APPDIR}/nexterm.desktop"
+
+          # アイコンを nexterm.png として配置する
           if [ -f "assets/icon.png" ]; then
             cp assets/icon.png "${APPDIR}/nexterm.png"
           else
@@ -175,11 +178,7 @@ jobs:
             printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82' > "${APPDIR}/nexterm.png"
           fi
 
-          # FUSE が利用できない CI 環境では --appimage-extract-and-run を使う
-          ARCH=x86_64 /tmp/appimagetool \
-            --appimage-extract-and-run \
-            "${APPDIR}" \
-            "nexterm-${{ github.ref_name }}-${{ matrix.name }}.AppImage" || \
+          # appimagetool でパッケージ化（libfuse2 が入っているので直接実行可能）
           ARCH=x86_64 /tmp/appimagetool \
             "${APPDIR}" \
             "nexterm-${{ github.ref_name }}-${{ matrix.name }}.AppImage"
