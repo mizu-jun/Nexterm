@@ -45,6 +45,11 @@ impl VtParser {
     pub fn bracketed_paste_mode(&self) -> bool {
         self.screen.bracketed_paste_mode()
     }
+
+    /// 同期出力モード（DEC ?2026）が有効かどうかを返す
+    pub fn synchronized_output_mode(&self) -> bool {
+        self.screen.synchronized_output_mode()
+    }
 }
 
 #[cfg(test)]
@@ -118,6 +123,30 @@ mod tests {
         // CSI ?2004h — ブラケットペーストモード有効化
         parser.advance(b"\x1b[?2004h");
         assert!(parser.bracketed_paste_mode(), "?2004h で有効になるべき");
+    }
+
+    #[test]
+    fn 同期出力モードが初期状態で無効() {
+        let parser = VtParser::new(80, 24);
+        assert!(!parser.synchronized_output_mode());
+    }
+
+    #[test]
+    fn 同期出力モード有効中はダーティ行を返さない() {
+        let mut parser = VtParser::new(80, 24);
+        // モード有効化
+        parser.advance(b"\x1b[?2026h");
+        assert!(parser.synchronized_output_mode());
+        // テキスト書き込み
+        parser.advance(b"Hello");
+        // ダーティ行は空（保留中）
+        let dirty = parser.screen_mut().take_dirty_rows();
+        assert!(dirty.is_empty(), "同期出力モード中はダーティ行を返さないべき");
+        // モード無効化でフラッシュ
+        parser.advance(b"\x1b[?2026l");
+        assert!(!parser.synchronized_output_mode());
+        let dirty = parser.screen_mut().take_dirty_rows();
+        assert!(!dirty.is_empty(), "モード無効化後にダーティ行を返すべき");
     }
 
     #[test]

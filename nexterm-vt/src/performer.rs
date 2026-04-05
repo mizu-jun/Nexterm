@@ -218,6 +218,10 @@ impl Screen {
                 2004 => {
                     self.set_bracketed_paste(enable);
                 }
+                // DEC Private Mode 2026: 同期出力モード
+                2026 => {
+                    self.set_synchronized_output(enable);
+                }
                 _ => {}
             }
         }

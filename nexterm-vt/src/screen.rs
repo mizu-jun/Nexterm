@@ -65,6 +65,8 @@ pub struct Screen {
     pub alt_mode: bool,
     /// ブラケットペーストモード（DEC ?2004）が有効か
     bracketed_paste: bool,
+    /// 同期出力モード（DEC ?2026）が有効か（有効中はダーティフラグを溜める）
+    synchronized_output: bool,
 }
 
 impl Screen {
@@ -92,6 +94,7 @@ impl Screen {
             alt_screen: None,
             alt_mode: false,
             bracketed_paste: false,
+            synchronized_output: false,
         }
     }
 
@@ -156,7 +159,14 @@ impl Screen {
     }
 
     /// ダーティ行のみを収集して返す（差分転送用）
+    ///
+    /// 同期出力モード（DEC ?2026）が有効な場合は空を返し、
+    /// 無効化されたタイミングで蓄積分をまとめて返す。
     pub fn take_dirty_rows(&mut self) -> Vec<DirtyRow> {
+        // 同期出力モード中はレンダリングを保留する
+        if self.synchronized_output {
+            return Vec::new();
+        }
         let mut result = Vec::new();
         for (row_idx, dirty) in self.dirty.iter_mut().enumerate() {
             if *dirty {
@@ -169,6 +179,16 @@ impl Screen {
             }
         }
         result
+    }
+
+    /// 同期出力モード（DEC ?2026）の状態を返す
+    pub fn synchronized_output_mode(&self) -> bool {
+        self.synchronized_output
+    }
+
+    /// 同期出力モードを設定する（performer から呼び出す）
+    pub(crate) fn set_synchronized_output(&mut self, enabled: bool) {
+        self.synchronized_output = enabled;
     }
 
     /// 全画面スナップショット（Full Refresh 用）
