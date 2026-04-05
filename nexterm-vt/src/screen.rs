@@ -5,6 +5,30 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::image::{decode_kitty, decode_sixel};
 
+/// OSC 133 セマンティックゾーンのマーク種別
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SemanticMarkKind {
+    /// プロンプト開始（A）
+    PromptStart,
+    /// コマンド入力開始（B）
+    CommandStart,
+    /// コマンド実行開始・出力開始（C）
+    OutputStart,
+    /// コマンド終了（D）
+    CommandEnd,
+}
+
+/// OSC 133 セマンティックゾーンのマーク（行番号 + 種別）
+#[derive(Debug, Clone)]
+pub struct SemanticMark {
+    /// グリッド行番号（0始まり）
+    pub row: u16,
+    /// 種別
+    pub kind: SemanticMarkKind,
+    /// コマンド終了時の exit code（D マーク時のみ Some）
+    pub exit_code: Option<i32>,
+}
+
 /// 配置待ち画像（クライアントへの送信前）
 pub struct PendingImage {
     pub id: u32,
@@ -67,6 +91,16 @@ pub struct Screen {
     bracketed_paste: bool,
     /// 同期出力モード（DEC ?2026）が有効か（有効中はダーティフラグを溜める）
     synchronized_output: bool,
+    /// マウスレポーティングモード（X11 ?1000=1, SGR ?1006=2, 0=無効）
+    pub mouse_mode: u8,
+    /// OSC 133 セマンティックゾーンのマーク一覧（行番号 + マーク種別）
+    pub semantic_marks: Vec<SemanticMark>,
+    /// 現在アクティブな OSC 8 ハイパーリンク URL（None = リンクなし）
+    current_hyperlink_url: Option<String>,
+    /// OSC 8 ハイパーリンクの開始列（current_hyperlink_url が Some の場合に有効）
+    hyperlink_start_col: u16,
+    /// OSC 8 ハイパーリンクの開始行
+    hyperlink_start_row: u16,
 }
 
 impl Screen {
@@ -95,6 +129,11 @@ impl Screen {
             alt_mode: false,
             bracketed_paste: false,
             synchronized_output: false,
+            mouse_mode: 0,
+            semantic_marks: Vec::new(),
+            current_hyperlink_url: None,
+            hyperlink_start_col: 0,
+            hyperlink_start_row: 0,
         }
     }
 
@@ -527,5 +566,43 @@ impl Screen {
     /// ブラケットペーストモードを設定する（performer から呼び出す）
     pub(crate) fn set_bracketed_paste(&mut self, enabled: bool) {
         self.bracketed_paste = enabled;
+    }
+
+    /// OSC 133 セマンティックゾーンマークを記録する
+    pub(crate) fn add_semantic_mark(&mut self, kind: SemanticMarkKind, exit_code: Option<i32>) {
+        self.semantic_marks.push(SemanticMark {
+            row: self.cursor_row,
+            kind,
+            exit_code,
+        });
+    }
+
+    /// 溜まったセマンティックマークを取り出してクリアする
+    pub fn take_semantic_marks(&mut self) -> Vec<SemanticMark> {
+        std::mem::take(&mut self.semantic_marks)
+    }
+
+    /// OSC 8 ハイパーリンクの開始（url が Some）または終了（None）を処理する
+    pub(crate) fn set_hyperlink(&mut self, url: Option<String>) {
+        if let Some(active_url) = self.current_hyperlink_url.take() {
+            // 既存リンクを確定させて grid.hyperlinks に追加する
+            let col_end = self.cursor_col;
+            let row = self.hyperlink_start_row;
+            if self.hyperlink_start_row == row && col_end > self.hyperlink_start_col {
+                use nexterm_proto::HyperlinkSpan;
+                self.grid.hyperlinks.push(HyperlinkSpan {
+                    row,
+                    col_start: self.hyperlink_start_col,
+                    col_end,
+                    url: active_url,
+                });
+            }
+        }
+        if let Some(url) = url {
+            // 新しいリンクの開始位置を記録する
+            self.current_hyperlink_url = Some(url);
+            self.hyperlink_start_col = self.cursor_col;
+            self.hyperlink_start_row = self.cursor_row;
+        }
     }
 }

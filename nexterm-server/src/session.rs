@@ -268,6 +268,13 @@ impl Session {
             .unwrap_or(false)
     }
 
+    /// フォーカスペインのマウスレポーティングモードを返す（0=無効）
+    pub fn focused_mouse_mode(&self) -> u8 {
+        self.focused_window()
+            .map(|w| w.focused_mouse_mode())
+            .unwrap_or(0)
+    }
+
     /// ウィンドウ全体をリサイズする（全ペインを BSP 計算で再配置する）
     pub fn resize_focused(&mut self, cols: u16, rows: u16) -> Result<()> {
         self.cols = cols;

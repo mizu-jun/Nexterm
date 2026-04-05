@@ -215,6 +215,8 @@ pub struct CopyModeState {
     pub cursor_row: u16,
     /// 選択開始位置（v を押した時点のカーソル位置）
     pub selection_start: Option<(u16, u16)>,
+    /// インクリメンタル検索クエリ（Some の間は検索入力中）
+    pub search_query: Option<String>,
 }
 
 impl CopyModeState {
@@ -224,6 +226,7 @@ impl CopyModeState {
             cursor_col: 0,
             cursor_row: 0,
             selection_start: None,
+            search_query: None,
         }
     }
 
@@ -239,6 +242,7 @@ impl CopyModeState {
     pub fn exit(&mut self) {
         self.is_active = false;
         self.selection_start = None;
+        self.search_query = None;
     }
 
     /// 選択開始/終了をトグルする（v キー）
@@ -521,6 +525,8 @@ pub struct ClientState {
     pub file_transfer: FileTransferDialog,
     /// 設定パネル（Ctrl+,）
     pub settings_panel: SettingsPanel,
+    /// マウスレポーティングモード（サーバーから通知される: 0=無効, 1=X11, 2=SGR）
+    pub mouse_reporting_mode: u8,
 }
 
 impl ClientState {
@@ -548,6 +554,7 @@ impl ClientState {
             macro_picker: MacroPicker::new(vec![]),
             file_transfer: FileTransferDialog::new(),
             settings_panel: SettingsPanel::default(),
+            mouse_reporting_mode: 0,
         }
     }
 
@@ -635,6 +642,18 @@ impl ClientState {
                     self.status_bar_text = format!("SFTP OK: {}", path);
                 }
             }
+            // OSC 133 セマンティックゾーンマーク — ステータスバーに最新コマンド終了コードを表示
+            ServerToClient::SemanticMark { pane_id, kind, exit_code, .. } => {
+                if kind == "D" && self.focused_pane_id == Some(pane_id) {
+                    if let Some(code) = exit_code {
+                        if code != 0 {
+                            self.status_bar_text = format!("[exit: {}]", code);
+                        } else {
+                            self.status_bar_text.clear();
+                        }
+                    }
+                }
+            }
             ServerToClient::LayoutChanged { panes, focused_pane_id } => {
                 // レイアウトを全更新する
                 self.pane_layouts.clear();
@@ -714,6 +733,21 @@ impl ClientState {
     pub fn search_next(&mut self) {
         let from = self.search.current_match.map(|m| m + 1).unwrap_or(0);
         self.search_next_from(from);
+    }
+
+    /// 前のマッチへ移動する
+    pub fn search_prev(&mut self) {
+        let query = self.search.query.clone();
+        let current = self.search.current_match.unwrap_or(0);
+        let result = self
+            .focused_pane_mut()
+            .and_then(|pane| pane.scrollback.search_prev(&query, current));
+        self.search.current_match = result;
+        if let Some(row) = result
+            && let Some(pane) = self.focused_pane_mut()
+        {
+            pane.scroll_offset = row;
+        }
     }
 
     fn search_next_from(&mut self, from: usize) {

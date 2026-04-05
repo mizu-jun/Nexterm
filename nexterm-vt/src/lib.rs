@@ -7,7 +7,7 @@ pub mod image;
 mod performer;
 mod screen;
 
-pub use screen::{PendingImage, Screen};
+pub use screen::{PendingImage, Screen, SemanticMark, SemanticMarkKind};
 
 /// VT シーケンスを処理してグリッドを更新するパーサ
 pub struct VtParser {
@@ -157,5 +157,46 @@ mod tests {
         // CSI ?2004l — 無効化
         parser.advance(b"\x1b[?2004l");
         assert!(!parser.bracketed_paste_mode(), "?2004l で無効になるべき");
+    }
+
+    #[test]
+    fn osc133セマンティックゾーンが記録される() {
+        let mut parser = VtParser::new(80, 24);
+        // A: プロンプト開始 → B: コマンド開始 → C: 出力開始 → D;0: 終了
+        parser.advance(b"\x1b]133;A\x07\x1b]133;B\x07\x1b]133;C\x07\x1b]133;D;0\x07");
+        let marks = parser.screen_mut().take_semantic_marks();
+        assert_eq!(marks.len(), 4, "4つのマークが記録されること");
+        assert!(matches!(marks[0].kind, SemanticMarkKind::PromptStart));
+        assert!(matches!(marks[1].kind, SemanticMarkKind::CommandStart));
+        assert!(matches!(marks[2].kind, SemanticMarkKind::OutputStart));
+        assert!(matches!(marks[3].kind, SemanticMarkKind::CommandEnd));
+        assert_eq!(marks[3].exit_code, Some(0));
+    }
+
+    #[test]
+    fn osc133コマンド失敗時にexit_codeが記録される() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]133;D;1\x07");
+        let marks = parser.screen_mut().take_semantic_marks();
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].exit_code, Some(1));
+    }
+
+    #[test]
+    fn osc8ハイパーリンクがグリッドに記録される() {
+        let mut parser = VtParser::new(80, 24);
+        // ESC ] 8 ; ; https://example.com BEL + テキスト + リンク終了
+        parser.advance(b"\x1b]8;;https://example.com\x07Click\x1b]8;;\x07");
+        let grid = parser.screen().grid();
+        // 文字が書き込まれている
+        assert_eq!(grid.get(0, 0).unwrap().ch, 'C');
+        assert_eq!(grid.get(4, 0).unwrap().ch, 'k');
+        // hyperlinks にスパンが記録されている
+        assert!(!grid.hyperlinks.is_empty(), "ハイパーリンクスパンが存在すること");
+        let span = &grid.hyperlinks[0];
+        assert_eq!(span.url, "https://example.com");
+        assert_eq!(span.row, 0);
+        assert_eq!(span.col_start, 0);
+        assert_eq!(span.col_end, 5); // "Click" は 5 文字
     }
 }

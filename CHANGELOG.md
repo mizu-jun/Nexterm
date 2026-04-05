@@ -37,14 +37,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[[hosts]]` エントリと合わせてホスト一覧に表示する。
 - `Host *` ワイルドカードは除外。`nexterm.toml` に同じホスト+ポートがある場合は重複しない。
 
+**コピーモード vim 互換キー追加**
+
+- `w` / `b`: 単語単位の前後移動。
+- `$`: 行末へ移動。
+- `Y`: 現在行全体をヤンクしてコピーモードを終了。
+- `/`: インクリメンタル検索モード（Enter で確定、n で次のマッチ、Esc でキャンセル）。
+
+**OSC 8 ハイパーリンク対応**
+
+- `nexterm-proto`: `Grid.hyperlinks: Vec<HyperlinkSpan>` を追加。
+- VT パーサが `ESC ] 8 ; ; <url> BEL` … `ESC ] 8 ; ; BEL` を解釈してグリッドにスパンを記録。
+- GPU クライアントの URL クリック（`Ctrl+Click`）が OSC 8 リンクを優先検出するように。
+
+**タブ/ペインのアクティビティ通知**
+
+- 非フォーカスペインへの出力があると、タブバーのタブにオレンジ背景と「●」インジケーターを表示。
+
+**マウスレポーティング実装（SGR ?1006 / X11 ?1000）**
+
+- VT パーサが `CSI ?1000h` / `CSI ?1006h` を解釈してマウスモードを追跡。
+- GPU クライアントのマウスクリック・ドラッグが PTY に SGR エスケープシーケンスで送信される。
+- `nexterm-proto`: `ClientToServer::MouseReport` メッセージを追加。
+
+**スクロールバック検索 UI 完成**
+
+- `Scrollback::search_prev()` を追加。`Shift+Enter` または `Shift+N` で前のマッチへ移動。
+- 検索バーの UI を改善：カーソル `|`、アクセントライン、キー操作ヒント表示。
+
+**OSC 133 セマンティックゾーン対応**
+
+- VT パーサが `ESC ] 133 ; A/B/C/D BEL` を解釈してプロンプト/コマンド/出力の境界を追跡。
+- コマンド終了（D マーク）の exit code がステータスバーに表示される（非 0 時のみ）。
+- `nexterm-proto`: `ServerToClient::SemanticMark` メッセージを追加。
+
+**プロファイル機能（名前付き設定セット）**
+
+- `nexterm-config`: `Profile` 構造体と `Config.profiles` / `Config.active_profile` を追加。
+- `Profile` はフォント・カラー・シェル・スクロールバック・タブバーをベース設定から上書き可能。
+- `Config::effective()` でアクティブプロファイルを適用した設定を返す。
+- `Config::activate_profile(name)` / `clear_active_profile()` でプロファイル切り替えを制御。
+
 ### Changed
 
 - `nexterm-client-gpu`: `Settings` パネルのスキーム選択が 9 種に対応。
 
 ### Tests
 
-- `nexterm-vt`: ブラケットペーストモード有効化 / 無効化テスト追加。
+- `nexterm-vt`: ブラケットペーストモード有効化 / 無効化テスト追加。OSC 8 ハイパーリンク・OSC 133 セマンティックゾーンテスト追加（計 18 テスト）。
 - `nexterm-server`: BSP 4 分割レイアウト・セッション管理 API・SSH config パーサのテスト追加。
+- `nexterm-config`: プロファイル適用・TOML パースのテスト追加（計 17 テスト）。
 
 ---
 

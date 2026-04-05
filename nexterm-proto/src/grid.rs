@@ -13,6 +13,15 @@ pub struct DirtyRow {
     pub cells: Vec<Cell>,
 }
 
+/// OSC 8 ハイパーリンクのスパン情報
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HyperlinkSpan {
+    pub row: u16,
+    pub col_start: u16,
+    pub col_end: u16,
+    pub url: String,
+}
+
 /// 画面全体のスナップショット（Full Refresh 用）
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Grid {
@@ -23,6 +32,9 @@ pub struct Grid {
     /// カーソル位置
     pub cursor_col: u16,
     pub cursor_row: u16,
+    /// OSC 8 ハイパーリンク（VT シーケンスで明示的に指定されたもの）
+    #[serde(default)]
+    pub hyperlinks: Vec<HyperlinkSpan>,
 }
 
 impl Grid {
@@ -35,6 +47,7 @@ impl Grid {
             rows,
             cursor_col: 0,
             cursor_row: 0,
+            hyperlinks: Vec::new(),
         }
     }
 

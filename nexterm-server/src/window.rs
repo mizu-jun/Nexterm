@@ -609,6 +609,14 @@ impl Window {
             .unwrap_or(false)
     }
 
+    /// フォーカスペインのマウスレポーティングモードを返す（0=無効）
+    pub fn focused_mouse_mode(&self) -> u8 {
+        self.panes
+            .get(&self.focused_pane_id)
+            .map(|p| p.mouse_mode.load(std::sync::atomic::Ordering::Relaxed))
+            .unwrap_or(0)
+    }
+
     /// フォーカス中のペインのみをリサイズする（後方互換・単一ペイン用）
     #[allow(dead_code)]
     pub fn resize_focused(&mut self, cols: u16, rows: u16) -> Result<()> {

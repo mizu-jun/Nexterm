@@ -694,6 +694,34 @@ async fn dispatch(
             }
         }
 
+        MouseReport {
+            button,
+            col,
+            row,
+            pressed,
+            motion,
+        } => {
+            if let Some(ref name) = *current_session {
+                let arc = manager.sessions();
+                let sessions = arc.lock().await;
+                if let Some(s) = sessions.get(name) {
+                    let mode = s.focused_mouse_mode();
+                    if mode > 0 {
+                        // SGR モード（2）: CSI < Cb ; Cx ; Cy M/m
+                        // X11 モード（1）: 同様だが座標が 8bit に制限される（ここでは SGR で代用）
+                        let suffix = if *pressed || *motion { b'M' } else { b'm' };
+                        // ボタンコードを計算する（SGR 拡張）
+                        // motion 中は button に 32 を加算する
+                        let cb = *button as u32 + if *motion { 32 } else { 0 };
+                        let seq = format!("\x1b[<{};{};{}{}", cb, col + 1, row + 1, suffix as char);
+                        if let Err(e) = s.write_to_focused(seq.as_bytes()) {
+                            error!("マウスレポート送信エラー: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+
         ListSessions => {
             // アタッチせずにセッション一覧だけ返す
             let list = manager.list_sessions().await;

@@ -326,6 +326,8 @@ pub struct Pane {
     asciicast_writer: AsciicastWriterHandle,
     /// ブラケットペーストモード（DEC ?2004）が有効かどうか
     pub bracketed_paste: Arc<std::sync::atomic::AtomicBool>,
+    /// マウスレポーティングモード（0=無効, 1=X11 ?1000, 2=SGR ?1006）
+    pub mouse_mode: Arc<std::sync::atomic::AtomicU8>,
 }
 
 impl Pane {
@@ -424,6 +426,11 @@ impl Pane {
             Arc::new(std::sync::atomic::AtomicBool::new(false));
         let bracketed_paste_clone = Arc::clone(&bracketed_paste);
 
+        // マウスレポーティングモードを Arc<AtomicU8> で共有する
+        let mouse_mode: Arc<std::sync::atomic::AtomicU8> =
+            Arc::new(std::sync::atomic::AtomicU8::new(0));
+        let mouse_mode_clone = Arc::clone(&mouse_mode);
+
         // PTY 読み取りスレッドを起動する
         tokio::task::spawn_blocking(move || {
             let mut parser = VtParser::new(cols, rows);
@@ -450,6 +457,12 @@ impl Pane {
                         // ブラケットペーストモードの変化を AtomicBool に反映する
                         bracketed_paste_clone.store(
                             parser.bracketed_paste_mode(),
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+
+                        // マウスレポーティングモードの変化を AtomicU8 に反映する
+                        mouse_mode_clone.store(
+                            parser.screen().mouse_mode,
                             std::sync::atomic::Ordering::Relaxed,
                         );
 
@@ -508,6 +521,23 @@ impl Pane {
                             send_msg(&shared_tx_clone, msg);
                         }
 
+                        // OSC 133 セマンティックゾーンマークを送信する
+                        for mark in parser.screen_mut().take_semantic_marks() {
+                            let kind = match mark.kind {
+                                nexterm_vt::SemanticMarkKind::PromptStart => "A",
+                                nexterm_vt::SemanticMarkKind::CommandStart => "B",
+                                nexterm_vt::SemanticMarkKind::OutputStart => "C",
+                                nexterm_vt::SemanticMarkKind::CommandEnd => "D",
+                            };
+                            let msg = ServerToClient::SemanticMark {
+                                pane_id,
+                                row: mark.row,
+                                kind: kind.to_string(),
+                                exit_code: mark.exit_code,
+                            };
+                            send_msg(&shared_tx_clone, msg);
+                        }
+
                         // 画像データを送信する（Sixel / Kitty）
                         let images = parser.screen_mut().take_pending_images();
                         for img in images {
@@ -556,6 +586,7 @@ impl Pane {
             binary_log_writer,
             asciicast_writer,
             bracketed_paste,
+            mouse_mode,
         })
     }
 

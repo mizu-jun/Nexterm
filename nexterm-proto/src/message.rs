@@ -52,21 +52,13 @@ pub enum KeyCode {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ClientToServer {
     /// キー入力イベント
-    KeyEvent {
-        code: KeyCode,
-        modifiers: Modifiers,
-    },
+    KeyEvent { code: KeyCode, modifiers: Modifiers },
     /// 端末サイズ変更
-    Resize {
-        cols: u16,
-        rows: u16,
-    },
+    Resize { cols: u16, rows: u16 },
     /// セッションからデタッチ（クライアント終了）
     Detach,
     /// セッション名を指定してアタッチ
-    Attach {
-        session_name: String,
-    },
+    Attach { session_name: String },
     /// ペイン作成（垂直分割）
     SplitVertical,
     /// ペイン作成（水平分割）
@@ -86,7 +78,10 @@ pub enum ClientToServer {
     /// セッションを強制終了する
     KillSession { name: String },
     /// セッション録音を開始する
-    StartRecording { session_name: String, output_path: String },
+    StartRecording {
+        session_name: String,
+        output_path: String,
+    },
     /// セッション録音を停止する
     StopRecording { session_name: String },
     /// フォーカスペインを閉じる
@@ -127,7 +122,10 @@ pub enum ClientToServer {
     /// ペイン番号オーバーレイを表示/非表示
     DisplayPanes { show: bool },
     /// asciicast v2 形式での録画を開始する
-    StartAsciicast { session_name: String, output_path: String },
+    StartAsciicast {
+        session_name: String,
+        output_path: String,
+    },
     /// asciicast v2 形式での録画を停止する
     StopAsciicast { session_name: String },
     /// レイアウトテンプレートを保存する
@@ -170,6 +168,19 @@ pub enum ClientToServer {
         #[serde(default)]
         display_name: String,
     },
+    /// マウスイベントを PTY に送信する（マウスレポーティングモード時）
+    MouseReport {
+        /// ボタン番号（0=左, 1=中, 2=右, 64=ホイールアップ, 65=ホイールダウン）
+        button: u8,
+        /// グリッド列（0始まり）
+        col: u16,
+        /// グリッド行（0始まり）
+        row: u16,
+        /// 押下 = true、リリース = false
+        pressed: bool,
+        /// マウス移動イベント（ドラッグ）
+        motion: bool,
+    },
     /// シリアルポートに接続する
     ConnectSerial {
         /// デバイスパス（例: "/dev/ttyUSB0", "COM3"）
@@ -188,9 +199,15 @@ pub enum ClientToServer {
     },
 }
 
-fn default_data_bits() -> u8 { 8 }
-fn default_stop_bits() -> u8 { 1 }
-fn default_parity() -> String { "none".to_string() }
+fn default_data_bits() -> u8 {
+    8
+}
+fn default_stop_bits() -> u8 {
+    1
+}
+fn default_parity() -> String {
+    "none".to_string()
+}
 
 /// ペインのレイアウト情報（グリッド座標系）
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -219,20 +236,13 @@ pub enum ServerToClient {
         cursor_row: u16,
     },
     /// 全画面スナップショット（アタッチ時・再接続時）
-    FullRefresh {
-        pane_id: u32,
-        grid: Grid,
-    },
+    FullRefresh { pane_id: u32, grid: Grid },
     /// セッション一覧
-    SessionList {
-        sessions: Vec<SessionInfo>,
-    },
+    SessionList { sessions: Vec<SessionInfo> },
     /// Ping の応答
     Pong,
     /// エラー通知
-    Error {
-        message: String,
-    },
+    Error { message: String },
     /// 画像配置通知（Sixel / Kitty プロトコル）
     ImagePlaced {
         pane_id: u32,
@@ -266,7 +276,11 @@ pub enum ServerToClient {
     /// ウィンドウ/ペインタイトル変更通知
     TitleChanged { pane_id: u32, title: String },
     /// デスクトップ通知
-    DesktopNotification { pane_id: u32, title: String, body: String },
+    DesktopNotification {
+        pane_id: u32,
+        title: String,
+        body: String,
+    },
     /// ブロードキャストモード状態通知
     BroadcastModeChanged { enabled: bool },
     /// asciicast v2 録画開始通知
@@ -300,6 +314,15 @@ pub enum ServerToClient {
         path: String,
         /// 成功時は None, エラー時はメッセージ
         error: Option<String>,
+    },
+    /// OSC 133 セマンティックゾーンマーク通知
+    SemanticMark {
+        pane_id: u32,
+        row: u16,
+        /// "A"=PromptStart, "B"=CommandStart, "C"=OutputStart, "D"=CommandEnd
+        kind: String,
+        /// D マーク時のみ Some
+        exit_code: Option<i32>,
     },
 }
 

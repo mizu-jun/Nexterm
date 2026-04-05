@@ -124,6 +124,29 @@ impl Scrollback {
         }
         None
     }
+
+    /// インクリメンタル検索 — パターンにマッチする前の行インデックスを返す
+    ///
+    /// `before_row` より前の行を逆方向に検索する。折り返しあり。
+    pub fn search_prev(&self, pattern: &str, before_row: usize) -> Option<usize> {
+        if pattern.is_empty() || self.len == 0 {
+            return None;
+        }
+        let Ok(re) = Regex::new(pattern) else {
+            return None;
+        };
+
+        for offset in 1..=self.len {
+            let row_idx = (before_row + self.len - offset) % self.len;
+            if let Some(line) = self.get(row_idx) {
+                let text = Self::line_to_string(line);
+                if re.is_match(&text) {
+                    return Some(row_idx);
+                }
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]
@@ -133,7 +156,10 @@ mod tests {
 
     fn make_line(text: &str) -> Vec<Cell> {
         text.chars()
-            .map(|ch| Cell { ch, ..Default::default() })
+            .map(|ch| Cell {
+                ch,
+                ..Default::default()
+            })
             .collect()
     }
 

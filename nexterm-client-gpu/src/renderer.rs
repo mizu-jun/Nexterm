@@ -1330,9 +1330,26 @@ impl WgpuState {
 
         for (i, &pane_id) in pane_ids.iter().enumerate() {
             let is_active = pane_id == focused_id;
-            let label = format!(" pane:{} ", pane_id);
+            // アクティビティフラグを確認して「●」インジケーターを付与する
+            let has_activity = state
+                .panes
+                .get(&pane_id)
+                .map(|p| p.has_activity)
+                .unwrap_or(false);
+            let label = if has_activity && !is_active {
+                format!(" pane:{} ● ", pane_id)
+            } else {
+                format!(" pane:{} ", pane_id)
+            };
             let label_w = label.chars().count() as f32 * cell_w + padding * 2.0;
-            let tab_bg = if is_active { active_bg } else { inactive_bg };
+            // アクティビティがある非アクティブタブは背景をオレンジ寄りに変更する
+            let tab_bg = if is_active {
+                active_bg
+            } else if has_activity {
+                [0.45, 0.30, 0.10, 1.0]
+            } else {
+                inactive_bg
+            };
 
             // タブ背景
             add_px_rect(x_offset, bar_y, label_w, bar_h, tab_bg, sw, sh, bg_verts, bg_idx);
@@ -1454,18 +1471,33 @@ impl WgpuState {
     ) {
         // ステータスラインの 1 行上に検索バーを表示する
         let py = sh - cell_h * 2.0;
-        add_px_rect(0.0, py, sw, cell_h, [0.1, 0.1, 0.1, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(0.0, py, sw, cell_h, [0.08, 0.10, 0.15, 1.0], sw, sh, bg_verts, bg_idx);
+        // 上辺に細いアクセントラインを引く
+        add_px_rect(0.0, py, sw, 2.0, [0.3, 0.7, 1.0, 1.0], sw, sh, bg_verts, bg_idx);
 
-        let match_info = if let Some(idx) = state.search.current_match {
-            format!(" SEARCH: {}  (match:{})", state.search.query, idx)
-        } else if state.search.query.is_empty() {
-            " SEARCH: ".to_string()
+        // 検索クエリとカーソル（点滅の代わりに常時 `|` を表示）
+        let query_with_cursor = format!("{}|", state.search.query);
+        let match_text = if let Some(idx) = state.search.current_match {
+            format!("  ↑↓:{}", idx)
+        } else if !state.search.query.is_empty() {
+            "  (no match)".to_string()
         } else {
-            format!(" SEARCH: {}  (no match)", state.search.query)
+            String::new()
         };
+        let label = format!(" / {}{}", query_with_cursor, match_text);
         add_string_verts(
-            &match_info, 0.0, py,
+            &label, 0.0, py,
             [0.3, 1.0, 0.5, 1.0], false,
+            sw, sh, cell_w, font, atlas, &self.queue,
+            text_verts, text_idx,
+        );
+
+        // 右端にキー操作ヒントを表示する
+        let hint = "Enter/↑ next  Shift+Enter/↑ prev  Esc close ";
+        let hint_x = sw - hint.chars().count() as f32 * cell_w;
+        add_string_verts(
+            hint, hint_x.max(0.0), py,
+            [0.55, 0.55, 0.55, 1.0], false,
             sw, sh, cell_w, font, atlas, &self.queue,
             text_verts, text_idx,
         );
@@ -2521,14 +2553,24 @@ impl ApplicationHandler for EventHandler {
             // マウスカーソル位置を追跡する（ドラッグ中は選択範囲を更新する）
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_position = Some((position.x, position.y));
+                let cell_w = self.app.font.cell_width() as f64;
+                let cell_h = self.app.font.cell_height() as f64;
+                let col = (position.x / cell_w) as u16;
+                let row = (position.y / cell_h) as u16;
                 if self.app.state.mouse_sel.is_dragging {
-                    let cell_w = self.app.font.cell_width() as f64;
-                    let cell_h = self.app.font.cell_height() as f64;
-                    let col = (position.x / cell_w) as u16;
-                    let row = (position.y / cell_h) as u16;
                     self.app.state.mouse_sel.update(col, row);
                     if let Some(w) = &self.window {
                         w.request_redraw();
+                    }
+                    // ドラッグ中もマウスモーションをレポートする（ボタン0=左ドラッグ）
+                    if let Some(conn) = &self.connection {
+                        let _ = conn.send_tx.try_send(ClientToServer::MouseReport {
+                            button: 0,
+                            col,
+                            row,
+                            pressed: true,
+                            motion: true,
+                        });
                     }
                 }
             }
@@ -2548,7 +2590,7 @@ impl ApplicationHandler for EventHandler {
                 }
             }
 
-            // 左ボタン押下: 選択開始
+            // 左ボタン押下: 選択開始 + マウスレポート
             WindowEvent::MouseInput {
                 button: MouseButton::Left,
                 state: ElementState::Pressed,
@@ -2560,6 +2602,16 @@ impl ApplicationHandler for EventHandler {
                     let col = (px / cell_w) as u16;
                     let row = (py / cell_h) as u16;
                     self.app.state.mouse_sel.begin(col, row);
+                    // マウスレポーティングが有効なら PTY にイベントを送信する
+                    if let Some(conn) = &self.connection {
+                        let _ = conn.send_tx.try_send(ClientToServer::MouseReport {
+                            button: 0,
+                            col,
+                            row,
+                            pressed: true,
+                            motion: false,
+                        });
+                    }
                 }
             }
 
@@ -3096,12 +3148,25 @@ impl EventHandler {
         }
 
         // 検索モードの特殊キー
-        if self.app.state.search.is_active
-            && code == WKeyCode::Enter {
-                self.app.state.search_next();
-                return true;
+        if self.app.state.search.is_active {
+            match code {
+                // Enter: 次のマッチへ / Shift+Enter: 前のマッチへ
+                WKeyCode::Enter => {
+                    if shift {
+                        self.app.state.search_prev();
+                    } else {
+                        self.app.state.search_next();
+                    }
+                    return true;
+                }
+                // N: 前のマッチへ（vim 慣習）
+                WKeyCode::KeyN if shift => {
+                    self.app.state.search_prev();
+                    return true;
+                }
+                _ => {}
             }
-            // 他のキーは消費しない（上の search.is_active ブロックで処理済み）
+        }
 
         // Ctrl++（Equal / Plus）: フォントサイズを大きくする
         if ctrl && (code == WKeyCode::Equal || code == WKeyCode::NumpadAdd) {
@@ -3133,6 +3198,15 @@ impl EventHandler {
     fn find_url_at(&self, col: u16, row: u16) -> Option<String> {
         use crate::state::detect_urls_in_row;
         let pane = self.app.state.focused_pane()?;
+
+        // OSC 8 ハイパーリンクを優先チェックする
+        for span in &pane.grid.hyperlinks {
+            if span.row == row && col >= span.col_start && col < span.col_end {
+                return Some(span.url.clone());
+            }
+        }
+
+        // テキストパターンから URL を動的検出する
         let cells = pane.grid.rows.get(row as usize)?;
         let urls = detect_urls_in_row(row, cells);
         urls.into_iter().find(|u| u.contains(col, row)).map(|u| u.url)
@@ -3140,6 +3214,11 @@ impl EventHandler {
 
     /// コピーモードのキー入力を処理する（true = 消費済み）
     fn handle_copy_mode_key(&mut self, code: WKeyCode) -> bool {
+        // 検索入力中は専用ハンドラに委譲する
+        if self.app.state.copy_mode.search_query.is_some() {
+            return self.handle_copy_mode_search_key(code);
+        }
+
         let cm = &mut self.app.state.copy_mode;
         let max_col = self.app.state.cols.saturating_sub(1);
         let max_row = self.app.state.rows.saturating_sub(1);
@@ -3173,17 +3252,226 @@ impl EventHandler {
             WKeyCode::Digit0 => {
                 cm.cursor_col = 0;
             }
+            // $: 行末へ移動
+            WKeyCode::Digit4 => {
+                // Shift+4 = '$' として扱う（WKeyCode には Dollar がないため）
+                cm.cursor_col = max_col;
+            }
+            // w: 次の単語の先頭へ移動
+            WKeyCode::KeyW => {
+                let (col, row) = (cm.cursor_col, cm.cursor_row);
+                if let Some((nc, nr)) = self.find_next_word_start(col, row, max_col, max_row) {
+                    let cm = &mut self.app.state.copy_mode;
+                    cm.cursor_col = nc;
+                    cm.cursor_row = nr;
+                }
+            }
+            // b: 前の単語の先頭へ移動
+            WKeyCode::KeyB => {
+                let (col, row) = (cm.cursor_col, cm.cursor_row);
+                if let Some((nc, nr)) = self.find_prev_word_start(col, row) {
+                    let cm = &mut self.app.state.copy_mode;
+                    cm.cursor_col = nc;
+                    cm.cursor_row = nr;
+                }
+            }
             // v: 選択開始/終了をトグル
             WKeyCode::KeyV => {
                 cm.toggle_selection();
             }
-            // y: 選択テキストをクリップボードにコピーして終了
+            // y / Y: y=選択テキストをヤンク、Y=行全体をヤンク
             WKeyCode::KeyY => {
-                self.yank_selection();
+                if self.modifiers.shift_key() {
+                    self.yank_current_line();
+                } else {
+                    self.yank_selection();
+                }
+            }
+            // /: インクリメンタル検索モードへ
+            WKeyCode::Slash => {
+                self.app.state.copy_mode.search_query = Some(String::new());
+            }
+            // n: 次の検索結果へ
+            WKeyCode::KeyN => {
+                let q = self
+                    .app
+                    .state
+                    .copy_mode
+                    .search_query
+                    .clone()
+                    .unwrap_or_default();
+                if !q.is_empty() {
+                    let (col, row) = (
+                        self.app.state.copy_mode.cursor_col,
+                        self.app.state.copy_mode.cursor_row,
+                    );
+                    if let Some((nc, nr)) = self.search_forward(&q, col + 1, row, max_col, max_row)
+                    {
+                        self.app.state.copy_mode.cursor_col = nc;
+                        self.app.state.copy_mode.cursor_row = nr;
+                    }
+                }
             }
             _ => return false,
         }
         true
+    }
+
+    /// 検索入力中のキー処理（true = 消費済み）
+    fn handle_copy_mode_search_key(&mut self, code: WKeyCode) -> bool {
+        match code {
+            // Escape: 検索をキャンセルして通常コピーモードへ
+            WKeyCode::Escape => {
+                self.app.state.copy_mode.search_query = None;
+            }
+            // Enter: 検索確定して最初のマッチへジャンプ
+            WKeyCode::Enter => {
+                let q = self
+                    .app
+                    .state
+                    .copy_mode
+                    .search_query
+                    .clone()
+                    .unwrap_or_default();
+                self.app.state.copy_mode.search_query = None;
+                if !q.is_empty() {
+                    let max_col = self.app.state.cols.saturating_sub(1);
+                    let max_row = self.app.state.rows.saturating_sub(1);
+                    let (col, row) = (
+                        self.app.state.copy_mode.cursor_col,
+                        self.app.state.copy_mode.cursor_row,
+                    );
+                    if let Some((nc, nr)) = self.search_forward(&q, col, row, max_col, max_row) {
+                        self.app.state.copy_mode.cursor_col = nc;
+                        self.app.state.copy_mode.cursor_row = nr;
+                        // 最後の検索クエリを保存して n キーで再利用できるようにする
+                        self.app.state.copy_mode.search_query = Some(q);
+                    }
+                }
+            }
+            // Backspace: クエリの末尾を削除
+            WKeyCode::Backspace => {
+                if let Some(ref mut q) = self.app.state.copy_mode.search_query {
+                    q.pop();
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// 次の単語の先頭位置を返す（見つからなければ None）
+    fn find_next_word_start(
+        &self,
+        col: u16,
+        row: u16,
+        max_col: u16,
+        max_row: u16,
+    ) -> Option<(u16, u16)> {
+        let pane = self.app.state.focused_pane()?;
+        let mut c = col as usize;
+        let mut r = row as usize;
+
+        // 現在位置が単語文字なら単語の終わりまでスキップ
+        if let Some(cells) = pane.grid.rows.get(r) {
+            while c < cells.len() && !cells[c].ch.is_whitespace() {
+                c += 1;
+            }
+        }
+        // 次の単語の先頭（空白をスキップ）
+        loop {
+            if let Some(cells) = pane.grid.rows.get(r) {
+                while c < cells.len() {
+                    if !cells[c].ch.is_whitespace() {
+                        return Some((c as u16, r as u16));
+                    }
+                    c += 1;
+                }
+            }
+            // 次の行へ
+            if r >= max_row as usize {
+                break;
+            }
+            r += 1;
+            c = 0;
+        }
+        Some((max_col, max_row))
+    }
+
+    /// 前の単語の先頭位置を返す（見つからなければ None）
+    fn find_prev_word_start(&self, col: u16, row: u16) -> Option<(u16, u16)> {
+        let pane = self.app.state.focused_pane()?;
+        let mut c = col as isize - 1;
+        let mut r = row as isize;
+
+        // 現在位置の直前が空白ならスキップ
+        loop {
+            if c < 0 {
+                if r <= 0 {
+                    return Some((0, 0));
+                }
+                r -= 1;
+                c = pane
+                    .grid
+                    .rows
+                    .get(r as usize)
+                    .map(|row| row.len() as isize - 1)
+                    .unwrap_or(0);
+            }
+            if let Some(cells) = pane.grid.rows.get(r as usize) {
+                if c < cells.len() as isize && !cells[c as usize].ch.is_whitespace() {
+                    break;
+                }
+            }
+            c -= 1;
+        }
+        // 単語の先頭までスキップ
+        loop {
+            if c <= 0 {
+                return Some((0, r as u16));
+            }
+            if let Some(cells) = pane.grid.rows.get(r as usize) {
+                if c - 1 < cells.len() as isize
+                    && cells[(c - 1) as usize].ch.is_whitespace()
+                {
+                    break;
+                }
+            } else {
+                break;
+            }
+            c -= 1;
+        }
+        Some((c as u16, r as u16))
+    }
+
+    /// 前方検索: クエリに最初にマッチする (col, row) を返す
+    fn search_forward(
+        &self,
+        query: &str,
+        start_col: u16,
+        start_row: u16,
+        max_col: u16,
+        max_row: u16,
+    ) -> Option<(u16, u16)> {
+        let pane = self.app.state.focused_pane()?;
+        let rows_total = (max_row + 1) as usize;
+
+        for dr in 0..rows_total {
+            let r = ((start_row as usize) + dr) % rows_total;
+            let cells = pane.grid.rows.get(r)?;
+            let row_str: String = cells.iter().map(|c| c.ch).collect();
+            let col_start = if dr == 0 { start_col as usize } else { 0 };
+            let search_in = if col_start < row_str.len() {
+                &row_str[col_start..]
+            } else {
+                continue;
+            };
+            if let Some(offset) = search_in.find(query) {
+                let found_col = (col_start + offset).min(max_col as usize) as u16;
+                return Some((found_col, r as u16));
+            }
+        }
+        None
     }
 
     /// 選択範囲のテキストをクリップボードにコピーしてコピーモードを終了する
@@ -3217,6 +3505,26 @@ impl EventHandler {
                 && let Ok(mut clipboard) = arboard::Clipboard::new() {
                     let _ = clipboard.set_text(text);
                 }
+        }
+        self.app.state.copy_mode.exit();
+    }
+
+    /// カーソル行全体をクリップボードにコピーしてコピーモードを終了する（Y キー）
+    fn yank_current_line(&mut self) {
+        let row_idx = self.app.state.copy_mode.cursor_row as usize;
+        let text = if let Some(pane) = self.app.state.focused_pane() {
+            pane.grid
+                .rows
+                .get(row_idx)
+                .map(|row| row.iter().map(|c| c.ch).collect::<String>())
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        if !text.is_empty()
+            && let Ok(mut clipboard) = arboard::Clipboard::new()
+        {
+            let _ = clipboard.set_text(text);
         }
         self.app.state.copy_mode.exit();
     }

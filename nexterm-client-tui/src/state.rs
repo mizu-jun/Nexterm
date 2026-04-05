@@ -21,7 +21,12 @@ impl PaneState {
     }
 
     /// 差分を適用する
-    fn apply_diff(&mut self, dirty_rows: Vec<nexterm_proto::DirtyRow>, cursor_col: u16, cursor_row: u16) {
+    fn apply_diff(
+        &mut self,
+        dirty_rows: Vec<nexterm_proto::DirtyRow>,
+        cursor_col: u16,
+        cursor_row: u16,
+    ) {
         for dirty in dirty_rows {
             if let Some(row) = self.grid.rows.get_mut(dirty.row as usize) {
                 *row = dirty.cells;
@@ -60,9 +65,10 @@ impl ClientState {
             ServerToClient::FullRefresh { pane_id, grid } => {
                 let cursor_col = grid.cursor_col;
                 let cursor_row = grid.cursor_row;
-                let state = self.panes.entry(pane_id).or_insert_with(|| {
-                    PaneState::new(grid.width, grid.height)
-                });
+                let state = self
+                    .panes
+                    .entry(pane_id)
+                    .or_insert_with(|| PaneState::new(grid.width, grid.height));
                 state.grid = grid;
                 state.cursor_col = cursor_col;
                 state.cursor_row = cursor_row;
@@ -92,7 +98,9 @@ impl ClientState {
             // TUI クライアントは画像プロトコル非対応のため無視する
             ServerToClient::ImagePlaced { .. } => {}
             // フォーカスペイン ID を更新する（TUI は単一ペイン表示のため位置情報は使わない）
-            ServerToClient::LayoutChanged { focused_pane_id, .. } => {
+            ServerToClient::LayoutChanged {
+                focused_pane_id, ..
+            } => {
                 self.focused_pane_id = Some(focused_pane_id);
             }
             // TUI ではベル通知は無視する
@@ -116,7 +124,8 @@ impl ClientState {
             | ServerToClient::PaneBroken { .. }
             | ServerToClient::SerialConnected { .. }
             | ServerToClient::SftpProgress { .. }
-            | ServerToClient::SftpDone { .. } => {}
+            | ServerToClient::SftpDone { .. }
+            | ServerToClient::SemanticMark { .. } => {}
         }
     }
 
@@ -128,24 +137,20 @@ impl ClientState {
 
     /// フォーカス中のペイン状態を返す
     pub fn focused_pane(&self) -> Option<&PaneState> {
-        self.focused_pane_id
-            .and_then(|id| self.panes.get(&id))
+        self.focused_pane_id.and_then(|id| self.panes.get(&id))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexterm_proto::{DirtyRow, Cell};
+    use nexterm_proto::{Cell, DirtyRow};
 
     #[test]
     fn full_refreshでペインが登録される() {
         let mut state = ClientState::new();
         let grid = Grid::new(80, 24);
-        state.apply_server_message(ServerToClient::FullRefresh {
-            pane_id: 1,
-            grid,
-        });
+        state.apply_server_message(ServerToClient::FullRefresh { pane_id: 1, grid });
         assert!(state.panes.contains_key(&1));
         assert_eq!(state.focused_pane_id, Some(1));
     }

@@ -19,7 +19,7 @@ pub use loader::{ConfigLoader, lua_path, toml_path};
 pub use lua_hooks::{HookEvent, LuaHookRunner};
 pub use schema::{
     BuiltinScheme, ColorScheme, Config, CustomPalette, FontConfig, HooksConfig, HostConfig,
-    KeyBinding, LogConfig, MacroConfig, SchemePalette, SerialPortConfig, ShellConfig,
+    KeyBinding, LogConfig, MacroConfig, Profile, SchemePalette, SerialPortConfig, ShellConfig,
     StatusBarConfig, TabBarConfig, TlsConfig, WebAuthConfig, WebConfig, WindowConfig,
     WindowDecorations,
 };

@@ -2,7 +2,7 @@
 
 use vte::Perform;
 
-use crate::screen::Screen;
+use crate::screen::{Screen, SemanticMarkKind};
 
 impl Perform for Screen {
     /// 印字可能文字の書き込み
@@ -161,6 +161,22 @@ impl Perform for Screen {
                         self.set_pending_title(title.to_string());
                     }
             }
+            // OSC 8: ハイパーリンク
+            // フォーマット: ESC ] 8 ; <params> ; <URI> BEL
+            // URI が空文字列の場合はリンク終了
+            "8" => {
+                // params[1] = オプション（無視可）、params[2] = URI
+                let uri = params
+                    .get(2)
+                    .and_then(|b| std::str::from_utf8(b).ok())
+                    .unwrap_or("")
+                    .trim();
+                if uri.is_empty() {
+                    self.set_hyperlink(None);
+                } else {
+                    self.set_hyperlink(Some(uri.to_string()));
+                }
+            }
             // OSC 9: iTerm2 互換デスクトップ通知
             // フォーマット: ESC ] 9 ; <メッセージ> BEL
             "9" => {
@@ -168,6 +184,35 @@ impl Perform for Screen {
                     && let Ok(msg) = std::str::from_utf8(msg_bytes) {
                         self.set_pending_notification("Nexterm".to_string(), msg.to_string());
                     }
+            }
+            // OSC 133: セマンティックゾーン（プロンプト / コマンド / 出力のマーキング）
+            // フォーマット: ESC ] 133 ; <A|B|C|D[;exit_code]> ST
+            "133" => {
+                if let Some(mark_bytes) = params.get(1)
+                    && let Ok(mark) = std::str::from_utf8(mark_bytes)
+                {
+                    match mark.trim() {
+                        "A" => {
+                            self.add_semantic_mark(SemanticMarkKind::PromptStart, None);
+                        }
+                        "B" => {
+                            self.add_semantic_mark(SemanticMarkKind::CommandStart, None);
+                        }
+                        "C" => {
+                            self.add_semantic_mark(SemanticMarkKind::OutputStart, None);
+                        }
+                        "D" => {
+                            // ESC ] 133 ; D ; <exit_code> BEL
+                            // params[2] が exit_code（省略可能）
+                            let exit_code = params
+                                .get(2)
+                                .and_then(|b| std::str::from_utf8(b).ok())
+                                .and_then(|s| s.trim().parse::<i32>().ok());
+                            self.add_semantic_mark(SemanticMarkKind::CommandEnd, exit_code);
+                        }
+                        _ => {}
+                    }
+                }
             }
             _ => {}
         }
@@ -213,6 +258,14 @@ impl Screen {
                     } else {
                         self.switch_to_primary();
                     }
+                }
+                // DEC Private Mode 1000: X11 マウスレポーティング（基本クリック）
+                1000 => {
+                    self.mouse_mode = if enable { 1 } else { 0 };
+                }
+                // DEC Private Mode 1006: SGR 拡張マウスレポーティング
+                1006 => {
+                    self.mouse_mode = if enable { 2 } else { 0 };
                 }
                 // DEC Private Mode 2004: ブラケットペーストモード
                 2004 => {

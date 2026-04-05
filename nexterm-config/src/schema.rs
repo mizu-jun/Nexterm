@@ -671,7 +671,64 @@ impl Default for ApiVersion {
     }
 }
 
-/// nexterm のトップレベル設定
+/// 名前付き設定プロファイル（フォント・カラー・シェルを上書きできる）
+///
+/// ```toml
+/// [[profiles]]
+/// name = "dark"
+///
+/// [profiles.font]
+/// family = "Hack Nerd Font"
+/// size = 14.0
+///
+/// [profiles.colors]
+/// scheme = "catppuccin"
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct Profile {
+    /// プロファイル名（一意）
+    pub name: String,
+    /// フォント設定（None = Config の font を使用）
+    #[serde(default)]
+    pub font: Option<FontConfig>,
+    /// カラースキーム設定（None = Config の colors を使用）
+    #[serde(default)]
+    pub colors: Option<ColorScheme>,
+    /// シェル設定（None = Config の shell を使用）
+    #[serde(default)]
+    pub shell: Option<ShellConfig>,
+    /// スクロールバック行数（None = Config の値を使用）
+    #[serde(default)]
+    pub scrollback_lines: Option<usize>,
+    /// タブバー設定（None = Config の tab_bar を使用）
+    #[serde(default)]
+    pub tab_bar: Option<TabBarConfig>,
+}
+
+impl Profile {
+    /// このプロファイルを `base` Config に適用して新しい Config を返す
+    pub fn apply_to(&self, base: &Config) -> Config {
+        let mut result = base.clone();
+        if let Some(font) = &self.font {
+            result.font = font.clone();
+        }
+        if let Some(colors) = &self.colors {
+            result.colors = colors.clone();
+        }
+        if let Some(shell) = &self.shell {
+            result.shell = shell.clone();
+        }
+        if let Some(lines) = self.scrollback_lines {
+            result.scrollback_lines = lines;
+        }
+        if let Some(tab_bar) = &self.tab_bar {
+            result.tab_bar = tab_bar.clone();
+        }
+        result
+    }
+}
+
+/// メイン設定構造体
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     /// 設定ロード時に発生したエラー一覧（Lua/TOML パースエラー）
@@ -738,6 +795,14 @@ pub struct Config {
     /// Web ターミナル設定（WebSocket + xterm.js）
     #[serde(default)]
     pub web: WebConfig,
+
+    /// 名前付き設定プロファイル一覧
+    #[serde(default)]
+    pub profiles: Vec<Profile>,
+
+    /// 現在アクティブなプロファイル名（None = デフォルト設定を使用）
+    #[serde(default)]
+    pub active_profile: Option<String>,
 }
 
 fn default_scrollback() -> usize {
@@ -763,7 +828,34 @@ impl Default for Config {
             log: LogConfig::default(),
             hooks: HooksConfig::default(),
             web: WebConfig::default(),
+            profiles: Vec::new(),
+            active_profile: None,
         }
+    }
+}
+
+impl Config {
+    /// アクティブプロファイルを適用した設定を返す。
+    /// プロファイルが未設定または存在しない場合は self を clone して返す。
+    pub fn effective(&self) -> Config {
+        if let Some(ref name) = self.active_profile {
+            if let Some(profile) = self.profiles.iter().find(|p| &p.name == name) {
+                return profile.apply_to(self);
+            }
+        }
+        self.clone()
+    }
+
+    /// 指定名のプロファイルをアクティブにする（存在しない名前は無視）
+    pub fn activate_profile(&mut self, name: &str) {
+        if self.profiles.iter().any(|p| p.name == name) {
+            self.active_profile = Some(name.to_string());
+        }
+    }
+
+    /// プロファイルをクリアしてデフォルト設定に戻す
+    pub fn clear_active_profile(&mut self) {
+        self.active_profile = None;
     }
 }
 
@@ -840,5 +932,60 @@ mod tests {
         let parsed: Config = toml::from_str(&toml_str).unwrap();
         assert_eq!(config.font, parsed.font);
         assert_eq!(config.scrollback_lines, parsed.scrollback_lines);
+    }
+
+    #[test]
+    fn プロファイルが設定に適用される() {
+        let mut config = Config::default();
+        config.profiles.push(Profile {
+            name: "big-font".to_string(),
+            font: Some(FontConfig {
+                family: "Hack Nerd Font".to_string(),
+                size: 20.0,
+                ..FontConfig::default()
+            }),
+            ..Profile::default()
+        });
+
+        config.activate_profile("big-font");
+        let effective = config.effective();
+        assert_eq!(effective.font.size, 20.0);
+        assert_eq!(effective.font.family, "Hack Nerd Font");
+        // プロファイルで指定していない設定はベースのまま
+        assert_eq!(effective.scrollback_lines, config.scrollback_lines);
+    }
+
+    #[test]
+    fn 存在しないプロファイルは無視される() {
+        let mut config = Config::default();
+        config.activate_profile("non-existent");
+        // 存在しない場合は active_profile が変わらない
+        assert_eq!(config.active_profile, None);
+    }
+
+    #[test]
+    fn プロファイルなしはベース設定をそのまま返す() {
+        let config = Config::default();
+        let effective = config.effective();
+        assert_eq!(effective.font, config.font);
+    }
+
+    #[test]
+    fn プロファイルをtrueでパースできる() {
+        let toml_str = r#"
+[[profiles]]
+name = "minimal"
+
+[profiles.font]
+family = "Inconsolata"
+size = 12.0
+ligatures = false
+"#;
+        let parsed: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.profiles.len(), 1);
+        assert_eq!(parsed.profiles[0].name, "minimal");
+        let font = parsed.profiles[0].font.as_ref().unwrap();
+        assert_eq!(font.size, 12.0);
+        assert!(!font.ligatures);
     }
 }
