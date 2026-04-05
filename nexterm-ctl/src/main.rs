@@ -18,6 +18,7 @@
 use anyhow::{bail, Context, Result};
 use clap::{Arg, Command};
 use clap_complete::{Shell, generate};
+use clap_mangen::Man;
 use nexterm_i18n::fl;
 use nexterm_proto::{ClientToServer, ServerToClient};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -82,6 +83,10 @@ fn build_cli() -> Command {
                                 .required(true),
                         ),
                 ),
+        )
+        .subcommand(
+            Command::new("man")
+                .about("Generate man page (outputs to stdout, redirect to nexterm-ctl.1)"),
         )
         .subcommand(
             Command::new("completions")
@@ -160,6 +165,11 @@ async fn main() -> Result<()> {
             }
             _ => unreachable!(),
         },
+        Some(("man", _)) => {
+            let man = Man::new(build_cli());
+            man.render(&mut std::io::stdout())?;
+            Ok(())
+        }
         Some(("completions", sub)) => {
             let shell_str = sub.get_one::<String>("shell").expect("clap required arg");
             let shell: Shell = shell_str.parse().expect("valid shell");

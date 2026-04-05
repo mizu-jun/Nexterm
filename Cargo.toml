@@ -69,6 +69,7 @@ arboard = "3"
 # Phase 3: nexterm-ctl CLI 引数パーサ
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
+clap_mangen = "0.2"
 
 # セッション永続化（JSON スナップショット）
 serde_json = "1"
