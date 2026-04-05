@@ -29,18 +29,18 @@ impl Attrs {
 }
 
 /// 端末カラー（256色 + TrueColor 対応）
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Color {
     /// デフォルト色（端末設定に従う）
     #[default]
     Default,
-    /// ANSI 16色（0〜15）
+    /// xterm 256色インデックス（0〜15: ANSI 16色, 16〜231: 216色キューブ, 232〜255: グレースケール）
+    /// SGR 38;5;N / 48;5;N に対応
     Indexed(u8),
-    /// 24bit TrueColor
+    /// 24bit TrueColor（RGB 各 8bit）
+    /// SGR 38;2;R;G;B / 48;2;R;G;B に対応
     Rgb(u8, u8, u8),
 }
-
 
 /// ターミナルの1セル
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

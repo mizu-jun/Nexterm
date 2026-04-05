@@ -254,6 +254,57 @@ mod tests {
         assert_eq!(span.col_end, 5); // "Click" は 5 文字
     }
 
+    // ---- ANSI 256色・True Color テスト ----
+
+    #[test]
+    fn sgr_256色前景色が設定される() {
+        let mut parser = VtParser::new(80, 24);
+        // SGR 38;5;196 = 256色インデックス 196（明るい赤）
+        parser.advance(b"\x1b[38;5;196mX");
+        let cell = parser.screen().grid().get(0, 0).unwrap();
+        assert_eq!(cell.ch, 'X');
+        assert_eq!(cell.fg, nexterm_proto::Color::Indexed(196));
+    }
+
+    #[test]
+    fn sgr_256色背景色が設定される() {
+        let mut parser = VtParser::new(80, 24);
+        // SGR 48;5;21 = 256色インデックス 21（青）
+        parser.advance(b"\x1b[48;5;21mY");
+        let cell = parser.screen().grid().get(0, 0).unwrap();
+        assert_eq!(cell.ch, 'Y');
+        assert_eq!(cell.bg, nexterm_proto::Color::Indexed(21));
+    }
+
+    #[test]
+    fn sgr_truecolor前景色が設定される() {
+        let mut parser = VtParser::new(80, 24);
+        // SGR 38;2;255;128;0 = RGB(255, 128, 0) オレンジ
+        parser.advance(b"\x1b[38;2;255;128;0mZ");
+        let cell = parser.screen().grid().get(0, 0).unwrap();
+        assert_eq!(cell.ch, 'Z');
+        assert_eq!(cell.fg, nexterm_proto::Color::Rgb(255, 128, 0));
+    }
+
+    #[test]
+    fn sgr_truecolor背景色が設定される() {
+        let mut parser = VtParser::new(80, 24);
+        // SGR 48;2;0;255;128 = RGB(0, 255, 128) 緑
+        parser.advance(b"\x1b[48;2;0;255;128mW");
+        let cell = parser.screen().grid().get(0, 0).unwrap();
+        assert_eq!(cell.ch, 'W');
+        assert_eq!(cell.bg, nexterm_proto::Color::Rgb(0, 255, 128));
+    }
+
+    #[test]
+    fn sgr_グレースケール256色が設定される() {
+        let mut parser = VtParser::new(80, 24);
+        // SGR 38;5;240 = グレースケール（232-255 の範囲）
+        parser.advance(b"\x1b[38;5;240mG");
+        let cell = parser.screen().grid().get(0, 0).unwrap();
+        assert_eq!(cell.fg, nexterm_proto::Color::Indexed(240));
+    }
+
     // ---- Kitty グラフィックスプロトコル テスト ----
 
     /// 1x1 RGBA 画像の base64: [R=255, G=0, B=0, A=255]
