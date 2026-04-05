@@ -4,6 +4,31 @@
 
 Rust 製のターミナルマルチプレクサ。tmux/zellij インスパイアで、wgpu による GPU レンダリングと Lua 設定システムを搭載する。
 
+## v0.7.0 の新機能（未リリース）
+
+**フローティングペイン**
+- `Ctrl-B f` でウィンドウ中央に 60%×70% のオーバーレイペインを開く。
+- `MoveFloatingPane` / `ResizeFloatingPane` IPC コマンドで移動・リサイズが可能。
+
+**WASM プラグインシステム**
+- `nexterm-plugin` クレートを新規追加（[wasmi](https://github.com/paritytech/wasmi) ベースのサンドボックス WASM ランタイム）。
+- `~/.config/nexterm/plugins/` に `.wasm` ファイルを置くだけで自動ロード。
+- プラグイン ABI: `nexterm_on_output`・`nexterm_on_command`、ホストインポート: `nexterm.log`・`nexterm.write_pane`。
+- `nexterm.toml` で `plugin_dir` / `plugins_disabled` を設定可能。
+
+**ステータスバーウィジェット強化**
+- ビルトインキーワード: `"time"`, `"date"`, `"hostname"`, `"session"`, `"pane_id"`。
+- `right_widgets`（右寄せ）・`separator`（区切り文字）フィールドを追加。
+
+**Linux パッケージング**
+- リリースタグ push 時に AppImage を自動ビルド・アップロード（`appimagetool` 使用）。
+- Flatpak マニフェストを `pkg/flatpak/` に追加（Flathub 配布向け）。
+
+**テストカバレッジ**
+- 合計テスト数 145 → 178 件（+23%）。
+
+---
+
 ## v0.5.5 の新機能
 
 **Windows — GPU クライアントのフォントレンダリングを修正**

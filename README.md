@@ -6,6 +6,31 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 
 [![CI](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml/badge.svg)](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml)
 
+## What's New in v0.7.0 (Unreleased)
+
+**Floating Panes**
+- Open a floating overlay pane with `Ctrl-B f` (centered, 60%×70% of the window).
+- Move and resize via `MoveFloatingPane` / `ResizeFloatingPane` IPC commands.
+
+**WASM Plugin System**
+- New `nexterm-plugin` crate provides a sandboxed WASM runtime (via [wasmi](https://github.com/paritytech/wasmi)).
+- Drop `.wasm` files into `~/.config/nexterm/plugins/` to load them automatically.
+- Plugin ABI: `nexterm_on_output`, `nexterm_on_command`; host imports: `nexterm.log`, `nexterm.write_pane`.
+- Configure with `plugin_dir` and `plugins_disabled` in `nexterm.toml`.
+
+**Status Bar Widget Enhancements**
+- Built-in keywords: `"time"`, `"date"`, `"hostname"`, `"session"`, `"pane_id"`.
+- New `right_widgets` field for right-aligned widgets and `separator` for custom separators.
+
+**Linux Packaging**
+- AppImage built automatically on every release tag (via `appimagetool`).
+- Flatpak manifest added at `pkg/flatpak/` for distribution via Flathub.
+
+**Test Coverage**
+- Total test count increased from 145 → 178 (+23%).
+
+---
+
 ## What's New in v0.5.5
 
 **Windows — GPU client font rendering fixed**
