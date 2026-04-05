@@ -168,8 +168,14 @@ fn start_server(exe_dir: &PathBuf) -> anyhow::Result<()> {
 }
 
 /// サーバーが準備完了するまで最大 `timeout` 待機する
+///
+/// 指数バックオフ方式（10ms → 20ms → 50ms → 100ms）で素早くチェックし、
+/// 起動が遅い場合は間隔を広げてCPUを無駄にしない。
 fn wait_for_server(timeout: Duration) -> anyhow::Result<()> {
+    // 指数バックオフのステップ（ミリ秒）
+    const BACKOFF_STEPS: &[u64] = &[10, 10, 10, 20, 20, 50, 100];
     let start = Instant::now();
+    let mut step_idx = 0;
     loop {
         if server_is_running() {
             return Ok(());
@@ -180,7 +186,9 @@ fn wait_for_server(timeout: Duration) -> anyhow::Result<()> {
                 timeout.as_secs()
             ));
         }
-        std::thread::sleep(Duration::from_millis(100));
+        let sleep_ms = BACKOFF_STEPS[step_idx.min(BACKOFF_STEPS.len() - 1)];
+        step_idx += 1;
+        std::thread::sleep(Duration::from_millis(sleep_ms));
     }
 }
 

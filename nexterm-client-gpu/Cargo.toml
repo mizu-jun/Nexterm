@@ -31,6 +31,8 @@ arboard = { workspace = true }
 notify = { workspace = true }
 # 設定ファイルの構造保持付き編集
 toml_edit = { workspace = true }
+# シェルパス展開（~ → ホームディレクトリ）
+shellexpand = "3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

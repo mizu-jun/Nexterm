@@ -221,10 +221,29 @@ struct WgpuState {
     image_sampler: wgpu::Sampler,
     /// 画像テクスチャキャッシュ（image_id → ImageEntry）
     image_textures: HashMap<u32, ImageEntry>,
+    // ---- フレーム間再利用バッファ（毎フレームの GPU アロケーションを回避）----
+    /// 背景頂点バッファ（VERTEX | COPY_DST、容量超過時は再確保）
+    buf_bg_v: wgpu::Buffer,
+    /// 背景インデックスバッファ
+    buf_bg_i: wgpu::Buffer,
+    /// テキスト頂点バッファ
+    buf_txt_v: wgpu::Buffer,
+    /// テキストインデックスバッファ
+    buf_txt_i: wgpu::Buffer,
+    /// 背景頂点バッファの現在容量（BgVertex 単位）
+    bg_v_cap: u64,
+    /// 背景インデックスバッファの現在容量（u16 単位）
+    bg_i_cap: u64,
+    /// テキスト頂点バッファの現在容量（TextVertex 単位）
+    txt_v_cap: u64,
+    /// テキストインデックスバッファの現在容量（u16 単位）
+    txt_i_cap: u64,
+    /// 最後にフレームを描画した時刻（FPS 制限用）
+    last_frame_at: Instant,
 }
 
 impl WgpuState {
-    async fn new(window: Arc<Window>) -> Result<Self> {
+    async fn new(window: Arc<Window>, gpu_cfg: &nexterm_config::GpuConfig) -> Result<Self> {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
@@ -281,10 +300,45 @@ impl WgpuState {
         };
         surface.configure(&device, &surface_config);
 
+        // ---- カスタムシェーダーの読み込み ----
+        // gpu.custom_bg_shader / gpu.custom_text_shader が設定されている場合はファイルから読み込む。
+        // 読み込み失敗時はビルトインシェーダーにフォールバックする。
+        let bg_shader_src: std::borrow::Cow<'static, str> = if let Some(ref path) = gpu_cfg.custom_bg_shader {
+            let expanded = shellexpand::tilde(path).into_owned();
+            match std::fs::read_to_string(&expanded) {
+                Ok(s) => {
+                    info!("カスタム背景シェーダーを読み込みました: {}", expanded);
+                    std::borrow::Cow::Owned(s)
+                }
+                Err(e) => {
+                    warn!("カスタム背景シェーダーの読み込みに失敗しました（ビルトインを使用）: {}: {}", expanded, e);
+                    std::borrow::Cow::Borrowed(BG_SHADER)
+                }
+            }
+        } else {
+            std::borrow::Cow::Borrowed(BG_SHADER)
+        };
+
+        let text_shader_src: std::borrow::Cow<'static, str> = if let Some(ref path) = gpu_cfg.custom_text_shader {
+            let expanded = shellexpand::tilde(path).into_owned();
+            match std::fs::read_to_string(&expanded) {
+                Ok(s) => {
+                    info!("カスタムテキストシェーダーを読み込みました: {}", expanded);
+                    std::borrow::Cow::Owned(s)
+                }
+                Err(e) => {
+                    warn!("カスタムテキストシェーダーの読み込みに失敗しました（ビルトインを使用）: {}: {}", expanded, e);
+                    std::borrow::Cow::Borrowed(TEXT_SHADER)
+                }
+            }
+        } else {
+            std::borrow::Cow::Borrowed(TEXT_SHADER)
+        };
+
         // ---- 背景矩形パイプライン ----
         let bg_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("bg_shader"),
-            source: wgpu::ShaderSource::Wgsl(BG_SHADER.into()),
+            source: wgpu::ShaderSource::Wgsl(bg_shader_src),
         });
 
         let bg_pipeline_layout =
@@ -355,7 +409,7 @@ impl WgpuState {
 
         let text_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("text_shader"),
-            source: wgpu::ShaderSource::Wgsl(TEXT_SHADER.into()),
+            source: wgpu::ShaderSource::Wgsl(text_shader_src),
         });
 
         let text_pipeline_layout =
@@ -458,6 +512,38 @@ impl WgpuState {
             ..Default::default()
         });
 
+        // ---- 再利用バッファの初期確保 ----
+        // 初期容量: 背景 8192 頂点・32768 インデックス（典型的な 80x24 ターミナルで十分）
+        const INIT_BG_V: u64 = 8192;
+        const INIT_BG_I: u64 = 32768;
+        const INIT_TXT_V: u64 = 16384;
+        const INIT_TXT_I: u64 = 65536;
+
+        let buf_bg_v = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("bg_vertex_buffer"),
+            size: INIT_BG_V * std::mem::size_of::<BgVertex>() as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let buf_bg_i = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("bg_index_buffer"),
+            size: INIT_BG_I * std::mem::size_of::<u16>() as u64,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let buf_txt_v = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("text_vertex_buffer"),
+            size: INIT_TXT_V * std::mem::size_of::<TextVertex>() as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let buf_txt_i = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("text_index_buffer"),
+            size: INIT_TXT_I * std::mem::size_of::<u16>() as u64,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         Ok(Self {
             device,
             queue,
@@ -469,6 +555,15 @@ impl WgpuState {
             image_pipeline,
             image_sampler,
             image_textures: HashMap::new(),
+            buf_bg_v,
+            buf_bg_i,
+            buf_txt_v,
+            buf_txt_i,
+            bg_v_cap: INIT_BG_V,
+            bg_i_cap: INIT_BG_I,
+            txt_v_cap: INIT_TXT_V,
+            txt_i_cap: INIT_TXT_I,
+            last_frame_at: Instant::now(),
         })
     }
 
@@ -489,7 +584,17 @@ impl WgpuState {
         atlas: &mut GlyphAtlas,
         tab_bar_cfg: &nexterm_config::TabBarConfig,
         color_scheme: &nexterm_config::ColorScheme,
+        fps_limit: u32,
     ) -> Result<()> {
+        // FPS 制限: 前フレームからの経過時間が 1/fps より短い場合はスキップ
+        if fps_limit > 0 {
+            let frame_duration = Duration::from_secs_f64(1.0 / fps_limit as f64);
+            if self.last_frame_at.elapsed() < frame_duration {
+                return Ok(());
+            }
+        }
+        self.last_frame_at = Instant::now();
+
         // カラースキームからパレットを導出する（毎フレーム; コストは小さい）
         let scheme_palette: Option<nexterm_config::SchemePalette> = match color_scheme {
             nexterm_config::ColorScheme::Builtin(s) => Some(s.palette()),
@@ -760,27 +865,10 @@ impl WgpuState {
                 );
             }
 
-        // ---- GPU バッファへアップロード ----
-        let buf_bg_v = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("bg_vertex_buffer"),
-            contents: bytemuck::cast_slice(if bg_verts.is_empty() { &[BgVertex { position: [0.0;2], color: [0.0;4] }] } else { &bg_verts }),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let buf_bg_i = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("bg_index_buffer"),
-            contents: bytemuck::cast_slice(if bg_idx.is_empty() { &[0u16] } else { &bg_idx }),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-        let buf_txt_v = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("text_vertex_buffer"),
-            contents: bytemuck::cast_slice(if text_verts.is_empty() { &[TextVertex { position: [0.0;2], uv: [0.0;2], color: [0.0;4] }] } else { &text_verts }),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let buf_txt_i = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("text_index_buffer"),
-            contents: bytemuck::cast_slice(if text_idx.is_empty() { &[0u16] } else { &text_idx }),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        // ---- GPU バッファへアップロード（再利用バッファへ write_buffer で上書き）----
+        // 容量不足の場合のみ新規確保する（2倍に拡張）
+        self.upload_bg_verts(&bg_verts, &bg_idx);
+        self.upload_txt_verts(&text_verts, &text_idx);
 
         let text_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("text_bind_group"),
@@ -818,15 +906,15 @@ impl WgpuState {
 
             if !bg_idx.is_empty() {
                 pass.set_pipeline(&self.bg_pipeline);
-                pass.set_vertex_buffer(0, buf_bg_v.slice(..));
-                pass.set_index_buffer(buf_bg_i.slice(..), wgpu::IndexFormat::Uint16);
+                pass.set_vertex_buffer(0, self.buf_bg_v.slice(..));
+                pass.set_index_buffer(self.buf_bg_i.slice(..), wgpu::IndexFormat::Uint16);
                 pass.draw_indexed(0..bg_idx.len() as u32, 0, 0..1);
             }
             if !text_idx.is_empty() {
                 pass.set_pipeline(&self.text_pipeline);
                 pass.set_bind_group(0, &text_bind_group, &[]);
-                pass.set_vertex_buffer(0, buf_txt_v.slice(..));
-                pass.set_index_buffer(buf_txt_i.slice(..), wgpu::IndexFormat::Uint16);
+                pass.set_vertex_buffer(0, self.buf_txt_v.slice(..));
+                pass.set_index_buffer(self.buf_txt_i.slice(..), wgpu::IndexFormat::Uint16);
                 pass.draw_indexed(0..text_idx.len() as u32, 0, 0..1);
             }
         }
@@ -2049,6 +2137,73 @@ impl WgpuState {
         }
     }
 
+    /// 背景頂点・インデックスデータを再利用バッファへアップロードする
+    ///
+    /// バッファ容量が不足する場合は 2 倍に拡張して再確保する。
+    fn upload_bg_verts(&mut self, verts: &[BgVertex], idx: &[u16]) {
+        let v_bytes = bytemuck::cast_slice(verts);
+        let i_bytes = bytemuck::cast_slice(idx);
+
+        // 容量不足なら再確保
+        if verts.len() as u64 > self.bg_v_cap {
+            self.bg_v_cap = (verts.len() as u64 * 2).max(self.bg_v_cap);
+            self.buf_bg_v = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("bg_vertex_buffer"),
+                size: self.bg_v_cap * std::mem::size_of::<BgVertex>() as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+        if idx.len() as u64 > self.bg_i_cap {
+            self.bg_i_cap = (idx.len() as u64 * 2).max(self.bg_i_cap);
+            self.buf_bg_i = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("bg_index_buffer"),
+                size: self.bg_i_cap * std::mem::size_of::<u16>() as u64,
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+
+        if !v_bytes.is_empty() {
+            self.queue.write_buffer(&self.buf_bg_v, 0, v_bytes);
+        }
+        if !i_bytes.is_empty() {
+            self.queue.write_buffer(&self.buf_bg_i, 0, i_bytes);
+        }
+    }
+
+    /// テキスト頂点・インデックスデータを再利用バッファへアップロードする
+    fn upload_txt_verts(&mut self, verts: &[TextVertex], idx: &[u16]) {
+        let v_bytes = bytemuck::cast_slice(verts);
+        let i_bytes = bytemuck::cast_slice(idx);
+
+        if verts.len() as u64 > self.txt_v_cap {
+            self.txt_v_cap = (verts.len() as u64 * 2).max(self.txt_v_cap);
+            self.buf_txt_v = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("text_vertex_buffer"),
+                size: self.txt_v_cap * std::mem::size_of::<TextVertex>() as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+        if idx.len() as u64 > self.txt_i_cap {
+            self.txt_i_cap = (idx.len() as u64 * 2).max(self.txt_i_cap);
+            self.buf_txt_i = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("text_index_buffer"),
+                size: self.txt_i_cap * std::mem::size_of::<u16>() as u64,
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+
+        if !v_bytes.is_empty() {
+            self.queue.write_buffer(&self.buf_txt_v, 0, v_bytes);
+        }
+        if !i_bytes.is_empty() {
+            self.queue.write_buffer(&self.buf_txt_i, 0, i_bytes);
+        }
+    }
+
     /// 画像テクスチャをキャッシュに登録する（初回のみ作成）
     fn ensure_image_texture(&mut self, id: u32, img: &crate::state::PlacedImage) {
         if self.image_textures.contains_key(&id) {
@@ -2438,11 +2593,23 @@ impl ApplicationHandler for EventHandler {
         // wgpu を非同期で初期化する（tokio runtime が必要）
         let wgpu_state = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current()
-                .block_on(WgpuState::new(Arc::clone(&window)))
+                .block_on(WgpuState::new(Arc::clone(&window), &self.app.config.gpu))
         })
         .expect("Failed to initialize wgpu");
 
-        let atlas = GlyphAtlas::new(&wgpu_state.device);
+        let mut atlas = GlyphAtlas::new(&wgpu_state.device);
+
+        // ASCII 印字可能文字（0x20-0x7E）をグリフアトラスに事前ロードする。
+        // 初回のキーストローク遅延を排除し、起動直後からスムーズな描画を実現する。
+        for ch in ' '..='~' {
+            for bold in [false, true] {
+                let key = GlyphKey { ch, bold, italic: false };
+                let (w, h, pixels) = self.app.font.rasterize_char(ch, bold, false, [220, 220, 220, 255]);
+                if w > 0 && h > 0 {
+                    atlas.get_or_insert(key, &pixels, w, h, &wgpu_state.queue);
+                }
+            }
+        }
 
         // ウィンドウサイズからセル数を計算してステートを初期化する
         let size = window.inner_size();
@@ -2867,6 +3034,7 @@ impl ApplicationHandler for EventHandler {
                             atlas,
                             &self.app.config.tab_bar,
                             &self.app.config.colors,
+                            self.app.config.gpu.fps_limit,
                         )
                     {
                         warn!("Render error: {}", e);

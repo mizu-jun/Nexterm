@@ -856,6 +856,47 @@ pub struct Config {
     /// プラグインを無効にするかどうか
     #[serde(default)]
     pub plugins_disabled: bool,
+
+    /// GPU レンダラー設定
+    #[serde(default)]
+    pub gpu: GpuConfig,
+}
+
+/// GPU レンダラー設定
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct GpuConfig {
+    /// 背景矩形用カスタム WGSL シェーダーファイルのパス（省略時はビルトイン使用）
+    ///
+    /// シェーダーは `@vertex fn vs_main` / `@fragment fn fs_main` を実装する必要がある。
+    /// 頂点入力: position: vec2<f32>, color: vec4<f32>
+    ///
+    /// 例: `custom_bg_shader = "~/.config/nexterm/shaders/crt.wgsl"`
+    #[serde(default)]
+    pub custom_bg_shader: Option<String>,
+
+    /// テキスト（グリフ）用カスタム WGSL シェーダーファイルのパス
+    ///
+    /// 頂点入力: position: vec2<f32>, uv: vec2<f32>, color: vec4<f32>
+    /// バインディング: @group(0) @binding(0) glyph_texture, @binding(1) glyph_sampler
+    #[serde(default)]
+    pub custom_text_shader: Option<String>,
+
+    /// フレームレート制限（FPS）。0 = 制限なし（デフォルト: 60）
+    #[serde(default = "default_fps_limit")]
+    pub fps_limit: u32,
+
+    /// グリフアトラスのサイズ（ピクセル、正方形）。デフォルト: 2048
+    /// 高DPI や大フォントサイズ使用時は 4096 に増やすと効果的
+    #[serde(default = "default_atlas_size")]
+    pub atlas_size: u32,
+}
+
+fn default_fps_limit() -> u32 {
+    60
+}
+
+fn default_atlas_size() -> u32 {
+    2048
 }
 
 fn default_scrollback() -> usize {
@@ -885,6 +926,7 @@ impl Default for Config {
             active_profile: None,
             plugin_dir: None,
             plugins_disabled: false,
+            gpu: GpuConfig::default(),
         }
     }
 }

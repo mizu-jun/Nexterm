@@ -14,12 +14,18 @@
 - [SFTP File Transfer](features/sftp.md)
 - [Serial Port](features/serial.md)
 - [Web Terminal](features/web.md)
+- [Graphics (Sixel / Kitty)](features/graphics.md)
+- [WASM Plugins](features/plugins.md)
 
 # Configuration
 - [Overview](config/overview.md)
 - [TOML Reference](config/toml.md)
 - [Lua Scripting](config/lua.md)
 - [Key Bindings](config/keybindings.md)
+
+# Advanced
+- [Custom Shaders](advanced/shaders.md)
+- [Performance Tuning](advanced/performance.md)
 
 # Architecture
 - [Architecture Overview](architecture.md)

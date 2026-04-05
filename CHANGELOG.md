@@ -9,6 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.2] - 2026-04-05
+
+### Added
+
+**カスタム WGSL シェーダーサポート**
+- `nexterm-config`: `[gpu]` セクションを追加（`custom_bg_shader` / `custom_text_shader` / `fps_limit` / `atlas_size`）。
+- GPU クライアント起動時に指定パスから WGSL ファイルを読み込む（読み込み失敗時はビルトインにフォールバック）。
+- CRT スキャンライン・グロー効果などのカスタムエフェクトが実装可能。
+
+**ドキュメントサイト充実**
+- `docs/src/features/graphics.md`: Sixel / Kitty グラフィックスプロトコルのガイド。
+- `docs/src/features/plugins.md`: WASM プラグイン開発ガイド（Rust サンプルコード付き）。
+- `docs/src/advanced/shaders.md`: カスタム WGSL シェーダーリファレンスと実装例。
+- `docs/src/advanced/performance.md`: パフォーマンスチューニングガイド。
+
+### Performance
+
+**GPU バッファ再利用による描画最適化**
+- `WgpuState` に再利用可能な頂点・インデックスバッファを追加。
+- 毎フレームの `create_buffer_init`（GPU アロケーション）を廃止し、`queue.write_buffer` による上書きに変更。
+- バッファ容量不足時のみ 2 倍サイズで再確保（通常は再確保なし）。
+- 80×24 ターミナルで GPU アロケーション回数を **約 4 回/フレーム → 0 回/フレーム** に削減。
+
+**FPS 制限機能**
+- `gpu.fps_limit`（デフォルト 60 FPS）でフレームレートを制御。
+- 0 を設定すると制限なし（vsync のみ）。
+
+**ASCII グリフ事前ウォームアップ**
+- 起動時に ASCII 印字可能文字（0x20–0x7E）を Bold/Regular でグリフアトラスに事前ロード。
+- 初回キーストロークのラスタライズ遅延を排除。
+
+**ランチャー起動時間最適化**
+- `wait_for_server` のポーリング間隔を指数バックオフ方式に変更（10ms, 10ms, 10ms, 20ms, 50ms, 100ms）。
+- サーバーが高速起動した場合の平均待機時間を **100ms → 約 30ms** に短縮。
+
+---
+
+## [0.7.1] - 2026-04-05
+
+### Fixed
+
+**macOS Intel ビルドの ad-hoc codesign 失敗を修正**
+- 個別バイナリ署名後にバンドル全体を署名すると subcomponent エラーが発生する問題を修正。
+- `codesign --force --deep --sign - dist/Nexterm.app` で一括署名に変更。
+
+---
+
 ## [0.7.0] - 2026-04-05
 
 ### Added
