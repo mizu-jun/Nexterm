@@ -181,6 +181,8 @@ pub enum ClientToServer {
         /// マウス移動イベント（ドラッグ）
         motion: bool,
     },
+    /// レイアウトモードを設定する（"bsp" または "tiling"）
+    SetLayoutMode { mode: String },
     /// シリアルポートに接続する
     ConnectSerial {
         /// デバイスパス（例: "/dev/ttyUSB0", "COM3"）

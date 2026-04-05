@@ -381,6 +381,13 @@ pub struct WindowConfig {
     pub macos_window_background_blur: u32,
     /// ウィンドウ装飾
     pub decorations: WindowDecorations,
+    /// ペインレイアウトモード: "bsp"（手動分割・デフォルト）または "tiling"（均等自動配置）
+    #[serde(default = "default_layout_mode")]
+    pub layout_mode: String,
+}
+
+fn default_layout_mode() -> String {
+    "bsp".to_string()
 }
 
 impl Default for WindowConfig {
@@ -389,6 +396,7 @@ impl Default for WindowConfig {
             background_opacity: 1.0,
             macos_window_background_blur: 0,
             decorations: WindowDecorations::Full,
+            layout_mode: default_layout_mode(),
         }
     }
 }

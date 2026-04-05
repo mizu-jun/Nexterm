@@ -14,6 +14,34 @@ use crate::pane::Pane;
 use crate::serial::SerialPane;
 use crate::snapshot::{SplitDirSnapshot, SplitNodeSnapshot, WindowSnapshot};
 
+// ---- レイアウトモード ----
+
+/// ウィンドウのレイアウトモード
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub enum LayoutMode {
+    /// BSP（バイナリ空間分割）— 手動分割・比率保持（デフォルト）
+    #[default]
+    Bsp,
+    /// タイリング — ペインを均等グリッドに自動配置
+    Tiling,
+}
+
+impl LayoutMode {
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "tiling" => LayoutMode::Tiling,
+            _ => LayoutMode::Bsp,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LayoutMode::Bsp => "bsp",
+            LayoutMode::Tiling => "tiling",
+        }
+    }
+}
+
 // ---- 分割方向 ----
 
 /// ペイン分割方向
@@ -271,6 +299,8 @@ pub struct Window {
     layout: SplitNode,
     /// ズーム中か（フォーカスペインがウィンドウ全体を占有する）
     zoomed: bool,
+    /// レイアウトモード（Bsp / Tiling）
+    pub layout_mode: LayoutMode,
 }
 
 impl Window {
@@ -289,7 +319,16 @@ impl Window {
         let mut panes = HashMap::new();
         panes.insert(pane.id, pane);
 
-        Ok(Self { id, name, panes, serial_panes: HashMap::new(), focused_pane_id, layout, zoomed: false })
+        Ok(Self {
+            id,
+            name,
+            panes,
+            serial_panes: HashMap::new(),
+            focused_pane_id,
+            layout,
+            zoomed: false,
+            layout_mode: LayoutMode::Bsp,
+        })
     }
 
     /// 既存のペインを持つウィンドウを生成する（break-pane 用）
@@ -298,7 +337,16 @@ impl Window {
         let layout = SplitNode::Pane { pane_id: focused_pane_id };
         let mut panes = HashMap::new();
         panes.insert(pane.id, pane);
-        Ok(Self { id, name, panes, serial_panes: HashMap::new(), focused_pane_id, layout, zoomed: false })
+        Ok(Self {
+            id,
+            name,
+            panes,
+            serial_panes: HashMap::new(),
+            focused_pane_id,
+            layout,
+            zoomed: false,
+            layout_mode: LayoutMode::Bsp,
+        })
     }
 
     /// フォーカス中のペイン ID を返す
@@ -361,9 +409,26 @@ impl Window {
 
     /// 全ペインのレイアウトを計算する
     pub fn compute_layouts(&self, cols: u16, rows: u16) -> Vec<PaneRect> {
-        let mut out = Vec::new();
-        self.layout.compute(0, 0, cols, rows, &mut out);
-        out
+        match self.layout_mode {
+            LayoutMode::Bsp => {
+                let mut out = Vec::new();
+                self.layout.compute(0, 0, cols, rows, &mut out);
+                out
+            }
+            LayoutMode::Tiling => {
+                // BSP ツリーからペイン ID を挿入順（ソート済み）で収集する
+                let mut pane_ids: Vec<u32> = self.panes.keys().copied().collect();
+                pane_ids.extend(self.serial_panes.keys().copied());
+                pane_ids.sort();
+                compute_tiling_layouts(&pane_ids, cols, rows)
+            }
+        }
+    }
+
+    /// レイアウトモードを変更し、全ペインを新レイアウトにリサイズする
+    pub fn set_layout_mode(&mut self, mode: LayoutMode, cols: u16, rows: u16) {
+        self.layout_mode = mode;
+        self.resize_all_panes(cols, rows);
     }
 
     /// LayoutChanged メッセージを生成する（IPC 送信用）
@@ -758,6 +823,7 @@ impl Window {
             focused_pane_id: snap.focused_pane_id,
             layout,
             zoomed: false,
+            layout_mode: LayoutMode::Bsp,
         })
     }
 
@@ -777,6 +843,68 @@ impl Window {
             }
         }
     }
+}
+
+/// タイリングレイアウトを計算する（ペインを均等グリッドに自動配置）
+///
+/// N ペインを ceil(sqrt(N)) 列に均等分配し、各列内でも均等な行高さを割り当てる。
+/// 境界線は設けず全スペースをペインに割り当てる。
+pub(crate) fn compute_tiling_layouts(pane_ids: &[u32], total_cols: u16, total_rows: u16) -> Vec<PaneRect> {
+    let n = pane_ids.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    if n == 1 {
+        return vec![PaneRect {
+            pane_id: pane_ids[0],
+            col_off: 0,
+            row_off: 0,
+            cols: total_cols,
+            rows: total_rows,
+        }];
+    }
+
+    // 列数: ceil(sqrt(n))
+    let ncols = ((n as f64).sqrt().ceil() as usize).max(1).min(n);
+    // 各列のペイン数: 最初の (n % ncols) 列に 1 つ多く割り当てる
+    let base = n / ncols;
+    let extra = n % ncols;
+
+    let mut result = Vec::with_capacity(n);
+    let mut pane_idx = 0;
+
+    for col_idx in 0..ncols {
+        let count_in_col = base + if col_idx < extra { 1 } else { 0 };
+        if count_in_col == 0 {
+            continue;
+        }
+
+        // 列の X 範囲（整数除算で均等に分配）
+        let col_off = (col_idx * total_cols as usize / ncols) as u16;
+        let next_col_off = ((col_idx + 1) * total_cols as usize / ncols) as u16;
+        let col_width = next_col_off.saturating_sub(col_off).max(1);
+
+        // 列内の各行の Y 範囲
+        for row_idx in 0..count_in_col {
+            let row_off = (row_idx * total_rows as usize / count_in_col) as u16;
+            let next_row_off = ((row_idx + 1) * total_rows as usize / count_in_col) as u16;
+            let row_height = next_row_off.saturating_sub(row_off).max(1);
+
+            result.push(PaneRect {
+                pane_id: pane_ids[pane_idx],
+                col_off,
+                row_off,
+                cols: col_width,
+                rows: row_height,
+            });
+            pane_idx += 1;
+            if pane_idx >= n {
+                break;
+            }
+        }
+    }
+
+    result
 }
 
 /// BSP スナップショットから各ペインのサイズを計算する
@@ -908,5 +1036,71 @@ mod tests {
         compute_pane_sizes(&snap_before, 80, 24, &mut sizes_before);
         compute_pane_sizes(&snap_after, 80, 24, &mut sizes_after);
         assert_eq!(sizes_before, sizes_after);
+    }
+
+    // ---- タイリングレイアウト テスト ----
+
+    #[test]
+    fn tiling_1ペインは全画面() {
+        let rects = compute_tiling_layouts(&[1], 80, 24);
+        assert_eq!(rects.len(), 1);
+        assert_eq!(rects[0].cols, 80);
+        assert_eq!(rects[0].rows, 24);
+        assert_eq!(rects[0].col_off, 0);
+        assert_eq!(rects[0].row_off, 0);
+    }
+
+    #[test]
+    fn tiling_2ペインは横2分割() {
+        let rects = compute_tiling_layouts(&[1, 2], 80, 24);
+        assert_eq!(rects.len(), 2);
+        // ncols=2 なので左右に並ぶ
+        assert_eq!(rects[0].col_off, 0);
+        assert!(rects[1].col_off > 0);
+        assert_eq!(rects[0].rows, 24);
+        assert_eq!(rects[1].rows, 24);
+    }
+
+    #[test]
+    fn tiling_4ペインは2x2グリッド() {
+        let rects = compute_tiling_layouts(&[1, 2, 3, 4], 80, 24);
+        assert_eq!(rects.len(), 4);
+        // ncols=2 なので各列に 2 ペイン
+        for r in &rects {
+            assert!(r.cols > 0);
+            assert!(r.rows > 0);
+            assert!(r.col_off < 80);
+            assert!(r.row_off < 24);
+        }
+        // 左2ペインは同じ col_off
+        assert_eq!(rects[0].col_off, rects[1].col_off);
+        // 右2ペインは同じ col_off
+        assert_eq!(rects[2].col_off, rects[3].col_off);
+        // 左と右で col_off が異なる
+        assert_ne!(rects[0].col_off, rects[2].col_off);
+    }
+
+    #[test]
+    fn tiling_5ペインは3列グリッド() {
+        let rects = compute_tiling_layouts(&[1, 2, 3, 4, 5], 80, 24);
+        assert_eq!(rects.len(), 5, "5つのペインが配置されること");
+        // ncols=3（ceil(sqrt(5))=3）
+        for r in &rects {
+            assert!(r.cols > 0, "列幅は0より大きいこと");
+            assert!(r.rows > 0, "行高さは0より大きいこと");
+        }
+    }
+
+    #[test]
+    fn tiling_空リストは空を返す() {
+        let rects = compute_tiling_layouts(&[], 80, 24);
+        assert!(rects.is_empty());
+    }
+
+    #[test]
+    fn layout_mode_from_str() {
+        assert_eq!(LayoutMode::from_str("tiling"), LayoutMode::Tiling);
+        assert_eq!(LayoutMode::from_str("bsp"), LayoutMode::Bsp);
+        assert_eq!(LayoutMode::from_str("unknown"), LayoutMode::Bsp);
     }
 }

@@ -1341,6 +1341,32 @@ async fn dispatch(
                 }
             }
         }
+        SetLayoutMode { mode } => {
+            if let Some(ref name) = *current_session {
+                let layout_msg = {
+                    let arc = manager.sessions();
+                    let mut sessions = arc.lock().await;
+                    if let Some(s) = sessions.get_mut(name) {
+                        let cols = s.cols;
+                        let rows = s.rows;
+                        s.focused_window_mut().map(|w| {
+                            w.set_layout_mode(
+                                crate::window::LayoutMode::from_str(mode),
+                                cols,
+                                rows,
+                            );
+                            w.layout_changed_msg(cols, rows)
+                        })
+                    } else {
+                        None
+                    }
+                };
+                if let Some(msg) = layout_msg {
+                    let _ = tx.send(msg).await;
+                }
+            }
+        }
+
         ConnectSerial { port, baud_rate, data_bits, stop_bits, parity } => {
             if let Some(ref name) = *current_session {
                 let result = manager.connect_serial(
