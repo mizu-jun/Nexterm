@@ -285,6 +285,15 @@ impl SplitNode {
 
 // ---- ウィンドウ ----
 
+/// フローティングペインの矩形情報
+#[derive(Clone, Debug)]
+pub struct FloatRect {
+    pub col_off: u16,
+    pub row_off: u16,
+    pub cols: u16,
+    pub rows: u16,
+}
+
 /// ウィンドウ（ペインのコンテナ）
 pub struct Window {
     pub id: u32,
@@ -301,6 +310,8 @@ pub struct Window {
     zoomed: bool,
     /// レイアウトモード（Bsp / Tiling）
     pub layout_mode: LayoutMode,
+    /// フローティングペイン（通常レイアウトの前面に重なるペイン）
+    floating_panes: HashMap<u32, (Pane, FloatRect)>,
 }
 
 impl Window {
@@ -328,6 +339,7 @@ impl Window {
             layout,
             zoomed: false,
             layout_mode: LayoutMode::Bsp,
+            floating_panes: HashMap::new(),
         })
     }
 
@@ -346,6 +358,7 @@ impl Window {
             layout,
             zoomed: false,
             layout_mode: LayoutMode::Bsp,
+            floating_panes: HashMap::new(),
         })
     }
 
@@ -429,6 +442,80 @@ impl Window {
     pub fn set_layout_mode(&mut self, mode: LayoutMode, cols: u16, rows: u16) {
         self.layout_mode = mode;
         self.resize_all_panes(cols, rows);
+    }
+
+    // ---- フローティングペイン ----
+
+    /// フローティングペインを生成してウィンドウ中央に配置する
+    ///
+    /// 返り値: (pane_id, FloatRect) — IPC が FloatingPaneOpened を送信するために使う
+    pub fn open_floating_pane(
+        &mut self,
+        total_cols: u16,
+        total_rows: u16,
+        tx: broadcast::Sender<ServerToClient>,
+        shell: &str,
+    ) -> Result<(u32, FloatRect)> {
+        // デフォルトサイズ: ウィンドウの 60%×70%、中央寄せ
+        let fp_cols = (total_cols as f32 * 0.6) as u16;
+        let fp_rows = (total_rows as f32 * 0.7) as u16;
+        let col_off = (total_cols.saturating_sub(fp_cols)) / 2;
+        let row_off = (total_rows.saturating_sub(fp_rows)) / 2;
+
+        let pane = Pane::spawn(fp_cols.max(10), fp_rows.max(5), tx, shell)?;
+        let pane_id = pane.id;
+        let rect = FloatRect { col_off, row_off, cols: fp_cols.max(10), rows: fp_rows.max(5) };
+        self.floating_panes.insert(pane_id, (pane, rect.clone()));
+        Ok((pane_id, rect))
+    }
+
+    /// フローティングペインを閉じる
+    pub fn close_floating_pane(&mut self, pane_id: u32) -> bool {
+        self.floating_panes.remove(&pane_id).is_some()
+    }
+
+    /// フローティングペインを移動する
+    pub fn move_floating_pane(&mut self, pane_id: u32, col_off: u16, row_off: u16) -> Option<FloatRect> {
+        if let Some((_, rect)) = self.floating_panes.get_mut(&pane_id) {
+            rect.col_off = col_off;
+            rect.row_off = row_off;
+            Some(rect.clone())
+        } else {
+            None
+        }
+    }
+
+    /// フローティングペインをリサイズする
+    pub fn resize_floating_pane(&mut self, pane_id: u32, cols: u16, rows: u16) -> Option<FloatRect> {
+        if let Some((pane, rect)) = self.floating_panes.get_mut(&pane_id) {
+            rect.cols = cols.max(10);
+            rect.rows = rows.max(5);
+            let _ = pane.resize_pty(rect.cols, rect.rows);
+            Some(rect.clone())
+        } else {
+            None
+        }
+    }
+
+    /// フローティングペインに入力を書き込む
+    pub fn write_to_floating(&self, pane_id: u32, data: &[u8]) -> Result<()> {
+        if let Some((pane, _)) = self.floating_panes.get(&pane_id) {
+            pane.write_input(data)?;
+        }
+        Ok(())
+    }
+
+    /// フローティングペインの一覧（表示用）
+    pub fn floating_pane_rects(&self) -> Vec<(u32, FloatRect)> {
+        self.floating_panes
+            .iter()
+            .map(|(&id, (_, rect))| (id, rect.clone()))
+            .collect()
+    }
+
+    /// フローティングペインが存在するか確認する
+    pub fn has_floating_pane(&self, pane_id: u32) -> bool {
+        self.floating_panes.contains_key(&pane_id)
     }
 
     /// LayoutChanged メッセージを生成する（IPC 送信用）
@@ -824,6 +911,7 @@ impl Window {
             layout,
             zoomed: false,
             layout_mode: LayoutMode::Bsp,
+            floating_panes: HashMap::new(),
         })
     }
 

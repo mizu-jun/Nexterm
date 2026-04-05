@@ -183,6 +183,18 @@ pub enum ClientToServer {
     },
     /// レイアウトモードを設定する（"bsp" または "tiling"）
     SetLayoutMode { mode: String },
+    /// フローティングペインを開く（Ctrl+B f）
+    OpenFloatingPane,
+    /// フローティングペインを閉じる
+    CloseFloatingPane { pane_id: u32 },
+    /// フローティングペインを移動する（マウスドラッグ）
+    MoveFloatingPane {
+        pane_id: u32,
+        col_off: u16,
+        row_off: u16,
+    },
+    /// フローティングペインをリサイズする
+    ResizeFloatingPane { pane_id: u32, cols: u16, rows: u16 },
     /// シリアルポートに接続する
     ConnectSerial {
         /// デバイスパス（例: "/dev/ttyUSB0", "COM3"）
@@ -326,6 +338,24 @@ pub enum ServerToClient {
         /// D マーク時のみ Some
         exit_code: Option<i32>,
     },
+    /// フローティングペイン開始通知
+    FloatingPaneOpened {
+        pane_id: u32,
+        col_off: u16,
+        row_off: u16,
+        cols: u16,
+        rows: u16,
+    },
+    /// フローティングペイン位置・サイズ変更通知
+    FloatingPaneMoved {
+        pane_id: u32,
+        col_off: u16,
+        row_off: u16,
+        cols: u16,
+        rows: u16,
+    },
+    /// フローティングペイン閉鎖通知
+    FloatingPaneClosed { pane_id: u32 },
 }
 
 /// セッション情報
