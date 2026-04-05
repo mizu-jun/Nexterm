@@ -2259,6 +2259,118 @@ impl WgpuState {
         });
         self.image_textures.insert(id, ImageEntry { texture, bind_group });
     }
+
+    /// カスタムシェーダーを再読み込みし bg/text パイプラインを再構築する。
+    ///
+    /// シェーダーファイルに構文エラーがあっても既存パイプラインは維持され、
+    /// ログに警告を出してフォールバックする。
+    fn reload_shader_pipelines(&mut self, gpu_cfg: &nexterm_config::GpuConfig) {
+        let format = self.surface_config.format;
+
+        // 背景シェーダー読み込み
+        let bg_src: std::borrow::Cow<'static, str> = if let Some(ref path) = gpu_cfg.custom_bg_shader {
+            let expanded = shellexpand::tilde(path).into_owned();
+            match std::fs::read_to_string(&expanded) {
+                Ok(s) => { info!("シェーダーホットリロード: 背景シェーダーを再読み込みしました: {}", expanded); std::borrow::Cow::Owned(s) }
+                Err(e) => { warn!("背景シェーダーの再読み込みに失敗しました（既存を維持）: {}", e); return; }
+            }
+        } else {
+            std::borrow::Cow::Borrowed(BG_SHADER)
+        };
+
+        // テキストシェーダー読み込み
+        let text_src: std::borrow::Cow<'static, str> = if let Some(ref path) = gpu_cfg.custom_text_shader {
+            let expanded = shellexpand::tilde(path).into_owned();
+            match std::fs::read_to_string(&expanded) {
+                Ok(s) => { info!("シェーダーホットリロード: テキストシェーダーを再読み込みしました: {}", expanded); std::borrow::Cow::Owned(s) }
+                Err(e) => { warn!("テキストシェーダーの再読み込みに失敗しました（既存を維持）: {}", e); return; }
+            }
+        } else {
+            std::borrow::Cow::Borrowed(TEXT_SHADER)
+        };
+
+        // 背景パイプラインを再構築する
+        let bg_shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("bg_shader_hot"),
+            source: wgpu::ShaderSource::Wgsl(bg_src),
+        });
+        let bg_layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("bg_pipeline_layout"),
+            bind_group_layouts: &[],
+            push_constant_ranges: &[],
+        });
+        self.bg_pipeline = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("bg_pipeline"),
+            layout: Some(&bg_layout),
+            vertex: wgpu::VertexState {
+                module: &bg_shader,
+                entry_point: "vs_main",
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<BgVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4],
+                }],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &bg_shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        // テキストパイプラインを再構築する
+        let text_shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("text_shader_hot"),
+            source: wgpu::ShaderSource::Wgsl(text_src),
+        });
+        let text_layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("text_pipeline_layout"),
+            bind_group_layouts: &[&self.text_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        self.text_pipeline = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("text_pipeline"),
+            layout: Some(&text_layout),
+            vertex: wgpu::VertexState {
+                module: &text_shader,
+                entry_point: "vs_main",
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<TextVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4],
+                }],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &text_shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        info!("シェーダーホットリロード完了");
+    }
 }
 
 /// 配置済み画像の TextVertex リストを構築する
@@ -2364,6 +2476,63 @@ fn ansi_256_to_rgb(n: u8) -> [f32; 4] {
     // グレースケール（232〜255）
     let grey = (n - 232) as f32 / 23.0;
     [grey, grey, grey, 1.0]
+}
+
+// ---- シェーダーファイル監視 ----
+
+/// カスタムシェーダーファイルを監視するウォッチャーを起動する。
+///
+/// 設定にシェーダーパスがある場合のみ監視を開始する。
+/// ファイルが変更されると `()` を受信チャネルに送信する。
+fn start_shader_watcher(
+    gpu_cfg: &nexterm_config::GpuConfig,
+) -> (Option<tokio::sync::mpsc::Receiver<()>>, Option<notify::RecommendedWatcher>) {
+    use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
+
+    // 監視対象ファイルを収集する
+    let paths: Vec<std::path::PathBuf> = [
+        gpu_cfg.custom_bg_shader.as_deref(),
+        gpu_cfg.custom_text_shader.as_deref(),
+    ]
+    .iter()
+    .flatten()
+    .map(|p| std::path::PathBuf::from(shellexpand::tilde(p).as_ref()))
+    .filter(|p| p.exists())
+    .collect();
+
+    if paths.is_empty() {
+        return (None, None);
+    }
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<()>(1);
+
+    let mut watcher = match notify::recommended_watcher(
+        move |result: notify::Result<Event>| {
+            if let Ok(event) = result {
+                use notify::EventKind::*;
+                if matches!(event.kind, Modify(_) | Create(_)) {
+                    info!("シェーダーファイルの変更を検知しました。パイプラインを再構築します。");
+                    let _ = tx.blocking_send(());
+                }
+            }
+        },
+    ) {
+        Ok(w) => w,
+        Err(e) => {
+            warn!("シェーダーウォッチャーの起動に失敗しました: {}", e);
+            return (None, None);
+        }
+    };
+
+    for path in &paths {
+        if let Err(e) = watcher.watch(path, RecursiveMode::NonRecursive) {
+            warn!("シェーダーファイルの監視に失敗しました: {}: {}", path.display(), e);
+        } else {
+            info!("シェーダーファイルを監視中: {}", path.display());
+        }
+    }
+
+    (Some(rx), Some(watcher))
 }
 
 // ---- WGSL シェーダー ----
@@ -2510,6 +2679,9 @@ impl NextermApp {
         config_watcher: Option<notify::RecommendedWatcher>,
         status_eval: Option<StatusBarEvaluator>,
     ) -> EventHandler {
+        // カスタムシェーダーファイルが設定されていれば監視を開始する
+        let (shader_reload_rx, _shader_watcher) = start_shader_watcher(&self.config.gpu);
+
         EventHandler {
             app: self,
             wgpu_state: None,
@@ -2523,6 +2695,8 @@ impl NextermApp {
             status_eval,
             last_status_eval: Instant::now(),
             scale_factor: 1.0,
+            shader_reload_rx,
+            _shader_watcher,
         }
     }
 }
@@ -2548,6 +2722,10 @@ pub struct EventHandler {
     last_status_eval: Instant,
     /// ディスプレイの DPI スケール係数（winit より取得）
     scale_factor: f32,
+    /// シェーダーファイル変更通知チャネル（Some = カスタムシェーダー監視中）
+    shader_reload_rx: Option<tokio::sync::mpsc::Receiver<()>>,
+    /// シェーダーファイル監視ウォッチャー
+    _shader_watcher: Option<notify::RecommendedWatcher>,
 }
 
 impl ApplicationHandler for EventHandler {
@@ -2681,6 +2859,17 @@ impl ApplicationHandler for EventHandler {
                     if let Some(wgpu) = &self.wgpu_state {
                         self.atlas = Some(GlyphAtlas::new(&wgpu.device));
                     }
+                }
+                had_messages = true;
+            }
+
+        // カスタムシェーダーファイルの変更をポーリングしてパイプラインを再構築する
+        if let Some(rx) = &mut self.shader_reload_rx
+            && rx.try_recv().is_ok() {
+                // チャネルをドレインして複数イベントを 1 回にまとめる
+                while rx.try_recv().is_ok() {}
+                if let Some(wgpu) = &mut self.wgpu_state {
+                    wgpu.reload_shader_pipelines(&self.app.config.gpu);
                 }
                 had_messages = true;
             }
