@@ -1,30 +1,131 @@
 # Quick Start
 
-See the [project README](https://github.com/mizu-jun/Nexterm#quick-start) for the most up-to-date quick start guide.
+This guide walks you from installation to a working multi-pane SSH session in under five minutes.
 
-## Starting Nexterm
+## 1. Install
 
-Launch the server and attach a GPU client in one step using the launcher:
+Choose the method for your platform:
+
+=== macOS (Homebrew)
+```sh
+brew install mizu-jun/nexterm/nexterm
+```
+
+=== Windows (winget)
+```sh
+winget install mizu-jun.Nexterm
+```
+
+=== Windows (Scoop)
+```sh
+scoop bucket add mizu-jun https://github.com/mizu-jun/scoop-mizu-jun
+scoop install nexterm
+```
+
+=== Linux (AppImage)
+```sh
+curl -L https://github.com/mizu-jun/nexterm/releases/latest/download/nexterm-x86_64.AppImage -o nexterm
+chmod +x nexterm && ./nexterm
+```
+
+See [Installation](install.md) for full platform details.
+
+---
+
+## 2. Launch
 
 ```sh
 nexterm
 ```
 
-Or start the server manually and attach separately:
+This starts the server and attaches the GPU client in one step.
+On first launch you will see an empty terminal with a status bar at the bottom.
+
+To start the server and client separately:
 
 ```sh
-nexterm-server &
-nexterm-client-gpu
+nexterm-server &          # バックグラウンドでサーバーを起動
+nexterm-client-gpu        # GPU クライアントを接続
 ```
 
-## Basic Key Bindings
+---
+
+## 3. Split the Terminal
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+Shift+\` | Split pane vertically |
-| `Ctrl+Shift+-` | Split pane horizontally |
+| `Ctrl+Shift+\` | Split right (vertical) |
+| `Ctrl+Shift+-` | Split below (horizontal) |
+| `Ctrl+G` | Show pane numbers then navigate |
 | `Ctrl+Shift+P` | Open command palette |
-| `Ctrl+G` | Display pane numbers for navigation |
-| `Ctrl+D` | Detach from session |
 
-See [Key Bindings](config/keybindings.md) for the full reference.
+Right-click inside any pane for a context menu with split and close actions.
+
+---
+
+## 4. Connect to an SSH Host
+
+**Option A — Command palette**
+
+1. Press `Ctrl+Shift+P`
+2. Type `host` and select **Show Host Manager**
+3. Start typing the hostname; press `Enter` to connect
+
+**Option B — Add a host to `nexterm.toml`**
+
+```toml
+[[hosts]]
+name     = "web-prod"
+host     = "192.0.2.1"
+port     = 22
+username = "deploy"
+auth_type = "agent"        # "agent", "key", or "password"
+```
+
+Save the file — Nexterm reloads configuration without restart.
+
+**Option C — Use your existing `~/.ssh/config`**
+
+Nexterm reads `~/.ssh/config` automatically.
+All non-wildcard hosts appear in the Host Manager.
+
+---
+
+## 5. Detach and Reattach
+
+Sessions survive client disconnection.
+
+```sh
+# Detach (keep session running)
+Ctrl+D
+
+# List running sessions
+nexterm-ctl list
+
+# Reattach
+nexterm-ctl attach main
+```
+
+---
+
+## 6. Customize Appearance
+
+Open the settings panel with `Ctrl+,` and adjust:
+
+| Tab | What you can change |
+|-----|---------------------|
+| **Font** | Family name, size |
+| **Colors** | One of 9 built-in schemes |
+| **Window** | Background opacity |
+
+Changes are saved to `nexterm.toml` automatically.
+
+---
+
+## Next Steps
+
+- [Key Bindings](config/keybindings.md) — full keyboard reference
+- [TOML Reference](config/toml.md) — all configuration options
+- [Lua Scripting](config/lua.md) — automate with macros and hooks
+- [Lua Macro Recipes](config/lua-recipes.md) — copy-and-paste examples
+- [SSH & Connectivity](features/ssh.md) — port forwarding, SFTP, X11

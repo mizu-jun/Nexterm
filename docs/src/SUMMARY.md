@@ -20,7 +20,9 @@
 # Configuration
 - [Overview](config/overview.md)
 - [TOML Reference](config/toml.md)
+- [Common Snippets](config/snippets.md)
 - [Lua Scripting](config/lua.md)
+- [Lua Macro Recipes](config/lua-recipes.md)
 - [Key Bindings](config/keybindings.md)
 
 # Advanced
