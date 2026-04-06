@@ -580,6 +580,12 @@ pub struct HostConfig {
     /// 信頼された X11 フォワーディング（ssh -Y 相当）
     #[serde(default)]
     pub x11_trusted: bool,
+    /// グループ名（ホストをカテゴリ分けするための任意文字列）
+    #[serde(default)]
+    pub group: String,
+    /// タグ一覧（複数のラベルで絞り込みに使用する）
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 fn default_ssh_port() -> u16 {
