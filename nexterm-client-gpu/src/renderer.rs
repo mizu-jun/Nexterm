@@ -589,7 +589,7 @@ impl WgpuState {
     /// 1フレームを描画する
     fn render(
         &mut self,
-        state: &ClientState,
+        state: &mut ClientState,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         tab_bar_cfg: &nexterm_config::TabBarConfig,
@@ -1425,8 +1425,8 @@ impl WgpuState {
     /// タブバー頂点を構築する（ウィンドウ最上行、WezTerm スタイル）
     #[allow(clippy::too_many_arguments)]
     fn build_tab_bar_verts(
-        &self,
-        state: &ClientState,
+        &mut self,
+        state: &mut ClientState,
         cfg: &nexterm_config::TabBarConfig,
         sw: f32, sh: f32, cell_w: f32, cell_h: f32,
         font: &mut FontManager,
@@ -1447,28 +1447,57 @@ impl WgpuState {
         let text_fg = [0.95, 0.95, 0.95, 1.0];
         let inactive_fg = [0.65, 0.65, 0.65, 1.0];
 
-        let mut x_offset = 0.0_f32;
         let padding = cell_w;
-        let sep = &cfg.separator;
+        let sep = cfg.separator.clone();
+
+        // 右端の設定ボタン幅を先に確保する（約 6 文字分）
+        let settings_label = " ⚙ Settings ";
+        let settings_w = settings_label.chars().count() as f32 * cell_w;
+        let tab_area_w = sw - settings_w;
 
         // ペイン ID 順にタブを並べる
         let mut pane_ids: Vec<u32> = state.pane_layouts.keys().copied().collect();
         pane_ids.sort();
 
+        // クリック判定テーブルを毎フレーム更新する
+        state.tab_hit_rects.clear();
+
+        let mut x_offset = 0.0_f32;
+        let text_y = bar_y + (bar_h - cell_h) / 2.0;
+
         for (i, &pane_id) in pane_ids.iter().enumerate() {
             let is_active = pane_id == focused_id;
-            // アクティビティフラグを確認して「●」インジケーターを付与する
-            let has_activity = state
+            // アクティビティフラグ・タイトルを取得する
+            let (has_activity, raw_title) = state
                 .panes
                 .get(&pane_id)
-                .map(|p| p.has_activity)
-                .unwrap_or(false);
-            let label = if has_activity && !is_active {
-                format!(" pane:{} ● ", pane_id)
+                .map(|p| (p.has_activity, p.title.clone()))
+                .unwrap_or((false, String::new()));
+
+            // タブラベル: OSC タイトルがあれば表示、なければペイン番号
+            let base_label = if raw_title.is_empty() {
+                format!("pane:{}", pane_id)
             } else {
-                format!(" pane:{} ", pane_id)
+                // 長すぎるタイトルは末尾を省略する（最大 24 文字）
+                let truncated: String = raw_title.chars().take(24).collect();
+                if raw_title.chars().count() > 24 {
+                    format!("{}…", truncated)
+                } else {
+                    truncated
+                }
             };
-            let label_w = label.chars().count() as f32 * cell_w + padding * 2.0;
+            let label = if has_activity && !is_active {
+                format!(" {} ● ", base_label)
+            } else {
+                format!(" {} ", base_label)
+            };
+            let label_w = (label.chars().count() as f32 * cell_w + padding * 2.0)
+                .min(tab_area_w - x_offset); // タブエリアをはみ出さない
+
+            if label_w < cell_w * 2.0 {
+                break; // これ以上タブを描画するスペースがない
+            }
+
             // アクティビティがある非アクティブタブは背景をオレンジ寄りに変更する
             let tab_bg = if is_active {
                 active_bg
@@ -1482,7 +1511,6 @@ impl WgpuState {
             add_px_rect(x_offset, bar_y, label_w, bar_h, tab_bg, sw, sh, bg_verts, bg_idx);
 
             // タブラベル（垂直中央揃え）
-            let text_y = bar_y + (bar_h - cell_h) / 2.0;
             let fg = if is_active { text_fg } else { inactive_fg };
             add_string_verts(
                 &label, x_offset + padding, text_y, fg, is_active,
@@ -1490,23 +1518,44 @@ impl WgpuState {
                 text_verts, text_idx,
             );
 
+            // クリック判定範囲を記録する
+            state.tab_hit_rects.insert(pane_id, (x_offset, x_offset + label_w));
+
             x_offset += label_w;
 
             // セパレータ（最後のタブの後は不要）
             if i + 1 < pane_ids.len() {
                 let next_is_active = pane_ids[i + 1] == focused_id;
-                // セパレータの色: 現在タブの背景から次のタブへの遷移を表現する
                 let sep_bg = if is_active || next_is_active { active_bg } else { inactive_bg };
                 let sep_w = cell_w;
                 add_px_rect(x_offset, bar_y, sep_w, bar_h, sep_bg, sw, sh, bg_verts, bg_idx);
                 add_string_verts(
-                    sep, x_offset, text_y, text_fg, false,
+                    &sep, x_offset, text_y, text_fg, false,
                     sw, sh, cell_w, font, atlas, &self.queue,
                     text_verts, text_idx,
                 );
                 x_offset += sep_w;
             }
         }
+
+        // 右端: 設定ボタン
+        let settings_x = sw - settings_w;
+        let settings_open = state.settings_panel.is_open;
+        let settings_bg = if settings_open {
+            active_bg
+        } else {
+            // 少し明るい非アクティブ色で識別しやすくする
+            [inactive_bg[0] + 0.05, inactive_bg[1] + 0.05, inactive_bg[2] + 0.08, 1.0]
+        };
+        add_px_rect(settings_x, bar_y, settings_w, bar_h, settings_bg, sw, sh, bg_verts, bg_idx);
+        let settings_fg = if settings_open { text_fg } else { [0.80, 0.80, 0.80, 1.0] };
+        add_string_verts(
+            settings_label, settings_x, text_y, settings_fg, settings_open,
+            sw, sh, cell_w, font, atlas, &self.queue,
+            text_verts, text_idx,
+        );
+        // 設定ボタンのクリック範囲を記録する
+        state.settings_tab_rect = Some((settings_x, sw));
     }
 
     /// ステータスライン頂点を構築する（ウィンドウ最下行）
@@ -3062,7 +3111,7 @@ impl ApplicationHandler for EventHandler {
                 }
             }
 
-            // 左ボタン押下: 選択開始 + マウスレポート
+            // 左ボタン押下: タブバークリック判定 + 選択開始 + マウスレポート
             WindowEvent::MouseInput {
                 button: MouseButton::Left,
                 state: ElementState::Pressed,
@@ -3076,6 +3125,37 @@ impl ApplicationHandler for EventHandler {
                     } else {
                         0.0_f64
                     };
+
+                    // タブバーエリア（py < tab_bar_h）のクリックを処理する
+                    if self.app.config.tab_bar.enabled && py < tab_bar_h_f64 {
+                        let px_f32 = px as f32;
+                        // 設定ボタンのクリック判定
+                        let hit_settings = self.app.state.settings_tab_rect
+                            .map(|(x0, x1)| px_f32 >= x0 && px_f32 < x1)
+                            .unwrap_or(false);
+                        if hit_settings {
+                            self.app.state.settings_panel.is_open =
+                                !self.app.state.settings_panel.is_open;
+                            if let Some(w) = &self.window {
+                                w.request_redraw();
+                            }
+                        } else {
+                            // タブクリックでペインフォーカスを切り替える
+                            let hit_pane = self.app.state.tab_hit_rects
+                                .iter()
+                                .find(|&(_, &(x0, x1))| px_f32 >= x0 && px_f32 < x1)
+                                .map(|(&id, _)| id);
+                            if let Some(pane_id) = hit_pane
+                                && self.app.state.focused_pane_id != Some(pane_id)
+                                    && let Some(conn) = &self.connection {
+                                        let _ = conn.send_tx.try_send(
+                                            ClientToServer::FocusPane { pane_id }
+                                        );
+                                    }
+                        }
+                        return; // タブバー内のクリックはターミナルに伝えない
+                    }
+
                     let col = (px / cell_w) as u16;
                     let row = ((py - tab_bar_h_f64).max(0.0) / cell_h) as u16;
                     self.app.state.mouse_sel.begin(col, row);
@@ -3309,7 +3389,7 @@ impl ApplicationHandler for EventHandler {
                     (&mut self.wgpu_state, &mut self.atlas)
                     && let Err(e) =
                         wgpu.render(
-                            &self.app.state,
+                            &mut self.app.state,
                             &mut self.app.font,
                             atlas,
                             &self.app.config.tab_bar,

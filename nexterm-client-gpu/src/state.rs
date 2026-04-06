@@ -40,6 +40,8 @@ pub struct PaneState {
     pub images: HashMap<u32, PlacedImage>,
     /// バックグラウンドアクティビティフラグ（非フォーカス時に出力があると true）
     pub has_activity: bool,
+    /// OSC 0/2 で設定されたタイトル（シェルや vim がウィンドウタイトルを設定する）
+    pub title: String,
 }
 
 impl PaneState {
@@ -52,6 +54,7 @@ impl PaneState {
             scroll_offset: 0,
             images: HashMap::new(),
             has_activity: false,
+            title: String::new(),
         }
     }
 
@@ -540,6 +543,11 @@ pub struct ClientState {
     pub mouse_reporting_mode: u8,
     /// フローティングペインの位置情報キャッシュ
     pub floating_pane_rects: HashMap<u32, FloatRect>,
+    /// タブバーの各タブのクリック範囲（pane_id → (x_start, x_end)）
+    /// レンダラーが毎フレーム更新し、マウスハンドラが参照する
+    pub tab_hit_rects: HashMap<u32, (f32, f32)>,
+    /// タブバーの設定ボタンのクリック範囲（x_start, x_end）
+    pub settings_tab_rect: Option<(f32, f32)>,
 }
 
 impl ClientState {
@@ -570,6 +578,8 @@ impl ClientState {
             settings_panel: SettingsPanel::default(),
             mouse_reporting_mode: 0,
             floating_pane_rects: HashMap::new(),
+            tab_hit_rects: HashMap::new(),
+            settings_tab_rect: None,
         }
     }
 
@@ -631,8 +641,13 @@ impl ClientState {
             }
             ServerToClient::RecordingStarted { .. } | ServerToClient::RecordingStopped { .. } => {}
             ServerToClient::WindowListChanged { .. } | ServerToClient::PaneClosed { .. } => {}
-            // タイトル変更・デスクトップ通知は GPU クライアントでは未実装
-            ServerToClient::TitleChanged { .. } | ServerToClient::DesktopNotification { .. } => {}
+            // OSC 0/2 タイトル変更 — ペインのタイトルフィールドを更新する
+            ServerToClient::TitleChanged { pane_id, title } => {
+                if let Some(pane) = self.panes.get_mut(&pane_id) {
+                    pane.title = title;
+                }
+            }
+            ServerToClient::DesktopNotification { .. } => {}
             ServerToClient::BroadcastModeChanged { enabled } => {
                 self.broadcast_mode = enabled;
             }
