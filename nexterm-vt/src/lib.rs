@@ -434,4 +434,138 @@ mod tests {
         // （TAB が col=8 に移動し、X が col=8 に書かれる）
         assert_eq!(grid.get(8, 0).unwrap().ch, 'X');
     }
+
+    // ─── CJK 全角文字テスト ──────────────────────────────────────────────────
+
+    #[test]
+    fn cjk全角文字が2カラム幅で配置される() {
+        let mut parser = VtParser::new(80, 24);
+        // 日本語全角文字（あ）は幅 2
+        parser.advance("あ".as_bytes());
+        let grid = parser.screen().grid();
+        // col=0 に文字本体
+        assert_eq!(grid.get(0, 0).unwrap().ch, 'あ');
+        // col=1 はプレースホルダー（空白）
+        assert_eq!(grid.get(1, 0).unwrap().ch, ' ');
+        // カーソルは col=2 に進んでいること（Screen.cursor_col を参照する）
+        assert_eq!(parser.screen().cursor().0, 2);
+    }
+
+    #[test]
+    fn cjk複数全角文字が連続して配置される() {
+        let mut parser = VtParser::new(80, 24);
+        // 「日本語」= 3 文字 × 幅 2 = 6 カラム消費
+        parser.advance("日本語".as_bytes());
+        let grid = parser.screen().grid();
+        assert_eq!(grid.get(0, 0).unwrap().ch, '日');
+        assert_eq!(grid.get(2, 0).unwrap().ch, '本');
+        assert_eq!(grid.get(4, 0).unwrap().ch, '語');
+        // カーソルは col=6 にあること
+        assert_eq!(parser.screen().cursor().0, 6);
+    }
+
+    #[test]
+    fn cjk全角と半角の混在() {
+        let mut parser = VtParser::new(80, 24);
+        // "A日B" → A(col=0), 日(col=1,2), B(col=3)
+        parser.advance("A日B".as_bytes());
+        let grid = parser.screen().grid();
+        assert_eq!(grid.get(0, 0).unwrap().ch, 'A');
+        assert_eq!(grid.get(1, 0).unwrap().ch, '日');
+        assert_eq!(grid.get(3, 0).unwrap().ch, 'B');
+        assert_eq!(parser.screen().cursor().0, 4);
+    }
+
+    #[test]
+    fn cjk行末で折り返す() {
+        // 幅 5 の端末で全角文字が行末端（col=4）にくる場合は次行に折り返す
+        // "ABCD" + 全角"あ": 幅2 の「あ」が col=4 から始まると
+        // col+1=5 >= width=5 となり折り返しが発生する
+        let mut parser = VtParser::new(5, 5);
+        parser.advance("ABCDあ".as_bytes());
+        let grid = parser.screen().grid();
+        // ABCD は 1 行目の col=0〜3 に配置される
+        assert_eq!(grid.get(0, 0).unwrap().ch, 'A');
+        assert_eq!(grid.get(3, 0).unwrap().ch, 'D');
+        // 「あ」は幅 2 で col=4 に入らないため 2 行目の col=0 に折り返す
+        assert_eq!(grid.get(0, 1).unwrap().ch, 'あ');
+    }
+
+    #[test]
+    fn 中国語簡体字が2カラム幅で配置される() {
+        let mut parser = VtParser::new(80, 24);
+        // 中国語文字（汉字）は幅 2
+        parser.advance("汉字".as_bytes());
+        let grid = parser.screen().grid();
+        assert_eq!(grid.get(0, 0).unwrap().ch, '汉');
+        assert_eq!(grid.get(2, 0).unwrap().ch, '字');
+        assert_eq!(parser.screen().cursor().0, 4);
+    }
+
+    #[test]
+    fn 韓国語ハングルが2カラム幅で配置される() {
+        let mut parser = VtParser::new(80, 24);
+        // ハングル音節（가）は幅 2
+        parser.advance("가나다".as_bytes());
+        let grid = parser.screen().grid();
+        assert_eq!(grid.get(0, 0).unwrap().ch, '가');
+        assert_eq!(grid.get(2, 0).unwrap().ch, '나');
+        assert_eq!(grid.get(4, 0).unwrap().ch, '다');
+        assert_eq!(parser.screen().cursor().0, 6);
+    }
+
+    #[test]
+    fn 半角カタカナは1カラム幅() {
+        let mut parser = VtParser::new(80, 24);
+        // 半角カタカナ（ｱｲｳ）は幅 1
+        parser.advance("ｱｲｳ".as_bytes());
+        let grid = parser.screen().grid();
+        assert_eq!(grid.get(0, 0).unwrap().ch, 'ｱ');
+        assert_eq!(grid.get(1, 0).unwrap().ch, 'ｲ');
+        assert_eq!(grid.get(2, 0).unwrap().ch, 'ｳ');
+        assert_eq!(parser.screen().cursor().0, 3);
+    }
+
+    #[test]
+    fn cjk全角文字のカラーが引き継がれる() {
+        let mut parser = VtParser::new(80, 24);
+        // SGR で赤（ANSI 31）に設定してから全角文字を書く
+        parser.advance(b"\x1b[31m");
+        parser.advance("あ".as_bytes());
+        let grid = parser.screen().grid();
+        // 本体セルは赤色
+        use nexterm_proto::Color;
+        assert_eq!(grid.get(0, 0).unwrap().fg, Color::Indexed(1)); // ANSI red = index 1
+        // プレースホルダーセルも同じ前景色
+        assert_eq!(grid.get(1, 0).unwrap().fg, Color::Indexed(1));
+    }
+
+    #[test]
+    fn cjk全角文字とsgr_リセットが正しく機能する() {
+        let mut parser = VtParser::new(80, 24);
+        // 太字 + 全角文字
+        parser.advance(b"\x1b[1m");
+        parser.advance("漢".as_bytes());
+        // リセット後の通常文字
+        parser.advance(b"\x1b[0m");
+        parser.advance(b"X");
+        let grid = parser.screen().grid();
+        assert_eq!(grid.get(0, 0).unwrap().ch, '漢');
+        assert!(grid.get(0, 0).unwrap().attrs.is_bold());
+        assert_eq!(grid.get(2, 0).unwrap().ch, 'X');
+        assert!(!grid.get(2, 0).unwrap().attrs.is_bold());
+    }
+
+    #[test]
+    fn cjk文字のリサイズ後も正しく動作する() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance("あいう".as_bytes());
+        // リサイズ後も全角文字書き込みが正常に動作することを確認する
+        parser.screen.resize(40, 12);
+        parser.advance("えお".as_bytes());
+        let grid = parser.screen().grid();
+        // リサイズ後に書いた「え」「お」がグリッド内に存在すること
+        let row0: String = grid.rows[0].iter().map(|c| c.ch).collect();
+        assert!(row0.contains('え') || row0.contains('お'));
+    }
 }
