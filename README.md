@@ -6,6 +6,33 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 
 [![CI](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml/badge.svg)](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml)
 
+## What's New in v0.8.0
+
+**Web Terminal: OAuth2 / SSO authentication**
+- Connect with GitHub, Google, Azure AD, or any OIDC provider — no more TOTP-only access.
+- Restrict access by email address or GitHub organization membership.
+- Client secret via `NEXTERM_OAUTH_CLIENT_SECRET` environment variable.
+- OAuth login button automatically injected into the browser login page.
+
+**Web Terminal: session & security improvements**
+- Configurable session TTL (`session_timeout_secs`, default 24 h).
+- Concurrent session limit (`max_sessions`, default unlimited).
+- Explicit logout endpoint (`POST /auth/logout`).
+- `force_https` option redirects HTTP → HTTPS for reverse-proxy deployments.
+- Access log (CSV or server log) for every request including failed auth attempts.
+
+**TUI client: multi-pane support**
+- Ctrl+B prefix for horizontal/vertical split, focus cycling, zoom, and close.
+- Status bar and full help overlay (Ctrl+B ?).
+
+**SSH host manager**
+- Tag-based filtering, group management, connection history, frequency-based sorting.
+
+**WASM plugin examples**
+- Three ready-to-build samples: `error-detector`, `command-counter`, `timestamp-injector`.
+
+---
+
 ## What's New in v0.7.6
 
 **TUI-parity tab bar and editable settings panel**
