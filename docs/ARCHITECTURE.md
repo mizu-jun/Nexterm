@@ -1,14 +1,14 @@
-# nexterm アーキテクチャ設計書
+# nexterm Architecture Design Document
 
-## 概要
+## Overview
 
-nexterm はデーモンレス設計の Rust 製ターミナルマルチプレクサである。
-サーバープロセスが PTY セッションを保持し続け、クライアントは随時接続・切断できる。
-GPU クライアント（wgpu）と TUI クライアント（ratatui）の 2 種類のフロントエンドを持つ。
+nexterm is a daemonless Rust terminal multiplexer.
+The server process keeps PTY sessions alive while clients can connect and disconnect at any time.
+It provides two types of frontends: a GPU client (wgpu) and a TUI client (ratatui).
 
 ---
 
-## クレート依存グラフ
+## Crate Dependency Graph
 
 ```
 nexterm-client-gpu
@@ -22,56 +22,56 @@ nexterm-server
   └── nexterm-proto
   └── nexterm-vt
 
-nexterm-proto   (共有型・メッセージ定義)
-nexterm-vt      (VT100 パーサ・仮想スクリーン)
-nexterm-config  (TOML + Lua 設定)
+nexterm-proto   (shared types and message definitions)
+nexterm-vt      (VT100 parser and virtual screen)
+nexterm-config  (TOML + Lua configuration)
 ```
 
-循環依存はない。`nexterm-proto` が唯一の共有クレートであり、すべての IPC 型を定義する。
+There are no circular dependencies. `nexterm-proto` is the sole shared crate and defines all IPC types.
 
 ---
 
-## プロセス構成
+## Process Architecture
 
 ```
 ┌───────────────────────────────────────┐
 │       nexterm-client-gpu / tui         │
-│   winit イベントループ / crossterm      │
-│   wgpu レンダラー / ratatui レンダラー   │
+│   winit event loop / crossterm         │
+│   wgpu renderer / ratatui renderer     │
 └──────────────────┬────────────────────┘
                    │ IPC (bincode / Named Pipe / Unix Socket)
 ┌──────────────────▼────────────────────┐
 │          nexterm-server                │
 │   SessionManager                       │
 │     └── Session                        │
-│           └── Window (BSP レイアウト)   │
-│                 └── Pane (PTY 管理)    │
+│           └── Window (BSP layout)      │
+│                 └── Pane (PTY mgmt)    │
 └──────────────────┬────────────────────┘
                    │ portable-pty
 ┌──────────────────▼────────────────────┐
 │     OS PTY (ConPTY / Unix PTY)         │
-│     シェル / アプリケーション            │
+│     Shell / Application                │
 └───────────────────────────────────────┘
 ```
 
 ---
 
-## サーバー側アーキテクチャ
+## Server-Side Architecture
 
-### セッション階層
+### Session Hierarchy
 
 ```
 SessionManager
-  └── HashMap<String, Session>   (セッション名 → Session)
+  └── HashMap<String, Session>   (session name → Session)
         └── Session
               ├── name: String
-              ├── cols, rows: u16   (端末全体サイズ)
+              ├── cols, rows: u16   (terminal overall size)
               ├── client_tx: Option<Sender<ServerToClient>>
               └── HashMap<u32, Window>  (Window ID → Window)
                     └── Window
                           ├── id, name: String
                           ├── focused_pane_id: u32
-                          ├── layout: SplitNode        (BSP ツリー)
+                          ├── layout: SplitNode        (BSP tree)
                           └── HashMap<u32, Pane>       (Pane ID → Pane)
                                 └── Pane
                                       ├── id: u32
@@ -81,188 +81,184 @@ SessionManager
                                       └── writer: Mutex<Box<dyn Write>>
 ```
 
-### PTY 読み取りスレッド
+### PTY Reader Thread
 
-各 `Pane` は生成時に `tokio::task::spawn_blocking` で読み取りスレッドを起動する。
+Each `Pane` spawns a reader thread via `tokio::task::spawn_blocking` at creation time.
 
 ```
-PTY 読み取りスレッド (blocking)
+PTY reader thread (blocking)
   loop {
     reader.read(&mut buf)
-    log_writer.write_all(&buf)     ← 録画中の場合のみ
+    log_writer.write_all(&buf)     ← only when recording is active
     VtParser::advance(buf)
-    Screen::take_dirty_rows()      → GridDiff メッセージ送信
-    Screen::take_pending_images()  → ImagePlaced メッセージ送信
-    Screen::take_pending_bell()    → Bell メッセージ送信
+    Screen::take_dirty_rows()      → send GridDiff message
+    Screen::take_pending_images()  → send ImagePlaced message
+    Screen::take_pending_bell()    → send Bell message
   }
 ```
 
-録画用のログライターは `Arc<Mutex<Option<BufWriter<File>>>>` で保持し、
-`start_recording()` / `stop_recording()` でメインスレッドから差し替える。
+The recording log writer is held as `Arc<Mutex<Option<BufWriter<File>>>>` and swapped by the main thread via `start_recording()` / `stop_recording()`.
 
-PTY 出力先チャネルは `Arc<Mutex<Sender<ServerToClient>>>` で保持し、
-クライアント再接続時に `update_tx()` で差し替える。これによりデーモンレス設計を実現している。
+The PTY output channel is held as `Arc<Mutex<Sender<ServerToClient>>>` and swapped via `update_tx()` on client reconnect. This is what enables the daemonless design.
 
-### クライアント再接続フロー
+### Client Reconnect Flow
 
 ```
-クライアント接続
+Client connects
   → IPC::Attach { session_name }
   → get_or_create_and_attach()
       → Session::attach(new_tx)
-          → window.update_tx_for_all(&tx)   (全ペインの Sender を差し替え)
-  → FullRefresh 送信
-  → LayoutChanged 送信
-  → SessionList 送信
+          → window.update_tx_for_all(&tx)   (replace Sender for all panes)
+  → send FullRefresh
+  → send LayoutChanged
+  → send SessionList
 ```
 
 ---
 
-## BSP レイアウトエンジン
+## BSP Layout Engine
 
-### データ構造
+### Data Structure
 
 ```rust
 enum SplitNode {
     Pane { pane_id: u32 },
     Split {
-        dir: SplitDir,   // Vertical(左右) | Horizontal(上下)
-        ratio: f32,      // 左/上の占有率 (0.0〜1.0)
+        dir: SplitDir,   // Vertical (left/right) | Horizontal (top/bottom)
+        ratio: f32,      // fraction occupied by the left/top child (0.0–1.0)
         left: Box<SplitNode>,
         right: Box<SplitNode>,
     },
 }
 ```
 
-### ペイン分割の手順（Chicken-and-Egg 問題の解決）
+### Pane Split Procedure (Resolving the Chicken-and-Egg Problem)
 
-1. `new_pane_id()` で ID を事前発行する
-2. `layout.insert_after(focused_id, new_id, dir)` でツリーに挿入する
-3. `compute_layouts(cols, rows)` で全ペインの矩形を再帰計算する
-4. `Pane::spawn_with_id(new_id, rect.cols, rect.rows, ...)` でペインを生成する
-5. 既存ペインを新しいサイズにリサイズする
+1. Pre-allocate an ID with `new_pane_id()`
+2. Insert into the tree with `layout.insert_after(focused_id, new_id, dir)`
+3. Recursively compute all pane rectangles with `compute_layouts(cols, rows)`
+4. Spawn the pane with `Pane::spawn_with_id(new_id, rect.cols, rect.rows, ...)`
+5. Resize existing panes to their new sizes
 
-### レイアウト計算（再帰）
+### Layout Calculation (Recursive)
 
 ```
 compute(col_off, row_off, cols, rows, out):
   Pane → out.push(PaneRect { pane_id, col_off, row_off, cols, rows })
   Split(Vertical):
     left_cols = floor(cols * ratio)
-    right_cols = cols - left_cols - 1   // 境界線 1 列
+    right_cols = cols - left_cols - 1   // 1-column border
     compute(left, col_off, ...)
     compute(right, col_off + left_cols + 1, ...)
   Split(Horizontal):
     top_rows = floor(rows * ratio)
-    bot_rows = rows - top_rows - 1      // 境界線 1 行
+    bot_rows = rows - top_rows - 1      // 1-row border
     compute(left, row_off, ...)
     compute(right, row_off + top_rows + 1, ...)
 ```
 
 ---
 
-## IPC 層
+## IPC Layer
 
-### トランスポート
+### Transport
 
-| OS | トランスポート | パス |
-|----|--------------|------|
+| OS | Transport | Path |
+|----|-----------|------|
 | Linux / macOS | Unix Domain Socket | `$XDG_RUNTIME_DIR/nexterm.sock` |
 | Windows | Named Pipe | `\\.\pipe\nexterm-<USERNAME>` |
 
-### フレーミング
+### Framing
 
-すべてのメッセージは 4 バイト LE 長さプレフィックス + bincode ペイロードで送受信する。
+All messages are sent and received as a 4-byte LE length prefix followed by a bincode payload.
 
 ```
 ┌────────────────┬─────────────────────────┐
-│ 4B (LE u32)    │ N バイト (bincode)       │
-│ ペイロード長   │ メッセージ本体           │
+│ 4B (LE u32)    │ N bytes (bincode)        │
+│ payload length │ message body             │
 └────────────────┴─────────────────────────┘
 ```
 
-### セキュリティ
+### Security
 
-**Unix ドメインソケット — UID ピア検証**
+**Unix Domain Socket — UID Peer Verification**
 
-接続受け付け後、カーネル API でクライアントの UID を取得してサーバーの UID と照合する。
-不一致の場合は即座に接続を切断する。
+After accepting a connection, the kernel API is used to retrieve the client UID and compare it against the server UID. A mismatch results in immediate disconnection.
 
 | OS | API |
 |----|-----|
 | Linux | `getsockopt(SO_PEERCRED)` → `ucred.uid` |
 | macOS / BSD | `libc::getpeereid(fd, &uid, &gid)` |
-| その他 Unix | UID 検証スキップ（警告ログのみ） |
+| Other Unix | UID verification skipped (warning log only) |
 
 **Windows Named Pipe**
 
-`ServerOptions::reject_remote_clients(true)` で同一マシン外からの接続を拒否する。
+`ServerOptions::reject_remote_clients(true)` rejects connections from outside the local machine.
 
-**パストラバーサル防止**
+**Path Traversal Prevention**
 
-`StartRecording { path }` ハンドラーは `validate_recording_path()` で `..` コンポーネントと空パスを事前に拒否する。
+The `StartRecording { path }` handler calls `validate_recording_path()` to reject `..` components and empty paths upfront.
 
-### スレッドモデル（サーバー側）
+### Thread Model (Server Side)
 
 ```
 tokio::spawn(handle_client)
-  ├── tokio::spawn (送信ループ: rx → write_half)
-  └── 受信ループ:  read_half → dispatch()
+  ├── tokio::spawn (send loop: rx → write_half)
+  └── recv loop:  read_half → dispatch()
 ```
 
-各クライアント接続ごとに非同期タスクが 2 つ起動する（送信・受信を分離）。
+Two async tasks are spawned per client connection (send and receive are separated).
 
 ---
 
-## VT パーサ
+## VT Parser
 
-`nexterm-vt` クレートは `vte` クレートをラップして仮想スクリーンを管理する。
+The `nexterm-vt` crate wraps the `vte` crate and manages a virtual screen.
 
 ```
 VtParser
-  ├── vte::Parser     (バイトストリーム → コールバック)
+  ├── vte::Parser     (byte stream → callbacks)
   └── Screen
-        ├── Grid (Cell[][] : 仮想グリッド)
-        ├── dirty: Vec<bool>     (行ダーティフラグ)
+        ├── Grid (Cell[][] : virtual grid)
+        ├── dirty: Vec<bool>     (per-row dirty flags)
         ├── cursor: (u16, u16)
         └── pending_images: Vec<PendingImage>
 ```
 
-### ダーティ差分の配信
+### Dirty Diff Delivery
 
-- `Screen::take_dirty_rows()` がダーティ行を `Vec<DirtyRow>` として取り出す
-- `DirtyRow { row: u16, cells: Vec<Cell> }` を `GridDiff` メッセージでクライアントに送信する
-- クライアントは受信した差分をローカルグリッドにマージする
+- `Screen::take_dirty_rows()` extracts dirty rows as `Vec<DirtyRow>`
+- `DirtyRow { row: u16, cells: Vec<Cell> }` is sent to the client as a `GridDiff` message
+- The client merges the received diff into its local grid
 
-### 画像プロトコル
+### Image Protocol
 
-| プロトコル | デコーダ | 送信メッセージ |
-|-----------|---------|-------------|
-| Sixel | DCS `q` シーケンスのデコード | `ImagePlaced { rgba, width, height, col, row }` |
-| Kitty | APC `G` シーケンスのデコード | 同上 |
+| Protocol | Decoder | Sent Message |
+|----------|---------|--------------|
+| Sixel | Decode DCS `q` sequence | `ImagePlaced { rgba, width, height, col, row }` |
+| Kitty | Decode APC `G` sequence | Same as above |
 
 ---
 
-## GPU クライアント（nexterm-client-gpu）
+## GPU Client (nexterm-client-gpu)
 
-### レンダリングパイプライン
+### Rendering Pipeline
 
-wgpu のカスタムシェーダーと cosmic-text のグリフアトラスを組み合わせた 3 パス構成。
+A 3-pass pipeline combining wgpu custom shaders with a cosmic-text glyph atlas.
 
 ```
 Render Pass
-  ├── Pass 1: 背景矩形 (bg_verts)
-  │     └── グリッド各セルの背景色 + カーソル矩形
-  ├── Pass 2: テキスト (text_verts)
-  │     └── cosmic-text グリフアトラスから UV サンプリング
-  └── Pass 3: 画像 (img_verts)
-        └── ImagePlaced RGBA テクスチャ
+  ├── Pass 1: Background rectangles (bg_verts)
+  │     └── Background color of each grid cell + cursor rectangle
+  ├── Pass 2: Text (text_verts)
+  │     └── UV sampling from cosmic-text glyph atlas
+  └── Pass 3: Images (img_verts)
+        └── ImagePlaced RGBA textures
 ```
 
-### マルチペイン描画
+### Multi-Pane Rendering
 
-`pane_layouts` が非空のとき（サーバー接続済み）、各 `PaneLayout` のオフセットを使って
-それぞれのペインを正しい位置に描画する。
+When `pane_layouts` is non-empty (server is connected), each `PaneLayout`'s offset is used to draw each pane at its correct position.
 
 ```
 for layout in pane_layouts:
@@ -274,45 +270,45 @@ for layout in pane_layouts:
     build_scrollback_verts_in_rect(pane, layout, rect)
   else:
     build_grid_verts_in_rect(pane, layout, rect)
-    build_border_verts(pane, layout)   // 隣接ペインとの境界線
+    build_border_verts(pane, layout)   // border between adjacent panes
 ```
 
-非フォーカスペインのテキスト色は 70% に減光する。
-フォーカスペインの境界線はブルー `[0.30, 0.55, 0.90]`、非フォーカスはグレー `[0.35, 0.35, 0.42]`。
+Text color in non-focused panes is dimmed to 70%.
+Focused pane borders are blue `[0.30, 0.55, 0.90]`; non-focused panes use gray `[0.35, 0.35, 0.42]`.
 
-### イベントループ（winit 0.30 ApplicationHandler）
+### Event Loop (winit 0.30 ApplicationHandler)
 
 ```
 ApplicationHandler
-  ├── new_events()          — アプリ起動
-  ├── resumed()             — ウィンドウ生成（透過・装飾を config から設定）・wgpu 初期化
+  ├── new_events()          — application startup
+  ├── resumed()             — window creation (transparency/decorations from config) · wgpu init
   ├── window_event()
   │     ├── KeyboardInput   → ClientToServer::KeyEvent
   │     │     ├── Ctrl+=/-/0          → change_font_size / reset_font_size
   │     │     ├── Ctrl+[              → copy_mode.enter()
-  │     │     ├── コピーモード中のキー → handle_copy_mode_key()
-  │     │     └── その他              → PTY へ転送
+  │     │     ├── Keys in copy mode   → handle_copy_mode_key()
+  │     │     └── Other               → forward to PTY
   │     ├── MouseInput (Left, Ctrl)   → find_url_at() → open_url()
   │     ├── Resized         → ClientToServer::Resize
   │     └── CloseRequested  → exit
   └── about_to_wait()
-        ├── PTY 出力ポーリング (16ms 間隔) → サーバーメッセージ適用
-        ├── pending_bell チェック → request_user_attention()
-        ├── ステータスバー評価（1秒ごと）
-        └── 再描画
+        ├── Poll PTY output (16ms interval) → apply server messages
+        ├── Check pending_bell → request_user_attention()
+        ├── Evaluate status bar (every 1 second)
+        └── Redraw
 ```
 
-### クライアント状態管理（ClientState）
+### Client State Management (ClientState)
 
 ```
 ClientState
-  ├── panes: HashMap<u32, PaneState>      (受信済みグリッド)
+  ├── panes: HashMap<u32, PaneState>      (received grids)
   ├── focused_pane_id: Option<u32>
   ├── pane_layouts: HashMap<u32, PaneLayout>
-  ├── palette: CommandPalette             (コマンドパレット)
-  ├── search: SearchState                 (インクリメンタル検索)
-  ├── pending_bell: bool                  (BEL フラグ)
-  └── copy_mode: CopyModeState            (Vim 風コピーモード)
+  ├── palette: CommandPalette             (command palette)
+  ├── search: SearchState                 (incremental search)
+  ├── pending_bell: bool                  (BEL flag)
+  └── copy_mode: CopyModeState            (Vim-style copy mode)
 
 PaneState
   ├── grid: Grid
@@ -320,7 +316,7 @@ PaneState
   ├── scrollback: Scrollback
   ├── scroll_offset: usize
   ├── images: HashMap<u32, PlacedImage>
-  └── has_activity: bool                  (非フォーカス時の出力フラグ)
+  └── has_activity: bool                  (output-while-unfocused flag)
 
 CopyModeState
   ├── is_active: bool
@@ -328,48 +324,47 @@ CopyModeState
   └── selection_start: Option<(u16, u16)>
 ```
 
-URL 検出は `detect_urls_in_row()` で行い、`https://` / `http://` から始まる URL を
-`DetectedUrl { row, col_start, col_end, url }` として返す。
-マウス Ctrl+Click 時にクリック位置の URL を検索し、OS のデフォルトブラウザで開く。
+URL detection is performed by `detect_urls_in_row()`, which scans for URLs starting with `https://` or `http://` and returns them as `DetectedUrl { row, col_start, col_end, url }`.
+On Ctrl+Click, `find_url_at(col, row)` locates any URL at the click position and opens it in the OS default browser.
 
 ---
 
-## TUI クライアント（nexterm-client-tui）
+## TUI Client (nexterm-client-tui)
 
-ratatui + crossterm で構築した軽量フォールバッククライアント。
-GPU が使えない環境（SSH 接続先など）での利用を想定している。
+A lightweight fallback client built with ratatui + crossterm.
+Intended for environments where a GPU is unavailable (e.g., over SSH).
 
-- 単一ペイン表示（BSP レイアウト情報の `is_focused` のみ利用）
-- `crossterm` のキーイベントを `ClientToServer::KeyEvent` に変換して送信
-- `ratatui` の `Paragraph` ウィジェットでグリッドを描画
+- Single-pane display (uses only the `is_focused` field from BSP layout information)
+- Converts `crossterm` key events to `ClientToServer::KeyEvent` and sends them
+- Renders the grid using a `ratatui` `Paragraph` widget
 
 ---
 
-## 設定システム（nexterm-config）
+## Configuration System (nexterm-config)
 
-### ロード順序
+### Load Order
 
 ```
-1. デフォルト値 (Rust Default トレイト)
-2. config.toml の読み込み（TOML デシリアライズ）
-3. config.lua の実行（Lua オーバーライド）
-4. 結果を Config 構造体にマージ
+1. Default values (Rust Default trait)
+2. Load config.toml (TOML deserialization)
+3. Execute config.lua (Lua overrides)
+4. Merge result into Config struct
 ```
 
-### ホットリロード
+### Hot Reload
 
-`notify` クレートでファイルシステムイベントを監視する。
-設定ファイルが変更されると `ConfigWatcher` が再ロードして `Config` を更新する。
+File system events are monitored using the `notify` crate.
+When a configuration file changes, `ConfigWatcher` reloads it and updates the `Config`.
 
-### 設定スキーマ
+### Configuration Schema
 
-| フィールド | 型 | デフォルト値 |
-|-----------|-----|------------|
+| Field | Type | Default |
+|-------|------|---------|
 | `font.family` | String | `"monospace"` |
 | `font.size` | f32 | `14.0` |
 | `font.ligatures` | bool | `true` |
 | `colors` | ColorScheme | `dark` |
-| `shell.program` | String | OS 依存 |
+| `shell.program` | String | OS-dependent |
 | `scrollback_lines` | usize | `50000` |
 | `status_bar.enabled` | bool | `false` |
 | `window.background_opacity` | f32 | `1.0` |
@@ -383,23 +378,22 @@ GPU が使えない環境（SSH 接続先など）での利用を想定してい
 
 ---
 
-## セッション永続化
+## Session Persistence
 
-サーバーはシャットダウン時に全セッション状態を JSON スナップショットとして保存し、
-次回起動時に自動復元する（`nexterm-server/src/persist.rs`, `src/snapshot.rs`）。
+On shutdown, the server saves the full session state as a JSON snapshot and automatically restores it on the next startup (`nexterm-server/src/persist.rs`, `src/snapshot.rs`).
 
 ```
-# 保存パス
+# Save path
 Linux / macOS: ~/.local/state/nexterm/snapshot.json
 Windows:       %APPDATA%\nexterm\snapshot.json
 ```
 
-### スナップショット型階層
+### Snapshot Type Hierarchy
 
 ```rust
 ServerSnapshot
-  ├── version: u32                         // 互換性チェック用
-  ├── saved_at: u64                        // Unix タイムスタンプ
+  ├── version: u32                         // for compatibility checking
+  ├── saved_at: u64                        // Unix timestamp
   └── sessions: Vec<SessionSnapshot>
         └── SessionSnapshot
               ├── name, shell, cols, rows
@@ -412,7 +406,7 @@ ServerSnapshot
                                 └── Split { dir, ratio, left, right }
 ```
 
-### 起動時の復元フロー
+### Restore Flow on Startup
 
 ```
 persist::load_snapshot()
@@ -420,105 +414,104 @@ persist::load_snapshot()
       for each SessionSnapshot:
         Session::restore_from_snapshot()
           → Window::restore_from_snapshot()
-              → compute_pane_sizes() で各ペインの矩形を計算
+              → compute_pane_sizes() to calculate each pane's rectangle
               → Pane::spawn_with_cwd(id, cols, rows, tx, shell, cwd)
-  → set_min_pane_id(max_pane_id + 1)     // AtomicU32::fetch_max で ID 衝突防止
+  → set_min_pane_id(max_pane_id + 1)     // prevent ID collisions via AtomicU32::fetch_max
   → set_min_window_id(max_window_id + 1)
 ```
 
-### 作業ディレクトリの取得（Linux のみ）
+### Working Directory Resolution (Linux only)
 
 ```rust
-// Pane::read_working_dir() — Linux 実装
+// Pane::read_working_dir() — Linux implementation
 std::fs::read_link(format!("/proc/{}/cwd", pid))
 ```
 
-Linux 以外では `None` を返す（シェルのデフォルト起動ディレクトリになる）。
+Returns `None` on non-Linux platforms (the shell starts in its default directory).
 
 ---
 
-## エラー処理方針
+## Error Handling Policy
 
-- すべてのエラーは `anyhow::Result` で伝播する
-- IPC 受信ループでのデシリアライズエラーは `continue`（1 メッセージの破棄）
-- PTY 読み取りエラーは `break`（スレッド終了、ペインが無効化）
-- クライアント切断はエラーではなく正常系（`read_exact` Err → `break` → デタッチ）
-
----
-
-## テスト戦略
-
-| レイヤー | テスト内容 | 件数 |
-|---------|-----------|------|
-| nexterm-proto | bincode 往復シリアライズ | 4 件 |
-| nexterm-vt | VT シーケンス・ダーティフラグ・リサイズ | 6 件 |
-| nexterm-config | デフォルト生成・TOML 往復・LuaWorker 非同期評価 | 5 件 |
-| nexterm-server | BSP 計算・セッション管理・IPC パス検証・スナップショット往復 | 14 件 |
-| nexterm-client-gpu | ClientState メッセージ適用・検索ライフサイクル・`hex_to_rgba`・ANSI256 | 21 件 |
-| nexterm-client-tui | ClientState メッセージ適用 | 2 件 |
-| **合計** | | **86 件以上** |
+- All errors propagate via `anyhow::Result`
+- Deserialization errors in the IPC receive loop use `continue` (discard the single message)
+- PTY read errors use `break` (terminate the thread; the pane becomes invalid)
+- Client disconnection is not an error but a normal condition (`read_exact` Err → `break` → detach)
 
 ---
 
-## Phase 3 完了済みタスク
+## Test Strategy
 
-| ステップ | 内容 | 状態 |
-|---------|------|------|
-| 3-4 | マウスサポート（クリックフォーカス / ホイールスクロール） | ✅ 完了 |
-| 3-5 | クリップボード統合（arboard クレート、Ctrl+Shift+C/V） | ✅ 完了 |
-| 3-6 | nexterm-ctl CLI（list / new / attach / kill） | ✅ 完了 |
-| 3-7 | 設定ホットリロード → GPU クライアント反映 | ✅ 完了 |
-| 3-8 | Lua ステータスバーウィジェット | ✅ 完了 |
+| Layer | Test Coverage | Count |
+|-------|--------------|-------|
+| nexterm-proto | bincode round-trip serialization | 4 |
+| nexterm-vt | VT sequences, dirty flags, resize | 6 |
+| nexterm-config | default construction, TOML round-trip, LuaWorker async evaluation | 5 |
+| nexterm-server | BSP calculation, session management, IPC path validation, snapshot round-trip | 14 |
+| nexterm-client-gpu | ClientState message application, search lifecycle, `hex_to_rgba`, ANSI256 | 21 |
+| nexterm-client-tui | ClientState message application | 2 |
+| **Total** | | **86+** |
 
-### 3-4: マウスサポート実装詳細
+---
 
-| イベント | 処理 |
-|---------|------|
-| `CursorMoved` | カーソル位置を `cursor_position: Option<(f64, f64)>` に保存 |
-| `MouseInput Left Released` | セル座標 → `pane_layouts` 検索 → `FocusPane` 送信 |
+## Phase 3 Completed Tasks
+
+| Step | Description | Status |
+|------|-------------|--------|
+| 3-4 | Mouse support (click focus / wheel scroll) | ✅ Done |
+| 3-5 | Clipboard integration (arboard crate, Ctrl+Shift+C/V) | ✅ Done |
+| 3-6 | nexterm-ctl CLI (list / new / attach / kill) | ✅ Done |
+| 3-7 | Config hot reload → reflected in GPU client | ✅ Done |
+| 3-8 | Lua status bar widget | ✅ Done |
+
+### 3-4: Mouse Support Implementation Details
+
+| Event | Handling |
+|-------|---------|
+| `CursorMoved` | Store cursor position in `cursor_position: Option<(f64, f64)>` |
+| `MouseInput Left Released` | Cell coordinates → search `pane_layouts` → send `FocusPane` |
 | `MouseWheel` | `LineDelta` / `PixelDelta` → `scroll_up` / `scroll_down` |
 
-### 3-5: クリップボード統合
+### 3-5: Clipboard Integration
 
-| ショートカット | 動作 |
-|-------------|------|
-| `Ctrl+Shift+C` | フォーカスペインの可視グリッドをテキスト変換してコピー |
-| `Ctrl+Shift+V` | クリップボードから `PasteText` メッセージで PTY にペースト |
+| Shortcut | Behavior |
+|----------|---------|
+| `Ctrl+Shift+C` | Convert visible grid of focused pane to text and copy |
+| `Ctrl+Shift+V` | Paste from clipboard to PTY via `PasteText` message |
 
-### 3-6: nexterm-ctl コマンド一覧
-
-```
-nexterm-ctl list              セッション一覧を表示
-nexterm-ctl new <name>        新規セッションを作成
-nexterm-ctl attach <name>     アタッチ方法を案内
-nexterm-ctl kill <name>       セッションを強制終了
-```
-
-IPC: `ListSessions` / `KillSession` の 2 つの新規プロトコルメッセージを追加。
-
-### 3-7: 設定ホットリロード
-
-`nexterm-config::watch_config()` で `~/.config/nexterm/` を監視。
-変更検知時に `Config` を受信し、フォント変更の場合はグリフアトラスも再生成する。
-
-### 3-8: Lua ステータスバーウィジェット
-
-`nexterm-config::StatusBarEvaluator` が `LuaWorker` を通じて Lua 式を評価。
-`about_to_wait` で 1 秒ごとに再評価し、ステータスラインの右端に表示する。
-
-`LuaWorker` は専用 OS スレッド（`nexterm-lua-worker`）上で `mlua::Lua` を保持し、
-メインスレッドとはチャネルで通信する（→ メインスレッドのブロックを回避）。
+### 3-6: nexterm-ctl Command Reference
 
 ```
-about_to_wait (winit, 1秒ごと)
+nexterm-ctl list              List all sessions
+nexterm-ctl new <name>        Create a new session
+nexterm-ctl attach <name>     Show instructions for attaching
+nexterm-ctl kill <name>       Force-terminate a session
+```
+
+IPC: Two new protocol messages added — `ListSessions` and `KillSession`.
+
+### 3-7: Config Hot Reload
+
+`nexterm-config::watch_config()` monitors `~/.config/nexterm/`.
+On change detection, the updated `Config` is received; if fonts changed, the glyph atlas is also regenerated.
+
+### 3-8: Lua Status Bar Widget
+
+`nexterm-config::StatusBarEvaluator` evaluates Lua expressions via `LuaWorker`.
+Re-evaluated every second in `about_to_wait` and displayed on the right side of the status line.
+
+`LuaWorker` holds a `mlua::Lua` instance on a dedicated OS thread (`nexterm-lua-worker`) and communicates with the main thread via channels (preventing the main thread from blocking).
+
+```
+about_to_wait (winit, every 1 second)
   └── StatusBarEvaluator::evaluate_widgets(&widgets)
         └── LuaWorker::eval_widgets()
-              ├── Arc<Mutex<String>> からキャッシュを即返却
-              └── SyncChannel::try_send(request) → Lua ワーカースレッドへ
+              ├── Return cached value immediately from Arc<Mutex<String>>
+              └── SyncChannel::try_send(request) → Lua worker thread
                     └── Lua::eval() → Arc<Mutex<String>>.write()
 ```
 
-**nexterm.lua 設定例:**
+**nexterm.lua configuration example:**
 
 ```lua
 return {
@@ -531,19 +524,19 @@ return {
 
 ---
 
-## Phase 5 完了済みタスク
+## Phase 5 Completed Tasks
 
-| ステップ | 内容 | 状態 |
-|---------|------|------|
-| 5-G | VT BEL 通知 → OS ウィンドウ注目要求 | ✅ 完了 |
-| 5-E | ランタイム フォントサイズ変更（Ctrl+= / Ctrl+- / Ctrl+0） | ✅ 完了 |
-| 5-A | セッション録画（`nexterm-ctl record start/stop`） | ✅ 完了 |
-| 5-C | ウィンドウ透過・ぼかし・ボーダーレス（config 駆動） | ✅ 完了 |
-| 5-D | Vim 風コピーモード（Ctrl+[, hjkl, v, y） | ✅ 完了 |
-| 5-F | URL 検出 + Ctrl+Click でブラウザ起動 | ✅ 完了 |
-| 5-B | WezTerm スタイル タブバー（`❯` セパレータ） | ✅ 完了 |
+| Step | Description | Status |
+|------|-------------|--------|
+| 5-G | VT BEL notification → OS window attention request | ✅ Done |
+| 5-E | Runtime font size change (Ctrl+= / Ctrl+- / Ctrl+0) | ✅ Done |
+| 5-A | Session recording (`nexterm-ctl record start/stop`) | ✅ Done |
+| 5-C | Window transparency, blur, and borderless mode (config-driven) | ✅ Done |
+| 5-D | Vim-style copy mode (Ctrl+[, hjkl, v, y) | ✅ Done |
+| 5-F | URL detection + Ctrl+Click to open browser | ✅ Done |
+| 5-B | WezTerm-style tab bar (`❯` separator) | ✅ Done |
 
-### 5-A: セッション録画実装詳細
+### 5-A: Session Recording Implementation Details
 
 ```
 Pane
@@ -555,34 +548,32 @@ start_recording(path)
 stop_recording()
   → writer.flush() → *guard = None
 
-PTY 読み取りループ
-  → buf 読み取り後 → log_writer.write_all(&buf)
+PTY read loop
+  → after reading buf → log_writer.write_all(&buf)
 ```
 
-### 5-B: タブバー描画
+### 5-B: Tab Bar Rendering
 
-`build_tab_bar_verts()` で `pane_layouts` を ID 昇順に並べ、各ペインのタブを描画する。
-- アクティブタブ: `active_tab_bg` 色、太字ラベル
-- 非アクティブタブ: `inactive_tab_bg` 色、通常ラベル
-- セパレータ: `cfg.separator`（デフォルト `❯`）を各タブ間に表示
+`build_tab_bar_verts()` sorts `pane_layouts` by ID in ascending order and renders a tab for each pane.
+- Active tab: `active_tab_bg` color, bold label
+- Inactive tab: `inactive_tab_bg` color, normal label
+- Separator: `cfg.separator` (default `❯`) displayed between each tab
 
-### 5-D: コピーモード状態遷移
+### 5-D: Copy Mode State Transitions
 
 ```
-通常モード ──[Ctrl+[]──> コピーモード
-                          ├── hjkl → カーソル移動
-                          ├── v    → selection_start トグル
-                          ├── y    → yank_selection() → クリップボード → 終了
-                          └── q/Esc → 終了
+Normal mode ──[Ctrl+[]──> Copy mode
+                          ├── hjkl → move cursor
+                          ├── v    → toggle selection_start
+                          ├── y    → yank_selection() → clipboard → exit
+                          └── q/Esc → exit
 ```
 
-### 5-F: URL 検出
+### 5-F: URL Detection
 
-`detect_urls_in_row(row_idx, cells)` が行テキストから `https://` / `http://` を検索し
-`DetectedUrl { row, col_start, col_end, url }` を返す。
+`detect_urls_in_row(row_idx, cells)` scans a row's text for `https://` / `http://` URLs and returns them as `DetectedUrl { row, col_start, col_end, url }`.
 
-マウス Ctrl+Click 時に `find_url_at(col, row)` でヒットした場合、
-プラットフォーム別コマンドでブラウザを起動する:
+On Ctrl+Click, if `find_url_at(col, row)` finds a hit, the browser is launched using a platform-specific command:
 - Windows: `cmd /c start <url>`
 - macOS: `open <url>`
 - Linux: `xdg-open <url>`

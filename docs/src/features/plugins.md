@@ -1,29 +1,29 @@
-# WASM プラグイン
+# WASM Plugins
 
-Nexterm は **WebAssembly (WASM)** ベースのプラグインシステムを内蔵しています。
-プラグインはサンドボックス化されたWASM環境で動作するため、システムへの直接アクセスはできません。
+Nexterm has a built-in **WebAssembly (WASM)** plugin system.
+Plugins run in a sandboxed WASM environment with no direct system access.
 
-## プラグインの仕組み
+## How It Works
 
 ```
-PTY 出力 → PluginManager.on_output() → 各プラグインの nexterm_on_output()
-コマンド → PluginManager.on_command() → 各プラグインの nexterm_on_command()
+PTY output  → PluginManager.on_output()  → each plugin's nexterm_on_output()
+Command     → PluginManager.on_command() → each plugin's nexterm_on_command()
 ```
 
-### ホストインポート API
+### Host Import API
 
-プラグインから Nexterm の機能を呼び出せるインポートです。
+Functions that plugins can call into Nexterm:
 
-| 関数 | シグネチャ | 説明 |
-|------|-----------|------|
-| `nexterm.log` | `(ptr: i32, len: i32)` | ログメッセージ（nexterm-server のログに出力）|
-| `nexterm.write_pane` | `(pane_id: i32, ptr: i32, len: i32)` | ペインへのテキスト書き込み |
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `nexterm.log` | `(ptr: i32, len: i32)` | Log a message (written to nexterm-server's log) |
+| `nexterm.write_pane` | `(pane_id: i32, ptr: i32, len: i32)` | Write text to a pane |
 
 ---
 
-## プラグインの作成
+## Writing a Plugin
 
-Rust で WASM プラグインを作成する例:
+Example of a Rust-based WASM plugin:
 
 ```toml
 # Cargo.toml
@@ -44,12 +44,12 @@ lto = true
 // src/lib.rs
 use std::sync::Mutex;
 
-// グローバル状態（必要な場合）
+// Global state (if needed)
 static COUNTER: Mutex<u64> = Mutex::new(0);
 
-/// PTY 出力を受け取るコールバック
-/// output: ペインに出力されたバイト列（UTF-8 テキスト）
-/// pane_id: ペイン ID
+/// Callback that receives PTY output
+/// output: bytes written to the pane (UTF-8 text)
+/// pane_id: pane identifier
 #[no_mangle]
 pub extern "C" fn nexterm_on_output(output_ptr: i32, output_len: i32, pane_id: i32) {
     let output = unsafe {
@@ -57,21 +57,21 @@ pub extern "C" fn nexterm_on_output(output_ptr: i32, output_len: i32, pane_id: i
     };
     let text = std::str::from_utf8(output).unwrap_or("");
 
-    // 例: "error" を含む出力を検出してログに記録する
+    // Example: detect "error" in output and log it
     if text.contains("error") {
-        let msg = format!("エラーを検出: pane_id={}\0", pane_id);
+        let msg = format!("Error detected: pane_id={}\0", pane_id);
         unsafe { nexterm_log(msg.as_ptr() as i32, msg.len() as i32 - 1); }
     }
 }
 
-/// コマンド入力を受け取るコールバック
+/// Callback that receives command input
 #[no_mangle]
 pub extern "C" fn nexterm_on_command(cmd_ptr: i32, cmd_len: i32, pane_id: i32) {
     let _ = (cmd_ptr, cmd_len, pane_id);
-    // コマンド履歴の記録などに使用可能
+    // Can be used to record command history, etc.
 }
 
-// ホストから提供される関数
+// Functions provided by the host
 extern "C" {
     fn nexterm_log(ptr: i32, len: i32);
     fn nexterm_write_pane(pane_id: i32, ptr: i32, len: i32);
@@ -79,47 +79,47 @@ extern "C" {
 ```
 
 ```bash
-# WASM にコンパイル
+# Compile to WASM
 cargo build --target wasm32-unknown-unknown --release
 # → target/wasm32-unknown-unknown/release/my_nexterm_plugin.wasm
 ```
 
 ---
 
-## プラグインのインストール
+## Installing a Plugin
 
 ```bash
-# プラグインディレクトリに配置
+# Place the plugin in the plugin directory
 mkdir -p ~/.config/nexterm/plugins
 cp my_nexterm_plugin.wasm ~/.config/nexterm/plugins/
 ```
 
-Nexterm 再起動（またはサーバー再起動）でプラグインが自動ロードされます。
+The plugin is auto-loaded on the next Nexterm restart (or server restart).
 
 ---
 
-## 設定
+## Configuration
 
 ```toml
 # nexterm.toml
 
-# カスタムプラグインディレクトリ（デフォルト: ~/.config/nexterm/plugins）
+# Custom plugin directory (default: ~/.config/nexterm/plugins)
 plugin_dir = "/path/to/plugins"
 
-# プラグインを完全に無効にする
+# Disable all plugins entirely
 plugins_disabled = false
 ```
 
 ---
 
-## デバッグ
+## Debugging
 
-プラグインのログは nexterm-server のログに出力されます:
+Plugin log messages are written to the nexterm-server log:
 
 ```bash
 # Linux / macOS
 journalctl --user -u nexterm-server -f
-# または
+# or
 tail -f ~/.local/share/nexterm/nexterm-server.log
 
 # Windows

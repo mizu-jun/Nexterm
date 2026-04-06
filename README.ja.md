@@ -4,6 +4,46 @@
 
 Rust 製のターミナルマルチプレクサ。tmux/zellij インスパイアで、wgpu による GPU レンダリングと Lua 設定システムを搭載する。
 
+## v0.7.5 の新機能
+
+**描画品質修正**
+- スクロールバック `visible_rows` にステータスバー高さを反映。最下行の重なりを修正。
+- `ScaleFactorChanged`（DPI 変更）が `cols`/`rows` を再計算してサーバーに通知。高 DPI ディスプレイでレイアウトがずれる問題を解消。
+- 右クリックコンテキストメニューの y 座標にタブバー高さを反映。
+- `GlyphAtlas` に `cleared_this_frame` フラグを追加。アトラス満杯時の UV 不整合によるグリフ化けを防止。
+
+---
+
+## v0.7.4 の新機能
+
+**CJK 全角文字の間隔修正**
+- `rasterize_char()` に `wide: bool` パラメータを追加。全角文字（Unicode 幅 ≥ 2）を 2 セル分のバッファでレンダリング。
+- 日本語・中国語・韓国語等の文字が等間隔で正しく表示されるようになった。
+
+**タブバー / ターミナルコンテンツ重なり修正**
+- タブバーと1行目のターミナルコンテンツが y=0 で重なっていた問題を修正。
+- `build_grid_verts` / `build_scrollback_verts` 等に `y_offset` パラメータを追加。
+
+**右側の黒帯修正**
+- `rows` 計算にタブバー高さとステータスバー高さを減算。右端の未使用領域が解消。
+
+---
+
+## v0.7.3 の新機能
+
+**Windows フォント文字間隔修正**
+- `Attrs::new()` のデフォルト (`Family::SansSerif`) を `Family::Monospace` / `Family::Name(family)` に変更。Segoe UI 等のプロポーショナルフォントへのフォールバックを防止。
+- セル幅計測をインクピクセル (`Buffer::draw()`) から advance width (`layout_runs()`) に変更。
+- 「Wi ndows PowerShe l l」の余分なスペースが解消。
+
+**シェーダーホットリロード・ギャラリー・移行ツール**
+- `WgpuState::reload_shader_pipelines()`: WGSL ファイル変更時にホットリロード。
+- `examples/shaders/` にサンプルシェーダー（CRT・Matrix・Glow・Grayscale・Amber）を同梱。
+- `nexterm-ctl import-ghostty`: Ghostty 設定を nexterm 形式に変換。
+- `nexterm-ctl service install/uninstall/status`: systemd / launchd 自動起動管理。
+
+---
+
 ## v0.7.2 の新機能
 
 **カスタム WGSL シェーダー**

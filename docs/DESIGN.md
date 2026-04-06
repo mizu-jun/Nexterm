@@ -1,43 +1,42 @@
-# nexterm 基本設計書
+# nexterm Design Document
 
-## 設計目標
+## Design Goals
 
-1. **デーモンレス再接続** — クライアントが切断してもセッションが生き続ける
-2. **高速レンダリング** — GPU (wgpu) によるゼロコピーに近いグリッド描画
-3. **シンプルな状態管理** — クライアントはグリッドのコピーを持ち、差分だけを受け取る
-4. **クロスプラットフォーム** — Linux / macOS / Windows を単一コードベースでサポート
-
----
-
-## ADR-001: デーモンレス設計
-
-### 背景
-
-tmux はサーバープロセス（デーモン）が常駐してセッションを管理する。
-nexterm も同様にサーバープロセスが PTY を保持するが、
-「デーモン」とは呼ばず、ユーザーが明示的に起動・終了できる設計とした。
-
-### 決定
-
-- `nexterm-server` がサーバープロセスとして独立して動作する
-- クライアントはいつでも接続・切断できる
-- 切断中も PTY プロセスは継続して動作する
-
-### 実現方法
-
-`Pane` の PTY 読み取りスレッドは `Arc<Mutex<Sender<ServerToClient>>>` を持つ。
-クライアント再接続時に `update_tx()` でチャネルを差し替えるだけでよい。
+1. **Daemonless reconnect** — Sessions remain alive even when the client disconnects
+2. **Fast rendering** — Near-zero-copy grid rendering via GPU (wgpu)
+3. **Simple state management** — The client holds a copy of the grid and receives only diffs
+4. **Cross-platform** — Supports Linux / macOS / Windows from a single codebase
 
 ---
 
-## ADR-002: BSP レイアウトエンジン採用
+## ADR-001: Daemonless Architecture
 
-### 背景
+### Background
 
-tmux は `%` / `"` コマンドでペインを分割する。
-nexterm は BSP（Binary Space Partition）ツリーを採用し、任意深さの分割を統一的に扱う。
+tmux keeps a persistent server process (daemon) to manage sessions.
+nexterm similarly has a server process that holds PTYs, but rather than calling it a "daemon," the design allows users to explicitly start and stop it.
 
-### 決定
+### Decision
+
+- `nexterm-server` operates as an independent server process
+- Clients can connect and disconnect at any time
+- PTY processes continue running while clients are disconnected
+
+### Implementation
+
+The PTY read thread of each `Pane` holds an `Arc<Mutex<Sender<ServerToClient>>>`.
+On client reconnect, it is sufficient to swap the channel via `update_tx()`.
+
+---
+
+## ADR-002: BSP Layout Engine
+
+### Background
+
+tmux splits panes with `%` / `"` commands.
+nexterm adopts a BSP (Binary Space Partition) tree to handle arbitrary-depth splits uniformly.
+
+### Decision
 
 ```rust
 enum SplitNode {
@@ -46,297 +45,295 @@ enum SplitNode {
 }
 ```
 
-- 分割は常に「フォーカスペインを 2 分割」する
-- 比率はデフォルト 50:50（将来的にドラッグで変更可能）
-- 境界線は 1 セル幅で固定
+- Splits always bisect the focused pane
+- Default ratio is 50:50 (drag-to-resize planned for the future)
+- Borders are fixed at 1 cell width
 
-### トレードオフ
+### Trade-offs
 
-- **メリット**: 再帰的な計算で任意の複雑なレイアウトを表現できる
-- **デメリット**: tmux のような「等幅 3 分割」は直接表現できない（中間ノードの比率調整で対応）
+- **Pro**: Recursive computation can represent arbitrarily complex layouts
+- **Con**: An "equal 3-way split" as in tmux cannot be expressed directly (workaround: adjust intermediate node ratios)
 
 ---
 
-## ADR-003: GPU クライアントに wgpu を採用
+## ADR-003: wgpu for the GPU Client
 
-### 背景
+### Background
 
-ターミナルエミュレータのテキスト描画は CPU だと大量の文字列処理が必要。
-GPU を使えばグリフアトラスから UV サンプリングするだけで高速描画できる。
+CPU-based text rendering for a terminal emulator requires heavy string processing.
+Using the GPU enables fast rendering by UV-sampling from a glyph atlas.
 
-### 決定
+### Decision
 
-- wgpu: クロスプラットフォーム GPU API（Vulkan / Metal / DX12 / WebGPU）
-- cosmic-text: Unicode・CJK 対応グリフラスタライゼーション
+- wgpu: cross-platform GPU API (Vulkan / Metal / DX12 / WebGPU)
+- cosmic-text: glyph rasterization with Unicode and CJK support
 
-### 描画パス構成
+### Render Pass Layout
 
 ```
-Pass 1: 背景矩形 (セル背景色・カーソル)
-Pass 2: テキスト (グリフアトラスからのサンプリング)
-Pass 3: 画像    (Sixel/Kitty RGBA テクスチャ)
+Pass 1: Background rectangles (cell background colors, cursor)
+Pass 2: Text (sampling from the glyph atlas)
+Pass 3: Images (Sixel/Kitty RGBA textures)
 ```
 
 ---
 
-## ADR-004: IPC フォーマットに bincode を採用
+## ADR-004: bincode for IPC Format
 
-### 背景
+### Background
 
-JSON は人が読めるが低速。Protobuf はスキーマ定義が必要で Rust との相性が低い。
+JSON is human-readable but slow. Protobuf requires a schema definition and has poor ergonomics with Rust.
 
-### 決定
+### Decision
 
-`bincode` クレートを採用。
+Adopt the `bincode` crate.
 
-- **メリット**: Rust の `serde` と完全に統合されており、型定義のみで実装できる
-- **メリット**: 非常に高速・低オーバーヘッド
-- **デメリット**: 人が読めない（デバッグ時にバイナリをダンプする必要がある）
-- **デメリット**: 言語をまたぐ実装が困難（現時点では問題なし）
+- **Pro**: Fully integrated with Rust's `serde`; only type definitions are needed
+- **Pro**: Extremely fast with minimal overhead
+- **Con**: Not human-readable (binary must be dumped for debugging)
+- **Con**: Cross-language interoperability is difficult (not a concern at this time)
 
 ---
 
-## ADR-005: 設定に TOML + Lua の 2 層構成を採用
+## ADR-005: Two-Layer Config with TOML + Lua
 
-### 背景
+### Background
 
-静的な設定は TOML が最適。しかし動的なステータスバーウィジェットのような処理には
-スクリプティング言語が必要。
+TOML is ideal for static configuration. However, dynamic processing such as status bar widgets requires a scripting language.
 
-### 決定
+### Decision
 
-- `config.toml`: デフォルト値・フォント・カラースキームなど静的設定
-- `config.lua`: 動的オーバーライド（Lua 5.4 を `mlua` クレートで組み込み）
+- `config.toml`: static settings such as defaults, fonts, and color schemes
+- `config.lua`: dynamic overrides (Lua 5.4 embedded via the `mlua` crate)
 
-### ロード順序
+### Load Order
 
 ```
-デフォルト値 → config.toml → config.lua
+Defaults → config.toml → config.lua
 ```
 
-後から読み込んだ値が優先される（上書き）。
+Later-loaded values take precedence (override).
 
 ---
 
-## ADR-006: TUI フォールバッククライアントの同梱
+## ADR-006: Bundled TUI Fallback Client
 
-### 背景
+### Background
 
-wgpu が使えない環境（コンテナ内、SSH 接続先など）でも使いたい。
+Users may need to run nexterm in environments where wgpu is unavailable (e.g., inside containers, over SSH).
 
-### 決定
+### Decision
 
-`nexterm-client-tui` を ratatui + crossterm で実装する。
-サーバーとのプロトコルは GPU クライアントと共通（`nexterm-proto`）。
+Implement `nexterm-client-tui` with ratatui + crossterm.
+The protocol with the server is shared with the GPU client (`nexterm-proto`).
 
-### 機能制限
+### Feature Limitations
 
-- 画像プロトコル（Sixel / Kitty）は非対応（`ImagePlaced` を無視）
-- スクロールバック・コマンドパレットは未実装（Phase 3 検討中）
-- マルチペインは「フォーカスペインのみ表示」に制限
+- Image protocols (Sixel / Kitty) are not supported (`ImagePlaced` is ignored)
+- Scrollback and command palette are not implemented (planned for Phase 3)
+- Multi-pane display is limited to showing only the focused pane
 
 ---
 
-## グリッド差分プロトコルの設計
+## Grid Diff Protocol Design
 
-### 問題
+### Problem
 
-毎フレーム全グリッドを送信すると帯域を無駄に消費する。
+Transmitting the full grid every frame wastes bandwidth.
 
-### 解決策
+### Solution
 
-サーバー側の `Screen` がダーティフラグ（`dirty: Vec<bool>`）を管理する。
-PTY 出力を処理するたびに変更行をマークし、`take_dirty_rows()` で差分を取り出す。
+The server-side `Screen` maintains a dirty flag (`dirty: Vec<bool>`).
+Changed rows are marked each time PTY output is processed, and diffs are extracted with `take_dirty_rows()`.
 
 ```
 Client                Server
   │                     │
-  │                  PTY 出力 "hello\r\n"
+  │                  PTY output "hello\r\n"
   │                  → Screen.dirty[0] = true
   │<── GridDiff ────────│
   │    dirty_rows=[row0]│
 ```
 
-クライアントはローカルグリッドに差分をマージするだけでよい。
+The client only needs to merge the diff into its local grid.
 
 ---
 
-## セキュリティ設計
+## Security Design
 
-### Unix ドメインソケット
+### Unix Domain Socket
 
-- `chmod 0600` でオーナーのみアクセス可能にする
-- 接続受け付け後、`SO_PEERCRED`（Linux）/ `getpeereid()`（macOS/BSD）でクライアントの UID を取得し、サーバーの UID と照合する。UID 不一致の場合は即座に接続を切断する
+- `chmod 0600` restricts access to the owner only
+- After accepting a connection, the client's UID is obtained via `SO_PEERCRED` (Linux) / `getpeereid()` (macOS/BSD) and compared against the server's UID. Connections with a UID mismatch are immediately dropped.
 
 ### Windows Named Pipe
 
-- `ServerOptions::reject_remote_clients(true)` で同一マシン外からの接続を拒否する
-- デフォルト DACL により作成者のみアクセス可能
+- `ServerOptions::reject_remote_clients(true)` rejects connections from outside the local machine
+- The default DACL allows access only to the creator
 
-### パストラバーサル防止
+### Path Traversal Prevention
 
-`StartRecording { path }` ハンドラーは `validate_recording_path()` で `..` コンポーネントと空パスを事前に拒否する。
+The `StartRecording { path }` handler pre-validates paths with `validate_recording_path()`, rejecting any path containing `..` components or empty paths.
 
-### 認証
+### Authentication
 
-UID 検証のみで、パスワード等の認証機能はなし。ローカル通信のみを前提とする。
-ネットワーク越し接続は SSH トンネル等を別途設定することを推奨する。
-
----
-
-## パフォーマンス設計
-
-### PTY 読み取りスレッド
-
-`tokio::task::spawn_blocking` で OS スレッドプールに投入する。
-tokio の非同期ランタイムをブロックしない。
-
-### グリッド差分
-
-差分のみ送信することで、アイドル状態のペインはトラフィックがゼロ。
-
-### GPU レンダリング
-
-- グリフアトラス: 初回レンダリング時にラスタライズ済みグリフをテクスチャにキャッシュ
-- 頂点バッファ: フレームごとに差分のみ更新（GPU メモリを効率的に使用）
-- ポーリング間隔: 16ms（約 60fps）で PTY 出力を確認・再描画
+Only UID verification is performed; there is no password-based authentication. Local-only communication is assumed. For network access, configuring an SSH tunnel or similar is recommended.
 
 ---
 
----
+## Performance Design
 
-## ADR-007: マウスサポートの設計
+### PTY Read Thread
 
-### 背景
+Dispatched to the OS thread pool via `tokio::task::spawn_blocking`.
+Does not block the tokio async runtime.
 
-winit 0.30 では `ApplicationHandler` トレイトに `window_event()` が必須。
-`CursorMoved`・`MouseInput`・`MouseWheel` イベントがここで受け取れる。
+### Grid Diffs
 
-### 決定
+By sending only diffs, idle panes generate zero traffic.
 
-- **クリックフォーカス**: `CursorMoved` でカーソル位置をキャッシュし、`MouseInput { Left, Released }` でセル座標に変換して `FocusPane { pane_id }` を送信する
-- **ホイールスクロール**: `MouseWheel` イベントで `scroll_up` / `scroll_down` を呼び出す（3 行単位）
-- セル座標変換式: `pane_id = layout.iter().find(|p| point_in_pane(cursor, p))`
+### GPU Rendering
 
-### トレードオフ
-
-- **メリット**: サーバーから `LayoutChanged` で受け取ったペイン矩形情報を使うため、サーバー・クライアント間の同期が不要
-- **デメリット**: 境界線ピクセルをクリックした場合の挙動が未定義（現時点は無視）
+- Glyph atlas: rasterized glyphs are cached into a texture on first render
+- Vertex buffer: only diffs are updated per frame (efficient GPU memory usage)
+- Poll interval: PTY output is checked and redrawn at 16ms intervals (~60 fps)
 
 ---
 
-## ADR-008: クリップボード統合に arboard を採用
+---
 
-### 背景
+## ADR-007: Mouse Support Design
 
-クロスプラットフォームのクリップボード操作を提供するクレートとして、`arboard`（Arboard Clipboard）と `clipboard`（古いクレート）がある。
+### Background
 
-### 決定
+In winit 0.30, the `ApplicationHandler` trait requires implementing `window_event()`.
+`CursorMoved`, `MouseInput`, and `MouseWheel` events are received there.
 
-`arboard = "3"` を採用。
+### Decision
 
-- **メリット**: Windows（OLE）・macOS（NSPasteboard）・Linux（X11/Wayland）の 3 OS に対応
-- **メリット**: 画像（RGBA）とテキストの両方をサポート
-- **デメリット**: `arboard::Clipboard::new()` はメインスレッド必須（一部 OS）。使用のたびに生成する
+- **Click-to-focus**: Cache cursor position on `CursorMoved`, then on `MouseInput { Left, Released }` convert to cell coordinates and send `FocusPane { pane_id }`
+- **Wheel scroll**: On `MouseWheel` events, call `scroll_up` / `scroll_down` (in 3-line increments)
+- Cell coordinate conversion: `pane_id = layout.iter().find(|p| point_in_pane(cursor, p))`
 
-### 実現方法
+### Trade-offs
 
-- `Ctrl+Shift+V`: `arboard::Clipboard::new()?.get_text()` → `ClientToServer::PasteText { text }` を送信
-- `Ctrl+Shift+C`: フォーカスペインのグリッドを `grid_to_text()` でプレーンテキスト変換 → `arboard::Clipboard::new()?.set_text()`
+- **Pro**: Uses pane rectangle info received from the server via `LayoutChanged`, so no synchronization between server and client is needed
+- **Con**: Behavior when clicking on border pixels is undefined (currently ignored)
 
 ---
 
-## ADR-009: nexterm-ctl を独立クレートとして実装
+## ADR-008: arboard for Clipboard Integration
 
-### 背景
+### Background
 
-`tmux` の `tmux list-sessions` / `tmux kill-session` に相当するセッション管理 CLI が必要。
-GPU クライアントや TUI クライアントを起動せずに操作できることが要件。
+Two crates provide cross-platform clipboard access: `arboard` (Arboard Clipboard) and `clipboard` (older crate).
 
-### 決定
+### Decision
 
-`nexterm-ctl` を独立した `[[bin]]` クレートとして実装。
+Adopt `arboard = "3"`.
 
-- IPC 接続は `nexterm-proto` の型を再利用
-- トランスポートは GPU/TUI クライアントと同一の Named Pipe / Unix Socket
-- サブコマンド: `list` / `new` / `attach` / `kill`（`clap derive` で実装）
+- **Pro**: Supports all 3 OSes — Windows (OLE), macOS (NSPasteboard), Linux (X11/Wayland)
+- **Pro**: Supports both images (RGBA) and text
+- **Con**: `arboard::Clipboard::new()` must be called on the main thread on some OSes; instantiate it on each use
 
-### `attach` サブコマンドについて
+### Implementation
 
-`nexterm-ctl` 自体はインタラクティブな端末入出力を行わないため、`attach` はアタッチ方法の案内メッセージを表示するのみとした。実際のアタッチは `nexterm-client-gpu` または `nexterm-client-tui` が担う。
+- `Ctrl+Shift+V`: `arboard::Clipboard::new()?.get_text()` → send `ClientToServer::PasteText { text }`
+- `Ctrl+Shift+C`: convert the focused pane's grid to plain text via `grid_to_text()` → `arboard::Clipboard::new()?.set_text()`
 
 ---
 
-## ADR-010: 設定ホットリロードに notify クレートを採用
+## ADR-009: nexterm-ctl as a Standalone Crate
 
-### 背景
+### Background
 
-設定ファイルの変更をポーリングで検知するとレイテンシが高く CPU を浪費する。
+A session management CLI equivalent to tmux's `tmux list-sessions` / `tmux kill-session` is needed.
+The requirement is to be operable without launching the GPU client or TUI client.
 
-### 決定
+### Decision
 
-`notify = "6"` を採用し、OS のネイティブファイル監視 API を使用する。
+Implement `nexterm-ctl` as a standalone `[[bin]]` crate.
+
+- IPC connection reuses types from `nexterm-proto`
+- Transport is the same Named Pipe / Unix Socket used by GPU/TUI clients
+- Subcommands: `list` / `new` / `attach` / `kill` (implemented with `clap derive`)
+
+### Note on the `attach` Subcommand
+
+Since `nexterm-ctl` itself does not perform interactive terminal I/O, the `attach` subcommand only prints a guidance message about how to attach. Actual attachment is handled by `nexterm-client-gpu` or `nexterm-client-tui`.
+
+---
+
+## ADR-010: notify Crate for Config Hot Reload
+
+### Background
+
+Polling to detect config file changes introduces high latency and wastes CPU.
+
+### Decision
+
+Adopt `notify = "6"` to use OS-native file watching APIs.
 
 - Linux: `inotify`
 - macOS: `kqueue` / FSEvents
 - Windows: `ReadDirectoryChangesW`
 
-### 実現方法
+### Implementation
 
-`watch_config(tx: Sender<Config>)` 関数が `RecommendedWatcher` を生成し、設定ファイル変更を検知したら新しい `Config` を送信する。GPU クライアントは `about_to_wait` フックで `config_rx.try_recv()` をポーリングし、新設定を受け取った場合は適用する。
+The `watch_config(tx: Sender<Config>)` function creates a `RecommendedWatcher` and sends a new `Config` whenever a config file change is detected. The GPU client polls `config_rx.try_recv()` in its `about_to_wait` hook and applies the new config when received.
 
-フォントファミリー・サイズが変わった場合のみグリフアトラスを再生成する（重い処理のため差分チェックが必要）。
+The glyph atlas is regenerated only when the font family or size changes (a diff check is required because this is an expensive operation).
 
 ---
 
-## ADR-011: Lua ステータスバーの評価方式（LuaWorker バックグラウンドスレッド）
+## ADR-011: Lua Status Bar Evaluation via LuaWorker Background Thread
 
-### 背景
+### Background
 
-ステータスバーウィジェットを Lua 式で定義すると、`os.date()` のような時刻を返す式が書ける。`mlua::Lua` は `!Send + !Sync` であるため、インスタンスをスレッド間で移動できない。当初はメインスレッドで同期評価する設計だったが、重い Lua 処理があると winit イベントループをブロックしてフレームレートが低下するリスクがあった。
+Defining status bar widgets as Lua expressions allows writing expressions like `os.date()` that return the current time. Because `mlua::Lua` is `!Send + !Sync`, instances cannot be moved across threads. The initial design evaluated Lua synchronously on the main thread, but heavy Lua processing risked blocking the winit event loop and degrading frame rate.
 
-### 決定
+### Decision
 
-`LuaWorker` を `nexterm-config` クレートに実装する。`Lua` インスタンスは専用の OS スレッド（`std::thread::spawn`）内で生成・保持し、メインスレッドからはチャネル経由でリクエストを送る。
+Implement `LuaWorker` in the `nexterm-config` crate. The `Lua` instance is created and owned inside a dedicated OS thread (`std::thread::spawn`); the main thread communicates with it via channels.
 
 ```
-メインスレッド (winit)
-  └── LuaWorker::eval_widgets(&widgets) → Arc<Mutex<String>> からキャッシュを即返却
+Main thread (winit)
+  └── LuaWorker::eval_widgets(&widgets) → returns cached value immediately from Arc<Mutex<String>>
           │ try_send (SyncChannel)
           ▼
-Lua ワーカースレッド (nexterm-lua-worker)
+Lua worker thread (nexterm-lua-worker)
   └── loop { recv() → Lua::eval() → Arc<Mutex<String>>.lock().write() }
 ```
 
-- `request_tx: SyncSender<LuaRequest>` に `try_send` を使い、チャネルが満杯なら破棄（ブロックしない）
-- 前回の評価結果が `cache: Arc<Mutex<String>>` に常に保持されており、`eval_widgets()` は即座に返す
+- Uses `try_send` on `request_tx: SyncSender<LuaRequest>`; requests are dropped if the channel is full (non-blocking)
+- The last evaluation result is always held in `cache: Arc<Mutex<String>>`; `eval_widgets()` returns immediately
 
-### トレードオフ
+### Trade-offs
 
-- **メリット**: メインスレッドが Lua 評価をブロックしない（フレームレートへの影響ゼロ）
-- **メリット**: `Lua` インスタンスのスレッド間移動が不要（`!Send` 制約を自然に回避）
-- **デメリット**: 評価結果が最大 1 フレーム遅延する（ステータスバー用途では無問題）
-- **デメリット**: Lua 評価が遅い場合、前回の結果が表示され続ける
+- **Pro**: The main thread is never blocked by Lua evaluation (zero impact on frame rate)
+- **Pro**: No need to move the `Lua` instance across threads (naturally avoids the `!Send` constraint)
+- **Con**: Evaluation results can lag by at most one frame (acceptable for status bar use cases)
+- **Con**: If Lua evaluation is slow, the previous result continues to be displayed
 
 ---
 
-## ADR-012: セッション永続化（JSON スナップショット）
+## ADR-012: Session Persistence (JSON Snapshots)
 
-### 背景
+### Background
 
-サーバーを再起動するとセッション・ウィンドウ・ペイン・BSP レイアウトがすべて失われていた。tmux は `.tmux_resurrect` / `tmux-continuum` プラグインで対応しているが、nexterm はサーバー自体がスナップショットを管理する設計とした。
+Restarting the server previously caused all sessions, windows, panes, and BSP layouts to be lost. tmux addresses this with the `.tmux_resurrect` / `tmux-continuum` plugins, but nexterm is designed so that the server itself manages snapshots.
 
-### 決定
+### Decision
 
-サーバーシャットダウン時に全セッション状態を JSON ファイルに保存し、次回起動時に復元する。
+Save all session state to a JSON file on server shutdown and restore it on the next startup.
 
-**保存形式**: `serde_json` によるプリティ JSON（human-readable、デバッグが容易）
+**Storage format**: Pretty-printed JSON via `serde_json` (human-readable, easy to debug)
 
-**保存パス**:
+**Storage path**:
 - Linux / macOS: `~/.local/state/nexterm/snapshot.json`
 - Windows: `%APPDATA%\nexterm\snapshot.json`
 
-**スナップショット型**:
+**Snapshot types**:
 
 ```rust
 ServerSnapshot { version: u32, sessions: Vec<SessionSnapshot>, saved_at: u64 }
@@ -346,72 +343,72 @@ SplitNodeSnapshot::Pane   { pane_id, cwd: Option<PathBuf> }
 SplitNodeSnapshot::Split  { dir, ratio, left, right }
 ```
 
-**復元フロー**:
+**Restore flow**:
 
 ```
-起動時:
+On startup:
   persist::load_snapshot()
     → SessionManager::restore_from_snapshot()
         → Session::restore_from_snapshot()
             → Window::restore_from_snapshot()
                 → Pane::spawn_with_cwd(id, cols, rows, tx, shell, cwd)
-  → set_min_pane_id(max_id + 1)   // ID 衝突防止
+  → set_min_pane_id(max_id + 1)   // prevent ID collisions
   → set_min_window_id(max_id + 1)
 
-終了時:
+On shutdown:
   SessionManager::to_snapshot()
     → persist::save_snapshot()
 ```
 
-**作業ディレクトリの復元**:
-- Linux: `/proc/{pid}/cwd` シンボリックリンクから子プロセスの cwd を取得
-- 他 OS: 復元時は `None`（シェル起動時のデフォルトディレクトリになる）
+**Working directory restoration**:
+- Linux: retrieve child process cwd from the `/proc/{pid}/cwd` symlink
+- Other OSes: `None` on restore (falls back to the shell's default startup directory)
 
-### トレードオフ
+### Trade-offs
 
-- **メリット**: バイナリ形式でなく JSON のため、バージョン管理・デバッグが容易
-- **メリット**: `version` フィールドで互換性チェックができる（不一致時はスキップ）
-- **デメリット**: PTY の仮想スクリーン内容（グリッド）は保存しない（シェルを再起動するだけ）
-- **デメリット**: Linux 以外ではペインの作業ディレクトリが復元されない
+- **Pro**: JSON rather than a binary format makes versioning and debugging straightforward
+- **Pro**: The `version` field enables compatibility checks (mismatches are skipped)
+- **Con**: The PTY virtual screen contents (grid) are not saved (only the shell is restarted)
+- **Con**: Pane working directories are not restored on non-Linux platforms
 
 ---
 
-## ADR-013: IPC セキュリティ（UID 検証とパストラバーサル防止）
+## ADR-013: IPC Security (UID Verification and Path Traversal Prevention)
 
-### 背景
+### Background
 
-Unix ドメインソケットのパーミッション 0600 と Windows Named Pipe のデフォルト DACL はオーナーのみアクセスを制限するが、共有サーバーやコンテナ環境ではソケットファイル自体のパーミッション変更や権限昇格攻撃のリスクがある。また、`StartRecording { path }` の引数にパストラバーサル（`../etc/passwd` 等）が渡された場合、任意のファイルパスに書き込まれるリスクがあった。
+Unix domain socket permissions of 0600 and the default DACL on Windows Named Pipes restrict access to the owner, but on shared servers or container environments there is a risk of socket file permission changes or privilege escalation attacks. Additionally, if a path traversal string (e.g., `../etc/passwd`) were passed as the `StartRecording { path }` argument, it could result in writes to arbitrary file paths.
 
-### 決定
+### Decision
 
-**UID ピア検証（Unix のみ）**:
+**UID peer verification (Unix only)**:
 
-接続受け付け後、カーネルの `SO_PEERCRED` / `getpeereid()` でクライアントの UID を取得し、サーバーの `euid` と照合する。不一致の場合は即座に接続を切断する。
+After accepting a connection, the client's UID is obtained from the kernel via `SO_PEERCRED` / `getpeereid()` and compared against the server's `euid`. If they do not match, the connection is immediately dropped.
 
-| OS | 実装 |
+| OS | Implementation |
 |----|------|
 | Linux | `getsockopt(SO_PEERCRED)` → `ucred.uid` |
 | macOS / BSD | `libc::getpeereid(fd, &uid, &gid)` |
-| その他 Unix | UID 検証をスキップ（警告ログのみ） |
+| Other Unix | UID verification skipped (warning log only) |
 
-**Windows Named Pipe**: `.reject_remote_clients(true)` で同一マシン外からの接続を拒否する。
+**Windows Named Pipe**: `.reject_remote_clients(true)` rejects connections from outside the local machine.
 
-**パストラバーサル防止**:
+**Path traversal prevention**:
 
-`StartRecording { path }` ハンドラーで `validate_recording_path()` を先行実行。`std::path::Component::ParentDir` (`..`) を含むパスや空パスはエラーで返す。
+`validate_recording_path()` is called first in the `StartRecording { path }` handler. Paths containing `std::path::Component::ParentDir` (`..`) or empty paths are returned as errors.
 
-### トレードオフ
+### Trade-offs
 
-- **メリット**: OS レベルで同一ユーザーのみに制限できる（ファイルパーミッションへの依存を減らす）
-- **デメリット**: `SO_PEERCRED` は Linux 限定、`getpeereid` は macOS/BSD 限定のため条件コンパイルが複雑になる
-- **デメリット**: `setuid` バイナリや sudo 経由での接続は意図せず拒否される可能性がある
+- **Pro**: Access can be restricted to the same user at the OS level, reducing reliance on file permissions
+- **Con**: `SO_PEERCRED` is Linux-only and `getpeereid` is macOS/BSD-only, making conditional compilation complex
+- **Con**: Connections via `setuid` binaries or `sudo` may be unintentionally rejected
 
 ---
 
-## 今後の設計課題
+## Future Design Issues
 
-| 課題 | 優先度 | 概要 |
+| Issue | Priority | Summary |
 |------|--------|------|
-| ペイン境界ドラッグ | 低 | マウスドラッグで BSP ツリーの比率を変更する |
-| TUI クライアントのスクロールバック | 低 | ratatui クライアントでもスクロールバック操作を追加する |
-| macOS / Windows の cwd 復元 | 低 | `/proc` に頼らない移植可能な作業ディレクトリ取得 |
+| Pane border dragging | Low | Change BSP tree ratios via mouse drag |
+| TUI client scrollback | Low | Add scrollback support to the ratatui client |
+| macOS / Windows cwd restore | Low | Portable working directory retrieval without relying on `/proc` |

@@ -1,83 +1,82 @@
-# パフォーマンスチューニング
+# Performance Tuning
 
-## GPU レンダラーの最適化
+## GPU Renderer Optimization
 
-### FPS 制限
+### FPS Cap
 
-デフォルトは 60 FPS です。高リフレッシュレートモニターに合わせて調整できます:
+The default is 60 FPS. Adjust to match your monitor's refresh rate:
 
 ```toml
 [gpu]
-fps_limit = 144   # 144Hz モニター
-fps_limit = 0     # 制限なし（vsync のみ）
+fps_limit = 144   # 144 Hz monitor
+fps_limit = 0     # uncapped (vsync only)
 ```
 
-### グリフアトラスサイズ
+### Glyph Atlas Size
 
-グリフアトラスは GPU テクスチャにフォントグリフをキャッシュします。
-デフォルトの 2048×2048 は一般的な使用に十分ですが、
-大きなフォントサイズや多数の Unicode 文字を使う場合は 4096 を推奨します:
+The glyph atlas caches font glyphs in a GPU texture.
+The default 2048×2048 is sufficient for typical use, but 4096 is recommended
+for large font sizes or a large number of Unicode characters:
 
 ```toml
 [gpu]
-atlas_size = 4096  # 高DPI や大フォントサイズ用
+atlas_size = 4096  # for high-DPI or large font sizes
 ```
 
 ---
 
-## 起動時間
+## Startup Time
 
-### サーバーとクライアントの分離
+### Server / Client Separation
 
-Nexterm はサーバー/クライアント分離アーキテクチャのため、
-初回起動時にサーバー起動待機が発生します（通常 < 200ms）。
+Because Nexterm uses a server/client architecture, the first launch includes a brief
+server-startup wait (typically < 200 ms).
 
-**2回目以降**: サーバーが既に起動中の場合はすぐにクライアントが接続します。
-ランチャーの検出ポーリングは指数バックオフ（10ms → 100ms）で効率的に動作します。
+**Subsequent launches**: if the server is already running, the client connects instantly.
+The launcher's detection polling uses exponential backoff (10 ms → 100 ms) for efficiency.
 
-### セッション永続化
+### Session Persistence
 
-サーバーを起動したままにすることで、クライアント再起動時の待機なしに
-即座に接続できます:
+Keep the server running to connect instantly on client restart without any wait:
 
 ```bash
-# サーバーをバックグラウンドで起動し続ける
+# Start server in the background and leave it running
 nexterm-server &
 
-# クライアントを起動・終了しても接続は維持される
+# Clients can start and exit freely; sessions remain alive
 ```
 
 ---
 
-## メモリ使用量
+## Memory Usage
 
-### スクロールバック行数
+### Scrollback Line Count
 
-スクロールバックのメモリ使用量はペイン数 × 行数 × 1行あたりのバイト数に比例します。
+Scrollback memory usage scales with: `pane count × line count × bytes per line`.
 
 ```toml
-# デフォルト: 50,000行（メモリ使用量: ~200MB @80cols）
-scrollback_lines = 10000  # メモリを節約する場合
-scrollback_lines = 100000 # 多めにログを保持する場合
+# Default: 50,000 lines (~200 MB @ 80 cols)
+scrollback_lines = 10000  # conserve memory
+scrollback_lines = 100000 # retain more log history
 ```
 
 ---
 
-## スクロール性能
+## Scroll Performance
 
-GPU レンダラーはスクロールバック全体を毎フレーム再描画するのではなく、
-変更があった行のみをダーティとしてマークします。
-スクロール中も GPU バッファの再アロケーションは発生しません。
+The GPU renderer does not redraw the entire scrollback every frame.
+Only rows marked dirty are reprocessed.
+No GPU buffer reallocation occurs during scrolling.
 
 ---
 
-## プロファイリング
+## Profiling
 
-パフォーマンス問題が発生した場合は環境変数でデバッグログを有効にできます:
+If you encounter performance issues, enable debug logging with an environment variable:
 
 ```bash
 NEXTERM_LOG=debug nexterm
 ```
 
-GPU 側の詳細なプロファイリングには [RenderDoc](https://renderdoc.org/) を使用できます
-（wgpu は RenderDoc に対応しています）。
+For detailed GPU-side profiling, use [RenderDoc](https://renderdoc.org/)
+(wgpu supports RenderDoc integration).

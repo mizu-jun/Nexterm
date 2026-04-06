@@ -13,12 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-**GPU クライアント: 描画総点検による品質修正**
-- スクロールバック表示の `visible_rows` 計算にステータスバー高さ（`cell_h`）を追加。最下行がステータスバーと重なっていた問題を修正。
-- `ScaleFactorChanged`（DPI 変更）イベントで `cols/rows` を再計算しサーバーへ Resize 通知を送るよう修正。高 DPI ディスプレイへの移動時にレイアウトがずれる問題を解消。
-- 右クリックコンテキストメニューの y 座標に `tab_bar_h` を反映。タブバー有効時にメニュー位置がズレる問題を修正。
-- `GlyphAtlas` 満杯時に `cleared_this_frame` フラグを追加。次フレーム開始時にフラグをリセットすることで、UV 不整合によるグリフ化けを防止。
-- `font.rs` の `family_owned` をすべてのパスで事前宣言し、ライフタイム構造を明確化。
+**GPU client: rendering quality pass**
+- Added status bar height (`cell_h`) to the `visible_rows` calculation in scrollback view, fixing overlap between the last row and the status bar.
+- `ScaleFactorChanged` (DPI change) event now recalculates `cols`/`rows` and sends a Resize notification to the server, resolving layout shift when moving to a high-DPI display.
+- Applied `tab_bar_h` offset to the right-click context menu y-coordinate, fixing menu position when the tab bar is enabled.
+- Added `cleared_this_frame` flag to `GlyphAtlas`; resetting the flag at the start of each frame prevents glyph corruption from stale UV coordinates after an atlas overflow mid-frame.
+- Pre-declared `family_owned` for all code paths in `font.rs` to clarify lifetime structure.
 
 ---
 
@@ -26,22 +26,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-**Windows GPU クライアント: CJK全角文字の文字間スペース問題を修正**
-- `rasterize_char()` に `wide: bool` パラメータを追加し、CJK等の全角文字（Unicode幅≥2）は 2 セル分のバッファ（`display_cols = 2.0`）でレンダリングするように変更。
-- `GlyphKey` に `wide` フィールドを追加し、全角・半角を別々にアトラスキャッシュ。
-- 日本語・中国語・韓国語等の文字が等間隔で正しく表示されるようになった。
+**GPU client (Windows): fix CJK full-width character spacing**
+- Added `wide: bool` parameter to `rasterize_char()`; full-width characters (Unicode width ≥ 2) now render into a 2-cell buffer (`display_cols = 2.0`).
+- Added `wide` field to `GlyphKey` so full-width and half-width glyphs are cached separately in the atlas.
+- Japanese, Chinese, Korean, and other CJK characters are now evenly spaced and correctly rendered.
 
-**Windows GPU クライアント: タブバーとターミナルコンテンツの重なり問題を修正**
-- タブバー（上部）と1行目ターミナルコンテンツが同じ y=0 に描画され重なっていた問題を修正。
-- `build_grid_verts` / `build_scrollback_verts` に `y_offset: f32` パラメータを追加。
-- マルチペイン用 `_in_rect` 関数も `off_y = row_offset * cell_h + tab_bar_h` に修正。
-- ペイン境界線・番号バッジもタブバー高さを考慮するよう更新。
+**GPU client (Windows): fix tab bar / terminal content overlap**
+- Fixed tab bar (at y=0) and row-1 terminal content being drawn at the same y-coordinate.
+- Added `y_offset: f32` parameter to `build_grid_verts` / `build_scrollback_verts`.
+- Multi-pane `_in_rect` functions updated to use `off_y = row_offset * cell_h + tab_bar_h`.
+- Pane borders and number badges now account for the tab bar height.
 
-**Windows GPU クライアント: 右側の黒帯（未使用領域）を修正**
-- ターミナルの行数計算（`rows`）がウィンドウ高さ全体を使用していたため、タブバー・ステータスバーと重なっていた問題を修正。
-- `rows = (height - tab_bar_h - status_bar_h) / cell_h` で正確な有効行数を算出。
-- ウィンドウ初期化時・リサイズイベント時の両方を修正。
-- マウスクリック座標→セル座標変換でも `tab_bar_h` を減算して正確な行選択を実現。
+**GPU client (Windows): fix black band on the right side**
+- The `rows` calculation was using the full window height, causing overlap with the tab bar and status bar.
+- Fixed with `rows = (height - tab_bar_h - status_bar_h) / cell_h` for accurate usable row count.
+- Corrected in both the initial window setup and resize event handler.
+- Mouse click → cell coordinate conversion now subtracts `tab_bar_h` for accurate row targeting.
 
 ---
 
@@ -49,18 +49,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-**Windows GPU クライアント: フォント文字間隔ずれを修正**
-- `Attrs::new()` のデフォルトが `Family::SansSerif` のため、Windows 上でプロポーショナルフォント（Segoe UI 等）にフォールバックしていた問題を修正。
-- `measure_char_width` と `rasterize_char` で `Family::Monospace` または `Family::Name(family)` を明示的に指定。
-- 設定フォント名が `"monospace"` の場合は `Family::Monospace`（fontdb がシステムの等幅フォントを選択）、具体名（`Consolas`, `JetBrains Mono` 等）は `Family::Name` で直接指定。
-- セル幅計測を `Buffer::draw()` のインクピクセル計測から `layout_runs()` の advance width 取得に変更。right bearing を含む正確なセル幅を算出することで文字間隔が正確になった。
-- 「Wi ndows PowerShe l l」のように文字の間に余分なスペースが入る問題を解消。
+**GPU client (Windows): fix font character spacing**
+- `Attrs::new()` defaulted to `Family::SansSerif`, causing fallback to a proportional font (Segoe UI, etc.) on Windows.
+- `measure_char_width` and `rasterize_char` now explicitly set `Family::Monospace` or `Family::Name(family)`.
+- Config font name `"monospace"` maps to `Family::Monospace` (fontdb selects the system monospace font); specific names (`Consolas`, `JetBrains Mono`, etc.) use `Family::Name` directly.
+- Cell width measurement switched from `Buffer::draw()` ink pixels to `layout_runs()` advance width, which includes right bearing for accurate character spacing.
+- Eliminates the "Wi ndows PowerShe l l" extra-space rendering bug.
 
-**シェーダーホットリロード・ギャラリー・移行ツール**
-- `WgpuState::reload_shader_pipelines()` を追加: WGSL ファイル変更時にシェーダーをホットリロード（再起動不要）。
-- `examples/shaders/`: CRT・Matrix・Glow（背景）/ Grayscale・Amber（テキスト）のサンプル WGSL シェーダーを同梱。
-- `nexterm-ctl import-ghostty`: Ghostty 設定ファイルをインポートして nexterm config に変換。
-- `nexterm-ctl service install/uninstall/status`: systemd（Linux）/ launchd（macOS）自動起動サービス管理。
+**Shader hot-reload, gallery, and migration tools**
+- Added `WgpuState::reload_shader_pipelines()`: hot-reloads WGSL shaders on file change (no restart needed).
+- `examples/shaders/`: bundled sample WGSL shaders — CRT, Matrix, Glow (background) / Grayscale, Amber (text).
+- `nexterm-ctl import-ghostty`: imports a Ghostty config file and converts it to nexterm config.
+- `nexterm-ctl service install/uninstall/status`: manages autostart services via systemd (Linux) / launchd (macOS).
 
 ---
 
@@ -68,36 +68,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-**カスタム WGSL シェーダーサポート**
-- `nexterm-config`: `[gpu]` セクションを追加（`custom_bg_shader` / `custom_text_shader` / `fps_limit` / `atlas_size`）。
-- GPU クライアント起動時に指定パスから WGSL ファイルを読み込む（読み込み失敗時はビルトインにフォールバック）。
-- CRT スキャンライン・グロー効果などのカスタムエフェクトが実装可能。
+**Custom WGSL shader support**
+- Added `[gpu]` section to `nexterm-config` (`custom_bg_shader` / `custom_text_shader` / `fps_limit` / `atlas_size`).
+- GPU client loads WGSL files from the specified paths at startup (falls back to built-in shaders on failure).
+- Enables custom effects such as CRT scanlines and glow.
 
-**ドキュメントサイト充実**
-- `docs/src/features/graphics.md`: Sixel / Kitty グラフィックスプロトコルのガイド。
-- `docs/src/features/plugins.md`: WASM プラグイン開発ガイド（Rust サンプルコード付き）。
-- `docs/src/advanced/shaders.md`: カスタム WGSL シェーダーリファレンスと実装例。
-- `docs/src/advanced/performance.md`: パフォーマンスチューニングガイド。
+**Documentation site expansion**
+- `docs/src/features/graphics.md`: Sixel / Kitty graphics protocol guide.
+- `docs/src/features/plugins.md`: WASM plugin development guide (with Rust sample code).
+- `docs/src/advanced/shaders.md`: custom WGSL shader reference and examples.
+- `docs/src/advanced/performance.md`: performance tuning guide.
 
 ### Performance
 
-**GPU バッファ再利用による描画最適化**
-- `WgpuState` に再利用可能な頂点・インデックスバッファを追加。
-- 毎フレームの `create_buffer_init`（GPU アロケーション）を廃止し、`queue.write_buffer` による上書きに変更。
-- バッファ容量不足時のみ 2 倍サイズで再確保（通常は再確保なし）。
-- 80×24 ターミナルで GPU アロケーション回数を **約 4 回/フレーム → 0 回/フレーム** に削減。
+**GPU buffer reuse for rendering optimization**
+- Added reusable vertex/index buffers to `WgpuState`.
+- Replaced per-frame `create_buffer_init` (GPU allocation) with `queue.write_buffer` overwrites.
+- Buffers are only reallocated (2× size) when capacity is exceeded; no reallocation in normal operation.
+- GPU allocation count for an 80×24 terminal drops from **~4 per frame → 0 per frame**.
 
-**FPS 制限機能**
-- `gpu.fps_limit`（デフォルト 60 FPS）でフレームレートを制御。
-- 0 を設定すると制限なし（vsync のみ）。
+**FPS cap**
+- `gpu.fps_limit` (default 60 FPS) controls the frame rate.
+- Set to 0 for uncapped (vsync only).
 
-**ASCII グリフ事前ウォームアップ**
-- 起動時に ASCII 印字可能文字（0x20–0x7E）を Bold/Regular でグリフアトラスに事前ロード。
-- 初回キーストロークのラスタライズ遅延を排除。
+**ASCII glyph pre-warming**
+- ASCII printable characters (0x20–0x7E) are pre-loaded into the glyph atlas at startup in both Regular and Bold.
+- Eliminates first-keystroke rasterization latency.
 
-**ランチャー起動時間最適化**
-- `wait_for_server` のポーリング間隔を指数バックオフ方式に変更（10ms, 10ms, 10ms, 20ms, 50ms, 100ms）。
-- サーバーが高速起動した場合の平均待機時間を **100ms → 約 30ms** に短縮。
+**Launcher startup time optimization**
+- Changed `wait_for_server` polling to exponential backoff (10 ms, 10 ms, 10 ms, 20 ms, 50 ms, 100 ms).
+- Average server-ready detection time reduced from **100 ms → ~30 ms** when the server starts quickly.
 
 ---
 
@@ -105,9 +105,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-**macOS Intel ビルドの ad-hoc codesign 失敗を修正**
-- 個別バイナリ署名後にバンドル全体を署名すると subcomponent エラーが発生する問題を修正。
-- `codesign --force --deep --sign - dist/Nexterm.app` で一括署名に変更。
+**Fix ad-hoc codesign failure on macOS Intel builds**
+- Signing individual binaries before signing the whole app bundle caused a subcomponent error.
+- Changed to a single `codesign --force --deep --sign - dist/Nexterm.app` for the full bundle.
 
 ---
 
@@ -115,29 +115,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-**フローティングペイン**
-- `OpenFloatingPane` / `CloseFloatingPane` / `MoveFloatingPane` / `ResizeFloatingPane` IPC コマンドを追加。
-- GPU クライアントに `FloatRect` キャッシュと `floating_pane_rects` フィールドを追加。
+**Floating panes**
+- Added `OpenFloatingPane` / `CloseFloatingPane` / `MoveFloatingPane` / `ResizeFloatingPane` IPC commands.
+- Added `FloatRect` cache and `floating_pane_rects` field to the GPU client.
 
-**WASM プラグインシステム**
-- `nexterm-plugin` クレートを新規作成（wasmi 0.38 ベース）。
-- ビルトインプラグイン API: `nexterm_on_output`, `nexterm_on_command`, ホストインポート `nexterm.log` / `nexterm.write_pane`。
-- 設定に `plugin_dir` / `plugins_disabled` フィールドを追加。
+**WASM plugin system**
+- New `nexterm-plugin` crate (wasmi 0.38-based sandboxed WASM runtime).
+- Built-in plugin API: `nexterm_on_output`, `nexterm_on_command`; host imports: `nexterm.log`, `nexterm.write_pane`.
+- Added `plugin_dir` / `plugins_disabled` fields to config.
 
-**ステータスバーウィジェット強化**
-- ビルトインウィジェット: `"time"`, `"date"`, `"hostname"`, `"session"`, `"pane_id"`。
-- `right_widgets`（右寄せ）・`separator` フィールドを `StatusBarConfig` に追加。
-- `WidgetContext` でセッション名・ペイン ID をウィジェットに渡せるように。
+**Status bar widget enhancements**
+- Built-in widgets: `"time"`, `"date"`, `"hostname"`, `"session"`, `"pane_id"`.
+- Added `right_widgets` (right-aligned) and `separator` fields to `StatusBarConfig`.
+- `WidgetContext` now passes session name and pane ID to widgets.
 
-**Linux パッケージング**
-- `linux/AppRun`: AppImage エントリーポイントスクリプト。
-- `pkg/flatpak/`: Flatpak マニフェスト + AppStream メタデータ。
-- GitHub Actions に AppImage ビルド・アップロードステップを追加。
-- `.github/workflows/flatpak.yml`: Flatpak 専用ビルドワークフロー。
+**Linux packaging**
+- `linux/AppRun`: AppImage entry-point script.
+- `pkg/flatpak/`: Flatpak manifest + AppStream metadata.
+- Added AppImage build and upload step to GitHub Actions.
+- `.github/workflows/flatpak.yml`: dedicated Flatpak build workflow.
 
-**テストカバレッジ向上**
-- 全テスト数 145 → 178 件（+33件）。
-- 追加対象: nexterm-proto, nexterm-client-tui, nexterm-vt, nexterm-config, nexterm-plugin。
+**Test coverage improvements**
+- Total test count: 145 → 178 (+33 tests).
+- New tests in: nexterm-proto, nexterm-client-tui, nexterm-vt, nexterm-config, nexterm-plugin.
 
 ---
 
@@ -145,84 +145,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-**カラースキーム 4 種追加（Catppuccin / Dracula / Nord / One Dark）**
+**Four new built-in color schemes (Catppuccin / Dracula / Nord / One Dark)**
 
-- `nexterm-config`: `BuiltinScheme` に `Catppuccin`・`Dracula`・`Nord`・`OneDark` を追加。
-- 全 9 スキームの fg/bg/ANSI[16] カラーパレットを定義し、GPU レンダラーのターミナル描画に反映。
-- Settings パネル（`[Colors]` タブ）でスキームドット 9 個表示に拡張。
+- Added `Catppuccin`, `Dracula`, `Nord`, and `OneDark` to `BuiltinScheme` in `nexterm-config`.
+- Defined full fg/bg/ANSI[16] color palettes for all 9 schemes; reflected in the GPU renderer's terminal drawing.
+- Settings panel (`[Colors]` tab) expanded to show all 9 scheme dots.
 
-**シェル補完スクリプト生成**
+**Shell completion script generation**
 
-- `nexterm-ctl completions <shell>` コマンドを追加。
-  bash / zsh / fish / powershell / elvish の補完スクリプトを標準出力に出力する。
+- Added `nexterm-ctl completions <shell>` command.
+  Outputs completion scripts for bash / zsh / fish / powershell / elvish to stdout.
 
-**man ページ生成**
+**Man page generation**
 
-- `nexterm-ctl man` コマンドを追加。
-  troff 形式の man ページを標準出力に出力する（`nexterm-ctl man > nexterm-ctl.1` で保存可能）。
+- Added `nexterm-ctl man` command.
+  Outputs a troff-format man page to stdout (`nexterm-ctl man > nexterm-ctl.1` to save).
 
-**ブラケットペーストモード（DEC ?2004）実装**
+**Bracketed paste mode (DEC ?2004)**
 
-- VT パーサが `CSI ?2004h` / `CSI ?2004l` を解釈してブラケットペーストモードを追跡。
-- ペースト時にモードが有効な場合、テキストを `ESC[200~` … `ESC[201~` で囲んで PTY に送信。
-  zsh・fish・vim など多くのシェル/エディタでペースト内容が誤実行されなくなる。
+- VT parser now interprets `CSI ?2004h` / `CSI ?2004l` to track bracketed paste mode.
+- When the mode is active, pasted text is wrapped with `ESC[200~` … `ESC[201~` before sending to the PTY.
+  Prevents accidental command execution in zsh, fish, vim, and other shells/editors.
 
-**SSH `~/.ssh/config` 自動読み込み**
+**Auto-load `~/.ssh/config`**
 
-- ホストマネージャ（`Ctrl+Shift+H`）起動時に `~/.ssh/config` を解析し、
-  `[[hosts]]` エントリと合わせてホスト一覧に表示する。
-- `Host *` ワイルドカードは除外。`nexterm.toml` に同じホスト+ポートがある場合は重複しない。
+- Host Manager (`Ctrl+Shift+H`) now parses `~/.ssh/config` at startup and merges entries with `[[hosts]]`.
+- `Host *` wildcards are excluded. Duplicate entries (same host + port already in `nexterm.toml`) are suppressed.
 
-**コピーモード vim 互換キー追加**
+**Vim-compatible copy mode keys**
 
-- `w` / `b`: 単語単位の前後移動。
-- `$`: 行末へ移動。
-- `Y`: 現在行全体をヤンクしてコピーモードを終了。
-- `/`: インクリメンタル検索モード（Enter で確定、n で次のマッチ、Esc でキャンセル）。
+- `w` / `b`: word-wise forward / backward movement.
+- `$`: jump to end of line.
+- `Y`: yank the entire current line and exit copy mode.
+- `/`: incremental search mode (Enter to confirm, n for next match, Esc to cancel).
 
-**OSC 8 ハイパーリンク対応**
+**OSC 8 hyperlink support**
 
-- `nexterm-proto`: `Grid.hyperlinks: Vec<HyperlinkSpan>` を追加。
-- VT パーサが `ESC ] 8 ; ; <url> BEL` … `ESC ] 8 ; ; BEL` を解釈してグリッドにスパンを記録。
-- GPU クライアントの URL クリック（`Ctrl+Click`）が OSC 8 リンクを優先検出するように。
+- Added `Grid.hyperlinks: Vec<HyperlinkSpan>` to `nexterm-proto`.
+- VT parser interprets `ESC ] 8 ; ; <url> BEL` … `ESC ] 8 ; ; BEL` and records spans in the grid.
+- GPU client's URL click (`Ctrl+Click`) now detects OSC 8 links first.
 
-**タブ/ペインのアクティビティ通知**
+**Tab/pane activity notification**
 
-- 非フォーカスペインへの出力があると、タブバーのタブにオレンジ背景と「●」インジケーターを表示。
+- When output arrives in an unfocused pane, its tab shows an orange background and a `●` indicator.
 
-**マウスレポーティング実装（SGR ?1006 / X11 ?1000）**
+**Mouse reporting (SGR ?1006 / X11 ?1000)**
 
-- VT パーサが `CSI ?1000h` / `CSI ?1006h` を解釈してマウスモードを追跡。
-- GPU クライアントのマウスクリック・ドラッグが PTY に SGR エスケープシーケンスで送信される。
-- `nexterm-proto`: `ClientToServer::MouseReport` メッセージを追加。
+- VT parser interprets `CSI ?1000h` / `CSI ?1006h` to track mouse modes.
+- GPU client mouse clicks and drags are sent to the PTY as SGR escape sequences.
+- Added `ClientToServer::MouseReport` message to `nexterm-proto`.
 
-**スクロールバック検索 UI 完成**
+**Scrollback search UI completed**
 
-- `Scrollback::search_prev()` を追加。`Shift+Enter` または `Shift+N` で前のマッチへ移動。
-- 検索バーの UI を改善：カーソル `|`、アクセントライン、キー操作ヒント表示。
+- Added `Scrollback::search_prev()`. `Shift+Enter` or `Shift+N` moves to the previous match.
+- Improved search bar UI: cursor `|`, accent line, key hint display.
 
-**OSC 133 セマンティックゾーン対応**
+**OSC 133 semantic zones**
 
-- VT パーサが `ESC ] 133 ; A/B/C/D BEL` を解釈してプロンプト/コマンド/出力の境界を追跡。
-- コマンド終了（D マーク）の exit code がステータスバーに表示される（非 0 時のみ）。
-- `nexterm-proto`: `ServerToClient::SemanticMark` メッセージを追加。
+- VT parser interprets `ESC ] 133 ; A/B/C/D BEL` to track prompt / command / output boundaries.
+- Exit code of a completed command (D mark) is shown in the status bar (non-zero only).
+- Added `ServerToClient::SemanticMark` message to `nexterm-proto`.
 
-**プロファイル機能（名前付き設定セット）**
+**Profiles (named configuration sets)**
 
-- `nexterm-config`: `Profile` 構造体と `Config.profiles` / `Config.active_profile` を追加。
-- `Profile` はフォント・カラー・シェル・スクロールバック・タブバーをベース設定から上書き可能。
-- `Config::effective()` でアクティブプロファイルを適用した設定を返す。
-- `Config::activate_profile(name)` / `clear_active_profile()` でプロファイル切り替えを制御。
+- Added `Profile` struct and `Config.profiles` / `Config.active_profile` to `nexterm-config`.
+- `Profile` can override font, colors, shell, scrollback, and tab bar from the base config.
+- `Config::effective()` returns the config with the active profile applied.
+- `Config::activate_profile(name)` / `clear_active_profile()` control profile switching.
 
 ### Changed
 
-- `nexterm-client-gpu`: `Settings` パネルのスキーム選択が 9 種に対応。
+- `nexterm-client-gpu`: Settings panel scheme selector now supports all 9 schemes.
 
 ### Tests
 
-- `nexterm-vt`: ブラケットペーストモード有効化 / 無効化テスト追加。OSC 8 ハイパーリンク・OSC 133 セマンティックゾーンテスト追加（計 18 テスト）。
-- `nexterm-server`: BSP 4 分割レイアウト・セッション管理 API・SSH config パーサのテスト追加。
-- `nexterm-config`: プロファイル適用・TOML パースのテスト追加（計 17 テスト）。
+- `nexterm-vt`: added bracketed paste mode enable/disable tests; OSC 8 hyperlink and OSC 133 semantic zone tests (18 tests total).
+- `nexterm-server`: added BSP 4-split layout, session management API, and SSH config parser tests.
+- `nexterm-config`: added profile application and TOML parse tests (17 tests total).
 
 ---
 
@@ -230,26 +229,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-**Windows — GPU クライアントのフォントが正しく描画されるようになった**
+**Windows — GPU client font rendering fixed**
 
-- `cell_w = font_size * 0.6` という誤った固定係数を廃止し、基準文字 `'0'` を
-  実際にラスタライズして advance width を計測する方式に変更。
-  "Wi ndows Power She l l" のような文字間の余分なスペースが解消される。
-- `FontManager::new()` に `scale_factor: f32` パラメーターを追加し、
-  winit の `window.scale_factor()` を渡すことで DPI 拡大率（125%・150%）に
-  応じた正確なフォントサイズを計算するようになった。
-- `rasterize_char` クロージャ内で `x as u32`（負値のラップ）していた
-  バグを修正し、`if x < 0 || y < 0 { return; }` ガードを追加。
-- `WindowEvent::ScaleFactorChanged` を処理し、DPI 変更時にフォントと
-  グリフアトラスを自動再生成するようになった。
+- Replaced the `cell_w = font_size * 0.6` fixed-ratio heuristic with actual advance width measurement
+  by rasterizing the reference character `'0'` at runtime via `layout_runs()`.
+  Eliminates extra spaces between characters ("Wi ndows Power She l l").
+- Added `scale_factor: f32` to `FontManager::new()`; passes `window.scale_factor()` from winit
+  so the physical font size is correctly computed for high-DPI displays (125 %, 150 % scaling).
+- Fixed a negative-coordinate wrap bug (`x as u32`) in the `rasterize_char` closure;
+  added `if x < 0 || y < 0 { return; }` guard.
+- `WindowEvent::ScaleFactorChanged` is now handled: font and glyph atlas are automatically regenerated on DPI change.
 
-**Windows 11 — GPU クライアントに Acrylic すりガラス背景を追加**
+**Windows 11 — Acrylic frosted-glass background**
 
-- `DwmSetWindowAttribute(DWMWA_SYSTEMBACKDROP_TYPE, DWMWCP_ACRYLIC)` を呼び出し、
-  Windows Terminal に似たすりガラス効果をウィンドウ背景に適用。
-- wgpu Surface の composite alpha mode を `PreMultiplied` に設定し、
-  透明合成が正しく動作するようにした。
-- Windows 10 や他 OS では追加コードは実行されず、動作に影響しない。
+- Calls `DwmSetWindowAttribute(DWMWA_SYSTEMBACKDROP_TYPE, DWMWCP_ACRYLIC)` to apply
+  a frosted-glass effect to the window background, similar to Windows Terminal.
+- wgpu Surface composite alpha mode set to `PreMultiplied` for correct transparent blending.
+- No effect on Windows 10 or non-Windows platforms; code is `#[cfg(windows)]`-guarded.
 
 ---
 
@@ -257,24 +253,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-**Windows — 起動時のコンソールウィンドウが表示されなくなった**
+**Windows — console window no longer appears on launch**
 
-`nexterm.exe`、`nexterm-server`、`nexterm-client-gpu` にリリースビルド限定で
-`#[windows_subsystem = "windows"]` 属性を追加。MSI インストーラーや
-エクスプローラーから `nexterm.exe` を起動した際に、ターミナルウィンドウ以外の
-余分なコンソールウィンドウが表示されなくなった。
+Added `#[windows_subsystem = "windows"]` (release builds only) to `nexterm.exe`,
+`nexterm-server`, and `nexterm-client-gpu`. Launching `nexterm.exe` from the MSI installer
+or Explorer no longer opens a stray black console window.
 
-- ログは `%LOCALAPPDATA%\nexterm\nexterm-server.log` / `nexterm-client.log`
-  に日次ローテーションで書き出す（`tracing-appender` 採用）。
-- エラーは `MessageBoxW` ダイアログで通知する。
+- Logs are written to `%LOCALAPPDATA%\nexterm\nexterm-server.log` / `nexterm-client.log`
+  with daily rotation (`tracing-appender`).
+- Errors are reported via `MessageBoxW` dialogs.
 
-**macOS — バイナリが ad-hoc 署名済みになり、Intel Mac に対応**
+**macOS — binaries are ad-hoc signed + Intel Mac support**
 
-- すべての macOS リリースバイナリを `codesign --sign -`（ad-hoc）で署名。
-  `xattr -dr com.apple.quarantine <ファイル>` を実行するだけで
-  Gatekeeper をバイパスして起動できる。
-- `macos-13`（Intel ランナー）で `x86_64-apple-darwin` ターゲットをビルドし
-  `nexterm-vX.Y.Z-macos-x86_64.tar.gz` をリリースアセットに追加。
+- All macOS release binaries are now signed with `codesign --sign -` (ad-hoc).
+  `xattr -dr com.apple.quarantine <file>` is all that's needed to bypass Gatekeeper.
+- Built `x86_64-apple-darwin` target on the `macos-13` (Intel) runner;
+  `nexterm-vX.Y.Z-macos-x86_64.tar.gz` is now included in release assets.
 
 ---
 

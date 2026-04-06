@@ -6,6 +6,46 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 
 [![CI](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml/badge.svg)](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml)
 
+## What's New in v0.7.5
+
+**Rendering quality fixes**
+- Scrollback `visible_rows` now subtracts the status bar height, fixing overlap of the last row.
+- `ScaleFactorChanged` (DPI change) recalculates `cols`/`rows` and notifies the server — layout no longer shifts on high-DPI displays.
+- Right-click context menu y-coordinate now accounts for the tab bar height.
+- `GlyphAtlas`: added `cleared_this_frame` flag to prevent UV-stale glyph corruption after mid-frame atlas overflow.
+
+---
+
+## What's New in v0.7.4
+
+**CJK full-width character spacing fixed**
+- `rasterize_char()` now accepts a `wide: bool` flag; full-width characters (Unicode width ≥ 2) render into a 2-cell buffer.
+- Japanese, Chinese, Korean, and other CJK characters are evenly spaced and correctly rendered.
+
+**Tab bar / terminal content overlap fixed**
+- Terminal content (row 1) no longer overlaps the tab bar at y=0.
+- All vertex-building functions (`build_grid_verts`, `build_scrollback_verts`, etc.) now accept a `y_offset` parameter.
+
+**Right-side black band fixed**
+- `rows` calculation now subtracts tab bar height and status bar height — no more blank area on the right.
+
+---
+
+## What's New in v0.7.3
+
+**Windows font spacing fixed**
+- Replaced the `Attrs::new()` default (`Family::SansSerif`) with explicit `Family::Monospace` / `Family::Name(family)` — no more Segoe UI proportional-font fallback.
+- Cell width measurement switched from ink pixels (`Buffer::draw()`) to advance width (`layout_runs()`), including right bearing.
+- The "Wi ndows PowerShe l l" extra-space rendering bug is gone.
+
+**Shader hot-reload, gallery & migration tools**
+- `WgpuState::reload_shader_pipelines()` hot-reloads WGSL shaders on file change.
+- Sample shaders bundled in `examples/shaders/` (CRT, Matrix, Glow, Grayscale, Amber).
+- `nexterm-ctl import-ghostty`: converts a Ghostty config to nexterm format.
+- `nexterm-ctl service install/uninstall/status`: manages systemd / launchd autostart.
+
+---
+
 ## What's New in v0.7.2
 
 **Custom WGSL Shaders**
@@ -390,7 +430,7 @@ Based on comparison with rlogin, Tera Term, WezTerm, and tmux.
 | 12-7 | winget manifest | ✅ |
 | 12-8 | GitHub Pages documentation site (mdBook, CI auto-deploy) | ✅ |
 
-**Tests**: 100+ passing
+**Tests**: 178+ passing
 
 ## Crate structure
 

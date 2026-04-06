@@ -37,8 +37,8 @@ issuer       = "Nexterm"   # shown in your authenticator app
 
 1. Start `nexterm-server` — it will log a message like:
    ```
-   TOTP 認証が有効ですが、シークレットが未設定です。
-   ブラウザで http://localhost:7681/setup を開いてセットアップしてください。
+   TOTP auth is enabled but no secret is configured.
+   Open http://localhost:7681/setup in a browser to complete setup.
    ```
 2. Open `/setup` in a browser.
 3. Scan the QR code with Google Authenticator, Authy, or any TOTP app.
