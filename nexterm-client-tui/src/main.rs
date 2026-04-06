@@ -79,13 +79,16 @@ async fn event_loop(
             state.apply_server_message(msg);
         }
 
+        // エラートーストの期限チェックをする
+        state.tick_toasts();
+
         // 画面を描画する
         terminal.draw(|frame| {
             render::draw(frame, state);
         })?;
 
-        // キー入力を処理する
-        if let Some(action) = input::poll_input()? {
+        // キー入力を処理する（現在のプレフィックスモードを渡す）
+        if let Some(action) = input::poll_input(state.prefix_mode)? {
             use input::Action::*;
             match action {
                 Quit => break,
@@ -94,6 +97,20 @@ async fn event_loop(
                     state.resize(cols, rows);
                     conn.send(nexterm_proto::ClientToServer::Resize { cols, rows })
                         .await?;
+                }
+                EnterPrefix => {
+                    state.enter_prefix();
+                }
+                PrefixCommand(cmd) => {
+                    // プレフィックスモードを解除してコマンドを送信する
+                    state.exit_prefix();
+                    conn.send(cmd).await?;
+                }
+                ToggleHelp => {
+                    state.toggle_help();
+                }
+                CancelPrefix => {
+                    state.exit_prefix();
                 }
             }
         }
