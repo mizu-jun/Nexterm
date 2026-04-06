@@ -6,6 +6,20 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 
 [![CI](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml/badge.svg)](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml)
 
+## What's New in v0.7.6
+
+**TUI-parity tab bar and editable settings panel**
+- Tab labels now show the OSC 0/2 window title (e.g. current working directory), matching the TUI client.
+- A "⚙ Settings" button appears on the right side of the tab bar — click it to open the settings panel.
+- Clicking a tab switches the active pane; no keyboard shortcut required.
+- Font family field in the settings panel is now fully editable: press **F** to enter edit mode, type, **Backspace** to delete, **Enter** to confirm, **Escape** to cancel.
+
+**Documentation**
+- All docs converted to English as the primary language.
+- Japanese translations added for shaders, performance, graphics, and plugins guides.
+
+---
+
 ## What's New in v0.7.5
 
 **Rendering quality fixes**

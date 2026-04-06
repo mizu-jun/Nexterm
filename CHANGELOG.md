@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.6] - 2026-04-06
+
+### Added
+
+**GPU client: TUI-parity tab bar and settings panel**
+- Tab bar now displays the OSC 0/2 window title (e.g. current working directory) in each tab label, matching the TUI client behaviour.
+- "⚙ Settings" button rendered on the right side of the tab bar; clicking it toggles the settings panel without a keyboard shortcut.
+- Mouse click hit-testing on tab bar: clicking a tab switches the active pane; clicking the settings button opens/closes the panel.
+- Settings panel font family field is now fully editable: press **F** (on Font tab) to enter edit mode, type the family name, **Backspace** to delete, **Enter** to confirm, **Escape** to cancel. Characters are intercepted before forwarding to the server.
+- `PaneState` carries a `title: String` field updated by `ServerToClient::TitleChanged` messages.
+- `ClientState` carries `tab_hit_rects` and `settings_tab_rect` populated each frame by `build_tab_bar_verts`.
+
+### Changed
+
+- `render()` and `build_tab_bar_verts()` now take `&mut ClientState` to allow per-frame hit-rect writes.
+
+### Documentation
+
+- All documentation converted to English as the primary language.
+- Japanese translations added for user-facing docs: `shaders.ja.md`, `performance.ja.md`, `graphics.ja.md`, `plugins.ja.md`.
+- `docs/ARCHITECTURE.md` and `docs/CONFIGURATION.md` fully translated to English.
+
+---
+
 ## [0.7.5] - 2026-04-06
 
 ### Fixed
