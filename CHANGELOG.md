@@ -9,6 +9,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.0] - 2026-04-06
+
+### Added
+
+**Web Terminal: OAuth2 / SSO authentication**
+- OAuth2/OIDC support for GitHub, Google, Azure AD, and any generic OIDC provider.
+- Authorization Code Flow with CSRF protection (state parameter, 10-minute TTL).
+- Access control via `allowed_emails` and `allowed_orgs` (GitHub only).
+- Client secret can be set via `NEXTERM_OAUTH_CLIENT_SECRET` environment variable (recommended over storing in `nexterm.toml`).
+- OAuth login button automatically injected into the login page when OAuth is enabled.
+
+**Web Terminal: session management improvements**
+- Configurable session TTL via `[web.auth] session_timeout_secs` (default: 86400 s = 24 h).
+- Concurrent session limit via `[web] max_sessions` (0 = unlimited); oldest session is evicted when limit is reached.
+- Explicit logout endpoint: `POST /auth/logout` revokes the session cookie.
+
+**Web Terminal: HTTPS enforcement**
+- New `[web] force_https = true` option; checks `X-Forwarded-Proto` and issues 301 redirects for HTTP requests (useful behind a TLS-terminating reverse proxy).
+
+**Web Terminal: access log**
+- New `[web.access_log]` section; logs every request (including WebSocket upgrades and failed auth attempts).
+- CSV output to a configurable file path, or to the server log via `tracing` when no file is set.
+- Fields: `timestamp`, `remote_addr`, `method`, `path`, `status`, `auth_method`, `user_id`.
+
+**TUI client: multi-pane support**
+- Ctrl+B prefix key system for pane management.
+- Horizontal/vertical split, focus cycling, pane close, zoom.
+- Status bar showing active session and pane count.
+- Full help overlay (Ctrl+B ?).
+
+**SSH host manager enhancements**
+- Tag-based filtering and group management.
+- Connection history with frequency-based sorting.
+- Bulk operations (connect all in group, disconnect all).
+
+**WASM plugin examples**
+- Three ready-to-build sample plugins: `error-detector`, `command-counter`, `timestamp-injector`.
+- Full plugin documentation including C and Rust examples.
+
+**Documentation**
+- Quickstart guide improvements, configuration snippet collection, Lua macro recipe collection.
+- Full web terminal authentication reference including enterprise GitHub SSO example.
+
+### Changed
+
+- `[web.auth]` now contains `session_timeout_secs` field (previously hardcoded to 24 h).
+- `[web]` has new fields: `max_sessions`, `force_https`, `access_log`.
+- `nexterm-config`: `OAuthConfig` and `AccessLogConfig` are now publicly exported.
+
+---
+
 ## [0.7.6] - 2026-04-06
 
 ### Added
