@@ -72,12 +72,10 @@
 
     input[type="text"]::placeholder { color: #3b3d57; letter-spacing: 0.2em; }
 
-    button {
+    button, .oauth-btn {
       width: 100%;
-      background: #7aa2f7;
       border: none;
       border-radius: 4px;
-      color: #1a1b26;
       font-family: inherit;
       font-size: 0.85rem;
       font-weight: 700;
@@ -85,9 +83,48 @@
       padding: 0.75rem;
       cursor: pointer;
       transition: background 0.2s;
+      display: block;
+      text-align: center;
+      text-decoration: none;
+    }
+
+    button {
+      background: #7aa2f7;
+      color: #1a1b26;
     }
 
     button:hover { background: #9cb8ff; }
+
+    /* OAuth セクション */
+    .oauth-section { margin-top: 1rem; }
+
+    .or-divider {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin: 1rem 0;
+      color: #3b3d57;
+      font-size: 0.7rem;
+    }
+
+    .or-divider::before,
+    .or-divider::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: #2a2a3d;
+    }
+
+    .oauth-btn {
+      background: #1e1e2e;
+      border: 1px solid #2a2a3d;
+      color: #c0caf5;
+    }
+
+    .oauth-btn:hover {
+      background: #2a2a3d;
+      border-color: #7aa2f7;
+    }
 
     .error {
       margin-top: 1rem;
@@ -132,6 +169,8 @@
       <button type="submit">connect</button>
     </form>
 
+    <!-- OAUTH_SECTION -->
+
     <div class="error" id="err"></div>
     <div class="hint">Open your authenticator app and enter the 6-digit code.</div>
   </div>
@@ -139,11 +178,20 @@
   <script>
     const params = new URLSearchParams(location.search);
     const err = document.getElementById('err');
-    if (params.get('error') === 'invalid_code') {
-      err.textContent = 'Invalid code. Please try again.';
-      err.classList.add('show');
-    } else if (params.get('error') === 'not_configured') {
-      err.textContent = 'TOTP is not configured. Visit /setup first.';
+    const errorMessages = {
+      invalid_code:    'Invalid code. Please try again.',
+      not_configured:  'TOTP is not configured. Visit /setup first.',
+      oauth_config:    'OAuth is not configured correctly.',
+      oauth_denied:    'OAuth login was denied.',
+      oauth_no_code:   'OAuth callback is missing the authorization code.',
+      oauth_no_state:  'OAuth callback is missing the state parameter.',
+      oauth_exchange:  'Failed to exchange OAuth code for token.',
+      oauth_forbidden: 'Your account is not authorized to access this terminal.',
+      session_limit:   'Session limit reached. Please try again later.',
+    };
+    const errKey = params.get('error');
+    if (errKey && errorMessages[errKey]) {
+      err.textContent = errorMessages[errKey];
       err.classList.add('show');
     }
 

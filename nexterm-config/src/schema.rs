@@ -638,10 +638,20 @@ pub struct WebAuthConfig {
     /// 認証アプリに表示する発行者名（デフォルト: "Nexterm"）
     #[serde(default = "default_totp_issuer")]
     pub issuer: String,
+    /// OAuth2 / OIDC 設定（設定された場合は TOTP より優先）
+    #[serde(default)]
+    pub oauth: OAuthConfig,
+    /// セッション有効期限（秒）。デフォルト: 86400（24 時間）
+    #[serde(default = "default_session_timeout_secs")]
+    pub session_timeout_secs: u64,
 }
 
 fn default_totp_issuer() -> String {
     "Nexterm".to_string()
+}
+
+fn default_session_timeout_secs() -> u64 {
+    86_400
 }
 
 impl Default for WebAuthConfig {
@@ -650,8 +660,38 @@ impl Default for WebAuthConfig {
             totp_enabled: false,
             totp_secret: None,
             issuer: default_totp_issuer(),
+            oauth: OAuthConfig::default(),
+            session_timeout_secs: default_session_timeout_secs(),
         }
     }
+}
+
+/// OAuth2 / OIDC 認証設定
+///
+/// 対応プロバイダー: GitHub / Google / Azure AD / 任意の OIDC プロバイダー
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct OAuthConfig {
+    /// OAuth2 を有効にするか（デフォルト: false）
+    #[serde(default)]
+    pub enabled: bool,
+    /// プロバイダー識別子: "github" | "google" | "azure" | "oidc"
+    #[serde(default)]
+    pub provider: String,
+    /// クライアント ID
+    pub client_id: Option<String>,
+    /// クライアントシークレット（環境変数 NEXTERM_OAUTH_CLIENT_SECRET での上書き推奨）
+    pub client_secret: Option<String>,
+    /// OIDC ディスカバリー URL（provider = "oidc" の場合に使用）
+    /// 例: "https://login.microsoftonline.com/{tenant}/v2.0"
+    pub issuer_url: Option<String>,
+    /// 許可するメールアドレスのリスト（空 = 全員許可）
+    #[serde(default)]
+    pub allowed_emails: Vec<String>,
+    /// 許可する GitHub Organization 名のリスト（provider = "github" のみ）
+    #[serde(default)]
+    pub allowed_orgs: Vec<String>,
+    /// OAuth2 コールバック URL（デフォルト: "http://localhost:{port}/auth/callback"）
+    pub redirect_url: Option<String>,
 }
 
 /// TLS / HTTPS 設定
@@ -676,6 +716,25 @@ impl Default for TlsConfig {
     }
 }
 
+/// アクセスログ設定
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AccessLogConfig {
+    /// アクセスログを有効にするか（デフォルト: false）
+    #[serde(default)]
+    pub enabled: bool,
+    /// ログファイルパス。省略時はサーバーログ（tracing）に出力
+    pub file: Option<String>,
+}
+
+impl Default for AccessLogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            file: None,
+        }
+    }
+}
+
 /// Web ターミナル設定（WebSocket + xterm.js）
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WebConfig {
@@ -693,6 +752,16 @@ pub struct WebConfig {
     /// TLS / HTTPS 設定
     #[serde(default)]
     pub tls: TlsConfig,
+    /// HTTP アクセス時に HTTPS へ強制リダイレクトするか（デフォルト: false）
+    /// tls.enabled = true の場合のみ有効
+    #[serde(default)]
+    pub force_https: bool,
+    /// 同時セッション数の上限（0 = 無制限。デフォルト: 0）
+    #[serde(default)]
+    pub max_sessions: usize,
+    /// アクセスログ設定
+    #[serde(default)]
+    pub access_log: AccessLogConfig,
 }
 
 fn default_web_port() -> u16 {
@@ -707,6 +776,9 @@ impl Default for WebConfig {
             token: None,
             auth: WebAuthConfig::default(),
             tls: TlsConfig::default(),
+            force_https: false,
+            max_sessions: 0,
+            access_log: AccessLogConfig::default(),
         }
     }
 }

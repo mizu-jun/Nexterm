@@ -1,21 +1,41 @@
-//! Web ターミナル — axum WebSocket + xterm.js + TOTP 認証 + HTTPS/TLS
+//! Web ターミナル — axum WebSocket + xterm.js + TOTP / OAuth2 認証 + HTTPS/TLS
 //!
 //! # 設定例（nexterm.toml）
 //! ```toml
 //! [web]
 //! enabled = true
 //! port = 7681
+//! force_https = true   # HTTP アクセスを HTTPS へリダイレクト
+//! max_sessions = 10    # 同時セッション数上限
 //!
 //! [web.auth]
+//! session_timeout_secs = 86400  # セッション有効期限（秒）
+//!
+//! # ── TOTP 認証 ──────────────────────────────────────────
 //! totp_enabled = true
-//! # totp_secret は初回セットアップ後に自動設定される
+//!
+//! # ── OAuth2 認証 ────────────────────────────────────────
+//! [web.auth.oauth]
+//! enabled = true
+//! provider = "github"        # "github" | "google" | "azure" | "oidc"
+//! client_id = "xxx"
+//! # client_secret は環境変数 NEXTERM_OAUTH_CLIENT_SECRET を推奨
+//! allowed_emails = ["admin@example.com"]
+//! # allowed_orgs = ["my-org"]  # GitHub のみ
+//!
+//! # ── アクセスログ ────────────────────────────────────────
+//! [web.access_log]
+//! enabled = true
+//! file = "/var/log/nexterm/access.csv"  # 省略時はサーバーログへ出力
 //!
 //! [web.tls]
 //! enabled = true
 //! # cert_file / key_file を省略すると自己署名証明書を自動生成
 //! ```
 
+mod access_log;
 mod auth;
+mod oauth;
 mod otp;
 mod tls;
 
@@ -26,7 +46,10 @@ use std::{
 
 use axum::{
     Form, Json, Router,
-    extract::{Query, State, WebSocketUpgrade, ws::{Message, WebSocket}},
+    extract::{
+        Query, State, WebSocketUpgrade,
+        ws::{Message, WebSocket},
+    },
     http::{HeaderMap, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
@@ -60,13 +83,18 @@ struct AppState {
     legacy_token: Option<String>,
     /// アクティブな TOTP マネージャー（セットアップ完了後に設定）
     totp: Arc<tokio::sync::RwLock<Option<otp::TotpManager>>>,
-    /// セッション管理
+    /// セッション管理（TTL・同時接続数管理）
     auth_mgr: Arc<auth::AuthManager>,
     /// 初回セットアップ待ちシークレット（未設定時のみ Some）
     pending_setup: Arc<Mutex<Option<PendingSetup>>>,
     totp_enabled: bool,
+    /// OAuth2 マネージャー（OAuth 有効時のみ Some）
+    oauth_mgr: Option<Arc<oauth::OAuthManager>>,
     tls_enabled: bool,
+    force_https: bool,
     issuer: String,
+    /// アクセスログライター
+    access_logger: Arc<access_log::AccessLogger>,
 }
 
 // ── エントリポイント ──────────────────────────────────────────────────────────
@@ -75,6 +103,7 @@ struct AppState {
 pub async fn start_web_server(config: WebConfig, manager: Arc<SessionManager>) {
     let totp_enabled = config.auth.totp_enabled;
     let tls_enabled = config.tls.enabled;
+    let force_https = config.force_https;
     let issuer = config.auth.issuer.clone();
 
     // TOTP マネージャーの初期化
@@ -91,7 +120,6 @@ pub async fn start_web_server(config: WebConfig, manager: Arc<SessionManager>) {
                 }
             },
             None => {
-                // 初回: シークレットを生成してブラウザでセットアップ
                 let secret = otp::TotpManager::generate_secret();
                 info!(
                     "TOTP 認証が有効ですが、シークレットが未設定です。\
@@ -114,15 +142,57 @@ pub async fn start_web_server(config: WebConfig, manager: Arc<SessionManager>) {
         (None, None)
     };
 
+    // OAuth2 マネージャーの初期化
+    let oauth_mgr = if config.auth.oauth.enabled {
+        let scheme = if tls_enabled { "https" } else { "http" };
+        let redirect_base = config
+            .auth
+            .oauth
+            .redirect_url
+            .clone()
+            .unwrap_or_else(|| format!("{}://localhost:{}", scheme, config.port));
+        let redirect_base = if redirect_base.contains("/auth/callback") {
+            // redirect_url が完全な callback URL の場合はベースを抽出する
+            redirect_base
+                .trim_end_matches("/auth/callback")
+                .to_string()
+        } else {
+            redirect_base
+        };
+
+        info!(
+            "OAuth2 認証が有効です（プロバイダー: {}）",
+            config.auth.oauth.provider
+        );
+        Some(Arc::new(oauth::OAuthManager::new(
+            config.auth.oauth.clone(),
+            redirect_base,
+        )))
+    } else {
+        None
+    };
+
+    // アクセスログライターの初期化
+    let access_logger = Arc::new(access_log::AccessLogger::new(
+        config.access_log.enabled,
+        config.access_log.file.as_deref(),
+    ));
+
     let state = AppState {
         manager,
         legacy_token: config.token,
         totp: Arc::new(tokio::sync::RwLock::new(active_totp)),
-        auth_mgr: Arc::new(auth::AuthManager::new()),
+        auth_mgr: Arc::new(auth::AuthManager::new(
+            config.auth.session_timeout_secs,
+            config.max_sessions,
+        )),
         pending_setup: Arc::new(Mutex::new(pending_setup)),
         totp_enabled,
+        oauth_mgr,
         tls_enabled,
+        force_https,
         issuer,
+        access_logger,
     };
 
     let app = build_router(state);
@@ -155,6 +225,9 @@ fn build_router(state: AppState) -> Router {
         .route("/login", get(serve_login))
         .route("/setup", get(serve_setup))
         .route("/auth/login", post(handle_login))
+        .route("/auth/oauth", get(handle_oauth_redirect))
+        .route("/auth/callback", get(handle_oauth_callback))
+        .route("/auth/logout", post(handle_logout))
         .route("/auth/setup-url", get(handle_setup_url))
         .route("/setup/verify", post(handle_setup_verify))
         .route("/ws", get(ws_handler))
@@ -256,37 +329,117 @@ async fn start_tls_server(addr: SocketAddr, app: Router, cert_pem: Vec<u8>, key_
 
 // ── 認証ヘルパー ──────────────────────────────────────────────────────────────
 
-/// TOTP 認証が必要な状況でセッションが有効かを確認する
+/// 認証が必要な状況でセッションが有効かを確認する
+///
+/// TOTP と OAuth の両方が無効の場合は認証不要として true を返す。
 fn has_valid_session(state: &AppState, headers: &HeaderMap) -> bool {
-    if !state.totp_enabled {
-        return true; // TOTP 無効 → 認証不要
+    let auth_required = state.totp_enabled || state.oauth_mgr.is_some();
+    if !auth_required {
+        return true;
     }
     auth::extract_session_cookie(headers)
         .map(|token| state.auth_mgr.is_valid(&token))
         .unwrap_or(false)
 }
 
+/// リクエストヘッダーからクライアント IP を取得する
+///
+/// X-Forwarded-For → X-Real-IP → "unknown" の順で試みる。
+fn client_ip(headers: &HeaderMap) -> String {
+    if let Some(v) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        // X-Forwarded-For は "IP1, IP2, ..." の形式なので最初のエントリを使う
+        return v.split(',').next().unwrap_or(v).trim().to_string();
+    }
+    if let Some(v) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
+        return v.to_string();
+    }
+    "unknown".to_string()
+}
+
+// ── force_https リダイレクト ──────────────────────────────────────────────────
+
+/// HTTP リクエストを HTTPS へリダイレクトするレスポンスを返す
+fn https_redirect(headers: &HeaderMap, port: u16) -> Response {
+    let host = headers
+        .get("host")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("localhost");
+    // ポート部分を除去して HTTPS ポートに置き換える
+    let host_no_port = host.split(':').next().unwrap_or(host);
+    let location = format!("https://{}:{}/", host_no_port, port);
+    Response::builder()
+        .status(301)
+        .header("Location", location)
+        .body(axum::body::Body::empty())
+        .unwrap()
+}
+
 // ── ページハンドラ ────────────────────────────────────────────────────────────
 
-/// GET / — メイン画面（TOTP 有効時は未認証をログインページへリダイレクト）
+/// GET / — メイン画面（未認証はログインページへリダイレクト）
 async fn serve_index(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Response {
-    if state.totp_enabled && !has_valid_session(&state, &headers) {
+    // force_https: TLS 無効または既に HTTPS の場合は無視する
+    // ここでは簡易チェック（X-Forwarded-Proto ヘッダーを確認）
+    if state.force_https && !state.tls_enabled {
+        let proto = headers
+            .get("x-forwarded-proto")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("http");
+        if proto != "https" {
+            return https_redirect(&headers, 7681); // デフォルトポート
+        }
+    }
+
+    if !has_valid_session(&state, &headers) {
         return redirect("/login");
     }
     serve_asset("index.html")
 }
 
 /// GET /login — ログインページ
-async fn serve_login() -> Response {
-    serve_asset("login.html")
+async fn serve_login(State(state): State<AppState>) -> Response {
+    serve_login_html(&state)
+}
+
+/// ログインページ HTML を動的に生成する（TOTP / OAuth ボタンの表示制御）
+fn serve_login_html(state: &AppState) -> Response {
+    let oauth_button = if let Some(ref oauth_mgr) = state.oauth_mgr {
+        // OAuth ボタンを表示するために認証 URL を生成する
+        match oauth_mgr.authorization_url() {
+            Ok(url) => {
+                let provider_label = "OAuth でログイン";
+                format!(
+                    r#"<div class="oauth-section">
+  <div class="or-divider"><span>または</span></div>
+  <a href="{}" class="oauth-btn">{}</a>
+</div>"#,
+                    url, provider_label
+                )
+            }
+            Err(e) => {
+                warn!("OAuth URL 生成エラー: {}", e);
+                String::new()
+            }
+        }
+    } else {
+        String::new()
+    };
+
+    // login.html テンプレートに OAuth セクションを埋め込む
+    let base_html = match Assets::get("login.html") {
+        Some(file) => String::from_utf8_lossy(file.data.as_ref()).into_owned(),
+        None => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+
+    let html = base_html.replace("<!-- OAUTH_SECTION -->", &oauth_button);
+    Html(html).into_response()
 }
 
 /// GET /setup — 初回 TOTP セットアップページ
 async fn serve_setup(State(state): State<AppState>) -> Response {
-    // セットアップが不要な場合はトップへリダイレクト
     if state.pending_setup.lock().unwrap().is_none() {
         return redirect("/");
     }
@@ -304,25 +457,203 @@ struct LoginForm {
 /// POST /auth/login — TOTP コードを検証してセッションを発行する
 async fn handle_login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Form(form): Form<LoginForm>,
 ) -> Response {
+    let addr = client_ip(&headers);
     let totp_guard = state.totp.read().await;
     let totp = match totp_guard.as_ref() {
         Some(t) => t,
-        None => return redirect("/login?error=not_configured"),
+        None => {
+            state.access_logger.log(&access_log::AccessLogEntry {
+                remote_addr: addr.clone(),
+                method: "POST".to_string(),
+                path: "/auth/login".to_string(),
+                status: 302,
+                auth_method: "totp".to_string(),
+                user_id: String::new(),
+            });
+            return redirect("/login?error=not_configured");
+        }
     };
 
     if !totp.verify(&form.code) {
-        warn!("TOTP ログイン失敗: 無効なコード");
+        warn!("TOTP ログイン失敗: 無効なコード（{}）", addr);
+        state.access_logger.log(&access_log::AccessLogEntry {
+            remote_addr: addr.clone(),
+            method: "POST".to_string(),
+            path: "/auth/login".to_string(),
+            status: 401,
+            auth_method: "totp".to_string(),
+            user_id: String::new(),
+        });
         return redirect("/login?error=invalid_code");
     }
 
-    let token = state.auth_mgr.create_session();
+    let token = match state.auth_mgr.create_session("totp", "") {
+        Some(t) => t,
+        None => return redirect("/login?error=session_limit"),
+    };
     let cookie = auth::make_session_cookie(&token, state.tls_enabled);
+
+    info!("TOTP ログイン成功（{}）", addr);
+    state.access_logger.log(&access_log::AccessLogEntry {
+        remote_addr: addr,
+        method: "POST".to_string(),
+        path: "/auth/login".to_string(),
+        status: 302,
+        auth_method: "totp".to_string(),
+        user_id: String::new(),
+    });
+
     Response::builder()
         .status(302)
         .header("Location", "/")
         .header("Set-Cookie", cookie)
+        .body(axum::body::Body::empty())
+        .unwrap()
+}
+
+/// GET /auth/oauth — OAuth プロバイダーの認証ページへリダイレクト
+async fn handle_oauth_redirect(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    let addr = client_ip(&headers);
+    let oauth_mgr = match state.oauth_mgr.as_ref() {
+        Some(m) => m,
+        None => return StatusCode::NOT_FOUND.into_response(),
+    };
+
+    match oauth_mgr.authorization_url() {
+        Ok(url) => {
+            info!("OAuth 認証開始（{}）", addr);
+            redirect(&url)
+        }
+        Err(e) => {
+            warn!("OAuth URL 生成エラー: {}", e);
+            redirect("/login?error=oauth_config")
+        }
+    }
+}
+
+/// OAuth2 コールバッククエリパラメータ
+#[derive(Deserialize)]
+struct OAuthCallback {
+    code: Option<String>,
+    state: Option<String>,
+    error: Option<String>,
+    error_description: Option<String>,
+}
+
+/// GET /auth/callback — OAuth2 コールバック処理
+async fn handle_oauth_callback(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<OAuthCallback>,
+) -> Response {
+    let addr = client_ip(&headers);
+    let oauth_mgr = match state.oauth_mgr.as_ref() {
+        Some(m) => m.clone(),
+        None => return StatusCode::NOT_FOUND.into_response(),
+    };
+
+    // プロバイダーからのエラーを処理する
+    if let Some(err) = query.error {
+        warn!(
+            "OAuth エラー: {} — {} （{}）",
+            err,
+            query.error_description.as_deref().unwrap_or(""),
+            addr
+        );
+        return redirect("/login?error=oauth_denied");
+    }
+
+    let code = match query.code {
+        Some(c) => c,
+        None => return redirect("/login?error=oauth_no_code"),
+    };
+    let oauth_state = match query.state {
+        Some(s) => s,
+        None => return redirect("/login?error=oauth_no_state"),
+    };
+
+    // コードを access_token に交換してユーザー情報を取得する
+    let user = match oauth_mgr.exchange_code(code, oauth_state).await {
+        Ok(u) => u,
+        Err(e) => {
+            warn!("OAuth コード交換失敗: {} （{}）", e, addr);
+            state.access_logger.log(&access_log::AccessLogEntry {
+                remote_addr: addr.clone(),
+                method: "GET".to_string(),
+                path: "/auth/callback".to_string(),
+                status: 401,
+                auth_method: "oauth".to_string(),
+                user_id: String::new(),
+            });
+            return redirect("/login?error=oauth_exchange");
+        }
+    };
+
+    // アクセス許可チェック
+    if !oauth_mgr.is_user_allowed(&user).await {
+        warn!(
+            "OAuth アクセス拒否: user_id={} （{}）",
+            user.user_id, addr
+        );
+        state.access_logger.log(&access_log::AccessLogEntry {
+            remote_addr: addr.clone(),
+            method: "GET".to_string(),
+            path: "/auth/callback".to_string(),
+            status: 403,
+            auth_method: format!("oauth:{}", user.provider),
+            user_id: user.user_id.clone(),
+        });
+        return redirect("/login?error=oauth_forbidden");
+    }
+
+    let auth_method = format!("oauth:{}", user.provider);
+    let user_id = user.login.as_deref().unwrap_or(&user.user_id).to_string();
+
+    let token = match state.auth_mgr.create_session(&auth_method, &user_id) {
+        Some(t) => t,
+        None => return redirect("/login?error=session_limit"),
+    };
+    let cookie = auth::make_session_cookie(&token, state.tls_enabled);
+
+    info!(
+        "OAuth ログイン成功: {} ({}) （{}）",
+        user_id, user.provider, addr
+    );
+    state.access_logger.log(&access_log::AccessLogEntry {
+        remote_addr: addr,
+        method: "GET".to_string(),
+        path: "/auth/callback".to_string(),
+        status: 302,
+        auth_method,
+        user_id,
+    });
+
+    Response::builder()
+        .status(302)
+        .header("Location", "/")
+        .header("Set-Cookie", cookie)
+        .body(axum::body::Body::empty())
+        .unwrap()
+}
+
+/// POST /auth/logout — セッションを破棄してログインページへリダイレクト
+async fn handle_logout(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    if let Some(token) = auth::extract_session_cookie(&headers) {
+        state.auth_mgr.revoke_session(&token);
+    }
+    Response::builder()
+        .status(302)
+        .header("Location", "/login")
+        .header("Set-Cookie", auth::make_logout_cookie())
         .body(axum::body::Body::empty())
         .unwrap()
 }
@@ -350,8 +681,10 @@ async fn handle_setup_url(State(state): State<AppState>) -> Response {
 /// POST /setup/verify — 初回 TOTP コードを検証してシークレットを保存する
 async fn handle_setup_verify(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Form(form): Form<LoginForm>,
 ) -> Response {
+    let addr = client_ip(&headers);
     let (secret_clone, is_valid) = {
         let guard = state.pending_setup.lock().unwrap();
         match guard.as_ref() {
@@ -364,17 +697,15 @@ async fn handle_setup_verify(
         return redirect("/setup?error=invalid_code");
     }
 
-    // シークレットを設定ファイルに保存する
     if let Err(e) = otp::save_secret_to_config(&secret_clone) {
         warn!("TOTP シークレットの保存に失敗: {}。インメモリのみで動作します。", e);
     }
 
-    // アクティブな TOTP マネージャーに昇格させる
     match otp::TotpManager::from_secret(&secret_clone, &state.issuer) {
         Ok(mgr) => {
             *state.totp.write().await = Some(mgr);
             *state.pending_setup.lock().unwrap() = None;
-            info!("TOTP セットアップが完了しました");
+            info!("TOTP セットアップが完了しました（{}）", addr);
         }
         Err(e) => {
             warn!("TOTP マネージャーの作成に失敗: {}", e);
@@ -382,8 +713,10 @@ async fn handle_setup_verify(
         }
     }
 
-    // セットアップ完了後はセッションを発行してトップへ
-    let token = state.auth_mgr.create_session();
+    let token = match state.auth_mgr.create_session("totp", "") {
+        Some(t) => t,
+        None => return redirect("/login?error=session_limit"),
+    };
     let cookie = auth::make_session_cookie(&token, state.tls_enabled);
     Response::builder()
         .status(302)
@@ -415,18 +748,42 @@ async fn ws_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Response {
-    // TOTP セッション確認
-    if state.totp_enabled && !has_valid_session(&state, &headers) {
+    let addr = client_ip(&headers);
+
+    // セッション確認
+    if !has_valid_session(&state, &headers) {
+        state.access_logger.log(&access_log::AccessLogEntry {
+            remote_addr: addr.clone(),
+            method: "GET".to_string(),
+            path: "/ws".to_string(),
+            status: 401,
+            auth_method: String::new(),
+            user_id: String::new(),
+        });
         return StatusCode::UNAUTHORIZED.into_response();
     }
 
     // 後方互換: クエリパラメータのトークン確認
     if let Some(ref expected) = state.legacy_token {
         if query.token != *expected {
-            warn!("WebSocket 認証失敗: 無効なトークン");
+            warn!("WebSocket 認証失敗: 無効なトークン（{}）", addr);
             return StatusCode::UNAUTHORIZED.into_response();
         }
     }
+
+    // アクセスログに WebSocket 接続を記録する
+    let (auth_method, user_id) = auth::extract_session_cookie(&headers)
+        .and_then(|t| state.auth_mgr.session_info(&t))
+        .unwrap_or_default();
+
+    state.access_logger.log(&access_log::AccessLogEntry {
+        remote_addr: addr,
+        method: "GET".to_string(),
+        path: "/ws".to_string(),
+        status: 101,
+        auth_method,
+        user_id,
+    });
 
     let session_name = query.session.clone();
     ws.on_upgrade(move |socket| handle_socket(socket, state.manager, session_name))

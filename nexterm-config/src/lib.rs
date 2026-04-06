@@ -18,10 +18,10 @@ pub mod watcher;
 pub use loader::{ConfigLoader, lua_path, toml_path};
 pub use lua_hooks::{HookEvent, LuaHookRunner};
 pub use schema::{
-    BuiltinScheme, ColorScheme, Config, CustomPalette, FontConfig, GpuConfig, HooksConfig,
-    HostConfig, KeyBinding, LogConfig, MacroConfig, Profile, SchemePalette, SerialPortConfig,
-    ShellConfig, StatusBarConfig, TabBarConfig, TlsConfig, WebAuthConfig, WebConfig, WindowConfig,
-    WindowDecorations,
+    AccessLogConfig, BuiltinScheme, ColorScheme, Config, CustomPalette, FontConfig, GpuConfig,
+    HooksConfig, HostConfig, KeyBinding, LogConfig, MacroConfig, OAuthConfig, Profile,
+    SchemePalette, SerialPortConfig, ShellConfig, StatusBarConfig, TabBarConfig, TlsConfig,
+    WebAuthConfig, WebConfig, WindowConfig, WindowDecorations,
 };
 pub use status_bar::{evaluate_builtin, StatusBarEvaluator, WidgetContext};
 pub use watcher::{watch_config, ConfigRx};

@@ -34,6 +34,10 @@ rust-embed = { version = "8", features = ["include-exclude"] }
 totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
 rand = "0.8"
 
+# OAuth2 / OIDC 認証
+oauth2 = { version = "4", features = ["reqwest"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
 # HTTPS / TLS
 hyper-util = { version = "0.1", features = ["tokio", "server-auto", "service"] }
 tokio-rustls = "0.26"
