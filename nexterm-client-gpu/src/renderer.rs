@@ -1828,16 +1828,39 @@ impl WgpuState {
         match sp.tab {
             0 => {
                 // Font タブ
-                let family_line = format!("  Font: {}", sp.font_family);
+                // フォントファミリー入力フィールド（F キーで編集モード切り替え）
+                let family_prefix = "  Family: ";
+                let family_cursor = if sp.font_family_editing { "|" } else { "" };
+                let family_line = format!("{}{}{}", family_prefix, sp.font_family, family_cursor);
+                // 編集中はフィールドをハイライト表示する
+                if sp.font_family_editing {
+                    let field_w = (family_line.chars().count() as f32 + 1.0) * cell_w;
+                    add_px_rect(
+                        px + cell_w, content_y, field_w, cell_h,
+                        [0.20, 0.30, 0.50, 1.0], sw, sh, bg_verts, bg_idx,
+                    );
+                }
                 add_string_verts(
                     &family_line, px + cell_w, content_y,
-                    [0.8, 0.85, 0.9, 1.0], false,
+                    [0.8, 0.85, 0.9, 1.0], sp.font_family_editing,
+                    sw, sh, cell_w, font, atlas, &self.queue,
+                    text_verts, text_idx,
+                );
+                // ヒント
+                let family_hint = if sp.font_family_editing {
+                    "  (Enter=confirm  Esc=cancel editing)"
+                } else {
+                    "  (F=edit family)"
+                };
+                add_string_verts(
+                    family_hint, px + cell_w, content_y + cell_h * 0.9,
+                    [0.45, 0.50, 0.55, 1.0], false,
                     sw, sh, cell_w, font, atlas, &self.queue,
                     text_verts, text_idx,
                 );
                 let size_line = format!("  Size: {:.1}pt   (↑/↓ to change)", sp.font_size);
                 add_string_verts(
-                    &size_line, px + cell_w, content_y + cell_h * 1.2,
+                    &size_line, px + cell_w, content_y + cell_h * 2.0,
                     [0.9, 0.95, 1.0, 1.0], false,
                     sw, sh, cell_w, font, atlas, &self.queue,
                     text_verts, text_idx,
@@ -3332,6 +3355,26 @@ impl ApplicationHandler for EventHandler {
                     false
                 };
 
+                // 設定パネルのフォントファミリー入力中は文字をフィールドに追加する
+                if !consumed
+                    && self.app.state.settings_panel.is_open
+                    && self.app.state.settings_panel.font_family_editing
+                {
+                    if let Some(ref t) = text {
+                        if !self.modifiers.control_key() && !self.modifiers.alt_key() {
+                            for ch in t.chars() {
+                                self.app.state.settings_panel.push_font_family_char(ch);
+                            }
+                            if let Some(w) = &self.window {
+                                w.request_redraw();
+                            }
+                            return;
+                        }
+                    }
+                    // テキストがない場合（矢印キー等）もサーバーへは転送しない
+                    return;
+                }
+
                 // ローカルで消費されなかった場合はサーバーへ転送する
                 if !consumed {
                     self.forward_key_to_server(physical_key, text.as_deref());
@@ -3631,39 +3674,61 @@ impl EventHandler {
 
         // 設定パネルが開いているときのナビゲーション（全キーを消費）
         if self.app.state.settings_panel.is_open {
+            let editing = self.app.state.settings_panel.font_family_editing;
             match code {
-                WKeyCode::Tab | WKeyCode::ArrowRight => self.app.state.settings_panel.next_tab(),
-                WKeyCode::ArrowLeft => self.app.state.settings_panel.prev_tab(),
-                WKeyCode::ArrowUp => {
+                WKeyCode::Escape => {
+                    if editing {
+                        // 編集モードを終了する（変更を破棄せず入力モードだけ終了）
+                        self.app.state.settings_panel.font_family_editing = false;
+                    } else {
+                        self.app.state.settings_panel.close();
+                    }
+                }
+                WKeyCode::Enter => {
+                    if editing {
+                        // 編集モードを確定する
+                        self.app.state.settings_panel.font_family_editing = false;
+                    } else {
+                        let _ = self.app.state.settings_panel.save_to_toml();
+                        self.app.state.settings_panel.close();
+                    }
+                }
+                WKeyCode::Backspace if editing => {
+                    self.app.state.settings_panel.pop_font_family_char();
+                }
+                // F キーで Font タブのフォントファミリー編集モードをトグルする
+                WKeyCode::KeyF if !editing && self.app.state.settings_panel.tab == 0 => {
+                    self.app.state.settings_panel.font_family_editing = true;
+                }
+                WKeyCode::Tab | WKeyCode::ArrowRight if !editing => {
+                    self.app.state.settings_panel.next_tab();
+                }
+                WKeyCode::ArrowLeft if !editing => {
+                    self.app.state.settings_panel.prev_tab();
+                }
+                WKeyCode::ArrowUp if !editing => {
                     match self.app.state.settings_panel.tab {
                         0 => self.app.state.settings_panel.increase_font_size(),
                         2 => self.app.state.settings_panel.increase_opacity(),
                         _ => {}
                     }
                 }
-                WKeyCode::ArrowDown => {
+                WKeyCode::ArrowDown if !editing => {
                     match self.app.state.settings_panel.tab {
                         0 => self.app.state.settings_panel.decrease_font_size(),
                         2 => self.app.state.settings_panel.decrease_opacity(),
                         _ => {}
                     }
                 }
-                WKeyCode::BracketRight => {
+                WKeyCode::BracketRight if !editing => {
                     if self.app.state.settings_panel.tab == 1 {
                         self.app.state.settings_panel.next_scheme();
                     }
                 }
-                WKeyCode::BracketLeft => {
+                WKeyCode::BracketLeft if !editing => {
                     if self.app.state.settings_panel.tab == 1 {
                         self.app.state.settings_panel.prev_scheme();
                     }
-                }
-                WKeyCode::Enter => {
-                    let _ = self.app.state.settings_panel.save_to_toml();
-                    self.app.state.settings_panel.close();
-                }
-                WKeyCode::Escape => {
-                    self.app.state.settings_panel.close();
                 }
                 _ => {}
             }

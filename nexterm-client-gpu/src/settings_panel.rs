@@ -16,8 +16,10 @@ pub struct SettingsPanel {
     pub opacity: f32,
     /// 変更があるか
     pub dirty: bool,
-    /// フォントファミリー名（表示用）
+    /// フォントファミリー名（編集可能）
     pub font_family: String,
+    /// フォントファミリー入力フィールドがフォーカスされているか
+    pub font_family_editing: bool,
 }
 
 impl Default for SettingsPanel {
@@ -38,6 +40,7 @@ impl SettingsPanel {
             opacity: config.window.background_opacity,
             dirty: false,
             font_family: config.font.family.clone(),
+            font_family_editing: false,
         }
     }
 
@@ -48,6 +51,23 @@ impl SettingsPanel {
     pub fn close(&mut self) {
         self.is_open = false;
         self.dirty = false;
+        self.font_family_editing = false;
+    }
+
+    /// フォントファミリー入力フィールドに文字を追加する
+    pub fn push_font_family_char(&mut self, ch: char) {
+        if self.font_family_editing {
+            self.font_family.push(ch);
+            self.dirty = true;
+        }
+    }
+
+    /// フォントファミリー入力フィールドの末尾を削除する
+    pub fn pop_font_family_char(&mut self) {
+        if self.font_family_editing {
+            self.font_family.pop();
+            self.dirty = true;
+        }
     }
 
     pub fn next_tab(&mut self) {
@@ -120,6 +140,11 @@ impl SettingsPanel {
         };
 
         let mut doc: toml_edit::DocumentMut = existing.parse().unwrap_or_default();
+
+        // [font].family
+        if !self.font_family.is_empty() {
+            doc["font"]["family"] = toml_edit::value(self.font_family.as_str());
+        }
 
         // [font].size
         doc["font"]["size"] = toml_edit::value(self.font_size as f64);
