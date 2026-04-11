@@ -6,6 +6,19 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 
 [![CI](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml/badge.svg)](https://github.com/kusanagi-jn/nexterm/actions/workflows/ci.yml)
 
+## What's New in v0.9.0
+
+**GPU クライアント: 大幅リデザインと競合機能追加**
+
+- **Tokyo Night テーマ**: デフォルトカラーをダークから Tokyo Night に変更。タブバーにアクセントライン、ペイン境界線を 1px 細線に刷新。
+- **設定パネル再設計**: 左サイドバー付き 7 カテゴリ設定画面（Startup / Font / Theme / Window / SSH / Keybindings / Profiles）。
+- **タブ名変更 UI**: タブをダブルクリック（300ms 以内）するとインライン編集フィールドが表示され、Enter でサーバーに RenameWindow を送信。
+- **コンテキストメニュー強化**: プロファイル一覧・インライン検索・設定を開くメニュー追加、キーボードショートカットヒント表示。
+- **アプリアイコン更新**: 青グラデーションの "N" ロゴに変更（nexterm-source.png / nexterm.ico 更新）。
+- **黒余白修正**: ペインレイアウト受信前の黒いウィンドウ余白を背景色で埋めるよう修正。
+
+---
+
 ## What's New in v0.8.0
 
 **Web Terminal: OAuth2 / SSO authentication**
