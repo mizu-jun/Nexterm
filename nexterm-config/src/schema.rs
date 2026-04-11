@@ -456,9 +456,10 @@ impl Default for TabBarConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            height: 28,
-            active_tab_bg: "#ae8b2d".to_string(),
-            inactive_tab_bg: "#5c6d74".to_string(),
+            height: 32,
+            // Tokyo Night アクセントカラー
+            active_tab_bg: "#3B4261".to_string(),
+            inactive_tab_bg: "#1E2030".to_string(),
             separator: "❯".to_string(),
         }
     }
@@ -810,6 +811,9 @@ impl Default for ApiVersion {
 pub struct Profile {
     /// プロファイル名（一意）
     pub name: String,
+    /// タブ・コンテキストメニューに表示するアイコン（絵文字またはASCII文字）
+    #[serde(default)]
+    pub icon: String,
     /// フォント設定（None = Config の font を使用）
     #[serde(default)]
     pub font: Option<FontConfig>,
@@ -825,6 +829,12 @@ pub struct Profile {
     /// タブバー設定（None = Config の tab_bar を使用）
     #[serde(default)]
     pub tab_bar: Option<TabBarConfig>,
+    /// 起動時の作業ディレクトリ（None = デフォルト）
+    #[serde(default)]
+    pub working_dir: Option<String>,
+    /// 追加環境変数（シェル起動時に設定する）
+    #[serde(default)]
+    pub env: std::collections::HashMap<String, String>,
 }
 
 impl Profile {

@@ -283,16 +283,39 @@ impl CopyModeState {
 pub enum ContextMenuAction {
     Copy,
     Paste,
+    SelectAll,
     SplitVertical,
     SplitHorizontal,
     ClosePane,
+    InlineSearch,
+    OpenSettings,
+    /// プロファイル名を指定してシェルを開く
+    OpenProfile { profile_name: String },
+    /// セパレーター（クリック不可）
+    Separator,
 }
 
 /// コンテキストメニューの1項目
 #[derive(Debug, Clone)]
 pub struct ContextMenuItem {
     pub label: String,
+    /// キーヒント（右端に薄く表示）
+    pub hint: String,
     pub action: ContextMenuAction,
+}
+
+impl ContextMenuItem {
+    fn new(label: impl Into<String>, action: ContextMenuAction) -> Self {
+        Self { label: label.into(), hint: String::new(), action }
+    }
+
+    fn with_hint(label: impl Into<String>, hint: impl Into<String>, action: ContextMenuAction) -> Self {
+        Self { label: label.into(), hint: hint.into(), action }
+    }
+
+    fn separator() -> Self {
+        Self { label: String::new(), hint: String::new(), action: ContextMenuAction::Separator }
+    }
 }
 
 /// 右クリックで表示するコンテキストメニュー
@@ -302,28 +325,45 @@ pub struct ContextMenu {
     pub x: f32,
     pub y: f32,
     pub items: Vec<ContextMenuItem>,
+    /// 現在ホバー中の項目インデックス
+    pub hovered: Option<usize>,
 }
 
 impl ContextMenu {
     /// 標準メニュー項目を持つコンテキストメニューを生成する
-    pub fn new_default(x: f32, y: f32) -> Self {
-        Self {
-            x,
-            y,
-            items: vec![
-                ContextMenuItem { label: "Copy".to_string(), action: ContextMenuAction::Copy },
-                ContextMenuItem { label: "Paste".to_string(), action: ContextMenuAction::Paste },
-                ContextMenuItem {
-                    label: "Split Vertical".to_string(),
-                    action: ContextMenuAction::SplitVertical,
-                },
-                ContextMenuItem {
-                    label: "Split Horizontal".to_string(),
-                    action: ContextMenuAction::SplitHorizontal,
-                },
-                ContextMenuItem { label: "Close Pane".to_string(), action: ContextMenuAction::ClosePane },
-            ],
+    /// profiles: プロファイル名とアイコンのペア一覧
+    pub fn new_default(x: f32, y: f32, profiles: &[(String, String)]) -> Self {
+        let mut items = vec![
+            ContextMenuItem::with_hint("コピー", "Ctrl+C", ContextMenuAction::Copy),
+            ContextMenuItem::with_hint("貼り付け", "Ctrl+V", ContextMenuAction::Paste),
+            ContextMenuItem::with_hint("すべて選択", "Ctrl+A", ContextMenuAction::SelectAll),
+            ContextMenuItem::separator(),
+            ContextMenuItem::with_hint("垂直分割", "Ctrl+B  %", ContextMenuAction::SplitVertical),
+            ContextMenuItem::with_hint("水平分割", "Ctrl+B  \"", ContextMenuAction::SplitHorizontal),
+            ContextMenuItem::with_hint("ペインを閉じる", "Ctrl+B  x", ContextMenuAction::ClosePane),
+        ];
+
+        // プロファイルが登録されていればサブセクションを追加する
+        if !profiles.is_empty() {
+            items.push(ContextMenuItem::separator());
+            for (name, icon) in profiles {
+                let label = if icon.is_empty() {
+                    format!("> {}", name)
+                } else {
+                    format!("{} {}", icon, name)
+                };
+                items.push(ContextMenuItem::new(
+                    label,
+                    ContextMenuAction::OpenProfile { profile_name: name.clone() },
+                ));
+            }
         }
+
+        items.push(ContextMenuItem::separator());
+        items.push(ContextMenuItem::with_hint("検索...", "Ctrl+F", ContextMenuAction::InlineSearch));
+        items.push(ContextMenuItem::with_hint("設定...", "Ctrl+,", ContextMenuAction::OpenSettings));
+
+        Self { x, y, items, hovered: None }
     }
 }
 

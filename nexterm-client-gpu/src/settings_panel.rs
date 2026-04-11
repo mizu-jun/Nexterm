@@ -1,13 +1,81 @@
-//! 設定パネル — Ctrl+, でフローティング UI を表示する
+//! 設定パネル — Ctrl+, でフローティング UI を表示する（左サイドバー付き多カテゴリ設計）
 
 use anyhow::Result;
 use nexterm_config::toml_path;
 
+/// サイドバーのカテゴリ
+#[derive(Debug, Clone, PartialEq)]
+pub enum SettingsCategory {
+    Startup,
+    Font,
+    Theme,
+    Window,
+    Ssh,
+    Keybindings,
+    Profiles,
+}
+
+impl SettingsCategory {
+    pub const ALL: &'static [SettingsCategory] = &[
+        SettingsCategory::Startup,
+        SettingsCategory::Font,
+        SettingsCategory::Theme,
+        SettingsCategory::Window,
+        SettingsCategory::Ssh,
+        SettingsCategory::Keybindings,
+        SettingsCategory::Profiles,
+    ];
+
+    pub fn label(&self) -> &str {
+        match self {
+            SettingsCategory::Startup => "スタートアップ",
+            SettingsCategory::Font => "フォント",
+            SettingsCategory::Theme => "テーマ",
+            SettingsCategory::Window => "ウィンドウ",
+            SettingsCategory::Ssh => "SSH",
+            SettingsCategory::Keybindings => "キーバインド",
+            SettingsCategory::Profiles => "プロファイル",
+        }
+    }
+
+    pub fn icon(&self) -> &str {
+        match self {
+            SettingsCategory::Startup => ">",
+            SettingsCategory::Font => "F",
+            SettingsCategory::Theme => "*",
+            SettingsCategory::Window => "#",
+            SettingsCategory::Ssh => "S",
+            SettingsCategory::Keybindings => "K",
+            SettingsCategory::Profiles => "P",
+        }
+    }
+}
+
+/// プロファイルエントリ（設定パネル内で編集可能）
+#[derive(Debug, Clone)]
+pub struct ProfileEntry {
+    pub name: String,
+    pub icon: String,
+    pub shell_program: String,
+    pub working_dir: String,
+}
+
+impl Default for ProfileEntry {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            icon: ">".to_string(),
+            shell_program: String::new(),
+            working_dir: String::new(),
+        }
+    }
+}
+
 /// 設定パネルの状態
 pub struct SettingsPanel {
     pub is_open: bool,
-    /// 選択中のタブ: 0=Font, 1=Colors, 2=Window
-    pub tab: usize,
+    /// 選択中のカテゴリ
+    pub category: SettingsCategory,
     /// フォントサイズ（スライダー値）
     pub font_size: f32,
     /// カラースキーム選択インデックス
@@ -20,6 +88,16 @@ pub struct SettingsPanel {
     pub font_family: String,
     /// フォントファミリー入力フィールドがフォーカスされているか
     pub font_family_editing: bool,
+    /// プロファイル一覧
+    pub profiles: Vec<ProfileEntry>,
+    /// 選択中のプロファイルインデックス
+    pub selected_profile: usize,
+    /// 起動時セッション名
+    pub startup_session: String,
+    /// タブ名変更中のウィンドウ ID（None = 変更なし）
+    pub tab_rename_editing: Option<u32>,
+    /// タブ名変更中のテキスト
+    pub tab_rename_text: String,
 }
 
 impl Default for SettingsPanel {
@@ -32,15 +110,35 @@ impl Default for SettingsPanel {
 impl SettingsPanel {
     pub fn new(config: &nexterm_config::Config) -> Self {
         let scheme_index = scheme_name_to_index(&config.colors);
+        // config.profiles から ProfileEntry を生成する
+        let profiles: Vec<ProfileEntry> = config
+            .profiles
+            .iter()
+            .map(|p| ProfileEntry {
+                name: p.name.clone(),
+                icon: p.icon.clone(),
+                shell_program: p
+                    .shell
+                    .as_ref()
+                    .map(|s| s.program.clone())
+                    .unwrap_or_default(),
+                working_dir: p.working_dir.clone().unwrap_or_default(),
+            })
+            .collect();
         Self {
             is_open: false,
-            tab: 0,
+            category: SettingsCategory::Font,
             font_size: config.font.size,
             scheme_index,
             opacity: config.window.background_opacity,
             dirty: false,
             font_family: config.font.family.clone(),
             font_family_editing: false,
+            profiles,
+            selected_profile: 0,
+            startup_session: "main".to_string(),
+            tab_rename_editing: None,
+            tab_rename_text: String::new(),
         }
     }
 
@@ -52,6 +150,36 @@ impl SettingsPanel {
         self.is_open = false;
         self.dirty = false;
         self.font_family_editing = false;
+        self.tab_rename_editing = None;
+    }
+
+    /// 左サイドバーの前のカテゴリへ移動する
+    pub fn prev_category(&mut self) {
+        let idx = Self::category_index(&self.category);
+        let len = SettingsCategory::ALL.len();
+        self.category = SettingsCategory::ALL[(idx + len - 1) % len].clone();
+    }
+
+    /// 左サイドバーの次のカテゴリへ移動する
+    pub fn next_category(&mut self) {
+        let idx = Self::category_index(&self.category);
+        self.category = SettingsCategory::ALL[(idx + 1) % SettingsCategory::ALL.len()].clone();
+    }
+
+    fn category_index(cat: &SettingsCategory) -> usize {
+        SettingsCategory::ALL
+            .iter()
+            .position(|c| c == cat)
+            .unwrap_or(0)
+    }
+
+    /// 後方互換: tab インデックスでカテゴリを設定する（旧 API）
+    pub fn next_tab(&mut self) {
+        self.next_category();
+    }
+
+    pub fn prev_tab(&mut self) {
+        self.prev_category();
     }
 
     /// フォントファミリー入力フィールドに文字を追加する
@@ -68,14 +196,6 @@ impl SettingsPanel {
             self.font_family.pop();
             self.dirty = true;
         }
-    }
-
-    pub fn next_tab(&mut self) {
-        self.tab = (self.tab + 1) % 3;
-    }
-
-    pub fn prev_tab(&mut self) {
-        self.tab = if self.tab == 0 { 2 } else { self.tab - 1 };
     }
 
     pub fn increase_font_size(&mut self) {
@@ -126,6 +246,32 @@ impl SettingsPanel {
             "onedark",
         ];
         SCHEMES[self.scheme_index % 9]
+    }
+
+    /// タブ名変更を開始する
+    pub fn begin_tab_rename(&mut self, window_id: u32, current_name: &str) {
+        self.tab_rename_editing = Some(window_id);
+        self.tab_rename_text = current_name.to_string();
+    }
+
+    /// タブ名変更をキャンセルする
+    pub fn cancel_tab_rename(&mut self) {
+        self.tab_rename_editing = None;
+        self.tab_rename_text.clear();
+    }
+
+    /// タブ名変更中に文字を追加する
+    pub fn push_tab_rename_char(&mut self, ch: char) {
+        if self.tab_rename_editing.is_some() {
+            self.tab_rename_text.push(ch);
+        }
+    }
+
+    /// タブ名変更中に末尾を削除する
+    pub fn pop_tab_rename_char(&mut self) {
+        if self.tab_rename_editing.is_some() {
+            self.tab_rename_text.pop();
+        }
     }
 
     /// 現在の設定を nexterm.toml に書き込む
@@ -194,7 +340,7 @@ mod tests {
         let config = Config::default();
         let panel = SettingsPanel::new(&config);
         assert!(!panel.is_open);
-        assert_eq!(panel.tab, 0);
+        assert_eq!(panel.category, SettingsCategory::Font);
         assert!(!panel.dirty);
         assert_eq!(panel.font_size, config.font.size);
         assert_eq!(panel.opacity, config.window.background_opacity);
@@ -235,5 +381,37 @@ mod tests {
             panel.scheme_index, 8,
             "インデックス 0 の前は 8 にラップする"
         );
+    }
+
+    #[test]
+    fn tab_rename_lifecycle() {
+        let config = Config::default();
+        let mut panel = SettingsPanel::new(&config);
+        assert!(panel.tab_rename_editing.is_none());
+
+        panel.begin_tab_rename(42, "main");
+        assert_eq!(panel.tab_rename_editing, Some(42));
+        assert_eq!(panel.tab_rename_text, "main");
+
+        panel.push_tab_rename_char('!');
+        assert_eq!(panel.tab_rename_text, "main!");
+
+        panel.pop_tab_rename_char();
+        assert_eq!(panel.tab_rename_text, "main");
+
+        panel.cancel_tab_rename();
+        assert!(panel.tab_rename_editing.is_none());
+        assert!(panel.tab_rename_text.is_empty());
+    }
+
+    #[test]
+    fn category_navigation() {
+        let config = Config::default();
+        let mut panel = SettingsPanel::new(&config);
+        panel.category = SettingsCategory::Font;
+        panel.next_category();
+        assert_eq!(panel.category, SettingsCategory::Theme);
+        panel.prev_category();
+        assert_eq!(panel.category, SettingsCategory::Font);
     }
 }

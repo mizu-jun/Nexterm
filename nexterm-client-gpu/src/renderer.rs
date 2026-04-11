@@ -908,6 +908,8 @@ impl WgpuState {
 
         // ---- メインレンダーパス（背景 + テキスト） ----
         {
+            // パレット背景色でクリアして黒い余白が残らないようにする
+            let clear_bg = scheme_palette.as_ref().map(|p| p.bg).unwrap_or([0, 0, 0]);
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main_render_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -915,7 +917,10 @@ impl WgpuState {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.0, g: 0.0, b: 0.0, a: 0.0,
+                            r: clear_bg[0] as f64 / 255.0,
+                            g: clear_bg[1] as f64 / 255.0,
+                            b: clear_bg[2] as f64 / 255.0,
+                            a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
                     },
@@ -1393,8 +1398,13 @@ impl WgpuState {
         if state.pane_layouts.len() <= 1 {
             return;
         }
-        let border_color = [0.35, 0.35, 0.42, 1.0];
-        let focused_border = [0.30, 0.55, 0.90, 1.0];
+        // Tokyo Night: セパレーター色 #2D3149、フォーカス枠 #7AA2F7
+        let border_color = [0.176, 0.192, 0.286, 1.0];
+        let focused_border = [0.478, 0.635, 0.969, 1.0];
+        // フォーカスペインの枠線ハイライト（薄い青、アルファ 0.25）
+        let focused_highlight = [0.478, 0.635, 0.969, 0.25];
+        // 境界線は 1px の細線
+        let border_w = 1.0_f32;
 
         for layout in state.pane_layouts.values() {
             let px = layout.col_offset as f32 * cell_w;
@@ -1402,22 +1412,34 @@ impl WgpuState {
             let pw = layout.cols as f32 * cell_w;
             let ph = layout.rows as f32 * cell_h;
             let is_focused = state.focused_pane_id == Some(layout.pane_id);
-            let color = if is_focused { focused_border } else { border_color };
 
-            // 右隣にペインがあれば垂直境界線を描画する
+            // フォーカスペインに薄いハイライト枠（2px）を描画する
+            if is_focused && state.pane_layouts.len() > 1 {
+                // 上辺
+                add_px_rect(px, py, pw, 2.0, focused_highlight, sw, sh, bg_verts, bg_idx);
+                // 下辺
+                add_px_rect(px, py + ph - 2.0, pw, 2.0, focused_highlight, sw, sh, bg_verts, bg_idx);
+                // 左辺
+                add_px_rect(px, py, 2.0, ph, focused_highlight, sw, sh, bg_verts, bg_idx);
+                // 右辺
+                add_px_rect(px + pw - 2.0, py, 2.0, ph, focused_highlight, sw, sh, bg_verts, bg_idx);
+            }
+
+            // 右隣にペインがあれば 1px の垂直境界線を描画する
             let right_col = layout.col_offset + layout.cols + 1;
+            let color = if is_focused { focused_border } else { border_color };
             if state.pane_layouts.values().any(|o| {
                 o.pane_id != layout.pane_id && o.col_offset == right_col
             }) {
-                add_px_rect(px + pw, py, cell_w, ph, color, sw, sh, bg_verts, bg_idx);
+                add_px_rect(px + pw, py, border_w, ph, color, sw, sh, bg_verts, bg_idx);
             }
 
-            // 下隣にペインがあれば水平境界線を描画する
+            // 下隣にペインがあれば 1px の水平境界線を描画する
             let bottom_row = layout.row_offset + layout.rows + 1;
             if state.pane_layouts.values().any(|o| {
                 o.pane_id != layout.pane_id && o.row_offset == bottom_row
             }) {
-                add_px_rect(px, py + ph, pw, cell_h, color, sw, sh, bg_verts, bg_idx);
+                add_px_rect(px, py + ph, pw, border_w, color, sw, sh, bg_verts, bg_idx);
             }
         }
     }
@@ -1436,6 +1458,8 @@ impl WgpuState {
     ) {
         let bar_h = cfg.height as f32;
         let bar_y = 0.0_f32;
+        // アクティブタブのアクセントライン高さ（タブ下端の 2px）
+        let accent_h = 2.0_f32;
 
         // タブバー全体の背景（非アクティブ色）
         let inactive_bg = hex_to_rgba(&cfg.inactive_tab_bg, 1.0);
@@ -1509,6 +1533,11 @@ impl WgpuState {
 
             // タブ背景
             add_px_rect(x_offset, bar_y, label_w, bar_h, tab_bg, sw, sh, bg_verts, bg_idx);
+            // アクティブタブの下部にアクセントライン（#7AA2F7）を描画する
+            if is_active {
+                add_px_rect(x_offset, bar_y + bar_h - accent_h, label_w, accent_h,
+                    [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
+            }
 
             // タブラベル（垂直中央揃え）
             let fg = if is_active { text_fg } else { inactive_fg };
@@ -1556,6 +1585,27 @@ impl WgpuState {
         );
         // 設定ボタンのクリック範囲を記録する
         state.settings_tab_rect = Some((settings_x, sw));
+
+        // タブ名変更中の場合: 対象タブの位置にインライン編集フィールドを表示する
+        if let Some(rename_id) = state.settings_panel.tab_rename_editing {
+            if let Some(&(tx0, tx1)) = state.tab_hit_rects.get(&rename_id) {
+                let edit_w = (tx1 - tx0).min(tab_area_w - tx0);
+                // 編集フィールド背景（濃いアクセント色）
+                add_px_rect(tx0, bar_y, edit_w, bar_h,
+                    [0.231, 0.259, 0.384, 1.0], sw, sh, bg_verts, bg_idx);
+                // 下部アクセントラインは太くして編集状態を示す
+                add_px_rect(tx0, bar_y + bar_h - accent_h * 2.0, edit_w, accent_h * 2.0,
+                    [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
+                // テキスト + カーソル（末尾に | を表示）
+                let edit_text = format!(" {}|", state.settings_panel.tab_rename_text);
+                add_string_verts(
+                    &edit_text, tx0 + padding, text_y,
+                    [1.0, 1.0, 1.0, 1.0], true,
+                    sw, sh, cell_w, font, atlas, &self.queue,
+                    text_verts, text_idx,
+                );
+            }
+        }
     }
 
     /// ステータスライン頂点を構築する（ウィンドウ最下行）
@@ -1570,22 +1620,26 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
     ) {
         let py = sh - cell_h;
-        // ステータスライン背景（濃い青）
-        add_px_rect(0.0, py, sw, cell_h, [0.12, 0.20, 0.35, 1.0], sw, sh, bg_verts, bg_idx);
+        // ステータスライン背景（Tokyo Night: #1E2030）
+        add_px_rect(0.0, py, sw, cell_h, [0.118, 0.125, 0.188, 1.0], sw, sh, bg_verts, bg_idx);
+        // ステータスライン上部に 1px の区切り線（#2D3149）
+        add_px_rect(0.0, py, sw, 1.0, [0.176, 0.192, 0.286, 1.0], sw, sh, bg_verts, bg_idx);
 
-        // テキスト: ペイン情報 + アクティビティ通知
+        // テキスト: N アイコン + セッション名 + ペイン情報
         let pane_id = state.focused_pane_id.unwrap_or(0);
         let activity_ids = state.active_pane_ids();
+        let pane_count = state.pane_layouts.len();
         let status = if activity_ids.is_empty() {
-            format!(" nexterm | pane:{}", pane_id)
+            format!(" N  nexterm | pane:{}/{}", pane_id, pane_count)
         } else {
             let ids: Vec<String> = activity_ids.iter().map(|id| id.to_string()).collect();
-            format!(" nexterm | pane:{} | activity:{}", pane_id, ids.join(","))
+            format!(" N  nexterm | pane:{}/{} | ●{}", pane_id, pane_count, ids.join(","))
         };
 
+        // Tokyo Night テキスト色 #A9B1D6
         add_string_verts(
             &status, 0.0, py,
-            [0.9, 0.9, 0.9, 1.0], false,
+            [0.663, 0.694, 0.839, 1.0], false,
             sw, sh, cell_w, font, atlas, &self.queue,
             text_verts, text_idx,
         );
@@ -1777,153 +1831,236 @@ impl WgpuState {
         bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
         text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
     ) {
+        use crate::settings_panel::SettingsCategory;
+
         let sp = &state.settings_panel;
         if !sp.is_open {
             return;
         }
 
-        let panel_cols: f32 = 44.0;
-        let panel_rows: f32 = 10.0;
-        let pw = panel_cols * cell_w;
-        let ph = panel_rows * cell_h;
-        let px = (sw - pw) / 2.0;
-        let py = (sh - ph) / 2.0;
+        // パネルサイズ（左サイドバー付き）
+        let panel_w = (sw * 0.72).min(sw - cell_w * 4.0);
+        let panel_h = (sh * 0.75).min(sh - cell_h * 4.0);
+        let px = (sw - panel_w) / 2.0;
+        let py = (sh - panel_h) / 2.0;
 
-        // パネル背景
-        add_px_rect(px, py, pw, ph, [0.12, 0.13, 0.16, 0.97], sw, sh, bg_verts, bg_idx);
-        // 上端のアクセント線
-        add_px_rect(px, py, pw, 2.0, [0.4, 0.7, 1.0, 1.0], sw, sh, bg_verts, bg_idx);
+        // サイドバー幅・コンテンツ領域
+        let sidebar_w = cell_w * 14.0;
+        let content_x = px + sidebar_w;
+        let content_w = panel_w - sidebar_w;
+
+        // パネル背景（Tokyo Night: #1A1B26）
+        add_px_rect(px, py, panel_w, panel_h, [0.102, 0.106, 0.149, 0.97], sw, sh, bg_verts, bg_idx);
+        // タイトルバー（#1E2030）
+        let title_h = cell_h * 1.4;
+        add_px_rect(px, py, panel_w, title_h, [0.118, 0.125, 0.188, 1.0], sw, sh, bg_verts, bg_idx);
+        // タイトルバー上端アクセント線（#7AA2F7）
+        add_px_rect(px, py, panel_w, 2.0, [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
 
         // タイトル
         add_string_verts(
-            "Settings", px + cell_w, py + cell_h * 0.1,
-            [1.0, 1.0, 1.0, 1.0], true,
+            " * Nexterm Settings",
+            px + cell_w * 0.5, py + cell_h * 0.2,
+            [0.663, 0.694, 0.839, 1.0], false,
+            sw, sh, cell_w, font, atlas, &self.queue,
+            text_verts, text_idx,
+        );
+        // 閉じるボタンヒント
+        let close_text = "Esc";
+        let close_x = px + panel_w - close_text.len() as f32 * cell_w - cell_w;
+        add_string_verts(
+            close_text, close_x, py + cell_h * 0.2,
+            [0.478, 0.635, 0.969, 1.0], false,
             sw, sh, cell_w, font, atlas, &self.queue,
             text_verts, text_idx,
         );
 
-        // タブバー
-        let tab_labels = ["[Font]", "[Colors]", "[Window]"];
-        for (i, label) in tab_labels.iter().enumerate() {
-            let tab_x = px + cell_w * (i as f32 * 10.0 + 12.0);
-            let tab_y = py + cell_h * 0.1;
-            let is_active = sp.tab == i;
+        // サイドバー背景（#16161E）
+        let sidebar_top = py + title_h;
+        let sidebar_h = panel_h - title_h - cell_h * 1.5;
+        add_px_rect(px, sidebar_top, sidebar_w, sidebar_h, [0.086, 0.086, 0.118, 1.0], sw, sh, bg_verts, bg_idx);
+
+        // サイドバー区切り線
+        add_px_rect(px + sidebar_w, sidebar_top, 1.0, sidebar_h, [0.176, 0.192, 0.286, 1.0], sw, sh, bg_verts, bg_idx);
+
+        // サイドバーカテゴリ一覧
+        let cat_item_h = cell_h * 1.1;
+        for (i, cat) in SettingsCategory::ALL.iter().enumerate() {
+            let item_y = sidebar_top + i as f32 * cat_item_h + cell_h * 0.3;
+            let is_active = &sp.category == cat;
             if is_active {
-                add_px_rect(tab_x - cell_w * 0.3, tab_y, label.len() as f32 * cell_w + cell_w * 0.6, cell_h, [0.25, 0.45, 0.75, 1.0], sw, sh, bg_verts, bg_idx);
+                // アクティブ項目: アクセントカラー背景 + 左端のインジケーター
+                add_px_rect(px, item_y - cell_h * 0.1, sidebar_w, cat_item_h, [0.149, 0.188, 0.278, 1.0], sw, sh, bg_verts, bg_idx);
+                add_px_rect(px, item_y - cell_h * 0.1, 3.0, cat_item_h, [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
             }
-            let fg = if is_active { [1.0, 1.0, 1.0, 1.0] } else { [0.6, 0.65, 0.7, 1.0] };
+            let label = format!("  {} {}", cat.icon(), cat.label());
+            let fg = if is_active { [0.753, 0.808, 0.969, 1.0] } else { [0.502, 0.533, 0.647, 1.0] };
             add_string_verts(
-                label, tab_x, tab_y,
+                &label, px + cell_w * 0.5, item_y,
                 fg, is_active,
                 sw, sh, cell_w, font, atlas, &self.queue,
                 text_verts, text_idx,
             );
         }
 
-        // タブ区切り線
-        add_px_rect(px, py + cell_h * 1.2, pw, 1.0, [0.30, 0.30, 0.35, 1.0], sw, sh, bg_verts, bg_idx);
+        // コンテンツ領域
+        let content_top = py + title_h + cell_h * 0.5;
+        let content_inner_x = content_x + cell_w;
 
-        // タブコンテンツ
-        let content_y = py + cell_h * 1.5;
-        match sp.tab {
-            0 => {
-                // Font タブ
-                // フォントファミリー入力フィールド（F キーで編集モード切り替え）
-                let family_prefix = "  Family: ";
+        match &sp.category {
+            SettingsCategory::Font => {
+                // フォントファミリー
                 let family_cursor = if sp.font_family_editing { "|" } else { "" };
-                let family_line = format!("{}{}{}", family_prefix, sp.font_family, family_cursor);
-                // 編集中はフィールドをハイライト表示する
+                let family_line = format!("Family:  {}{}", sp.font_family, family_cursor);
                 if sp.font_family_editing {
-                    let field_w = (family_line.chars().count() as f32 + 1.0) * cell_w;
-                    add_px_rect(
-                        px + cell_w, content_y, field_w, cell_h,
-                        [0.20, 0.30, 0.50, 1.0], sw, sh, bg_verts, bg_idx,
-                    );
+                    let field_w = content_w - cell_w * 2.0;
+                    add_px_rect(content_inner_x, content_top + cell_h * 1.0, field_w, cell_h, [0.149, 0.188, 0.278, 1.0], sw, sh, bg_verts, bg_idx);
                 }
                 add_string_verts(
-                    &family_line, px + cell_w, content_y,
+                    &family_line, content_inner_x, content_top + cell_h * 1.0,
                     [0.8, 0.85, 0.9, 1.0], sp.font_family_editing,
-                    sw, sh, cell_w, font, atlas, &self.queue,
-                    text_verts, text_idx,
+                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
                 );
-                // ヒント
-                let family_hint = if sp.font_family_editing {
-                    "  (Enter=confirm  Esc=cancel editing)"
-                } else {
-                    "  (F=edit family)"
-                };
+                let hint = if sp.font_family_editing { "(Enter=確定  Esc=キャンセル)" } else { "(F キーで編集)" };
                 add_string_verts(
-                    family_hint, px + cell_w, content_y + cell_h * 0.9,
-                    [0.45, 0.50, 0.55, 1.0], false,
-                    sw, sh, cell_w, font, atlas, &self.queue,
-                    text_verts, text_idx,
+                    hint, content_inner_x, content_top + cell_h * 1.9,
+                    [0.376, 0.408, 0.518, 1.0], false,
+                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
                 );
-                let size_line = format!("  Size: {:.1}pt   (↑/↓ to change)", sp.font_size);
+                // フォントサイズ
+                let size_line = format!("Size:    {:.1}pt", sp.font_size);
                 add_string_verts(
-                    &size_line, px + cell_w, content_y + cell_h * 2.0,
+                    &size_line, content_inner_x, content_top + cell_h * 3.0,
                     [0.9, 0.95, 1.0, 1.0], false,
-                    sw, sh, cell_w, font, atlas, &self.queue,
-                    text_verts, text_idx,
+                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                );
+                // サイズバー（8〜32pt）
+                let bar_w = content_w - cell_w * 3.0;
+                let bar_y = content_top + cell_h * 4.2;
+                add_px_rect(content_inner_x, bar_y, bar_w, cell_h * 0.35, [0.176, 0.192, 0.286, 1.0], sw, sh, bg_verts, bg_idx);
+                let fill = ((sp.font_size - 8.0) / 24.0).clamp(0.0, 1.0);
+                add_px_rect(content_inner_x, bar_y, bar_w * fill, cell_h * 0.35, [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
+                add_string_verts(
+                    "(↑/↓ で変更)", content_inner_x, content_top + cell_h * 4.8,
+                    [0.376, 0.408, 0.518, 1.0], false,
+                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
                 );
             }
-            1 => {
-                // Colors タブ
-                let scheme_line = format!("  Scheme: {}   (←/→ to change)", sp.scheme_name());
+            SettingsCategory::Theme => {
+                // カラースキーム
+                let scheme_line = format!("テーマ:  {}  (←/→)", sp.scheme_name());
                 add_string_verts(
-                    &scheme_line, px + cell_w, content_y,
+                    &scheme_line, content_inner_x, content_top + cell_h * 1.0,
                     [0.9, 0.95, 1.0, 1.0], false,
-                    sw, sh, cell_w, font, atlas, &self.queue,
-                    text_verts, text_idx,
+                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
                 );
-                // スキームドット（9個）
-                let dot_y = content_y + cell_h * 1.4;
+                // スキームプレビュードット（9個）
+                let dot_y = content_top + cell_h * 2.5;
+                let scheme_names = ["dark", "light", "tokyonight", "solarized", "gruvbox", "catppuccin", "dracula", "nord", "onedark"];
                 let schemes_colors: [[f32; 4]; 9] = [
-                    [0.15, 0.15, 0.18, 1.0], // dark
-                    [0.95, 0.95, 0.92, 1.0], // light
-                    [0.10, 0.10, 0.20, 1.0], // tokyonight
-                    [0.00, 0.17, 0.21, 1.0], // solarized
-                    [0.28, 0.26, 0.22, 1.0], // gruvbox
-                    [0.19, 0.17, 0.23, 1.0], // catppuccin
-                    [0.16, 0.13, 0.23, 1.0], // dracula
-                    [0.18, 0.20, 0.25, 1.0], // nord
-                    [0.16, 0.18, 0.22, 1.0], // onedark
+                    [0.15, 0.15, 0.18, 1.0],
+                    [0.95, 0.95, 0.92, 1.0],
+                    [0.10, 0.10, 0.20, 1.0],
+                    [0.00, 0.17, 0.21, 1.0],
+                    [0.28, 0.26, 0.22, 1.0],
+                    [0.19, 0.17, 0.23, 1.0],
+                    [0.16, 0.13, 0.23, 1.0],
+                    [0.18, 0.20, 0.25, 1.0],
+                    [0.16, 0.18, 0.22, 1.0],
                 ];
-                for (i, &col) in schemes_colors.iter().enumerate() {
-                    let dot_x = px + cell_w * (2.0 + i as f32 * 3.0);
+                let dot_size = cell_w * 1.2;
+                let dot_gap = (content_w - cell_w * 2.0) / 9.0;
+                for (i, (&col, name)) in schemes_colors.iter().zip(scheme_names.iter()).enumerate() {
+                    let dot_x = content_inner_x + i as f32 * dot_gap;
                     let is_sel = sp.scheme_index == i;
-                    let dot_size = if is_sel { cell_w * 1.4 } else { cell_w };
                     if is_sel {
-                        add_px_rect(dot_x - 2.0, dot_y - 2.0, dot_size + 4.0, cell_h + 4.0, [0.4, 0.7, 1.0, 1.0], sw, sh, bg_verts, bg_idx);
+                        add_px_rect(dot_x - 2.0, dot_y - 2.0, dot_size + 4.0, cell_h + 4.0, [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
                     }
                     add_px_rect(dot_x, dot_y, dot_size, cell_h, col, sw, sh, bg_verts, bg_idx);
+                    let name_y = dot_y + cell_h * 1.3;
+                    let short = &name[..3.min(name.len())];
+                    add_string_verts(
+                        short, dot_x, name_y,
+                        if is_sel { [0.663, 0.694, 0.839, 1.0] } else { [0.376, 0.408, 0.518, 1.0] },
+                        is_sel, sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                    );
+                }
+            }
+            SettingsCategory::Window => {
+                // 不透明度
+                let opacity_line = format!("不透明度:  {:.0}%  (↑/↓)", sp.opacity * 100.0);
+                add_string_verts(
+                    &opacity_line, content_inner_x, content_top + cell_h * 1.0,
+                    [0.9, 0.95, 1.0, 1.0], false,
+                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                );
+                let bar_w = content_w - cell_w * 3.0;
+                let bar_y = content_top + cell_h * 2.4;
+                add_px_rect(content_inner_x, bar_y, bar_w, cell_h * 0.35, [0.176, 0.192, 0.286, 1.0], sw, sh, bg_verts, bg_idx);
+                add_px_rect(content_inner_x, bar_y, bar_w * sp.opacity, cell_h * 0.35, [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
+            }
+            SettingsCategory::Profiles => {
+                add_string_verts(
+                    "プロファイル一覧:", content_inner_x, content_top + cell_h * 0.5,
+                    [0.663, 0.694, 0.839, 1.0], true,
+                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                );
+                if sp.profiles.is_empty() {
+                    add_string_verts(
+                        "プロファイルがありません",
+                        content_inner_x, content_top + cell_h * 1.8,
+                        [0.376, 0.408, 0.518, 1.0], false,
+                        sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                    );
+                    add_string_verts(
+                        "nexterm.toml に [[profiles]] を追加してください",
+                        content_inner_x, content_top + cell_h * 2.7,
+                        [0.376, 0.408, 0.518, 1.0], false,
+                        sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                    );
+                } else {
+                    for (i, prof) in sp.profiles.iter().enumerate() {
+                        let item_y = content_top + cell_h * (1.5 + i as f32 * 1.2);
+                        let is_sel = sp.selected_profile == i;
+                        if is_sel {
+                            add_px_rect(content_inner_x - cell_w * 0.3, item_y - cell_h * 0.1,
+                                content_w - cell_w * 0.7, cell_h,
+                                [0.149, 0.188, 0.278, 1.0], sw, sh, bg_verts, bg_idx);
+                        }
+                        let label = format!("{} {}", prof.icon, prof.name);
+                        let fg = if is_sel { [0.753, 0.808, 0.969, 1.0] } else { [0.502, 0.533, 0.647, 1.0] };
+                        add_string_verts(
+                            &label, content_inner_x, item_y, fg, is_sel,
+                            sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                        );
+                    }
                 }
             }
             _ => {
-                // Window タブ
-                let opacity_line = format!("  Opacity: {:.2}   (↑/↓ to change)", sp.opacity);
+                // スタートアップ・SSH・キーバインドは近日実装予定
+                let msg = match &sp.category {
+                    SettingsCategory::Startup => "スタートアップ設定は nexterm.toml で管理します",
+                    SettingsCategory::Ssh => "SSH ホストは nexterm.toml の [[hosts]] で管理します",
+                    SettingsCategory::Keybindings => "キーバインドは nexterm.toml の [[keys]] で管理します",
+                    _ => "",
+                };
                 add_string_verts(
-                    &opacity_line, px + cell_w, content_y,
-                    [0.9, 0.95, 1.0, 1.0], false,
-                    sw, sh, cell_w, font, atlas, &self.queue,
-                    text_verts, text_idx,
+                    msg, content_inner_x, content_top + cell_h * 2.0,
+                    [0.376, 0.408, 0.518, 1.0], false,
+                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
                 );
-                // 不透明度バー
-                let bar_y = content_y + cell_h * 1.4;
-                let bar_w = pw - cell_w * 4.0;
-                add_px_rect(px + cell_w * 2.0, bar_y, bar_w, cell_h * 0.4, [0.30, 0.30, 0.35, 1.0], sw, sh, bg_verts, bg_idx);
-                add_px_rect(px + cell_w * 2.0, bar_y, bar_w * sp.opacity, cell_h * 0.4, [0.4, 0.7, 1.0, 1.0], sw, sh, bg_verts, bg_idx);
             }
         }
 
-        // ボトムヒント
-        let hint_y = py + ph - cell_h * 1.1;
-        add_px_rect(px, hint_y, pw, 1.0, [0.30, 0.30, 0.35, 1.0], sw, sh, bg_verts, bg_idx);
+        // ボトムバー（保存・キャンセル）
+        let bottom_y = py + panel_h - cell_h * 1.5;
+        add_px_rect(px, bottom_y, panel_w, 1.0, [0.176, 0.192, 0.286, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(px, bottom_y + 1.0, panel_w, cell_h * 1.5 - 1.0, [0.118, 0.125, 0.188, 1.0], sw, sh, bg_verts, bg_idx);
         add_string_verts(
-            "  Enter=save  Esc=cancel  Tab=next tab",
-            px + cell_w, hint_y + cell_h * 0.1,
-            [0.5, 0.55, 0.60, 1.0], false,
-            sw, sh, cell_w, font, atlas, &self.queue,
-            text_verts, text_idx,
+            "  Enter=保存  Esc=キャンセル  Tab=次のカテゴリ",
+            px + cell_w * 0.5, bottom_y + cell_h * 0.3,
+            [0.376, 0.408, 0.518, 1.0], false,
+            sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
         );
     }
 
@@ -2808,6 +2945,7 @@ impl NextermApp {
             scale_factor: 1.0,
             shader_reload_rx,
             _shader_watcher,
+            last_tab_click: None,
         }
     }
 }
@@ -2837,6 +2975,8 @@ pub struct EventHandler {
     shader_reload_rx: Option<tokio::sync::mpsc::Receiver<()>>,
     /// シェーダーファイル監視ウォッチャー
     _shader_watcher: Option<notify::RecommendedWatcher>,
+    /// タブのダブルクリック検出用（最終クリック時刻とペイン ID）
+    last_tab_click: Option<(Instant, u32)>,
 }
 
 impl ApplicationHandler for EventHandler {
@@ -2855,12 +2995,24 @@ impl ApplicationHandler for EventHandler {
         let decorations = !matches!(win_cfg.decorations, WindowDecorations::None);
 
         let attrs = Window::default_attributes()
-            .with_title("nexterm")
+            .with_title("Nexterm")
             .with_inner_size(PhysicalSize::new(1280u32, 800u32))
             .with_transparent(transparent)
             .with_decorations(decorations);
 
         let window = Arc::new(event_loop.create_window(attrs).expect("Failed to create window"));
+
+        // アプリケーションアイコンを設定する
+        {
+            let icon_bytes = include_bytes!("../../assets/nexterm-source.png");
+            if let Ok(img) = image::load_from_memory(icon_bytes) {
+                let rgba = img.into_rgba8();
+                let (iw, ih) = (rgba.width(), rgba.height());
+                if let Ok(icon) = winit::window::Icon::from_rgba(rgba.into_raw(), iw, ih) {
+                    window.set_window_icon(Some(icon));
+                }
+            }
+        }
 
         // IME 入力を有効にする
         window.set_ime_allowed(true);
@@ -3126,8 +3278,16 @@ impl ApplicationHandler for EventHandler {
                         0.0_f64
                     };
                     let menu_y = (py - tab_bar_h_ctx).max(0.0) as f32;
+                    // プロファイル一覧を渡してコンテキストメニューを生成する
+                    let profile_list: Vec<(String, String)> = self
+                        .app
+                        .config
+                        .profiles
+                        .iter()
+                        .map(|p| (p.name.clone(), p.icon.clone()))
+                        .collect();
                     self.app.state.context_menu =
-                        Some(ContextMenu::new_default(px as f32, menu_y));
+                        Some(ContextMenu::new_default(px as f32, menu_y, &profile_list));
                     if let Some(w) = &self.window {
                         w.request_redraw();
                     }
@@ -3168,13 +3328,33 @@ impl ApplicationHandler for EventHandler {
                                 .iter()
                                 .find(|&(_, &(x0, x1))| px_f32 >= x0 && px_f32 < x1)
                                 .map(|(&id, _)| id);
-                            if let Some(pane_id) = hit_pane
-                                && self.app.state.focused_pane_id != Some(pane_id)
-                                    && let Some(conn) = &self.connection {
-                                        let _ = conn.send_tx.try_send(
-                                            ClientToServer::FocusPane { pane_id }
-                                        );
+                            if let Some(pane_id) = hit_pane {
+                                let now = Instant::now();
+                                // ダブルクリック判定（300ms 以内に同一ペインを再クリック）
+                                let is_double_click = self.last_tab_click
+                                    .map(|(t, id)| id == pane_id && now.duration_since(t) < Duration::from_millis(300))
+                                    .unwrap_or(false);
+
+                                if is_double_click {
+                                    // ダブルクリック → タブ名変更モードへ
+                                    let current_name = self.app.state.panes
+                                        .get(&pane_id)
+                                        .map(|p| p.title.clone())
+                                        .filter(|t| !t.is_empty())
+                                        .unwrap_or_else(|| format!("pane:{}", pane_id));
+                                    self.app.state.settings_panel.begin_tab_rename(pane_id, &current_name);
+                                    self.last_tab_click = None;
+                                } else {
+                                    self.last_tab_click = Some((now, pane_id));
+                                    if self.app.state.focused_pane_id != Some(pane_id) {
+                                        if let Some(conn) = &self.connection {
+                                            let _ = conn.send_tx.try_send(
+                                                ClientToServer::FocusPane { pane_id }
+                                            );
+                                        }
                                     }
+                                }
+                            }
                         }
                         return; // タブバー内のクリックはターミナルに伝えない
                     }
@@ -3606,6 +3786,43 @@ impl EventHandler {
             return true;
         }
 
+        // タブ名変更モード中のキー処理（全キーを消費）
+        if self.app.state.settings_panel.tab_rename_editing.is_some() {
+            match code {
+                WKeyCode::Escape => {
+                    self.app.state.settings_panel.cancel_tab_rename();
+                }
+                WKeyCode::Enter => {
+                    let rename_id = self.app.state.settings_panel.tab_rename_editing;
+                    let new_name = self.app.state.settings_panel.tab_rename_text.clone();
+                    self.app.state.settings_panel.cancel_tab_rename();
+                    if let (Some(window_id), Some(conn)) = (rename_id, &self.connection) {
+                        if !new_name.is_empty() {
+                            let _ = conn.send_tx.try_send(ClientToServer::RenameWindow {
+                                window_id,
+                                name: new_name,
+                            });
+                        }
+                    }
+                }
+                WKeyCode::Backspace => {
+                    self.app.state.settings_panel.pop_tab_rename_char();
+                }
+                _ => {
+                    // 英字・数字・記号を入力する
+                    if let Some(ch) = winit_code_to_char(code) {
+                        let ch = if self.modifiers.shift_key() {
+                            ch.to_uppercase().next().unwrap_or(ch)
+                        } else {
+                            ch
+                        };
+                        self.app.state.settings_panel.push_tab_rename_char(ch);
+                    }
+                }
+            }
+            return true;
+        }
+
         // マクロピッカーが開いているときのナビゲーション（全キーを消費）
         if self.app.state.macro_picker.is_open {
             match code {
@@ -3696,37 +3913,45 @@ impl EventHandler {
                 WKeyCode::Backspace if editing => {
                     self.app.state.settings_panel.pop_font_family_char();
                 }
-                // F キーで Font タブのフォントファミリー編集モードをトグルする
-                WKeyCode::KeyF if !editing && self.app.state.settings_panel.tab == 0 => {
-                    self.app.state.settings_panel.font_family_editing = true;
-                }
-                WKeyCode::Tab | WKeyCode::ArrowRight if !editing => {
-                    self.app.state.settings_panel.next_tab();
-                }
-                WKeyCode::ArrowLeft if !editing => {
-                    self.app.state.settings_panel.prev_tab();
-                }
-                WKeyCode::ArrowUp if !editing => {
-                    match self.app.state.settings_panel.tab {
-                        0 => self.app.state.settings_panel.increase_font_size(),
-                        2 => self.app.state.settings_panel.increase_opacity(),
-                        _ => {}
+                // F キーで Font カテゴリのフォントファミリー編集モードをトグルする
+                WKeyCode::KeyF if !editing => {
+                    use crate::settings_panel::SettingsCategory;
+                    if self.app.state.settings_panel.category == SettingsCategory::Font {
+                        self.app.state.settings_panel.font_family_editing = true;
                     }
                 }
-                WKeyCode::ArrowDown if !editing => {
-                    match self.app.state.settings_panel.tab {
-                        0 => self.app.state.settings_panel.decrease_font_size(),
-                        2 => self.app.state.settings_panel.decrease_opacity(),
-                        _ => {}
+                WKeyCode::Tab | WKeyCode::ArrowDown if !editing => {
+                    self.app.state.settings_panel.next_category();
+                }
+                WKeyCode::ArrowUp if !editing => {
+                    use crate::settings_panel::SettingsCategory;
+                    match &self.app.state.settings_panel.category {
+                        SettingsCategory::Font => self.app.state.settings_panel.increase_font_size(),
+                        SettingsCategory::Window => self.app.state.settings_panel.increase_opacity(),
+                        _ => self.app.state.settings_panel.prev_category(),
+                    }
+                }
+                WKeyCode::ArrowRight if !editing => {
+                    use crate::settings_panel::SettingsCategory;
+                    if self.app.state.settings_panel.category == SettingsCategory::Theme {
+                        self.app.state.settings_panel.next_scheme();
+                    }
+                }
+                WKeyCode::ArrowLeft if !editing => {
+                    use crate::settings_panel::SettingsCategory;
+                    if self.app.state.settings_panel.category == SettingsCategory::Theme {
+                        self.app.state.settings_panel.prev_scheme();
                     }
                 }
                 WKeyCode::BracketRight if !editing => {
-                    if self.app.state.settings_panel.tab == 1 {
+                    use crate::settings_panel::SettingsCategory;
+                    if self.app.state.settings_panel.category == SettingsCategory::Theme {
                         self.app.state.settings_panel.next_scheme();
                     }
                 }
                 WKeyCode::BracketLeft if !editing => {
-                    if self.app.state.settings_panel.tab == 1 {
+                    use crate::settings_panel::SettingsCategory;
+                    if self.app.state.settings_panel.category == SettingsCategory::Theme {
                         self.app.state.settings_panel.prev_scheme();
                     }
                 }
@@ -4384,6 +4609,15 @@ impl EventHandler {
                             let _ = conn.send_tx.try_send(ClientToServer::PasteText { text });
                         }
             }
+            ContextMenuAction::SelectAll => {
+                // グリッド全体のテキストをクリップボードにコピーする
+                if let Some(pane) = self.app.state.focused_pane() {
+                    let text = grid_to_text(pane);
+                    if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                        let _ = clipboard.set_text(text);
+                    }
+                }
+            }
             ContextMenuAction::SplitVertical => {
                 if let Some(conn) = &self.connection {
                     let _ = conn.send_tx.try_send(ClientToServer::SplitVertical);
@@ -4398,6 +4632,28 @@ impl EventHandler {
                 if let Some(conn) = &self.connection {
                     let _ = conn.send_tx.try_send(ClientToServer::ClosePane);
                 }
+            }
+            ContextMenuAction::InlineSearch => {
+                self.app.state.start_search();
+            }
+            ContextMenuAction::OpenSettings => {
+                self.app.state.settings_panel.open();
+            }
+            ContextMenuAction::OpenProfile { profile_name } => {
+                // プロファイルのシェル設定でペインを新規分割する
+                if let Some(prof) = self.app.config.profiles.iter().find(|p| &p.name == profile_name) {
+                    if let Some(shell) = &prof.shell {
+                        if let Some(conn) = &self.connection {
+                            // まず垂直分割してから ConnectSsh の代わりにシェルパスを環境変数で渡す
+                            // （現時点では SplitVertical で新ペインを開き、プロファイル設定はログとして記録）
+                            let _ = conn.send_tx.try_send(ClientToServer::SplitVertical);
+                            info!("プロファイル '{}' のシェル '{}' で起動を要求", profile_name, shell.program);
+                        }
+                    }
+                }
+            }
+            ContextMenuAction::Separator => {
+                // セパレーターはクリック不可のため何もしない
             }
         }
     }

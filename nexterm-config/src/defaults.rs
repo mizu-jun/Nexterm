@@ -13,7 +13,7 @@ ligatures = true
 [colors]
 # 組み込みスキーム: "dark" | "light" | "tokyonight" | "solarized" | "gruvbox"
 # カスタムスキームは nexterm.lua で定義可能
-scheme = "dark"
+scheme = "tokyonight"
 
 [shell]
 # program = "/bin/zsh"   # デフォルトは $SHELL 環境変数
