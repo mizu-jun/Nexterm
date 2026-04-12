@@ -3303,14 +3303,10 @@ impl ApplicationHandler for EventHandler {
                 ..
             } => {
                 if let Some((px, py)) = self.cursor_position {
-                    // タブバー有効時は y 座標をタブバー高さ分ずらしてターミナル内相対位置に変換する
-                    let tab_bar_h_ctx = if self.app.config.tab_bar.enabled {
-                        self.app.config.tab_bar.height as f64
-                    } else {
-                        0.0_f64
-                    };
-                    let menu_y = (py - tab_bar_h_ctx).max(0.0) as f32;
-                    // プロファイル一覧を渡してコンテキストメニューを生成する
+                    let cell_w_ctx = self.app.font.cell_width() as f64;
+                    let cell_h_ctx = self.app.font.cell_height() as f64;
+                    // メニューサイズ（描画側と同じ値を使用）
+                    let menu_w_px = 18.0 * cell_w_ctx;
                     let profile_list: Vec<(String, String)> = self
                         .app
                         .config
@@ -3318,8 +3314,20 @@ impl ApplicationHandler for EventHandler {
                         .iter()
                         .map(|p| (p.name.clone(), p.icon.clone()))
                         .collect();
+                    let item_count = {
+                        let tmp = ContextMenu::new_default(0.0, 0.0, &profile_list);
+                        tmp.items.len()
+                    };
+                    let menu_h_px = item_count as f64 * cell_h_ctx;
+
+                    // ウィンドウ内に収まるように位置をクランプする
+                    let win_w = self.window.as_ref().map(|w| w.inner_size().width as f64).unwrap_or(800.0);
+                    let win_h = self.window.as_ref().map(|w| w.inner_size().height as f64).unwrap_or(600.0);
+                    let menu_x = (px).min(win_w - menu_w_px).max(0.0) as f32;
+                    let menu_y = (py).min(win_h - menu_h_px).max(0.0) as f32;
+
                     self.app.state.context_menu =
-                        Some(ContextMenu::new_default(px as f32, menu_y, &profile_list));
+                        Some(ContextMenu::new_default(menu_x, menu_y, &profile_list));
                     if let Some(w) = &self.window {
                         w.request_redraw();
                     }
@@ -3418,7 +3426,8 @@ impl ApplicationHandler for EventHandler {
                     && let Some(menu) = self.app.state.context_menu.take() {
                         let cell_w = self.app.font.cell_width();
                         let cell_h = self.app.font.cell_height();
-                        let menu_w = 8.0 * cell_w;
+                        // 描画幅と同じ値を使用する（ここを変えると描画とクリック判定がずれる）
+                        let menu_w = 18.0 * cell_w;
                         let fx = px as f32;
                         let fy = py as f32;
                         if fx >= menu.x && fx <= menu.x + menu_w {
@@ -4956,6 +4965,7 @@ fn add_char_verts(
     px: f32, py: f32,
     fg: [f32; 4],
     bold: bool,
+    is_wide: bool,
     sw: f32, sh: f32,
     font: &mut FontManager,
     atlas: &mut GlyphAtlas,
@@ -4966,14 +4976,15 @@ fn add_char_verts(
     if ch == ' ' {
         return;
     }
-    let key = GlyphKey { ch, bold, italic: false, wide: false };
+    // 全角文字フラグを正しく設定してグリフアトラスのキャッシュキーを一致させる
+    let key = GlyphKey { ch, bold, italic: false, wide: is_wide };
     let fg_u8 = [
         (fg[0] * 255.0) as u8,
         (fg[1] * 255.0) as u8,
         (fg[2] * 255.0) as u8,
         255u8,
     ];
-    let (gw, gh, pixels) = font.rasterize_char(ch, bold, false, fg_u8, false);
+    let (gw, gh, pixels) = font.rasterize_char(ch, bold, false, fg_u8, is_wide);
     if gw == 0 || gh == 0 || pixels.is_empty() {
         return;
     }
@@ -4992,7 +5003,10 @@ fn add_char_verts(
     text_idx.extend_from_slice(&[base, base+1, base+2, base, base+2, base+3]);
 }
 
-/// 文字列をテキスト頂点バッファに追加する（各文字 cell_w 幅で等幅配置）
+/// 文字列をテキスト頂点バッファに追加する
+///
+/// Unicode 文字幅（全角=2, 半角=1）を考慮して正しいピクセル位置に各グリフを配置する。
+/// 日本語・中国語・韓国語などの全角文字も正しく描画される。
 #[allow(clippy::too_many_arguments)]
 fn add_string_verts(
     text: &str,
@@ -5007,11 +5021,16 @@ fn add_string_verts(
     text_verts: &mut Vec<TextVertex>,
     text_idx: &mut Vec<u16>,
 ) {
-    for (i, ch) in text.chars().enumerate() {
+    let mut x_offset = 0.0f32;
+    for ch in text.chars() {
+        // Unicode 幅（全角=2, 半角=1）を取得して文字送り量を決定する
+        let char_display_width = UnicodeWidthChar::width(ch).unwrap_or(1);
+        let is_wide = char_display_width >= 2;
         add_char_verts(
-            ch, px + i as f32 * cell_w, py, fg, bold,
+            ch, px + x_offset, py, fg, bold, is_wide,
             sw, sh, font, atlas, queue, text_verts, text_idx,
         );
+        x_offset += char_display_width as f32 * cell_w;
     }
 }
 
