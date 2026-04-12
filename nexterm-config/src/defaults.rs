@@ -6,9 +6,14 @@ pub const DEFAULT_TOML: &str = r#"
 # 詳細は https://github.com/kusanagi-jn/nexterm を参照
 
 [font]
+# family = "Cascadia Code"   # Windows 推奨
+# family = "JetBrains Mono"  # クロスプラットフォーム推奨
+# family = "Fira Code"        # リガチャ対応
 family = "monospace"
-size = 14.0
+size = 15.0
 ligatures = true
+# フォントフォールバックチェーン（グリフが見つからない場合に順番に試行）
+# font_fallbacks = ["Noto Sans Mono CJK JP", "Noto Color Emoji"]
 
 [colors]
 # 組み込みスキーム: "dark" | "light" | "tokyonight" | "solarized" | "gruvbox"
@@ -30,7 +35,8 @@ pub const DEFAULT_LUA: &str = r#"
 local config = require("nexterm")
 
 -- フォントをカスタマイズする例:
--- config.font.family = "JetBrains Mono"
+-- config.font.family = "Cascadia Code"   -- Windows 推奨
+-- config.font.family = "JetBrains Mono"  -- クロスプラットフォーム推奨
 -- config.font.size = 15.0
 
 -- カラースキームをカスタマイズする例:

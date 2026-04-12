@@ -20,9 +20,16 @@ impl Default for FontConfig {
     fn default() -> Self {
         Self {
             family: "monospace".to_string(),
-            size: 14.0,
+            size: 15.0,
             ligatures: true,
-            font_fallbacks: vec![],
+            // プログラミングフォント → CJK → 絵文字 の順に試行
+            font_fallbacks: vec![
+                "Cascadia Code".to_string(),
+                "JetBrains Mono".to_string(),
+                "Fira Code".to_string(),
+                "Noto Sans Mono CJK JP".to_string(),
+                "Noto Color Emoji".to_string(),
+            ],
         }
     }
 }
@@ -1107,7 +1114,7 @@ mod tests {
     fn フォントデフォルト値() {
         let font = FontConfig::default();
         assert!(font.ligatures);
-        assert_eq!(font.size, 14.0);
+        assert_eq!(font.size, 15.0);
     }
 
     #[test]

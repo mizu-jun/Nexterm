@@ -1850,20 +1850,20 @@ impl WgpuState {
         let content_x = px + sidebar_w;
         let content_w = panel_w - sidebar_w;
 
-        // ドロップシャドウ（4px オフセット、半透明）
+        // ドロップシャドウ（4px オフセット）
         add_px_rect(px + 4.0, py + 4.0, panel_w, panel_h,
-            [0.04, 0.04, 0.06, 0.60], sw, sh, bg_verts, bg_idx);
+            [0.04, 0.04, 0.06, 0.85], sw, sh, bg_verts, bg_idx);
 
-        // グロー枠線（外側 1px、アクセントカラー半透明）
+        // 枠線（外側 1px、アクセントカラー薄め）
         add_px_rect(px - 1.0, py - 1.0, panel_w + 2.0, panel_h + 2.0,
-            [0.478, 0.635, 0.969, 0.35], sw, sh, bg_verts, bg_idx);
+            [0.478, 0.635, 0.969, 0.20], sw, sh, bg_verts, bg_idx);
 
-        // パネル背景（グラスモーフィズム: Tokyo Night + 半透明でターミナルが透ける）
-        add_px_rect(px, py, panel_w, panel_h, [0.102, 0.106, 0.149, 0.78], sw, sh, bg_verts, bg_idx);
+        // パネル背景（不透明: グラスモーフィズムなし）
+        add_px_rect(px, py, panel_w, panel_h, [0.102, 0.106, 0.149, 0.97], sw, sh, bg_verts, bg_idx);
 
-        // タイトルバー（#1E2030、少し透明）
+        // タイトルバー（#1E2030、不透明）
         let title_h = cell_h * 1.4;
-        add_px_rect(px, py, panel_w, title_h, [0.118, 0.125, 0.188, 0.92], sw, sh, bg_verts, bg_idx);
+        add_px_rect(px, py, panel_w, title_h, [0.118, 0.125, 0.188, 1.0], sw, sh, bg_verts, bg_idx);
 
         // タイトルバー上端アクセント線（3px、#7AA2F7）
         add_px_rect(px, py, panel_w, 3.0, [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
@@ -1888,10 +1888,10 @@ impl WgpuState {
             text_verts, text_idx,
         );
 
-        // サイドバー背景（より暗く・半透明でグラスモーフィズム感を強調）
+        // サイドバー背景（不透明）
         let sidebar_top = py + title_h;
         let sidebar_h = panel_h - title_h - cell_h * 1.5;
-        add_px_rect(px, sidebar_top, sidebar_w, sidebar_h, [0.066, 0.070, 0.102, 0.88], sw, sh, bg_verts, bg_idx);
+        add_px_rect(px, sidebar_top, sidebar_w, sidebar_h, [0.066, 0.070, 0.102, 1.0], sw, sh, bg_verts, bg_idx);
 
         // サイドバー区切り線（アクセントカラー薄め）
         add_px_rect(px + sidebar_w, sidebar_top, 1.0, sidebar_h, [0.478, 0.635, 0.969, 0.30], sw, sh, bg_verts, bg_idx);
@@ -1902,9 +1902,9 @@ impl WgpuState {
             let item_y = sidebar_top + i as f32 * cat_item_h + cell_h * 0.3;
             let is_active = &sp.category == cat;
             if is_active {
-                // アクティブ項目: 青みを強めたアクセント背景（90%不透明）
+                // アクティブ項目: 青みを強めたアクセント背景（完全不透明）
                 add_px_rect(px, item_y - cell_h * 0.15, sidebar_w, cat_item_h,
-                    [0.149, 0.200, 0.320, 0.90], sw, sh, bg_verts, bg_idx);
+                    [0.149, 0.200, 0.320, 1.0], sw, sh, bg_verts, bg_idx);
                 // 左端インジケーター（3px + 内側1px薄め）
                 add_px_rect(px, item_y - cell_h * 0.15, 3.0, cat_item_h,
                     [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
@@ -2386,16 +2386,16 @@ impl WgpuState {
         let mx = menu.x;
         let my = menu.y;
 
-        // ドロップシャドウ（3px オフセット、半透明）
+        // ドロップシャドウ（3px オフセット）
         add_px_rect(mx + 3.0, my + 3.0, menu_w, menu_h,
-            [0.02, 0.02, 0.04, 0.50], sw, sh, bg_verts, bg_idx);
+            [0.02, 0.02, 0.04, 0.80], sw, sh, bg_verts, bg_idx);
 
-        // グロー枠線（外側 1px、アクセントカラー）
+        // 枠線（外側 1px、アクセントカラー薄め）
         add_px_rect(mx - 1.0, my - 1.0, menu_w + 2.0, menu_h + 2.0,
-            [0.478, 0.635, 0.969, 0.40], sw, sh, bg_verts, bg_idx);
+            [0.478, 0.635, 0.969, 0.15], sw, sh, bg_verts, bg_idx);
 
-        // メニュー全体の背景（グラスモーフィズム: 青みがかった半透明）
-        add_px_rect(mx, my, menu_w, menu_h, [0.10, 0.11, 0.18, 0.82], sw, sh, bg_verts, bg_idx);
+        // メニュー全体の背景（不透明: グラスモーフィズムなし）
+        add_px_rect(mx, my, menu_w, menu_h, [0.10, 0.11, 0.18, 0.97], sw, sh, bg_verts, bg_idx);
 
         // 上端のアクセント線（3px 太め）
         add_px_rect(mx, my, menu_w, 3.0, [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
@@ -2404,7 +2404,7 @@ impl WgpuState {
             let item_y = my + i as f32 * cell_h;
             // 項目区切り線（最初以外、薄く）
             if i > 0 {
-                add_px_rect(mx, item_y, menu_w, 1.0, [0.30, 0.35, 0.45, 0.50], sw, sh, bg_verts, bg_idx);
+                add_px_rect(mx, item_y, menu_w, 1.0, [0.25, 0.28, 0.38, 0.80], sw, sh, bg_verts, bg_idx);
             }
             // テキスト描画（左パディング 0.7セル分）
             add_string_verts(
