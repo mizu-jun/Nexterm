@@ -376,7 +376,8 @@ impl WgpuState {
                 entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    // アルファブレンディングを有効化してグラスモーフィズム（半透明UI）を実現する
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: Default::default(),
@@ -1474,9 +1475,9 @@ impl WgpuState {
         let padding = cell_w;
         let sep = cfg.separator.clone();
 
-        // 右端の設定ボタン幅を先に確保する（約 6 文字分）
-        let settings_label = " ⚙ Settings ";
-        let settings_w = settings_label.chars().count() as f32 * cell_w;
+        // 右端の設定ボタン幅を先に確保する（固定幅で絵文字の幅計算ズレを防ぐ）
+        let settings_label = " * Settings ";
+        let settings_w = 12.0 * cell_w;
         let tab_area_w = sw - settings_w;
 
         // ペイン ID 順にタブを並べる
@@ -1844,18 +1845,30 @@ impl WgpuState {
         let px = (sw - panel_w) / 2.0;
         let py = (sh - panel_h) / 2.0;
 
-        // サイドバー幅・コンテンツ領域
-        let sidebar_w = cell_w * 14.0;
+        // サイドバー幅・コンテンツ領域（日本語カテゴリ名を考慮して18セル分確保）
+        let sidebar_w = cell_w * 18.0;
         let content_x = px + sidebar_w;
         let content_w = panel_w - sidebar_w;
 
-        // パネル背景（Tokyo Night: #1A1B26）
-        add_px_rect(px, py, panel_w, panel_h, [0.102, 0.106, 0.149, 0.97], sw, sh, bg_verts, bg_idx);
-        // タイトルバー（#1E2030）
+        // ドロップシャドウ（4px オフセット、半透明）
+        add_px_rect(px + 4.0, py + 4.0, panel_w, panel_h,
+            [0.04, 0.04, 0.06, 0.60], sw, sh, bg_verts, bg_idx);
+
+        // グロー枠線（外側 1px、アクセントカラー半透明）
+        add_px_rect(px - 1.0, py - 1.0, panel_w + 2.0, panel_h + 2.0,
+            [0.478, 0.635, 0.969, 0.35], sw, sh, bg_verts, bg_idx);
+
+        // パネル背景（グラスモーフィズム: Tokyo Night + 半透明でターミナルが透ける）
+        add_px_rect(px, py, panel_w, panel_h, [0.102, 0.106, 0.149, 0.78], sw, sh, bg_verts, bg_idx);
+
+        // タイトルバー（#1E2030、少し透明）
         let title_h = cell_h * 1.4;
-        add_px_rect(px, py, panel_w, title_h, [0.118, 0.125, 0.188, 1.0], sw, sh, bg_verts, bg_idx);
-        // タイトルバー上端アクセント線（#7AA2F7）
-        add_px_rect(px, py, panel_w, 2.0, [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(px, py, panel_w, title_h, [0.118, 0.125, 0.188, 0.92], sw, sh, bg_verts, bg_idx);
+
+        // タイトルバー上端アクセント線（3px、#7AA2F7）
+        add_px_rect(px, py, panel_w, 3.0, [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
+        // 内側1px薄めのグロー
+        add_px_rect(px, py + 3.0, panel_w, 1.0, [0.478, 0.635, 0.969, 0.25], sw, sh, bg_verts, bg_idx);
 
         // タイトル
         add_string_verts(
@@ -1875,23 +1888,28 @@ impl WgpuState {
             text_verts, text_idx,
         );
 
-        // サイドバー背景（#16161E）
+        // サイドバー背景（より暗く・半透明でグラスモーフィズム感を強調）
         let sidebar_top = py + title_h;
         let sidebar_h = panel_h - title_h - cell_h * 1.5;
-        add_px_rect(px, sidebar_top, sidebar_w, sidebar_h, [0.086, 0.086, 0.118, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(px, sidebar_top, sidebar_w, sidebar_h, [0.066, 0.070, 0.102, 0.88], sw, sh, bg_verts, bg_idx);
 
-        // サイドバー区切り線
-        add_px_rect(px + sidebar_w, sidebar_top, 1.0, sidebar_h, [0.176, 0.192, 0.286, 1.0], sw, sh, bg_verts, bg_idx);
+        // サイドバー区切り線（アクセントカラー薄め）
+        add_px_rect(px + sidebar_w, sidebar_top, 1.0, sidebar_h, [0.478, 0.635, 0.969, 0.30], sw, sh, bg_verts, bg_idx);
 
         // サイドバーカテゴリ一覧
-        let cat_item_h = cell_h * 1.1;
+        let cat_item_h = cell_h * 1.3;
         for (i, cat) in SettingsCategory::ALL.iter().enumerate() {
             let item_y = sidebar_top + i as f32 * cat_item_h + cell_h * 0.3;
             let is_active = &sp.category == cat;
             if is_active {
-                // アクティブ項目: アクセントカラー背景 + 左端のインジケーター
-                add_px_rect(px, item_y - cell_h * 0.1, sidebar_w, cat_item_h, [0.149, 0.188, 0.278, 1.0], sw, sh, bg_verts, bg_idx);
-                add_px_rect(px, item_y - cell_h * 0.1, 3.0, cat_item_h, [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
+                // アクティブ項目: 青みを強めたアクセント背景（90%不透明）
+                add_px_rect(px, item_y - cell_h * 0.15, sidebar_w, cat_item_h,
+                    [0.149, 0.200, 0.320, 0.90], sw, sh, bg_verts, bg_idx);
+                // 左端インジケーター（3px + 内側1px薄め）
+                add_px_rect(px, item_y - cell_h * 0.15, 3.0, cat_item_h,
+                    [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
+                add_px_rect(px + 3.0, item_y - cell_h * 0.15, 1.0, cat_item_h,
+                    [0.478, 0.635, 0.969, 0.35], sw, sh, bg_verts, bg_idx);
             }
             let label = format!("  {} {}", cat.icon(), cat.label());
             let fg = if is_active { [0.753, 0.808, 0.969, 1.0] } else { [0.502, 0.533, 0.647, 1.0] };
@@ -2362,23 +2380,36 @@ impl WgpuState {
         bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
         text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
     ) {
-        let menu_w = 8.0 * cell_w;
+        // 日本語ダブルワイド文字を考慮して幅を十分に確保する
+        let menu_w = 18.0 * cell_w;
         let menu_h = menu.items.len() as f32 * cell_h;
+        let mx = menu.x;
+        let my = menu.y;
 
-        // メニュー全体の背景（濃いグレー、半透明）
-        add_px_rect(menu.x, menu.y, menu_w, menu_h, [0.15, 0.15, 0.18, 0.95], sw, sh, bg_verts, bg_idx);
-        // 上端のアクセント線
-        add_px_rect(menu.x, menu.y, menu_w, 2.0, [0.4, 0.6, 1.0, 1.0], sw, sh, bg_verts, bg_idx);
+        // ドロップシャドウ（3px オフセット、半透明）
+        add_px_rect(mx + 3.0, my + 3.0, menu_w, menu_h,
+            [0.02, 0.02, 0.04, 0.50], sw, sh, bg_verts, bg_idx);
+
+        // グロー枠線（外側 1px、アクセントカラー）
+        add_px_rect(mx - 1.0, my - 1.0, menu_w + 2.0, menu_h + 2.0,
+            [0.478, 0.635, 0.969, 0.40], sw, sh, bg_verts, bg_idx);
+
+        // メニュー全体の背景（グラスモーフィズム: 青みがかった半透明）
+        add_px_rect(mx, my, menu_w, menu_h, [0.10, 0.11, 0.18, 0.82], sw, sh, bg_verts, bg_idx);
+
+        // 上端のアクセント線（3px 太め）
+        add_px_rect(mx, my, menu_w, 3.0, [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
 
         for (i, item) in menu.items.iter().enumerate() {
-            let item_y = menu.y + i as f32 * cell_h;
-            // 項目区切り線（最初以外）
+            let item_y = my + i as f32 * cell_h;
+            // 項目区切り線（最初以外、薄く）
             if i > 0 {
-                add_px_rect(menu.x, item_y, menu_w, 1.0, [0.30, 0.30, 0.35, 1.0], sw, sh, bg_verts, bg_idx);
+                add_px_rect(mx, item_y, menu_w, 1.0, [0.30, 0.35, 0.45, 0.50], sw, sh, bg_verts, bg_idx);
             }
+            // テキスト描画（左パディング 0.7セル分）
             add_string_verts(
-                &item.label, menu.x + cell_w * 0.5, item_y,
-                [0.9, 0.9, 0.9, 1.0], false,
+                &item.label, mx + cell_w * 0.7, item_y + (cell_h - cell_h) * 0.5,
+                [0.92, 0.94, 0.98, 1.0], false,
                 sw, sh, cell_w, font, atlas, &self.queue,
                 text_verts, text_idx,
             );
@@ -2565,7 +2596,8 @@ impl WgpuState {
                 entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    // アルファブレンディングを有効化（画像オーバーレイパイプラインも同様）
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: Default::default(),
