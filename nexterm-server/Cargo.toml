@@ -6,6 +6,16 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 
+# ライブラリとバイナリの両方をビルドする
+# GPU クライアントがライブラリとしてリンクしてシングルバイナリを実現する
+[lib]
+name = "nexterm_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nexterm-server"
+path = "src/main.rs"
+
 [dependencies]
 nexterm-proto = { path = "../nexterm-proto" }
 nexterm-vt = { path = "../nexterm-vt" }

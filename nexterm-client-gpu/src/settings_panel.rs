@@ -40,13 +40,13 @@ impl SettingsCategory {
 
     pub fn icon(&self) -> &str {
         match self {
-            SettingsCategory::Startup => ">",
-            SettingsCategory::Font => "F",
-            SettingsCategory::Theme => "*",
-            SettingsCategory::Window => "#",
-            SettingsCategory::Ssh => "S",
-            SettingsCategory::Keybindings => "K",
-            SettingsCategory::Profiles => "P",
+            SettingsCategory::Startup => "▶",
+            SettingsCategory::Font => "Aa",
+            SettingsCategory::Theme => "◐",
+            SettingsCategory::Window => "▢",
+            SettingsCategory::Ssh => "⊞",
+            SettingsCategory::Keybindings => "⌨",
+            SettingsCategory::Profiles => "◉",
         }
     }
 }
@@ -74,6 +74,9 @@ impl Default for ProfileEntry {
 /// 設定パネルの状態
 pub struct SettingsPanel {
     pub is_open: bool,
+    /// 開閉アニメーションの進行度（0.0 = 完全に閉じた状態, 1.0 = 完全に開いた状態）
+    /// 毎フレーム renderer 側で加算される
+    pub open_progress: f32,
     /// 選択中のカテゴリ
     pub category: SettingsCategory,
     /// フォントサイズ（スライダー値）
@@ -127,6 +130,7 @@ impl SettingsPanel {
             .collect();
         Self {
             is_open: false,
+            open_progress: 0.0,
             category: SettingsCategory::Font,
             font_size: config.font.size,
             scheme_index,
@@ -144,13 +148,22 @@ impl SettingsPanel {
 
     pub fn open(&mut self) {
         self.is_open = true;
+        // open_progress は 0 から始めてアニメーションを再生する
+        self.open_progress = 0.0;
     }
 
     pub fn close(&mut self) {
         self.is_open = false;
+        self.open_progress = 0.0;
         self.dirty = false;
         self.font_family_editing = false;
         self.tab_rename_editing = None;
+    }
+
+    /// イーズアウトキュービック: t^3 の逆関数でスムーズな減速を表現する
+    pub fn eased_progress(&self) -> f32 {
+        let t = self.open_progress.clamp(0.0, 1.0);
+        1.0 - (1.0 - t).powi(3)
     }
 
     /// 左サイドバーの前のカテゴリへ移動する

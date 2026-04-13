@@ -6,9 +6,16 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 
+# シングルバイナリ: nexterm.exe としてビルドする
+[[bin]]
+name = "nexterm"
+path = "src/main.rs"
+
 [dependencies]
 nexterm-proto = { path = "../nexterm-proto" }
 nexterm-config = { path = "../nexterm-config" }
+# サーバーを同一プロセス内の Tokio タスクとして起動するために組み込む
+nexterm-server = { path = "../nexterm-server" }
 nexterm-i18n = { path = "../nexterm-i18n" }
 tokio = { workspace = true }
 bincode = { workspace = true }

@@ -94,17 +94,27 @@ struct GlyphAtlas {
     /// フレーム内でアトラスをリセットした場合 true
     /// 次フレームで再描画が必要なことを示す（UV 不整合防止）
     cleared_this_frame: bool,
+    /// サイズアップが必要な場合 true（次フレームで grow() を呼ぶ）
+    needs_grow: bool,
 }
 
 impl GlyphAtlas {
-    const SIZE: u32 = 2048;
+    /// 起動時の初期テクスチャサイズ: 1024×1024 = 4MB（節約のため小さく開始）
+    const SIZE_INIT: u32 = 1024;
+    /// テクスチャの最大サイズ: 2048×2048 = 16MB
+    const SIZE_MAX: u32 = 2048;
 
     fn new(device: &wgpu::Device) -> Self {
+        Self::with_size(device, Self::SIZE_INIT)
+    }
+
+    /// 指定サイズでアトラスを生成する（動的拡張用）
+    fn with_size(device: &wgpu::Device, size: u32) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("glyph_atlas"),
             size: wgpu::Extent3d {
-                width: Self::SIZE,
-                height: Self::SIZE,
+                width: size,
+                height: size,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -130,13 +140,27 @@ impl GlyphAtlas {
             texture,
             view,
             sampler,
-            size: Self::SIZE,
+            size,
             cursor_x: 0,
             cursor_y: 0,
             row_height: 0,
             cache: HashMap::new(),
             cleared_this_frame: false,
+            needs_grow: false,
         }
+    }
+
+    /// アトラスを拡張する（サイズを 2 倍にするか、最大サイズですでにあればリセット）。
+    /// 呼び出し後は UV キャッシュが無効になるため cleared_this_frame が true になる。
+    fn grow(self, device: &wgpu::Device) -> Self {
+        let new_size = (self.size * 2).min(Self::SIZE_MAX);
+        if new_size > self.size {
+            tracing::debug!("GlyphAtlas 拡張: {}→{}", self.size, new_size);
+        }
+        // キャッシュは無効化されるため新しいアトラスを作成する
+        let mut atlas = Self::with_size(device, new_size);
+        atlas.cleared_this_frame = true;
+        atlas
     }
 
     /// グリフをアトラスに追加する（既存なら再利用）
@@ -159,7 +183,8 @@ impl GlyphAtlas {
             self.row_height = 0;
         }
 
-        // アトラスが満杯の場合: キャッシュをリセットして原点から再開する。
+        // アトラスが満杯の場合: サイズが MAX 未満なら拡張シグナルを立てる。
+        // 最大サイズの場合はキャッシュをリセットして原点から再開する。
         // cleared_this_frame = true をセットし、次フレームでの再描画を促す。
         // これにより「クリア前に書いたUV」と「クリア後に上書きされた内容」の
         // 不整合（グリフ化け）を防ぐ。
@@ -169,6 +194,10 @@ impl GlyphAtlas {
             self.row_height = 0;
             self.cache.clear();
             self.cleared_this_frame = true;
+            if self.size < Self::SIZE_MAX {
+                // 次フレームで grow() を呼んでテクスチャを拡張する
+                self.needs_grow = true;
+            }
         }
 
         // テクスチャへ書き込む
@@ -1459,12 +1488,15 @@ impl WgpuState {
     ) {
         let bar_h = cfg.height as f32;
         let bar_y = 0.0_f32;
-        // アクティブタブのアクセントライン高さ（タブ下端の 2px）
-        let accent_h = 2.0_f32;
+        // アクティブタブのアクセントライン高さ（3px でより視認性を高める）
+        let accent_h = 3.0_f32;
 
         // タブバー全体の背景（非アクティブ色）
         let inactive_bg = hex_to_rgba(&cfg.inactive_tab_bg, 1.0);
         add_px_rect(0.0, bar_y, sw, bar_h, inactive_bg, sw, sh, bg_verts, bg_idx);
+        // タブバー下端の区切り線（薄いアクセント色）
+        add_px_rect(0.0, bar_y + bar_h - 1.0, sw, 1.0,
+            [0.176, 0.192, 0.286, 1.0], sw, sh, bg_verts, bg_idx);
 
         // フォーカスペインの ID で「アクティブタブ」を表示する
         let focused_id = state.focused_pane_id.unwrap_or(0);
@@ -1553,18 +1585,27 @@ impl WgpuState {
 
             x_offset += label_w;
 
-            // セパレータ（最後のタブの後は不要）
+            // タブ間の縦区切り線（1px、薄いアクセント色）
             if i + 1 < pane_ids.len() {
-                let next_is_active = pane_ids[i + 1] == focused_id;
-                let sep_bg = if is_active || next_is_active { active_bg } else { inactive_bg };
-                let sep_w = cell_w;
-                add_px_rect(x_offset, bar_y, sep_w, bar_h, sep_bg, sw, sh, bg_verts, bg_idx);
-                add_string_verts(
-                    &sep, x_offset, text_y, text_fg, false,
-                    sw, sh, cell_w, font, atlas, &self.queue,
-                    text_verts, text_idx,
-                );
-                x_offset += sep_w;
+                // アクティブタブの隣は区切り線を非表示にする（アクセント線で十分）
+                if !is_active && pane_ids[i + 1] != focused_id {
+                    let line_h = bar_h * 0.6; // タブバー高さの60%
+                    let line_y = bar_y + (bar_h - line_h) / 2.0;
+                    add_px_rect(x_offset, line_y, 1.0, line_h,
+                        [0.25, 0.28, 0.38, 0.50], sw, sh, bg_verts, bg_idx);
+                }
+                // セパレーター文字列が設定されている場合は互換のために残す（空文字列がデフォルト）
+                if !sep.trim().is_empty() {
+                    let sep_w = cell_w;
+                    let sep_bg = if is_active { active_bg } else { inactive_bg };
+                    add_px_rect(x_offset, bar_y, sep_w, bar_h, sep_bg, sw, sh, bg_verts, bg_idx);
+                    add_string_verts(
+                        &sep, x_offset, text_y, inactive_fg, false,
+                        sw, sh, cell_w, font, atlas, &self.queue,
+                        text_verts, text_idx,
+                    );
+                    x_offset += sep_w;
+                }
             }
         }
 
@@ -1839,11 +1880,16 @@ impl WgpuState {
             return;
         }
 
+        // 開閉アニメーション: イーズアウトキュービックでスムーズに表示する
+        let eased = sp.eased_progress();
+
         // パネルサイズ（左サイドバー付き）
         let panel_w = (sw * 0.72).min(sw - cell_w * 4.0);
         let panel_h = (sh * 0.75).min(sh - cell_h * 4.0);
         let px = (sw - panel_w) / 2.0;
-        let py = (sh - panel_h) / 2.0;
+        // スライドアップ: 開始時は 16px 下から徐々に定位置へ移動する
+        let slide_offset = (1.0 - eased) * 16.0;
+        let py = (sh - panel_h) / 2.0 + slide_offset;
 
         // サイドバー幅・コンテンツ領域（日本語カテゴリ名を考慮して18セル分確保）
         let sidebar_w = cell_w * 18.0;
@@ -2080,6 +2126,14 @@ impl WgpuState {
             [0.376, 0.408, 0.518, 1.0], false,
             sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
         );
+
+        // フェードインオーバーレイ: パネルと同色で、open_progress が進むにつれて透明になる
+        // eased=1.0 のときはオーバーレイなし（完全に表示）
+        let fade_alpha = (1.0 - eased) * 0.95;
+        if fade_alpha > 0.01 {
+            add_px_rect(px - 1.0, py - 1.0, panel_w + 2.0, panel_h + 2.0,
+                [0.102, 0.106, 0.149, fade_alpha], sw, sh, bg_verts, bg_idx);
+        }
     }
 
     /// SFTP ファイル転送ダイアログ頂点を構築する
@@ -2401,18 +2455,49 @@ impl WgpuState {
         add_px_rect(mx, my, menu_w, 3.0, [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
 
         for (i, item) in menu.items.iter().enumerate() {
+            use crate::state::ContextMenuAction;
             let item_y = my + i as f32 * cell_h;
-            // 項目区切り線（最初以外、薄く）
-            if i > 0 {
-                add_px_rect(mx, item_y, menu_w, 1.0, [0.25, 0.28, 0.38, 0.80], sw, sh, bg_verts, bg_idx);
+
+            if matches!(item.action, ContextMenuAction::Separator) {
+                // セパレーター: 中央に水平線を描く
+                let sep_y = item_y + cell_h * 0.45;
+                add_px_rect(mx + cell_w * 0.5, sep_y, menu_w - cell_w, 1.0,
+                    [0.28, 0.32, 0.45, 0.70], sw, sh, bg_verts, bg_idx);
+                continue;
             }
-            // テキスト描画（左パディング 0.7セル分）
+
+            // ホバーハイライト背景（セパレーター以外）
+            if menu.hovered == Some(i) {
+                add_px_rect(mx + 2.0, item_y + 1.0, menu_w - 4.0, cell_h - 2.0,
+                    [0.149, 0.200, 0.320, 0.90], sw, sh, bg_verts, bg_idx);
+                // ホバー時の左アクセント線（3px）
+                add_px_rect(mx + 2.0, item_y + 1.0, 3.0, cell_h - 2.0,
+                    [0.478, 0.635, 0.969, 0.90], sw, sh, bg_verts, bg_idx);
+            }
+
+            // ラベルテキスト（左パディング 0.9セル分）
+            let text_color = if menu.hovered == Some(i) {
+                [0.95, 0.96, 1.0, 1.0]  // ホバー時は少し明るく
+            } else {
+                [0.75, 0.78, 0.88, 1.0]  // 通常は少し抑えた色
+            };
             add_string_verts(
-                &item.label, mx + cell_w * 0.7, item_y + (cell_h - cell_h) * 0.5,
-                [0.92, 0.94, 0.98, 1.0], false,
+                &item.label, mx + cell_w * 0.9, item_y + cell_h * 0.1,
+                text_color, false,
                 sw, sh, cell_w, font, atlas, &self.queue,
                 text_verts, text_idx,
             );
+
+            // キーヒントテキスト（右寄せ、グレー）
+            if !item.hint.is_empty() {
+                let hint_x = mx + menu_w - (item.hint.len() as f32 * cell_w * 0.6 + cell_w * 0.5);
+                add_string_verts(
+                    &item.hint, hint_x, item_y + cell_h * 0.1,
+                    [0.45, 0.48, 0.60, 0.80], false,
+                    sw, sh, cell_w, font, atlas, &self.queue,
+                    text_verts, text_idx,
+                );
+            }
         }
     }
 
@@ -3200,6 +3285,15 @@ impl ApplicationHandler for EventHandler {
             && let Some(w) = &self.window {
                 w.request_redraw();
             }
+
+        // 設定パネルの開閉アニメーションを進める（60fps 想定で約 8フレーム = 0.13秒）
+        let sp = &mut self.app.state.settings_panel;
+        if sp.is_open && sp.open_progress < 1.0 {
+            sp.open_progress = (sp.open_progress + 0.15).min(1.0);
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+        }
     }
 
     fn window_event(
@@ -3292,6 +3386,31 @@ impl ApplicationHandler for EventHandler {
                             pressed: true,
                             motion: true,
                         });
+                    }
+                }
+
+                // コンテキストメニューが開いている場合はホバー項目を更新する
+                if let Some(menu) = &mut self.app.state.context_menu {
+                    let cw = self.app.font.cell_width();
+                    let ch = self.app.font.cell_height();
+                    let menu_w = 18.0 * cw;
+                    let fx = position.x as f32;
+                    let fy = position.y as f32;
+                    let mut new_hovered = None;
+                    if fx >= menu.x && fx <= menu.x + menu_w {
+                        for (i, item) in menu.items.iter().enumerate() {
+                            let item_y = menu.y + i as f32 * ch;
+                            if fy >= item_y && fy < item_y + ch {
+                                new_hovered = Some(i);
+                                break;
+                            }
+                        }
+                    }
+                    if menu.hovered != new_hovered {
+                        menu.hovered = new_hovered;
+                        if let Some(w) = &self.window {
+                            w.request_redraw();
+                        }
                     }
                 }
             }
@@ -3663,6 +3782,17 @@ impl ApplicationHandler for EventHandler {
                     {
                         warn!("Render error: {}", e);
                     }
+
+                // GlyphAtlas の動的拡張: 満杯になったら 2 倍サイズで再生成する
+                // 借用競合を避けるため atlas を一時的に取り出して処理する
+                if let Some(mut atlas) = self.atlas.take() {
+                    if atlas.needs_grow {
+                        if let Some(wgpu) = &self.wgpu_state {
+                            atlas = atlas.grow(&wgpu.device);
+                        }
+                    }
+                    self.atlas = Some(atlas);
+                }
             }
 
             _ => {}

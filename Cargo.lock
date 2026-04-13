@@ -3079,6 +3079,7 @@ dependencies = [
  "nexterm-config",
  "nexterm-i18n",
  "nexterm-proto",
+ "nexterm-server",
  "notify",
  "regex",
  "serde",

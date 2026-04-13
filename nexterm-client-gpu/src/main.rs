@@ -1,5 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-//! nexterm-client-gpu エントリーポイント — wgpu + winit デスクトップクライアント
+//! nexterm エントリーポイント — wgpu + winit デスクトップクライアント（シングルバイナリ）
+//!
+//! nexterm-server のロジックを Tokio タスクとして内部起動し、
+//! 単一プロセスで全機能を提供する。
 
 mod connection;
 mod font;
@@ -21,6 +24,14 @@ use winit::event_loop::EventLoop;
 #[tokio::main]
 async fn main() -> Result<()> {
     let _log_guard = init_tracing();
+
+    // サーバーを Tokio タスクとして内部起動する（別プロセス不要）
+    // IPC ソケットは同じプロトコルをそのまま使用する
+    tokio::spawn(async {
+        if let Err(e) = nexterm_server::run_server().await {
+            tracing::error!("nexterm-server エラー: {}", e);
+        }
+    });
 
     // 設定ロード（TOML → Lua）
     let config = ConfigLoader::load()?;
