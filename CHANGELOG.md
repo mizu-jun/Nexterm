@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.4] - 2026-04-14
+
+### Fixed
+
+- **PowerShell クラッシュ修正**: `nexterm-vt` の `erase_in_line` / `erase_in_display` / `scroll_up` で直接配列インデックスアクセスを使っていた箇所を `Grid::clear_row()` / `Grid::copy_row()` 安全メソッドに置換。PSReadLine が送る複雑な VT シーケンスによる IndexError パニックを防止。
+
+### Added
+
+- **設定パネル マウス操作**: サイドバーカテゴリ・フォントサイズ/不透明度スライダー・テーマカラードットをマウスでクリック・ドラッグ操作可能に。スライダーのドラッグ終了時に自動保存。パネル外クリックで閉じる。
+
+### Changed
+
+- **ターミナル透過表示**: ターミナル背景がデフォルト 95% 不透明（`background_opacity = 0.95`）になり、背景が薄く透けるようになった。設定パネルとコンテキストメニューは常に完全不透明を維持。`nexterm.toml` の `[window] background_opacity` で 0.1〜1.0 の範囲で調整可能。
+- **メモリ使用量削減**: `cosmic-text` の `FontSystem` 初期化をシステム全スキャンから OS 別フォントディレクトリ絞り込みロードに変更（macOS: `/System/Library/Fonts`、Windows: `C:\Windows\Fonts`）。推定 ~30-40MB のメモリ削減。
+
+---
+
 ## [0.8.0] - 2026-04-06
 
 ### Added
