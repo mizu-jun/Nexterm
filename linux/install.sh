@@ -11,7 +11,8 @@
 
 set -euo pipefail
 
-BINARIES=(nexterm nexterm-server nexterm-client-gpu nexterm-client-tui nexterm-ctl)
+# nexterm = GPU クライアント + サーバー統合バイナリ（v0.9.3〜、nexterm-client-gpu から改名）
+BINARIES=(nexterm nexterm-server nexterm-client-tui nexterm-ctl)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # インストール先を決定（root なら /usr/local/bin、それ以外は ~/.local/bin）

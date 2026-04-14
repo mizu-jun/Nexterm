@@ -84,13 +84,15 @@ jobs:
             libfuse2
 
       - name: Build release binaries
+        # nexterm-client-gpu は v0.9.3 でバイナリ名を nexterm に変更し、
+        # サーバーを内部起動するシングルバイナリとなった。
+        # nexterm-launcher は nexterm.exe と同名バイナリを生成するため除外する。
         run: >
           cargo build --release --target ${{ matrix.target }}
           -p nexterm-server
           -p nexterm-client-gpu
           -p nexterm-client-tui
           -p nexterm-ctl
-          -p nexterm-launcher
 
       # ── macOS: .app バンドル作成 ──
       - name: Create macOS .app bundle
@@ -99,7 +101,7 @@ jobs:
           APP=dist/Nexterm.app
           mkdir -p "$APP/Contents/MacOS"
           # 全バイナリを .app バンドル内に配置
-          for bin in nexterm nexterm-server nexterm-client-gpu nexterm-client-tui nexterm-ctl; do
+          for bin in nexterm nexterm-server nexterm-client-tui nexterm-ctl; do
             BIN_PATH="target/${{ matrix.target }}/release/$bin"
             if [ -f "$BIN_PATH" ]; then
               cp "$BIN_PATH" "$APP/Contents/MacOS/"
@@ -123,7 +125,7 @@ jobs:
         run: |
           mkdir -p dist
           # 個別バイナリも dist/ に配置（CLI 利用・Homebrew 向け）
-          for bin in nexterm nexterm-server nexterm-client-gpu nexterm-client-tui nexterm-ctl; do
+          for bin in nexterm nexterm-server nexterm-client-tui nexterm-ctl; do
             BIN_PATH="target/${{ matrix.target }}/release/$bin"
             if [ -f "$BIN_PATH" ]; then
               cp "$BIN_PATH" dist/
@@ -150,7 +152,7 @@ jobs:
           mkdir -p "${APPDIR}/usr/bin"
 
           # バイナリを配置する
-          for bin in nexterm nexterm-server nexterm-client-gpu nexterm-client-tui nexterm-ctl; do
+          for bin in nexterm nexterm-server nexterm-client-tui nexterm-ctl; do
             BIN_PATH="target/${{ matrix.target }}/release/$bin"
             if [ -f "$BIN_PATH" ]; then
               cp "$BIN_PATH" "${APPDIR}/usr/bin/"
@@ -190,9 +192,9 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path dist | Out-Null
+          # nexterm.exe = GPU クライアント + サーバー統合バイナリ（v0.9.3〜）
           Copy-Item target/${{ matrix.target }}/release/nexterm.exe            dist/
           Copy-Item target/${{ matrix.target }}/release/nexterm-server.exe     dist/
-          Copy-Item target/${{ matrix.target }}/release/nexterm-client-gpu.exe dist/
           Copy-Item target/${{ matrix.target }}/release/nexterm-client-tui.exe dist/
           Copy-Item target/${{ matrix.target }}/release/nexterm-ctl.exe        dist/
           Copy-Item scripts/install-service.ps1                                dist/
@@ -217,7 +219,6 @@ jobs:
           $targets = @(
             "dist\nexterm.exe",
             "dist\nexterm-server.exe",
-            "dist\nexterm-client-gpu.exe",
             "dist\nexterm-client-tui.exe",
             "dist\nexterm-ctl.exe"
           )
