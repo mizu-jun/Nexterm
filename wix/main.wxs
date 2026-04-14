@@ -41,8 +41,9 @@
 
     <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
 
+      <!-- nexterm.exe = GPU クライアント + サーバー統合バイナリ（v0.9.3〜） -->
       <Component Id="nexterm_exe" Guid="A1B2C3D4-E5F6-7890-ABCD-EF1234567890">
-        <File Id="nexterm_launcher_exe"
+        <File Id="nexterm_exe_file"
               Source="target\x86_64-pc-windows-msvc\release\nexterm.exe"
               KeyPath="yes" />
         <Environment Id="PATH_nexterm"
@@ -60,11 +61,7 @@
               KeyPath="yes" />
       </Component>
 
-      <Component Id="nexterm_client_gpu_exe" Guid="C3D4E5F6-A7B8-9012-CDEF-123456789012">
-        <File Id="nexterm_client_gpu_exe"
-              Source="target\x86_64-pc-windows-msvc\release\nexterm-client-gpu.exe"
-              KeyPath="yes" />
-      </Component>
+      <!-- nexterm-client-gpu.exe は v0.9.3 で nexterm.exe に統合済み、エントリ削除 -->
 
       <Component Id="nexterm_client_tui_exe" Guid="D4E5F6A7-B8C9-0123-DEF0-234567890123">
         <File Id="nexterm_client_tui_exe"
