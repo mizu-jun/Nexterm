@@ -40,6 +40,8 @@ notify = { workspace = true }
 toml_edit = { workspace = true }
 # シェルパス展開（~ → ホームディレクトリ）
 shellexpand = "3"
+# フォントシステム初期化でのロケール取得（全スキャン回避のため）
+sys-locale = "0.3"
 unicode-width = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]

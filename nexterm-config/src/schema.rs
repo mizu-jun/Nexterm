@@ -426,7 +426,8 @@ pub struct WindowConfig {
 }
 
 fn default_background_opacity() -> f32 {
-    1.0
+    // デフォルト 0.95（若干透過）。完全不透明にしたい場合は nexterm.toml で 1.0 に設定
+    0.95
 }
 
 fn default_layout_mode() -> String {

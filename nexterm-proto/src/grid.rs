@@ -65,6 +65,28 @@ impl Grid {
                 *c = cell;
             }
     }
+
+    /// 行全体をデフォルトセルで埋める（範囲外は無視してパニックしない）
+    pub fn clear_row(&mut self, row: u16) {
+        if let Some(r) = self.rows.get_mut(row as usize) {
+            r.iter_mut().for_each(|c| *c = Cell::default());
+        }
+    }
+
+    /// src 行の内容を dst 行へコピーする（範囲外は無視してパニックしない）
+    pub fn copy_row(&mut self, dst: u16, src: u16) {
+        if dst == src {
+            return;
+        }
+        // src 行を先にクローンしてから dst に書き込む（借用の競合を回避）
+        let src_cells = match self.rows.get(src as usize) {
+            Some(r) => r.clone(),
+            None => return,
+        };
+        if let Some(dst_row) = self.rows.get_mut(dst as usize) {
+            *dst_row = src_cells;
+        }
+    }
 }
 
 #[cfg(test)]

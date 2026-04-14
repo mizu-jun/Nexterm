@@ -3,6 +3,28 @@
 use anyhow::Result;
 use nexterm_config::toml_path;
 
+/// スライダーの種別
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SliderType {
+    FontSize,
+    WindowOpacity,
+}
+
+/// マウスドラッグ中のスライダー状態
+#[derive(Debug, Clone)]
+pub struct SliderDrag {
+    /// どのスライダーをドラッグしているか
+    pub slider_type: SliderType,
+    /// スライダートラックの開始 X 座標（ピクセル）
+    pub track_x: f32,
+    /// スライダートラックの幅（ピクセル）
+    pub track_w: f32,
+    /// スライダーの最小値
+    pub min_val: f32,
+    /// スライダーの最大値
+    pub max_val: f32,
+}
+
 /// サイドバーのカテゴリ
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingsCategory {
@@ -77,6 +99,8 @@ pub struct SettingsPanel {
     /// 開閉アニメーションの進行度（0.0 = 完全に閉じた状態, 1.0 = 完全に開いた状態）
     /// 毎フレーム renderer 側で加算される
     pub open_progress: f32,
+    /// マウスドラッグ中のスライダー（None = ドラッグ中でない）
+    pub drag_slider: Option<SliderDrag>,
     /// 選択中のカテゴリ
     pub category: SettingsCategory,
     /// フォントサイズ（スライダー値）
@@ -131,6 +155,7 @@ impl SettingsPanel {
         Self {
             is_open: false,
             open_progress: 0.0,
+            drag_slider: None,
             category: SettingsCategory::Font,
             font_size: config.font.size,
             scheme_index,
@@ -155,9 +180,28 @@ impl SettingsPanel {
     pub fn close(&mut self) {
         self.is_open = false;
         self.open_progress = 0.0;
+        self.drag_slider = None;
         self.dirty = false;
         self.font_family_editing = false;
         self.tab_rename_editing = None;
+    }
+
+    /// スライダー X 座標からフォントサイズを設定する（マウスクリック/ドラッグ用）
+    pub fn set_font_size_from_slider(&mut self, cursor_x: f32, track_x: f32, track_w: f32) {
+        let ratio = ((cursor_x - track_x) / track_w).clamp(0.0, 1.0);
+        // フォントサイズ範囲: 8.0〜32.0 (24.0 の範囲、0.5 単位に丸める)
+        let raw = 8.0 + ratio * 24.0;
+        self.font_size = (raw * 2.0).round() / 2.0;
+        self.dirty = true;
+    }
+
+    /// スライダー X 座標から不透明度を設定する（マウスクリック/ドラッグ用）
+    pub fn set_opacity_from_slider(&mut self, cursor_x: f32, track_x: f32, track_w: f32) {
+        let ratio = ((cursor_x - track_x) / track_w).clamp(0.0, 1.0);
+        // 不透明度範囲: 0.1〜1.0 (5% 単位に丸める)
+        let raw = 0.1 + ratio * 0.9;
+        self.opacity = (raw * 20.0).round() / 20.0;
+        self.dirty = true;
     }
 
     /// イーズアウトキュービック: t^3 の逆関数でスムーズな減速を表現する

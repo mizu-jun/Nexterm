@@ -20,7 +20,9 @@ impl FontManager {
     /// `fallbacks` はグリフが見つからない場合に順番に試行するフォントファミリーリスト。
     /// `scale_factor` は winit の window.scale_factor()（DPI スケール係数）。
     pub fn new(family: &str, size_pt: f32, fallbacks: &[String], scale_factor: f32) -> Self {
-        let mut font_system = FontSystem::new();
+        // FontSystem::new() は全システムフォントをスキャンするため ~30-50MB 消費する。
+        // 代わりに絞り込みロードを使用してメモリを削減する。
+        let mut font_system = Self::build_font_system(family, fallbacks);
 
         // プライマリフォントを monospace ジェネリックとして登録する。
         // Attrs::new().family(Family::Monospace) で参照される。
@@ -64,6 +66,53 @@ impl FontManager {
             cell_w,
             family: family.to_string(),
         }
+    }
+
+    /// フォントシステムを絞り込みロードで初期化する
+    ///
+    /// `FontSystem::new()` は全システムフォントをスキャンするため ~30-50MB 消費する。
+    /// このメソッドではOS別の主要フォントディレクトリのみをロードしてメモリを削減する。
+    /// CJK・絵文字フォールバックに必要なディレクトリは含む。
+    fn build_font_system(_primary_family: &str, _fallbacks: &[String]) -> FontSystem {
+        use cosmic_text::fontdb;
+
+        let locale = sys_locale::get_locale().unwrap_or_else(|| "ja-JP".to_string());
+        let mut db = fontdb::Database::new();
+
+        // OS 別の主要フォントディレクトリを絞り込んでロードする
+        // フォールバック: load_system_fonts() で全スキャン
+        #[cfg(target_os = "macos")]
+        {
+            // システムフォント（絵文字・CJK 含む）
+            db.load_fonts_dir("/System/Library/Fonts");
+            // ユーザーインストールフォントは省略（主要ターミナルフォントは上記に含まれる）
+        }
+        #[cfg(target_os = "windows")]
+        {
+            // Windows システムフォント
+            db.load_fonts_dir("C:\\Windows\\Fonts");
+        }
+        #[cfg(target_os = "linux")]
+        {
+            // Linux 主要フォントディレクトリ（全スキャンより高速）
+            for dir in &[
+                "/usr/share/fonts",
+                "/usr/local/share/fonts",
+                "/usr/share/fonts/truetype",
+                "/usr/share/fonts/opentype",
+            ] {
+                db.load_fonts_dir(dir);
+            }
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        {
+            // 未知の OS はフルスキャンにフォールバック
+            db.load_system_fonts();
+        }
+
+        tracing::debug!("フォントDB: {} 個のフェイスをロード済み", db.len());
+
+        FontSystem::new_with_locale_and_db(locale, db)
     }
 
     /// ASCII 基準文字 '0' のアドバンス幅を計測する

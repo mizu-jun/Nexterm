@@ -317,14 +317,13 @@ impl Screen {
     fn scroll_up(&mut self) {
         let top = self.scroll_top as usize;
         let bottom = self.scroll_bottom as usize;
-        // 領域内の行を1行ずつ上にコピー
+        // 領域内の行を1行ずつ上にコピー（直接インデックスアクセスを避けてパニック防止）
         for r in top..bottom {
-            self.grid.rows[r] = self.grid.rows[r + 1].clone();
+            self.grid.copy_row(r as u16, (r + 1) as u16);
             self.mark_dirty(r as u16);
         }
         // 最下行をクリア
-        let width = self.grid.width as usize;
-        self.grid.rows[bottom] = vec![Cell::default(); width];
+        self.grid.clear_row(bottom as u16);
         self.mark_dirty(bottom as u16);
     }
 
@@ -419,20 +418,20 @@ impl Screen {
         let width = self.grid.width as usize;
         match mode {
             0 => {
-                // カーソルから行末までクリア
+                // カーソルから行末までクリア（Grid::set で範囲チェック済み）
                 for c in self.cursor_col as usize..width {
-                    self.grid.rows[row as usize][c] = Cell::default();
+                    self.grid.set(c as u16, row, Cell::default());
                 }
             }
             1 => {
-                // 行頭からカーソルまでクリア
+                // 行頭からカーソルまでクリア（Grid::set で範囲チェック済み）
                 for c in 0..=self.cursor_col as usize {
-                    self.grid.rows[row as usize][c] = Cell::default();
+                    self.grid.set(c as u16, row, Cell::default());
                 }
             }
             2 => {
-                // 行全体をクリア
-                self.grid.rows[row as usize] = vec![Cell::default(); width];
+                // 行全体をクリア（Grid::clear_row で範囲チェック済み）
+                self.grid.clear_row(row);
             }
             _ => {}
         }
@@ -442,28 +441,27 @@ impl Screen {
     /// 画面をクリアする（一部または全体）
     pub(crate) fn erase_in_display(&mut self, mode: u16) {
         let height = self.grid.height as usize;
-        let width = self.grid.width as usize;
         match mode {
             0 => {
-                // カーソルから画面末までクリア
+                // カーソルから画面末までクリア（Grid::clear_row で範囲チェック済み）
                 self.erase_in_line(0);
                 for r in (self.cursor_row as usize + 1)..height {
-                    self.grid.rows[r] = vec![Cell::default(); width];
+                    self.grid.clear_row(r as u16);
                     self.mark_dirty(r as u16);
                 }
             }
             1 => {
-                // 画面頭からカーソルまでクリア
+                // 画面頭からカーソルまでクリア（Grid::clear_row で範囲チェック済み）
                 for r in 0..self.cursor_row as usize {
-                    self.grid.rows[r] = vec![Cell::default(); width];
+                    self.grid.clear_row(r as u16);
                     self.mark_dirty(r as u16);
                 }
                 self.erase_in_line(1);
             }
             2 | 3 => {
-                // 画面全体をクリア
+                // 画面全体をクリア（Grid::clear_row で範囲チェック済み）
                 for r in 0..height {
-                    self.grid.rows[r] = vec![Cell::default(); width];
+                    self.grid.clear_row(r as u16);
                     self.mark_dirty(r as u16);
                 }
                 if mode == 2 {

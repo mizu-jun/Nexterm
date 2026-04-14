@@ -625,6 +625,7 @@ impl WgpuState {
         tab_bar_cfg: &nexterm_config::TabBarConfig,
         color_scheme: &nexterm_config::ColorScheme,
         fps_limit: u32,
+        background_opacity: f32,
     ) -> Result<()> {
         // FPS 制限: 前フレームからの経過時間が 1/fps より短い場合はスキップ
         if fps_limit > 0 {
@@ -950,7 +951,8 @@ impl WgpuState {
                             r: clear_bg[0] as f64 / 255.0,
                             g: clear_bg[1] as f64 / 255.0,
                             b: clear_bg[2] as f64 / 255.0,
-                            a: 1.0,
+                            // background_opacity 設定値を alpha に反映（透過ターミナル対応）
+                            a: background_opacity as f64,
                         }),
                         store: wgpu::StoreOp::Store,
                     },
@@ -1904,8 +1906,8 @@ impl WgpuState {
         add_px_rect(px - 1.0, py - 1.0, panel_w + 2.0, panel_h + 2.0,
             [0.478, 0.635, 0.969, 0.20], sw, sh, bg_verts, bg_idx);
 
-        // パネル背景（不透明: グラスモーフィズムなし）
-        add_px_rect(px, py, panel_w, panel_h, [0.102, 0.106, 0.149, 0.97], sw, sh, bg_verts, bg_idx);
+        // パネル背景（完全不透明: ターミナル透過設定に関わらず常に不透明）
+        add_px_rect(px, py, panel_w, panel_h, [0.102, 0.106, 0.149, 1.0], sw, sh, bg_verts, bg_idx);
 
         // タイトルバー（#1E2030、不透明）
         let title_h = cell_h * 1.4;
@@ -2448,8 +2450,8 @@ impl WgpuState {
         add_px_rect(mx - 1.0, my - 1.0, menu_w + 2.0, menu_h + 2.0,
             [0.478, 0.635, 0.969, 0.15], sw, sh, bg_verts, bg_idx);
 
-        // メニュー全体の背景（不透明: グラスモーフィズムなし）
-        add_px_rect(mx, my, menu_w, menu_h, [0.10, 0.11, 0.18, 0.97], sw, sh, bg_verts, bg_idx);
+        // メニュー全体の背景（完全不透明: ターミナル透過設定に関わらず常に不透明）
+        add_px_rect(mx, my, menu_w, menu_h, [0.10, 0.11, 0.18, 1.0], sw, sh, bg_verts, bg_idx);
 
         // 上端のアクセント線（3px 太め）
         add_px_rect(mx, my, menu_w, 3.0, [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
@@ -3096,6 +3098,136 @@ pub struct EventHandler {
     last_tab_click: Option<(Instant, u32)>,
 }
 
+/// 設定パネルに対するマウスヒットテスト結果
+enum SettingsPanelHit {
+    /// パネル外をクリック → パネルを閉じる
+    Outside,
+    /// タイトルバーエリア（ドラッグ移動等の将来拡張用）
+    TitleBar,
+    /// サイドバーカテゴリをクリック
+    Category(usize),
+    /// スライダーをクリック/ドラッグ
+    Slider {
+        slider_type: crate::settings_panel::SliderType,
+        track_x: f32,
+        track_w: f32,
+        min: f32,
+        max: f32,
+    },
+    /// テーマカラードット
+    ThemeColor(usize),
+    /// パネル内の空白エリア（何もしない）
+    PanelBackground,
+}
+
+impl EventHandler {
+    /// 設定パネルに対するマウスヒットテストを実行する
+    fn hit_test_settings_panel(&self, cx: f32, cy: f32) -> SettingsPanelHit {
+        use crate::settings_panel::{SettingsCategory, SliderType};
+
+        let sp = &self.app.state.settings_panel;
+        if !sp.is_open {
+            return SettingsPanelHit::Outside;
+        }
+        let (sw, sh) = match self.wgpu_state.as_ref() {
+            Some(w) => (w.surface_config.width as f32, w.surface_config.height as f32),
+            None => return SettingsPanelHit::Outside,
+        };
+        let cell_w = self.app.font.cell_width();
+        let cell_h = self.app.font.cell_height();
+
+        // パネル寸法 (build_settings_panel_verts と同じ式)
+        let panel_w = (sw * 0.72).min(sw - cell_w * 4.0);
+        let panel_h = (sh * 0.75).min(sh - cell_h * 4.0);
+        let px = (sw - panel_w) / 2.0;
+        let eased = sp.eased_progress();
+        let slide_offset = (1.0 - eased) * 16.0;
+        let py = (sh - panel_h) / 2.0 + slide_offset;
+
+        let sidebar_w = cell_w * 18.0;
+        let content_x = px + sidebar_w;
+        let content_w = panel_w - sidebar_w;
+        let content_inner_x = content_x + cell_w;
+
+        // パネル外 → 閉じる
+        if cx < px || cx > px + panel_w || cy < py || cy > py + panel_h {
+            return SettingsPanelHit::Outside;
+        }
+
+        // タイトルバー
+        let title_h = cell_h * 1.4;
+        if cy < py + title_h {
+            return SettingsPanelHit::TitleBar;
+        }
+
+        // サイドバーカテゴリ
+        let sidebar_top = py + title_h;
+        let cat_item_h = cell_h * 1.3;
+        if cx < px + sidebar_w {
+            let rel_y = cy - sidebar_top;
+            if rel_y >= 0.0 {
+                let cat_idx = (rel_y / cat_item_h) as usize;
+                if cat_idx < SettingsCategory::ALL.len() {
+                    return SettingsPanelHit::Category(cat_idx);
+                }
+            }
+            return SettingsPanelHit::PanelBackground;
+        }
+
+        // コンテンツ領域ヒットテスト
+        let content_top = py + title_h + cell_h * 0.5;
+        let bar_w = content_w - cell_w * 3.0;
+
+        match &sp.category {
+            SettingsCategory::Font => {
+                // フォントサイズスライダー
+                let bar_y = content_top + cell_h * 4.2;
+                if cy >= bar_y - cell_h * 0.5 && cy <= bar_y + cell_h
+                    && cx >= content_inner_x && cx <= content_inner_x + bar_w {
+                    return SettingsPanelHit::Slider {
+                        slider_type: SliderType::FontSize,
+                        track_x: content_inner_x,
+                        track_w: bar_w,
+                        min: 8.0,
+                        max: 32.0,
+                    };
+                }
+            }
+            SettingsCategory::Theme => {
+                // テーマカラードット
+                let dot_y = content_top + cell_h * 2.5;
+                let dot_gap = (content_w - cell_w * 2.0) / 9.0;
+                let dot_size = cell_w * 1.2;
+                if cy >= dot_y && cy <= dot_y + cell_h {
+                    for i in 0..9_usize {
+                        let dot_x = content_inner_x + i as f32 * dot_gap;
+                        if cx >= dot_x && cx <= dot_x + dot_size {
+                            return SettingsPanelHit::ThemeColor(i);
+                        }
+                    }
+                }
+            }
+            SettingsCategory::Window => {
+                // 不透明度スライダー
+                let bar_y = content_top + cell_h * 2.4;
+                if cy >= bar_y - cell_h * 0.5 && cy <= bar_y + cell_h
+                    && cx >= content_inner_x && cx <= content_inner_x + bar_w {
+                    return SettingsPanelHit::Slider {
+                        slider_type: SliderType::WindowOpacity,
+                        track_x: content_inner_x,
+                        track_w: bar_w,
+                        min: 0.1,
+                        max: 1.0,
+                    };
+                }
+            }
+            _ => {}
+        }
+
+        SettingsPanelHit::PanelBackground
+    }
+}
+
 impl ApplicationHandler for EventHandler {
     fn new_events(&mut self, event_loop: &ActiveEventLoop, _cause: StartCause) {
         // PTY 出力を 16ms ごとにポーリングする（約 60fps）
@@ -3389,6 +3521,26 @@ impl ApplicationHandler for EventHandler {
                     }
                 }
 
+                // 設定パネルのスライダーをドラッグ中の場合、値をリアルタイム更新する
+                {
+                    let fx = position.x as f32;
+                    let sp = &mut self.app.state.settings_panel;
+                    if let Some(drag) = &sp.drag_slider.clone() {
+                        use crate::settings_panel::SliderType;
+                        match drag.slider_type {
+                            SliderType::FontSize => {
+                                sp.set_font_size_from_slider(fx, drag.track_x, drag.track_w);
+                            }
+                            SliderType::WindowOpacity => {
+                                sp.set_opacity_from_slider(fx, drag.track_x, drag.track_w);
+                            }
+                        }
+                        if let Some(w) = &self.window {
+                            w.request_redraw();
+                        }
+                    }
+                }
+
                 // コンテキストメニューが開いている場合はホバー項目を更新する
                 if let Some(menu) = &mut self.app.state.context_menu {
                     let cw = self.app.font.cell_width();
@@ -3460,6 +3612,52 @@ impl ApplicationHandler for EventHandler {
                 ..
             } => {
                 if let Some((px, py)) = self.cursor_position {
+                    // 設定パネルが開いている場合はヒットテストを先に実行する
+                    if self.app.state.settings_panel.is_open {
+                        let hit = self.hit_test_settings_panel(px as f32, py as f32);
+                        use crate::settings_panel::SliderType;
+                        match hit {
+                            SettingsPanelHit::Outside => {
+                                // パネル外クリック → パネルを閉じる
+                                self.app.state.settings_panel.close();
+                            }
+                            SettingsPanelHit::Category(idx) => {
+                                // サイドバーカテゴリをクリック → カテゴリ切り替え
+                                if let Some(cat) = crate::settings_panel::SettingsCategory::ALL.get(idx) {
+                                    self.app.state.settings_panel.category = cat.clone();
+                                }
+                            }
+                            SettingsPanelHit::Slider { slider_type, track_x, track_w, min: _, max: _ } => {
+                                // スライダーをクリック → 即時値を反映してドラッグ状態を開始する
+                                let fx = px as f32;
+                                let sp = &mut self.app.state.settings_panel;
+                                match slider_type {
+                                    SliderType::FontSize => sp.set_font_size_from_slider(fx, track_x, track_w),
+                                    SliderType::WindowOpacity => sp.set_opacity_from_slider(fx, track_x, track_w),
+                                }
+                                sp.drag_slider = Some(crate::settings_panel::SliderDrag {
+                                    slider_type,
+                                    track_x,
+                                    track_w,
+                                    min_val: if matches!(slider_type, SliderType::FontSize) { 8.0 } else { 0.1 },
+                                    max_val: if matches!(slider_type, SliderType::FontSize) { 32.0 } else { 1.0 },
+                                });
+                            }
+                            SettingsPanelHit::ThemeColor(idx) => {
+                                // テーマカラードットをクリック → スキーム切り替え
+                                self.app.state.settings_panel.scheme_index = idx;
+                                self.app.state.settings_panel.dirty = true;
+                            }
+                            SettingsPanelHit::TitleBar | SettingsPanelHit::PanelBackground => {
+                                // その他のパネル内クリック → 何もしない
+                            }
+                        }
+                        if let Some(w) = &self.window {
+                            w.request_redraw();
+                        }
+                        return; // 設定パネルが開いている間はターミナルにクリックを伝えない
+                    }
+
                     let cell_w = self.app.font.cell_width() as f64;
                     let cell_h = self.app.font.cell_height() as f64;
                     let tab_bar_h_f64 = if self.app.config.tab_bar.enabled {
@@ -3540,6 +3738,15 @@ impl ApplicationHandler for EventHandler {
                 state: ElementState::Released,
                 ..
             } => {
+                // 設定パネルのスライダードラッグを終了して設定を保存する
+                if self.app.state.settings_panel.drag_slider.take().is_some() {
+                    let _ = self.app.state.settings_panel.save_to_toml();
+                    self.app.state.settings_panel.dirty = false;
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                }
+
                 // コンテキストメニューが開いている場合はクリックで処理する
                 if let Some((px, py)) = self.cursor_position
                     && let Some(menu) = self.app.state.context_menu.take() {
@@ -3778,6 +3985,7 @@ impl ApplicationHandler for EventHandler {
                             &self.app.config.tab_bar,
                             &self.app.config.colors,
                             self.app.config.gpu.fps_limit,
+                            self.app.config.window.background_opacity,
                         )
                     {
                         warn!("Render error: {}", e);
