@@ -109,6 +109,7 @@ impl AuthManager {
     }
 
     /// アクティブなセッション数を返す（期限切れを除く）
+    #[allow(dead_code)]
     pub fn active_count(&self) -> usize {
         let sessions = self.sessions.lock().unwrap();
         sessions

@@ -169,10 +169,12 @@ fn parse_ssh_config(content: &str) -> Vec<HostConfig> {
 #[derive(Debug, Clone)]
 pub struct HistoryEntry {
     /// ホストの一意キー（"username@host:port"）
+    #[allow(dead_code)]
     pub key: String,
     /// 接続回数
     pub count: u32,
     /// 最終接続時刻（Unix エポック秒）
+    #[allow(dead_code)]
     pub last_connected: u64,
 }
 
@@ -275,6 +277,7 @@ impl HostManager {
     }
 
     /// ホストへの接続を記録する（接続回数・最終接続時刻を更新）
+    #[allow(dead_code)]
     pub fn record_connection(&mut self, host: &HostConfig) {
         let key = format!("{}@{}:{}", host.username, host.host, host.port);
         let now = std::time::SystemTime::now()
@@ -297,6 +300,7 @@ impl HostManager {
     }
 
     /// 登録済みタグの重複なし一覧を返す（タグフィルター UI 用）
+    #[allow(dead_code)]
     pub fn all_tags(&self) -> Vec<String> {
         let mut tags: Vec<String> = self
             .hosts
@@ -309,6 +313,7 @@ impl HostManager {
     }
 
     /// 登録済みグループの重複なし一覧を返す（グループフィルター UI 用）
+    #[allow(dead_code)]
     pub fn all_groups(&self) -> Vec<String> {
         let mut groups: Vec<String> = self
             .hosts
@@ -322,12 +327,14 @@ impl HostManager {
     }
 
     /// タグフィルターを設定する（None でフィルター解除）
+    #[allow(dead_code)]
     pub fn set_tag_filter(&mut self, tag: Option<String>) {
         self.tag_filter = tag;
         self.selected = 0;
     }
 
     /// グループフィルターを設定する（None でフィルター解除）
+    #[allow(dead_code)]
     pub fn set_group_filter(&mut self, group: Option<String>) {
         self.group_filter = group;
         self.selected = 0;

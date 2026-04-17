@@ -359,6 +359,7 @@ fn allowed_recording_dirs() -> Vec<std::path::PathBuf> {
 }
 
 /// クライアントからのメッセージをディスパッチする
+#[allow(clippy::too_many_arguments)]
 async fn dispatch(
     msg: &ClientToServer,
     manager: &SessionManager,
@@ -546,16 +547,14 @@ async fn dispatch(
                         // on_pane_open フック
                         crate::hooks::on_pane_open(hooks, &lua, name, pane_id);
                         // auto_log が有効なら新ペインの録音を自動開始する
-                        if log_config.auto_log {
-                            if let Some(log_dir) = &log_config.log_dir {
-                                if let Err(e) = manager
+                        if log_config.auto_log
+                            && let Some(log_dir) = &log_config.log_dir
+                                && let Err(e) = manager
                                     .start_recording_with_log_config(name, log_dir, log_config)
                                     .await
                                 {
                                     tracing::warn!("auto_log 録音開始失敗 (pane={}): {}", pane_id, e);
                                 }
-                            }
-                        }
                         // FullRefresh と LayoutChanged を送信する
                         let msgs = {
                             let arc = manager.sessions();
@@ -1066,7 +1065,7 @@ async fn dispatch(
             }
         }
 
-        ConnectSsh { host, port, username, auth_type, password, key_path, remote_forwards, x11_forward, x11_trusted } => {
+        ConnectSsh { host, port, username, auth_type, password, key_path, remote_forwards, x11_forward: _, x11_trusted: _ } => {
             use nexterm_ssh::{SshAuth, SshConfig, SshSession};
             use zeroize::Zeroizing;
 
@@ -1196,8 +1195,7 @@ async fn dispatch(
                         // 元ウィンドウのレイアウトを先に取得（borrow checker 対策）
                         let old_layout = s.focused_window().map(|w| w.layout_changed_msg(cols, rows));
                         s.break_pane().ok().map(|new_win_id| {
-                            let pane_id = s.focused_window()
-                                .and_then(|w| Some(w.focused_pane_id()))
+                            let pane_id = s.focused_window().map(|w| w.focused_pane_id())
                                 .unwrap_or(0);
                             let new_layout = s.focused_window()
                                 .map(|w| w.layout_changed_msg(cols, rows));
@@ -1330,13 +1328,11 @@ async fn dispatch(
                         // マクロの出力をフォーカスペインの PTY に書き込む
                         let arc = manager.sessions();
                         let sessions = arc.lock().await;
-                        if let Some(session) = sessions.get(name) {
-                            if let Some(window) = session.focused_window() {
-                                if let Some(pane) = window.pane(pane_id) {
+                        if let Some(session) = sessions.get(name)
+                            && let Some(window) = session.focused_window()
+                                && let Some(pane) = window.pane(pane_id) {
                                     let _ = pane.write_input(text.as_bytes());
                                 }
-                            }
-                        }
                     }
                 }
             }

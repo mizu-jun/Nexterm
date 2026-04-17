@@ -617,6 +617,7 @@ impl WgpuState {
     }
 
     /// 1フレームを描画する
+    #[allow(clippy::too_many_arguments)]
     fn render(
         &mut self,
         state: &mut ClientState,
@@ -1631,8 +1632,8 @@ impl WgpuState {
         state.settings_tab_rect = Some((settings_x, sw));
 
         // タブ名変更中の場合: 対象タブの位置にインライン編集フィールドを表示する
-        if let Some(rename_id) = state.settings_panel.tab_rename_editing {
-            if let Some(&(tx0, tx1)) = state.tab_hit_rects.get(&rename_id) {
+        if let Some(rename_id) = state.settings_panel.tab_rename_editing
+            && let Some(&(tx0, tx1)) = state.tab_hit_rects.get(&rename_id) {
                 let edit_w = (tx1 - tx0).min(tab_area_w - tx0);
                 // 編集フィールド背景（濃いアクセント色）
                 add_px_rect(tx0, bar_y, edit_w, bar_h,
@@ -1649,7 +1650,6 @@ impl WgpuState {
                     text_verts, text_idx,
                 );
             }
-        }
     }
 
     /// ステータスライン頂点を構築する（ウィンドウ最下行）
@@ -2200,7 +2200,7 @@ impl WgpuState {
             );
 
             // 入力値 + カーソル
-            let display = if is_active { format!("{}_", value) } else { format!("{}", value) };
+            let display = if is_active { format!("{}_", value) } else { value.to_string() };
             add_string_verts(
                 &display, px + cell_w * 8.5, row_y,
                 if is_active { [1.0, 1.0, 0.8, 1.0] } else { [0.8, 0.85, 0.8, 1.0] }, false,
@@ -2793,12 +2793,11 @@ fn resolve_color(
         }
         Color::Indexed(n) => {
             // ANSI 0-15: スキームパレットを優先する
-            if *n < 16 {
-                if let Some(p) = palette {
+            if *n < 16
+                && let Some(p) = palette {
                     let c = p.ansi[*n as usize];
                     return [u8_to_f32(c[0]), u8_to_f32(c[1]), u8_to_f32(c[2]), 1.0];
                 }
-            }
             ansi_256_to_rgb(*n)
         }
     }
@@ -2854,7 +2853,7 @@ fn ansi_256_to_rgb(n: u8) -> [f32; 4] {
 fn start_shader_watcher(
     gpu_cfg: &nexterm_config::GpuConfig,
 ) -> (Option<tokio::sync::mpsc::Receiver<()>>, Option<notify::RecommendedWatcher>) {
-    use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
+    use notify::{Event, RecursiveMode, Watcher};
 
     // 監視対象ファイルを収集する
     let paths: Vec<std::path::PathBuf> = [
@@ -3111,7 +3110,9 @@ enum SettingsPanelHit {
         slider_type: crate::settings_panel::SliderType,
         track_x: f32,
         track_w: f32,
+        #[allow(dead_code)]
         min: f32,
+        #[allow(dead_code)]
         max: f32,
     },
     /// テーマカラードット
@@ -3550,7 +3551,7 @@ impl ApplicationHandler for EventHandler {
                     let fy = position.y as f32;
                     let mut new_hovered = None;
                     if fx >= menu.x && fx <= menu.x + menu_w {
-                        for (i, item) in menu.items.iter().enumerate() {
+                        for (i, _item) in menu.items.iter().enumerate() {
                             let item_y = menu.y + i as f32 * ch;
                             if fy >= item_y && fy < item_y + ch {
                                 new_hovered = Some(i);
@@ -3703,13 +3704,12 @@ impl ApplicationHandler for EventHandler {
                                     self.last_tab_click = None;
                                 } else {
                                     self.last_tab_click = Some((now, pane_id));
-                                    if self.app.state.focused_pane_id != Some(pane_id) {
-                                        if let Some(conn) = &self.connection {
+                                    if self.app.state.focused_pane_id != Some(pane_id)
+                                        && let Some(conn) = &self.connection {
                                             let _ = conn.send_tx.try_send(
                                                 ClientToServer::FocusPane { pane_id }
                                             );
                                         }
-                                    }
                                 }
                             }
                         }
@@ -3907,8 +3907,8 @@ impl ApplicationHandler for EventHandler {
                     && self.app.state.settings_panel.is_open
                     && self.app.state.settings_panel.font_family_editing
                 {
-                    if let Some(ref t) = text {
-                        if !self.modifiers.control_key() && !self.modifiers.alt_key() {
+                    if let Some(ref t) = text
+                        && !self.modifiers.control_key() && !self.modifiers.alt_key() {
                             for ch in t.chars() {
                                 self.app.state.settings_panel.push_font_family_char(ch);
                             }
@@ -3917,7 +3917,6 @@ impl ApplicationHandler for EventHandler {
                             }
                             return;
                         }
-                    }
                     // テキストがない場合（矢印キー等）もサーバーへは転送しない
                     return;
                 }
@@ -3994,11 +3993,10 @@ impl ApplicationHandler for EventHandler {
                 // GlyphAtlas の動的拡張: 満杯になったら 2 倍サイズで再生成する
                 // 借用競合を避けるため atlas を一時的に取り出して処理する
                 if let Some(mut atlas) = self.atlas.take() {
-                    if atlas.needs_grow {
-                        if let Some(wgpu) = &self.wgpu_state {
+                    if atlas.needs_grow
+                        && let Some(wgpu) = &self.wgpu_state {
                             atlas = atlas.grow(&wgpu.device);
                         }
-                    }
                     self.atlas = Some(atlas);
                 }
             }
@@ -4175,14 +4173,13 @@ impl EventHandler {
                     let rename_id = self.app.state.settings_panel.tab_rename_editing;
                     let new_name = self.app.state.settings_panel.tab_rename_text.clone();
                     self.app.state.settings_panel.cancel_tab_rename();
-                    if let (Some(window_id), Some(conn)) = (rename_id, &self.connection) {
-                        if !new_name.is_empty() {
+                    if let (Some(window_id), Some(conn)) = (rename_id, &self.connection)
+                        && !new_name.is_empty() {
                             let _ = conn.send_tx.try_send(ClientToServer::RenameWindow {
                                 window_id,
                                 name: new_name,
                             });
                         }
-                    }
                 }
                 WKeyCode::Backspace => {
                     self.app.state.settings_panel.pop_tab_rename_char();
@@ -4650,11 +4647,10 @@ impl EventHandler {
                     .map(|row| row.len() as isize - 1)
                     .unwrap_or(0);
             }
-            if let Some(cells) = pane.grid.rows.get(r as usize) {
-                if c < cells.len() as isize && !cells[c as usize].ch.is_whitespace() {
+            if let Some(cells) = pane.grid.rows.get(r as usize)
+                && c < cells.len() as isize && !cells[c as usize].ch.is_whitespace() {
                     break;
                 }
-            }
             c -= 1;
         }
         // 単語の先頭までスキップ
@@ -5020,16 +5016,14 @@ impl EventHandler {
             }
             ContextMenuAction::OpenProfile { profile_name } => {
                 // プロファイルのシェル設定でペインを新規分割する
-                if let Some(prof) = self.app.config.profiles.iter().find(|p| &p.name == profile_name) {
-                    if let Some(shell) = &prof.shell {
-                        if let Some(conn) = &self.connection {
+                if let Some(prof) = self.app.config.profiles.iter().find(|p| &p.name == profile_name)
+                    && let Some(shell) = &prof.shell
+                        && let Some(conn) = &self.connection {
                             // まず垂直分割してから ConnectSsh の代わりにシェルパスを環境変数で渡す
                             // （現時点では SplitVertical で新ペインを開き、プロファイル設定はログとして記録）
                             let _ = conn.send_tx.try_send(ClientToServer::SplitVertical);
                             info!("プロファイル '{}' のシェル '{}' で起動を要求", profile_name, shell.program);
                         }
-                    }
-                }
             }
             ContextMenuAction::Separator => {
                 // セパレーターはクリック不可のため何もしない
@@ -5038,6 +5032,7 @@ impl EventHandler {
     }
 
     /// HostConfig から ConnectSsh メッセージを送信する（現在のペインに接続）
+    #[allow(dead_code)]
     fn connect_ssh_host(&self, host: &nexterm_config::HostConfig) {
         let Some(conn) = &self.connection else { return };
         let _ = conn.send_tx.try_send(ClientToServer::ConnectSsh {

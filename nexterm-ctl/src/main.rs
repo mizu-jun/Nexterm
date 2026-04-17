@@ -512,7 +512,7 @@ fn cmd_service_status() -> Result<()> {
             println!("サービス: 未インストール");
             println!("インストールするには: nexterm-ctl service install");
         }
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(windows)]
@@ -846,13 +846,11 @@ fn parse_ghostty_config(content: &str) -> Result<GhosttyConverted> {
             "background-opacity" => background_opacity = value.parse::<f32>().ok(),
             // ANSI パレット: palette = N=#RRGGBB 形式
             "palette" => {
-                if let Some((idx_str, color)) = value.split_once('=') {
-                    if let Ok(idx) = idx_str.trim().parse::<usize>() {
-                        if idx < 16 {
+                if let Some((idx_str, color)) = value.split_once('=')
+                    && let Ok(idx) = idx_str.trim().parse::<usize>()
+                        && idx < 16 {
                             ansi[idx] = Some(normalize_color(color.trim()));
                         }
-                    }
-                }
             }
             // 未対応キーはメモに追記する
             "theme" => notes.push(format!(
@@ -917,11 +915,7 @@ fn parse_ghostty_config(content: &str) -> Result<GhosttyConverted> {
     };
 
     // [window] セクションの生成
-    let window_toml = if let Some(opacity) = background_opacity {
-        Some(format!("[window]\nbackground_opacity = {:.2}\n", opacity))
-    } else {
-        None
-    };
+    let window_toml = background_opacity.map(|opacity| format!("[window]\nbackground_opacity = {:.2}\n", opacity));
 
     Ok(GhosttyConverted { font_toml, palette_toml, window_toml, notes })
 }
@@ -931,8 +925,6 @@ fn normalize_color(s: &str) -> String {
     let s = s.trim_matches('"').trim_matches('\'');
     if s.starts_with('#') {
         s.to_uppercase()
-    } else if s.len() == 6 && s.chars().all(|c| c.is_ascii_hexdigit()) {
-        format!("#{}", s.to_uppercase())
     } else {
         format!("#{}", s.to_uppercase())
     }

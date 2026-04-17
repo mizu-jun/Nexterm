@@ -20,8 +20,10 @@ pub struct SliderDrag {
     /// スライダートラックの幅（ピクセル）
     pub track_w: f32,
     /// スライダーの最小値
+    #[allow(dead_code)]
     pub min_val: f32,
     /// スライダーの最大値
+    #[allow(dead_code)]
     pub max_val: f32,
 }
 
@@ -78,7 +80,9 @@ impl SettingsCategory {
 pub struct ProfileEntry {
     pub name: String,
     pub icon: String,
+    #[allow(dead_code)]
     pub shell_program: String,
+    #[allow(dead_code)]
     pub working_dir: String,
 }
 
@@ -120,6 +124,7 @@ pub struct SettingsPanel {
     /// 選択中のプロファイルインデックス
     pub selected_profile: usize,
     /// 起動時セッション名
+    #[allow(dead_code)]
     pub startup_session: String,
     /// タブ名変更中のウィンドウ ID（None = 変更なし）
     pub tab_rename_editing: Option<u32>,
@@ -231,10 +236,12 @@ impl SettingsPanel {
     }
 
     /// 後方互換: tab インデックスでカテゴリを設定する（旧 API）
+    #[allow(dead_code)]
     pub fn next_tab(&mut self) {
         self.next_category();
     }
 
+    #[allow(dead_code)]
     pub fn prev_tab(&mut self) {
         self.prev_category();
     }
@@ -260,6 +267,7 @@ impl SettingsPanel {
         self.dirty = true;
     }
 
+    #[allow(dead_code)]
     pub fn decrease_font_size(&mut self) {
         self.font_size = (self.font_size - 0.5).max(8.0);
         self.dirty = true;
@@ -284,6 +292,7 @@ impl SettingsPanel {
         self.dirty = true;
     }
 
+    #[allow(dead_code)]
     pub fn decrease_opacity(&mut self) {
         self.opacity = (self.opacity - 0.05).max(0.1);
         self.dirty = true;

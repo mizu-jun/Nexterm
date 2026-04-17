@@ -13,9 +13,13 @@ use crate::settings_panel::SettingsPanel;
 /// フローティングペインの位置・サイズ情報
 #[derive(Clone, Debug)]
 pub struct FloatRect {
+    #[allow(dead_code)]
     pub col_off: u16,
+    #[allow(dead_code)]
     pub row_off: u16,
+    #[allow(dead_code)]
     pub cols: u16,
+    #[allow(dead_code)]
     pub rows: u16,
 }
 
@@ -580,6 +584,7 @@ pub struct ClientState {
     /// 設定パネル（Ctrl+,）
     pub settings_panel: SettingsPanel,
     /// マウスレポーティングモード（サーバーから通知される: 0=無効, 1=X11, 2=SGR）
+    #[allow(dead_code)]
     pub mouse_reporting_mode: u8,
     /// フローティングペインの位置情報キャッシュ
     pub floating_pane_rects: HashMap<u32, FloatRect>,
@@ -714,15 +719,14 @@ impl ClientState {
             }
             // OSC 133 セマンティックゾーンマーク — ステータスバーに最新コマンド終了コードを表示
             ServerToClient::SemanticMark { pane_id, kind, exit_code, .. } => {
-                if kind == "D" && self.focused_pane_id == Some(pane_id) {
-                    if let Some(code) = exit_code {
+                if kind == "D" && self.focused_pane_id == Some(pane_id)
+                    && let Some(code) = exit_code {
                         if code != 0 {
                             self.status_bar_text = format!("[exit: {}]", code);
                         } else {
                             self.status_bar_text.clear();
                         }
                     }
-                }
             }
             // フローティングペインイベント — 位置情報をキャッシュするが、
             // レンダラー側での描画は renderer.rs で別途実装する

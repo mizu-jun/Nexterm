@@ -9,7 +9,7 @@
 //! 3. サーバーの準備完了を待ってから nexterm-client-gpu を起動
 //! 4. クライアントが終了してもサーバーは継続動作させる
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -136,7 +136,7 @@ fn named_pipe_exists(pipe_name: &str) -> bool {
 
 // ---- サーバー起動 ----
 
-fn start_server(exe_dir: &PathBuf) -> anyhow::Result<()> {
+fn start_server(exe_dir: &Path) -> anyhow::Result<()> {
     let server = server_exe(exe_dir);
 
     if !server.exists() {
@@ -194,7 +194,7 @@ fn wait_for_server(timeout: Duration) -> anyhow::Result<()> {
 
 // ---- クライアント起動 ----
 
-fn start_client(exe_dir: &PathBuf) -> anyhow::Result<()> {
+fn start_client(exe_dir: &Path) -> anyhow::Result<()> {
     let client = client_exe(exe_dir);
 
     if !client.exists() {
@@ -244,21 +244,21 @@ fn exe_dir() -> anyhow::Result<PathBuf> {
         .ok_or_else(|| anyhow::anyhow!("実行ファイルの親ディレクトリが取得できません"))
 }
 
-fn server_exe(dir: &PathBuf) -> PathBuf {
+fn server_exe(dir: &Path) -> PathBuf {
     #[cfg(windows)]
     return dir.join("nexterm-server.exe");
     #[cfg(not(windows))]
     dir.join("nexterm-server")
 }
 
-fn client_exe(dir: &PathBuf) -> PathBuf {
+fn client_exe(dir: &Path) -> PathBuf {
     #[cfg(windows)]
     return dir.join("nexterm-client-gpu.exe");
     #[cfg(not(windows))]
     dir.join("nexterm-client-gpu")
 }
 
-fn tui_exe(dir: &PathBuf) -> PathBuf {
+fn tui_exe(dir: &Path) -> PathBuf {
     #[cfg(windows)]
     return dir.join("nexterm-client-tui.exe");
     #[cfg(not(windows))]

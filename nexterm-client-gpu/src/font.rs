@@ -259,6 +259,7 @@ impl FontManager {
     }
 
     /// 設定されているフォントファミリー名を返す
+    #[allow(dead_code)]
     pub fn family(&self) -> &str {
         &self.family
     }

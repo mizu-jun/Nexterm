@@ -34,6 +34,7 @@ impl LayoutMode {
         }
     }
 
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
             LayoutMode::Bsp => "bsp",
@@ -215,6 +216,7 @@ impl SplitNode {
     }
 
     /// 隣接するペイン ID を返す（フォーカスペインの兄弟ノード）
+    #[allow(dead_code)]
     fn neighbor_id(&self, target_id: u32) -> Option<u32> {
         match self {
             SplitNode::Pane { .. } => None,
@@ -232,6 +234,7 @@ impl SplitNode {
     }
 
     /// サブツリー内の最初のペイン ID を返す
+    #[allow(dead_code)]
     fn first_pane_id(&self) -> Option<u32> {
         match self {
             SplitNode::Pane { pane_id } => Some(*pane_id),
@@ -498,6 +501,7 @@ impl Window {
     }
 
     /// フローティングペインに入力を書き込む
+    #[allow(dead_code)]
     pub fn write_to_floating(&self, pane_id: u32, data: &[u8]) -> Result<()> {
         if let Some((pane, _)) = self.floating_panes.get(&pane_id) {
             pane.write_input(data)?;
@@ -506,6 +510,7 @@ impl Window {
     }
 
     /// フローティングペインの一覧（表示用）
+    #[allow(dead_code)]
     pub fn floating_pane_rects(&self) -> Vec<(u32, FloatRect)> {
         self.floating_panes
             .iter()
@@ -514,6 +519,7 @@ impl Window {
     }
 
     /// フローティングペインが存在するか確認する
+    #[allow(dead_code)]
     pub fn has_floating_pane(&self, pane_id: u32) -> bool {
         self.floating_panes.contains_key(&pane_id)
     }
@@ -569,6 +575,7 @@ impl Window {
     }
 
     /// ズーム状態を返す
+    #[allow(dead_code)]
     pub fn is_zoomed(&self) -> bool {
         self.zoomed
     }
@@ -663,6 +670,7 @@ impl Window {
     }
 
     /// フォーカスペインと隣接ペイン（next 方向）を入れ替える
+    #[allow(dead_code)]
     pub fn swap_with_next(&mut self) {
         let focused = self.focused_pane_id;
         let ids: Vec<u32> = {
@@ -677,6 +685,7 @@ impl Window {
     }
 
     /// フォーカスペインと隣接ペイン（prev 方向）を入れ替える
+    #[allow(dead_code)]
     pub fn swap_with_prev(&mut self) {
         let focused = self.focused_pane_id;
         let ids: Vec<u32> = {
@@ -792,6 +801,7 @@ impl Window {
     }
 
     /// シリアルポートペインを BSP ツリーに追加する
+    #[allow(clippy::too_many_arguments)]
     pub fn add_serial_pane(
         &mut self,
         total_cols: u16,

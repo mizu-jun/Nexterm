@@ -3,8 +3,8 @@
 //! `SerialPane` は PTY の代わりにシリアルポートを入出力バックエンドとして使用する。
 //! BSP レイアウトツリーへの統合は通常ペインと同一の仕組みで行う。
 
-use std::sync::{Arc, Mutex};
 use std::io::Write;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
 use nexterm_proto::{Grid, ServerToClient};
@@ -44,7 +44,9 @@ fn parse_stop_bits(stop_bits: u8) -> serialport::StopBits {
 /// シリアルポートバックエンドのペイン
 pub struct SerialPane {
     pub id: u32,
+    #[allow(dead_code)]
     pub cols: u16,
+    #[allow(dead_code)]
     pub rows: u16,
     /// シリアルポートへの書き込みハンドル
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
@@ -52,6 +54,7 @@ pub struct SerialPane {
 
 impl SerialPane {
     /// シリアルポートに接続してペインを生成する
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         port_name: &str,
         baud_rate: u32,
@@ -71,17 +74,24 @@ impl SerialPane {
             .map_err(|e| anyhow!("シリアルポート '{}' を開けませんでした: {}", port_name, e))?;
 
         let pane_id = new_pane_id();
-        info!("シリアルポート '{}' をペイン {} として起動しました (baud={})", port_name, pane_id, baud_rate);
+        info!(
+            "シリアルポート '{}' をペイン {} として起動しました (baud={})",
+            port_name, pane_id, baud_rate
+        );
 
         // 書き込み用クローン
         let serial_write = serial
             .try_clone()
             .map_err(|e| anyhow!("シリアルポートのクローンに失敗しました: {}", e))?;
 
-        let writer: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(Box::new(serial_write)));
+        let writer: Arc<Mutex<Box<dyn Write + Send>>> =
+            Arc::new(Mutex::new(Box::new(serial_write)));
 
         // 初期グリッドを broadcast に送信する
-        let _ = tx.send(ServerToClient::FullRefresh { pane_id, grid: Grid::new(cols, rows) });
+        let _ = tx.send(ServerToClient::FullRefresh {
+            pane_id,
+            grid: Grid::new(cols, rows),
+        });
 
         let tx_clone = tx;
 
@@ -131,12 +141,19 @@ impl SerialPane {
                 info!("シリアルポート切断 (pane={})", pane_id);
             })?;
 
-        Ok(Self { id: pane_id, cols, rows, writer })
+        Ok(Self {
+            id: pane_id,
+            cols,
+            rows,
+            writer,
+        })
     }
 
     /// データをシリアルポートに書き込む（キー入力）
     pub fn write_input(&self, data: &[u8]) -> Result<()> {
-        let mut w = self.writer.lock()
+        let mut w = self
+            .writer
+            .lock()
             .map_err(|e| anyhow!("シリアルライターのロック取得失敗: {}", e))?;
         w.write_all(data)?;
         Ok(())
@@ -148,6 +165,7 @@ impl SerialPane {
     }
 
     /// Full Refresh グリッドを生成する
+    #[allow(dead_code)]
     pub fn make_full_refresh(&self) -> Grid {
         Grid::new(self.cols, self.rows)
     }
