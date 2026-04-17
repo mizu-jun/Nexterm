@@ -1,0 +1,110 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## ビルドコマンド
+
+```bash
+# 全クレートをビルド
+cargo build
+
+# リリースビルド
+cargo build --release
+
+# 特定クレートのみ
+cargo build -p nexterm-server
+cargo build -p nexterm-client-gpu
+cargo build -p nexterm-ctl
+
+# テスト実行
+cargo test
+cargo test -p nexterm-vt          # 特定クレート
+cargo test bsp_split               # テスト名でフィルタ
+
+# Lint
+cargo clippy -- -D warnings        # PRマージ必須条件
+cargo fmt --check                  # PRマージ必須条件
+cargo fmt                          # フォーマット適用
+
+# デバッグ実行
+NEXTERM_LOG=debug nexterm-server
+NEXTERM_LOG=trace nexterm-client-gpu   # IPC全メッセージ表示
+```
+
+## アーキテクチャ
+
+### プロセス構成
+
+```
+nexterm-launcher (nexterm.exe / nexterm)
+  → nexterm-server  (デーモン: PTYセッション保持)
+  → nexterm-client-gpu  (GUIクライアント: wgpu)
+  → nexterm-client-tui  (フォールバック: ratatui)
+```
+
+IPC通信はUnixソケット (`$XDG_RUNTIME_DIR/nexterm.sock`) またはWindowsの名前付きパイプ (`\\.\pipe\nexterm-<USERNAME>`) を使用。メッセージは4バイトLEプレフィックス付きbincodeシリアライズ。
+
+### クレート依存関係
+
+- `nexterm-proto` — 全IPC型定義。他の全クレートが依存する中心クレート。変更は全クレートに影響する
+- `nexterm-vt` — `vte`クレートのラッパー。VT100/ANSIパーサ + 仮想スクリーン (`Grid`) + Sixel/Kitty画像デコード
+- `nexterm-server` — PTYサーバー。`SessionManager → Session → Window (BSP) → Pane` の階層構造
+- `nexterm-config` — TOML+Luaコンフィグ。ロード順: デフォルト値 → config.toml → config.lua。`notify`クレートによるホットリロード
+- `nexterm-client-gpu` — wgpuレンダラー (winit 0.30 ApplicationHandler)。3パスレンダリング: 背景矩形→テキスト→画像
+- `nexterm-client-tui` — ratatui+crossterm によるTUIフォールバック
+- `nexterm-ssh` — russh 0.58 ベースのSSHクライアント
+- `nexterm-plugin` — wasmiベースのWASMプラグインランタイム
+- `nexterm-i18n` — 8言語対応。ユーザー向け文字列は`fl!`マクロ必須
+- `nexterm-ctl` — CLIツール (list/new/attach/kill/record)
+- `nexterm-launcher` — サーバー自動起動エントリーポイント
+
+### サーバー内部構造
+
+- `session.rs` — `SessionManager`, `Session`, BSPレイアウトエンジン
+- `window.rs` — `Window` (BSPツリー + Pane管理)
+- `pane.rs` — `Pane` (PTY + PTYリーダースレッド + 録画ログライター)
+- `ipc.rs` — クライアント接続ハンドリング、UID検証 (SO_PEERCRED/getpeereid)
+- `persist.rs` / `snapshot.rs` — セッション永続化 (JSON、`~/.local/state/nexterm/snapshot.json`)
+- `web/` — axum WebSocket + xterm.js埋め込みWebターミナル
+
+### GPUクライアント内部構造
+
+- `renderer.rs` — wgpu初期化 + 3パスレンダリングパイプライン + cosmic-textグリフアトラス
+- `state.rs` — `ClientState` (panes/pane_layouts/copy_mode/search等の状態管理)
+- `font.rs` — `FontManager` (cosmic-textラッパー、CJK幅計算)
+- `settings_panel.rs` — `Ctrl+,`で開く設定パネルUI (7カテゴリ、toml_editで書き戻し)
+- `palette.rs` — コマンドパレット (fuzzy-matcher)
+- `scrollback.rs` — スクロールバック管理 + インクリメンタル検索
+- `host_manager.rs` — SSHホストマネージャーUI
+- `macro_picker.rs` — Luaマクロピッカーui
+
+## 重要な実装パターン
+
+### PTYリーダースレッド (daemonless設計の核心)
+
+各Paneは`tokio::task::spawn_blocking`でリーダースレッドを起動。クライアントの接続/切断時は`Arc<Mutex<Sender<ServerToClient>>>`をアトミックにスワップするため、セッションがクライアント切断後も生き続ける。
+
+### BSPレイアウト (pane分割)
+
+`SplitNode`列挙型の再帰ツリー。Pane追加は「ID事前確保 → ツリー挿入 → 全paneサイズ再計算 → PTYスポーン → 既存paneリサイズ」の順で行うこと (chicken-and-egg問題回避)。
+
+### Luaワーカー
+
+`mlua::Lua`インスタンスは`nexterm-lua-worker`という専用OSスレッドに閉じ込め、メインスレッドとはチャネルで通信する。`StatusBarEvaluator`は毎秒評価を要求し、キャッシュ済み値を即時返してバックグラウンド更新する。
+
+### 設定パネルのTOML書き戻し
+
+`toml_edit`クレートを使い既存コメントや構造を保持したまま値を更新する。`toml`クレートで全書き換えしないこと。
+
+## コーディング規約
+
+- `unwrap()`禁止。`?` または `expect("理由")`を使用
+- エラーは`anyhow::Result`で伝播
+- async: `tokio::spawn` / blocking処理は`tokio::task::spawn_blocking`
+- IPC用Mutex: `tokio::sync::Mutex`、PTYリーダースレッド用: `std::sync::Mutex`
+- ユーザー向け文字列: `nexterm_i18n::fl!`マクロ必須、`nexterm-i18n/locales/`の全8言語に追加
+- プロトコルメッセージ追加時は`nexterm-proto/src/message.rs`と`nexterm-proto/src/grid.rs`の両方を確認
+
+## リリースフロー
+
+リリースは`.github/workflows/release.yml`で自動化。バージョンタグ (`v*.*.*`) のプッシュでトリガーされる。WiX v3でWindowsインストーラー (`.msi`) をビルド。`wix/main.wxs`でコンポーネントを管理 (`nexterm-client-gpu.exe`は含まない)。
