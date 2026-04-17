@@ -108,6 +108,7 @@ fn peer_uid_impl(stream: &tokio::net::UnixStream) -> Option<libc::uid_t> {
     if ret == 0 {
         Some(cred.uid)
     } else {
+        // SAFETY: __errno_location() はスレッドローカルな errno ポインタを返す。逆参照は常に安全。
         warn!("SO_PEERCRED の取得に失敗しました (errno={})", unsafe { *libc::__errno_location() });
         None
     }
@@ -150,6 +151,7 @@ fn peer_uid_impl(_stream: &tokio::net::UnixStream) -> Option<libc::uid_t> {
 
 #[cfg(unix)]
 fn unix_socket_path() -> String {
+    // SAFETY: getuid() は常に成功し、副作用なし。
     let uid = unsafe { libc::getuid() };
     let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
         .unwrap_or_else(|_| format!("/run/user/{}", uid));
