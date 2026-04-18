@@ -390,7 +390,7 @@ impl Pane {
             #[cfg(not(windows))]
             { std::env::var("HOME").ok().map(std::path::PathBuf::from) }
         }).flatten();
-        let effective_cwd = cwd.or_else(|| home_buf.as_deref());
+        let effective_cwd = cwd.or(home_buf.as_deref());
         if let Some(c) = effective_cwd {
             cmd.cwd(c);
         }

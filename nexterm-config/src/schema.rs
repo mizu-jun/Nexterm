@@ -705,6 +705,7 @@ pub struct OAuthConfig {
 
 /// TLS / HTTPS 設定
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct TlsConfig {
     /// HTTPS を有効にするか（デフォルト: false）
     #[serde(default)]
@@ -715,18 +716,10 @@ pub struct TlsConfig {
     pub key_file: Option<String>,
 }
 
-impl Default for TlsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            cert_file: None,
-            key_file: None,
-        }
-    }
-}
 
 /// アクセスログ設定
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct AccessLogConfig {
     /// アクセスログを有効にするか（デフォルト: false）
     #[serde(default)]
@@ -735,14 +728,6 @@ pub struct AccessLogConfig {
     pub file: Option<String>,
 }
 
-impl Default for AccessLogConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            file: None,
-        }
-    }
-}
 
 /// Web ターミナル設定（WebSocket + xterm.js）
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1031,11 +1016,10 @@ impl Config {
     /// アクティブプロファイルを適用した設定を返す。
     /// プロファイルが未設定または存在しない場合は self を clone して返す。
     pub fn effective(&self) -> Config {
-        if let Some(ref name) = self.active_profile {
-            if let Some(profile) = self.profiles.iter().find(|p| &p.name == name) {
+        if let Some(ref name) = self.active_profile
+            && let Some(profile) = self.profiles.iter().find(|p| &p.name == name) {
                 return profile.apply_to(self);
             }
-        }
         self.clone()
     }
 

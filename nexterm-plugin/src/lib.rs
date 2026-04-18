@@ -136,9 +136,8 @@ impl PluginManager {
             .with_context(|| "プラグインの起動に失敗")?;
 
         // nexterm_init があれば呼ぶ（オプション）
-        if let Some(init_fn) = instance
+        if let Ok(init_fn) = instance
             .get_typed_func::<(), ()>(&store, "nexterm_init")
-            .ok()
         {
             init_fn.call(&mut store, ()).ok();
         }

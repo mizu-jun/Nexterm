@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use mlua::prelude::*;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::schema::{ColorScheme, Config, FontConfig, HooksConfig, KeyBinding, ShellConfig, StatusBarConfig, TabBarConfig};
 

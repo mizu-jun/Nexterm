@@ -764,12 +764,11 @@ async fn ws_handler(
     }
 
     // 後方互換: クエリパラメータのトークン確認
-    if let Some(ref expected) = state.legacy_token {
-        if query.token != *expected {
+    if let Some(ref expected) = state.legacy_token
+        && query.token != *expected {
             warn!("WebSocket 認証失敗: 無効なトークン（{}）", addr);
             return StatusCode::UNAUTHORIZED.into_response();
         }
-    }
 
     // アクセスログに WebSocket 接続を記録する
     let (auth_method, user_id) = auth::extract_session_cookie(&headers)
@@ -809,11 +808,10 @@ async fn handle_socket(mut socket: WebSocket, manager: Arc<SessionManager>, sess
             result = rx.recv() => {
                 match result {
                     Ok(msg) => {
-                        if let Some(text) = pty_message_to_text(&msg) {
-                            if socket.send(Message::Text(text.into())).await.is_err() {
+                        if let Some(text) = pty_message_to_text(&msg)
+                            && socket.send(Message::Text(text)).await.is_err() {
                                 break;
                             }
-                        }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}

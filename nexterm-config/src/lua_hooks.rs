@@ -102,11 +102,10 @@ impl LuaHookRunner {
     ///
     /// チャネルが満杯の場合はイベントを破棄してログを出力する。
     pub fn fire(&self, event: HookEvent) {
-        if let Some(tx) = &self.event_tx {
-            if tx.try_send(event).is_err() {
+        if let Some(tx) = &self.event_tx
+            && tx.try_send(event).is_err() {
                 warn!("LuaHookRunner: イベントキューが満杯です。フックをスキップします");
             }
-        }
     }
 
     /// Lua フックランナーが有効か（スクリプトが存在するか）

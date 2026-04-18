@@ -99,7 +99,7 @@ fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
     let year = years400 * 400 + years100 * 100 + years4 * 4 + years1 + 1970;
 
     // 月ごとの日数（うるう年を考慮）
-    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    let leap = (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400);
     let month_days: [u64; 12] = [
         31,
         if leap { 29 } else { 28 },

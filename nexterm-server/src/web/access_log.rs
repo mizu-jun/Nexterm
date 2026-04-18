@@ -46,18 +46,15 @@ impl AccessLogger {
     pub fn new(enabled: bool, file: Option<&str>) -> Self {
         let file_path = file.map(PathBuf::from);
         // ファイルが設定されている場合はヘッダー行を書き込む（ファイルが新規の場合のみ）
-        if enabled {
-            if let Some(ref path) = file_path {
-                if !path.exists() {
-                    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
+        if enabled
+            && let Some(ref path) = file_path
+                && !path.exists()
+                    && let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
                         let _ = writeln!(
                             f,
                             "timestamp,remote_addr,method,path,status,auth_method,user_id"
                         );
                     }
-                }
-            }
-        }
         Self {
             file_path,
             file_lock: Arc::new(Mutex::new(())),

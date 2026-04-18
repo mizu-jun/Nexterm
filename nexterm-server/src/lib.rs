@@ -89,11 +89,10 @@ pub async fn run_server() -> Result<()> {
 
     // シャットダウン時にスナップショットを保存する
     let snap = manager.to_snapshot().await;
-    if !snap.sessions.is_empty() {
-        if let Err(e) = persist::save_snapshot(&snap) {
+    if !snap.sessions.is_empty()
+        && let Err(e) = persist::save_snapshot(&snap) {
             tracing::warn!("スナップショットの保存に失敗しました: {}", e);
         }
-    }
 
     info!("nexterm-server 停止");
     Ok(())

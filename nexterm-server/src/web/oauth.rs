@@ -323,26 +323,21 @@ impl OAuthManager {
     /// `allowed_emails` と `allowed_orgs` が両方空の場合は全員許可。
     pub async fn is_user_allowed(&self, user: &OAuthUser) -> bool {
         // メールアドレスチェック
-        if !self.config.allowed_emails.is_empty() {
-            if let Some(email) = &user.email {
-                if self.config.allowed_emails.contains(email) {
+        if !self.config.allowed_emails.is_empty()
+            && let Some(email) = &user.email
+                && self.config.allowed_emails.contains(email) {
                     return true;
                 }
-            }
             // allowed_emails が設定されていてメールが一致しない場合は
             // allowed_orgs も確認する
-        }
 
         // GitHub Organization チェック
-        if !self.config.allowed_orgs.is_empty() && self.config.provider == "github" {
-            if let Some(login) = &user.login {
-                if let Some(token) = self.get_current_token().await {
-                    if self.check_github_org(&token, login).await {
+        if !self.config.allowed_orgs.is_empty() && self.config.provider == "github"
+            && let Some(login) = &user.login
+                && let Some(token) = self.get_current_token().await
+                    && self.check_github_org(&token, login).await {
                         return true;
                     }
-                }
-            }
-        }
 
         // 両方の許可リストが空 → 全員許可
         if self.config.allowed_emails.is_empty() && self.config.allowed_orgs.is_empty() {
@@ -368,11 +363,9 @@ impl OAuthManager {
                 .header("User-Agent", "nexterm/1.0")
                 .send()
                 .await
-            {
-                if resp.status().is_success() {
+                && resp.status().is_success() {
                     return true;
                 }
-            }
         }
         false
     }
