@@ -635,7 +635,12 @@ impl Window {
         self.serial_panes.remove(&target_id);
 
         // 残ったペインにフォーカスを移す（ID が最も小さいものを選ぶ）
-        let next_id = self.panes.keys().copied().min().unwrap();
+        let next_id = self
+            .panes
+            .keys()
+            .copied()
+            .min()
+            .expect("panes は len > 1 ガード済みのため少なくとも1つ残っているはず");
         self.focused_pane_id = next_id;
 
         // 残ったペインをリサイズする
@@ -717,7 +722,12 @@ impl Window {
         // ペイン Map から取り出す
         let pane = self.panes.remove(&target_id)?;
         // フォーカスを残ったペインの最小 ID に移す
-        let next_id = self.panes.keys().copied().min().unwrap();
+        let next_id = self
+            .panes
+            .keys()
+            .copied()
+            .min()
+            .expect("panes は len > 1 ガード済みのため少なくとも1つ残っているはず");
         self.focused_pane_id = next_id;
         self.zoomed = false;
         // 残ったペインをリサイズする

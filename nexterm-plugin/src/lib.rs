@@ -136,15 +136,13 @@ impl PluginManager {
             .with_context(|| "プラグインの起動に失敗")?;
 
         // nexterm_init があれば呼ぶ（オプション）
-        if let Ok(init_fn) = instance
-            .get_typed_func::<(), ()>(&store, "nexterm_init")
-        {
+        if let Ok(init_fn) = instance.get_typed_func::<(), ()>(&store, "nexterm_init") {
             init_fn.call(&mut store, ()).ok();
         }
 
         info!("プラグインをロードしました: {}", path.display());
 
-        let mut plugins = self.plugins.lock().unwrap();
+        let mut plugins = self.plugins.lock().expect("plugins mutex poisoned");
         plugins.push(PluginInstance {
             path: path.to_path_buf(),
             store,
@@ -179,7 +177,7 @@ impl PluginManager {
     ///
     /// 戻り値: `true` = 抑制（クライアントに転送しない）
     pub fn on_output(&self, pane_id: u32, data: &[u8]) -> bool {
-        let mut plugins = self.plugins.lock().unwrap();
+        let mut plugins = self.plugins.lock().expect("plugins mutex poisoned");
         for plugin in plugins.iter_mut() {
             let Ok(func) = plugin
                 .instance
@@ -214,7 +212,7 @@ impl PluginManager {
     /// 戻り値: `true` = いずれかのプラグインが処理済み
     pub fn on_command(&self, cmd: &str) -> bool {
         let cmd_bytes = cmd.as_bytes();
-        let mut plugins = self.plugins.lock().unwrap();
+        let mut plugins = self.plugins.lock().expect("plugins mutex poisoned");
         for plugin in plugins.iter_mut() {
             let Ok(func) = plugin
                 .instance
@@ -244,7 +242,7 @@ impl PluginManager {
 
     /// ロード済みプラグイン数を返す
     pub fn plugin_count(&self) -> usize {
-        self.plugins.lock().unwrap().len()
+        self.plugins.lock().expect("plugins mutex poisoned").len()
     }
 
     /// ロード済みプラグインのパス一覧を返す

@@ -105,7 +105,7 @@ impl client::Handler for SshHandler {
     ) -> Result<(), Self::Error> {
         // forward_map からローカル転送先を取得する
         let dest = {
-            let map = self.forward_map.lock().unwrap();
+            let map = self.forward_map.lock().expect("forward_map mutex poisoned");
             map.get(&connected_port).cloned()
         };
 
@@ -390,7 +390,7 @@ impl SshSession {
 
         // forward_map にマッピングを登録する（ハンドラのコールバックで参照される）
         {
-            let mut map = self.forward_map.lock().unwrap();
+            let mut map = self.forward_map.lock().expect("forward_map mutex poisoned");
             map.insert(remote_port as u32, (local_host.clone(), local_port));
         }
 

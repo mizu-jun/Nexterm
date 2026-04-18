@@ -371,7 +371,7 @@ fn https_redirect(headers: &HeaderMap, port: u16) -> Response {
         .status(301)
         .header("Location", location)
         .body(axum::body::Body::empty())
-        .unwrap()
+        .expect("Response::builder への無効なヘッダー値")
 }
 
 // ── ページハンドラ ────────────────────────────────────────────────────────────
@@ -440,7 +440,7 @@ fn serve_login_html(state: &AppState) -> Response {
 
 /// GET /setup — 初回 TOTP セットアップページ
 async fn serve_setup(State(state): State<AppState>) -> Response {
-    if state.pending_setup.lock().unwrap().is_none() {
+    if state.pending_setup.lock().expect("pending_setup mutex poisoned").is_none() {
         return redirect("/");
     }
     serve_asset("setup.html")
@@ -511,7 +511,7 @@ async fn handle_login(
         .header("Location", "/")
         .header("Set-Cookie", cookie)
         .body(axum::body::Body::empty())
-        .unwrap()
+        .expect("Response::builder への無効なヘッダー値")
 }
 
 /// GET /auth/oauth — OAuth プロバイダーの認証ページへリダイレクト
@@ -639,7 +639,7 @@ async fn handle_oauth_callback(
         .header("Location", "/")
         .header("Set-Cookie", cookie)
         .body(axum::body::Body::empty())
-        .unwrap()
+        .expect("Response::builder への無効なヘッダー値")
 }
 
 /// POST /auth/logout — セッションを破棄してログインページへリダイレクト
@@ -667,7 +667,7 @@ struct SetupUrlResponse {
 
 /// GET /auth/setup-url — セットアップ用の otpauth:// URL とシークレットを返す
 async fn handle_setup_url(State(state): State<AppState>) -> Response {
-    let guard = state.pending_setup.lock().unwrap();
+    let guard = state.pending_setup.lock().expect("pending_setup mutex poisoned");
     match guard.as_ref() {
         Some(ps) => Json(SetupUrlResponse {
             url: ps.totp.get_url(),
@@ -686,7 +686,7 @@ async fn handle_setup_verify(
 ) -> Response {
     let addr = client_ip(&headers);
     let (secret_clone, is_valid) = {
-        let guard = state.pending_setup.lock().unwrap();
+        let guard = state.pending_setup.lock().expect("pending_setup mutex poisoned");
         match guard.as_ref() {
             Some(ps) => (ps.secret.clone(), ps.totp.verify(&form.code)),
             None => return redirect("/?setup=done"),
@@ -704,7 +704,7 @@ async fn handle_setup_verify(
     match otp::TotpManager::from_secret(&secret_clone, &state.issuer) {
         Ok(mgr) => {
             *state.totp.write().await = Some(mgr);
-            *state.pending_setup.lock().unwrap() = None;
+            *state.pending_setup.lock().expect("pending_setup mutex poisoned") = None;
             info!("TOTP セットアップが完了しました（{}）", addr);
         }
         Err(e) => {
@@ -723,7 +723,7 @@ async fn handle_setup_verify(
         .header("Location", "/")
         .header("Set-Cookie", cookie)
         .body(axum::body::Body::empty())
-        .unwrap()
+        .expect("Response::builder への無効なヘッダー値")
 }
 
 // ── WebSocket ─────────────────────────────────────────────────────────────────
@@ -879,7 +879,7 @@ fn serve_asset(name: &str) -> Response {
         None => Response::builder()
             .status(404)
             .body(axum::body::Body::from(format!("{} not found", name)))
-            .unwrap(),
+            .expect("Response::builder への無効な設定"),
     }
 }
 
@@ -888,5 +888,5 @@ fn redirect(location: &str) -> Response {
         .status(302)
         .header("Location", location)
         .body(axum::body::Body::empty())
-        .unwrap()
+        .expect("Response::builder への無効なヘッダー値")
 }

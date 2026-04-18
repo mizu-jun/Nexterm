@@ -80,7 +80,7 @@ impl OAuthManager {
 
         // state を保存する（10 分で自動期限切れ）
         let expiry = Instant::now() + STATE_TTL;
-        let mut states = self.pending_states.lock().unwrap();
+        let mut states = self.pending_states.lock().expect("OAuth pending_states mutex poisoned");
         // 古いエントリを掃除する
         states.retain(|_, v| Instant::now() < *v);
         states.insert(csrf_token.secret().clone(), expiry);
@@ -96,7 +96,7 @@ impl OAuthManager {
     ) -> anyhow::Result<OAuthUser> {
         // state 検証（CSRF 対策）
         {
-            let mut states = self.pending_states.lock().unwrap();
+            let mut states = self.pending_states.lock().expect("OAuth pending_states mutex poisoned");
             match states.remove(&state) {
                 Some(expiry) if Instant::now() < expiry => {
                     // 有効な state

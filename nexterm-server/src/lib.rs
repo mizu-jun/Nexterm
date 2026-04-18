@@ -4,10 +4,10 @@
 mod hooks;
 mod ipc;
 mod pane;
-mod persist;
+pub mod persist;
 mod serial;
 mod session;
-mod snapshot;
+pub mod snapshot;
 mod template;
 mod web;
 mod window;

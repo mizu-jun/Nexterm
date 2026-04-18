@@ -54,7 +54,7 @@ impl AuthManager {
             .collect();
 
         let expiry = Instant::now() + self.ttl;
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock().expect("session store mutex poisoned");
 
         // 期限切れセッションを事前に掃除する
         sessions.retain(|_, v| Instant::now() < v.expiry);
@@ -84,7 +84,7 @@ impl AuthManager {
 
     /// セッショントークンが有効か確認する
     pub fn is_valid(&self, token: &str) -> bool {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = self.sessions.lock().expect("session store mutex poisoned");
         sessions
             .get(token)
             .map(|entry| Instant::now() < entry.expiry)
@@ -93,7 +93,7 @@ impl AuthManager {
 
     /// セッションのメタ情報を取得する（アクセスログ用）
     pub fn session_info(&self, token: &str) -> Option<(String, String)> {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = self.sessions.lock().expect("session store mutex poisoned");
         sessions.get(token).and_then(|entry| {
             if Instant::now() < entry.expiry {
                 Some((entry.auth_method.clone(), entry.user_id.clone()))
@@ -105,13 +105,16 @@ impl AuthManager {
 
     /// 明示的にセッションを削除する（ログアウト用）
     pub fn revoke_session(&self, token: &str) {
-        self.sessions.lock().unwrap().remove(token);
+        self.sessions
+            .lock()
+            .expect("session store mutex poisoned")
+            .remove(token);
     }
 
     /// アクティブなセッション数を返す（期限切れを除く）
     #[allow(dead_code)]
     pub fn active_count(&self) -> usize {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = self.sessions.lock().expect("session store mutex poisoned");
         sessions
             .values()
             .filter(|v| Instant::now() < v.expiry)
