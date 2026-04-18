@@ -1,0 +1,217 @@
+//! グリフアトラス — GPU テキスト描画用テクスチャキャッシュ
+
+use std::collections::HashMap;
+
+use bytemuck::{Pod, Zeroable};
+
+// ---- 頂点型 ----
+
+/// 背景矩形用の頂点（位置 + 色）
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub(crate) struct BgVertex {
+    /// NDC 座標 [-1, 1]
+    pub position: [f32; 2],
+    /// RGBA 色 [0, 1]
+    pub color: [f32; 4],
+}
+
+/// テキスト用の頂点（位置 + UV + 色）
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub(crate) struct TextVertex {
+    pub position: [f32; 2],
+    pub uv: [f32; 2],
+    pub color: [f32; 4],
+}
+
+// ---- グリフアトラス ----
+
+/// グリフキャッシュのキー
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct GlyphKey {
+    pub ch: char,
+    pub bold: bool,
+    pub italic: bool,
+    pub wide: bool,
+}
+
+/// グリフアトラス内の矩形
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GlyphRect {
+    /// アトラス内の UV 座標（左上・右下）
+    pub uv_min: [f32; 2],
+    pub uv_max: [f32; 2],
+    /// グリフのピクセルサイズ
+    #[allow(dead_code)]
+    pub width: u32,
+    #[allow(dead_code)]
+    pub height: u32,
+}
+
+/// グリフアトラス（全グリフを 1 枚のテクスチャに詰め込む）
+pub(crate) struct GlyphAtlas {
+    pub texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
+    pub sampler: wgpu::Sampler,
+    /// アトラスの寸法（正方形）
+    pub size: u32,
+    /// 次に書き込む列
+    cursor_x: u32,
+    /// 次に書き込む行の Y 座標
+    cursor_y: u32,
+    /// 現在行の最大高さ
+    row_height: u32,
+    /// キャッシュ済みグリフ
+    pub cache: HashMap<GlyphKey, GlyphRect>,
+    /// フレーム内でアトラスをリセットした場合 true
+    /// 次フレームで再描画が必要なことを示す（UV 不整合防止）
+    pub cleared_this_frame: bool,
+    /// サイズアップが必要な場合 true（次フレームで grow() を呼ぶ）
+    pub needs_grow: bool,
+}
+
+impl GlyphAtlas {
+    /// 起動時の初期テクスチャサイズ: 1024×1024 = 4MB（節約のため小さく開始）
+    const SIZE_INIT: u32 = 1024;
+    /// テクスチャの最大サイズ: 2048×2048 = 16MB
+    const SIZE_MAX: u32 = 2048;
+
+    pub fn new(device: &wgpu::Device) -> Self {
+        Self::with_size(device, Self::SIZE_INIT)
+    }
+
+    /// 指定サイズでアトラスを生成する（動的拡張用）
+    pub fn with_size(device: &wgpu::Device, size: u32) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("glyph_atlas"),
+            size: wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("glyph_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        Self {
+            texture,
+            view,
+            sampler,
+            size,
+            cursor_x: 0,
+            cursor_y: 0,
+            row_height: 0,
+            cache: HashMap::new(),
+            cleared_this_frame: false,
+            needs_grow: false,
+        }
+    }
+
+    /// アトラスを拡張する（サイズを 2 倍にするか、最大サイズですでにあればリセット）。
+    /// 呼び出し後は UV キャッシュが無効になるため cleared_this_frame が true になる。
+    pub fn grow(self, device: &wgpu::Device) -> Self {
+        let new_size = (self.size * 2).min(Self::SIZE_MAX);
+        if new_size > self.size {
+            tracing::debug!("GlyphAtlas 拡張: {}→{}", self.size, new_size);
+        }
+        // キャッシュは無効化されるため新しいアトラスを作成する
+        let mut atlas = Self::with_size(device, new_size);
+        atlas.cleared_this_frame = true;
+        atlas
+    }
+
+    /// グリフをアトラスに追加する（既存なら再利用）
+    pub fn get_or_insert(
+        &mut self,
+        key: GlyphKey,
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+        queue: &wgpu::Queue,
+    ) -> GlyphRect {
+        if let Some(rect) = self.cache.get(&key) {
+            return *rect;
+        }
+
+        // 行末で折り返し
+        if self.cursor_x + width > self.size {
+            self.cursor_y += self.row_height + 1;
+            self.cursor_x = 0;
+            self.row_height = 0;
+        }
+
+        // アトラスが満杯の場合: サイズが MAX 未満なら拡張シグナルを立てる。
+        // 最大サイズの場合はキャッシュをリセットして原点から再開する。
+        // cleared_this_frame = true をセットし、次フレームでの再描画を促す。
+        // これにより「クリア前に書いたUV」と「クリア後に上書きされた内容」の
+        // 不整合（グリフ化け）を防ぐ。
+        if self.cursor_y + height > self.size {
+            self.cursor_x = 0;
+            self.cursor_y = 0;
+            self.row_height = 0;
+            self.cache.clear();
+            self.cleared_this_frame = true;
+            if self.size < Self::SIZE_MAX {
+                // 次フレームで grow() を呼んでテクスチャを拡張する
+                self.needs_grow = true;
+            }
+        }
+
+        // テクスチャへ書き込む
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &self.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: self.cursor_x,
+                    y: self.cursor_y,
+                    z: 0,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            pixels,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let s = self.size as f32;
+        let rect = GlyphRect {
+            uv_min: [self.cursor_x as f32 / s, self.cursor_y as f32 / s],
+            uv_max: [
+                (self.cursor_x + width) as f32 / s,
+                (self.cursor_y + height) as f32 / s,
+            ],
+            width,
+            height,
+        };
+
+        self.cursor_x += width + 1;
+        self.row_height = self.row_height.max(height);
+        self.cache.insert(key, rect);
+        rect
+    }
+}

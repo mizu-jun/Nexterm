@@ -4,13 +4,19 @@
 //!   1. ターミナルセルの背景色を頂点バッファで描画（カラーパス）
 //!   2. cosmic-text でグリフをラスタライズし、グリフアトラスに書き込む
 //!   3. グリフアトラスからサンプリングしてテキストを描画（テキストパス）
+//!
+//! サブモジュール:
+//! - `glyph_atlas`  — GlyphAtlas + 頂点型 (BgVertex, TextVertex)
+//! - `shaders`      — WGSL シェーダー定数
+//! - `color_util`   — ANSI 色変換・16 進カラー解析
+//! - `key_map`      — winit ↔ proto キーコード変換
+//! - `vertex_util`  — 頂点バッファ生成ヘルパー
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use bytemuck::{Pod, Zeroable};
 use nexterm_config::{Config, StatusBarEvaluator};
 use unicode_width::UnicodeWidthChar;
 use nexterm_proto::ClientToServer;
@@ -31,216 +37,69 @@ use crate::{
     state::{ClientState, ContextMenu, ContextMenuAction},
 };
 
-// ---- 頂点型 ----
+// サブモジュールは main.rs で宣言済み（crate ルート）
+use crate::glyph_atlas::{BgVertex, GlyphAtlas, GlyphKey, TextVertex};
+use crate::shaders::{BG_SHADER, IMAGE_SHADER, TEXT_SHADER};
+use crate::color_util::{ansi_256_to_rgb, hex_to_rgba, resolve_color};
+use crate::key_map::{config_key_matches, physical_to_proto_key, proto_modifiers, winit_code_to_char};
+use crate::vertex_util::{
+    add_char_verts, add_px_rect, add_rect_verts, add_string_verts, grid_to_text, open_url,
+};
 
-/// 背景矩形用の頂点（位置 + 色）
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct BgVertex {
-    /// NDC 座標 [-1, 1]
-    position: [f32; 2],
-    /// RGBA 色 [0, 1]
-    color: [f32; 4],
-}
+// ---- シェーダーファイル監視 ----
 
-/// テキスト用の頂点（位置 + UV + 色）
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct TextVertex {
-    position: [f32; 2],
-    uv: [f32; 2],
-    color: [f32; 4],
-}
+/// カスタムシェーダーファイルを監視するウォッチャーを起動する。
+///
+/// 設定にシェーダーパスがある場合のみ監視を開始する。
+/// ファイルが変更されると `()` を受信チャネルに送信する。
+fn start_shader_watcher(
+    gpu_cfg: &nexterm_config::GpuConfig,
+) -> (Option<tokio::sync::mpsc::Receiver<()>>, Option<notify::RecommendedWatcher>) {
+    use notify::{Event, RecursiveMode, Watcher};
 
-// ---- グリフアトラス ----
+    let paths: Vec<std::path::PathBuf> = [
+        gpu_cfg.custom_bg_shader.as_deref(),
+        gpu_cfg.custom_text_shader.as_deref(),
+    ]
+    .iter()
+    .flatten()
+    .map(|p| std::path::PathBuf::from(shellexpand::tilde(p).as_ref()))
+    .filter(|p| p.exists())
+    .collect();
 
-/// グリフキャッシュのキー
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct GlyphKey {
-    ch: char,
-    bold: bool,
-    italic: bool,
-    wide: bool,
-}
-
-/// グリフアトラス内の矩形
-#[derive(Debug, Clone, Copy)]
-struct GlyphRect {
-    /// アトラス内の UV 座標（左上・右下）
-    uv_min: [f32; 2],
-    uv_max: [f32; 2],
-    /// グリフのピクセルサイズ
-    #[allow(dead_code)]
-    width: u32,
-    #[allow(dead_code)]
-    height: u32,
-}
-
-/// グリフアトラス（全グリフを 1 枚のテクスチャに詰め込む）
-struct GlyphAtlas {
-    texture: wgpu::Texture,
-    view: wgpu::TextureView,
-    sampler: wgpu::Sampler,
-    /// アトラスの寸法（正方形）
-    size: u32,
-    /// 次に書き込む列
-    cursor_x: u32,
-    /// 次に書き込む行の Y 座標
-    cursor_y: u32,
-    /// 現在行の最大高さ
-    row_height: u32,
-    /// キャッシュ済みグリフ
-    cache: HashMap<GlyphKey, GlyphRect>,
-    /// フレーム内でアトラスをリセットした場合 true
-    /// 次フレームで再描画が必要なことを示す（UV 不整合防止）
-    cleared_this_frame: bool,
-    /// サイズアップが必要な場合 true（次フレームで grow() を呼ぶ）
-    needs_grow: bool,
-}
-
-impl GlyphAtlas {
-    /// 起動時の初期テクスチャサイズ: 1024×1024 = 4MB（節約のため小さく開始）
-    const SIZE_INIT: u32 = 1024;
-    /// テクスチャの最大サイズ: 2048×2048 = 16MB
-    const SIZE_MAX: u32 = 2048;
-
-    fn new(device: &wgpu::Device) -> Self {
-        Self::with_size(device, Self::SIZE_INIT)
+    if paths.is_empty() {
+        return (None, None);
     }
 
-    /// 指定サイズでアトラスを生成する（動的拡張用）
-    fn with_size(device: &wgpu::Device, size: u32) -> Self {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("glyph_atlas"),
-            size: wgpu::Extent3d {
-                width: size,
-                height: size,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
+    let (tx, rx) = tokio::sync::mpsc::channel::<()>(1);
 
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("glyph_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-
-        Self {
-            texture,
-            view,
-            sampler,
-            size,
-            cursor_x: 0,
-            cursor_y: 0,
-            row_height: 0,
-            cache: HashMap::new(),
-            cleared_this_frame: false,
-            needs_grow: false,
-        }
-    }
-
-    /// アトラスを拡張する（サイズを 2 倍にするか、最大サイズですでにあればリセット）。
-    /// 呼び出し後は UV キャッシュが無効になるため cleared_this_frame が true になる。
-    fn grow(self, device: &wgpu::Device) -> Self {
-        let new_size = (self.size * 2).min(Self::SIZE_MAX);
-        if new_size > self.size {
-            tracing::debug!("GlyphAtlas 拡張: {}→{}", self.size, new_size);
-        }
-        // キャッシュは無効化されるため新しいアトラスを作成する
-        let mut atlas = Self::with_size(device, new_size);
-        atlas.cleared_this_frame = true;
-        atlas
-    }
-
-    /// グリフをアトラスに追加する（既存なら再利用）
-    fn get_or_insert(
-        &mut self,
-        key: GlyphKey,
-        pixels: &[u8],
-        width: u32,
-        height: u32,
-        queue: &wgpu::Queue,
-    ) -> GlyphRect {
-        if let Some(rect) = self.cache.get(&key) {
-            return *rect;
-        }
-
-        // 行末で折り返し
-        if self.cursor_x + width > self.size {
-            self.cursor_y += self.row_height + 1;
-            self.cursor_x = 0;
-            self.row_height = 0;
-        }
-
-        // アトラスが満杯の場合: サイズが MAX 未満なら拡張シグナルを立てる。
-        // 最大サイズの場合はキャッシュをリセットして原点から再開する。
-        // cleared_this_frame = true をセットし、次フレームでの再描画を促す。
-        // これにより「クリア前に書いたUV」と「クリア後に上書きされた内容」の
-        // 不整合（グリフ化け）を防ぐ。
-        if self.cursor_y + height > self.size {
-            self.cursor_x = 0;
-            self.cursor_y = 0;
-            self.row_height = 0;
-            self.cache.clear();
-            self.cleared_this_frame = true;
-            if self.size < Self::SIZE_MAX {
-                // 次フレームで grow() を呼んでテクスチャを拡張する
-                self.needs_grow = true;
+    let mut watcher = match notify::recommended_watcher(
+        move |result: notify::Result<Event>| {
+            if let Ok(event) = result {
+                use notify::EventKind::*;
+                if matches!(event.kind, Modify(_) | Create(_)) {
+                    info!("シェーダーファイルの変更を検知しました。パイプラインを再構築します。");
+                    let _ = tx.blocking_send(());
+                }
             }
+        },
+    ) {
+        Ok(w) => w,
+        Err(e) => {
+            warn!("シェーダーウォッチャーの起動に失敗しました: {}", e);
+            return (None, None);
         }
+    };
 
-        // テクスチャへ書き込む
-        queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &self.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: self.cursor_x,
-                    y: self.cursor_y,
-                    z: 0,
-                },
-                aspect: wgpu::TextureAspect::All,
-            },
-            pixels,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(width * 4),
-                rows_per_image: None,
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-
-        let s = self.size as f32;
-        let rect = GlyphRect {
-            uv_min: [self.cursor_x as f32 / s, self.cursor_y as f32 / s],
-            uv_max: [
-                (self.cursor_x + width) as f32 / s,
-                (self.cursor_y + height) as f32 / s,
-            ],
-            width,
-            height,
-        };
-
-        self.cursor_x += width + 1;
-        self.row_height = self.row_height.max(height);
-        self.cache.insert(key, rect);
-        rect
+    for path in &paths {
+        if let Err(e) = watcher.watch(path, RecursiveMode::NonRecursive) {
+            warn!("シェーダーファイルの監視に失敗しました: {}: {}", path.display(), e);
+        } else {
+            info!("シェーダーファイルを監視中: {}", path.display());
+        }
     }
+
+    (Some(rx), Some(watcher))
 }
 
 // ---- wgpu コアステート ----
@@ -2766,228 +2625,6 @@ fn build_image_verts(
     (verts, idx)
 }
 
-/// nexterm-proto の Color を RGBA [0, 1] に変換する
-///
-/// `palette` が Some のとき、Color::Default と Color::Indexed(0..15) はスキームの
-/// 色を優先して使用する。
-fn resolve_color(
-    color: &nexterm_proto::Color,
-    is_fg: bool,
-    palette: Option<&nexterm_config::SchemePalette>,
-) -> [f32; 4] {
-    use nexterm_proto::Color;
-    let u8_to_f32 = |v: u8| v as f32 / 255.0;
-    match color {
-        Color::Default => {
-            if let Some(p) = palette {
-                let c = if is_fg { p.fg } else { p.bg };
-                [u8_to_f32(c[0]), u8_to_f32(c[1]), u8_to_f32(c[2]), 1.0]
-            } else if is_fg {
-                [0.85, 0.85, 0.85, 1.0]
-            } else {
-                [0.05, 0.05, 0.05, 1.0]
-            }
-        }
-        Color::Rgb(r, g, b) => {
-            [u8_to_f32(*r), u8_to_f32(*g), u8_to_f32(*b), 1.0]
-        }
-        Color::Indexed(n) => {
-            // ANSI 0-15: スキームパレットを優先する
-            if *n < 16
-                && let Some(p) = palette {
-                    let c = p.ansi[*n as usize];
-                    return [u8_to_f32(c[0]), u8_to_f32(c[1]), u8_to_f32(c[2]), 1.0];
-                }
-            ansi_256_to_rgb(*n)
-        }
-    }
-}
-
-/// ANSI 256 色パレット → RGBA [0, 1]
-fn ansi_256_to_rgb(n: u8) -> [f32; 4] {
-    // 基本 16 色（簡易実装）
-    const BASIC: [[f32; 3]; 16] = [
-        [0.0, 0.0, 0.0],       // 0: black
-        [0.502, 0.0, 0.0],     // 1: red
-        [0.0, 0.502, 0.0],     // 2: green
-        [0.502, 0.502, 0.0],   // 3: yellow
-        [0.0, 0.0, 0.502],     // 4: blue
-        [0.502, 0.0, 0.502],   // 5: magenta
-        [0.0, 0.502, 0.502],   // 6: cyan
-        [0.753, 0.753, 0.753], // 7: white
-        [0.502, 0.502, 0.502], // 8: bright black
-        [1.0, 0.0, 0.0],       // 9: bright red
-        [0.0, 1.0, 0.0],       // 10: bright green
-        [1.0, 1.0, 0.0],       // 11: bright yellow
-        [0.0, 0.0, 1.0],       // 12: bright blue
-        [1.0, 0.0, 1.0],       // 13: bright magenta
-        [0.0, 1.0, 1.0],       // 14: bright cyan
-        [1.0, 1.0, 1.0],       // 15: bright white
-    ];
-
-    if (n as usize) < BASIC.len() {
-        let c = BASIC[n as usize];
-        return [c[0], c[1], c[2], 1.0];
-    }
-
-    // 216 色キューブ（16〜231）
-    if (16..=231).contains(&n) {
-        let idx = n - 16;
-        let b = (idx % 6) as f32 / 5.0;
-        let g = ((idx / 6) % 6) as f32 / 5.0;
-        let r = ((idx / 36) % 6) as f32 / 5.0;
-        return [r, g, b, 1.0];
-    }
-
-    // グレースケール（232〜255）
-    let grey = (n - 232) as f32 / 23.0;
-    [grey, grey, grey, 1.0]
-}
-
-// ---- シェーダーファイル監視 ----
-
-/// カスタムシェーダーファイルを監視するウォッチャーを起動する。
-///
-/// 設定にシェーダーパスがある場合のみ監視を開始する。
-/// ファイルが変更されると `()` を受信チャネルに送信する。
-fn start_shader_watcher(
-    gpu_cfg: &nexterm_config::GpuConfig,
-) -> (Option<tokio::sync::mpsc::Receiver<()>>, Option<notify::RecommendedWatcher>) {
-    use notify::{Event, RecursiveMode, Watcher};
-
-    // 監視対象ファイルを収集する
-    let paths: Vec<std::path::PathBuf> = [
-        gpu_cfg.custom_bg_shader.as_deref(),
-        gpu_cfg.custom_text_shader.as_deref(),
-    ]
-    .iter()
-    .flatten()
-    .map(|p| std::path::PathBuf::from(shellexpand::tilde(p).as_ref()))
-    .filter(|p| p.exists())
-    .collect();
-
-    if paths.is_empty() {
-        return (None, None);
-    }
-
-    let (tx, rx) = tokio::sync::mpsc::channel::<()>(1);
-
-    let mut watcher = match notify::recommended_watcher(
-        move |result: notify::Result<Event>| {
-            if let Ok(event) = result {
-                use notify::EventKind::*;
-                if matches!(event.kind, Modify(_) | Create(_)) {
-                    info!("シェーダーファイルの変更を検知しました。パイプラインを再構築します。");
-                    let _ = tx.blocking_send(());
-                }
-            }
-        },
-    ) {
-        Ok(w) => w,
-        Err(e) => {
-            warn!("シェーダーウォッチャーの起動に失敗しました: {}", e);
-            return (None, None);
-        }
-    };
-
-    for path in &paths {
-        if let Err(e) = watcher.watch(path, RecursiveMode::NonRecursive) {
-            warn!("シェーダーファイルの監視に失敗しました: {}: {}", path.display(), e);
-        } else {
-            info!("シェーダーファイルを監視中: {}", path.display());
-        }
-    }
-
-    (Some(rx), Some(watcher))
-}
-
-// ---- WGSL シェーダー ----
-
-const BG_SHADER: &str = r#"
-struct VertexInput {
-    @location(0) position: vec2<f32>,
-    @location(1) color: vec4<f32>,
-}
-
-struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0) color: vec4<f32>,
-}
-
-@vertex
-fn vs_main(in: VertexInput) -> VertexOutput {
-    var out: VertexOutput;
-    out.clip_position = vec4<f32>(in.position, 0.0, 1.0);
-    out.color = in.color;
-    return out;
-}
-
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return in.color;
-}
-"#;
-
-/// 画像レンダリング用シェーダー（テクスチャ RGBA をそのまま出力）
-const IMAGE_SHADER: &str = r#"
-struct VertexInput {
-    @location(0) position: vec2<f32>,
-    @location(1) uv: vec2<f32>,
-    @location(2) color: vec4<f32>,
-}
-struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-    @location(1) color: vec4<f32>,
-}
-@group(0) @binding(0) var img_texture: texture_2d<f32>;
-@group(0) @binding(1) var img_sampler: sampler;
-@vertex
-fn vs_main(in: VertexInput) -> VertexOutput {
-    var out: VertexOutput;
-    out.clip_position = vec4<f32>(in.position, 0.0, 1.0);
-    out.uv = in.uv;
-    out.color = in.color;
-    return out;
-}
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return textureSample(img_texture, img_sampler, in.uv);
-}
-"#;
-
-const TEXT_SHADER: &str = r#"
-struct VertexInput {
-    @location(0) position: vec2<f32>,
-    @location(1) uv: vec2<f32>,
-    @location(2) color: vec4<f32>,
-}
-
-struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-    @location(1) color: vec4<f32>,
-}
-
-@group(0) @binding(0) var glyph_texture: texture_2d<f32>;
-@group(0) @binding(1) var glyph_sampler: sampler;
-
-@vertex
-fn vs_main(in: VertexInput) -> VertexOutput {
-    var out: VertexOutput;
-    out.clip_position = vec4<f32>(in.position, 0.0, 1.0);
-    out.uv = in.uv;
-    out.color = in.color;
-    return out;
-}
-
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let alpha = textureSample(glyph_texture, glyph_sampler, in.uv).a;
-    return vec4<f32>(in.color.rgb, in.color.a * alpha);
-}
-"#;
-
 // ---- アプリケーション本体 ----
 
 /// Windows 11 の Acrylic（すりガラス）効果をウィンドウに適用する
@@ -5110,101 +4747,6 @@ impl EventHandler {
     }
 }
 
-/// winit の物理キーを nexterm_proto の KeyCode に変換する
-fn physical_to_proto_key(key: PhysicalKey, mods: ModifiersState) -> Option<ProtoKeyCode> {
-    let ctrl = mods.control_key();
-    let PhysicalKey::Code(code) = key else { return None };
-
-    match code {
-        WKeyCode::Enter => Some(ProtoKeyCode::Enter),
-        WKeyCode::Backspace => Some(ProtoKeyCode::Backspace),
-        WKeyCode::Delete => Some(ProtoKeyCode::Delete),
-        WKeyCode::Escape => Some(ProtoKeyCode::Escape),
-        WKeyCode::Tab => {
-            if mods.shift_key() {
-                Some(ProtoKeyCode::BackTab)
-            } else {
-                Some(ProtoKeyCode::Tab)
-            }
-        }
-        WKeyCode::ArrowUp => Some(ProtoKeyCode::Up),
-        WKeyCode::ArrowDown => Some(ProtoKeyCode::Down),
-        WKeyCode::ArrowLeft => Some(ProtoKeyCode::Left),
-        WKeyCode::ArrowRight => Some(ProtoKeyCode::Right),
-        WKeyCode::Home => Some(ProtoKeyCode::Home),
-        WKeyCode::End => Some(ProtoKeyCode::End),
-        WKeyCode::PageUp => Some(ProtoKeyCode::PageUp),
-        WKeyCode::PageDown => Some(ProtoKeyCode::PageDown),
-        WKeyCode::Insert => Some(ProtoKeyCode::Insert),
-        WKeyCode::F1 => Some(ProtoKeyCode::F(1)),
-        WKeyCode::F2 => Some(ProtoKeyCode::F(2)),
-        WKeyCode::F3 => Some(ProtoKeyCode::F(3)),
-        WKeyCode::F4 => Some(ProtoKeyCode::F(4)),
-        WKeyCode::F5 => Some(ProtoKeyCode::F(5)),
-        WKeyCode::F6 => Some(ProtoKeyCode::F(6)),
-        WKeyCode::F7 => Some(ProtoKeyCode::F(7)),
-        WKeyCode::F8 => Some(ProtoKeyCode::F(8)),
-        WKeyCode::F9 => Some(ProtoKeyCode::F(9)),
-        WKeyCode::F10 => Some(ProtoKeyCode::F(10)),
-        WKeyCode::F11 => Some(ProtoKeyCode::F(11)),
-        WKeyCode::F12 => Some(ProtoKeyCode::F(12)),
-        // Ctrl+文字: text が None のケース（OS がテキストを生成しない場合）
-        c if ctrl => winit_code_to_char(c).map(ProtoKeyCode::Char),
-        _ => None,
-    }
-}
-
-/// winit のキーコードを英小文字に変換する（Ctrl シーケンス用）
-fn winit_code_to_char(code: WKeyCode) -> Option<char> {
-    match code {
-        WKeyCode::KeyA => Some('a'),
-        WKeyCode::KeyB => Some('b'),
-        WKeyCode::KeyC => Some('c'),
-        WKeyCode::KeyD => Some('d'),
-        WKeyCode::KeyE => Some('e'),
-        WKeyCode::KeyF => Some('f'),
-        WKeyCode::KeyG => Some('g'),
-        WKeyCode::KeyH => Some('h'),
-        WKeyCode::KeyI => Some('i'),
-        WKeyCode::KeyJ => Some('j'),
-        WKeyCode::KeyK => Some('k'),
-        WKeyCode::KeyL => Some('l'),
-        WKeyCode::KeyM => Some('m'),
-        WKeyCode::KeyN => Some('n'),
-        WKeyCode::KeyO => Some('o'),
-        WKeyCode::KeyP => Some('p'),
-        WKeyCode::KeyQ => Some('q'),
-        WKeyCode::KeyR => Some('r'),
-        WKeyCode::KeyS => Some('s'),
-        WKeyCode::KeyT => Some('t'),
-        WKeyCode::KeyU => Some('u'),
-        WKeyCode::KeyV => Some('v'),
-        WKeyCode::KeyW => Some('w'),
-        WKeyCode::KeyX => Some('x'),
-        WKeyCode::KeyY => Some('y'),
-        WKeyCode::KeyZ => Some('z'),
-        _ => None,
-    }
-}
-
-/// winit の ModifiersState を nexterm_proto の Modifiers に変換する
-fn proto_modifiers(state: ModifiersState) -> nexterm_proto::Modifiers {
-    let mut bits = 0u8;
-    if state.shift_key() {
-        bits |= nexterm_proto::Modifiers::SHIFT;
-    }
-    if state.control_key() {
-        bits |= nexterm_proto::Modifiers::CTRL;
-    }
-    if state.alt_key() {
-        bits |= nexterm_proto::Modifiers::ALT;
-    }
-    if state.super_key() {
-        bits |= nexterm_proto::Modifiers::META;
-    }
-    nexterm_proto::Modifiers(bits)
-}
-
 // wgpu::util のためのインポート
 use wgpu::util::DeviceExt;
 
@@ -5217,332 +4759,3 @@ struct ImageEntry {
     bind_group: wgpu::BindGroup,
 }
 
-// ---- ヘルパー関数 ----
-
-/// ペインのグリッド内容をプレーンテキストに変換する（Ctrl+Shift+C コピー用）
-/// URL をデフォルトブラウザで開く（プラットフォーム対応）
-fn open_url(url: &str) {
-    info!("Opening URL: {}", url);
-    #[cfg(target_os = "windows")]
-    {
-        let _ = std::process::Command::new("cmd")
-            .args(["/c", "start", "", url])
-            .spawn();
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let _ = std::process::Command::new("open").arg(url).spawn();
-    }
-    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
-    {
-        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
-    }
-}
-
-fn grid_to_text(pane: &crate::state::PaneState) -> String {
-    let mut lines = Vec::with_capacity(pane.grid.rows.len());
-    for row in &pane.grid.rows {
-        let line: String = row.iter().map(|c| c.ch).collect();
-        // 行末の空白を除去して返す
-        lines.push(line.trim_end().to_string());
-    }
-    lines.join("\n")
-}
-
-/// `#rrggbb` 形式の16進カラー文字列を `[f32; 4]` RGBA に変換する
-fn hex_to_rgba(hex: &str, alpha: f32) -> [f32; 4] {
-    let hex = hex.trim_start_matches('#');
-    let r = u8::from_str_radix(hex.get(0..2).unwrap_or("80"), 16).unwrap_or(128) as f32 / 255.0;
-    let g = u8::from_str_radix(hex.get(2..4).unwrap_or("80"), 16).unwrap_or(128) as f32 / 255.0;
-    let b = u8::from_str_radix(hex.get(4..6).unwrap_or("80"), 16).unwrap_or(128) as f32 / 255.0;
-    [r, g, b, alpha]
-}
-
-/// NDC 矩形の背景頂点4つを追加する（三角形インデックスも追加）
-fn add_rect_verts(
-    x0: f32, y0: f32, x1: f32, y1: f32,
-    color: [f32; 4],
-    bg_verts: &mut Vec<BgVertex>,
-    bg_idx: &mut Vec<u16>,
-) {
-    let base = bg_verts.len() as u16;
-    bg_verts.extend_from_slice(&[
-        BgVertex { position: [x0, y0], color },
-        BgVertex { position: [x1, y0], color },
-        BgVertex { position: [x1, y1], color },
-        BgVertex { position: [x0, y1], color },
-    ]);
-    bg_idx.extend_from_slice(&[base, base+1, base+2, base, base+2, base+3]);
-}
-
-/// ピクセル矩形を NDC に変換して背景頂点バッファに追加する
-#[allow(clippy::too_many_arguments)]
-fn add_px_rect(
-    px: f32, py: f32, pw: f32, ph: f32,
-    color: [f32; 4],
-    sw: f32, sh: f32,
-    bg_verts: &mut Vec<BgVertex>,
-    bg_idx: &mut Vec<u16>,
-) {
-    let x0 = px / sw * 2.0 - 1.0;
-    let y0 = 1.0 - py / sh * 2.0;
-    let x1 = (px + pw) / sw * 2.0 - 1.0;
-    let y1 = 1.0 - (py + ph) / sh * 2.0;
-    add_rect_verts(x0, y0, x1, y1, color, bg_verts, bg_idx);
-}
-
-/// 1文字をテキスト頂点バッファに追加する
-#[allow(clippy::too_many_arguments)]
-fn add_char_verts(
-    ch: char,
-    px: f32, py: f32,
-    fg: [f32; 4],
-    bold: bool,
-    is_wide: bool,
-    sw: f32, sh: f32,
-    font: &mut FontManager,
-    atlas: &mut GlyphAtlas,
-    queue: &wgpu::Queue,
-    text_verts: &mut Vec<TextVertex>,
-    text_idx: &mut Vec<u16>,
-) {
-    if ch == ' ' {
-        return;
-    }
-    // 全角文字フラグを正しく設定してグリフアトラスのキャッシュキーを一致させる
-    let key = GlyphKey { ch, bold, italic: false, wide: is_wide };
-    let fg_u8 = [
-        (fg[0] * 255.0) as u8,
-        (fg[1] * 255.0) as u8,
-        (fg[2] * 255.0) as u8,
-        255u8,
-    ];
-    let (gw, gh, pixels) = font.rasterize_char(ch, bold, false, fg_u8, is_wide);
-    if gw == 0 || gh == 0 || pixels.is_empty() {
-        return;
-    }
-    let rect = atlas.get_or_insert(key, &pixels, gw, gh, queue);
-    let tx0 = px / sw * 2.0 - 1.0;
-    let ty0 = 1.0 - py / sh * 2.0;
-    let tx1 = (px + gw as f32) / sw * 2.0 - 1.0;
-    let ty1 = 1.0 - (py + gh as f32) / sh * 2.0;
-    let base = text_verts.len() as u16;
-    text_verts.extend_from_slice(&[
-        TextVertex { position: [tx0, ty0], uv: rect.uv_min, color: fg },
-        TextVertex { position: [tx1, ty0], uv: [rect.uv_max[0], rect.uv_min[1]], color: fg },
-        TextVertex { position: [tx1, ty1], uv: rect.uv_max, color: fg },
-        TextVertex { position: [tx0, ty1], uv: [rect.uv_min[0], rect.uv_max[1]], color: fg },
-    ]);
-    text_idx.extend_from_slice(&[base, base+1, base+2, base, base+2, base+3]);
-}
-
-/// 文字列をテキスト頂点バッファに追加する
-///
-/// Unicode 文字幅（全角=2, 半角=1）を考慮して正しいピクセル位置に各グリフを配置する。
-/// 日本語・中国語・韓国語などの全角文字も正しく描画される。
-#[allow(clippy::too_many_arguments)]
-fn add_string_verts(
-    text: &str,
-    px: f32, py: f32,
-    fg: [f32; 4],
-    bold: bool,
-    sw: f32, sh: f32,
-    cell_w: f32,
-    font: &mut FontManager,
-    atlas: &mut GlyphAtlas,
-    queue: &wgpu::Queue,
-    text_verts: &mut Vec<TextVertex>,
-    text_idx: &mut Vec<u16>,
-) {
-    let mut x_offset = 0.0f32;
-    for ch in text.chars() {
-        // Unicode 幅（全角=2, 半角=1）を取得して文字送り量を決定する
-        let char_display_width = UnicodeWidthChar::width(ch).unwrap_or(1);
-        let is_wide = char_display_width >= 2;
-        add_char_verts(
-            ch, px + x_offset, py, fg, bold, is_wide,
-            sw, sh, font, atlas, queue, text_verts, text_idx,
-        );
-        x_offset += char_display_width as f32 * cell_w;
-    }
-}
-
-/// 設定キー文字列（例: "ctrl+shift+p", "ctrl+b d"）と winit キーイベントを照合する
-///
-/// フォーマット: 修飾キー（ctrl/shift/alt/meta）と最終キー文字を `+` で区切る。
-/// スペース区切りのプレフィックス（tmux 風: "ctrl+b d"）は先頭の修飾シーケンス + 末尾の単一文字として扱う。
-fn config_key_matches(key_str: &str, code: WKeyCode, mods: ModifiersState) -> bool {
-    // スペース区切りで最後のトークンをメインキーとして扱う（tmux プレフィックス互換は未実装 → 最後トークンのみ比較）
-    let last_token = key_str.split_whitespace().last().unwrap_or(key_str);
-
-    // `+` で分割して修飾キーとメインキーを取得する
-    let parts: Vec<&str> = last_token.split('+').collect();
-    if parts.is_empty() {
-        return false;
-    }
-
-    let mut need_ctrl = false;
-    let mut need_shift = false;
-    let mut need_alt = false;
-    let mut need_meta = false;
-    let main_key = parts.last().expect("parts は split() で少なくとも1要素ある");
-
-    for part in &parts[..parts.len() - 1] {
-        match part.to_lowercase().as_str() {
-            "ctrl" | "control" => need_ctrl = true,
-            "shift" => need_shift = true,
-            "alt" | "option" => need_alt = true,
-            "meta" | "super" | "cmd" | "command" => need_meta = true,
-            _ => {}
-        }
-    }
-
-    // 修飾キーが一致しなければ false
-    if need_ctrl != mods.control_key() { return false; }
-    if need_shift != mods.shift_key() { return false; }
-    if need_alt != mods.alt_key() { return false; }
-    if need_meta != mods.super_key() { return false; }
-
-    // メインキー文字列を winit KeyCode に変換して比較する
-    key_str_to_keycode(main_key) == Some(code)
-}
-
-/// キー文字列を winit の KeyCode に変換する（簡易実装）
-fn key_str_to_keycode(s: &str) -> Option<WKeyCode> {
-    // 1 文字の場合は英数字として処理する
-    if s.len() == 1 {
-        let ch = s.chars().next().expect("s.len() == 1 なので必ず1文字ある");
-        return char_to_keycode(ch);
-    }
-    // 特殊キー名
-    match s.to_lowercase().as_str() {
-        "enter" | "return" => Some(WKeyCode::Enter),
-        "backspace" => Some(WKeyCode::Backspace),
-        "delete" | "del" => Some(WKeyCode::Delete),
-        "escape" | "esc" => Some(WKeyCode::Escape),
-        "tab" => Some(WKeyCode::Tab),
-        "space" => Some(WKeyCode::Space),
-        "up" => Some(WKeyCode::ArrowUp),
-        "down" => Some(WKeyCode::ArrowDown),
-        "left" => Some(WKeyCode::ArrowLeft),
-        "right" => Some(WKeyCode::ArrowRight),
-        "home" => Some(WKeyCode::Home),
-        "end" => Some(WKeyCode::End),
-        "pageup" => Some(WKeyCode::PageUp),
-        "pagedown" => Some(WKeyCode::PageDown),
-        "insert" => Some(WKeyCode::Insert),
-        "f1" => Some(WKeyCode::F1),
-        "f2" => Some(WKeyCode::F2),
-        "f3" => Some(WKeyCode::F3),
-        "f4" => Some(WKeyCode::F4),
-        "f5" => Some(WKeyCode::F5),
-        "f6" => Some(WKeyCode::F6),
-        "f7" => Some(WKeyCode::F7),
-        "f8" => Some(WKeyCode::F8),
-        "f9" => Some(WKeyCode::F9),
-        "f10" => Some(WKeyCode::F10),
-        "f11" => Some(WKeyCode::F11),
-        "f12" => Some(WKeyCode::F12),
-        _ => None,
-    }
-}
-
-/// 1文字を winit の KeyCode に変換する
-fn char_to_keycode(ch: char) -> Option<WKeyCode> {
-    match ch {
-        'a' | 'A' => Some(WKeyCode::KeyA),
-        'b' | 'B' => Some(WKeyCode::KeyB),
-        'c' | 'C' => Some(WKeyCode::KeyC),
-        'd' | 'D' => Some(WKeyCode::KeyD),
-        'e' | 'E' => Some(WKeyCode::KeyE),
-        'f' | 'F' => Some(WKeyCode::KeyF),
-        'g' | 'G' => Some(WKeyCode::KeyG),
-        'h' | 'H' => Some(WKeyCode::KeyH),
-        'i' | 'I' => Some(WKeyCode::KeyI),
-        'j' | 'J' => Some(WKeyCode::KeyJ),
-        'k' | 'K' => Some(WKeyCode::KeyK),
-        'l' | 'L' => Some(WKeyCode::KeyL),
-        'm' | 'M' => Some(WKeyCode::KeyM),
-        'n' | 'N' => Some(WKeyCode::KeyN),
-        'o' | 'O' => Some(WKeyCode::KeyO),
-        'p' | 'P' => Some(WKeyCode::KeyP),
-        'q' | 'Q' => Some(WKeyCode::KeyQ),
-        'r' | 'R' => Some(WKeyCode::KeyR),
-        's' | 'S' => Some(WKeyCode::KeyS),
-        't' | 'T' => Some(WKeyCode::KeyT),
-        'u' | 'U' => Some(WKeyCode::KeyU),
-        'v' | 'V' => Some(WKeyCode::KeyV),
-        'w' | 'W' => Some(WKeyCode::KeyW),
-        'x' | 'X' => Some(WKeyCode::KeyX),
-        'y' | 'Y' => Some(WKeyCode::KeyY),
-        'z' | 'Z' => Some(WKeyCode::KeyZ),
-        '0' => Some(WKeyCode::Digit0),
-        '1' => Some(WKeyCode::Digit1),
-        '2' => Some(WKeyCode::Digit2),
-        '3' => Some(WKeyCode::Digit3),
-        '4' => Some(WKeyCode::Digit4),
-        '5' => Some(WKeyCode::Digit5),
-        '6' => Some(WKeyCode::Digit6),
-        '7' => Some(WKeyCode::Digit7),
-        '8' => Some(WKeyCode::Digit8),
-        '9' => Some(WKeyCode::Digit9),
-        '%' => Some(WKeyCode::Digit5),    // Shift+5 = %
-        '"' => Some(WKeyCode::Quote),
-        '\'' => Some(WKeyCode::Quote),
-        '[' => Some(WKeyCode::BracketLeft),
-        ']' => Some(WKeyCode::BracketRight),
-        '\\' => Some(WKeyCode::Backslash),
-        '/' => Some(WKeyCode::Slash),
-        '-' => Some(WKeyCode::Minus),
-        '=' => Some(WKeyCode::Equal),
-        ',' => Some(WKeyCode::Comma),
-        '.' => Some(WKeyCode::Period),
-        ';' => Some(WKeyCode::Semicolon),
-        '`' => Some(WKeyCode::Backquote),
-        _ => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ansi256_基本16色が変換できる() {
-        let black = ansi_256_to_rgb(0);
-        assert_eq!(black, [0.0, 0.0, 0.0, 1.0]);
-        let white = ansi_256_to_rgb(15);
-        assert_eq!(white, [1.0, 1.0, 1.0, 1.0]);
-    }
-
-    #[test]
-    fn ansi256_グレースケールが変換できる() {
-        let grey = ansi_256_to_rgb(232);
-        assert_eq!(grey, [0.0, 0.0, 0.0, 1.0]);
-        let bright = ansi_256_to_rgb(255);
-        assert_eq!(bright, [1.0, 1.0, 1.0, 1.0]);
-    }
-
-    #[test]
-    fn デフォルト色の解決() {
-        let fg = resolve_color(&nexterm_proto::Color::Default, true, None);
-        assert!(fg[0] > 0.5); // 前景は明るい
-        let bg = resolve_color(&nexterm_proto::Color::Default, false, None);
-        assert!(bg[0] < 0.5); // 背景は暗い
-    }
-
-    #[test]
-    fn hex_to_rgba_変換() {
-        let c = hex_to_rgba("#ae8b2d", 1.0);
-        assert!((c[0] - 0xae as f32 / 255.0).abs() < 1e-3);
-        assert!((c[1] - 0x8b as f32 / 255.0).abs() < 1e-3);
-        assert!((c[2] - 0x2d as f32 / 255.0).abs() < 1e-3);
-        assert_eq!(c[3], 1.0);
-    }
-
-    #[test]
-    fn hex_to_rgba_ハッシュなし() {
-        let c = hex_to_rgba("ffffff", 0.5);
-        assert_eq!(c, [1.0, 1.0, 1.0, 0.5]);
-    }
-}

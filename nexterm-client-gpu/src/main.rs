@@ -4,15 +4,20 @@
 //! nexterm-server のロジックを Tokio タスクとして内部起動し、
 //! 単一プロセスで全機能を提供する。
 
+mod color_util;
 mod connection;
 mod font;
+mod glyph_atlas;
 mod host_manager;
+mod key_map;
 mod macro_picker;
 mod palette;
 mod renderer;
 mod scrollback;
 mod settings_panel;
+mod shaders;
 mod state;
+mod vertex_util;
 
 use anyhow::Result;
 use nexterm_config::{watch_config, ConfigLoader, StatusBarEvaluator};
