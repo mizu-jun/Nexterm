@@ -7,22 +7,32 @@ use serde::{Deserialize, Serialize};
 pub struct Attrs(pub u8);
 
 impl Attrs {
+    /// SGR 1: 太字
     pub const BOLD: u8 = 0b0000_0001;
+    /// SGR 3: イタリック
     pub const ITALIC: u8 = 0b0000_0010;
+    /// SGR 4: アンダーライン
     pub const UNDERLINE: u8 = 0b0000_0100;
+    /// SGR 5: 点滅
     pub const BLINK: u8 = 0b0000_1000;
+    /// SGR 7: 反転表示（前景色と背景色を入れ替え）
     pub const REVERSE: u8 = 0b0001_0000;
+    /// SGR 9: 取り消し線
     pub const STRIKETHROUGH: u8 = 0b0010_0000;
 
+    /// 太字フラグが立っているか確認する
     pub fn is_bold(self) -> bool {
         self.0 & Self::BOLD != 0
     }
+    /// イタリックフラグが立っているか確認する
     pub fn is_italic(self) -> bool {
         self.0 & Self::ITALIC != 0
     }
+    /// アンダーラインフラグが立っているか確認する
     pub fn is_underline(self) -> bool {
         self.0 & Self::UNDERLINE != 0
     }
+    /// 反転表示フラグが立っているか確認する
     pub fn is_reverse(self) -> bool {
         self.0 & Self::REVERSE != 0
     }

@@ -11,14 +11,20 @@ use crate::{DirtyRow, Grid};
 pub struct Modifiers(pub u8);
 
 impl Modifiers {
+    /// Shift キーのビットマスク
     pub const SHIFT: u8 = 0b0001;
+    /// Ctrl キーのビットマスク
     pub const CTRL: u8 = 0b0010;
+    /// Alt / Option キーのビットマスク
     pub const ALT: u8 = 0b0100;
+    /// Meta / Super / Windows キーのビットマスク
     pub const META: u8 = 0b1000;
 
+    /// Ctrl キーが押されているか確認する
     pub fn is_ctrl(self) -> bool {
         self.0 & Self::CTRL != 0
     }
+    /// Shift キーが押されているか確認する
     pub fn is_shift(self) -> bool {
         self.0 & Self::SHIFT != 0
     }
@@ -31,20 +37,35 @@ pub enum KeyCode {
     Char(char),
     /// ファンクションキー F1〜F12
     F(u8),
+    /// Enter / Return キー
     Enter,
+    /// Backspace キー
     Backspace,
+    /// Delete キー
     Delete,
+    /// Escape キー
     Escape,
+    /// Tab キー
     Tab,
+    /// Shift+Tab（逆方向タブ）
     BackTab,
+    /// 上矢印キー
     Up,
+    /// 下矢印キー
     Down,
+    /// 左矢印キー
     Left,
+    /// 右矢印キー
     Right,
+    /// Home キー
     Home,
+    /// End キー
     End,
+    /// Page Up キー
     PageUp,
+    /// Page Down キー
     PageDown,
+    /// Insert キー
     Insert,
 }
 
@@ -52,13 +73,26 @@ pub enum KeyCode {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ClientToServer {
     /// キー入力イベント
-    KeyEvent { code: KeyCode, modifiers: Modifiers },
+    KeyEvent {
+        /// 押されたキー
+        code: KeyCode,
+        /// 同時に押された修飾キー
+        modifiers: Modifiers,
+    },
     /// 端末サイズ変更
-    Resize { cols: u16, rows: u16 },
+    Resize {
+        /// 新しい列数
+        cols: u16,
+        /// 新しい行数
+        rows: u16,
+    },
     /// セッションからデタッチ（クライアント終了）
     Detach,
     /// セッション名を指定してアタッチ
-    Attach { session_name: String },
+    Attach {
+        /// アタッチ先セッション名
+        session_name: String,
+    },
     /// ペイン作成（垂直分割）
     SplitVertical,
     /// ペイン作成（水平分割）
@@ -68,30 +102,50 @@ pub enum ClientToServer {
     /// 前のペインにフォーカス移動
     FocusPrevPane,
     /// 指定 ID のペインにフォーカスを移動する（クリック操作など）
-    FocusPane { pane_id: u32 },
+    FocusPane {
+        /// フォーカス先のペイン ID
+        pane_id: u32,
+    },
     /// テキストをフォーカスペインにペーストする
-    PasteText { text: String },
+    PasteText {
+        /// ペーストするテキスト
+        text: String,
+    },
     /// 接続確認
     Ping,
     /// セッション一覧を取得する（アタッチなし）
     ListSessions,
     /// セッションを強制終了する
-    KillSession { name: String },
+    KillSession {
+        /// 終了するセッション名
+        name: String,
+    },
     /// セッション録音を開始する
     StartRecording {
+        /// 録音対象セッション名
         session_name: String,
+        /// 録音ファイルの出力パス
         output_path: String,
     },
     /// セッション録音を停止する
-    StopRecording { session_name: String },
+    StopRecording {
+        /// 停止するセッション名
+        session_name: String,
+    },
     /// フォーカスペインを閉じる
     ClosePane,
     /// フォーカスペインの分割比率を変更する（正: 広げる、負: 縮める）
-    ResizeSplit { delta: f32 },
+    ResizeSplit {
+        /// サイズ変更量（0.0〜1.0 の割合、正=拡大、負=縮小）
+        delta: f32,
+    },
     /// SSH 接続（設定済みホスト名を指定）
     ConnectSsh {
+        /// 接続先ホスト名または IP アドレス
         host: String,
+        /// SSH ポート番号（通常 22）
         port: u16,
+        /// ログインユーザー名
         username: String,
         /// 認証方式: "password", "key", "agent"
         auth_type: String,
@@ -112,36 +166,70 @@ pub enum ClientToServer {
     /// 新しいウィンドウを作成する
     NewWindow,
     /// 指定ウィンドウを閉じる（最後のウィンドウは閉じられない）
-    CloseWindow { window_id: u32 },
+    CloseWindow {
+        /// 閉じるウィンドウの ID
+        window_id: u32,
+    },
     /// 指定ウィンドウにフォーカスを移動する
-    FocusWindow { window_id: u32 },
+    FocusWindow {
+        /// フォーカスするウィンドウ ID
+        window_id: u32,
+    },
     /// 指定ウィンドウをリネームする
-    RenameWindow { window_id: u32, name: String },
+    RenameWindow {
+        /// リネームするウィンドウ ID
+        window_id: u32,
+        /// 新しいウィンドウ名
+        name: String,
+    },
     /// ブロードキャストモードを設定する（true: 全ペインに入力、false: フォーカスペインのみ）
-    SetBroadcast { enabled: bool },
+    SetBroadcast {
+        /// true = 全ペインに入力、false = フォーカスペインのみ
+        enabled: bool,
+    },
     /// ペイン番号オーバーレイを表示/非表示
-    DisplayPanes { show: bool },
+    DisplayPanes {
+        /// true = オーバーレイを表示
+        show: bool,
+    },
     /// asciicast v2 形式での録画を開始する
     StartAsciicast {
+        /// 録画対象セッション名
         session_name: String,
+        /// asciicast ファイルの出力パス
         output_path: String,
     },
     /// asciicast v2 形式での録画を停止する
-    StopAsciicast { session_name: String },
+    StopAsciicast {
+        /// 停止するセッション名
+        session_name: String,
+    },
     /// レイアウトテンプレートを保存する
-    SaveTemplate { name: String },
+    SaveTemplate {
+        /// 保存するテンプレート名
+        name: String,
+    },
     /// レイアウトテンプレートを読み込んで適用する
-    LoadTemplate { name: String },
+    LoadTemplate {
+        /// 読み込むテンプレート名
+        name: String,
+    },
     /// 保存済みテンプレートの一覧を取得する
     ListTemplates,
     /// フォーカスペインをウィンドウ全体にズーム（トグル）
     ToggleZoom,
     /// フォーカスペインと指定ペインを入れ替える（BSP ツリー内の ID swap）
-    SwapPane { target_pane_id: u32 },
+    SwapPane {
+        /// 入れ替え先のペイン ID
+        target_pane_id: u32,
+    },
     /// フォーカスペインを新しいウィンドウとして切り離す
     BreakPane,
     /// フォーカスペインを指定ウィンドウに移動する
-    JoinPane { target_window_id: u32 },
+    JoinPane {
+        /// 移動先ウィンドウ ID
+        target_window_id: u32,
+    },
     /// SFTP アップロード: ローカルファイルをリモートに転送する
     SftpUpload {
         /// 接続先 SSH ホスト設定名（config.hosts のエントリ名）
@@ -182,19 +270,35 @@ pub enum ClientToServer {
         motion: bool,
     },
     /// レイアウトモードを設定する（"bsp" または "tiling"）
-    SetLayoutMode { mode: String },
+    SetLayoutMode {
+        /// レイアウトモード文字列（"bsp" または "tiling"）
+        mode: String,
+    },
     /// フローティングペインを開く（Ctrl+B f）
     OpenFloatingPane,
     /// フローティングペインを閉じる
-    CloseFloatingPane { pane_id: u32 },
+    CloseFloatingPane {
+        /// 閉じるフローティングペイン ID
+        pane_id: u32,
+    },
     /// フローティングペインを移動する（マウスドラッグ）
     MoveFloatingPane {
+        /// 移動するフローティングペイン ID
         pane_id: u32,
+        /// 新しい列方向オフセット（0始まり）
         col_off: u16,
+        /// 新しい行方向オフセット（0始まり）
         row_off: u16,
     },
     /// フローティングペインをリサイズする
-    ResizeFloatingPane { pane_id: u32, cols: u16, rows: u16 },
+    ResizeFloatingPane {
+        /// リサイズするフローティングペイン ID
+        pane_id: u32,
+        /// 新しい列数
+        cols: u16,
+        /// 新しい行数
+        rows: u16,
+    },
     /// シリアルポートに接続する
     ConnectSerial {
         /// デバイスパス（例: "/dev/ttyUSB0", "COM3"）
@@ -226,13 +330,17 @@ fn default_parity() -> String {
 /// ペインのレイアウト情報（グリッド座標系）
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaneLayout {
+    /// ペインの一意 ID
     pub pane_id: u32,
     /// ウィンドウ内の列オフセット（0 始まり）
     pub col_offset: u16,
     /// ウィンドウ内の行オフセット（0 始まり）
     pub row_offset: u16,
+    /// ペインの列数（文字単位）
     pub cols: u16,
+    /// ペインの行数（文字単位）
     pub rows: u16,
+    /// このペインがフォーカスを持っているか
     pub is_focused: bool,
 }
 
@@ -245,21 +353,35 @@ pub enum ServerToClient {
         pane_id: u32,
         /// ダーティ行のみ
         dirty_rows: Vec<DirtyRow>,
-        /// カーソル位置
+        /// カーソルの列位置（0始まり）
         cursor_col: u16,
+        /// カーソルの行位置（0始まり）
         cursor_row: u16,
     },
     /// 全画面スナップショット（アタッチ時・再接続時）
-    FullRefresh { pane_id: u32, grid: Grid },
+    FullRefresh {
+        /// 対象ペイン ID
+        pane_id: u32,
+        /// スナップショットグリッド
+        grid: Grid,
+    },
     /// セッション一覧
-    SessionList { sessions: Vec<SessionInfo> },
+    SessionList {
+        /// セッション情報の一覧
+        sessions: Vec<SessionInfo>,
+    },
     /// Ping の応答
     Pong,
     /// エラー通知
-    Error { message: String },
+    Error {
+        /// エラーメッセージ
+        message: String,
+    },
     /// 画像配置通知（Sixel / Kitty プロトコル）
     ImagePlaced {
+        /// 対象ペイン ID
         pane_id: u32,
+        /// 画像の一意 ID（フレーム管理用）
         image_id: u32,
         /// グリッド上の配置列（0始まり）
         col: u16,
@@ -274,45 +396,107 @@ pub enum ServerToClient {
     },
     /// レイアウト変更通知（分割・フォーカス変更・リサイズ時）
     LayoutChanged {
+        /// 全ペインのレイアウト一覧
         panes: Vec<PaneLayout>,
+        /// 現在フォーカスを持つペイン ID
         focused_pane_id: u32,
     },
     /// BEL 通知（\x07 を受信したペインから発行）
-    Bell { pane_id: u32 },
+    Bell {
+        /// BEL を受信したペイン ID
+        pane_id: u32,
+    },
     /// セッション録音開始通知
-    RecordingStarted { pane_id: u32, path: String },
+    RecordingStarted {
+        /// 録音対象ペイン ID
+        pane_id: u32,
+        /// 録音ファイルパス
+        path: String,
+    },
     /// セッション録音停止通知
-    RecordingStopped { pane_id: u32 },
+    RecordingStopped {
+        /// 録音対象ペイン ID
+        pane_id: u32,
+    },
     /// ウィンドウ一覧変更通知
-    WindowListChanged { windows: Vec<WindowInfo> },
+    WindowListChanged {
+        /// 最新のウィンドウ情報一覧
+        windows: Vec<WindowInfo>,
+    },
     /// ペインが閉じられた通知（ウィンドウも一緒に閉じられた場合は pane_id を 0 にする）
-    PaneClosed { pane_id: u32 },
+    PaneClosed {
+        /// 閉じられたペイン ID（0 = ウィンドウごと閉じた）
+        pane_id: u32,
+    },
     /// ウィンドウ/ペインタイトル変更通知
-    TitleChanged { pane_id: u32, title: String },
+    TitleChanged {
+        /// タイトルが変わったペイン ID
+        pane_id: u32,
+        /// 新しいタイトル文字列
+        title: String,
+    },
     /// デスクトップ通知
     DesktopNotification {
+        /// 通知元ペイン ID
         pane_id: u32,
+        /// 通知タイトル
         title: String,
+        /// 通知本文
         body: String,
     },
     /// ブロードキャストモード状態通知
-    BroadcastModeChanged { enabled: bool },
+    BroadcastModeChanged {
+        /// true = 全ペインに入力、false = フォーカスペインのみ
+        enabled: bool,
+    },
     /// asciicast v2 録画開始通知
-    AsciicastStarted { pane_id: u32, path: String },
+    AsciicastStarted {
+        /// 録音対象ペイン ID
+        pane_id: u32,
+        /// asciicast ファイルパス
+        path: String,
+    },
     /// asciicast v2 録画停止通知
-    AsciicastStopped { pane_id: u32 },
+    AsciicastStopped {
+        /// 録音対象ペイン ID
+        pane_id: u32,
+    },
     /// テンプレート保存完了通知
-    TemplateSaved { name: String, path: String },
+    TemplateSaved {
+        /// テンプレート名
+        name: String,
+        /// 保存ファイルパス
+        path: String,
+    },
     /// テンプレート読み込み完了通知
-    TemplateLoaded { name: String },
+    TemplateLoaded {
+        /// 読み込んだテンプレート名
+        name: String,
+    },
     /// テンプレート一覧
-    TemplateList { names: Vec<String> },
+    TemplateList {
+        /// 保存済みテンプレート名の一覧
+        names: Vec<String>,
+    },
     /// ペインズーム状態変化通知
-    ZoomChanged { is_zoomed: bool },
+    ZoomChanged {
+        /// true = ズーム中、false = 通常表示
+        is_zoomed: bool,
+    },
     /// BreakPane 完了通知（新ウィンドウの ID）
-    PaneBroken { new_window_id: u32, pane_id: u32 },
+    PaneBroken {
+        /// 新しく作成されたウィンドウの ID
+        new_window_id: u32,
+        /// 分離されたペイン ID
+        pane_id: u32,
+    },
     /// シリアル接続成功通知
-    SerialConnected { pane_id: u32, port: String },
+    SerialConnected {
+        /// 割り当てられたペイン ID
+        pane_id: u32,
+        /// 接続したポート名（例: "/dev/ttyUSB0"）
+        port: String,
+    },
     /// SFTP 転送進捗通知
     SftpProgress {
         /// 転送元ローカルパスまたはリモートパス（UI 表示用）
@@ -331,7 +515,9 @@ pub enum ServerToClient {
     },
     /// OSC 133 セマンティックゾーンマーク通知
     SemanticMark {
+        /// マークが付いたペイン ID
         pane_id: u32,
+        /// マーク行（0始まり）
         row: u16,
         /// "A"=PromptStart, "B"=CommandStart, "C"=OutputStart, "D"=CommandEnd
         kind: String,
@@ -340,38 +526,58 @@ pub enum ServerToClient {
     },
     /// フローティングペイン開始通知
     FloatingPaneOpened {
+        /// 開かれたフローティングペイン ID
         pane_id: u32,
+        /// 列方向オフセット（0始まり）
         col_off: u16,
+        /// 行方向オフセット（0始まり）
         row_off: u16,
+        /// ペインの列数
         cols: u16,
+        /// ペインの行数
         rows: u16,
     },
     /// フローティングペイン位置・サイズ変更通知
     FloatingPaneMoved {
+        /// 移動されたフローティングペイン ID
         pane_id: u32,
+        /// 列方向オフセット（0始まり）
         col_off: u16,
+        /// 行方向オフセット（0始まり）
         row_off: u16,
+        /// ペインの列数
         cols: u16,
+        /// ペインの行数
         rows: u16,
     },
     /// フローティングペイン閉鎖通知
-    FloatingPaneClosed { pane_id: u32 },
+    FloatingPaneClosed {
+        /// 閉じられたフローティングペイン ID
+        pane_id: u32,
+    },
 }
 
 /// セッション情報
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionInfo {
+    /// セッション名
     pub name: String,
+    /// ウィンドウ数
     pub window_count: u32,
+    /// クライアントがアタッチ中かどうか
     pub attached: bool,
 }
 
 /// ウィンドウ情報
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WindowInfo {
+    /// ウィンドウの一意 ID
     pub window_id: u32,
+    /// ウィンドウ名
     pub name: String,
+    /// ウィンドウ内のペイン数
     pub pane_count: u32,
+    /// このウィンドウがフォーカスを持っているか
     pub is_focused: bool,
 }
 

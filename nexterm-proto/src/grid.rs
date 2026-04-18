@@ -16,21 +16,28 @@ pub struct DirtyRow {
 /// OSC 8 ハイパーリンクのスパン情報
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HyperlinkSpan {
+    /// 行インデックス（0始まり）
     pub row: u16,
+    /// リンク開始列（0始まり、inclusive）
     pub col_start: u16,
+    /// リンク終了列（0始まり、exclusive）
     pub col_end: u16,
+    /// リンク先 URL
     pub url: String,
 }
 
 /// 画面全体のスナップショット（Full Refresh 用）
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Grid {
+    /// グリッドの列数（文字単位）
     pub width: u16,
+    /// グリッドの行数（文字単位）
     pub height: u16,
     /// 行優先の二次元配列（rows[y][x]）
     pub rows: Vec<Vec<Cell>>,
-    /// カーソル位置
+    /// カーソルの列位置（0始まり）
     pub cursor_col: u16,
+    /// カーソルの行位置（0始まり）
     pub cursor_row: u16,
     /// OSC 8 ハイパーリンク（VT シーケンスで明示的に指定されたもの）
     #[serde(default)]
