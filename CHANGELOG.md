@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.5] - 2026-04-18
+
+### Added
+
+- **CLAUDE.md**: Claude Code 向けプロジェクトガイド追加。ビルドコマンド・アーキテクチャ概要・コーディング規約を文書化。
+- **docs/KEYBINDINGS.md**: キーバインド完全リファレンスを独立ファイルに抽出。
+
+### Changed
+
+- **依存クレート更新**: `vte` 0.13 → 0.15、`cosmic-text` 0.12 → 0.18、`portable-pty` 0.8 → 0.9 を含む 104 パッケージを最新互換バージョンに更新。
+- **README リファクター**: README.md を 32% 削減（1019 行 → 690 行）。変更履歴セクションを CHANGELOG.md へのリンクに置き換え、キーバインド詳細を docs/KEYBINDINGS.md へ移動。
+
+### Improved
+
+- **nexterm-client-gpu モジュール分割**: `renderer.rs`（5553 行）から 5 つのモジュールを抽出し保守性を向上。
+  - `glyph_atlas.rs` — GlyphAtlas・BgVertex・TextVertex・GlyphKey
+  - `shaders.rs` — WGSL シェーダー定数
+  - `color_util.rs` — ANSI 256 色・16 進カラー変換ユーティリティ
+  - `key_map.rs` — winit キーコード ↔ proto キーコード変換
+  - `vertex_util.rs` — 矩形・テキスト・URL・グリッド → テキスト変換ユーティリティ
+- **Rustdoc 充実**: `nexterm-proto` 全 pub API（メッセージ・型・列挙型）に日本語ドキュメントコメントを追加。`#![warn(missing_docs)]` を有効化。
+- **unsafe SAFETY コメント**: `nexterm-server/ipc.rs` の `SO_PEERCRED`・`getpeereid` および `pane.rs` の `libc::kill` に安全性の根拠を文書化。
+- **Clippy 警告解消**: ワークスペース全体の Clippy 警告を解消。CI の `-D warnings` フラグに対応。
+
+---
+
 ## [0.9.4] - 2026-04-14
 
 ### Fixed
