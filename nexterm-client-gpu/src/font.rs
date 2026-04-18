@@ -136,7 +136,7 @@ impl FontManager {
         } else {
             Attrs::new().family(Family::Name(&family_owned))
         };
-        buf.set_text(font_system, "0", attrs, Shaping::Advanced);
+        buf.set_text(font_system, "0", &attrs, Shaping::Advanced, None);
         buf.set_size(
             font_system,
             Some(metrics.font_size * 4.0),
@@ -206,7 +206,13 @@ impl FontManager {
         let text = ch.to_string();
         // 全角文字は 2 セル分の幅でレンダリングする（バッファ幅を 2× に設定）
         let display_cols = if wide { 2.0 } else { 1.0 };
-        buffer.set_text(&mut self.font_system, &text, attrs, Shaping::Advanced);
+        buffer.set_text(
+            &mut self.font_system,
+            &text,
+            &attrs,
+            Shaping::Advanced,
+            None,
+        );
         buffer.set_size(
             &mut self.font_system,
             Some(self.metrics.font_size * 4.0 * display_cols),

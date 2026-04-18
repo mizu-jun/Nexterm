@@ -63,8 +63,8 @@ impl VtParser {
                             self.apc_buf.push(0x1b);
                             self.apc_buf.push(byte);
                         } else {
-                            self.parser.advance(&mut self.screen, 0x1b);
-                            self.parser.advance(&mut self.screen, byte);
+                            self.parser.advance(&mut self.screen, &[0x1b]);
+                            self.parser.advance(&mut self.screen, &[byte]);
                         }
                         continue;
                     }
@@ -80,7 +80,7 @@ impl VtParser {
             if self.apc_active {
                 self.apc_buf.push(byte);
             } else {
-                self.parser.advance(&mut self.screen, byte);
+                self.parser.advance(&mut self.screen, &[byte]);
             }
         }
     }

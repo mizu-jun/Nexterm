@@ -26,10 +26,10 @@ repository = "https://github.com/kusanagi-jn/nexterm"
 tokio = { version = "1", features = ["full"] }
 
 # PTY 操作（ConPTY / Unix PTY クロスプラットフォーム）
-portable-pty = "0.8"
+portable-pty = "0.9"
 
 # VT シーケンスパーサ
-vte = "0.13"
+vte = "0.15"
 
 # シリアライズ
 serde = { version = "1", features = ["derive"] }
@@ -55,7 +55,7 @@ notify = "6"                        # ファイル変更監視
 # Phase 2: GPU レンダリング
 winit = "0.30"
 wgpu = "22"
-cosmic-text = "0.12"
+cosmic-text = "0.18"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
 # Phase 2: スクロールバック検索
