@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! Nexterm WASM プラグインホストランタイム
 //!
 //! # プラグイン ABI
@@ -261,6 +262,7 @@ impl PluginManager {
 /// プラグイン情報（`nexterm-ctl plugin list` 等で表示）
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct PluginInfo {
+    /// WASM プラグインファイルのパス
     pub path: String,
 }
 

@@ -40,10 +40,10 @@ use crate::{
 // サブモジュールは main.rs で宣言済み（crate ルート）
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, GlyphKey, TextVertex};
 use crate::shaders::{BG_SHADER, IMAGE_SHADER, TEXT_SHADER};
-use crate::color_util::{ansi_256_to_rgb, hex_to_rgba, resolve_color};
+use crate::color_util::{hex_to_rgba, resolve_color};
 use crate::key_map::{config_key_matches, physical_to_proto_key, proto_modifiers, winit_code_to_char};
 use crate::vertex_util::{
-    add_char_verts, add_px_rect, add_rect_verts, add_string_verts, grid_to_text, open_url,
+    add_px_rect, add_string_verts, grid_to_text, open_url,
 };
 
 // ---- シェーダーファイル監視 ----

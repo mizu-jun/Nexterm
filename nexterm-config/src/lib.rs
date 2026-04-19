@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! nexterm-config — Lua + TOML 2層設定システム
 //!
 //! ロード順序:

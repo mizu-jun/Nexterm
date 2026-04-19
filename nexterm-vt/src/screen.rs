@@ -31,11 +31,17 @@ pub struct SemanticMark {
 
 /// 配置待ち画像（クライアントへの送信前）
 pub struct PendingImage {
+    /// 画像 ID（Kitty プロトコルで使用）
     pub id: u32,
+    /// 配置先の列（文字セル単位）
     pub col: u16,
+    /// 配置先の行（文字セル単位）
     pub row: u16,
+    /// 画像の幅（ピクセル）
     pub width: u32,
+    /// 画像の高さ（ピクセル）
     pub height: u32,
+    /// RGBA ピクセルデータ（width × height × 4 バイト）
     pub rgba: Vec<u8>,
 }
 

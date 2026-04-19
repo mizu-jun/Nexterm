@@ -28,16 +28,44 @@ use tracing::{error, warn};
 /// フックイベントの種別
 #[derive(Debug)]
 pub enum HookEvent {
-    PaneOpen { session: String, pane_id: u32 },
-    PaneClose { session: String, pane_id: u32 },
-    SessionStart { session: String },
-    Attach { session: String },
-    Detach { session: String },
+    /// ペインが開かれた
+    PaneOpen {
+        /// セッション名
+        session: String,
+        /// ペイン ID
+        pane_id: u32,
+    },
+    /// ペインが閉じられた
+    PaneClose {
+        /// セッション名
+        session: String,
+        /// ペイン ID
+        pane_id: u32,
+    },
+    /// セッションが開始された
+    SessionStart {
+        /// セッション名
+        session: String,
+    },
+    /// クライアントがアタッチした
+    Attach {
+        /// セッション名
+        session: String,
+    },
+    /// クライアントがデタッチした
+    Detach {
+        /// セッション名
+        session: String,
+    },
     /// マクロ実行リクエスト（応答チャネル付き）
     RunMacro {
+        /// 実行する Lua 関数名
         lua_fn: String,
+        /// セッション名
         session: String,
+        /// ペイン ID
         pane_id: u32,
+        /// 実行結果を返すチャネル
         reply_tx: mpsc::SyncSender<Option<String>>,
     },
 }

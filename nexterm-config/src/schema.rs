@@ -49,15 +49,24 @@ pub struct SchemePalette {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BuiltinScheme {
+    /// ダークテーマ
     Dark,
+    /// ライトテーマ
     Light,
+    /// Tokyo Night テーマ
     TokyoNight,
+    /// Solarized テーマ
     Solarized,
+    /// Gruvbox テーマ
     Gruvbox,
+    /// Catppuccin テーマ
     Catppuccin,
+    /// Dracula テーマ
     Dracula,
+    /// Nord テーマ
     Nord,
     #[serde(rename = "onedark")]
+    /// One Dark テーマ
     OneDark,
 }
 

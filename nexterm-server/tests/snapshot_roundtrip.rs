@@ -105,10 +105,11 @@ fn test_bsp_split_node_roundtrip() {
 fn test_persist_save_and_load() {
     let dir = tempfile::tempdir().expect("tmpdir 作成失敗");
 
-    // HOME を tmpdir に上書きしてスナップショットパスを隔離する
-    let old_home = std::env::var("HOME").ok();
-    // SAFETY: シングルスレッドテスト内での環境変数書き換え
-    unsafe { std::env::set_var("HOME", dir.path()) };
+    // XDG_STATE_HOME を tmpdir に設定してスナップショットパスを隔離する
+    // HOME より競合しにくい専用変数を使うことでテスト並列実行時の安全性を高める
+    let old_xdg = std::env::var("XDG_STATE_HOME").ok();
+    // SAFETY: テスト内での環境変数書き換え。XDG_STATE_HOME は nexterm 専用で他テストとの競合なし
+    unsafe { std::env::set_var("XDG_STATE_HOME", dir.path()) };
 
     let snap = ServerSnapshot {
         version: SNAPSHOT_VERSION,
@@ -127,9 +128,9 @@ fn test_persist_save_and_load() {
 
     // 環境変数を元に戻す
     unsafe {
-        match old_home {
-            Some(h) => std::env::set_var("HOME", h),
-            None => std::env::remove_var("HOME"),
+        match old_xdg {
+            Some(v) => std::env::set_var("XDG_STATE_HOME", v),
+            None => std::env::remove_var("XDG_STATE_HOME"),
         }
     }
 }

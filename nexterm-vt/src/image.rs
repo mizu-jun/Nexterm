@@ -5,7 +5,9 @@ use std::collections::HashMap;
 /// デコードされた画像データ（RGBA）
 #[derive(Debug, Clone)]
 pub struct DecodedImage {
+    /// 画像の幅（ピクセル）
     pub width: u32,
+    /// 画像の高さ（ピクセル）
     pub height: u32,
     /// RGBA ピクセルデータ（width × height × 4 バイト）
     pub rgba: Vec<u8>,
@@ -50,11 +52,14 @@ pub fn decode_sixel(data: &[u8]) -> Option<DecodedImage> {
                                 match kind {
                                     2 => {
                                         // RGB (0–100%)
-                                        palette.insert(n, [
-                                            (p1 * 255 / 100).min(255) as u8,
-                                            (p2 * 255 / 100).min(255) as u8,
-                                            (p3 * 255 / 100).min(255) as u8,
-                                        ]);
+                                        palette.insert(
+                                            n,
+                                            [
+                                                (p1 * 255 / 100).min(255) as u8,
+                                                (p2 * 255 / 100).min(255) as u8,
+                                                (p3 * 255 / 100).min(255) as u8,
+                                            ],
+                                        );
                                     }
                                     1 => {
                                         // HLS — 簡易近似（白として扱う）
@@ -88,7 +93,7 @@ pub fn decode_sixel(data: &[u8]) -> Option<DecodedImage> {
                 if i < data.len() {
                     let ch = data[i];
                     i += 1;
-                    if matches!(ch, b'?' ..= b'~') {
+                    if matches!(ch, b'?'..=b'~') {
                         let color = *palette.get(&current_color).unwrap_or(&[200, 200, 200]);
                         let bits = ch - b'?';
                         ensure_bands(&mut buf, band);
@@ -100,7 +105,7 @@ pub fn decode_sixel(data: &[u8]) -> Option<DecodedImage> {
                     }
                 }
             }
-            b'?' ..= b'~' => {
+            b'?'..=b'~' => {
                 // Sixel ピクセルデータ（1文字 = 6ビット縦列）
                 let color = *palette.get(&current_color).unwrap_or(&[200, 200, 200]);
                 let bits = data[i] - b'?';
@@ -135,7 +140,11 @@ pub fn decode_sixel(data: &[u8]) -> Option<DecodedImage> {
         }
     }
 
-    Some(DecodedImage { width: width as u32, height: height as u32, rgba })
+    Some(DecodedImage {
+        width: width as u32,
+        height: height as u32,
+        rgba,
+    })
 }
 
 /// バッファを (band+1)*6 行まで拡張する
@@ -239,7 +248,11 @@ pub fn decode_kitty(apc_data: &[u8]) -> Option<DecodedImage> {
             if pixel_data.len() < expected {
                 return None;
             }
-            Some(DecodedImage { width, height, rgba: pixel_data[..expected].to_vec() })
+            Some(DecodedImage {
+                width,
+                height,
+                rgba: pixel_data[..expected].to_vec(),
+            })
         }
         24 => {
             // RGB 8-bit → RGBA 変換
@@ -255,7 +268,11 @@ pub fn decode_kitty(apc_data: &[u8]) -> Option<DecodedImage> {
                 rgba.extend_from_slice(chunk);
                 rgba.push(255);
             }
-            Some(DecodedImage { width, height, rgba })
+            Some(DecodedImage {
+                width,
+                height,
+                rgba,
+            })
         }
         _ => None,
     }
@@ -298,7 +315,8 @@ fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
         }
     }
 
-    let clean: Vec<u8> = input.iter()
+    let clean: Vec<u8> = input
+        .iter()
         .filter(|&&b| b != b'=' && !b.is_ascii_whitespace())
         .copied()
         .collect();

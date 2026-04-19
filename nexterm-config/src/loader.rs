@@ -140,19 +140,28 @@ impl ConfigLoader {
 /// TOML から部分的に読み込む中間構造体（全フィールドが Optional）
 #[derive(Debug, serde::Deserialize)]
 pub struct TomlConfig {
+    /// フォント設定
     pub font: Option<FontConfig>,
+    /// カラースキーム設定
     pub colors: Option<TomlColors>,
+    /// シェル設定
     pub shell: Option<ShellConfig>,
+    /// キーバインド一覧
     pub keys: Option<Vec<KeyBinding>>,
+    /// ステータスバー設定
     pub status_bar: Option<StatusBarConfig>,
+    /// スクロールバック行数
     pub scrollback_lines: Option<usize>,
+    /// タブバー設定
     pub tab_bar: Option<TabBarConfig>,
+    /// フック設定
     pub hooks: Option<HooksConfig>,
 }
 
 /// TOML の colors セクション
 #[derive(Debug, serde::Deserialize)]
 pub struct TomlColors {
+    /// カラースキーム名
     pub scheme: Option<String>,
 }
 

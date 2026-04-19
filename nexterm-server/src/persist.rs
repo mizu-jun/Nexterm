@@ -23,6 +23,10 @@ fn state_dir() -> PathBuf {
     }
     #[cfg(not(windows))]
     {
+        // XDG_STATE_HOME が設定されていればそれを優先する（テスト隔離にも有用）
+        if let Ok(xdg) = std::env::var("XDG_STATE_HOME") {
+            return PathBuf::from(xdg).join("nexterm");
+        }
         let home = std::env::var("HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|_| std::env::temp_dir());

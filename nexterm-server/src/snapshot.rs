@@ -39,19 +39,28 @@ pub struct ServerSnapshot {
 /// セッションのスナップショット
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SessionSnapshot {
+    /// セッション名
     pub name: String,
+    /// 起動シェルコマンド
     pub shell: String,
+    /// 端末列数
     pub cols: u16,
+    /// 端末行数
     pub rows: u16,
+    /// ウィンドウ一覧
     pub windows: Vec<WindowSnapshot>,
+    /// フォーカスしているウィンドウ ID
     pub focused_window_id: u32,
 }
 
 /// ウィンドウのスナップショット
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WindowSnapshot {
+    /// ウィンドウ ID
     pub id: u32,
+    /// ウィンドウ名
     pub name: String,
+    /// フォーカスしているペイン ID
     pub focused_pane_id: u32,
     /// BSP 分割ツリー
     pub layout: SplitNodeSnapshot,
@@ -60,16 +69,22 @@ pub struct WindowSnapshot {
 /// BSP 分割ツリーのスナップショット
 #[derive(Debug, Serialize, Deserialize)]
 pub enum SplitNodeSnapshot {
+    /// 単一ペイン
     Pane {
+        /// ペイン ID
         pane_id: u32,
         /// 作業ディレクトリ（Linux のみ取得可能）
         cwd: Option<PathBuf>,
     },
+    /// 分割ノード
     Split {
+        /// 分割方向
         dir: SplitDirSnapshot,
         /// 左/上の占有割合（0.0〜1.0）
         ratio: f32,
+        /// 左/上の子ノード
         left: Box<SplitNodeSnapshot>,
+        /// 右/下の子ノード
         right: Box<SplitNodeSnapshot>,
     },
 }
@@ -77,6 +92,8 @@ pub enum SplitNodeSnapshot {
 /// 分割方向のスナップショット
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SplitDirSnapshot {
+    /// 垂直分割（左右）
     Vertical,
+    /// 水平分割（上下）
     Horizontal,
 }

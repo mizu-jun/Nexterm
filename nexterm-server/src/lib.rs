@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! nexterm-server ライブラリクレート
 //! GPU クライアントに組み込んでシングルバイナリとして実行するために公開する。
 

@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! SSH クライアント統合 — russh を使った SSH 接続管理
 
 use anyhow::{bail, Context, Result};
@@ -13,9 +14,13 @@ use zeroize::Zeroizing;
 /// SSH 接続設定
 #[derive(Debug, Clone)]
 pub struct SshConfig {
+    /// 接続先ホスト名または IP アドレス
     pub host: String,
+    /// 接続先ポート番号
     pub port: u16,
+    /// SSH ログインユーザー名
     pub username: String,
+    /// 認証方式
     pub auth: SshAuth,
     /// ProxyJump ホスト (フォーマット: "user@host:port")
     pub proxy_jump: Option<String>,
@@ -30,7 +35,9 @@ pub enum SshAuth {
     Password(Zeroizing<String>),
     /// 公開鍵認証（秘密鍵ファイルパス）
     PrivateKey {
+        /// 秘密鍵ファイルのパス
         key_path: std::path::PathBuf,
+        /// 秘密鍵のパスフレーズ（省略可）
         passphrase: Option<Zeroizing<String>>,
     },
     /// SSH エージェント認証

@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! nexterm ローカライズ基盤
 //!
 //! 起動時に [`init`] を呼び出してシステムロケールを検出し、
@@ -32,19 +33,17 @@ static TRANSLATIONS: LazyLock<HashMap<&'static str, HashMap<String, String>>> =
         LOCALE_DATA
             .iter()
             .map(|(locale, json)| {
-                let map: HashMap<String, String> = serde_json::from_str(json)
-                    .unwrap_or_else(|e| {
-                        eprintln!("nexterm-i18n: failed to parse locale '{locale}': {e}");
-                        HashMap::new()
-                    });
+                let map: HashMap<String, String> = serde_json::from_str(json).unwrap_or_else(|e| {
+                    eprintln!("nexterm-i18n: failed to parse locale '{locale}': {e}");
+                    HashMap::new()
+                });
                 (*locale, map)
             })
             .collect()
     });
 
 /// 現在のロケール（スレッドセーフ）
-static CURRENT_LOCALE: LazyLock<RwLock<String>> =
-    LazyLock::new(|| RwLock::new("en".to_string()));
+static CURRENT_LOCALE: LazyLock<RwLock<String>> = LazyLock::new(|| RwLock::new("en".to_string()));
 
 // ---- 公開 API ----
 
@@ -181,7 +180,10 @@ mod tests {
     #[test]
     fn test_t_args_interpolation() {
         set_locale("en");
-        let result = t_args("ctl-session-created", &[("name", &"test" as &dyn std::fmt::Display)]);
+        let result = t_args(
+            "ctl-session-created",
+            &[("name", &"test" as &dyn std::fmt::Display)],
+        );
         assert!(result.contains("test"));
     }
 
