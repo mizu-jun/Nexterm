@@ -130,6 +130,8 @@ pub struct SettingsPanel {
     pub tab_rename_editing: Option<u32>,
     /// タブ名変更中のテキスト
     pub tab_rename_text: String,
+    /// 言語選択インデックス（LANGUAGE_OPTIONS の位置）
+    pub language_index: usize,
 }
 
 impl Default for SettingsPanel {
@@ -157,6 +159,10 @@ impl SettingsPanel {
                 working_dir: p.working_dir.clone().unwrap_or_default(),
             })
             .collect();
+        let language_index = LANGUAGE_OPTIONS
+            .iter()
+            .position(|(_, code)| *code == config.language.as_str())
+            .unwrap_or(0);
         Self {
             is_open: false,
             open_progress: 0.0,
@@ -173,6 +179,7 @@ impl SettingsPanel {
             startup_session: "main".to_string(),
             tab_rename_editing: None,
             tab_rename_text: String::new(),
+            language_index,
         }
     }
 
@@ -314,6 +321,27 @@ impl SettingsPanel {
         SCHEMES[self.scheme_index % 9]
     }
 
+    /// 現在選択中の言語コードを返す
+    pub fn language_code(&self) -> &str {
+        LANGUAGE_OPTIONS
+            .get(self.language_index)
+            .map(|(_, code)| *code)
+            .unwrap_or("auto")
+    }
+
+    /// 次の言語に切り替える
+    pub fn next_language(&mut self) {
+        self.language_index = (self.language_index + 1) % LANGUAGE_OPTIONS.len();
+        self.dirty = true;
+    }
+
+    /// 前の言語に切り替える
+    pub fn prev_language(&mut self) {
+        let len = LANGUAGE_OPTIONS.len();
+        self.language_index = (self.language_index + len - 1) % len;
+        self.dirty = true;
+    }
+
     /// タブ名変更を開始する
     pub fn begin_tab_rename(&mut self, window_id: u32, current_name: &str) {
         self.tab_rename_editing = Some(window_id);
@@ -367,6 +395,9 @@ impl SettingsPanel {
         // [window].background_opacity
         doc["window"]["background_opacity"] = toml_edit::value(self.opacity as f64);
 
+        // language
+        doc["language"] = toml_edit::value(self.language_code());
+
         // 親ディレクトリを作成する
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -376,6 +407,19 @@ impl SettingsPanel {
         Ok(())
     }
 }
+
+/// 言語選択肢: (表示名, コード)
+pub const LANGUAGE_OPTIONS: &[(&str, &str)] = &[
+    ("Auto (OS)", "auto"),
+    ("English", "en"),
+    ("日本語", "ja"),
+    ("Français", "fr"),
+    ("Deutsch", "de"),
+    ("Español", "es"),
+    ("Italiano", "it"),
+    ("中文(简体)", "zh-CN"),
+    ("한국어", "ko"),
+];
 
 /// カラースキームをインデックスに変換する
 fn scheme_name_to_index(colors: &nexterm_config::ColorScheme) -> usize {

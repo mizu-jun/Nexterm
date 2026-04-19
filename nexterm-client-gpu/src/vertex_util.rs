@@ -6,6 +6,11 @@ use unicode_width::UnicodeWidthChar;
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, GlyphKey, TextVertex};
 
+/// 文字列の表示幅をセル単位で返す（CJK 全角文字は 2 として計算）
+pub(crate) fn visual_width(s: &str) -> usize {
+    s.chars().map(|c| c.width().unwrap_or(1)).sum()
+}
+
 /// NDC 矩形の背景頂点4つを追加する（三角形インデックスも追加）
 pub(crate) fn add_rect_verts(
     x0: f32,

@@ -32,7 +32,7 @@ async fn main() -> Result<()> {
 
     // サーバーを Tokio タスクとして内部起動する（別プロセス不要）
     // IPC ソケットは同じプロトコルをそのまま使用する
-    tokio::spawn(async {
+    let server_handle = tokio::spawn(async {
         if let Err(e) = nexterm_server::run_server().await {
             tracing::error!("nexterm-server エラー: {}", e);
         }
@@ -40,7 +40,12 @@ async fn main() -> Result<()> {
 
     // 設定ロード（TOML → Lua）
     let config = ConfigLoader::load()?;
-    nexterm_i18n::init();
+    // config の language 設定を優先し、"auto" の場合は OS ロケールを検出する
+    if config.language == "auto" {
+        nexterm_i18n::init();
+    } else {
+        nexterm_i18n::set_locale(&config.language);
+    }
 
     info!(
         "Config loaded: font={} {}pt",
@@ -64,7 +69,7 @@ async fn main() -> Result<()> {
     // GPU アプリケーションを起動する
     let app = renderer::NextermApp::new(config).await?;
     event_loop.run_app(
-        &mut app.into_event_handler(Some(config_rx), config_watcher, status_eval),
+        &mut app.into_event_handler(Some(config_rx), config_watcher, status_eval, server_handle),
     )?;
 
     Ok(())

@@ -43,7 +43,7 @@ use crate::shaders::{BG_SHADER, IMAGE_SHADER, TEXT_SHADER};
 use crate::color_util::{hex_to_rgba, resolve_color};
 use crate::key_map::{config_key_matches, physical_to_proto_key, proto_modifiers, winit_code_to_char};
 use crate::vertex_util::{
-    add_px_rect, add_string_verts, grid_to_text, open_url,
+    add_px_rect, add_string_verts, grid_to_text, open_url, visual_width,
 };
 
 // ---- シェーダーファイル監視 ----
@@ -1961,10 +1961,46 @@ impl WgpuState {
                     }
                 }
             }
+            SettingsCategory::Startup => {
+                use crate::settings_panel::LANGUAGE_OPTIONS;
+
+                // 言語選択ラベル
+                add_string_verts(
+                    "言語 / Language",
+                    content_inner_x, content_top + cell_h * 0.5,
+                    [0.663, 0.694, 0.839, 1.0], false,
+                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                );
+
+                // 選択バー背景
+                let sel_y = content_top + cell_h * 1.6;
+                let sel_w = content_w - cell_w * 2.0;
+                add_px_rect(content_inner_x, sel_y, sel_w, cell_h,
+                    [0.149, 0.188, 0.278, 1.0], sw, sh, bg_verts, bg_idx);
+
+                // 現在の言語名表示
+                let lang_label = LANGUAGE_OPTIONS
+                    .get(sp.language_index)
+                    .map(|(name, _)| *name)
+                    .unwrap_or("Auto");
+                let lang_text = format!("< {} >", lang_label);
+                add_string_verts(
+                    &lang_text, content_inner_x + cell_w * 0.5, sel_y + cell_h * 0.1,
+                    [0.95, 0.96, 1.0, 1.0], true,
+                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                );
+
+                // 変更は次回起動時に反映される旨の注記
+                add_string_verts(
+                    "※ 変更は次回起動時に反映されます",
+                    content_inner_x, content_top + cell_h * 3.2,
+                    [0.376, 0.408, 0.518, 1.0], false,
+                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                );
+            }
             _ => {
-                // スタートアップ・SSH・キーバインドは近日実装予定
+                // SSH・キーバインドは近日実装予定
                 let msg = match &sp.category {
-                    SettingsCategory::Startup => "スタートアップ設定は nexterm.toml で管理します",
                     SettingsCategory::Ssh => "SSH ホストは nexterm.toml の [[hosts]] で管理します",
                     SettingsCategory::Keybindings => "キーバインドは nexterm.toml の [[keys]] で管理します",
                     _ => "",
@@ -2295,8 +2331,16 @@ impl WgpuState {
         bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
         text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
     ) {
-        // 日本語ダブルワイド文字を考慮して幅を十分に確保する
-        let menu_w = 18.0 * cell_w;
+        // ラベルとヒントの最大表示幅からメニュー幅を動的に計算する
+        let max_label_w = menu.items.iter()
+            .map(|item| visual_width(&item.label))
+            .max().unwrap_or(8);
+        let max_hint_w = menu.items.iter()
+            .map(|item| visual_width(&item.hint))
+            .max().unwrap_or(0);
+        // 左パディング(0.9) + ラベル + ギャップ(2) + ヒント + 右パディング(1.5)
+        let min_cells = max_label_w + max_hint_w + 5;
+        let menu_w = (min_cells as f32).max(16.0) * cell_w;
         let menu_h = menu.items.len() as f32 * cell_h;
         let mx = menu.x;
         let my = menu.y;
@@ -2681,6 +2725,7 @@ impl NextermApp {
         config_rx: Option<tokio::sync::mpsc::Receiver<Config>>,
         config_watcher: Option<notify::RecommendedWatcher>,
         status_eval: Option<StatusBarEvaluator>,
+        server_handle: tokio::task::JoinHandle<()>,
     ) -> EventHandler {
         // カスタムシェーダーファイルが設定されていれば監視を開始する
         let (shader_reload_rx, _shader_watcher) = start_shader_watcher(&self.config.gpu);
@@ -2701,6 +2746,7 @@ impl NextermApp {
             shader_reload_rx,
             _shader_watcher,
             last_tab_click: None,
+            server_handle,
         }
     }
 }
@@ -2732,6 +2778,8 @@ pub struct EventHandler {
     _shader_watcher: Option<notify::RecommendedWatcher>,
     /// タブのダブルクリック検出用（最終クリック時刻とペイン ID）
     last_tab_click: Option<(Instant, u32)>,
+    /// 内部サーバータスクのハンドル（ウィンドウ終了時に abort する）
+    server_handle: tokio::task::JoinHandle<()>,
 }
 
 /// 設定パネルに対するマウスヒットテスト結果
@@ -3074,6 +3122,8 @@ impl ApplicationHandler for EventHandler {
     ) {
         match event {
             WindowEvent::CloseRequested => {
+                // サーバータスクを abort してからイベントループを終了する
+                self.server_handle.abort();
                 event_loop.exit();
             }
 
@@ -3214,8 +3264,6 @@ impl ApplicationHandler for EventHandler {
                 if let Some((px, py)) = self.cursor_position {
                     let cell_w_ctx = self.app.font.cell_width() as f64;
                     let cell_h_ctx = self.app.font.cell_height() as f64;
-                    // メニューサイズ（描画側と同じ値を使用）
-                    let menu_w_px = 18.0 * cell_w_ctx;
                     let profile_list: Vec<(String, String)> = self
                         .app
                         .config
@@ -3223,10 +3271,12 @@ impl ApplicationHandler for EventHandler {
                         .iter()
                         .map(|p| (p.name.clone(), p.icon.clone()))
                         .collect();
-                    let item_count = {
-                        let tmp = ContextMenu::new_default(0.0, 0.0, &profile_list);
-                        tmp.items.len()
-                    };
+                    let tmp = ContextMenu::new_default(0.0, 0.0, &profile_list);
+                    let item_count = tmp.items.len();
+                    // メニュー幅を描画側と同じロジックで計算する
+                    let max_label = tmp.items.iter().map(|i| visual_width(&i.label)).max().unwrap_or(8);
+                    let max_hint = tmp.items.iter().map(|i| visual_width(&i.hint)).max().unwrap_or(0);
+                    let menu_w_px = ((max_label + max_hint + 5) as f64).max(16.0) * cell_w_ctx;
                     let menu_h_px = item_count as f64 * cell_h_ctx;
 
                     // ウィンドウ内に収まるように位置をクランプする
@@ -3946,14 +3996,18 @@ impl EventHandler {
                 }
                 WKeyCode::ArrowRight if !editing => {
                     use crate::settings_panel::SettingsCategory;
-                    if self.app.state.settings_panel.category == SettingsCategory::Theme {
-                        self.app.state.settings_panel.next_scheme();
+                    match &self.app.state.settings_panel.category {
+                        SettingsCategory::Theme => self.app.state.settings_panel.next_scheme(),
+                        SettingsCategory::Startup => self.app.state.settings_panel.next_language(),
+                        _ => {}
                     }
                 }
                 WKeyCode::ArrowLeft if !editing => {
                     use crate::settings_panel::SettingsCategory;
-                    if self.app.state.settings_panel.category == SettingsCategory::Theme {
-                        self.app.state.settings_panel.prev_scheme();
+                    match &self.app.state.settings_panel.category {
+                        SettingsCategory::Theme => self.app.state.settings_panel.prev_scheme(),
+                        SettingsCategory::Startup => self.app.state.settings_panel.prev_language(),
+                        _ => {}
                     }
                 }
                 WKeyCode::BracketRight if !editing => {

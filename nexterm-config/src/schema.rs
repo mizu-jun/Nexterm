@@ -334,28 +334,38 @@ impl Default for ShellConfig {
     fn default() -> Self {
         #[cfg(windows)]
         {
-            // PowerShell 7 → PowerShell 5 → cmd.exe の優先順でデフォルトシェルを選択する
-            let (program, args) =
-                if std::path::Path::new("C:\\Program Files\\PowerShell\\7\\pwsh.exe").exists() {
-                    (
-                        "C:\\Program Files\\PowerShell\\7\\pwsh.exe".to_string(),
-                        vec!["-NoLogo".to_string()],
-                    )
-                } else if std::path::Path::new(
-                    "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-                )
-                .exists()
-                {
-                    (
-                        "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
-                            .to_string(),
-                        vec!["-NoLogo".to_string()],
-                    )
-                } else {
-                    // 最終フォールバック: cmd.exe
-                    ("C:\\Windows\\System32\\cmd.exe".to_string(), vec![])
+            // %ProgramFiles%\PowerShell\* を動的スキャンして最新バージョンを選択する
+            let prog_files = std::env::var("ProgramFiles")
+                .unwrap_or_else(|_| "C:\\Program Files".to_string());
+            let ps_root = std::path::Path::new(&prog_files).join("PowerShell");
+            if let Ok(entries) = std::fs::read_dir(&ps_root) {
+                let mut pwsh: Option<std::path::PathBuf> = None;
+                for e in entries.flatten() {
+                    let candidate = e.path().join("pwsh.exe");
+                    if candidate.exists() && pwsh.as_ref().map_or(true, |p| candidate > *p) {
+                        pwsh = Some(candidate);
+                    }
+                }
+                if let Some(path) = pwsh {
+                    return Self {
+                        program: path.to_string_lossy().into_owned(),
+                        args: vec!["-NoLogo".to_string()],
+                    };
+                }
+            }
+            // PowerShell 5 フォールバック
+            let ps5 = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+            if std::path::Path::new(ps5).exists() {
+                return Self {
+                    program: ps5.to_string(),
+                    args: vec!["-NoLogo".to_string()],
                 };
-            return Self { program, args };
+            }
+            // 最終フォールバック: cmd.exe
+            return Self {
+                program: "C:\\Windows\\System32\\cmd.exe".to_string(),
+                args: vec![],
+            };
         }
 
         #[cfg(not(windows))]
@@ -950,6 +960,10 @@ pub struct Config {
     /// GPU レンダラー設定
     #[serde(default)]
     pub gpu: GpuConfig,
+
+    /// 表示言語（"auto" = OS 検出, "en"/"ja"/"fr"/"de"/"es"/"it"/"zh-CN"/"ko"）
+    #[serde(default = "default_language")]
+    pub language: String,
 }
 
 /// GPU レンダラー設定
@@ -993,6 +1007,10 @@ fn default_scrollback() -> usize {
     50_000
 }
 
+fn default_language() -> String {
+    "auto".to_string()
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -1017,6 +1035,7 @@ impl Default for Config {
             plugin_dir: None,
             plugins_disabled: false,
             gpu: GpuConfig::default(),
+            language: default_language(),
         }
     }
 }
