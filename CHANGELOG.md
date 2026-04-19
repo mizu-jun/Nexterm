@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Improved
+
+- **nexterm-server ipc.rs モジュール分割**: `ipc.rs`（1707 行）を 5 サブモジュールに分割し保守性を向上。
+  - `ipc/platform.rs` — Unix Domain Socket / Windows Named Pipe リスナー・UID 検証
+  - `ipc/handler.rs` — 接続済みクライアントの読み書きループ
+  - `ipc/dispatch.rs` — 40+ IPC コマンドのディスパッチロジック
+  - `ipc/key.rs` — キーコード → VT エスケープシーケンス変換（ユニットテスト 8 件付き）
+  - `ipc/sftp.rs` — SFTP アップロード・ダウンロードヘルパー
+
+- **統合テスト追加**: `nexterm-server/tests/` に 2 ファイル追加。
+  - `ipc_integration.rs` — bincode シリアライズ + 4 バイト LE フレーミングの往復テスト（14 件）
+  - `snapshot_roundtrip.rs` — セッションスナップショットの JSON 往復・永続化テスト（6 件）
+
+- **`#![warn(missing_docs)]` ワークスペース全体適用**: 6 クレート（nexterm-vt / nexterm-ssh / nexterm-plugin / nexterm-config / nexterm-server / nexterm-i18n）に適用し、不足ドキュメントを一括追加。
+
+### Fixed
+
+- **プロダクションコードの `unwrap()` 削減**: `web/mod.rs`・`web/auth.rs`・`web/oauth.rs`・`window.rs`・`nexterm-plugin`・`nexterm-ssh` の危険な `unwrap()` を `expect("理由")` に変換し、パニック時の原因特定を改善。
+- **`persist::state_dir()`**: `XDG_STATE_HOME` 環境変数を優先するよう修正（テスト隔離・XDG 準拠）。
+
 ---
 
 ## [0.9.5] - 2026-04-18
