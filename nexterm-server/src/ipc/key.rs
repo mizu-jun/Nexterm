@@ -54,10 +54,7 @@ mod tests {
 
     #[test]
     fn ctrl_a_returns_0x01() {
-        let mods = Modifiers {
-            ctrl: true,
-            ..Default::default()
-        };
+        let mods = Modifiers(Modifiers::CTRL);
         assert_eq!(key_to_bytes(&KeyCode::Char('a'), mods), vec![0x01]);
     }
 
