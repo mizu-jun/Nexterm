@@ -275,7 +275,7 @@ impl SshSession {
                 let comment = identity.comment().to_string();
                 debug!("SSH エージェント認証を試みます: {}", comment);
 
-                let pub_key = identity.public_key().into_owned();
+                let pub_key = identity.clone();
 
                 let mut handle = self.handle.lock().await;
                 let result = handle
