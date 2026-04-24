@@ -47,8 +47,8 @@ impl AuthManager {
     ///
     /// `max_sessions` を超える場合は最も古いセッションを削除する。
     pub fn create_session(&self, auth_method: &str, user_id: &str) -> Option<String> {
-        let token: String = rand::thread_rng()
-            .sample_iter(rand::distributions::Alphanumeric)
+        let token: String = rand::rng()
+            .sample_iter(rand::distr::Alphanumeric)
             .take(48)
             .map(char::from)
             .collect();

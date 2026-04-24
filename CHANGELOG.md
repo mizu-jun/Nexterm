@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.8] - 2026-04-25
+
+### Fixed
+
+- **PowerShell自動起動**: Windows版起動時にPowerShellが自動的に起動しない問題を修正（`-NoLogo`引数を含む設定が全ペイン生成に正しく伝播するように）。
+- **ウィンドウ透過**: 設定ファイルなしの初回起動時にウィンドウ背景が透過されない問題を修正（デフォルト不透明度を0.95に変更）。
+- **×ボタンで固まる**: ウィンドウを×で閉じると固まる問題を修正（IPC接続を先にドロップしてからサーバータスクを終了）。
+- **コンテキストメニュー文字はみ出し**: ショートカットキーがメニュー枠外にはみ出す問題を修正（描画位置計算をvisual_width()ベースに統一）。
+
+### Changed
+
+- **依存関係更新**: `rand` を 0.8.6 → 0.9.4 に更新。
+
+---
+
 ## [0.9.7] - 2026-04-20
 
 ### Added
