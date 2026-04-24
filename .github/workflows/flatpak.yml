@@ -19,8 +19,8 @@ jobs:
 
       - name: Install flatpak-builder
         run: |
-          apt-get update -y
-          apt-get install -y flatpak flatpak-builder elfutils
+          sudo apt-get update -y
+          sudo apt-get install -y flatpak flatpak-builder elfutils
 
       - name: Add Flathub remote
         run: |
