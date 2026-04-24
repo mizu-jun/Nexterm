@@ -26,7 +26,10 @@ use session::SessionManager;
 pub async fn run_server() -> Result<()> {
     info!("nexterm-server 起動中...");
 
-    let manager = Arc::new(SessionManager::new());
+    let shell_config = nexterm_config::ConfigLoader::load()
+        .unwrap_or_default()
+        .shell;
+    let manager = Arc::new(SessionManager::new(shell_config));
 
     // スナップショットが存在すれば前回のセッションを復元する
     if let Some(snap) = persist::load_snapshot() {

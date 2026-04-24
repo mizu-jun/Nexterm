@@ -456,7 +456,7 @@ fn default_layout_mode() -> String {
 impl Default for WindowConfig {
     fn default() -> Self {
         Self {
-            background_opacity: 1.0,
+            background_opacity: default_background_opacity(),
             macos_window_background_blur: 0,
             decorations: WindowDecorations::Full,
             layout_mode: default_layout_mode(),

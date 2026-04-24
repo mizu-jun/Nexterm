@@ -2395,7 +2395,8 @@ impl WgpuState {
 
             // キーヒントテキスト（右寄せ、グレー）
             if !item.hint.is_empty() {
-                let hint_x = mx + menu_w - (item.hint.len() as f32 * cell_w * 0.6 + cell_w * 0.5);
+                let hint_visual_w = visual_width(&item.hint) as f32;
+                let hint_x = mx + menu_w - (hint_visual_w * cell_w + cell_w * 0.5);
                 add_string_verts(
                     &item.hint, hint_x, item_y + cell_h * 0.1,
                     [0.45, 0.48, 0.60, 0.80], false,
@@ -3122,6 +3123,8 @@ impl ApplicationHandler for EventHandler {
     ) {
         match event {
             WindowEvent::CloseRequested => {
+                // IPC 接続を先にドロップしてチャネルを閉じる（Windows でのハング防止）
+                self.connection = None;
                 // サーバータスクを abort してからイベントループを終了する
                 self.server_handle.abort();
                 event_loop.exit();

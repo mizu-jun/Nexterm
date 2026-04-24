@@ -326,8 +326,9 @@ impl Window {
         rows: u16,
         tx: broadcast::Sender<ServerToClient>,
         shell: &str,
+        args: &[String],
     ) -> Result<Self> {
-        let pane = Pane::spawn(cols, rows, tx, shell)?;
+        let pane = Pane::spawn(cols, rows, tx, shell, args)?;
         let focused_pane_id = pane.id;
         let layout = SplitNode::Pane { pane_id: focused_pane_id };
         let mut panes = HashMap::new();
@@ -387,6 +388,7 @@ impl Window {
         total_rows: u16,
         tx: broadcast::Sender<ServerToClient>,
         shell: &str,
+        args: &[String],
         dir: SplitDir,
     ) -> Result<u32> {
         // 1. 新 ID を事前発行してツリーに挿入する
@@ -408,7 +410,7 @@ impl Window {
             });
 
         // 3. 計算済みサイズで新ペインを spawn する
-        let pane = Pane::spawn_with_id(new_id, new_rect.cols, new_rect.rows, tx, shell)?;
+        let pane = Pane::spawn_with_id(new_id, new_rect.cols, new_rect.rows, tx, shell, args)?;
         self.panes.insert(new_id, pane);
         self.focused_pane_id = new_id;
 
@@ -458,6 +460,7 @@ impl Window {
         total_rows: u16,
         tx: broadcast::Sender<ServerToClient>,
         shell: &str,
+        args: &[String],
     ) -> Result<(u32, FloatRect)> {
         // デフォルトサイズ: ウィンドウの 60%×70%、中央寄せ
         let fp_cols = (total_cols as f32 * 0.6) as u16;
@@ -465,7 +468,7 @@ impl Window {
         let col_off = (total_cols.saturating_sub(fp_cols)) / 2;
         let row_off = (total_rows.saturating_sub(fp_rows)) / 2;
 
-        let pane = Pane::spawn(fp_cols.max(10), fp_rows.max(5), tx, shell)?;
+        let pane = Pane::spawn(fp_cols.max(10), fp_rows.max(5), tx, shell, args)?;
         let pane_id = pane.id;
         let rect = FloatRect { col_off, row_off, cols: fp_cols.max(10), rows: fp_rows.max(5) };
         self.floating_panes.insert(pane_id, (pane, rect.clone()));
@@ -915,9 +918,9 @@ impl Window {
             let cwd = find_cwd_in_snapshot(&snap.layout, pane_id);
             let pane = match cwd {
                 Some(ref cwd_path) => {
-                    Pane::spawn_with_cwd(pane_id, pane_cols, pane_rows, tx.clone(), shell, cwd_path)?
+                    Pane::spawn_with_cwd(pane_id, pane_cols, pane_rows, tx.clone(), shell, &[], cwd_path)?
                 }
-                None => Pane::spawn_with_id(pane_id, pane_cols, pane_rows, tx.clone(), shell)?,
+                None => Pane::spawn_with_id(pane_id, pane_cols, pane_rows, tx.clone(), shell, &[])?,
             };
             panes.insert(pane_id, pane);
         }

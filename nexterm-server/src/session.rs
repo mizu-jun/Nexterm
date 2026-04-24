@@ -37,6 +37,8 @@ pub struct Session {
     broadcast_tx: broadcast::Sender<ServerToClient>,
     /// デフォルトシェル
     shell: String,
+    /// デフォルトシェル引数
+    shell_args: Vec<String>,
     /// デフォルト端末サイズ
     pub cols: u16,
     pub rows: u16,
@@ -51,10 +53,11 @@ impl Session {
         cols: u16,
         rows: u16,
         shell: String,
+        shell_args: Vec<String>,
     ) -> Result<Self> {
         let (broadcast_tx, _) = broadcast::channel::<ServerToClient>(512);
         let window_id = new_window_id();
-        let window = Window::new(window_id, "window-1".to_string(), cols, rows, broadcast_tx.clone(), &shell)?;
+        let window = Window::new(window_id, "window-1".to_string(), cols, rows, broadcast_tx.clone(), &shell, &shell_args)?;
         let mut windows = HashMap::new();
         windows.insert(window_id, window);
 
@@ -64,6 +67,7 @@ impl Session {
             focused_window_id: window_id,
             broadcast_tx,
             shell,
+            shell_args,
             cols,
             rows,
             broadcast: false,
@@ -124,11 +128,16 @@ impl Session {
         &self.shell
     }
 
+    /// デフォルトシェル引数を返す
+    pub fn shell_args(&self) -> &[String] {
+        &self.shell_args
+    }
+
     /// 新しいウィンドウを追加する
     pub fn add_window(&mut self) -> Result<u32> {
         let window_id = new_window_id();
         let name = format!("window-{}", window_id);
-        let window = Window::new(window_id, name, self.cols, self.rows, self.broadcast_tx.clone(), &self.shell)?;
+        let window = Window::new(window_id, name, self.cols, self.rows, self.broadcast_tx.clone(), &self.shell, &self.shell_args)?;
         self.windows.insert(window_id, window);
         self.focused_window_id = window_id;
         Ok(window_id)
@@ -336,6 +345,7 @@ impl Session {
             focused_window_id: snap.focused_window_id,
             broadcast_tx,
             shell: snap.shell.clone(),
+            shell_args: vec![],
             cols: snap.cols,
             rows: snap.rows,
             broadcast: false,
@@ -346,12 +356,15 @@ impl Session {
 /// セッションマネージャー（全セッションを管理）
 pub struct SessionManager {
     sessions: Arc<Mutex<HashMap<String, Session>>>,
+    /// デフォルトシェル設定（設定ファイルから読み込む）
+    shell_config: nexterm_config::ShellConfig,
 }
 
 impl SessionManager {
-    pub fn new() -> Self {
+    pub fn new(shell_config: nexterm_config::ShellConfig) -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            shell_config,
         }
     }
 
@@ -372,9 +385,9 @@ impl SessionManager {
         if sessions.contains_key(&name) {
             bail!("セッション '{}' は既に存在します", name);
         }
-        // デフォルトシェルを決定する（OS 依存）
-        let shell = default_shell();
-        let session = Session::new(name.clone(), cols, rows, shell)?;
+        let shell = self.shell_config.program.clone();
+        let args = self.shell_config.args.clone();
+        let session = Session::new(name.clone(), cols, rows, shell, args)?;
         sessions.insert(name.clone(), session);
         info!("セッション '{}' を作成しました", name);
         Ok(())
@@ -412,8 +425,9 @@ impl SessionManager {
         if sessions.contains_key(name) {
             info!("セッション '{}' に再アタッチしました", name);
         } else {
-            let shell = default_shell();
-            let session = Session::new(name.to_string(), cols, rows, shell)?;
+            let shell = self.shell_config.program.clone();
+            let args = self.shell_config.args.clone();
+            let session = Session::new(name.to_string(), cols, rows, shell, args)?;
             sessions.insert(name.to_string(), session);
             info!("セッション '{}' を新規作成しました", name);
         }
@@ -589,63 +603,26 @@ impl SessionManager {
     }
 }
 
-/// OS に応じたデフォルトシェルを返す
-fn default_shell() -> String {
-    #[cfg(windows)]
-    {
-        // PowerShell 7 を優先: %ProgramFiles%\PowerShell\* 配下を検索
-        let prog_files = std::env::var("ProgramFiles")
-            .unwrap_or_else(|_| "C:\\Program Files".to_string());
-        let ps_root = std::path::Path::new(&prog_files).join("PowerShell");
-        if let Ok(entries) = std::fs::read_dir(&ps_root) {
-            let mut pwsh: Option<std::path::PathBuf> = None;
-            for e in entries.flatten() {
-                let candidate = e.path().join("pwsh.exe");
-                if candidate.exists() {
-                    // 最大バージョン番号のディレクトリを選ぶ
-                    if pwsh.as_ref().map_or(true, |prev| candidate > *prev) {
-                        pwsh = Some(candidate);
-                    }
-                }
-            }
-            if let Some(path) = pwsh {
-                return path.to_string_lossy().into_owned();
-            }
-        }
-        // 次点: Windows PowerShell 5 (フルパス)
-        let ps5 = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
-        if std::path::Path::new(ps5).exists() {
-            return ps5.to_string();
-        }
-        // 最終フォールバック: PATH 経由
-        "powershell.exe".to_string()
-    }
-    #[cfg(not(windows))]
-    {
-        std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn default_shellが空でない() {
-        let shell = default_shell();
-        assert!(!shell.is_empty());
+    fn shell_configデフォルトが空でない() {
+        let cfg = nexterm_config::ShellConfig::default();
+        assert!(!cfg.program.is_empty());
     }
 
     #[tokio::test]
     async fn セッション一覧が空で始まる() {
-        let manager = SessionManager::new();
+        let manager = SessionManager::new(nexterm_config::ShellConfig::default());
         let list = manager.list_sessions().await;
         assert!(list.is_empty());
     }
 
     #[tokio::test]
     async fn セッション取得で存在しない名前はNone() {
-        let manager = SessionManager::new();
+        let manager = SessionManager::new(nexterm_config::ShellConfig::default());
         let arc = manager.sessions();
         let sessions = arc.lock().await;
         assert!(sessions.get("nonexistent").is_none());
@@ -653,14 +630,14 @@ mod tests {
 
     #[tokio::test]
     async fn セッション削除で存在しない名前はErr() {
-        let manager = SessionManager::new();
+        let manager = SessionManager::new(nexterm_config::ShellConfig::default());
         let result = manager.kill_session("nonexistent").await;
         assert!(result.is_err(), "存在しないセッションの kill は Err を返すべき");
     }
 
     #[tokio::test]
     async fn セッション一覧が初期状態では空() {
-        let manager = SessionManager::new();
+        let manager = SessionManager::new(nexterm_config::ShellConfig::default());
         let list = manager.list_sessions().await;
         assert_eq!(list.len(), 0, "初期状態では空のリストを返すべき");
     }

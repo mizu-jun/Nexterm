@@ -337,8 +337,9 @@ impl Pane {
         rows: u16,
         initial_tx: broadcast::Sender<ServerToClient>,
         shell: &str,
+        args: &[String],
     ) -> Result<Self> {
-        Self::spawn_impl(new_pane_id(), cols, rows, initial_tx, shell, None)
+        Self::spawn_impl(new_pane_id(), cols, rows, initial_tx, shell, args, None)
     }
 
     /// 指定 ID でペインを生成する（BSP 分割時に ID を事前確定するために使用）
@@ -348,8 +349,9 @@ impl Pane {
         rows: u16,
         initial_tx: broadcast::Sender<ServerToClient>,
         shell: &str,
+        args: &[String],
     ) -> Result<Self> {
-        Self::spawn_impl(id, cols, rows, initial_tx, shell, None)
+        Self::spawn_impl(id, cols, rows, initial_tx, shell, args, None)
     }
 
     /// 指定 ID・作業ディレクトリでペインを生成する（スナップショット復元時に使用）
@@ -359,9 +361,10 @@ impl Pane {
         rows: u16,
         initial_tx: broadcast::Sender<ServerToClient>,
         shell: &str,
+        args: &[String],
         cwd: &Path,
     ) -> Result<Self> {
-        Self::spawn_impl(id, cols, rows, initial_tx, shell, Some(cwd))
+        Self::spawn_impl(id, cols, rows, initial_tx, shell, args, Some(cwd))
     }
 
     /// 内部 PTY 起動実装（CWD はオプション）
@@ -371,6 +374,7 @@ impl Pane {
         rows: u16,
         initial_tx: broadcast::Sender<ServerToClient>,
         shell: &str,
+        args: &[String],
         cwd: Option<&Path>,
     ) -> Result<Self> {
         let pty_system = NativePtySystem::default();
@@ -383,6 +387,7 @@ impl Pane {
         })?;
 
         let mut cmd = CommandBuilder::new(shell);
+        cmd.args(args);
         // 明示的な CWD がなければユーザーのホームディレクトリを使う
         let home_buf: Option<std::path::PathBuf> = cwd.is_none().then(|| {
             #[cfg(windows)]

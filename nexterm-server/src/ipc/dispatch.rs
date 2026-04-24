@@ -186,9 +186,10 @@ pub(super) async fn dispatch(
                         let cols = s.cols;
                         let rows = s.rows;
                         let shell = s.shell().to_string();
+                        let args = s.shell_args().to_vec();
                         let pane_tx = s.broadcast_sender();
                         s.focused_window_mut()
-                            .map(|w| w.add_pane(cols, rows, pane_tx, &shell, dir))
+                            .map(|w| w.add_pane(cols, rows, pane_tx, &shell, &args, dir))
                     } else {
                         None
                     }
@@ -1086,9 +1087,10 @@ pub(super) async fn dispatch(
                         let cols = s.cols;
                         let rows = s.rows;
                         let shell = s.shell().to_string();
+                        let args = s.shell_args().to_vec();
                         let sender = s.broadcast_sender();
                         s.focused_window_mut()
-                            .map(|w| w.open_floating_pane(cols, rows, sender, &shell))
+                            .map(|w| w.open_floating_pane(cols, rows, sender, &shell, &args))
                     } else {
                         None
                     }
