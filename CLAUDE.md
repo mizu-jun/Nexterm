@@ -141,6 +141,6 @@ CIは`.github/workflows/ci.yml`で`main`/`develop`ブランチをトリガーと
 
 バージョンバンプは`Cargo.toml`の`[workspace.package] version`を更新すること（個別クレートのCargo.tomlではなく、ワークスペースルートのみ）。
 
-Flatpakビルドは`.github/workflows/flatpak.yml`で`ubuntu-latest`ランナー上で実行する。`container:`ブロックを使うと`apt-get`が利用できなくなるため使用しないこと。
+Flatpakビルドは`.github/workflows/flatpak.yml`で`ubuntu-latest`ランナー上で実行する。`container:`ブロックを使うと`apt-get`が利用できなくなるため使用しないこと。`flatpak remote-add`・`flatpak install`・`flatpak-builder`にはすべて`--user`フラグが必要（CI環境ではシステム操作の権限がない）。
 
 russh の SSH エージェント認証では `request_identities()` が返す `Vec<PublicKey>` のループ変数は `&PublicKey` 型。`authenticate_publickey_with` に渡す際は `identity.clone()` で所有権を取得すること（`public_key()` メソッドは `PublicKey` 型には存在しない）。
