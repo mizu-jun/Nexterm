@@ -2802,6 +2802,7 @@ impl NextermApp {
             _shader_watcher,
             last_tab_click: None,
             server_handle,
+            pixel_scroll_accumulator: 0.0,
         }
     }
 }
@@ -2835,6 +2836,8 @@ pub struct EventHandler {
     last_tab_click: Option<(Instant, u32)>,
     /// 内部サーバータスクのハンドル（ウィンドウ終了時に abort する）
     server_handle: tokio::task::JoinHandle<()>,
+    /// タッチパッド精密スクロール（PixelDelta）の積算バッファ
+    pixel_scroll_accumulator: f64,
 }
 
 /// 設定パネルに対するマウスヒットテスト結果
@@ -3601,7 +3604,13 @@ impl ApplicationHandler for EventHandler {
                 let lines = match delta {
                     MouseScrollDelta::LineDelta(_, y) => (y * 3.0) as i32,
                     MouseScrollDelta::PixelDelta(p) => {
-                        (p.y / self.app.font.cell_height() as f64 * 3.0) as i32
+                        // Windows タッチパッドは PixelDelta を送る。
+                        // 積算してセル高さ分溜まったら1行スクロールし、端数は次回に持ち越す。
+                        self.pixel_scroll_accumulator += p.y;
+                        let cell_h = self.app.font.cell_height() as f64;
+                        let lines = (self.pixel_scroll_accumulator / cell_h) as i32;
+                        self.pixel_scroll_accumulator -= lines as f64 * cell_h;
+                        lines
                     }
                 };
                 if lines > 0 {

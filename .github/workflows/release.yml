@@ -255,15 +255,11 @@ jobs:
           if ([string]::IsNullOrEmpty($version)) { throw "Cannot extract version from Cargo.toml" }
           Write-Host "MSI version: $version"
 
-          # WiX ソースにバージョンを直接書き込む（プリプロセッサ変数を使わない）
-          $wixPath = "wix\main.wxs"
-          (Get-Content $wixPath -Raw) -replace '\$\(var\.Version\)', $version |
-            Set-Content $wixPath -Encoding UTF8
-
-          # candle.exe + light.exe でMSIをビルド
+          # candle.exe + light.exe でMSIをビルド（-d フラグでバージョンをプリプロセッサ変数として渡す）
           $wixDir = "$($wixInstalled.FullName)\bin"
+          $wixPath = "wix\main.wxs"
           New-Item -ItemType Directory -Path build -Force | Out-Null
-          & "$wixDir\candle.exe" -arch x64 -out "build\" $wixPath
+          & "$wixDir\candle.exe" -arch x64 -d "Version=$version" -out "build\" $wixPath
           if ($LASTEXITCODE -ne 0) { throw "candle.exe failed" }
 
           & "$wixDir\light.exe" `

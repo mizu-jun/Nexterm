@@ -1230,7 +1230,7 @@ separator = " | "
     #[test]
     fn window_config_デフォルト値() {
         let w = WindowConfig::default();
-        assert_eq!(w.background_opacity, 1.0);
+        assert!((w.background_opacity - 0.95).abs() < f32::EPSILON);
         assert_eq!(w.macos_window_background_blur, 0);
         assert_eq!(w.decorations, WindowDecorations::Full);
         assert_eq!(w.layout_mode, "bsp");

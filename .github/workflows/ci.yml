@@ -60,7 +60,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run ConPTY integration tests
         run: cargo test --package nexterm-server --test '*' -- --nocapture
-        continue-on-error: true
 
   security:
     name: Security audit
