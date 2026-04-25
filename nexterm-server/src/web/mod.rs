@@ -655,7 +655,7 @@ async fn handle_logout(
         .header("Location", "/login")
         .header("Set-Cookie", auth::make_logout_cookie())
         .body(axum::body::Body::empty())
-        .unwrap()
+        .expect("logout redirect レスポンスの構築に失敗")
 }
 
 /// セットアップ URL レスポンス

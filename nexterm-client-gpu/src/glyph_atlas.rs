@@ -27,13 +27,27 @@ pub(crate) struct TextVertex {
 
 // ---- グリフアトラス ----
 
-/// グリフキャッシュのキー
+/// グリフキャッシュのキー（1文字単位）
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct GlyphKey {
     pub ch: char,
     pub bold: bool,
     pub italic: bool,
     pub wide: bool,
+}
+
+/// リガチャグリフキャッシュのキー（行単位シェーピング用）
+///
+/// `col` はグリッド列インデックス、`text` はチャンク全体の文字列。
+/// リガチャは文脈依存のため、前後の文字列も含めてキャッシュキーにする。
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct LigatureKey {
+    pub col: usize,
+    pub text: String,
+    pub bold: bool,
+    pub italic: bool,
+    /// fg 色を u32 にパックして比較する（[r,g,b,a] → u32）
+    pub fg_packed: u32,
 }
 
 /// グリフアトラス内の矩形
@@ -62,8 +76,10 @@ pub(crate) struct GlyphAtlas {
     cursor_y: u32,
     /// 現在行の最大高さ
     row_height: u32,
-    /// キャッシュ済みグリフ
+    /// キャッシュ済みグリフ（1文字単位）
     pub cache: HashMap<GlyphKey, GlyphRect>,
+    /// キャッシュ済みリガチャグリフ（行単位シェーピング）
+    pub ligature_cache: HashMap<LigatureKey, GlyphRect>,
     /// フレーム内でアトラスをリセットした場合 true
     /// 次フレームで再描画が必要なことを示す（UV 不整合防止）
     pub cleared_this_frame: bool,
@@ -118,6 +134,7 @@ impl GlyphAtlas {
             cursor_y: 0,
             row_height: 0,
             cache: HashMap::new(),
+            ligature_cache: HashMap::new(),
             cleared_this_frame: false,
             needs_grow: false,
         }
@@ -212,6 +229,78 @@ impl GlyphAtlas {
         self.cursor_x += width + 1;
         self.row_height = self.row_height.max(height);
         self.cache.insert(key, rect);
+        rect
+    }
+
+    /// リガチャグリフをアトラスに追加する（既存なら再利用）
+    pub fn get_or_insert_ligature(
+        &mut self,
+        key: LigatureKey,
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+        queue: &wgpu::Queue,
+    ) -> GlyphRect {
+        if let Some(rect) = self.ligature_cache.get(&key) {
+            return *rect;
+        }
+
+        if self.cursor_x + width > self.size {
+            self.cursor_y += self.row_height + 1;
+            self.cursor_x = 0;
+            self.row_height = 0;
+        }
+
+        if self.cursor_y + height > self.size {
+            self.cursor_x = 0;
+            self.cursor_y = 0;
+            self.row_height = 0;
+            self.cache.clear();
+            self.ligature_cache.clear();
+            self.cleared_this_frame = true;
+            if self.size < Self::SIZE_MAX {
+                self.needs_grow = true;
+            }
+        }
+
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &self.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: self.cursor_x,
+                    y: self.cursor_y,
+                    z: 0,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            pixels,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let s = self.size as f32;
+        let rect = GlyphRect {
+            uv_min: [self.cursor_x as f32 / s, self.cursor_y as f32 / s],
+            uv_max: [
+                (self.cursor_x + width) as f32 / s,
+                (self.cursor_y + height) as f32 / s,
+            ],
+            width,
+            height,
+        };
+
+        self.cursor_x += width + 1;
+        self.row_height = self.row_height.max(height);
+        self.ligature_cache.insert(key, rect);
         rect
     }
 }

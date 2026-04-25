@@ -43,6 +43,9 @@ pub struct SessionSnapshot {
     pub name: String,
     /// 起動シェルコマンド
     pub shell: String,
+    /// シェル起動引数（例: ["-NoLogo"] for PowerShell）
+    #[serde(default)]
+    pub shell_args: Vec<String>,
     /// 端末列数
     pub cols: u16,
     /// 端末行数

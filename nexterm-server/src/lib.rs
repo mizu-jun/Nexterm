@@ -81,6 +81,22 @@ pub async fn run_server() -> Result<()> {
         tokio::spawn(web::start_web_server(web_config, web_manager));
     }
 
+    // 30秒ごとにスナップショットを自動保存するバックグラウンドタスク
+    let auto_save_manager = Arc::clone(&manager);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        interval.tick().await; // 最初の tick は即時なのでスキップ
+        loop {
+            interval.tick().await;
+            let snap = auto_save_manager.to_snapshot().await;
+            if !snap.sessions.is_empty() {
+                if let Err(e) = persist::save_snapshot(&snap) {
+                    tracing::warn!("自動保存に失敗しました: {}", e);
+                }
+            }
+        }
+    });
+
     // IPC サーバーを実行してシャットダウンシグナルを待機する
     tokio::select! {
         result = ipc::serve(manager_for_ipc, hooks, lua_runner, log_config, hosts) => {

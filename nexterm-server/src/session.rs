@@ -302,6 +302,7 @@ impl Session {
         SessionSnapshot {
             name: self.name.clone(),
             shell: self.shell.clone(),
+            shell_args: self.shell_args.clone(),
             cols: self.cols,
             rows: self.rows,
             windows: self.windows.values().map(|w| w.to_snapshot()).collect(),
@@ -345,7 +346,7 @@ impl Session {
             focused_window_id: snap.focused_window_id,
             broadcast_tx,
             shell: snap.shell.clone(),
-            shell_args: vec![],
+            shell_args: snap.shell_args.clone(),
             cols: snap.cols,
             rows: snap.rows,
             broadcast: false,

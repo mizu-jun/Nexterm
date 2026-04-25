@@ -2,6 +2,18 @@
 
 use cosmic_text::{Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, SwashCache};
 
+/// リガチャ描画の出力グリフ（行単位ラスタライズ用）
+pub struct RenderedGlyph {
+    /// グリッド上の列インデックス（0 origin）
+    pub col: usize,
+    /// グリフの物理幅（ピクセル）
+    pub width: u32,
+    /// グリフの物理高さ（ピクセル）
+    pub height: u32,
+    /// RGBA ピクセルデータ
+    pub pixels: Vec<u8>,
+}
+
 /// フォントシステムのラッパー
 pub struct FontManager {
     pub font_system: FontSystem,
@@ -11,6 +23,8 @@ pub struct FontManager {
     cell_w: f32,
     /// 設定されたフォントファミリー名（Attrs に渡す）
     family: String,
+    /// リガチャを有効にするか
+    pub ligatures: bool,
 }
 
 impl FontManager {
@@ -19,7 +33,14 @@ impl FontManager {
     /// `family` はプライマリフォントファミリー名。
     /// `fallbacks` はグリフが見つからない場合に順番に試行するフォントファミリーリスト。
     /// `scale_factor` は winit の window.scale_factor()（DPI スケール係数）。
-    pub fn new(family: &str, size_pt: f32, fallbacks: &[String], scale_factor: f32) -> Self {
+    /// `ligatures` は HarfBuzz リガチャシェーピングを有効にするか。
+    pub fn new(
+        family: &str,
+        size_pt: f32,
+        fallbacks: &[String],
+        scale_factor: f32,
+        ligatures: bool,
+    ) -> Self {
         // FontSystem::new() は全システムフォントをスキャンするため ~30-50MB 消費する。
         // 代わりに絞り込みロードを使用してメモリを削減する。
         let mut font_system = Self::build_font_system(family, fallbacks);
@@ -65,6 +86,7 @@ impl FontManager {
             metrics,
             cell_w,
             family: family.to_string(),
+            ligatures,
         }
     }
 
@@ -254,6 +276,170 @@ impl FontManager {
         (cell_w, cell_h, pixels)
     }
 
+    /// 行全体をリガチャ込みでラスタライズし、グリッド列単位のグリフリストを返す。
+    ///
+    /// `chars` は (col, char, bold, italic, fg_rgba) のタプル列。
+    /// HarfBuzz の Advanced シェーピングが有効になるため、「->」「=>」「!=」等の
+    /// リガチャグリフが正しく合成される。
+    ///
+    /// リガチャが無効（`self.ligatures == false`）の場合は空リストを返す。
+    /// 呼び出し元は空リストのとき `rasterize_char()` にフォールバックすること。
+    pub fn rasterize_line_segment(
+        &mut self,
+        chars: &[(usize, char, bool, bool, [u8; 4])],
+    ) -> Vec<RenderedGlyph> {
+        if !self.ligatures || chars.is_empty() {
+            return Vec::new();
+        }
+
+        // 同じ fg 色・bold・italic の連続するチャンクに分けてシェーピングする。
+        // 属性が変わる箇所でリガチャは分断される（レンダリング上正しい）。
+        let mut result = Vec::new();
+        let mut chunk_start = 0;
+
+        while chunk_start < chars.len() {
+            let (_, _, bold0, italic0, fg0) = chars[chunk_start];
+            let mut chunk_end = chunk_start + 1;
+            while chunk_end < chars.len() {
+                let (_, _, b, i, fg) = chars[chunk_end];
+                if b != bold0 || i != italic0 || fg != fg0 {
+                    break;
+                }
+                chunk_end += 1;
+            }
+            let chunk = &chars[chunk_start..chunk_end];
+            let mut rendered = self.rasterize_chunk(chunk);
+            result.append(&mut rendered);
+            chunk_start = chunk_end;
+        }
+        result
+    }
+
+    /// 同属性の文字チャンクを1つのバッファでシェーピングしてグリフリストを返す。
+    fn rasterize_chunk(
+        &mut self,
+        chunk: &[(usize, char, bool, bool, [u8; 4])],
+    ) -> Vec<RenderedGlyph> {
+        let text: String = chunk.iter().map(|(_, ch, _, _, _)| *ch).collect();
+        let (_, _, bold, italic, fg) = chunk[0];
+        let cell_h = self.metrics.line_height.ceil() as u32;
+
+        let family_owned = self.family.clone();
+        let base_attrs = if self.family.eq_ignore_ascii_case("monospace") || self.family.is_empty()
+        {
+            Attrs::new().family(Family::Monospace)
+        } else {
+            Attrs::new().family(Family::Name(&family_owned))
+        };
+        let attrs = base_attrs
+            .weight(if bold {
+                cosmic_text::Weight::BOLD
+            } else {
+                cosmic_text::Weight::NORMAL
+            })
+            .style(if italic {
+                cosmic_text::Style::Italic
+            } else {
+                cosmic_text::Style::Normal
+            });
+
+        // チャンク全体を1バッファに渡して HarfBuzz でシェーピングする
+        let buf_width = self.cell_w * chunk.len() as f32 * 4.0;
+        let mut buffer = Buffer::new(&mut self.font_system, self.metrics);
+        buffer.set_text(
+            &mut self.font_system,
+            &text,
+            &attrs,
+            Shaping::Advanced,
+            None,
+        );
+        buffer.set_size(
+            &mut self.font_system,
+            Some(buf_width),
+            Some(self.metrics.line_height),
+        );
+        buffer.shape_until_scroll(&mut self.font_system, false);
+
+        // layout_runs() から各グリフの x オフセット・幅を取得する
+        // グリフ x 座標をセル幅で割ってグリッド列にマッピングする
+        let color = Color::rgba(fg[0], fg[1], fg[2], fg[3]);
+        let mut glyphs: Vec<(usize, f32, f32)> = Vec::new(); // (col, x_px, w_px)
+        for run in buffer.layout_runs() {
+            for glyph in run.glyphs.iter() {
+                let col_idx = (glyph.x / self.cell_w).round() as usize;
+                if col_idx < chunk.len() {
+                    let (grid_col, _, _, _, _) = chunk[col_idx];
+                    glyphs.push((grid_col, glyph.x, glyph.w));
+                }
+            }
+        }
+
+        // グリフが取得できなかった場合は空を返してフォールバックさせる
+        if glyphs.is_empty() {
+            return Vec::new();
+        }
+
+        // バッファ全体をラスタライズしてグリフ領域ごとに切り出す
+        let total_w = (self.cell_w * chunk.len() as f32).ceil() as u32;
+        let mut full_pixels = vec![0u8; (total_w * cell_h * 4) as usize];
+        buffer.draw(
+            &mut self.font_system,
+            &mut self.swash_cache,
+            color,
+            |x, y, _w, _h, c| {
+                if x < 0 || y < 0 {
+                    return;
+                }
+                let px = x as u32;
+                let py = y as u32;
+                if px < total_w && py < cell_h {
+                    let idx = ((py * total_w + px) * 4) as usize;
+                    if idx + 3 < full_pixels.len() {
+                        full_pixels[idx] = (c.r() as u32 * c.a() as u32 / 255) as u8;
+                        full_pixels[idx + 1] = (c.g() as u32 * c.a() as u32 / 255) as u8;
+                        full_pixels[idx + 2] = (c.b() as u32 * c.a() as u32 / 255) as u8;
+                        full_pixels[idx + 3] = c.a();
+                    }
+                }
+            },
+        );
+
+        // 各グリフ領域を切り出して RenderedGlyph に変換する
+        glyphs
+            .into_iter()
+            .map(|(grid_col, glyph_x, glyph_w)| {
+                let x_start = glyph_x.max(0.0) as u32;
+                let width = glyph_w.ceil() as u32;
+                let width = width.min(total_w.saturating_sub(x_start));
+                if width == 0 {
+                    return RenderedGlyph {
+                        col: grid_col,
+                        width: 0,
+                        height: 0,
+                        pixels: Vec::new(),
+                    };
+                }
+                let mut pixels = vec![0u8; (width * cell_h * 4) as usize];
+                for row in 0..cell_h {
+                    for col in 0..width {
+                        let src = ((row * total_w + x_start + col) * 4) as usize;
+                        let dst = ((row * width + col) * 4) as usize;
+                        if src + 3 < full_pixels.len() && dst + 3 < pixels.len() {
+                            pixels[dst..dst + 4].copy_from_slice(&full_pixels[src..src + 4]);
+                        }
+                    }
+                }
+                RenderedGlyph {
+                    col: grid_col,
+                    width,
+                    height: cell_h,
+                    pixels,
+                }
+            })
+            .filter(|g| g.width > 0)
+            .collect()
+    }
+
     /// 1セルの幅（物理ピクセル）を返す — advance width の実計測値
     pub fn cell_width(&self) -> f32 {
         self.cell_w
@@ -277,14 +463,14 @@ mod tests {
 
     #[test]
     fn フォントマネージャーが生成できる() {
-        let fm = FontManager::new("monospace", 14.0, &[], 1.0);
+        let fm = FontManager::new("monospace", 14.0, &[], 1.0, true);
         assert!(fm.cell_width() > 0.0);
         assert!(fm.cell_height() > 0.0);
     }
 
     #[test]
     fn セルサイズが正の値を持つ() {
-        let fm = FontManager::new("monospace", 16.0, &[], 1.0);
+        let fm = FontManager::new("monospace", 16.0, &[], 1.0, true);
         assert!(fm.cell_width() > 5.0);
         assert!(fm.cell_height() > 10.0);
     }
@@ -295,15 +481,15 @@ mod tests {
             "Noto Sans CJK JP".to_string(),
             "Noto Color Emoji".to_string(),
         ];
-        let fm = FontManager::new("JetBrains Mono", 14.0, &fallbacks, 1.0);
+        let fm = FontManager::new("JetBrains Mono", 14.0, &fallbacks, 1.0, true);
         assert!(fm.cell_width() > 0.0);
         assert!(fm.cell_height() > 0.0);
     }
 
     #[test]
     fn scale_factor_1_25でセル幅が大きくなる() {
-        let fm1 = FontManager::new("monospace", 14.0, &[], 1.0);
-        let fm125 = FontManager::new("monospace", 14.0, &[], 1.25);
+        let fm1 = FontManager::new("monospace", 14.0, &[], 1.0, true);
+        let fm125 = FontManager::new("monospace", 14.0, &[], 1.25, true);
         assert!(fm125.cell_width() > fm1.cell_width());
         assert!(fm125.cell_height() > fm1.cell_height());
     }
@@ -311,7 +497,7 @@ mod tests {
     #[test]
     fn advance_width_が_ink_width_以上であること() {
         // layout_runs() 計測は ink width と等しいか大きい（right bearing を含む）
-        let fm = FontManager::new("monospace", 14.0, &[], 1.0);
+        let fm = FontManager::new("monospace", 14.0, &[], 1.0, true);
         // monospace フォントなのですべての文字が同じ幅のはず
         let cell_w = fm.cell_width();
         assert!(cell_w > 0.0, "cell_w should be positive: {}", cell_w);

@@ -38,7 +38,7 @@ use crate::{
 };
 
 // サブモジュールは main.rs で宣言済み（crate ルート）
-use crate::glyph_atlas::{BgVertex, GlyphAtlas, GlyphKey, TextVertex};
+use crate::glyph_atlas::{BgVertex, GlyphAtlas, GlyphKey, LigatureKey, TextVertex};
 use crate::shaders::{BG_SHADER, IMAGE_SHADER, TEXT_SHADER};
 use crate::color_util::{hex_to_rgba, resolve_color};
 use crate::key_map::{config_key_matches, physical_to_proto_key, proto_modifiers, winit_code_to_char};
@@ -909,21 +909,94 @@ impl WgpuState {
 
         let grid = &pane.grid;
         for row in 0..grid.height as usize {
+            let py = row as f32 * cell_h + y_offset;
+
+            // 背景色・選択ハイライトを先に描画する（リガチャ有無に関わらず）
             for col in 0..grid.width as usize {
-                let Some(cell) = grid.get(col as u16, row as u16) else {
-                    continue;
-                };
+                let Some(cell) = grid.get(col as u16, row as u16) else { continue };
                 let px = col as f32 * cell_w;
-                let py = row as f32 * cell_h + y_offset;
                 let bg = resolve_color(&cell.bg, false, palette);
                 add_px_rect(px, py, cell_w, cell_h, bg, sw, sh, bg_verts, bg_idx);
-                // 選択ハイライトオーバーレイ
                 if mouse_sel.contains(col as u16, row as u16) {
                     add_px_rect(px, py, cell_w, cell_h, SEL_COLOR, sw, sh, bg_verts, bg_idx);
                 }
-                if cell.ch == ' ' {
-                    continue;
+            }
+
+            // リガチャが有効な場合: 行全体を行単位シェーピングで描画する
+            // 成功したセルは `ligature_rendered` に記録してフォールバックをスキップする
+            let mut ligature_rendered = std::collections::HashSet::new();
+            if font.ligatures {
+                // 行の非空白セルを (col, char, bold, italic, fg_u8) にまとめる
+                let row_chars: Vec<(usize, char, bool, bool, [u8; 4])> = (0..grid.width as usize)
+                    .filter_map(|col| {
+                        let cell = grid.get(col as u16, row as u16)?;
+                        if cell.ch == ' ' { return None; }
+                        let fg = resolve_color(&cell.fg, true, palette);
+                        let fg_u8 = [
+                            (fg[0] * 255.0) as u8,
+                            (fg[1] * 255.0) as u8,
+                            (fg[2] * 255.0) as u8,
+                            (fg[3] * 255.0) as u8,
+                        ];
+                        Some((col, cell.ch, cell.attrs.is_bold(), cell.attrs.is_italic(), fg_u8))
+                    })
+                    .collect();
+
+                if !row_chars.is_empty() {
+                    // 行テキストをキャッシュキー用に生成する
+                    let row_text: String = row_chars.iter().map(|(_, ch, _, _, _)| *ch).collect();
+
+                    let rendered = font.rasterize_line_segment(&row_chars);
+                    for glyph in rendered {
+                        if glyph.width == 0 || glyph.pixels.is_empty() { continue; }
+                        let col = glyph.col;
+                        let Some(cell) = grid.get(col as u16, row as u16) else { continue };
+                        let fg = resolve_color(&cell.fg, true, palette);
+                        let fg_u8 = [
+                            (fg[0] * 255.0) as u8,
+                            (fg[1] * 255.0) as u8,
+                            (fg[2] * 255.0) as u8,
+                            255,
+                        ];
+                        let fg_packed = u32::from_le_bytes(fg_u8);
+                        let lig_key = LigatureKey {
+                            col,
+                            text: row_text.clone(),
+                            bold: cell.attrs.is_bold(),
+                            italic: cell.attrs.is_italic(),
+                            fg_packed,
+                        };
+                        let rect = atlas.get_or_insert_ligature(
+                            lig_key,
+                            &glyph.pixels,
+                            glyph.width,
+                            glyph.height,
+                            &self.queue,
+                        );
+                        let px = col as f32 * cell_w;
+                        let tx0 = px / sw * 2.0 - 1.0;
+                        let ty0 = 1.0 - py / sh * 2.0;
+                        let tx1 = (px + glyph.width as f32) / sw * 2.0 - 1.0;
+                        let ty1 = 1.0 - (py + glyph.height as f32) / sh * 2.0;
+                        let base = text_verts.len() as u16;
+                        text_verts.extend_from_slice(&[
+                            TextVertex { position: [tx0, ty0], uv: rect.uv_min, color: fg },
+                            TextVertex { position: [tx1, ty0], uv: [rect.uv_max[0], rect.uv_min[1]], color: fg },
+                            TextVertex { position: [tx1, ty1], uv: rect.uv_max, color: fg },
+                            TextVertex { position: [tx0, ty1], uv: [rect.uv_min[0], rect.uv_max[1]], color: fg },
+                        ]);
+                        text_idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        ligature_rendered.insert(col);
+                    }
                 }
+            }
+
+            // リガチャで描画済みでないセルを1文字単位でフォールバック描画する
+            for col in 0..grid.width as usize {
+                if ligature_rendered.contains(&col) { continue; }
+                let Some(cell) = grid.get(col as u16, row as u16) else { continue };
+                if cell.ch == ' ' { continue; }
+                let px = col as f32 * cell_w;
                 let fg = resolve_color(&cell.fg, true, palette);
                 let fg_u8 = [
                     (fg[0] * 255.0) as u8,
@@ -931,7 +1004,6 @@ impl WgpuState {
                     (fg[2] * 255.0) as u8,
                     (fg[3] * 255.0) as u8,
                 ];
-                // 全角文字（CJK 等、Unicode width = 2）は 2 セル幅でレンダリングする
                 let is_wide = UnicodeWidthChar::width(cell.ch).unwrap_or(1) >= 2;
                 let key = GlyphKey {
                     ch: cell.ch,
@@ -946,9 +1018,7 @@ impl WgpuState {
                     fg_u8,
                     is_wide,
                 );
-                if gw == 0 || gh == 0 || pixels.is_empty() {
-                    continue;
-                }
+                if gw == 0 || gh == 0 || pixels.is_empty() { continue; }
                 let rect = atlas.get_or_insert(key, &pixels, gw, gh, &self.queue);
                 let tx0 = px / sw * 2.0 - 1.0;
                 let ty0 = 1.0 - py / sh * 2.0;
@@ -956,26 +1026,10 @@ impl WgpuState {
                 let ty1 = 1.0 - (py + gh as f32) / sh * 2.0;
                 let base = text_verts.len() as u16;
                 text_verts.extend_from_slice(&[
-                    TextVertex {
-                        position: [tx0, ty0],
-                        uv: rect.uv_min,
-                        color: fg,
-                    },
-                    TextVertex {
-                        position: [tx1, ty0],
-                        uv: [rect.uv_max[0], rect.uv_min[1]],
-                        color: fg,
-                    },
-                    TextVertex {
-                        position: [tx1, ty1],
-                        uv: rect.uv_max,
-                        color: fg,
-                    },
-                    TextVertex {
-                        position: [tx0, ty1],
-                        uv: [rect.uv_min[0], rect.uv_max[1]],
-                        color: fg,
-                    },
+                    TextVertex { position: [tx0, ty0], uv: rect.uv_min, color: fg },
+                    TextVertex { position: [tx1, ty0], uv: [rect.uv_max[0], rect.uv_min[1]], color: fg },
+                    TextVertex { position: [tx1, ty1], uv: rect.uv_max, color: fg },
+                    TextVertex { position: [tx0, ty1], uv: [rect.uv_min[0], rect.uv_max[1]], color: fg },
                 ]);
                 text_idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
             }
@@ -2710,7 +2764,7 @@ pub struct NextermApp {
 
 impl NextermApp {
     pub async fn new(config: Config) -> Result<Self> {
-        let font = FontManager::new(&config.font.family, config.font.size, &config.font.font_fallbacks, 1.0);
+        let font = FontManager::new(&config.font.family, config.font.size, &config.font.font_fallbacks, 1.0, config.font.ligatures);
         let mut state = ClientState::new(80, 24, config.scrollback_lines);
         // 設定ファイルのホスト一覧をホストマネージャに渡す
         state.host_manager = crate::host_manager::HostManager::new(config.hosts.clone());
@@ -2961,6 +3015,7 @@ impl ApplicationHandler for EventHandler {
             self.app.config.font.size,
             &self.app.config.font.font_fallbacks,
             scale_factor,
+            self.app.config.font.ligatures,
         );
 
         // Acrylic（すりガラス）背景を適用する（Windows 11 のみ有効）
@@ -3062,6 +3117,7 @@ impl ApplicationHandler for EventHandler {
                         self.app.config.font.size,
                         &self.app.config.font.font_fallbacks,
                         self.scale_factor,
+                        self.app.config.font.ligatures,
                     );
                     if let Some(wgpu) = &self.wgpu_state {
                         self.atlas = Some(GlyphAtlas::new(&wgpu.device));
@@ -3156,6 +3212,7 @@ impl ApplicationHandler for EventHandler {
                     self.app.config.font.size,
                     &self.app.config.font.font_fallbacks,
                     self.scale_factor,
+                    self.app.config.font.ligatures,
                 );
                 // スケール変更でグリフが無効化されるためアトラスを再生成する
                 if let Some(wgpu) = &self.wgpu_state {
@@ -4458,8 +4515,13 @@ impl EventHandler {
             return;
         }
         self.app.config.font.size = new_size;
-        self.app.font =
-            crate::font::FontManager::new(&self.app.config.font.family, new_size, &self.app.config.font.font_fallbacks, self.scale_factor);
+        self.app.font = crate::font::FontManager::new(
+            &self.app.config.font.family,
+            new_size,
+            &self.app.config.font.font_fallbacks,
+            self.scale_factor,
+            self.app.config.font.ligatures,
+        );
         if let Some(wgpu) = &self.wgpu_state {
             self.atlas = Some(GlyphAtlas::new(&wgpu.device));
         }
@@ -4503,8 +4565,13 @@ impl EventHandler {
         // 慣例の 14pt をデフォルトとして使用する
         let default_size = nexterm_config::Config::default().font.size;
         self.app.config.font.size = default_size;
-        self.app.font =
-            crate::font::FontManager::new(&self.app.config.font.family, default_size, &self.app.config.font.font_fallbacks, self.scale_factor);
+        self.app.font = crate::font::FontManager::new(
+            &self.app.config.font.family,
+            default_size,
+            &self.app.config.font.font_fallbacks,
+            self.scale_factor,
+            self.app.config.font.ligatures,
+        );
         if let Some(wgpu) = &self.wgpu_state {
             self.atlas = Some(GlyphAtlas::new(&wgpu.device));
         }

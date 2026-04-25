@@ -84,7 +84,8 @@ impl AccessLogger {
 
         // ファイルへの追記
         if let Some(ref path) = self.file_path {
-            let _lock = self.file_lock.lock().unwrap();
+            let Ok(_lock) = self.file_lock.lock() else { return };
+            let _lock = _lock;
             if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
                 let line = format!(
                     "{},{},{},{},{},{},{}\n",

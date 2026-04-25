@@ -20,6 +20,7 @@ fn session_with_single_pane() -> SessionSnapshot {
     SessionSnapshot {
         name: "test".to_string(),
         shell: "/bin/bash".to_string(),
+        shell_args: vec![],
         cols: 80,
         rows: 24,
         windows: vec![WindowSnapshot {
