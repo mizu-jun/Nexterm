@@ -259,7 +259,7 @@ jobs:
           $wixDir = "$($wixInstalled.FullName)\bin"
           $wixPath = "wix\main.wxs"
           New-Item -ItemType Directory -Path build -Force | Out-Null
-          & "$wixDir\candle.exe" -arch x64 -d "Version=$version" -out "build\" $wixPath
+          & "$wixDir\candle.exe" -arch x64 "-dVersion=$version" -out "build\" $wixPath
           if ($LASTEXITCODE -ne 0) { throw "candle.exe failed" }
 
           & "$wixDir\light.exe" `
