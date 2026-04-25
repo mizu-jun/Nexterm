@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.9] - 2026-04-25
+
+### Fixed
+
+- **タッチパッドスクロール**: Windows タッチパッド（PixelDelta）でスクロールが無視される問題を修正（積算バッファを追加し、セル高さ分溜まったら行スクロール）。
+- **フォントリガチャ**: 設定ファイルの `[font] ligatures = true` が正しく FontManager に渡されなかった問題を修正。
+
+### Improved
+
+- **CI 品質向上**: Windows ConPTY 統合テストの `continue-on-error: true` を削除し、テスト失敗をビルド失敗として扱うように変更。
+- **WiX ビルド安定化**: バージョン置換を `candle.exe -d "Version=X.Y.Z"` フラグ渡しに変更し、ソースファイル（`wix/main.wxs`）を変更しないように改善。
+
+### Fixed (テスト)
+
+- **`window_config_デフォルト値` テスト修正**: `background_opacity` のデフォルト値が `0.95` に変更されたにもかかわらずテストが `1.0` を期待していた不整合を修正。
+
+---
+
 ## [0.9.8] - 2026-04-25
 
 ### Fixed
