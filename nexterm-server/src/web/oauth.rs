@@ -24,10 +24,9 @@ use std::{
 
 use nexterm_config::OAuthConfig;
 use oauth2::{
-    AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, RedirectUrl, Scope,
-    TokenResponse, TokenUrl,
-    basic::BasicClient,
-    reqwest::async_http_client,
+    AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointSet, RedirectUrl,
+    Scope, TokenResponse, TokenUrl,
+    basic::{BasicClient, BasicTokenResponse},
 };
 use serde::Deserialize;
 use tracing::{info, warn};
@@ -76,7 +75,7 @@ impl OAuthManager {
             request = request.add_scope(Scope::new(scope));
         }
 
-        let (url, csrf_token) = request.url();
+        let (url, csrf_token): (_, CsrfToken) = request.url();
 
         // state を保存する（10 分で自動期限切れ）
         let expiry = Instant::now() + STATE_TTL;
@@ -111,9 +110,10 @@ impl OAuthManager {
         }
 
         let client = self.build_client()?;
-        let token_result = client
+        let http_client = reqwest::Client::new();
+        let token_result: BasicTokenResponse = client
             .exchange_code(AuthorizationCode::new(code))
-            .request_async(async_http_client)
+            .request_async(&http_client)
             .await
             .map_err(|e| anyhow::anyhow!("トークン交換失敗: {}", e))?;
 
@@ -378,7 +378,22 @@ impl OAuthManager {
 
     // ── プライベートヘルパー ──────────────────────────────────────────────────
 
-    fn build_client(&self) -> anyhow::Result<BasicClient> {
+    fn build_client(
+        &self,
+    ) -> anyhow::Result<
+        oauth2::Client<
+            oauth2::basic::BasicErrorResponse,
+            BasicTokenResponse,
+            oauth2::basic::BasicTokenIntrospectionResponse,
+            oauth2::StandardRevocableToken,
+            oauth2::basic::BasicRevocationErrorResponse,
+            EndpointSet,
+            oauth2::EndpointNotSet,
+            oauth2::EndpointNotSet,
+            oauth2::EndpointNotSet,
+            EndpointSet,
+        >,
+    > {
         let client_id = ClientId::new(
             self.config
                 .client_id
@@ -403,20 +418,21 @@ impl OAuthManager {
             format!("{}/auth/callback", self.redirect_base)
         });
 
-        let client = BasicClient::new(
-            client_id,
-            Some(ClientSecret::new(client_secret)),
-            AuthUrl::new(auth_url)
-                .map_err(|e| anyhow::anyhow!("OAuth auth_url が不正です: {}", e))?,
-            Some(
+        // oauth2 v5: BasicClient::new は client_id のみ受け取り、他はメソッドチェーンで設定する
+        let client = BasicClient::new(client_id)
+            .set_client_secret(ClientSecret::new(client_secret))
+            .set_auth_uri(
+                AuthUrl::new(auth_url)
+                    .map_err(|e| anyhow::anyhow!("OAuth auth_url が不正です: {}", e))?,
+            )
+            .set_token_uri(
                 TokenUrl::new(token_url)
                     .map_err(|e| anyhow::anyhow!("OAuth token_url が不正です: {}", e))?,
-            ),
-        )
-        .set_redirect_uri(
-            RedirectUrl::new(redirect_url)
-                .map_err(|e| anyhow::anyhow!("OAuth redirect_url が不正です: {}", e))?,
-        );
+            )
+            .set_redirect_uri(
+                RedirectUrl::new(redirect_url)
+                    .map_err(|e| anyhow::anyhow!("OAuth redirect_url が不正です: {}", e))?,
+            );
 
         Ok(client)
     }

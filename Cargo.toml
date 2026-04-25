@@ -36,7 +36,7 @@ serde = { version = "1", features = ["derive"] }
 bincode = "1"
 
 # TUI クライアント（Phase 1）
-ratatui = "0.29"
+ratatui = "0.30"
 crossterm = "0.28"
 
 # エラーハンドリング
