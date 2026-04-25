@@ -9,17 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **タッチパッドスクロール**: Windows タッチパッド（PixelDelta）でスクロールが無視される問題を修正（積算バッファを追加し、セル高さ分溜まったら行スクロール）。
-- **フォントリガチャ**: 設定ファイルの `[font] ligatures = true` が正しく FontManager に渡されなかった問題を修正。
+- **Touchpad scrolling**: Fixed an issue where Windows touchpad scroll events (PixelDelta) were silently ignored. Added an accumulation buffer that triggers a line scroll once enough delta accumulates to equal one cell height.
+- **Font ligatures**: Fixed an issue where `[font] ligatures = true` in the config file was not correctly passed through to FontManager.
 
 ### Improved
 
-- **CI 品質向上**: Windows ConPTY 統合テストの `continue-on-error: true` を削除し、テスト失敗をビルド失敗として扱うように変更。
-- **WiX ビルド安定化**: バージョン置換を `candle.exe -d "Version=X.Y.Z"` フラグ渡しに変更し、ソースファイル（`wix/main.wxs`）を変更しないように改善。
+- **CI quality**: Removed `continue-on-error: true` from the Windows ConPTY integration test so that test failures now cause the build to fail.
+- **WiX build stability**: Changed version injection to use `candle.exe -dVersion=X.Y.Z` flag instead of modifying the source file (`wix/main.wxs`) directly.
 
-### Fixed (テスト)
+### Fixed (tests)
 
-- **`window_config_デフォルト値` テスト修正**: `background_opacity` のデフォルト値が `0.95` に変更されたにもかかわらずテストが `1.0` を期待していた不整合を修正。
+- **`window_config_default_value` test**: Fixed a mismatch where the test expected `background_opacity` to be `1.0` even after the default was changed to `0.95`.
 
 ---
 
@@ -27,14 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **PowerShell自動起動**: Windows版起動時にPowerShellが自動的に起動しない問題を修正（`-NoLogo`引数を含む設定が全ペイン生成に正しく伝播するように）。
-- **ウィンドウ透過**: 設定ファイルなしの初回起動時にウィンドウ背景が透過されない問題を修正（デフォルト不透明度を0.95に変更）。
-- **×ボタンで固まる**: ウィンドウを×で閉じると固まる問題を修正（IPC接続を先にドロップしてからサーバータスクを終了）。
-- **コンテキストメニュー文字はみ出し**: ショートカットキーがメニュー枠外にはみ出す問題を修正（描画位置計算をvisual_width()ベースに統一）。
+- **PowerShell auto-launch**: Fixed an issue where PowerShell did not start automatically on Windows. The config including the `-NoLogo` argument is now correctly propagated to all pane creation paths.
+- **Window transparency**: Fixed an issue where the window background was not transparent on first launch without a config file. Changed the default opacity to 0.95.
+- **Freeze on close**: Fixed a hang when closing the window with the × button. The IPC connection is now dropped before the server task is terminated.
+- **Context menu text overflow**: Fixed shortcut key labels overflowing outside the menu border. Unified drawing position calculation to use `visual_width()`.
 
 ### Changed
 
-- **依存関係更新**: `rand` を 0.8.6 → 0.9.4 に更新。
+- **Dependency update**: Updated `rand` from 0.8.6 to 0.9.4.
 
 ---
 
@@ -42,13 +42,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **言語選択UI**: インストール時・設定パネルで言語を選択できる機能を追加（8言語対応）。
+- **Language selection UI**: Added the ability to select the UI language during installation and from the settings panel (8 languages supported).
 
 ### Fixed
 
-- **コンテキストメニュー幅**: 翻訳テキストが長い言語でメニューがはみ出す問題を修正。
-- **ウィンドウClose固まり**: ウィンドウを閉じようとすると固まる問題を修正。
-- **PowerShell検出改善**: PowerShellシェルの自動検出精度を向上。
+- **Context menu width**: Fixed menu overflow for languages with longer translated text.
+- **Freeze on window close**: Fixed a hang that occurred when attempting to close the window.
+- **PowerShell detection**: Improved accuracy of automatic PowerShell shell detection.
 
 ---
 
@@ -56,23 +56,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Improved
 
-- **nexterm-server ipc.rs モジュール分割**: `ipc.rs`（1707 行）を 5 サブモジュールに分割し保守性を向上。
-  - `ipc/platform.rs` — Unix Domain Socket / Windows Named Pipe リスナー・UID 検証
-  - `ipc/handler.rs` — 接続済みクライアントの読み書きループ
-  - `ipc/dispatch.rs` — 40+ IPC コマンドのディスパッチロジック
-  - `ipc/key.rs` — キーコード → VT エスケープシーケンス変換（ユニットテスト 8 件付き）
-  - `ipc/sftp.rs` — SFTP アップロード・ダウンロードヘルパー
+- **nexterm-server ipc.rs module split**: Split `ipc.rs` (1707 lines) into 5 submodules for improved maintainability.
+  - `ipc/platform.rs` — Unix Domain Socket / Windows Named Pipe listener and UID verification
+  - `ipc/handler.rs` — Read/write loop for connected clients
+  - `ipc/dispatch.rs` — Dispatch logic for 40+ IPC commands
+  - `ipc/key.rs` — Keycode → VT escape sequence conversion (8 unit tests)
+  - `ipc/sftp.rs` — SFTP upload/download helpers
 
-- **統合テスト追加**: `nexterm-server/tests/` に 2 ファイル追加。
-  - `ipc_integration.rs` — bincode シリアライズ + 4 バイト LE フレーミングの往復テスト（14 件）
-  - `snapshot_roundtrip.rs` — セッションスナップショットの JSON 往復・永続化テスト（6 件）
+- **Integration tests added**: Added 2 files under `nexterm-server/tests/`.
+  - `ipc_integration.rs` — Round-trip tests for bincode serialization + 4-byte LE framing (14 tests)
+  - `snapshot_roundtrip.rs` — JSON round-trip and persistence tests for session snapshots (6 tests)
 
-- **`#![warn(missing_docs)]` ワークスペース全体適用**: 6 クレート（nexterm-vt / nexterm-ssh / nexterm-plugin / nexterm-config / nexterm-server / nexterm-i18n）に適用し、不足ドキュメントを一括追加。
+- **`#![warn(missing_docs)]` applied workspace-wide**: Applied to 6 crates (nexterm-vt / nexterm-ssh / nexterm-plugin / nexterm-config / nexterm-server / nexterm-i18n) with missing documentation added in bulk.
 
 ### Fixed
 
-- **プロダクションコードの `unwrap()` 削減**: `web/mod.rs`・`web/auth.rs`・`web/oauth.rs`・`window.rs`・`nexterm-plugin`・`nexterm-ssh` の危険な `unwrap()` を `expect("理由")` に変換し、パニック時の原因特定を改善。
-- **`persist::state_dir()`**: `XDG_STATE_HOME` 環境変数を優先するよう修正（テスト隔離・XDG 準拠）。
+- **Reduced `unwrap()` in production code**: Converted unsafe `unwrap()` calls in `web/mod.rs`, `web/auth.rs`, `web/oauth.rs`, `window.rs`, `nexterm-plugin`, and `nexterm-ssh` to `expect("reason")` for improved panic diagnostics.
+- **`persist::state_dir()`**: Fixed to prefer the `XDG_STATE_HOME` environment variable (for test isolation and XDG compliance).
 
 ---
 
@@ -80,25 +80,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **CLAUDE.md**: Claude Code 向けプロジェクトガイド追加。ビルドコマンド・アーキテクチャ概要・コーディング規約を文書化。
-- **docs/KEYBINDINGS.md**: キーバインド完全リファレンスを独立ファイルに抽出。
+- **CLAUDE.md**: Added project guide for Claude Code. Documents build commands, architecture overview, and coding conventions.
+- **docs/KEYBINDINGS.md**: Extracted the complete key binding reference into a standalone file.
 
 ### Changed
 
-- **依存クレート更新**: `vte` 0.13 → 0.15、`cosmic-text` 0.12 → 0.18、`portable-pty` 0.8 → 0.9 を含む 104 パッケージを最新互換バージョンに更新。
-- **README リファクター**: README.md を 32% 削減（1019 行 → 690 行）。変更履歴セクションを CHANGELOG.md へのリンクに置き換え、キーバインド詳細を docs/KEYBINDINGS.md へ移動。
+- **Dependency updates**: Updated 104 packages to their latest compatible versions, including `vte` 0.13 → 0.15, `cosmic-text` 0.12 → 0.18, and `portable-pty` 0.8 → 0.9.
+- **README refactor**: Reduced README.md by 32% (1019 → 690 lines). Replaced the changelog section with a link to CHANGELOG.md and moved key binding details to docs/KEYBINDINGS.md.
 
 ### Improved
 
-- **nexterm-client-gpu モジュール分割**: `renderer.rs`（5553 行）から 5 つのモジュールを抽出し保守性を向上。
-  - `glyph_atlas.rs` — GlyphAtlas・BgVertex・TextVertex・GlyphKey
-  - `shaders.rs` — WGSL シェーダー定数
-  - `color_util.rs` — ANSI 256 色・16 進カラー変換ユーティリティ
-  - `key_map.rs` — winit キーコード ↔ proto キーコード変換
-  - `vertex_util.rs` — 矩形・テキスト・URL・グリッド → テキスト変換ユーティリティ
-- **Rustdoc 充実**: `nexterm-proto` 全 pub API（メッセージ・型・列挙型）に日本語ドキュメントコメントを追加。`#![warn(missing_docs)]` を有効化。
-- **unsafe SAFETY コメント**: `nexterm-server/ipc.rs` の `SO_PEERCRED`・`getpeereid` および `pane.rs` の `libc::kill` に安全性の根拠を文書化。
-- **Clippy 警告解消**: ワークスペース全体の Clippy 警告を解消。CI の `-D warnings` フラグに対応。
+- **nexterm-client-gpu module split**: Extracted 5 modules from `renderer.rs` (5553 lines) to improve maintainability.
+  - `glyph_atlas.rs` — GlyphAtlas, BgVertex, TextVertex, GlyphKey
+  - `shaders.rs` — WGSL shader constants
+  - `color_util.rs` — ANSI 256-color and hex color conversion utilities
+  - `key_map.rs` — winit keycode ↔ proto keycode conversion
+  - `vertex_util.rs` — Rectangle, text, URL, and grid → text conversion utilities
+- **Rustdoc expansion**: Added documentation comments to all public APIs in `nexterm-proto` (messages, types, enums). Enabled `#![warn(missing_docs)]`.
+- **unsafe SAFETY comments**: Documented safety rationale for `SO_PEERCRED`/`getpeereid` in `nexterm-server/ipc.rs` and `libc::kill` in `pane.rs`.
+- **Clippy warnings resolved**: Resolved all Clippy warnings across the workspace. Now compliant with CI's `-D warnings` flag.
 
 ---
 
@@ -106,16 +106,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **PowerShell クラッシュ修正**: `nexterm-vt` の `erase_in_line` / `erase_in_display` / `scroll_up` で直接配列インデックスアクセスを使っていた箇所を `Grid::clear_row()` / `Grid::copy_row()` 安全メソッドに置換。PSReadLine が送る複雑な VT シーケンスによる IndexError パニックを防止。
+- **PowerShell crash fix**: Replaced direct array index accesses in `nexterm-vt`'s `erase_in_line`, `erase_in_display`, and `scroll_up` with the safe `Grid::clear_row()` / `Grid::copy_row()` methods. Prevents IndexError panics caused by complex VT sequences sent by PSReadLine.
 
 ### Added
 
-- **設定パネル マウス操作**: サイドバーカテゴリ・フォントサイズ/不透明度スライダー・テーマカラードットをマウスでクリック・ドラッグ操作可能に。スライダーのドラッグ終了時に自動保存。パネル外クリックで閉じる。
+- **Settings panel mouse interaction**: Sidebar categories, font size/opacity sliders, and theme color dots can now be clicked and dragged with the mouse. Sliders auto-save on drag release. Clicking outside the panel closes it.
 
 ### Changed
 
-- **ターミナル透過表示**: ターミナル背景がデフォルト 95% 不透明（`background_opacity = 0.95`）になり、背景が薄く透けるようになった。設定パネルとコンテキストメニューは常に完全不透明を維持。`nexterm.toml` の `[window] background_opacity` で 0.1〜1.0 の範囲で調整可能。
-- **メモリ使用量削減**: `cosmic-text` の `FontSystem` 初期化をシステム全スキャンから OS 別フォントディレクトリ絞り込みロードに変更（macOS: `/System/Library/Fonts`、Windows: `C:\Windows\Fonts`）。推定 ~30-40MB のメモリ削減。
+- **Terminal background transparency**: The terminal background is now 95% opaque by default (`background_opacity = 0.95`), giving a subtle see-through effect. The settings panel and context menu always remain fully opaque. Adjustable between 0.1 and 1.0 via `[window] background_opacity` in `nexterm.toml`.
+- **Memory usage reduction**: Changed `cosmic-text`'s `FontSystem` initialization from a full system scan to loading only OS-specific font directories (macOS: `/System/Library/Fonts`, Windows: `C:\Windows\Fonts`). Estimated ~30–40 MB memory reduction.
 
 ---
 

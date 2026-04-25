@@ -8,14 +8,14 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 
 ## What's New in v0.9.0
 
-**GPU クライアント: 大幅リデザインと競合機能追加**
+**GPU client: major redesign and competitive feature additions**
 
-- **Tokyo Night テーマ**: デフォルトカラーをダークから Tokyo Night に変更。タブバーにアクセントライン、ペイン境界線を 1px 細線に刷新。
-- **設定パネル再設計**: 左サイドバー付き 7 カテゴリ設定画面（Startup / Font / Theme / Window / SSH / Keybindings / Profiles）。
-- **タブ名変更 UI**: タブをダブルクリック（300ms 以内）するとインライン編集フィールドが表示され、Enter でサーバーに RenameWindow を送信。
-- **コンテキストメニュー強化**: プロファイル一覧・インライン検索・設定を開くメニュー追加、キーボードショートカットヒント表示。
-- **アプリアイコン更新**: 青グラデーションの "N" ロゴに変更（nexterm-source.png / nexterm.ico 更新）。
-- **黒余白修正**: ペインレイアウト受信前の黒いウィンドウ余白を背景色で埋めるよう修正。
+- **Tokyo Night theme**: Changed the default color scheme from dark to Tokyo Night. Refreshed the tab bar with an accent line and pane borders with 1px thin lines.
+- **Settings panel redesign**: New 7-category settings screen with a left sidebar (Startup / Font / Theme / Window / SSH / Keybindings / Profiles).
+- **Tab rename UI**: Double-clicking a tab (within 300 ms) shows an inline edit field; pressing Enter sends a RenameWindow command to the server.
+- **Context menu enhancements**: Added profile list, inline search, and open-settings menu entries with keyboard shortcut hints.
+- **App icon update**: Changed to a blue-gradient "N" logo (updated nexterm-source.png / nexterm.ico).
+- **Black margin fix**: Fixed a black window border appearing before the pane layout is received; the background color is now used to fill the gap.
 
 ---
 
