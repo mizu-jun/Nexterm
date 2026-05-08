@@ -5,6 +5,18 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::image::{decode_kitty, decode_sixel};
 
+/// DCS Sixel バッファの最大サイズ。
+///
+/// 悪意ある PTY が DCS を終端しないまま延々送り続ける DoS への対策（CRITICAL #7）。
+/// 16 MiB は 1 ページの大きな Sixel 画像 + マージン。
+const MAX_DCS_BUF_LEN: usize = 16 * 1024 * 1024;
+
+/// Kitty 分割転送ペイロードの最大サイズ。
+///
+/// `m=1` チャンクで延々と送られ続ける場合の DoS 対策（CRITICAL #7）。
+/// 64 MiB は分割画像の合計上限。
+const MAX_KITTY_CHUNK_LEN: usize = 64 * 1024 * 1024;
+
 /// OSC 133 セマンティックゾーンのマーク種別
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SemanticMarkKind {
@@ -489,10 +501,23 @@ impl Screen {
     }
 
     /// DCS バイトをバッファに追加する（put 呼び出し時）
+    ///
+    /// 上限超過時はバッファクリア + DCS 状態を破棄して通常パースに復帰する
+    /// （CRITICAL #7: 悪意ある PTY が DCS を終端せずに送り続ける DoS 対策）。
     pub(crate) fn push_dcs_byte(&mut self, byte: u8) {
-        if self.dcs_sixel_active {
-            self.dcs_buf.push(byte);
+        if !self.dcs_sixel_active {
+            return;
         }
+        if self.dcs_buf.len() >= MAX_DCS_BUF_LEN {
+            tracing::warn!(
+                "DCS Sixel バッファが上限 ({} バイト) を超過。シーケンスを破棄します。",
+                MAX_DCS_BUF_LEN
+            );
+            self.dcs_buf.clear();
+            self.dcs_sixel_active = false;
+            return;
+        }
+        self.dcs_buf.push(byte);
     }
 
     /// Sixel DCS を完了してデコードし、pending_images に積む（unhook 呼び出し時）
@@ -540,6 +565,16 @@ impl Screen {
             // 分割転送中: 最初のチャンクのパラメータを保存し、ペイロードを累積する
             if self.kitty_chunk_params.is_none() {
                 self.kitty_chunk_params = Some(params_bytes.to_vec());
+            }
+            // 上限チェック: 累積ペイロードが MAX_KITTY_CHUNK_LEN を超えたら破棄
+            if self.kitty_chunk_payload.len() + payload.len() > MAX_KITTY_CHUNK_LEN {
+                tracing::warn!(
+                    "Kitty 分割転送ペイロードが上限 ({} バイト) を超過。シーケンスを破棄します。",
+                    MAX_KITTY_CHUNK_LEN
+                );
+                self.kitty_chunk_payload.clear();
+                self.kitty_chunk_params = None;
+                return;
             }
             self.kitty_chunk_payload.extend_from_slice(payload);
         } else {

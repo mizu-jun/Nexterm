@@ -10,6 +10,15 @@ mod screen;
 
 pub use screen::{PendingImage, Screen, SemanticMark, SemanticMarkKind};
 
+/// APC バッファ（Kitty グラフィックス）の最大サイズ。
+///
+/// 悪意ある PTY / SSH ホストが APC シーケンスを終端せずに延々送り続けると
+/// プロセスメモリを枯渇させられる脆弱性（CRITICAL #7）への対策。
+/// 上限超過時はバッファをクリアして APC 状態を破棄する。
+///
+/// 4 MiB は通常の Kitty 画像 + base64 エンコード後の最大想定値。
+const MAX_APC_BUF_LEN: usize = 4 * 1024 * 1024;
+
 /// VT シーケンスを処理してグリッドを更新するパーサ
 pub struct VtParser {
     parser: vte::Parser,
@@ -20,6 +29,8 @@ pub struct VtParser {
     apc_buf: Vec<u8>,
     /// 直前のバイトが ESC (0x1B) だったかどうか
     apc_pending_esc: bool,
+    /// APC バッファ上限超過で破棄したことを警告済みかどうか（ログスパム防止）
+    apc_overflow_warned: bool,
 }
 
 impl VtParser {
@@ -31,7 +42,26 @@ impl VtParser {
             apc_active: false,
             apc_buf: Vec::new(),
             apc_pending_esc: false,
+            apc_overflow_warned: false,
         }
+    }
+
+    /// APC バッファに 1 バイト追加する。上限超過時は APC 状態を破棄する。
+    fn apc_push(&mut self, byte: u8) {
+        if self.apc_buf.len() >= MAX_APC_BUF_LEN {
+            if !self.apc_overflow_warned {
+                tracing::warn!(
+                    "APC バッファが上限 ({} バイト) を超過しました。シーケンスを破棄します。",
+                    MAX_APC_BUF_LEN
+                );
+                self.apc_overflow_warned = true;
+            }
+            // バッファクリア + APC 終了して通常パースに復帰
+            self.apc_buf.clear();
+            self.apc_active = false;
+            return;
+        }
+        self.apc_buf.push(byte);
     }
 
     /// バイト列を処理してグリッドを更新する
@@ -60,9 +90,9 @@ impl VtParser {
                     _ => {
                         // APC 以外の ESC シーケンス — vte に ESC + 現在バイトを渡す
                         if self.apc_active {
-                            // APC 中の孤立 ESC はバッファに追加する
-                            self.apc_buf.push(0x1b);
-                            self.apc_buf.push(byte);
+                            // APC 中の孤立 ESC はバッファに追加する（上限チェック付き）
+                            self.apc_push(0x1b);
+                            self.apc_push(byte);
                         } else {
                             self.parser.advance(&mut self.screen, &[0x1b]);
                             self.parser.advance(&mut self.screen, &[byte]);
@@ -79,7 +109,7 @@ impl VtParser {
             }
 
             if self.apc_active {
-                self.apc_buf.push(byte);
+                self.apc_push(byte);
             } else {
                 self.parser.advance(&mut self.screen, &[byte]);
             }
@@ -579,5 +609,42 @@ mod tests {
         // リサイズ後に書いた「え」「お」がグリッド内に存在すること
         let row0: String = grid.rows[0].iter().map(|c| c.ch).collect();
         assert!(row0.contains('え') || row0.contains('お'));
+    }
+
+    #[test]
+    fn apc_バッファ上限超過でメモリ枯渇しない() {
+        // CRITICAL #7: 悪意ある PTY が APC を終端しないまま大量バイトを送り続けても
+        // メモリ枯渇を起こさず、上限超過でバッファクリア + 通常パースに復帰する
+        let mut parser = VtParser::new(80, 24);
+
+        // ESC _ (APC 開始) を送る
+        parser.advance(b"\x1b_");
+        // 上限を超える 5 MiB の APC ペイロードを送る
+        let huge = vec![b'A'; 5 * 1024 * 1024];
+        parser.advance(&huge);
+
+        // バッファが上限以下に保たれていることを確認（メモリ枯渇しない）
+        assert!(
+            parser.apc_buf.len() <= MAX_APC_BUF_LEN,
+            "APC バッファが上限を超えている: {}",
+            parser.apc_buf.len()
+        );
+
+        // 上限超過後は APC 状態が破棄され通常パースに復帰している
+        // （以降のバイトは通常文字として画面に書き込まれる）
+        assert!(!parser.apc_active);
+    }
+
+    #[test]
+    fn apc_オーバーフロー後も新しい_apc_を受付られる() {
+        // 上限超過で破棄された後、新しい正常な APC シーケンスを処理できるか
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b_");
+        let huge = vec![b'A'; 5 * 1024 * 1024];
+        parser.advance(&huge);
+
+        // 新しい APC 開始
+        parser.advance(b"\x1b_Gtest\x1b\\");
+        // クラッシュしないことのみ確認（具体的な動作は decode_kitty 依存）
     }
 }

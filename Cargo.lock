@@ -3482,6 +3482,7 @@ version = "1.0.2"
 dependencies = [
  "nexterm-proto",
  "thiserror 2.0.18",
+ "tracing",
  "unicode-width 0.2.2",
  "vte",
 ]
