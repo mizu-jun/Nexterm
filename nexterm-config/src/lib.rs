@@ -11,6 +11,7 @@ pub mod defaults;
 pub mod keyring;
 pub mod loader;
 pub mod lua_hooks;
+pub mod lua_sandbox;
 pub mod lua_worker;
 pub mod schema;
 pub mod status_bar;

@@ -110,7 +110,9 @@ impl ConfigLoader {
 
     /// Lua スクリプトを実行して Config を更新する
     fn apply_lua(config: &mut Config, path: &std::path::Path) -> Result<()> {
-        let lua = Lua::new();
+        // CRITICAL #4: サンドボックス化された Lua を使用（os/io/package 無効）
+        let lua = crate::lua_sandbox::sandboxed_lua()
+            .map_err(|e| anyhow::anyhow!("サンドボックス Lua の初期化に失敗: {}", e))?;
 
         // 現在の設定を Lua テーブルに変換してグローバルに設定
         let config_table = config_to_lua_table(&lua, config)?;
@@ -543,7 +545,7 @@ ansi = ["#000000", "#ff0000", "#00ff00", "#ffff00",
 
     #[test]
     fn luaで設定を上書きできる() {
-        let lua = Lua::new();
+        let lua = crate::lua_sandbox::sandboxed_lua().unwrap();
         let mut config = Config::default();
 
         let tbl = config_to_lua_table(&lua, &config).unwrap();

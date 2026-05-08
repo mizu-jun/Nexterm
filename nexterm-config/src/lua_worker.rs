@@ -52,7 +52,14 @@ impl LuaWorker {
             .name("nexterm-lua-worker".to_string())
             .spawn(move || {
                 // Lua インスタンスをこのスレッド内で生成する（!Send のため move 不可）
-                let lua = Lua::new();
+                // CRITICAL #4: サンドボックス化された Lua を使用（os/io/package 無効）
+                let lua = match crate::lua_sandbox::sandboxed_lua() {
+                    Ok(l) => l,
+                    Err(e) => {
+                        warn!("Lua ワーカー: サンドボックス Lua 初期化失敗: {}", e);
+                        return;
+                    }
+                };
 
                 if let Some(path) = lua_script_path
                     && path.exists()

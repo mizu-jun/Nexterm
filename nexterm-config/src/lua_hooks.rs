@@ -101,7 +101,14 @@ impl LuaHookRunner {
         std::thread::Builder::new()
             .name("nexterm-lua-hooks".to_string())
             .spawn(move || {
-                let lua = Lua::new();
+                // CRITICAL #4: サンドボックス化された Lua を使用（os/io/package 無効）
+                let lua = match crate::lua_sandbox::sandboxed_lua() {
+                    Ok(l) => l,
+                    Err(e) => {
+                        warn!("LuaHookRunner: サンドボックス Lua 初期化失敗: {}", e);
+                        return;
+                    }
+                };
 
                 // `hooks` テーブルを事前に作成する（Lua でフック関数を登録できるようにする）
                 if let Err(e) = lua.load("hooks = {}").exec() {
