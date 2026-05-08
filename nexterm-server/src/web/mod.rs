@@ -37,6 +37,7 @@ mod access_log;
 mod auth;
 mod oauth;
 mod otp;
+mod rate_limit;
 mod tls;
 
 use std::{
@@ -95,6 +96,8 @@ struct AppState {
     issuer: String,
     /// アクセスログライター
     access_logger: Arc<access_log::AccessLogger>,
+    /// TOTP ログインのレート制限（IP ベース、5 試行/分）
+    totp_rate_limiter: Arc<rate_limit::RateLimiter>,
 }
 
 // ── エントリポイント ──────────────────────────────────────────────────────────
@@ -200,6 +203,9 @@ pub async fn start_web_server(config: WebConfig, manager: Arc<SessionManager>) {
         force_https,
         issuer,
         access_logger,
+        totp_rate_limiter: Arc::new(rate_limit::RateLimiter::new(
+            rate_limit::RateLimitConfig::totp_default(),
+        )),
     };
 
     let app = build_router(state);
@@ -479,6 +485,28 @@ async fn handle_login(
     Form(form): Form<LoginForm>,
 ) -> Response {
     let addr = client_ip(&headers);
+
+    // レート制限: 同一 IP から 60 秒に 5 回までしか試行を許さない
+    // （TOTP ブルートフォース対策、CRITICAL #2）
+    if !state.totp_rate_limiter.check_and_record(&addr) {
+        warn!("TOTP ログインレート制限超過（{}）", addr);
+        state.access_logger.log(&access_log::AccessLogEntry {
+            remote_addr: addr.clone(),
+            method: "POST".to_string(),
+            path: "/auth/login".to_string(),
+            status: 429,
+            auth_method: "totp".to_string(),
+            user_id: String::new(),
+        });
+        return Response::builder()
+            .status(StatusCode::TOO_MANY_REQUESTS)
+            .header("Retry-After", "60")
+            .body(axum::body::Body::from(
+                "Too many failed attempts. Try again in 60 seconds.",
+            ))
+            .unwrap_or_else(|_| redirect("/login?error=rate_limited"));
+    }
+
     let totp_guard = state.totp.read().await;
     let totp = match totp_guard.as_ref() {
         Some(t) => t,
@@ -507,6 +535,9 @@ async fn handle_login(
         });
         return redirect("/login?error=invalid_code");
     }
+
+    // 認証成功: レート制限カウンタをリセット（正規ユーザーをペナルティから解放）
+    state.totp_rate_limiter.reset(&addr);
 
     let token = match state.auth_mgr.create_session("totp", "") {
         Some(t) => t,
