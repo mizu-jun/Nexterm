@@ -1,0 +1,30 @@
+[package]
+name = "nexterm-ctl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "nexterm-ctl"
+path = "src/main.rs"
+
+[dependencies]
+nexterm-proto = { path = "../nexterm-proto" }
+nexterm-i18n = { path = "../nexterm-i18n" }
+tokio = { workspace = true }
+bincode = { workspace = true }
+serde = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+clap_complete = { workspace = true }
+clap_mangen = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[lints]
+workspace = true

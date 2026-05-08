@@ -1,0 +1,63 @@
+[package]
+name = "nexterm-client-gpu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+# シングルバイナリ: nexterm.exe としてビルドする
+[[bin]]
+name = "nexterm"
+path = "src/main.rs"
+
+[dependencies]
+nexterm-proto = { path = "../nexterm-proto" }
+nexterm-config = { path = "../nexterm-config" }
+# サーバーを同一プロセス内の Tokio タスクとして起動するために組み込む
+nexterm-server = { path = "../nexterm-server" }
+nexterm-i18n = { path = "../nexterm-i18n" }
+tokio = { workspace = true }
+bincode = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+winit = { workspace = true }
+wgpu = { workspace = true }
+cosmic-text = { workspace = true }
+image = { workspace = true }
+regex = { workspace = true }
+fuzzy-matcher = { workspace = true }
+bytemuck = { version = "1", features = ["derive"] }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = "0.2"
+# Phase 3: クリップボード統合
+arboard = { workspace = true }
+# Phase 3: 設定ホットリロード監視
+notify = { workspace = true }
+# 設定ファイルの構造保持付き編集
+toml_edit = { workspace = true }
+# シェルパス展開（~ → ホームディレクトリ）
+shellexpand = "3"
+# グリフアトラスの LRU キャッシュ（フォント変更後の古いエントリを自動削除）
+lru = "0.17"
+# フォントシステム初期化でのロケール取得（全スキャン回避のため）
+sys-locale = "0.3"
+unicode-width = { workspace = true }
+# 更新チェック: GitHub Releases API への HTTPS リクエスト
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+dirs = "5"
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+] }
+
+[lints]
+workspace = true

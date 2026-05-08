@@ -1,0 +1,11 @@
+#!/bin/sh
+# AppImage エントリーポイント
+# APPDIR は appimagetool が設定する環境変数
+
+SELF=$(readlink -f "$0")
+HERE=$(dirname "$SELF")
+
+export PATH="${HERE}/usr/bin:${PATH}"
+export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+
+exec "${HERE}/usr/bin/nexterm" "$@"

@@ -1,0 +1,25 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 10
+    # 脆弱性のある依存関係を特に監視
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    # セキュリティ更新に関しては即時対応
+    groups:
+      security-updates:
+        patterns:
+          - "rustls*"
+          - "russh*"
+          - "rustls-webpki*"
+        update-types:
+          - "security"
+    # rustls-webpkiのv0.104安定版を特に監視
+    ignore:
+      # 一時的にv0.104のプレリリースを無視（安定版が必要）
+      - dependency-name: "rustls-webpki"
+        versions: ["0.104.0-alpha.*"]

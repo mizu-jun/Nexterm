@@ -1,0 +1,68 @@
+[package]
+name = "nexterm-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+# ライブラリとバイナリの両方をビルドする
+# GPU クライアントがライブラリとしてリンクしてシングルバイナリを実現する
+[lib]
+name = "nexterm_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nexterm-server"
+path = "src/main.rs"
+
+[dependencies]
+nexterm-proto = { path = "../nexterm-proto" }
+nexterm-vt = { path = "../nexterm-vt" }
+nexterm-config = { path = "../nexterm-config" }
+nexterm-ssh = { path = "../nexterm-ssh" }
+nexterm-plugin = { path = "../nexterm-plugin" }
+tokio = { workspace = true }
+portable-pty = { workspace = true }
+bincode = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = "0.2"
+serde_json = { workspace = true }
+
+serialport = { workspace = true }
+toml_edit = { workspace = true }
+zeroize = "1.8"
+axum = { version = "0.7", features = ["ws"] }
+tower = "0.4"
+rust-embed = { version = "8", features = ["include-exclude"] }
+
+# TOTP authentication
+totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
+rand = "0.9"
+
+# OAuth2 / OIDC 認証
+oauth2 = { version = "5", features = ["reqwest"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# HTTPS / TLS
+hyper-util = { version = "0.1", features = ["tokio", "server-auto", "service"] }
+tokio-rustls = "0.26"
+rustls = "0.23"
+rustls-pemfile = "2"
+rcgen = "0.13"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+dirs = "5"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

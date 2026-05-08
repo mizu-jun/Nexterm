@@ -1,0 +1,99 @@
+[workspace]
+members = [
+    "nexterm-proto",
+    "nexterm-vt",
+    "nexterm-server",
+    "nexterm-client-tui",
+    "nexterm-config",
+    "nexterm-client-gpu",
+    "nexterm-ctl",
+    "nexterm-i18n",
+    "nexterm-ssh",
+    "nexterm-launcher",
+    "nexterm-plugin",
+]
+resolver = "2"
+
+[workspace.package]
+version = "1.0.2"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = []
+repository = "https://github.com/mizu-jun/nexterm"
+
+# 11 クレート共通の lint ポリシー
+# 各クレートの Cargo.toml で `[lints] workspace = true` を指定して継承する
+[workspace.lints.rust]
+unused_must_use = "deny"          # Result などの戻り値を無視するのを防ぐ
+unsafe_op_in_unsafe_fn = "deny"   # unsafe fn 内でも unsafe ブロック必須
+
+[workspace.lints.clippy]
+# 開発残骸を CI で検出
+todo = "warn"
+dbg_macro = "warn"
+unimplemented = "warn"
+# よくある冗長パターン（既存修正済みのため再発防止）
+needless_return = "warn"
+
+[workspace.dependencies]
+# 非同期ランタイム
+tokio = { version = "1", features = ["full"] }
+
+# PTY 操作（ConPTY / Unix PTY クロスプラットフォーム）
+portable-pty = "0.9"
+
+# VT シーケンスパーサ
+vte = "0.15"
+
+# シリアライズ
+serde = { version = "1", features = ["derive"] }
+bincode = "1"
+
+# TUI クライアント（Phase 1）
+ratatui = "0.30"
+crossterm = "0.28"
+
+# エラーハンドリング
+thiserror = "2"
+anyhow = "1"
+
+# ログ
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Phase 2: 設定システム
+toml = "0.8"
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
+notify = "6"                        # ファイル変更監視
+
+# Phase 2: GPU レンダリング
+winit = "0.30"
+wgpu = "22"
+cosmic-text = "0.18"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+# Phase 2: スクロールバック検索
+regex = "1"
+
+# Phase 2: fuzzy マッチ（コマンドパレット）
+fuzzy-matcher = "0.3"
+
+# Phase 3: クリップボード統合
+arboard = "3"
+
+# Phase 3: nexterm-ctl CLI 引数パーサ
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+clap_mangen = "0.2"
+
+# セッション永続化（JSON スナップショット）
+serde_json = "1"
+
+# Phase 3: CJK 幅計算
+unicode-width = "0.2"
+
+# Phase 8: シリアルポート接続
+serialport = "4"
+
+# 設定ファイルの構造保持付き編集
+toml_edit = "0.22"

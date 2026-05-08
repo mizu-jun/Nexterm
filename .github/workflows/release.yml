@@ -1,0 +1,302 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+env:
+  CARGO_TERM_COLOR: always
+
+# GitHub Release への書き込み権限
+permissions:
+  contents: write
+
+jobs:
+  # ── Step 1: Release ページを先に作成する ──────────────────────────
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+
+  # ── Step 2: 各プラットフォームのバイナリをビルドして添付する ──────
+  build:
+    name: Build (${{ matrix.name }})
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: linux-x86_64
+            archive_ext: tar.gz
+
+          # macOS Apple Silicon (M1/M2/M3)
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            name: macos-arm64
+            archive_ext: tar.gz
+
+          # macOS Intel
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            name: macos-x86_64
+            archive_ext: tar.gz
+
+          # Windows x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: windows-x86_64
+            archive_ext: zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libx11-dev libxkbcommon-dev libwayland-dev \
+            libasound2-dev libpulse-dev \
+            libudev-dev \
+            libfuse2
+
+      - name: Build release binaries
+        # nexterm-client-gpu は v0.9.3 でバイナリ名を nexterm に変更し、
+        # サーバーを内部起動するシングルバイナリとなった。
+        # nexterm-launcher は nexterm.exe と同名バイナリを生成するため除外する。
+        run: >
+          cargo build --release --target ${{ matrix.target }}
+          -p nexterm-server
+          -p nexterm-client-gpu
+          -p nexterm-client-tui
+          -p nexterm-ctl
+
+      # ── macOS: .app バンドル作成 ──
+      - name: Create macOS .app bundle
+        if: runner.os == 'macOS'
+        run: |
+          APP=dist/Nexterm.app
+          mkdir -p "$APP/Contents/MacOS"
+          # 全バイナリを .app バンドル内に配置
+          for bin in nexterm nexterm-server nexterm-client-tui nexterm-ctl; do
+            BIN_PATH="target/${{ matrix.target }}/release/$bin"
+            if [ -f "$BIN_PATH" ]; then
+              cp "$BIN_PATH" "$APP/Contents/MacOS/"
+            fi
+          done
+          # Info.plist のバージョンを置換して配置
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= "\(.*\)"/\1/')
+          sed "s/BUNDLE_VERSION/${VERSION}/g" macos/Info.plist > "$APP/Contents/Info.plist"
+
+      # ── macOS: ad-hoc コード署名（Gatekeeper の quarantine 除去後に起動可能にする）──
+      - name: Ad-hoc code sign (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          # --deep でバンドル内の全バイナリを再帰的に一括署名する
+          # （個別署名後にバンドルを署名すると subcomponent エラーになるため）
+          codesign --force --deep --sign - dist/Nexterm.app
+
+      # ── Unix 向けパッケージング ──
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          # 個別バイナリも dist/ に配置（CLI 利用・Homebrew 向け）
+          for bin in nexterm nexterm-server nexterm-client-tui nexterm-ctl; do
+            BIN_PATH="target/${{ matrix.target }}/release/$bin"
+            if [ -f "$BIN_PATH" ]; then
+              cp "$BIN_PATH" dist/
+            fi
+          done
+          # Linux のみ: .desktop ファイルとインストールスクリプトを同梱
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            cp linux/nexterm.desktop dist/
+            cp linux/install.sh dist/
+          fi
+          tar -czf nexterm-${{ github.ref_name }}-${{ matrix.name }}.tar.gz -C dist .
+
+      # ── Linux AppImage ビルド ──
+      - name: Build AppImage (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          # appimagetool をダウンロードする
+          APPIMAGETOOL_URL="https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
+          curl -sSL "$APPIMAGETOOL_URL" -o /tmp/appimagetool
+          chmod +x /tmp/appimagetool
+
+          # AppDir を組み立てる
+          APPDIR=/tmp/Nexterm.AppDir
+          mkdir -p "${APPDIR}/usr/bin"
+
+          # バイナリを配置する
+          for bin in nexterm nexterm-server nexterm-client-tui nexterm-ctl; do
+            BIN_PATH="target/${{ matrix.target }}/release/$bin"
+            if [ -f "$BIN_PATH" ]; then
+              cp "$BIN_PATH" "${APPDIR}/usr/bin/"
+            fi
+          done
+
+          # AppRun スクリプト（エントリーポイント）
+          cp linux/AppRun "${APPDIR}/AppRun"
+          chmod +x "${APPDIR}/AppRun"
+
+          # .desktop ファイルを AppDir にコピーし、Icon= を "nexterm" に書き換える
+          # （appimagetool は AppDir 内の <Icon>.png を探すため、Icon 名とファイル名を一致させる）
+          sed 's/^Icon=.*/Icon=nexterm/' linux/nexterm.desktop > "${APPDIR}/nexterm.desktop"
+
+          # アイコンを nexterm.png として配置する
+          if [ -f "assets/icon.png" ]; then
+            cp assets/icon.png "${APPDIR}/nexterm.png"
+          else
+            # ダミーアイコン（1x1 透過 PNG）を生成する
+            printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82' > "${APPDIR}/nexterm.png"
+          fi
+
+          # appimagetool でパッケージ化（libfuse2 が入っているので直接実行可能）
+          ARCH=x86_64 /tmp/appimagetool \
+            "${APPDIR}" \
+            "nexterm-${{ github.ref_name }}-${{ matrix.name }}.AppImage"
+
+      - name: Upload AppImage to GitHub Release
+        if: runner.os == 'Linux'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: nexterm-${{ github.ref_name }}-${{ matrix.name }}.AppImage
+
+      # ── Windows 向けパッケージング（ZIP）──
+      - name: Package (Windows ZIP)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist | Out-Null
+          # nexterm.exe = GPU クライアント + サーバー統合バイナリ（v0.9.3〜）
+          Copy-Item target/${{ matrix.target }}/release/nexterm.exe            dist/
+          Copy-Item target/${{ matrix.target }}/release/nexterm-server.exe     dist/
+          Copy-Item target/${{ matrix.target }}/release/nexterm-client-tui.exe dist/
+          Copy-Item target/${{ matrix.target }}/release/nexterm-ctl.exe        dist/
+          Copy-Item scripts/install-service.ps1                                dist/
+          Copy-Item scripts/uninstall-service.ps1                              dist/
+          Compress-Archive -Path dist/* -DestinationPath nexterm-${{ github.ref_name }}-${{ matrix.name }}.zip
+
+      # ── Windows コード署名（証明書が Secrets に設定されている場合のみ）──
+      - name: Sign binaries (Windows)
+        if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != ''
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        shell: pwsh
+        run: |
+          # Base64 エンコードされた PFX 証明書をデコードしてファイルに保存
+          $certBytes = [System.Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+          $certPath  = Join-Path $env:RUNNER_TEMP "nexterm-sign.pfx"
+          [System.IO.File]::WriteAllBytes($certPath, $certBytes)
+
+          # signtool.exe でバイナリを署名
+          $signtool = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe"
+          $targets = @(
+            "dist\nexterm.exe",
+            "dist\nexterm-server.exe",
+            "dist\nexterm-client-tui.exe",
+            "dist\nexterm-ctl.exe"
+          )
+          foreach ($t in $targets) {
+            & $signtool sign `
+              /f $certPath `
+              /p $env:WINDOWS_CERTIFICATE_PASSWORD `
+              /tr http://timestamp.digicert.com `
+              /td sha256 /fd sha256 `
+              $t
+          }
+
+          # 証明書ファイルを削除
+          Remove-Item $certPath -Force
+
+      # ── Windows MSI インストーラービルド ──
+      - name: Build MSI installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # WiX Toolset v3 のインストール（未インストールの場合のみ）
+          if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) {
+            choco install wixtoolset -y --no-progress
+          }
+          $wixInstalled = Get-ChildItem "C:\Program Files (x86)\WiX Toolset*" -Directory -ErrorAction SilentlyContinue |
+                          Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $wixInstalled) { throw "WiX Toolset not found" }
+          $env:Path += ";$($wixInstalled.FullName)\bin"
+
+          # MSI のバージョンを Cargo.toml から取得
+          $matchResult = Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' |
+                         Select-Object -First 1
+          $version = $matchResult.Matches[0].Groups[1].Value
+          if ([string]::IsNullOrEmpty($version)) { throw "Cannot extract version from Cargo.toml" }
+          Write-Host "MSI version: $version"
+
+          # candle.exe + light.exe でMSIをビルド（-d フラグでバージョンをプリプロセッサ変数として渡す）
+          $wixDir = "$($wixInstalled.FullName)\bin"
+          $wixPath = "wix\main.wxs"
+          New-Item -ItemType Directory -Path build -Force | Out-Null
+          & "$wixDir\candle.exe" -arch x64 "-dVersion=$version" -out "build\" $wixPath
+          if ($LASTEXITCODE -ne 0) { throw "candle.exe failed" }
+
+          & "$wixDir\light.exe" `
+            -out "nexterm-${{ github.ref_name }}-${{ matrix.name }}.msi" `
+            "build\main.wixobj"
+          if ($LASTEXITCODE -ne 0) { throw "light.exe failed" }
+
+      # ── MSI 署名（証明書が設定されている場合）──
+      - name: Sign MSI (Windows)
+        if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != ''
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        shell: pwsh
+        run: |
+          $certBytes = [System.Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+          $certPath  = Join-Path $env:RUNNER_TEMP "nexterm-sign.pfx"
+          [System.IO.File]::WriteAllBytes($certPath, $certBytes)
+
+          $signtool = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe"
+          & $signtool sign `
+            /f $certPath `
+            /p $env:WINDOWS_CERTIFICATE_PASSWORD `
+            /tr http://timestamp.digicert.com `
+            /td sha256 /fd sha256 `
+            "nexterm-${{ github.ref_name }}-${{ matrix.name }}.msi"
+
+          Remove-Item $certPath -Force
+
+      # ── GitHub Release にアーカイブを添付 ──
+      - name: Upload ZIP to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: nexterm-${{ github.ref_name }}-${{ matrix.name }}.${{ matrix.archive_ext }}
+
+      - name: Upload MSI to GitHub Release
+        if: runner.os == 'Windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: nexterm-${{ github.ref_name }}-${{ matrix.name }}.msi
