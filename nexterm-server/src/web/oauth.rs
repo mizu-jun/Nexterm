@@ -104,8 +104,16 @@ impl OAuthManager {
         Ok(url.to_string())
     }
 
-    /// コールバックの code と state を検証してユーザー情報を取得する
-    pub async fn exchange_code(&self, code: String, state: String) -> anyhow::Result<OAuthUser> {
+    /// コールバックの code と state を検証してユーザー情報と access_token を返す。
+    ///
+    /// 戻り値の `String` は access_token で、続く `is_user_allowed` の Org メンバーシップ
+    /// 検証で必要となる。`Zeroizing` ではなく素の `String` を返すが、Org チェック後に
+    /// drop される短寿命の値であり、ログ出力もしない。
+    pub async fn exchange_code(
+        &self,
+        code: String,
+        state: String,
+    ) -> anyhow::Result<(OAuthUser, String)> {
         // state 検証（CSRF 対策）
         {
             let mut states = self
@@ -136,7 +144,8 @@ impl OAuthManager {
         let access_token = token_result.access_token().secret().to_string();
 
         // ユーザー情報を取得する
-        self.fetch_user_info(&access_token).await
+        let user = self.fetch_user_info(&access_token).await?;
+        Ok((user, access_token))
     }
 
     /// プロバイダー固有のユーザー情報 API を呼び出す
@@ -334,10 +343,25 @@ impl OAuthManager {
         })
     }
 
-    /// ユーザーが許可リストに含まれているか確認する
+    /// ユーザーが許可リストに含まれているか確認する。
     ///
-    /// `allowed_emails` と `allowed_orgs` が両方空の場合は全員許可。
-    pub async fn is_user_allowed(&self, user: &OAuthUser) -> bool {
+    /// 認可ロジック:
+    /// - 両リスト空 → 全員許可
+    /// - `allowed_emails` 一致 → 許可
+    /// - `allowed_orgs` 一致（GitHub のみ、メンバーシップ API で検証）→ 許可
+    /// - どれにも該当しない → 拒否
+    ///
+    /// `access_token` は GitHub Organization メンバーシップ検証で必須。
+    /// 旧実装では `get_current_token()` が常に `None` を返すバグで Org チェックが
+    /// 実行されず、`allowed_orgs` 単独設定では誰もログインできない機能不全だった
+    /// （CRITICAL #1）。
+    pub async fn is_user_allowed(&self, user: &OAuthUser, access_token: &str) -> bool {
+        // 両方の許可リストが空 → 全員許可
+        if self.config.allowed_emails.is_empty() && self.config.allowed_orgs.is_empty() {
+            info!("OAuth: 許可リスト未設定のため全ユーザーを許可");
+            return true;
+        }
+
         // メールアドレスチェック
         if !self.config.allowed_emails.is_empty()
             && let Some(email) = &user.email
@@ -345,22 +369,13 @@ impl OAuthManager {
         {
             return true;
         }
-        // allowed_emails が設定されていてメールが一致しない場合は
-        // allowed_orgs も確認する
 
-        // GitHub Organization チェック
+        // GitHub Organization チェック（access_token 経由で確実に実行）
         if !self.config.allowed_orgs.is_empty()
             && self.config.provider == "github"
             && let Some(login) = &user.login
-            && let Some(token) = self.get_current_token().await
-            && self.check_github_org(&token, login).await
+            && self.check_github_org(access_token, login).await
         {
-            return true;
-        }
-
-        // 両方の許可リストが空 → 全員許可
-        if self.config.allowed_emails.is_empty() && self.config.allowed_orgs.is_empty() {
-            info!("OAuth: 許可リスト未設定のため全ユーザーを許可");
             return true;
         }
 
@@ -388,12 +403,6 @@ impl OAuthManager {
             }
         }
         false
-    }
-
-    /// 現在の access_token を一時保存から取得する（org チェック用）
-    /// 注: 簡易実装として None を返す（org チェックは token exchange 後に行うこと）
-    async fn get_current_token(&self) -> Option<String> {
-        None
     }
 
     // ── プライベートヘルパー ──────────────────────────────────────────────────
@@ -620,5 +629,90 @@ mod tests {
         let manager = OAuthManager::new(config.clone(), "http://localhost:7681".to_string());
         assert_eq!(manager.config.provider, "github");
         assert_eq!(manager.redirect_base, "http://localhost:7681");
+    }
+
+    fn make_user(login: &str, email: Option<&str>) -> OAuthUser {
+        OAuthUser {
+            provider: "github".to_string(),
+            user_id: "user-id".to_string(),
+            email: email.map(str::to_string),
+            login: Some(login.to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn allowリスト_両方空_は全員許可() {
+        // 旧実装でも正常動作していたケース。後方互換性確認。
+        let mut config = test_config("github");
+        config.allowed_emails = vec![];
+        config.allowed_orgs = vec![];
+        let mgr = OAuthManager::new(config, "http://localhost:7681".to_string());
+
+        let user = make_user("alice", Some("alice@example.com"));
+        assert!(
+            mgr.is_user_allowed(&user, "ignored_token").await,
+            "両リスト空なら全員許可されるべき"
+        );
+    }
+
+    #[tokio::test]
+    async fn allowed_emails_一致で許可される() {
+        let mut config = test_config("github");
+        config.allowed_emails = vec!["alice@example.com".to_string()];
+        let mgr = OAuthManager::new(config, "http://localhost:7681".to_string());
+
+        let user = make_user("alice", Some("alice@example.com"));
+        assert!(mgr.is_user_allowed(&user, "ignored_token").await);
+    }
+
+    #[tokio::test]
+    async fn allowed_emails_設定でメール不一致は拒否される() {
+        let mut config = test_config("github");
+        config.allowed_emails = vec!["alice@example.com".to_string()];
+        let mgr = OAuthManager::new(config, "http://localhost:7681".to_string());
+
+        let user = make_user("eve", Some("eve@evil.example"));
+        assert!(
+            !mgr.is_user_allowed(&user, "ignored_token").await,
+            "allowed_emails が設定されていてメール不一致なら拒否されるべき"
+        );
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn allowed_orgs_のみ_設定_かつ_GitHub_API_到達不可は拒否される() {
+        // CRITICAL #1 の核心テスト:
+        // 旧実装では get_current_token() が None を返すため Org チェックが
+        // 絶対実行されず、is_user_allowed が必ず false を返した（誰もログイン不能）。
+        // 修正後は access_token を渡せば実 API 経由で検証される。
+        // テスト環境では実 API 到達不可なので "ログインできない" が期待だが、
+        // **実 API が呼ばれること** (= access_token が伝播されていること) を保証する。
+        let mut config = test_config("github");
+        config.allowed_orgs = vec!["nexterm-team".to_string()];
+        let mgr = OAuthManager::new(config, "http://localhost:7681".to_string());
+
+        let user = make_user("alice", Some("alice@example.com"));
+        // 無効トークンなので check_github_org の HTTP は失敗 → false 期待
+        let allowed = mgr.is_user_allowed(&user, "invalid_token_xxx").await;
+        assert!(
+            !allowed,
+            "無効 access_token では Org メンバーシップが確認できず拒否されるべき"
+        );
+    }
+
+    #[tokio::test]
+    async fn allowed_emails_と_allowed_orgs_両方設定_メール一致で許可() {
+        // 併用時にメール一致で短絡許可されることを確認
+        // （旧実装でも動作していたパス、回帰テストとして保護）
+        let mut config = test_config("github");
+        config.allowed_emails = vec!["alice@example.com".to_string()];
+        config.allowed_orgs = vec!["nexterm-team".to_string()];
+        let mgr = OAuthManager::new(config, "http://localhost:7681".to_string());
+
+        let user = make_user("alice", Some("alice@example.com"));
+        assert!(
+            mgr.is_user_allowed(&user, "any_token").await,
+            "メール一致で Org チェック前に許可されるべき"
+        );
     }
 }

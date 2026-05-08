@@ -594,8 +594,9 @@ async fn handle_oauth_callback(
     };
 
     // コードを access_token に交換してユーザー情報を取得する
-    let user = match oauth_mgr.exchange_code(code, oauth_state).await {
-        Ok(u) => u,
+    // access_token は GitHub Org メンバーシップ検証で必要なので一緒に受け取る
+    let (user, access_token) = match oauth_mgr.exchange_code(code, oauth_state).await {
+        Ok(pair) => pair,
         Err(e) => {
             warn!("OAuth コード交換失敗: {} （{}）", e, addr);
             state.access_logger.log(&access_log::AccessLogEntry {
@@ -610,8 +611,8 @@ async fn handle_oauth_callback(
         }
     };
 
-    // アクセス許可チェック
-    if !oauth_mgr.is_user_allowed(&user).await {
+    // アクセス許可チェック（access_token は Org メンバーシップ API で使用）
+    if !oauth_mgr.is_user_allowed(&user, &access_token).await {
         warn!("OAuth アクセス拒否: user_id={} （{}）", user.user_id, addr);
         state.access_logger.log(&access_log::AccessLogEntry {
             remote_addr: addr.clone(),
