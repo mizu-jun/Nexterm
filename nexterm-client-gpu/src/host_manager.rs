@@ -236,24 +236,80 @@ pub fn load_history() -> HashMap<String, HistoryEntry> {
 }
 
 /// 接続履歴を JSON ファイルに保存する
+///
+/// atomic write（一時ファイル → rename）で書き込み、Unix では 0600 パーミッションを
+/// 強制する。ホスト名・ユーザー名は機密性のある情報のため、共有ホストで他ユーザー
+/// から読み取られないよう保護する。
 pub fn save_history(history: &HashMap<String, HistoryEntry>) {
     let path = history_path();
-    if let Some(parent) = path.parent()
-        && let Err(e) = std::fs::create_dir_all(parent)
-    {
-        warn!("接続履歴ディレクトリの作成に失敗しました: {}", e);
-        return;
-    }
-    match serde_json::to_string_pretty(history) {
-        Ok(json) => {
-            if let Err(e) = std::fs::write(&path, json) {
-                warn!("接続履歴の保存に失敗しました: {}", e);
-            }
-        }
+    let json = match serde_json::to_string_pretty(history) {
+        Ok(j) => j,
         Err(e) => {
             warn!("接続履歴のシリアライズに失敗しました: {}", e);
+            return;
+        }
+    };
+    if let Err(e) = write_atomic_secure(&path, json.as_bytes()) {
+        warn!("接続履歴の保存に失敗しました: {}", e);
+    }
+}
+
+/// ファイルをアトミックに書き込み、Unix では 0600 パーミッションを強制する。
+///
+/// nexterm-server/src/persist.rs::write_atomic_secure と同等の実装。
+/// クレート間依存を避けるためローカルに複製している。
+fn write_atomic_secure(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("親ディレクトリが取得できません: {:?}", path),
+        )
+    })?;
+    std::fs::create_dir_all(parent)?;
+
+    let tmp_name = format!(
+        ".{}.tmp.{}",
+        path.file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("nexterm"),
+        std::process::id()
+    );
+    let tmp_path = parent.join(tmp_name);
+
+    {
+        #[cfg(unix)]
+        let mut file = {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp_path)?
+        };
+        #[cfg(windows)]
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp_path)?;
+
+        if let Err(e) = file.write_all(content) {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(e);
+        }
+        if let Err(e) = file.sync_all() {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(e);
         }
     }
+
+    if let Err(e) = std::fs::rename(&tmp_path, path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// パスワード入力モーダルの状態
