@@ -43,6 +43,8 @@ rust-embed = { version = "8", features = ["include-exclude"] }
 # TOTP authentication
 totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
 rand = "0.9"
+# 定数時間比較（タイミング攻撃対策、TOTP コード比較・リプレイ検出で使用）
+subtle = "2.6"
 
 # OAuth2 / OIDC 認証
 oauth2 = { version = "5", features = ["reqwest"] }
