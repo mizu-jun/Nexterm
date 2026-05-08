@@ -73,6 +73,14 @@ where
                 break;
             }
             let msg_len = u32::from_le_bytes(len_buf) as usize;
+            // 巨大な長さプレフィックスによる OOM 攻撃を防ぐ
+            if nexterm_proto::validate_msg_len(msg_len).is_err() {
+                tracing::error!(
+                    "サーバーからの IPC メッセージサイズが上限超過: {} バイト — 接続を切断します",
+                    msg_len
+                );
+                break;
+            }
 
             let mut payload = vec![0u8; msg_len];
             if read_half.read_exact(&mut payload).await.is_err() {

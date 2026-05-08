@@ -1632,6 +1632,8 @@ impl IpcConn {
         let mut len_buf = [0u8; 4];
         self.reader.read_exact(&mut len_buf).await?;
         let msg_len = u32::from_le_bytes(len_buf) as usize;
+        // 巨大な長さプレフィックスによる OOM 攻撃を防ぐ
+        nexterm_proto::validate_msg_len(msg_len).map_err(|e| anyhow::anyhow!("{}", e))?;
         let mut payload = vec![0u8; msg_len];
         self.reader.read_exact(&mut payload).await?;
         Ok(bincode::deserialize(&payload)?)

@@ -55,6 +55,11 @@ where
             break;
         }
         let msg_len = u32::from_le_bytes(len_buf) as usize;
+        // 巨大な長さプレフィックスによる OOM 攻撃を防ぐ
+        if let Err(e) = nexterm_proto::validate_msg_len(msg_len) {
+            error!("{} — 接続を切断します", e);
+            break;
+        }
         let mut payload = vec![0u8; msg_len];
         if read_half.read_exact(&mut payload).await.is_err() {
             break;
