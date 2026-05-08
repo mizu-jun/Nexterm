@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// フォント設定
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct FontConfig {
     /// フォントファミリー名
     pub family: String,
@@ -306,7 +307,12 @@ pub struct CustomPalette {
 }
 
 /// カラースキーム設定
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// TOML では以下の 3 形式を受け付ける（カスタム deserializer で対応）:
+/// 1. `colors = "tokyonight"` — 文字列で組み込みスキーム指定
+/// 2. `[colors] scheme = "tokyonight"` — テーブル形式（公式ドキュメント記載）
+/// 3. `[colors] foreground = "#..." background = "#..." ...` — 完全カスタムパレット
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum ColorScheme {
     /// 組み込みスキーム名
@@ -321,8 +327,77 @@ impl Default for ColorScheme {
     }
 }
 
+impl<'de> Deserialize<'de> for ColorScheme {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{self, MapAccess, Visitor};
+        use std::fmt;
+
+        struct ColorSchemeVisitor;
+
+        impl<'de> Visitor<'de> for ColorSchemeVisitor {
+            type Value = ColorScheme;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str(
+                    "string (組み込みスキーム名) または table ([colors] scheme = \"...\" / カスタムパレット)",
+                )
+            }
+
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                Ok(ColorScheme::Builtin(parse_builtin_scheme(value)))
+            }
+
+            fn visit_string<E: de::Error>(self, value: String) -> Result<Self::Value, E> {
+                Ok(ColorScheme::Builtin(parse_builtin_scheme(&value)))
+            }
+
+            fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
+                // 一旦すべてのキーを HashMap に集める
+                let mut entries: std::collections::HashMap<String, toml::Value> =
+                    std::collections::HashMap::new();
+                while let Some((key, value)) = map.next_entry::<String, toml::Value>()? {
+                    entries.insert(key, value);
+                }
+
+                // パターン 2: [colors] scheme = "tokyonight"
+                if let Some(scheme) = entries.get("scheme")
+                    && let Some(name) = scheme.as_str()
+                {
+                    return Ok(ColorScheme::Builtin(parse_builtin_scheme(name)));
+                }
+
+                // パターン 3: フルカスタムパレット（foreground / background / cursor / ansi）
+                let palette: CustomPalette = toml::Value::Table(entries.into_iter().collect())
+                    .try_into()
+                    .map_err(|e| {
+                        de::Error::custom(format!("カスタムパレットのパースに失敗: {}", e))
+                    })?;
+                Ok(ColorScheme::Custom(palette))
+            }
+        }
+
+        deserializer.deserialize_any(ColorSchemeVisitor)
+    }
+}
+
+/// 組み込みスキーム名を `BuiltinScheme` にパースする。未知の値は Dark にフォールバック。
+fn parse_builtin_scheme(s: &str) -> BuiltinScheme {
+    match s.to_lowercase().as_str() {
+        "dark" => BuiltinScheme::Dark,
+        "light" => BuiltinScheme::Light,
+        "tokyonight" => BuiltinScheme::TokyoNight,
+        "solarized" => BuiltinScheme::Solarized,
+        "gruvbox" => BuiltinScheme::Gruvbox,
+        _ => BuiltinScheme::Dark,
+    }
+}
+
 /// シェル設定
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ShellConfig {
     /// シェルプログラムのパス
     pub program: String,
@@ -378,6 +453,7 @@ impl Default for ShellConfig {
 
 /// ステータスバー設定
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct StatusBarConfig {
     /// ステータスバーを表示するか
     pub enabled: bool,
@@ -429,6 +505,7 @@ pub enum WindowDecorations {
 
 /// ウィンドウ設定（透過・ぼかし・装飾）
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct WindowConfig {
     /// ウィンドウの不透明度（0.0 = 完全透明、1.0 = 不透明）
     #[serde(default = "default_background_opacity")]
@@ -487,6 +564,7 @@ pub enum CursorStyle {
 
 /// タブバー設定（WezTerm スタイル）
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TabBarConfig {
     /// タブバーを表示するか
     pub enabled: bool,
@@ -767,6 +845,7 @@ pub struct AccessLogConfig {
 
 /// Web ターミナル設定（WebSocket + xterm.js）
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct WebConfig {
     /// Web ターミナルを有効にするか（デフォルト: false）
     #[serde(default)]

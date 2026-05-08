@@ -2,14 +2,11 @@
 
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use mlua::prelude::*;
 use tracing::{info, warn};
 
-use crate::schema::{
-    ColorScheme, Config, FontConfig, HooksConfig, KeyBinding, ShellConfig, StatusBarConfig,
-    TabBarConfig,
-};
+use crate::schema::{ColorScheme, Config};
 
 /// 設定ディレクトリのパスを返す
 pub fn config_dir() -> PathBuf {
@@ -45,16 +42,18 @@ impl ConfigLoader {
     pub fn load() -> Result<Config> {
         let mut config = Config::default();
 
-        // Step 1: TOML を読み込む
+        // Step 1: TOML を読み込む（Config を直接 deserialize する）
         let toml_path = toml_path();
         if toml_path.exists() {
             match Self::load_toml(&toml_path) {
-                Ok(toml_config) => {
-                    config = merge_toml(config, toml_config);
+                Ok(loaded) => {
+                    config = loaded;
                     info!("TOML 設定を読み込みました: {}", toml_path.display());
                 }
                 Err(e) => {
-                    warn!("TOML 設定の読み込みに失敗しました（デフォルト使用）: {}", e);
+                    let msg = format!("TOML 設定の読み込みに失敗しました: {}", e);
+                    warn!("{}", msg);
+                    config.config_errors.push(msg);
                 }
             }
         } else {
@@ -97,10 +96,15 @@ impl ConfigLoader {
         Ok(())
     }
 
-    /// TOML ファイルを読み込む
-    fn load_toml(path: &std::path::Path) -> Result<TomlConfig> {
-        let content = std::fs::read_to_string(path)?;
-        let parsed: TomlConfig = toml::from_str(&content)?;
+    /// TOML ファイルを `Config` に直接 deserialize する。
+    ///
+    /// `Config` の全フィールドに `#[serde(default)]` が付いているため、
+    /// TOML に書かれていないフィールドは `Default::default()` で埋まる。
+    fn load_toml(path: &std::path::Path) -> Result<Config> {
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("TOML ファイル読み込み失敗: {}", path.display()))?;
+        let parsed: Config = toml::from_str(&content)
+            .with_context(|| format!("TOML パース失敗: {}", path.display()))?;
         Ok(parsed)
     }
 
@@ -143,69 +147,10 @@ impl ConfigLoader {
     }
 }
 
-/// TOML から部分的に読み込む中間構造体（全フィールドが Optional）
-#[derive(Debug, serde::Deserialize)]
-pub struct TomlConfig {
-    /// フォント設定
-    pub font: Option<FontConfig>,
-    /// カラースキーム設定
-    pub colors: Option<TomlColors>,
-    /// シェル設定
-    pub shell: Option<ShellConfig>,
-    /// キーバインド一覧
-    pub keys: Option<Vec<KeyBinding>>,
-    /// ステータスバー設定
-    pub status_bar: Option<StatusBarConfig>,
-    /// スクロールバック行数
-    pub scrollback_lines: Option<usize>,
-    /// タブバー設定
-    pub tab_bar: Option<TabBarConfig>,
-    /// フック設定
-    pub hooks: Option<HooksConfig>,
-}
-
-/// TOML の colors セクション
-#[derive(Debug, serde::Deserialize)]
-pub struct TomlColors {
-    /// カラースキーム名
-    pub scheme: Option<String>,
-}
-
-/// TOML 設定をデフォルト Config にマージする
-pub fn merge_toml(mut base: Config, toml: TomlConfig) -> Config {
-    if let Some(font) = toml.font {
-        base.font = font;
-    }
-    if let Some(colors) = toml.colors
-        && let Some(scheme) = colors.scheme
-    {
-        base.colors = parse_color_scheme(&scheme);
-    }
-    if let Some(shell) = toml.shell {
-        base.shell = shell;
-    }
-    if let Some(keys) = toml.keys {
-        base.keys = keys;
-    }
-    if let Some(sb) = toml.status_bar {
-        base.status_bar = sb;
-    }
-    if let Some(lines) = toml.scrollback_lines {
-        base.scrollback_lines = lines;
-    }
-    if let Some(tab_bar) = toml.tab_bar {
-        base.tab_bar = tab_bar;
-    }
-    if let Some(hooks) = toml.hooks {
-        base.hooks = hooks;
-    }
-    base
-}
-
-/// カラースキーム文字列をパースする
+/// カラースキーム文字列をパースする（後方互換のため public のまま残す）
 pub fn parse_color_scheme(s: &str) -> ColorScheme {
     use crate::schema::BuiltinScheme;
-    match s {
+    match s.to_lowercase().as_str() {
         "dark" => ColorScheme::Builtin(BuiltinScheme::Dark),
         "light" => ColorScheme::Builtin(BuiltinScheme::Light),
         "tokyonight" => ColorScheme::Builtin(BuiltinScheme::TokyoNight),
@@ -383,12 +328,26 @@ mod dirs_next {
 }
 
 /// 初回起動時に生成するデフォルト設定テンプレート
+///
+/// **注意**: 実装の `Config` 構造体と一致するキー名を使用する。
+/// 過去のテンプレートにあった `[color_scheme] builtin = ...` /
+/// `[tab_bar] show = ...` / `[status_bar] show = ...` は
+/// 実装と一致しないキー名でサイレント無視されていたため修正済み。
 const DEFAULT_CONFIG_TOML: &str = r#"# Nexterm configuration file
 # Documentation: https://github.com/mizu-jun/Nexterm
 # This file was auto-generated on first launch. Edit freely.
 
 # Number of scrollback lines to retain per pane
 scrollback_lines = 10000
+
+# Display language: "auto" (OS detect) or "en" / "ja" / "fr" / "de" / "es" / "it" / "zh-CN" / "ko"
+language = "auto"
+
+# Cursor style: "block" / "beam" / "underline"
+cursor_style = "block"
+
+# Check GitHub Releases for new versions on startup (default: true)
+auto_check_update = true
 
 [font]
 # Font family name (use a monospace/nerd font for best results)
@@ -397,24 +356,35 @@ size = 14.0
 ligatures = true
 # font_fallbacks = ["Noto Color Emoji"]
 
-[color_scheme]
-# Built-in themes: "dark", "light", "tokyonight", "solarized", "gruvbox"
-builtin = "tokyonight"
+# Built-in color schemes: "dark", "light", "tokyonight", "solarized", "gruvbox"
+# 文字列で指定するか [colors] scheme = "..." の形式も可
+colors = "tokyonight"
 
-[shell]
+# [shell]
 # Override the default shell. Leave commented to use the OS default.
 # Windows: "C:\\Program Files\\PowerShell\\7\\pwsh.exe"
 # macOS/Linux: auto-detected from $SHELL
-# program = ""
+# program = "/bin/bash"
 # args = ["-NoLogo"]
 
 [tab_bar]
-show = true
-position = "top"
+enabled = true
+height = 28
 
 [status_bar]
-show = true
-position = "bottom"
+enabled = true
+
+# [window]
+# background_opacity = 0.92
+# macos_window_background_blur = 20
+# decorations = "default"
+
+# [[hosts]]
+# name = "production"
+# host = "192.168.1.100"
+# port = 22
+# username = "ops"
+# auth_type = "key"
 
 # [hooks]
 # on_pane_open  = "/path/to/script"
@@ -433,7 +403,6 @@ mod tests {
 
     #[test]
     fn toml文字列から設定をパースできる() {
-        // scrollback_lines はセクション前に書く（TOML ルール）
         let toml_str = r#"
 scrollback_lines = 10000
 
@@ -442,34 +411,134 @@ family = "JetBrains Mono"
 size = 16.0
 ligatures = false
 "#;
-        let parsed: TomlConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(parsed.font.as_ref().unwrap().family, "JetBrains Mono");
-        assert_eq!(parsed.font.as_ref().unwrap().size, 16.0);
-        assert!(!parsed.font.as_ref().unwrap().ligatures);
-        assert_eq!(parsed.scrollback_lines, Some(10000));
+        let parsed: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.font.family, "JetBrains Mono");
+        assert_eq!(parsed.font.size, 16.0);
+        assert!(!parsed.font.ligatures);
+        assert_eq!(parsed.scrollback_lines, 10000);
     }
 
     #[test]
-    fn tomlマージが正しく動作する() {
-        let base = Config::default();
-        let toml = TomlConfig {
-            font: Some(FontConfig {
-                family: "Fira Code".to_string(),
-                size: 13.0,
-                ligatures: true,
-                font_fallbacks: vec![],
-            }),
-            colors: None,
-            shell: None,
-            keys: None,
-            status_bar: None,
-            scrollback_lines: Some(20000),
-            tab_bar: None,
-            hooks: None,
-        };
-        let merged = merge_toml(base, toml);
-        assert_eq!(merged.font.family, "Fira Code");
-        assert_eq!(merged.scrollback_lines, 20000);
+    fn config_に_hosts_セクションを書ける() {
+        // 以前 TomlConfig が hosts を持たず、ユーザー設定がサイレント無視されていた問題の回帰テスト
+        let toml_str = r#"
+[[hosts]]
+name = "production"
+host = "192.168.1.100"
+port = 2222
+username = "ops"
+auth_type = "key"
+key_path = "~/.ssh/id_ed25519"
+"#;
+        let parsed: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.hosts.len(), 1);
+        assert_eq!(parsed.hosts[0].name, "production");
+        assert_eq!(parsed.hosts[0].port, 2222);
+        assert_eq!(parsed.hosts[0].username, "ops");
+    }
+
+    #[test]
+    fn config_に_window_セクションを書ける() {
+        // 以前 TomlConfig が window を持たず、ユーザー設定がサイレント無視されていた問題の回帰テスト
+        let toml_str = r#"
+[window]
+background_opacity = 0.85
+padding_x = 8
+padding_y = 4
+"#;
+        let parsed: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.window.background_opacity, 0.85);
+        assert_eq!(parsed.window.padding_x, 8);
+        assert_eq!(parsed.window.padding_y, 4);
+    }
+
+    #[test]
+    fn config_に_macros_セクションを書ける() {
+        let toml_str = r#"
+[[macros]]
+name = "git-status"
+description = "Show git status"
+lua_fn = "macro_git_status"
+"#;
+        let parsed: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.macros.len(), 1);
+        assert_eq!(parsed.macros[0].name, "git-status");
+    }
+
+    #[test]
+    fn config_に_cursor_style_と_auto_check_update_を書ける() {
+        let toml_str = r#"
+cursor_style = "beam"
+auto_check_update = false
+language = "ja"
+"#;
+        let parsed: Config = toml::from_str(toml_str).unwrap();
+        assert!(matches!(
+            parsed.cursor_style,
+            crate::schema::CursorStyle::Beam
+        ));
+        assert!(!parsed.auto_check_update);
+        assert_eq!(parsed.language, "ja");
+    }
+
+    #[test]
+    fn colors_を文字列でも_scheme_テーブルでも_カスタムでも書ける() {
+        use crate::schema::BuiltinScheme;
+
+        // 形式 1: 文字列
+        let parsed: Config = toml::from_str("colors = \"gruvbox\"").unwrap();
+        assert!(matches!(
+            parsed.colors,
+            ColorScheme::Builtin(BuiltinScheme::Gruvbox)
+        ));
+
+        // 形式 2: [colors] scheme = "..."
+        let parsed: Config = toml::from_str("[colors]\nscheme = \"solarized\"").unwrap();
+        assert!(matches!(
+            parsed.colors,
+            ColorScheme::Builtin(BuiltinScheme::Solarized)
+        ));
+
+        // 形式 3: フルカスタムパレット
+        let custom_toml = r##"
+[colors]
+foreground = "#cdd6f4"
+background = "#1e1e2e"
+cursor = "#f5e0dc"
+ansi = ["#000000", "#ff0000", "#00ff00", "#ffff00",
+        "#0000ff", "#ff00ff", "#00ffff", "#ffffff",
+        "#808080", "#ff8080", "#80ff80", "#ffff80",
+        "#8080ff", "#ff80ff", "#80ffff", "#ffffff"]
+"##;
+        let parsed: Config = toml::from_str(custom_toml).unwrap();
+        match parsed.colors {
+            ColorScheme::Custom(p) => {
+                assert_eq!(p.foreground, "#cdd6f4");
+                assert_eq!(p.ansi.len(), 16);
+            }
+            _ => panic!("Custom パレットがパースされなかった"),
+        }
+    }
+
+    #[test]
+    fn デフォルトテンプレートが_config_として_パース可能() {
+        // 初回起動時のテンプレート自体が壊れていないことを確認する
+        let parsed: Result<Config> = toml::from_str(DEFAULT_CONFIG_TOML).map_err(Into::into);
+        assert!(
+            parsed.is_ok(),
+            "DEFAULT_CONFIG_TOML が Config としてパースできない: {:?}",
+            parsed.err()
+        );
+        let cfg = parsed.unwrap();
+        assert_eq!(cfg.scrollback_lines, 10000);
+        assert_eq!(cfg.language, "auto");
+        assert!(cfg.tab_bar.enabled);
+        assert!(cfg.status_bar.enabled);
+        // 旧テンプレートは [color_scheme] builtin = "..." だったがそれが効かない問題の回帰テスト
+        assert!(matches!(
+            cfg.colors,
+            ColorScheme::Builtin(crate::schema::BuiltinScheme::TokyoNight)
+        ));
     }
 
     #[test]
