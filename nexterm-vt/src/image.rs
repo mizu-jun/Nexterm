@@ -2,6 +2,26 @@
 
 use std::collections::HashMap;
 
+/// 画像 1 枚あたりの最大バイト数（256 MiB）。
+///
+/// 悪意ある PTY / SSH ホストが極端に大きな width × height を指定して
+/// `vec![0u8; width * height * 4]` で u32 オーバーフロー後に
+/// 極小バッファを確保し、その後の境界外書き込みでヒープを破壊する攻撃を防ぐ。
+const MAX_IMAGE_BYTES: usize = 256 * 1024 * 1024;
+
+/// 幅 × 高さ × チャネル数 を `usize` で安全に計算する。
+///
+/// `u64` 経由でオーバーフローを検出し、`MAX_IMAGE_BYTES` を超える場合は `None` を返す。
+fn checked_image_bytes(width: u32, height: u32, channels: u32) -> Option<usize> {
+    let bytes = (width as u64)
+        .checked_mul(height as u64)?
+        .checked_mul(channels as u64)?;
+    if bytes > MAX_IMAGE_BYTES as u64 {
+        return None;
+    }
+    Some(bytes as usize)
+}
+
 /// デコードされた画像データ（RGBA）
 #[derive(Debug, Clone)]
 pub struct DecodedImage {
@@ -127,7 +147,11 @@ pub fn decode_sixel(data: &[u8]) -> Option<DecodedImage> {
         return None;
     }
 
-    let mut rgba = vec![0u8; width * height * 4];
+    // 巨大画像での `u32` 乗算オーバーフロー → 極小バッファ確保後の境界外書き込みを防ぐ
+    let width_u32 = u32::try_from(width).ok()?;
+    let height_u32 = u32::try_from(height).ok()?;
+    let total = checked_image_bytes(width_u32, height_u32, 4)?;
+    let mut rgba = vec![0u8; total];
     for (row_idx, row) in buf.iter().enumerate().take(height) {
         for (col_idx, pixel) in row.iter().enumerate().take(width) {
             if let Some(c) = pixel {
@@ -244,7 +268,8 @@ pub fn decode_kitty(apc_data: &[u8]) -> Option<DecodedImage> {
             if width == 0 || height == 0 {
                 return None;
             }
-            let expected = (width * height * 4) as usize;
+            // u32 乗算オーバーフローで小さな expected が出来るとパニック / バッファ不一致が起きる
+            let expected = checked_image_bytes(width, height, 4)?;
             if pixel_data.len() < expected {
                 return None;
             }
@@ -259,11 +284,13 @@ pub fn decode_kitty(apc_data: &[u8]) -> Option<DecodedImage> {
             if width == 0 || height == 0 {
                 return None;
             }
-            let expected = (width * height * 3) as usize;
+            // u32 乗算オーバーフロー対策。RGB は 3 チャネル、変換後の RGBA は 4 チャネル。
+            let expected = checked_image_bytes(width, height, 3)?;
+            let rgba_capacity = checked_image_bytes(width, height, 4)?;
             if pixel_data.len() < expected {
                 return None;
             }
-            let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+            let mut rgba = Vec::with_capacity(rgba_capacity);
             for chunk in pixel_data[..expected].chunks_exact(3) {
                 rgba.extend_from_slice(chunk);
                 rgba.push(255);
@@ -383,5 +410,39 @@ mod tests {
         let img = result.unwrap();
         assert_eq!(img.width, 1);
         assert_eq!(img.height, 6);
+    }
+
+    #[test]
+    fn 通常サイズの画像バイト数計算() {
+        assert_eq!(checked_image_bytes(100, 100, 4), Some(40_000));
+        assert_eq!(checked_image_bytes(1, 1, 4), Some(4));
+        assert_eq!(checked_image_bytes(0, 0, 4), Some(0));
+    }
+
+    #[test]
+    fn u32_オーバーフロー時に_none_を返す() {
+        // 65536 * 65536 * 4 = 17 GB → u32 でラップして極小値、u64 で正しく計算してチェック
+        assert_eq!(checked_image_bytes(65536, 65536, 4), None);
+        // 4096 * 4096 * 4 = 64 MiB（256 MiB 以下、許容）
+        assert_eq!(checked_image_bytes(4096, 4096, 4), Some(67_108_864));
+        // 8192 * 8192 * 4 = 256 MiB（境界、許容）
+        assert_eq!(checked_image_bytes(8192, 8192, 4), Some(MAX_IMAGE_BYTES));
+        // 8193 * 8192 * 4 = 256 MiB + 32 KiB（境界超過、拒否）
+        assert_eq!(checked_image_bytes(8193, 8192, 4), None);
+        // u32::MAX 単独でも overflow させずに None を返す
+        assert_eq!(checked_image_bytes(u32::MAX, u32::MAX, 4), None);
+    }
+
+    #[test]
+    fn 巨大kitty画像はデコードを拒否する() {
+        // format=32, width=65536, height=65536 → 17GB → 拒否されるべき
+        // 実際の APC 文字列を組み立てる
+        let payload = b""; // 空の base64 ペイロード（バッファ確保前に検証されるはず）
+        let mut data = Vec::new();
+        data.extend_from_slice(b"a=T,f=32,s=65536,v=65536;");
+        data.extend_from_slice(payload);
+        let result = decode_kitty(&data);
+        // 巨大画像なので checked_image_bytes が None を返し、結果は None
+        assert!(result.is_none(), "巨大画像のデコードは拒否されるべき");
     }
 }
