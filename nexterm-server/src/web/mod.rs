@@ -225,11 +225,24 @@ pub async fn start_web_server(config: WebConfig, manager: Arc<SessionManager>) {
                 start_tls_server(addr, app, cert_pem, key_pem).await;
             }
             Err(e) => {
-                warn!(
-                    "証明書の読み込みに失敗: {}。HTTP にフォールバックします。",
-                    e
-                );
-                start_plain_http(addr, app).await;
+                // CRITICAL #3: TLS 失敗時の平文 HTTP フォールバックは
+                // セッショントークン・TOTP コード・パスワード等の漏洩リスクが
+                // あるため、明示的なオプトインがない限り起動を中止する。
+                if config.allow_http_fallback {
+                    warn!(
+                        "証明書の読み込みに失敗: {}。allow_http_fallback=true のため HTTP にフォールバックします（推奨されない）。",
+                        e
+                    );
+                    start_plain_http(addr, app).await;
+                } else {
+                    tracing::error!(
+                        "証明書の読み込みに失敗: {}。Web サーバーの起動を中止します。\n\
+                         HTTP フォールバックを許可するには [web] allow_http_fallback = true を設定してください（テスト・開発時のみ推奨）。",
+                        e
+                    );
+                    // 起動中止: caller (start_web_server) は spawn された task のため
+                    // ここで関数から抜ければ Web サーバーは起動しない（メインの IPC は継続）
+                }
             }
         }
     } else {

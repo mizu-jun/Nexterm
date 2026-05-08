@@ -871,6 +871,15 @@ pub struct WebConfig {
     /// アクセスログ設定
     #[serde(default)]
     pub access_log: AccessLogConfig,
+    /// **危険**: TLS 設定失敗時に平文 HTTP でフォールバック起動を許可するか（デフォルト: false）
+    ///
+    /// `tls.enabled = true` で証明書ファイル不在・読み込み失敗・パーミッションエラー
+    /// 等が起きた場合の挙動を制御する:
+    /// - `false`（デフォルト・推奨）: サーバー起動を中止する。セッショントークンや
+    ///   TOTP コードが平文で漏れることを防ぐ。
+    /// - `true`: 警告ログを出して HTTP にフォールバックする（テスト・開発のみ）。
+    #[serde(default)]
+    pub allow_http_fallback: bool,
 }
 
 fn default_web_port() -> u16 {
@@ -888,6 +897,7 @@ impl Default for WebConfig {
             force_https: false,
             max_sessions: 0,
             access_log: AccessLogConfig::default(),
+            allow_http_fallback: false,
         }
     }
 }
@@ -1383,5 +1393,25 @@ layout_mode = "tiling"
         assert_eq!(BuiltinScheme::Dark.display_name(), "Dark");
         assert_eq!(BuiltinScheme::TokyoNight.display_name(), "Tokyo Night");
         assert_eq!(BuiltinScheme::OneDark.display_name(), "One Dark");
+    }
+
+    #[test]
+    fn webconfig_の_allow_http_fallback_デフォルトは_false() {
+        // CRITICAL #3 対応: 安全なデフォルトであることを保証する
+        let cfg = WebConfig::default();
+        assert!(
+            !cfg.allow_http_fallback,
+            "allow_http_fallback のデフォルトは false でなければならない（HTTP フォールバック禁止）"
+        );
+    }
+
+    #[test]
+    fn webconfig_は_toml_から_allow_http_fallback_を読める() {
+        let toml_str = r#"
+enabled = true
+allow_http_fallback = true
+"#;
+        let cfg: WebConfig = toml::from_str(toml_str).unwrap();
+        assert!(cfg.allow_http_fallback);
     }
 }
