@@ -107,8 +107,8 @@ async fn connect_unix() -> Result<Connection> {
 #[cfg(unix)]
 fn unix_socket_path() -> String {
     let uid = unsafe { libc::getuid() };
-    let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-        .unwrap_or_else(|_| format!("/run/user/{}", uid));
+    let runtime_dir =
+        std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/run/user/{}", uid));
     format!("{}/nexterm.sock", runtime_dir)
 }
 

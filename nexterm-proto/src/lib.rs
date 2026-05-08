@@ -13,4 +13,6 @@ pub mod message;
 
 pub use cell::{Attrs, Cell, Color};
 pub use grid::{DirtyRow, Grid, HyperlinkSpan};
-pub use message::{ClientToServer, KeyCode, Modifiers, PaneLayout, ServerToClient, SessionInfo, WindowInfo};
+pub use message::{
+    ClientToServer, KeyCode, Modifiers, PaneLayout, ServerToClient, SessionInfo, WindowInfo,
+};

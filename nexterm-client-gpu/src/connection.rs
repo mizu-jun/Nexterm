@@ -67,9 +67,10 @@ where
                 break;
             }
             if let Ok(msg) = bincode::deserialize::<ServerToClient>(&payload)
-                && recv_tx.send(msg).await.is_err() {
-                    break;
-                }
+                && recv_tx.send(msg).await.is_err()
+            {
+                break;
+            }
         }
     });
 
@@ -79,8 +80,7 @@ where
 #[cfg(unix)]
 async fn connect_unix() -> Result<Connection> {
     let uid = unsafe { libc::getuid() };
-    let dir = std::env::var("XDG_RUNTIME_DIR")
-        .unwrap_or_else(|_| format!("/run/user/{}", uid));
+    let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/run/user/{}", uid));
     let path = format!("{}/nexterm.sock", dir);
     let stream = tokio::net::UnixStream::connect(path).await?;
     setup(stream).await

@@ -335,8 +335,8 @@ impl Default for ShellConfig {
         #[cfg(windows)]
         {
             // %ProgramFiles%\PowerShell\* を動的スキャンして最新バージョンを選択する
-            let prog_files = std::env::var("ProgramFiles")
-                .unwrap_or_else(|_| "C:\\Program Files".to_string());
+            let prog_files =
+                std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".to_string());
             let ps_root = std::path::Path::new(&prog_files).join("PowerShell");
             if let Ok(entries) = std::fs::read_dir(&ps_root) {
                 let mut pwsh: Option<std::path::PathBuf> = None;
@@ -744,8 +744,7 @@ pub struct OAuthConfig {
 }
 
 /// TLS / HTTPS 設定
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct TlsConfig {
     /// HTTPS を有効にするか（デフォルト: false）
     #[serde(default)]
@@ -756,10 +755,8 @@ pub struct TlsConfig {
     pub key_file: Option<String>,
 }
 
-
 /// アクセスログ設定
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct AccessLogConfig {
     /// アクセスログを有効にするか（デフォルト: false）
     #[serde(default)]
@@ -767,7 +764,6 @@ pub struct AccessLogConfig {
     /// ログファイルパス。省略時はサーバーログ（tracing）に出力
     pub file: Option<String>,
 }
-
 
 /// Web ターミナル設定（WebSocket + xterm.js）
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1099,9 +1095,10 @@ impl Config {
     /// プロファイルが未設定または存在しない場合は self を clone して返す。
     pub fn effective(&self) -> Config {
         if let Some(ref name) = self.active_profile
-            && let Some(profile) = self.profiles.iter().find(|p| &p.name == name) {
-                return profile.apply_to(self);
-            }
+            && let Some(profile) = self.profiles.iter().find(|p| &p.name == name)
+        {
+            return profile.apply_to(self);
+        }
         self.clone()
     }
 

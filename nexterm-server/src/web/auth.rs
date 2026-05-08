@@ -242,7 +242,9 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             "cookie",
-            "other=value; nexterm_session=abc123; another=test".parse().unwrap(),
+            "other=value; nexterm_session=abc123; another=test"
+                .parse()
+                .unwrap(),
         );
         let session = extract_session_cookie(&headers);
         assert_eq!(session, Some("abc123".to_string()));

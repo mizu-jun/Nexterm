@@ -1,18 +1,16 @@
 //! セッション管理 — セッション/ウィンドウのライフサイクルを管理する
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
-use anyhow::{bail, Result};
-use tokio::sync::{broadcast, mpsc, Mutex};
+use anyhow::{Result, bail};
+use tokio::sync::{Mutex, broadcast, mpsc};
 use tracing::{info, warn};
 
 use nexterm_proto::{ServerToClient, SessionInfo, WindowInfo};
 
-use crate::snapshot::{
-    ServerSnapshot, SessionSnapshot, SNAPSHOT_VERSION, SNAPSHOT_VERSION_MIN,
-};
+use crate::snapshot::{SNAPSHOT_VERSION, SNAPSHOT_VERSION_MIN, ServerSnapshot, SessionSnapshot};
 use crate::window::Window;
 
 static NEXT_WINDOW_ID: AtomicU32 = AtomicU32::new(1);
@@ -57,7 +55,15 @@ impl Session {
     ) -> Result<Self> {
         let (broadcast_tx, _) = broadcast::channel::<ServerToClient>(2048);
         let window_id = new_window_id();
-        let window = Window::new(window_id, "window-1".to_string(), cols, rows, broadcast_tx.clone(), &shell, &shell_args)?;
+        let window = Window::new(
+            window_id,
+            "window-1".to_string(),
+            cols,
+            rows,
+            broadcast_tx.clone(),
+            &shell,
+            &shell_args,
+        )?;
         let mut windows = HashMap::new();
         windows.insert(window_id, window);
 
@@ -137,7 +143,15 @@ impl Session {
     pub fn add_window(&mut self) -> Result<u32> {
         let window_id = new_window_id();
         let name = format!("window-{}", window_id);
-        let window = Window::new(window_id, name, self.cols, self.rows, self.broadcast_tx.clone(), &self.shell, &self.shell_args)?;
+        let window = Window::new(
+            window_id,
+            name,
+            self.cols,
+            self.rows,
+            self.broadcast_tx.clone(),
+            &self.shell,
+            &self.shell_args,
+        )?;
         self.windows.insert(window_id, window);
         self.focused_window_id = window_id;
         Ok(window_id)
@@ -154,7 +168,10 @@ impl Session {
         self.windows.remove(&window_id);
         // フォーカスが削除されたウィンドウにあった場合、残ったウィンドウに移す
         if self.focused_window_id == window_id {
-            self.focused_window_id = *self.windows.keys().next()
+            self.focused_window_id = *self
+                .windows
+                .keys()
+                .next()
                 .expect("windows が空でないことは len() > 1 チェック済み");
         }
         Ok(())
@@ -171,7 +188,9 @@ impl Session {
 
     /// 指定ウィンドウをリネームする
     pub fn rename_window(&mut self, window_id: u32, name: String) -> Result<()> {
-        let window = self.windows.get_mut(&window_id)
+        let window = self
+            .windows
+            .get_mut(&window_id)
             .ok_or_else(|| anyhow::anyhow!("ウィンドウ {} が見つかりません", window_id))?;
         window.name = name;
         Ok(())
@@ -179,12 +198,16 @@ impl Session {
 
     /// ウィンドウ情報の一覧を返す
     pub fn window_list(&self) -> Vec<WindowInfo> {
-        let mut list: Vec<WindowInfo> = self.windows.values().map(|w| WindowInfo {
-            window_id: w.id,
-            name: w.name.clone(),
-            pane_count: w.pane_count() as u32,
-            is_focused: w.id == self.focused_window_id,
-        }).collect();
+        let mut list: Vec<WindowInfo> = self
+            .windows
+            .values()
+            .map(|w| WindowInfo {
+                window_id: w.id,
+                name: w.name.clone(),
+                pane_count: w.pane_count() as u32,
+                is_focused: w.id == self.focused_window_id,
+            })
+            .collect();
         list.sort_by_key(|w| w.window_id);
         list
     }
@@ -197,7 +220,8 @@ impl Session {
         let cols = self.cols;
         let rows = self.rows;
         let pane = {
-            let w = self.focused_window_mut()
+            let w = self
+                .focused_window_mut()
                 .ok_or_else(|| anyhow::anyhow!("フォーカスウィンドウが見つかりません"))?;
             w.take_focused_pane(cols, rows)
                 .ok_or_else(|| anyhow::anyhow!("最後のペインは切り離せません"))?
@@ -222,14 +246,18 @@ impl Session {
         }
         // ペインを取り出す
         let pane = {
-            let w = self.windows.get_mut(&focused_win_id)
+            let w = self
+                .windows
+                .get_mut(&focused_win_id)
                 .ok_or_else(|| anyhow::anyhow!("フォーカスウィンドウが見つかりません"))?;
             w.take_focused_pane(cols, rows)
                 .ok_or_else(|| anyhow::anyhow!("最後のペインは移動できません"))?
         };
         let pane_id = pane.id;
         // 移動先ウィンドウに挿入する
-        let target = self.windows.get_mut(&target_window_id)
+        let target = self
+            .windows
+            .get_mut(&target_window_id)
             .ok_or_else(|| anyhow::anyhow!("ウィンドウ {} が見つかりません", target_window_id))?;
         target.insert_pane(pane, cols, rows, crate::window::SplitDir::Vertical);
         self.focused_window_id = target_window_id;
@@ -249,7 +277,8 @@ impl Session {
 
     /// ブロードキャストモード: フォーカスウィンドウの全ペインに書き込む
     pub fn write_to_all(&self, data: &[u8]) -> Result<()> {
-        let window = self.focused_window()
+        let window = self
+            .focused_window()
             .ok_or_else(|| anyhow::anyhow!("フォーカスウィンドウが見つかりません"))?;
         for pane_id in window.pane_ids() {
             if let Some(pane) = window.pane(pane_id) {
@@ -321,15 +350,18 @@ impl Session {
 
         let mut windows = HashMap::new();
         for win_snap in &snap.windows {
-            match Window::restore_from_snapshot(win_snap, &broadcast_tx, &snap.shell, snap.cols, snap.rows) {
+            match Window::restore_from_snapshot(
+                win_snap,
+                &broadcast_tx,
+                &snap.shell,
+                snap.cols,
+                snap.rows,
+            ) {
                 Ok(window) => {
                     windows.insert(win_snap.id, window);
                 }
                 Err(e) => {
-                    warn!(
-                        "ウィンドウ '{}' の復元に失敗しました: {}",
-                        win_snap.name, e
-                    );
+                    warn!("ウィンドウ '{}' の復元に失敗しました: {}", win_snap.name, e);
                 }
             }
         }
@@ -386,12 +418,7 @@ impl SessionManager {
 
     /// 新規セッションを作成する
     #[allow(dead_code)]
-    pub async fn create_session(
-        &self,
-        name: String,
-        cols: u16,
-        rows: u16,
-    ) -> Result<()> {
+    pub async fn create_session(&self, name: String, cols: u16, rows: u16) -> Result<()> {
         let mut sessions = self.sessions.lock().await;
         if sessions.contains_key(&name) {
             bail!("セッション '{}' は既に存在します", name);
@@ -406,10 +433,7 @@ impl SessionManager {
 
     /// 既存セッションにアタッチする（broadcast::Receiver を返す）
     #[allow(dead_code)]
-    pub async fn attach_session(
-        &self,
-        name: &str,
-    ) -> Result<broadcast::Receiver<ServerToClient>> {
+    pub async fn attach_session(&self, name: &str) -> Result<broadcast::Receiver<ServerToClient>> {
         let sessions = self.sessions.lock().await;
         let session = sessions
             .get(name)
@@ -426,12 +450,7 @@ impl SessionManager {
     }
 
     /// セッションが存在しない場合は新規作成してアタッチ、存在する場合は再アタッチする
-    pub async fn get_or_create_and_attach(
-        &self,
-        name: &str,
-        cols: u16,
-        rows: u16,
-    ) -> Result<()> {
+    pub async fn get_or_create_and_attach(&self, name: &str, cols: u16, rows: u16) -> Result<()> {
         let mut sessions = self.sessions.lock().await;
         if sessions.contains_key(name) {
             info!("セッション '{}' に再アタッチしました", name);
@@ -488,11 +507,7 @@ impl SessionManager {
         let pane = window
             .pane(window.focused_pane_id())
             .ok_or_else(|| anyhow::anyhow!("フォーカスペインが見つかりません"))?;
-        pane.start_recording_with_config(
-            base_dir,
-            session_name,
-            log_config,
-        )?;
+        pane.start_recording_with_config(base_dir, session_name, log_config)?;
         Ok(pane.id)
     }
 
@@ -556,7 +571,14 @@ impl SessionManager {
             .focused_window_mut()
             .ok_or_else(|| anyhow::anyhow!("フォーカスウィンドウが見つかりません"))?;
         window.add_serial_pane(
-            cols, rows, tx, port, baud_rate, data_bits, stop_bits, parity,
+            cols,
+            rows,
+            tx,
+            port,
+            baud_rate,
+            data_bits,
+            stop_bits,
+            parity,
             crate::window::SplitDir::Vertical,
         )
     }
@@ -596,7 +618,10 @@ impl SessionManager {
 
         for sess_snap in &snap.sessions {
             if sessions.contains_key(&sess_snap.name) {
-                info!("セッション '{}' は既に存在するためスキップします", sess_snap.name);
+                info!(
+                    "セッション '{}' は既に存在するためスキップします",
+                    sess_snap.name
+                );
                 continue;
             }
             match Session::restore_from_snapshot(sess_snap) {
@@ -606,7 +631,10 @@ impl SessionManager {
                     info!("セッション '{}' を復元しました", sess_snap.name);
                 }
                 Err(e) => {
-                    warn!("セッション '{}' の復元に失敗しました: {}", sess_snap.name, e);
+                    warn!(
+                        "セッション '{}' の復元に失敗しました: {}",
+                        sess_snap.name, e
+                    );
                 }
             }
         }
@@ -646,7 +674,10 @@ mod tests {
     async fn セッション削除で存在しない名前はErr() {
         let manager = SessionManager::new(nexterm_config::ShellConfig::default());
         let result = manager.kill_session("nonexistent").await;
-        assert!(result.is_err(), "存在しないセッションの kill は Err を返すべき");
+        assert!(
+            result.is_err(),
+            "存在しないセッションの kill は Err を返すべき"
+        );
     }
 
     #[tokio::test]
@@ -663,8 +694,9 @@ mod tests {
             24,
             "/bin/sh".to_string(),
             Vec::new(),
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         assert_eq!(session.name, "test-session");
         assert_eq!(session.cols, 80);
         assert_eq!(session.rows, 24);
@@ -680,8 +712,9 @@ mod tests {
             24,
             "/bin/sh".to_string(),
             Vec::new(),
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         let info = session.info();
         assert_eq!(info.name, "test");
         assert_eq!(info.window_count, 1);
@@ -691,10 +724,12 @@ mod tests {
     #[tokio::test]
     async fn session_manager_create_new_session() {
         let manager = SessionManager::new(nexterm_config::ShellConfig::default());
-        
-        let result = manager.get_or_create_and_attach("new-session", 80, 24).await;
+
+        let result = manager
+            .get_or_create_and_attach("new-session", 80, 24)
+            .await;
         assert!(result.is_ok());
-        
+
         let list = manager.list_sessions().await;
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].name, "new-session");
@@ -703,13 +738,16 @@ mod tests {
     #[tokio::test]
     async fn session_manager_kill_existing_session() {
         let manager = SessionManager::new(nexterm_config::ShellConfig::default());
-        manager.get_or_create_and_attach("to-kill", 80, 24).await.unwrap();
-        
+        manager
+            .get_or_create_and_attach("to-kill", 80, 24)
+            .await
+            .unwrap();
+
         assert_eq!(manager.list_sessions().await.len(), 1);
-        
+
         let result = manager.kill_session("to-kill").await;
         assert!(result.is_ok());
-        
+
         assert_eq!(manager.list_sessions().await.len(), 0);
     }
 }

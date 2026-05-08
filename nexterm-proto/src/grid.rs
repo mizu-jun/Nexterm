@@ -68,9 +68,10 @@ impl Grid {
     /// 指定セルへ書き込み（範囲外は無視）
     pub fn set(&mut self, col: u16, row: u16, cell: Cell) {
         if let Some(r) = self.rows.get_mut(row as usize)
-            && let Some(c) = r.get_mut(col as usize) {
-                *c = cell;
-            }
+            && let Some(c) = r.get_mut(col as usize)
+        {
+            *c = cell;
+        }
     }
 
     /// 行全体をデフォルトセルで埋める（範囲外は無視してパニックしない）
@@ -164,8 +165,18 @@ mod tests {
         let row = DirtyRow {
             row: 3,
             cells: vec![
-                Cell { ch: 'A', fg: Color::Default, bg: Color::Default, attrs: Attrs::default() },
-                Cell { ch: 'B', fg: Color::Rgb(255, 0, 0), bg: Color::Default, attrs: Attrs(Attrs::BOLD) },
+                Cell {
+                    ch: 'A',
+                    fg: Color::Default,
+                    bg: Color::Default,
+                    attrs: Attrs::default(),
+                },
+                Cell {
+                    ch: 'B',
+                    fg: Color::Rgb(255, 0, 0),
+                    bg: Color::Default,
+                    attrs: Attrs(Attrs::BOLD),
+                },
             ],
         };
         let encoded = bincode::serialize(&row).unwrap();

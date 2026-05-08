@@ -131,9 +131,10 @@ impl LuaHookRunner {
     /// チャネルが満杯の場合はイベントを破棄してログを出力する。
     pub fn fire(&self, event: HookEvent) {
         if let Some(tx) = &self.event_tx
-            && tx.try_send(event).is_err() {
-                warn!("LuaHookRunner: イベントキューが満杯です。フックをスキップします");
-            }
+            && tx.try_send(event).is_err()
+        {
+            warn!("LuaHookRunner: イベントキューが満杯です。フックをスキップします");
+        }
     }
 
     /// Lua フックランナーが有効か（スクリプトが存在するか）
@@ -202,15 +203,18 @@ fn call_hook(lua: &Lua, event: &HookEvent) -> LuaResult<()> {
                 func.call::<()>(session.as_str())?;
             }
         }
-        HookEvent::RunMacro { lua_fn, session, pane_id, reply_tx } => {
+        HookEvent::RunMacro {
+            lua_fn,
+            session,
+            pane_id,
+            reply_tx,
+        } => {
             // グローバル関数名で探す（macros テーブル経由とグローバル直接呼び出し両対応）
             let result: Option<String> = lua
                 .globals()
                 .get::<LuaFunction>(lua_fn.as_str())
                 .ok()
-                .and_then(|func| {
-                    func.call::<LuaValue>((session.as_str(), *pane_id)).ok()
-                })
+                .and_then(|func| func.call::<LuaValue>((session.as_str(), *pane_id)).ok())
                 .and_then(|val| match val {
                     LuaValue::String(s) => s.to_str().ok().map(|s| s.to_string()),
                     _ => None,

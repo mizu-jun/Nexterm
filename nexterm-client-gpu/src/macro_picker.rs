@@ -3,7 +3,7 @@
 //! 設定ファイルの `[[macros]]` エントリを一覧表示し、
 //! Enter で選択したマクロを実行する（RunMacro メッセージをサーバーに送信する）。
 
-use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
+use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use nexterm_config::MacroConfig;
 
 /// マクロピッカーの表示/操作状態
@@ -69,7 +69,11 @@ impl MacroPicker {
     pub fn select_prev(&mut self) {
         let count = self.filtered().len();
         if count > 0 {
-            self.selected = if self.selected == 0 { count - 1 } else { self.selected - 1 };
+            self.selected = if self.selected == 0 {
+                count - 1
+            } else {
+                self.selected - 1
+            };
         }
     }
 

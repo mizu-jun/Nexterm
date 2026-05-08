@@ -89,8 +89,12 @@ impl LayoutTemplate {
     /// 戻り値: 保存先パスの文字列
     pub fn save(&self) -> Result<String> {
         let dir = template_dir();
-        std::fs::create_dir_all(&dir)
-            .with_context(|| format!("テンプレートディレクトリの作成に失敗しました: {}", dir.display()))?;
+        std::fs::create_dir_all(&dir).with_context(|| {
+            format!(
+                "テンプレートディレクトリの作成に失敗しました: {}",
+                dir.display()
+            )
+        })?;
 
         let path = template_path(&self.name);
         let json = serde_json::to_string_pretty(self)
@@ -107,8 +111,12 @@ impl LayoutTemplate {
         let path = template_path(name);
         let json = std::fs::read_to_string(&path)
             .with_context(|| format!("テンプレートの読み込みに失敗しました: {}", path.display()))?;
-        let template: Self = serde_json::from_str(&json)
-            .with_context(|| format!("テンプレートの JSON デシリアライズに失敗しました: {}", path.display()))?;
+        let template: Self = serde_json::from_str(&json).with_context(|| {
+            format!(
+                "テンプレートの JSON デシリアライズに失敗しました: {}",
+                path.display()
+            )
+        })?;
         Ok(template)
     }
 
@@ -119,15 +127,19 @@ impl LayoutTemplate {
             return Ok(Vec::new());
         }
         let mut names = Vec::new();
-        for entry in std::fs::read_dir(&dir)
-            .with_context(|| format!("テンプレートディレクトリの読み取りに失敗しました: {}", dir.display()))?
-        {
+        for entry in std::fs::read_dir(&dir).with_context(|| {
+            format!(
+                "テンプレートディレクトリの読み取りに失敗しました: {}",
+                dir.display()
+            )
+        })? {
             let entry = entry?;
             let path = entry.path();
             if path.extension().map(|e| e == "json").unwrap_or(false)
-                && let Some(stem) = path.file_stem() {
-                    names.push(stem.to_string_lossy().to_string());
-                }
+                && let Some(stem) = path.file_stem()
+            {
+                names.push(stem.to_string_lossy().to_string());
+            }
         }
         names.sort();
         Ok(names)
@@ -165,7 +177,10 @@ pub fn template_from_session_info(
 /// n 個のペインを均等分割するレイアウトを生成する
 fn build_balanced_layout(count: usize) -> PaneTemplate {
     if count <= 1 {
-        return PaneTemplate::Leaf { command: None, cwd: None };
+        return PaneTemplate::Leaf {
+            command: None,
+            cwd: None,
+        };
     }
     let left_count = count / 2;
     let right_count = count - left_count;
@@ -211,7 +226,7 @@ mod tests {
     fn build_balanced_layout_single_pane() {
         let layout = build_balanced_layout(1);
         match layout {
-            PaneTemplate::Leaf { .. } => {},
+            PaneTemplate::Leaf { .. } => {}
             _ => panic!("1個のペインはLeafになるべき"),
         }
     }
@@ -224,14 +239,14 @@ mod tests {
                 assert!((ratio - 0.5).abs() < 0.01); // 1:1分割
                 // 左右はLeaf
                 match *left {
-                    PaneTemplate::Leaf { .. } => {},
+                    PaneTemplate::Leaf { .. } => {}
                     _ => panic!("左はLeafになるべき"),
                 }
                 match *right {
-                    PaneTemplate::Leaf { .. } => {},
+                    PaneTemplate::Leaf { .. } => {}
                     _ => panic!("右はLeafになるべき"),
                 }
-            },
+            }
             _ => panic!("2個のペインはSplitHになるべき"),
         }
     }
@@ -243,14 +258,14 @@ mod tests {
             PaneTemplate::SplitH { left, right, .. } => {
                 // 左: 2ペインの分割、右: 2ペインの分割
                 match *left {
-                    PaneTemplate::SplitH { .. } => {},
+                    PaneTemplate::SplitH { .. } => {}
                     _ => panic!("左は再帰的に2分割されるべき"),
                 }
                 match *right {
-                    PaneTemplate::SplitH { .. } | PaneTemplate::Leaf { .. } => {},
-                    PaneTemplate::SplitV { .. } => {},
+                    PaneTemplate::SplitH { .. } | PaneTemplate::Leaf { .. } => {}
+                    PaneTemplate::SplitV { .. } => {}
                 }
-            },
+            }
             _ => panic!("4個のペインはSplitHになるべき"),
         }
     }
@@ -269,7 +284,7 @@ mod tests {
         let titles = vec!["win1".to_string(), "win2".to_string()];
         let counts = vec![2, 4];
         let template = template_from_session_info("session_template", titles, counts);
-        
+
         assert_eq!(template.name, "session_template");
         assert_eq!(template.windows.len(), 2);
         assert_eq!(template.windows[0].title, "win1");
@@ -278,19 +293,27 @@ mod tests {
 
     #[test]
     fn pane_template_serialization_roundtrip() {
-        let leaf = PaneTemplate::Leaf { 
+        let leaf = PaneTemplate::Leaf {
             command: Some("/bin/bash".to_string()),
-            cwd: Some("/home/user".to_string()), 
+            cwd: Some("/home/user".to_string()),
         };
         let json = serde_json::to_string(&leaf).unwrap();
         let deserialized: PaneTemplate = serde_json::from_str(&json).unwrap();
-        
+
         match (leaf, deserialized) {
-            (PaneTemplate::Leaf { command: c1, cwd: d1 }, 
-             PaneTemplate::Leaf { command: c2, cwd: d2 }) => {
+            (
+                PaneTemplate::Leaf {
+                    command: c1,
+                    cwd: d1,
+                },
+                PaneTemplate::Leaf {
+                    command: c2,
+                    cwd: d2,
+                },
+            ) => {
                 assert_eq!(c1, c2);
                 assert_eq!(d1, d2);
-            },
+            }
             _ => panic!("roundtrip failed"),
         }
     }
@@ -299,7 +322,10 @@ mod tests {
     fn window_template_serialization_roundtrip() {
         let window = WindowTemplate {
             title: "test_window".to_string(),
-            layout: PaneTemplate::Leaf { command: None, cwd: None },
+            layout: PaneTemplate::Leaf {
+                command: None,
+                cwd: None,
+            },
         };
         let json = serde_json::to_string(&window).unwrap();
         let deserialized: WindowTemplate = serde_json::from_str(&json).unwrap();
@@ -311,7 +337,7 @@ mod tests {
         let template = LayoutTemplate::new("roundtrip_test");
         let json = serde_json::to_string(&template).unwrap();
         let deserialized: LayoutTemplate = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(template.name, deserialized.name);
         assert_eq!(template.windows.len(), deserialized.windows.len());
     }
@@ -320,17 +346,22 @@ mod tests {
     fn split_h_serialization_roundtrip() {
         let split = PaneTemplate::SplitH {
             ratio: 0.6,
-            left: Box::new(PaneTemplate::Leaf { command: None, cwd: None }),
-            right: Box::new(PaneTemplate::Leaf { command: None, cwd: None }),
+            left: Box::new(PaneTemplate::Leaf {
+                command: None,
+                cwd: None,
+            }),
+            right: Box::new(PaneTemplate::Leaf {
+                command: None,
+                cwd: None,
+            }),
         };
         let json = serde_json::to_string(&split).unwrap();
         let deserialized: PaneTemplate = serde_json::from_str(&json).unwrap();
-        
+
         match (split, deserialized) {
-            (PaneTemplate::SplitH { ratio: r1, .. }, 
-             PaneTemplate::SplitH { ratio: r2, .. }) => {
+            (PaneTemplate::SplitH { ratio: r1, .. }, PaneTemplate::SplitH { ratio: r2, .. }) => {
                 assert!((r1 - r2).abs() < 0.0001);
-            },
+            }
             _ => panic!("SplitH roundtrip failed"),
         }
     }
@@ -339,16 +370,22 @@ mod tests {
     fn split_v_serialization_roundtrip() {
         let split = PaneTemplate::SplitV {
             ratio: 0.3,
-            top: Box::new(PaneTemplate::Leaf { command: None, cwd: None }),
-            bottom: Box::new(PaneTemplate::Leaf { command: None, cwd: None }),
+            top: Box::new(PaneTemplate::Leaf {
+                command: None,
+                cwd: None,
+            }),
+            bottom: Box::new(PaneTemplate::Leaf {
+                command: None,
+                cwd: None,
+            }),
         };
         let json = serde_json::to_string(&split).unwrap();
         let deserialized: PaneTemplate = serde_json::from_str(&json).unwrap();
-        
+
         match deserialized {
             PaneTemplate::SplitV { ratio, .. } => {
                 assert!((ratio - 0.3).abs() < 0.0001);
-            },
+            }
             _ => panic!("SplitV roundtrip failed"),
         }
     }

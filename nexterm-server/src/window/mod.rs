@@ -87,7 +87,9 @@ impl Window {
     ) -> Result<Self> {
         let pane = Pane::spawn(cols, rows, tx, shell, args)?;
         let focused_pane_id = pane.id;
-        let layout = SplitNode::Pane { pane_id: focused_pane_id };
+        let layout = SplitNode::Pane {
+            pane_id: focused_pane_id,
+        };
         let mut panes = HashMap::new();
         panes.insert(pane.id, pane);
 
@@ -107,7 +109,9 @@ impl Window {
     /// 既存のペインを持つウィンドウを生成する（break-pane 用）
     pub fn new_with_pane(id: u32, name: String, pane: Pane) -> Result<Self> {
         let focused_pane_id = pane.id;
-        let layout = SplitNode::Pane { pane_id: focused_pane_id };
+        let layout = SplitNode::Pane {
+            pane_id: focused_pane_id,
+        };
         let mut panes = HashMap::new();
         panes.insert(pane.id, pane);
         Ok(Self {
@@ -174,9 +178,10 @@ impl Window {
         // 4. 既存ペインを新しいサイズにリサイズする
         for rect in &layouts {
             if rect.pane_id != new_id
-                && let Some(p) = self.panes.get_mut(&rect.pane_id) {
-                    let _ = p.resize_pty(rect.cols, rect.rows);
-                }
+                && let Some(p) = self.panes.get_mut(&rect.pane_id)
+            {
+                let _ = p.resize_pty(rect.cols, rect.rows);
+            }
         }
 
         Ok(new_id)
@@ -227,7 +232,12 @@ impl Window {
 
         let pane = Pane::spawn(fp_cols.max(10), fp_rows.max(5), tx, shell, args)?;
         let pane_id = pane.id;
-        let rect = FloatRect { col_off, row_off, cols: fp_cols.max(10), rows: fp_rows.max(5) };
+        let rect = FloatRect {
+            col_off,
+            row_off,
+            cols: fp_cols.max(10),
+            rows: fp_rows.max(5),
+        };
         self.floating_panes.insert(pane_id, (pane, rect.clone()));
         Ok((pane_id, rect))
     }
@@ -238,7 +248,12 @@ impl Window {
     }
 
     /// フローティングペインを移動する
-    pub fn move_floating_pane(&mut self, pane_id: u32, col_off: u16, row_off: u16) -> Option<FloatRect> {
+    pub fn move_floating_pane(
+        &mut self,
+        pane_id: u32,
+        col_off: u16,
+        row_off: u16,
+    ) -> Option<FloatRect> {
         if let Some((_, rect)) = self.floating_panes.get_mut(&pane_id) {
             rect.col_off = col_off;
             rect.row_off = row_off;
@@ -249,7 +264,12 @@ impl Window {
     }
 
     /// フローティングペインをリサイズする
-    pub fn resize_floating_pane(&mut self, pane_id: u32, cols: u16, rows: u16) -> Option<FloatRect> {
+    pub fn resize_floating_pane(
+        &mut self,
+        pane_id: u32,
+        cols: u16,
+        rows: u16,
+    ) -> Option<FloatRect> {
         if let Some((pane, rect)) = self.floating_panes.get_mut(&pane_id) {
             rect.cols = cols.max(10);
             rect.rows = rows.max(5);
@@ -459,7 +479,11 @@ impl Window {
             v
         };
         if let Some(pos) = ids.iter().position(|&id| id == focused) {
-            let prev_id = if pos == 0 { ids[ids.len() - 1] } else { ids[pos - 1] };
+            let prev_id = if pos == 0 {
+                ids[ids.len() - 1]
+            } else {
+                ids[pos - 1]
+            };
             self.layout.swap_ids(focused, prev_id);
         }
     }
@@ -584,7 +608,9 @@ impl Window {
         parity: &str,
         dir: SplitDir,
     ) -> Result<u32> {
-        let sp = SerialPane::spawn(port_name, baud_rate, data_bits, stop_bits, parity, total_cols, total_rows, tx)?;
+        let sp = SerialPane::spawn(
+            port_name, baud_rate, data_bits, stop_bits, parity, total_cols, total_rows, tx,
+        )?;
         let new_id = sp.id;
         self.layout.insert_after(self.focused_pane_id, new_id, dir);
         self.serial_panes.insert(new_id, sp);
@@ -674,9 +700,15 @@ impl Window {
         for (pane_id, pane_cols, pane_rows) in size_map {
             let cwd = find_cwd_in_snapshot(&snap.layout, pane_id);
             let pane = match cwd {
-                Some(ref cwd_path) => {
-                    Pane::spawn_with_cwd(pane_id, pane_cols, pane_rows, tx.clone(), shell, &[], cwd_path)?
-                }
+                Some(ref cwd_path) => Pane::spawn_with_cwd(
+                    pane_id,
+                    pane_cols,
+                    pane_rows,
+                    tx.clone(),
+                    shell,
+                    &[],
+                    cwd_path,
+                )?,
                 None => Pane::spawn_with_id(pane_id, pane_cols, pane_rows, tx.clone(), shell, &[])?,
             };
             panes.insert(pane_id, pane);

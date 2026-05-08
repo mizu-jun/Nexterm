@@ -196,7 +196,10 @@ mod tests {
         parser.advance(b"Hello");
         // ダーティ行は空（保留中）
         let dirty = parser.screen_mut().take_dirty_rows();
-        assert!(dirty.is_empty(), "同期出力モード中はダーティ行を返さないべき");
+        assert!(
+            dirty.is_empty(),
+            "同期出力モード中はダーティ行を返さないべき"
+        );
         // モード無効化でフラッシュ
         parser.advance(b"\x1b[?2026l");
         assert!(!parser.synchronized_output_mode());
@@ -247,7 +250,10 @@ mod tests {
         assert_eq!(grid.get(0, 0).unwrap().ch, 'C');
         assert_eq!(grid.get(4, 0).unwrap().ch, 'k');
         // hyperlinks にスパンが記録されている
-        assert!(!grid.hyperlinks.is_empty(), "ハイパーリンクスパンが存在すること");
+        assert!(
+            !grid.hyperlinks.is_empty(),
+            "ハイパーリンクスパンが存在すること"
+        );
         let span = &grid.hyperlinks[0];
         assert_eq!(span.url, "https://example.com");
         assert_eq!(span.row, 0);
@@ -327,8 +333,8 @@ mod tests {
         assert_eq!(images[0].width, 1);
         assert_eq!(images[0].height, 1);
         assert_eq!(images[0].rgba[0], 255); // R
-        assert_eq!(images[0].rgba[1], 0);   // G
-        assert_eq!(images[0].rgba[2], 0);   // B
+        assert_eq!(images[0].rgba[1], 0); // G
+        assert_eq!(images[0].rgba[2], 0); // B
         assert_eq!(images[0].rgba[3], 255); // A
     }
 
@@ -342,7 +348,11 @@ mod tests {
         // チャンク2: m=0（最終チャンク）
         parser.advance(b"\x1b_Gm=0;/w==\x1b\\");
         let images = parser.screen_mut().take_pending_images();
-        assert_eq!(images.len(), 1, "分割チャンクから1枚の画像が組み立てられること");
+        assert_eq!(
+            images.len(),
+            1,
+            "分割チャンクから1枚の画像が組み立てられること"
+        );
         assert_eq!(images[0].width, 1);
         assert_eq!(images[0].height, 1);
     }

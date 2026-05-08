@@ -24,5 +24,5 @@ pub use schema::{
     PresentModeConfig, Profile, SchemePalette, SerialPortConfig, ShellConfig, StatusBarConfig,
     TabBarConfig, TlsConfig, WebAuthConfig, WebConfig, WindowConfig, WindowDecorations,
 };
-pub use status_bar::{evaluate_builtin, StatusBarEvaluator, WidgetContext};
-pub use watcher::{watch_config, ConfigRx};
+pub use status_bar::{StatusBarEvaluator, WidgetContext, evaluate_builtin};
+pub use watcher::{ConfigRx, watch_config};

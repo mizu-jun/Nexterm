@@ -22,16 +22,15 @@ pub(crate) fn resolve_color(
                 [0.05, 0.05, 0.05, 1.0]
             }
         }
-        Color::Rgb(r, g, b) => {
-            [u8_to_f32(*r), u8_to_f32(*g), u8_to_f32(*b), 1.0]
-        }
+        Color::Rgb(r, g, b) => [u8_to_f32(*r), u8_to_f32(*g), u8_to_f32(*b), 1.0],
         Color::Indexed(n) => {
             // ANSI 0-15: スキームパレットを優先する
             if *n < 16
-                && let Some(p) = palette {
-                    let c = p.ansi[*n as usize];
-                    return [u8_to_f32(c[0]), u8_to_f32(c[1]), u8_to_f32(c[2]), 1.0];
-                }
+                && let Some(p) = palette
+            {
+                let c = p.ansi[*n as usize];
+                return [u8_to_f32(c[0]), u8_to_f32(c[1]), u8_to_f32(c[2]), 1.0];
+            }
             ansi_256_to_rgb(*n)
         }
     }

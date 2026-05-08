@@ -1,6 +1,6 @@
 //! コマンドパレット — Ctrl+Shift+P でフローティング UI を表示する
 
-use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
+use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use nexterm_i18n::fl;
 
 /// パレットに登録できるアクション

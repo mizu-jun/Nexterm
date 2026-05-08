@@ -18,10 +18,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use nexterm_config::{Config, StatusBarEvaluator};
-use unicode_width::UnicodeWidthChar;
 use nexterm_proto::ClientToServer;
 use nexterm_proto::KeyCode as ProtoKeyCode;
 use tracing::{debug, info, warn};
+use unicode_width::UnicodeWidthChar;
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalSize,
@@ -38,10 +38,12 @@ use crate::{
 };
 
 // サブモジュールは main.rs で宣言済み（crate ルート）
-use crate::glyph_atlas::{BgVertex, GlyphAtlas, GlyphKey, LigatureKey, TextVertex};
-use crate::shaders::{BG_SHADER, IMAGE_SHADER, TEXT_SHADER};
 use crate::color_util::{hex_to_rgba, resolve_color};
-use crate::key_map::{config_key_matches, physical_to_proto_key, proto_modifiers, winit_code_to_char};
+use crate::glyph_atlas::{BgVertex, GlyphAtlas, GlyphKey, LigatureKey, TextVertex};
+use crate::key_map::{
+    config_key_matches, physical_to_proto_key, proto_modifiers, winit_code_to_char,
+};
+use crate::shaders::{BG_SHADER, IMAGE_SHADER, TEXT_SHADER};
 use crate::vertex_util::{
     add_px_rect, add_string_verts, draw_cursor, grid_to_text, open_url, visual_width,
 };
@@ -54,7 +56,10 @@ use crate::vertex_util::{
 /// ファイルが変更されると `()` を受信チャネルに送信する。
 fn start_shader_watcher(
     gpu_cfg: &nexterm_config::GpuConfig,
-) -> (Option<tokio::sync::mpsc::Receiver<()>>, Option<notify::RecommendedWatcher>) {
+) -> (
+    Option<tokio::sync::mpsc::Receiver<()>>,
+    Option<notify::RecommendedWatcher>,
+) {
     use notify::{Event, RecursiveMode, Watcher};
 
     let paths: Vec<std::path::PathBuf> = [
@@ -73,17 +78,15 @@ fn start_shader_watcher(
 
     let (tx, rx) = tokio::sync::mpsc::channel::<()>(1);
 
-    let mut watcher = match notify::recommended_watcher(
-        move |result: notify::Result<Event>| {
-            if let Ok(event) = result {
-                use notify::EventKind::*;
-                if matches!(event.kind, Modify(_) | Create(_)) {
-                    info!("シェーダーファイルの変更を検知しました。パイプラインを再構築します。");
-                    let _ = tx.blocking_send(());
-                }
+    let mut watcher = match notify::recommended_watcher(move |result: notify::Result<Event>| {
+        if let Ok(event) = result {
+            use notify::EventKind::*;
+            if matches!(event.kind, Modify(_) | Create(_)) {
+                info!("シェーダーファイルの変更を検知しました。パイプラインを再構築します。");
+                let _ = tx.blocking_send(());
             }
-        },
-    ) {
+        }
+    }) {
         Ok(w) => w,
         Err(e) => {
             warn!("シェーダーウォッチャーの起動に失敗しました: {}", e);
@@ -93,7 +96,11 @@ fn start_shader_watcher(
 
     for path in &paths {
         if let Err(e) = watcher.watch(path, RecursiveMode::NonRecursive) {
-            warn!("シェーダーファイルの監視に失敗しました: {}: {}", path.display(), e);
+            warn!(
+                "シェーダーファイルの監視に失敗しました: {}: {}",
+                path.display(),
+                e
+            );
         } else {
             info!("シェーダーファイルを監視中: {}", path.display());
         }
@@ -207,7 +214,9 @@ impl WgpuState {
         // ---- カスタムシェーダーの読み込み ----
         // gpu.custom_bg_shader / gpu.custom_text_shader が設定されている場合はファイルから読み込む。
         // 読み込み失敗時はビルトインシェーダーにフォールバックする。
-        let bg_shader_src: std::borrow::Cow<'static, str> = if let Some(ref path) = gpu_cfg.custom_bg_shader {
+        let bg_shader_src: std::borrow::Cow<'static, str> = if let Some(ref path) =
+            gpu_cfg.custom_bg_shader
+        {
             let expanded = shellexpand::tilde(path).into_owned();
             match std::fs::read_to_string(&expanded) {
                 Ok(s) => {
@@ -215,7 +224,10 @@ impl WgpuState {
                     std::borrow::Cow::Owned(s)
                 }
                 Err(e) => {
-                    warn!("カスタム背景シェーダーの読み込みに失敗しました（ビルトインを使用）: {}: {}", expanded, e);
+                    warn!(
+                        "カスタム背景シェーダーの読み込みに失敗しました（ビルトインを使用）: {}: {}",
+                        expanded, e
+                    );
                     std::borrow::Cow::Borrowed(BG_SHADER)
                 }
             }
@@ -223,7 +235,9 @@ impl WgpuState {
             std::borrow::Cow::Borrowed(BG_SHADER)
         };
 
-        let text_shader_src: std::borrow::Cow<'static, str> = if let Some(ref path) = gpu_cfg.custom_text_shader {
+        let text_shader_src: std::borrow::Cow<'static, str> = if let Some(ref path) =
+            gpu_cfg.custom_text_shader
+        {
             let expanded = shellexpand::tilde(path).into_owned();
             match std::fs::read_to_string(&expanded) {
                 Ok(s) => {
@@ -231,7 +245,10 @@ impl WgpuState {
                     std::borrow::Cow::Owned(s)
                 }
                 Err(e) => {
-                    warn!("カスタムテキストシェーダーの読み込みに失敗しました（ビルトインを使用）: {}: {}", expanded, e);
+                    warn!(
+                        "カスタムテキストシェーダーの読み込みに失敗しました（ビルトインを使用）: {}: {}",
+                        expanded, e
+                    );
                     std::borrow::Cow::Borrowed(TEXT_SHADER)
                 }
             }
@@ -245,12 +262,11 @@ impl WgpuState {
             source: wgpu::ShaderSource::Wgsl(bg_shader_src),
         });
 
-        let bg_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("bg_pipeline_layout"),
-                bind_group_layouts: &[],
-                push_constant_ranges: &[],
-            });
+        let bg_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("bg_pipeline_layout"),
+            bind_group_layouts: &[],
+            push_constant_ranges: &[],
+        });
 
         let bg_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("bg_pipeline"),
@@ -317,12 +333,11 @@ impl WgpuState {
             source: wgpu::ShaderSource::Wgsl(text_shader_src),
         });
 
-        let text_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("text_pipeline_layout"),
-                bind_group_layouts: &[&text_bind_group_layout],
-                push_constant_ranges: &[],
-            });
+        let text_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("text_pipeline_layout"),
+            bind_group_layouts: &[&text_bind_group_layout],
+            push_constant_ranges: &[],
+        });
 
         let text_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("text_pipeline"),
@@ -517,7 +532,11 @@ impl WgpuState {
                 let parse_hex = |s: &str| -> [u8; 3] {
                     let s = s.trim_start_matches('#');
                     let v = u32::from_str_radix(s, 16).unwrap_or(0);
-                    [((v >> 16) & 0xFF) as u8, ((v >> 8) & 0xFF) as u8, (v & 0xFF) as u8]
+                    [
+                        ((v >> 16) & 0xFF) as u8,
+                        ((v >> 8) & 0xFF) as u8,
+                        (v & 0xFF) as u8,
+                    ]
                 };
                 let mut ansi = [[0u8; 3]; 16];
                 for (i, hex) in p.ansi.iter().enumerate().take(16) {
@@ -555,7 +574,11 @@ impl WgpuState {
         let cell_h = font.cell_height();
 
         // タブバー高さ（有効時のみ）: ターミナルコンテンツのy-offsetとして使用
-        let tab_bar_h = if tab_bar_cfg.enabled { tab_bar_cfg.height as f32 } else { 0.0 };
+        let tab_bar_h = if tab_bar_cfg.enabled {
+            tab_bar_cfg.height as f32
+        } else {
+            0.0
+        };
         // パディングを加味した実効オフセット（グリッド描画の基点）
         let _grid_offset_x = padding_x;
         let grid_offset_y = tab_bar_h + padding_y;
@@ -571,10 +594,9 @@ impl WgpuState {
             let layout_ids: Vec<u32> = state.pane_layouts.keys().copied().collect();
             for pane_id in layout_ids {
                 let is_focused = state.focused_pane_id == Some(pane_id);
-                if let (Some(layout), Some(pane)) = (
-                    state.pane_layouts.get(&pane_id),
-                    state.panes.get(&pane_id),
-                ) {
+                if let (Some(layout), Some(pane)) =
+                    (state.pane_layouts.get(&pane_id), state.panes.get(&pane_id))
+                {
                     if pane.scroll_offset > 0 && is_focused {
                         self.build_scrollback_verts_in_rect(
                             pane,
@@ -616,7 +638,16 @@ impl WgpuState {
                 }
             }
             // ペイン境界線を描画する
-            self.build_border_verts(state, sw, sh, cell_w, cell_h, tab_bar_h, &mut bg_verts, &mut bg_idx);
+            self.build_border_verts(
+                state,
+                sw,
+                sh,
+                cell_w,
+                cell_h,
+                tab_bar_h,
+                &mut bg_verts,
+                &mut bg_idx,
+            );
         } else if let Some(pane) = state.focused_pane() {
             // フォールバック: レイアウト情報なし（接続直後など）
             if pane.scroll_offset > 0 {
@@ -669,141 +700,319 @@ impl WgpuState {
                     let badge_w = cell_w * 2.0;
                     let badge_h = cell_h;
                     // 黄色背景バッジ
-                    add_px_rect(px, py, badge_w, badge_h, [0.9, 0.75, 0.0, 0.90], sw, sh, &mut bg_verts, &mut bg_idx);
+                    add_px_rect(
+                        px,
+                        py,
+                        badge_w,
+                        badge_h,
+                        [0.9, 0.75, 0.0, 0.90],
+                        sw,
+                        sh,
+                        &mut bg_verts,
+                        &mut bg_idx,
+                    );
                     // ペイン番号テキスト（1 始まり）
                     let label = (number + 1).to_string();
                     add_string_verts(
-                        &label, px + 2.0, py,
-                        [0.0, 0.0, 0.0, 1.0], true,
-                        sw, sh, cell_w, font, atlas, &self.queue,
-                        &mut text_verts, &mut text_idx,
+                        &label,
+                        px + 2.0,
+                        py,
+                        [0.0, 0.0, 0.0, 1.0],
+                        true,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        &mut text_verts,
+                        &mut text_idx,
                     );
                 }
             }
             // レイアウト情報がない場合（フォールバック: フォーカスペインのみ）
             if state.pane_layouts.is_empty()
-                && let Some(focused_id) = state.focused_pane_id {
-                    add_px_rect(0.0, tab_bar_h, cell_w * 2.0, cell_h, [0.9, 0.75, 0.0, 0.90], sw, sh, &mut bg_verts, &mut bg_idx);
-                    let label = focused_id.to_string();
-                    add_string_verts(
-                        &label, 2.0, tab_bar_h,
-                        [0.0, 0.0, 0.0, 1.0], true,
-                        sw, sh, cell_w, font, atlas, &self.queue,
-                        &mut text_verts, &mut text_idx,
-                    );
-                }
+                && let Some(focused_id) = state.focused_pane_id
+            {
+                add_px_rect(
+                    0.0,
+                    tab_bar_h,
+                    cell_w * 2.0,
+                    cell_h,
+                    [0.9, 0.75, 0.0, 0.90],
+                    sw,
+                    sh,
+                    &mut bg_verts,
+                    &mut bg_idx,
+                );
+                let label = focused_id.to_string();
+                add_string_verts(
+                    &label,
+                    2.0,
+                    tab_bar_h,
+                    [0.0, 0.0, 0.0, 1.0],
+                    true,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    &mut text_verts,
+                    &mut text_idx,
+                );
+            }
         }
 
         // ---- タブバー（設定で有効な場合）----
         if tab_bar_cfg.enabled {
             self.build_tab_bar_verts(
-                state, tab_bar_cfg, sw, sh, cell_w, cell_h, font, atlas,
-                &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
+                state,
+                tab_bar_cfg,
+                sw,
+                sh,
+                cell_w,
+                cell_h,
+                font,
+                atlas,
+                &mut bg_verts,
+                &mut bg_idx,
+                &mut text_verts,
+                &mut text_idx,
             );
         }
 
         // ---- ステータスライン（常時表示） ----
         self.build_status_verts(
-            state, sw, sh, cell_w, cell_h, font, atlas,
-            &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
+            state,
+            sw,
+            sh,
+            cell_w,
+            cell_h,
+            font,
+            atlas,
+            &mut bg_verts,
+            &mut bg_idx,
+            &mut text_verts,
+            &mut text_idx,
         );
 
         // ---- 検索バー（アクティブ時） ----
         if state.search.is_active {
             self.build_search_verts(
-                state, sw, sh, cell_w, cell_h, font, atlas,
-                &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
+                state,
+                sw,
+                sh,
+                cell_w,
+                cell_h,
+                font,
+                atlas,
+                &mut bg_verts,
+                &mut bg_idx,
+                &mut text_verts,
+                &mut text_idx,
             );
         }
 
         // ---- Quick Select オーバーレイ（アクティブ時） ----
         if state.quick_select.is_active {
             self.build_quick_select_verts(
-                state, sw, sh, cell_w, cell_h, font, atlas,
-                &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
+                state,
+                sw,
+                sh,
+                cell_w,
+                cell_h,
+                font,
+                atlas,
+                &mut bg_verts,
+                &mut bg_idx,
+                &mut text_verts,
+                &mut text_idx,
             );
         }
 
         // ---- SFTP ファイル転送ダイアログ（オープン時） ----
         if state.file_transfer.is_open {
             self.build_file_transfer_verts(
-                state, sw, sh, cell_w, cell_h, font, atlas,
-                &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
+                state,
+                sw,
+                sh,
+                cell_w,
+                cell_h,
+                font,
+                atlas,
+                &mut bg_verts,
+                &mut bg_idx,
+                &mut text_verts,
+                &mut text_idx,
             );
         }
 
         // ---- Lua マクロピッカー（オープン時） ----
         if state.macro_picker.is_open {
             self.build_macro_picker_verts(
-                state, sw, sh, cell_w, cell_h, font, atlas,
-                &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
+                state,
+                sw,
+                sh,
+                cell_w,
+                cell_h,
+                font,
+                atlas,
+                &mut bg_verts,
+                &mut bg_idx,
+                &mut text_verts,
+                &mut text_idx,
             );
         }
 
         // ---- ホストマネージャ（オープン時） ----
         if state.host_manager.is_open {
             self.build_host_manager_verts(
-                state, sw, sh, cell_w, cell_h, font, atlas,
-                &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
+                state,
+                sw,
+                sh,
+                cell_w,
+                cell_h,
+                font,
+                atlas,
+                &mut bg_verts,
+                &mut bg_idx,
+                &mut text_verts,
+                &mut text_idx,
             );
         }
         if state.host_manager.password_modal.is_some() {
             self.build_password_modal_verts(
-                state, sw, sh, cell_w, cell_h, font, atlas,
-                &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
+                state,
+                sw,
+                sh,
+                cell_w,
+                cell_h,
+                font,
+                atlas,
+                &mut bg_verts,
+                &mut bg_idx,
+                &mut text_verts,
+                &mut text_idx,
             );
         }
 
         // ---- コマンドパレット（オープン時） ----
         if state.palette.is_open {
             self.build_palette_verts(
-                state, sw, sh, cell_w, cell_h, font, atlas,
-                &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
+                state,
+                sw,
+                sh,
+                cell_w,
+                cell_h,
+                font,
+                atlas,
+                &mut bg_verts,
+                &mut bg_idx,
+                &mut text_verts,
+                &mut text_idx,
             );
         }
 
         // ---- 設定パネル（Ctrl+, でオープン） ----
         if state.settings_panel.is_open {
             self.build_settings_panel_verts(
-                state, sw, sh, cell_w, cell_h, font, atlas,
-                &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
+                state,
+                sw,
+                sh,
+                cell_w,
+                cell_h,
+                font,
+                atlas,
+                &mut bg_verts,
+                &mut bg_idx,
+                &mut text_verts,
+                &mut text_idx,
             );
         }
 
         // ---- コンテキストメニュー（右クリック時） ----
         if let Some(ref menu) = state.context_menu {
             self.build_context_menu_verts(
-                menu, sw, sh, cell_w, cell_h, font, atlas,
-                &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
+                menu,
+                sw,
+                sh,
+                cell_w,
+                cell_h,
+                font,
+                atlas,
+                &mut bg_verts,
+                &mut bg_idx,
+                &mut text_verts,
+                &mut text_idx,
             );
         }
 
         // ---- 更新通知バナー（画面上部） ----
         if state.update_banner.is_some() {
             self.build_update_banner_verts(
-                state, sw, sh, cell_w, cell_h, font, atlas,
-                &mut bg_verts, &mut bg_idx, &mut text_verts, &mut text_idx,
+                state,
+                sw,
+                sh,
+                cell_w,
+                cell_h,
+                font,
+                atlas,
+                &mut bg_verts,
+                &mut bg_idx,
+                &mut text_verts,
+                &mut text_idx,
             );
         }
 
         // ---- IME プリエディットオーバーレイ（変換中テキスト） ----
         if let Some(ref preedit) = state.ime_preedit
-            && let Some(pane) = state.focused_pane() {
-                let px = pane.cursor_col as f32 * cell_w;
-                let py = (pane.cursor_row + 1) as f32 * cell_h;
-                // プリエディット背景（やや明るいグレー）
-                let text_width = preedit.chars().count() as f32 * cell_w;
-                add_px_rect(px, py, text_width.max(cell_w), cell_h, [0.25, 0.25, 0.30, 0.90], sw, sh, &mut bg_verts, &mut bg_idx);
-                // アンダーライン（黄色）
-                add_px_rect(px, py + cell_h - 2.0, text_width.max(cell_w), 2.0, [1.0, 0.85, 0.2, 1.0], sw, sh, &mut bg_verts, &mut bg_idx);
-                // プリエディットテキスト
-                add_string_verts(
-                    preedit, px, py,
-                    [1.0, 1.0, 0.6, 1.0], false,
-                    sw, sh, cell_w, font, atlas, &self.queue,
-                    &mut text_verts, &mut text_idx,
-                );
-            }
+            && let Some(pane) = state.focused_pane()
+        {
+            let px = pane.cursor_col as f32 * cell_w;
+            let py = (pane.cursor_row + 1) as f32 * cell_h;
+            // プリエディット背景（やや明るいグレー）
+            let text_width = preedit.chars().count() as f32 * cell_w;
+            add_px_rect(
+                px,
+                py,
+                text_width.max(cell_w),
+                cell_h,
+                [0.25, 0.25, 0.30, 0.90],
+                sw,
+                sh,
+                &mut bg_verts,
+                &mut bg_idx,
+            );
+            // アンダーライン（黄色）
+            add_px_rect(
+                px,
+                py + cell_h - 2.0,
+                text_width.max(cell_w),
+                2.0,
+                [1.0, 0.85, 0.2, 1.0],
+                sw,
+                sh,
+                &mut bg_verts,
+                &mut bg_idx,
+            );
+            // プリエディットテキスト
+            add_string_verts(
+                preedit,
+                px,
+                py,
+                [1.0, 1.0, 0.6, 1.0],
+                false,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                &mut text_verts,
+                &mut text_idx,
+            );
+        }
 
         // ---- GPU バッファへアップロード（再利用バッファへ write_buffer で上書き）----
         // 容量不足の場合のみ新規確保する（2倍に拡張）
@@ -873,16 +1082,20 @@ impl WgpuState {
             for (id, img) in &pane.images {
                 if let Some(entry) = self.image_textures.get(id) {
                     let (img_verts, img_idx) = build_image_verts(img, sw, sh, cell_w, cell_h);
-                    let img_vbuf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("img_vbuf"),
-                        contents: bytemuck::cast_slice(&img_verts),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
-                    let img_ibuf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("img_ibuf"),
-                        contents: bytemuck::cast_slice(&img_idx),
-                        usage: wgpu::BufferUsages::INDEX,
-                    });
+                    let img_vbuf =
+                        self.device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("img_vbuf"),
+                                contents: bytemuck::cast_slice(&img_verts),
+                                usage: wgpu::BufferUsages::VERTEX,
+                            });
+                    let img_ibuf =
+                        self.device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("img_ibuf"),
+                                contents: bytemuck::cast_slice(&img_idx),
+                                usage: wgpu::BufferUsages::INDEX,
+                            });
                     {
                         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("image_render_pass"),
@@ -942,7 +1155,9 @@ impl WgpuState {
 
             // 背景色・選択ハイライトを先に描画する（リガチャ有無に関わらず）
             for col in 0..grid.width as usize {
-                let Some(cell) = grid.get(col as u16, row as u16) else { continue };
+                let Some(cell) = grid.get(col as u16, row as u16) else {
+                    continue;
+                };
                 let px = col as f32 * cell_w;
                 let bg = resolve_color(&cell.bg, false, palette);
                 add_px_rect(px, py, cell_w, cell_h, bg, sw, sh, bg_verts, bg_idx);
@@ -959,7 +1174,9 @@ impl WgpuState {
                 let row_chars: Vec<(usize, char, bool, bool, [u8; 4])> = (0..grid.width as usize)
                     .filter_map(|col| {
                         let cell = grid.get(col as u16, row as u16)?;
-                        if cell.ch == ' ' { return None; }
+                        if cell.ch == ' ' {
+                            return None;
+                        }
                         let fg = resolve_color(&cell.fg, true, palette);
                         let fg_u8 = [
                             (fg[0] * 255.0) as u8,
@@ -967,7 +1184,13 @@ impl WgpuState {
                             (fg[2] * 255.0) as u8,
                             (fg[3] * 255.0) as u8,
                         ];
-                        Some((col, cell.ch, cell.attrs.is_bold(), cell.attrs.is_italic(), fg_u8))
+                        Some((
+                            col,
+                            cell.ch,
+                            cell.attrs.is_bold(),
+                            cell.attrs.is_italic(),
+                            fg_u8,
+                        ))
                     })
                     .collect();
 
@@ -977,9 +1200,13 @@ impl WgpuState {
 
                     let rendered = font.rasterize_line_segment(&row_chars);
                     for glyph in rendered {
-                        if glyph.width == 0 || glyph.pixels.is_empty() { continue; }
+                        if glyph.width == 0 || glyph.pixels.is_empty() {
+                            continue;
+                        }
                         let col = glyph.col;
-                        let Some(cell) = grid.get(col as u16, row as u16) else { continue };
+                        let Some(cell) = grid.get(col as u16, row as u16) else {
+                            continue;
+                        };
                         let fg = resolve_color(&cell.fg, true, palette);
                         let fg_u8 = [
                             (fg[0] * 255.0) as u8,
@@ -1009,12 +1236,35 @@ impl WgpuState {
                         let ty1 = 1.0 - (py + glyph.height as f32) / sh * 2.0;
                         let base = text_verts.len() as u16;
                         text_verts.extend_from_slice(&[
-                            TextVertex { position: [tx0, ty0], uv: rect.uv_min, color: fg },
-                            TextVertex { position: [tx1, ty0], uv: [rect.uv_max[0], rect.uv_min[1]], color: fg },
-                            TextVertex { position: [tx1, ty1], uv: rect.uv_max, color: fg },
-                            TextVertex { position: [tx0, ty1], uv: [rect.uv_min[0], rect.uv_max[1]], color: fg },
+                            TextVertex {
+                                position: [tx0, ty0],
+                                uv: rect.uv_min,
+                                color: fg,
+                            },
+                            TextVertex {
+                                position: [tx1, ty0],
+                                uv: [rect.uv_max[0], rect.uv_min[1]],
+                                color: fg,
+                            },
+                            TextVertex {
+                                position: [tx1, ty1],
+                                uv: rect.uv_max,
+                                color: fg,
+                            },
+                            TextVertex {
+                                position: [tx0, ty1],
+                                uv: [rect.uv_min[0], rect.uv_max[1]],
+                                color: fg,
+                            },
                         ]);
-                        text_idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        text_idx.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                         ligature_rendered.insert(col);
                     }
                 }
@@ -1022,9 +1272,15 @@ impl WgpuState {
 
             // リガチャで描画済みでないセルを1文字単位でフォールバック描画する
             for col in 0..grid.width as usize {
-                if ligature_rendered.contains(&col) { continue; }
-                let Some(cell) = grid.get(col as u16, row as u16) else { continue };
-                if cell.ch == ' ' { continue; }
+                if ligature_rendered.contains(&col) {
+                    continue;
+                }
+                let Some(cell) = grid.get(col as u16, row as u16) else {
+                    continue;
+                };
+                if cell.ch == ' ' {
+                    continue;
+                }
                 let px = col as f32 * cell_w;
                 let fg = resolve_color(&cell.fg, true, palette);
                 let fg_u8 = [
@@ -1047,7 +1303,9 @@ impl WgpuState {
                     fg_u8,
                     is_wide,
                 );
-                if gw == 0 || gh == 0 || pixels.is_empty() { continue; }
+                if gw == 0 || gh == 0 || pixels.is_empty() {
+                    continue;
+                }
                 let rect = atlas.get_or_insert(key, &pixels, gw, gh, &self.queue);
                 let tx0 = px / sw * 2.0 - 1.0;
                 let ty0 = 1.0 - py / sh * 2.0;
@@ -1055,10 +1313,26 @@ impl WgpuState {
                 let ty1 = 1.0 - (py + gh as f32) / sh * 2.0;
                 let base = text_verts.len() as u16;
                 text_verts.extend_from_slice(&[
-                    TextVertex { position: [tx0, ty0], uv: rect.uv_min, color: fg },
-                    TextVertex { position: [tx1, ty0], uv: [rect.uv_max[0], rect.uv_min[1]], color: fg },
-                    TextVertex { position: [tx1, ty1], uv: rect.uv_max, color: fg },
-                    TextVertex { position: [tx0, ty1], uv: [rect.uv_min[0], rect.uv_max[1]], color: fg },
+                    TextVertex {
+                        position: [tx0, ty0],
+                        uv: rect.uv_min,
+                        color: fg,
+                    },
+                    TextVertex {
+                        position: [tx1, ty0],
+                        uv: [rect.uv_max[0], rect.uv_min[1]],
+                        color: fg,
+                    },
+                    TextVertex {
+                        position: [tx1, ty1],
+                        uv: rect.uv_max,
+                        color: fg,
+                    },
+                    TextVertex {
+                        position: [tx0, ty1],
+                        uv: [rect.uv_min[0], rect.uv_max[1]],
+                        color: fg,
+                    },
                 ]);
                 text_idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
             }
@@ -1067,7 +1341,17 @@ impl WgpuState {
         // カーソル矩形（スタイルに応じた形状で描画）
         let cx = pane.cursor_col as f32 * cell_w;
         let cy = pane.cursor_row as f32 * cell_h + y_offset;
-        draw_cursor(cursor_style, cx, cy, cell_w, cell_h, sw, sh, bg_verts, bg_idx);
+        draw_cursor(
+            cursor_style,
+            cx,
+            cy,
+            cell_w,
+            cell_h,
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
     }
 
     /// スクロールバックコンテンツの頂点を構築する
@@ -1270,7 +1554,17 @@ impl WgpuState {
         if is_focused {
             let cx = off_x + pane.cursor_col as f32 * cell_w;
             let cy = off_y + pane.cursor_row as f32 * cell_h;
-            draw_cursor(cursor_style, cx, cy, cell_w, cell_h, sw, sh, bg_verts, bg_idx);
+            draw_cursor(
+                cursor_style,
+                cx,
+                cy,
+                cell_w,
+                cell_h,
+                sw,
+                sh,
+                bg_verts,
+                bg_idx,
+            );
         }
     }
 
@@ -1368,9 +1662,13 @@ impl WgpuState {
     fn build_border_verts(
         &self,
         state: &ClientState,
-        sw: f32, sh: f32, cell_w: f32, cell_h: f32,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
         tab_bar_h: f32,
-        bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
     ) {
         if state.pane_layouts.len() <= 1 {
             return;
@@ -1395,27 +1693,55 @@ impl WgpuState {
                 // 上辺
                 add_px_rect(px, py, pw, 2.0, focused_highlight, sw, sh, bg_verts, bg_idx);
                 // 下辺
-                add_px_rect(px, py + ph - 2.0, pw, 2.0, focused_highlight, sw, sh, bg_verts, bg_idx);
+                add_px_rect(
+                    px,
+                    py + ph - 2.0,
+                    pw,
+                    2.0,
+                    focused_highlight,
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
                 // 左辺
                 add_px_rect(px, py, 2.0, ph, focused_highlight, sw, sh, bg_verts, bg_idx);
                 // 右辺
-                add_px_rect(px + pw - 2.0, py, 2.0, ph, focused_highlight, sw, sh, bg_verts, bg_idx);
+                add_px_rect(
+                    px + pw - 2.0,
+                    py,
+                    2.0,
+                    ph,
+                    focused_highlight,
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
             }
 
             // 右隣にペインがあれば 1px の垂直境界線を描画する
             let right_col = layout.col_offset + layout.cols + 1;
-            let color = if is_focused { focused_border } else { border_color };
-            if state.pane_layouts.values().any(|o| {
-                o.pane_id != layout.pane_id && o.col_offset == right_col
-            }) {
+            let color = if is_focused {
+                focused_border
+            } else {
+                border_color
+            };
+            if state
+                .pane_layouts
+                .values()
+                .any(|o| o.pane_id != layout.pane_id && o.col_offset == right_col)
+            {
                 add_px_rect(px + pw, py, border_w, ph, color, sw, sh, bg_verts, bg_idx);
             }
 
             // 下隣にペインがあれば 1px の水平境界線を描画する
             let bottom_row = layout.row_offset + layout.rows + 1;
-            if state.pane_layouts.values().any(|o| {
-                o.pane_id != layout.pane_id && o.row_offset == bottom_row
-            }) {
+            if state
+                .pane_layouts
+                .values()
+                .any(|o| o.pane_id != layout.pane_id && o.row_offset == bottom_row)
+            {
                 add_px_rect(px, py + ph, pw, border_w, color, sw, sh, bg_verts, bg_idx);
             }
         }
@@ -1427,11 +1753,16 @@ impl WgpuState {
         &mut self,
         state: &mut ClientState,
         cfg: &nexterm_config::TabBarConfig,
-        sw: f32, sh: f32, cell_w: f32, cell_h: f32,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
-        bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
-        text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
     ) {
         let bar_h = cfg.height as f32;
         let bar_y = 0.0_f32;
@@ -1442,8 +1773,17 @@ impl WgpuState {
         let inactive_bg = hex_to_rgba(&cfg.inactive_tab_bg, 1.0);
         add_px_rect(0.0, bar_y, sw, bar_h, inactive_bg, sw, sh, bg_verts, bg_idx);
         // タブバー下端の区切り線（境界色と統一）
-        add_px_rect(0.0, bar_y + bar_h - 1.0, sw, 1.0,
-            [0.255, 0.286, 0.408, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            0.0,
+            bar_y + bar_h - 1.0,
+            sw,
+            1.0,
+            [0.255, 0.286, 0.408, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // フォーカスペインの ID で「アクティブタブ」を表示する
         let focused_id = state.focused_pane_id.unwrap_or(0);
@@ -1495,8 +1835,8 @@ impl WgpuState {
             } else {
                 format!(" {} ", base_label)
             };
-            let label_w = (label.chars().count() as f32 * cell_w + padding * 2.0)
-                .min(tab_area_w - x_offset); // タブエリアをはみ出さない
+            let label_w =
+                (label.chars().count() as f32 * cell_w + padding * 2.0).min(tab_area_w - x_offset); // タブエリアをはみ出さない
 
             if label_w < cell_w * 2.0 {
                 break; // これ以上タブを描画するスペースがない
@@ -1512,23 +1852,46 @@ impl WgpuState {
             };
 
             // タブ背景
-            add_px_rect(x_offset, bar_y, label_w, bar_h, tab_bg, sw, sh, bg_verts, bg_idx);
+            add_px_rect(
+                x_offset, bar_y, label_w, bar_h, tab_bg, sw, sh, bg_verts, bg_idx,
+            );
             // アクティブタブの下部にアクセントライン（#7AA2F7）を描画する
             if is_active {
-                add_px_rect(x_offset, bar_y + bar_h - accent_h, label_w, accent_h,
-                    [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
+                add_px_rect(
+                    x_offset,
+                    bar_y + bar_h - accent_h,
+                    label_w,
+                    accent_h,
+                    [0.478, 0.635, 0.969, 1.0],
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
             }
 
             // タブラベル（垂直中央揃え）
             let fg = if is_active { text_fg } else { inactive_fg };
             add_string_verts(
-                &label, x_offset + padding, text_y, fg, is_active,
-                sw, sh, cell_w, font, atlas, &self.queue,
-                text_verts, text_idx,
+                &label,
+                x_offset + padding,
+                text_y,
+                fg,
+                is_active,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
             );
 
             // クリック判定範囲を記録する
-            state.tab_hit_rects.insert(pane_id, (x_offset, x_offset + label_w));
+            state
+                .tab_hit_rects
+                .insert(pane_id, (x_offset, x_offset + label_w));
 
             x_offset += label_w;
 
@@ -1538,18 +1901,39 @@ impl WgpuState {
                 if !is_active && pane_ids[i + 1] != focused_id {
                     let line_h = bar_h * 0.6; // タブバー高さの60%
                     let line_y = bar_y + (bar_h - line_h) / 2.0;
-                    add_px_rect(x_offset, line_y, 1.0, line_h,
-                        [0.25, 0.28, 0.38, 0.50], sw, sh, bg_verts, bg_idx);
+                    add_px_rect(
+                        x_offset,
+                        line_y,
+                        1.0,
+                        line_h,
+                        [0.25, 0.28, 0.38, 0.50],
+                        sw,
+                        sh,
+                        bg_verts,
+                        bg_idx,
+                    );
                 }
                 // セパレーター文字列が設定されている場合は互換のために残す（空文字列がデフォルト）
                 if !sep.trim().is_empty() {
                     let sep_w = cell_w;
                     let sep_bg = if is_active { active_bg } else { inactive_bg };
-                    add_px_rect(x_offset, bar_y, sep_w, bar_h, sep_bg, sw, sh, bg_verts, bg_idx);
+                    add_px_rect(
+                        x_offset, bar_y, sep_w, bar_h, sep_bg, sw, sh, bg_verts, bg_idx,
+                    );
                     add_string_verts(
-                        &sep, x_offset, text_y, inactive_fg, false,
-                        sw, sh, cell_w, font, atlas, &self.queue,
-                        text_verts, text_idx,
+                        &sep,
+                        x_offset,
+                        text_y,
+                        inactive_fg,
+                        false,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
                     );
                     x_offset += sep_w;
                 }
@@ -1563,37 +1947,94 @@ impl WgpuState {
             active_bg
         } else {
             // 少し明るい非アクティブ色で識別しやすくする
-            [inactive_bg[0] + 0.05, inactive_bg[1] + 0.05, inactive_bg[2] + 0.08, 1.0]
+            [
+                inactive_bg[0] + 0.05,
+                inactive_bg[1] + 0.05,
+                inactive_bg[2] + 0.08,
+                1.0,
+            ]
         };
-        add_px_rect(settings_x, bar_y, settings_w, bar_h, settings_bg, sw, sh, bg_verts, bg_idx);
-        let settings_fg = if settings_open { text_fg } else { [0.80, 0.80, 0.80, 1.0] };
+        add_px_rect(
+            settings_x,
+            bar_y,
+            settings_w,
+            bar_h,
+            settings_bg,
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
+        let settings_fg = if settings_open {
+            text_fg
+        } else {
+            [0.80, 0.80, 0.80, 1.0]
+        };
         add_string_verts(
-            settings_label, settings_x, text_y, settings_fg, settings_open,
-            sw, sh, cell_w, font, atlas, &self.queue,
-            text_verts, text_idx,
+            settings_label,
+            settings_x,
+            text_y,
+            settings_fg,
+            settings_open,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
         );
         // 設定ボタンのクリック範囲を記録する
         state.settings_tab_rect = Some((settings_x, sw));
 
         // タブ名変更中の場合: 対象タブの位置にインライン編集フィールドを表示する
         if let Some(rename_id) = state.settings_panel.tab_rename_editing
-            && let Some(&(tx0, tx1)) = state.tab_hit_rects.get(&rename_id) {
-                let edit_w = (tx1 - tx0).min(tab_area_w - tx0);
-                // 編集フィールド背景（濃いアクセント色）
-                add_px_rect(tx0, bar_y, edit_w, bar_h,
-                    [0.231, 0.259, 0.384, 1.0], sw, sh, bg_verts, bg_idx);
-                // 下部アクセントラインは太くして編集状態を示す
-                add_px_rect(tx0, bar_y + bar_h - accent_h * 2.0, edit_w, accent_h * 2.0,
-                    [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
-                // テキスト + カーソル（末尾に | を表示）
-                let edit_text = format!(" {}|", state.settings_panel.tab_rename_text);
-                add_string_verts(
-                    &edit_text, tx0 + padding, text_y,
-                    [1.0, 1.0, 1.0, 1.0], true,
-                    sw, sh, cell_w, font, atlas, &self.queue,
-                    text_verts, text_idx,
-                );
-            }
+            && let Some(&(tx0, tx1)) = state.tab_hit_rects.get(&rename_id)
+        {
+            let edit_w = (tx1 - tx0).min(tab_area_w - tx0);
+            // 編集フィールド背景（濃いアクセント色）
+            add_px_rect(
+                tx0,
+                bar_y,
+                edit_w,
+                bar_h,
+                [0.231, 0.259, 0.384, 1.0],
+                sw,
+                sh,
+                bg_verts,
+                bg_idx,
+            );
+            // 下部アクセントラインは太くして編集状態を示す
+            add_px_rect(
+                tx0,
+                bar_y + bar_h - accent_h * 2.0,
+                edit_w,
+                accent_h * 2.0,
+                [0.478, 0.635, 0.969, 1.0],
+                sw,
+                sh,
+                bg_verts,
+                bg_idx,
+            );
+            // テキスト + カーソル（末尾に | を表示）
+            let edit_text = format!(" {}|", state.settings_panel.tab_rename_text);
+            add_string_verts(
+                &edit_text,
+                tx0 + padding,
+                text_y,
+                [1.0, 1.0, 1.0, 1.0],
+                true,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
+            );
+        }
     }
 
     /// ステータスライン頂点を構築する（ウィンドウ最下行）
@@ -1601,17 +2042,42 @@ impl WgpuState {
     fn build_status_verts(
         &self,
         state: &ClientState,
-        sw: f32, sh: f32, cell_w: f32, cell_h: f32,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
-        bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
-        text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
     ) {
         let py = sh - cell_h;
         // ステータスライン背景（Tokyo Night: #1E2030）
-        add_px_rect(0.0, py, sw, cell_h, [0.118, 0.125, 0.188, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            0.0,
+            py,
+            sw,
+            cell_h,
+            [0.118, 0.125, 0.188, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
         // ステータスライン上部に 1px の区切り線（#2D3149）
-        add_px_rect(0.0, py, sw, 1.0, [0.176, 0.192, 0.286, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            0.0,
+            py,
+            sw,
+            1.0,
+            [0.176, 0.192, 0.286, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // テキスト: N アイコン + セッション名 + ペイン情報
         let pane_id = state.focused_pane_id.unwrap_or(0);
@@ -1621,15 +2087,29 @@ impl WgpuState {
             format!(" N  nexterm | pane:{}/{}", pane_id, pane_count)
         } else {
             let ids: Vec<String> = activity_ids.iter().map(|id| id.to_string()).collect();
-            format!(" N  nexterm | pane:{}/{} | ●{}", pane_id, pane_count, ids.join(","))
+            format!(
+                " N  nexterm | pane:{}/{} | ●{}",
+                pane_id,
+                pane_count,
+                ids.join(",")
+            )
         };
 
         // Tokyo Night テキスト色 #A9B1D6
         add_string_verts(
-            &status, 0.0, py,
-            [0.663, 0.694, 0.839, 1.0], false,
-            sw, sh, cell_w, font, atlas, &self.queue,
-            text_verts, text_idx,
+            &status,
+            0.0,
+            py,
+            [0.663, 0.694, 0.839, 1.0],
+            false,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
         );
 
         // 右側ウィジェット（status_bar_right_text または旧 status_bar_text）を右端に表示する
@@ -1645,10 +2125,19 @@ impl WgpuState {
             right_offset = text_w;
             let right_px = sw - text_w;
             add_string_verts(
-                &widget_text, right_px, py,
-                [0.4, 0.9, 0.6, 1.0], false,
-                sw, sh, cell_w, font, atlas, &self.queue,
-                text_verts, text_idx,
+                &widget_text,
+                right_px,
+                py,
+                [0.4, 0.9, 0.6, 1.0],
+                false,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
             );
         }
 
@@ -1682,25 +2171,44 @@ impl WgpuState {
             right_offset += zoom_text.chars().count() as f32 * cell_w;
             let right_px = sw - right_offset;
             add_string_verts(
-                zoom_text, right_px, py,
-                [1.0, 0.85, 0.2, 1.0], true,
-                sw, sh, cell_w, font, atlas, &self.queue,
-                text_verts, text_idx,
+                zoom_text,
+                right_px,
+                py,
+                [1.0, 0.85, 0.2, 1.0],
+                true,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
             );
         }
 
         // スクロールバック中はインジケーターをウィジェットの左に表示する
         if let Some(pane) = state.focused_pane()
-            && pane.scroll_offset > 0 {
-                let scroll_text = format!(" ↑{} ", pane.scroll_offset);
-                let right_px = sw - scroll_text.chars().count() as f32 * cell_w - right_offset;
-                add_string_verts(
-                    &scroll_text, right_px, py,
-                    [1.0, 0.85, 0.2, 1.0], true,
-                    sw, sh, cell_w, font, atlas, &self.queue,
-                    text_verts, text_idx,
-                );
-            }
+            && pane.scroll_offset > 0
+        {
+            let scroll_text = format!(" ↑{} ", pane.scroll_offset);
+            let right_px = sw - scroll_text.chars().count() as f32 * cell_w - right_offset;
+            add_string_verts(
+                &scroll_text,
+                right_px,
+                py,
+                [1.0, 0.85, 0.2, 1.0],
+                true,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
+            );
+        }
     }
 
     /// 検索バー頂点を構築する（ウィンドウ下部のオーバーレイ）
@@ -1708,17 +2216,42 @@ impl WgpuState {
     fn build_search_verts(
         &self,
         state: &ClientState,
-        sw: f32, sh: f32, cell_w: f32, cell_h: f32,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
-        bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
-        text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
     ) {
         // ステータスラインの 1 行上に検索バーを表示する
         let py = sh - cell_h * 2.0;
-        add_px_rect(0.0, py, sw, cell_h, [0.08, 0.10, 0.15, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            0.0,
+            py,
+            sw,
+            cell_h,
+            [0.08, 0.10, 0.15, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
         // 上辺に細いアクセントラインを引く
-        add_px_rect(0.0, py, sw, 2.0, [0.3, 0.7, 1.0, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            0.0,
+            py,
+            sw,
+            2.0,
+            [0.3, 0.7, 1.0, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // 検索クエリとカーソル（点滅の代わりに常時 `|` を表示）
         let query_with_cursor = format!("{}|", state.search.query);
@@ -1731,20 +2264,38 @@ impl WgpuState {
         };
         let label = format!(" / {}{}", query_with_cursor, match_text);
         add_string_verts(
-            &label, 0.0, py,
-            [0.3, 1.0, 0.5, 1.0], false,
-            sw, sh, cell_w, font, atlas, &self.queue,
-            text_verts, text_idx,
+            &label,
+            0.0,
+            py,
+            [0.3, 1.0, 0.5, 1.0],
+            false,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
         );
 
         // 右端にキー操作ヒントを表示する
         let hint = "Enter/↑ next  Shift+Enter/↑ prev  Esc close ";
         let hint_x = sw - hint.chars().count() as f32 * cell_w;
         add_string_verts(
-            hint, hint_x.max(0.0), py,
-            [0.55, 0.55, 0.55, 1.0], false,
-            sw, sh, cell_w, font, atlas, &self.queue,
-            text_verts, text_idx,
+            hint,
+            hint_x.max(0.0),
+            py,
+            [0.55, 0.55, 0.55, 1.0],
+            false,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
         );
     }
 
@@ -1753,16 +2304,21 @@ impl WgpuState {
     fn build_palette_verts(
         &self,
         state: &ClientState,
-        sw: f32, sh: f32, cell_w: f32, cell_h: f32,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
-        bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
-        text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
     ) {
         let palette = &state.palette;
         let items = palette.filtered();
         let palette_cols: f32 = 40.0;
-        let palette_rows = (items.len() + 2).min(12) as f32;  // クエリ行 + 最大10アイテム + マージン
+        let palette_rows = (items.len() + 2).min(12) as f32; // クエリ行 + 最大10アイテム + マージン
 
         let pw = palette_cols * cell_w;
         let ph = palette_rows * cell_h;
@@ -1770,17 +2326,46 @@ impl WgpuState {
         let py = (sh - ph) / 2.0;
 
         // パレット背景（ダークグレー）
-        add_px_rect(px, py, pw, ph, [0.15, 0.15, 0.18, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            px,
+            py,
+            pw,
+            ph,
+            [0.15, 0.15, 0.18, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
         // 外枠（やや明るい）
-        add_px_rect(px, py, pw, 2.0, [0.4, 0.6, 1.0, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            px,
+            py,
+            pw,
+            2.0,
+            [0.4, 0.6, 1.0, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // クエリ行
         let query_text = format!("> {}", palette.query);
         add_string_verts(
-            &query_text, px + cell_w, py + cell_h * 0.1,
-            [1.0, 1.0, 1.0, 1.0], false,
-            sw, sh, cell_w, font, atlas, &self.queue,
-            text_verts, text_idx,
+            &query_text,
+            px + cell_w,
+            py + cell_h * 0.1,
+            [1.0, 1.0, 1.0, 1.0],
+            false,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
         );
 
         // アクション一覧
@@ -1788,7 +2373,17 @@ impl WgpuState {
             let item_py = py + cell_h * (i as f32 + 1.2);
             if i == palette.selected {
                 // 選択行ハイライト
-                add_px_rect(px + 2.0, item_py, pw - 4.0, cell_h, [0.25, 0.40, 0.65, 1.0], sw, sh, bg_verts, bg_idx);
+                add_px_rect(
+                    px + 2.0,
+                    item_py,
+                    pw - 4.0,
+                    cell_h,
+                    [0.25, 0.40, 0.65, 1.0],
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
             }
             let prefix = if i == palette.selected { "> " } else { "  " };
             let label = format!("{}{}", prefix, action.label);
@@ -1798,10 +2393,19 @@ impl WgpuState {
                 [0.75, 0.75, 0.78, 1.0]
             };
             add_string_verts(
-                &label, px + cell_w, item_py,
-                fg, i == palette.selected,
-                sw, sh, cell_w, font, atlas, &self.queue,
-                text_verts, text_idx,
+                &label,
+                px + cell_w,
+                item_py,
+                fg,
+                i == palette.selected,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
             );
         }
     }
@@ -1813,11 +2417,16 @@ impl WgpuState {
     fn build_settings_panel_verts(
         &self,
         state: &ClientState,
-        sw: f32, sh: f32, cell_w: f32, cell_h: f32,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
-        bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
-        text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
     ) {
         use crate::settings_panel::SettingsCategory;
 
@@ -1843,50 +2452,145 @@ impl WgpuState {
         let content_w = panel_w - sidebar_w;
 
         // ドロップシャドウ（4px オフセット）
-        add_px_rect(px + 4.0, py + 4.0, panel_w, panel_h,
-            [0.04, 0.04, 0.06, 0.85], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            px + 4.0,
+            py + 4.0,
+            panel_w,
+            panel_h,
+            [0.04, 0.04, 0.06, 0.85],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // 枠線（外側 1px、アクセントカラー薄め）
-        add_px_rect(px - 1.0, py - 1.0, panel_w + 2.0, panel_h + 2.0,
-            [0.478, 0.635, 0.969, 0.20], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            px - 1.0,
+            py - 1.0,
+            panel_w + 2.0,
+            panel_h + 2.0,
+            [0.478, 0.635, 0.969, 0.20],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // パネル背景（完全不透明: ターミナル透過設定に関わらず常に不透明）
-        add_px_rect(px, py, panel_w, panel_h, [0.102, 0.106, 0.149, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            px,
+            py,
+            panel_w,
+            panel_h,
+            [0.102, 0.106, 0.149, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // タイトルバー（#1E2030、不透明）
         let title_h = cell_h * 1.4;
-        add_px_rect(px, py, panel_w, title_h, [0.118, 0.125, 0.188, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            px,
+            py,
+            panel_w,
+            title_h,
+            [0.118, 0.125, 0.188, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // タイトルバー上端アクセント線（3px、#7AA2F7）
-        add_px_rect(px, py, panel_w, 3.0, [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            px,
+            py,
+            panel_w,
+            3.0,
+            [0.478, 0.635, 0.969, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
         // 内側1px薄めのグロー
-        add_px_rect(px, py + 3.0, panel_w, 1.0, [0.478, 0.635, 0.969, 0.25], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            px,
+            py + 3.0,
+            panel_w,
+            1.0,
+            [0.478, 0.635, 0.969, 0.25],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // タイトル
         add_string_verts(
             " * Nexterm Settings",
-            px + cell_w * 0.5, py + cell_h * 0.2,
-            [0.663, 0.694, 0.839, 1.0], false,
-            sw, sh, cell_w, font, atlas, &self.queue,
-            text_verts, text_idx,
+            px + cell_w * 0.5,
+            py + cell_h * 0.2,
+            [0.663, 0.694, 0.839, 1.0],
+            false,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
         );
         // 閉じるボタンヒント
         let close_text = "Esc";
         let close_x = px + panel_w - close_text.len() as f32 * cell_w - cell_w;
         add_string_verts(
-            close_text, close_x, py + cell_h * 0.2,
-            [0.478, 0.635, 0.969, 1.0], false,
-            sw, sh, cell_w, font, atlas, &self.queue,
-            text_verts, text_idx,
+            close_text,
+            close_x,
+            py + cell_h * 0.2,
+            [0.478, 0.635, 0.969, 1.0],
+            false,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
         );
 
         // サイドバー背景（不透明）
         let sidebar_top = py + title_h;
         let sidebar_h = panel_h - title_h - cell_h * 1.5;
-        add_px_rect(px, sidebar_top, sidebar_w, sidebar_h, [0.066, 0.070, 0.102, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            px,
+            sidebar_top,
+            sidebar_w,
+            sidebar_h,
+            [0.066, 0.070, 0.102, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // サイドバー区切り線（アクセントカラー薄め）
-        add_px_rect(px + sidebar_w, sidebar_top, 1.0, sidebar_h, [0.478, 0.635, 0.969, 0.30], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            px + sidebar_w,
+            sidebar_top,
+            1.0,
+            sidebar_h,
+            [0.478, 0.635, 0.969, 0.30],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // サイドバーカテゴリ一覧
         let cat_item_h = cell_h * 1.3;
@@ -1895,21 +2599,61 @@ impl WgpuState {
             let is_active = &sp.category == cat;
             if is_active {
                 // アクティブ項目: 青みを強めたアクセント背景（完全不透明）
-                add_px_rect(px, item_y - cell_h * 0.15, sidebar_w, cat_item_h,
-                    [0.149, 0.200, 0.320, 1.0], sw, sh, bg_verts, bg_idx);
+                add_px_rect(
+                    px,
+                    item_y - cell_h * 0.15,
+                    sidebar_w,
+                    cat_item_h,
+                    [0.149, 0.200, 0.320, 1.0],
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
                 // 左端インジケーター（3px + 内側1px薄め）
-                add_px_rect(px, item_y - cell_h * 0.15, 3.0, cat_item_h,
-                    [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
-                add_px_rect(px + 3.0, item_y - cell_h * 0.15, 1.0, cat_item_h,
-                    [0.478, 0.635, 0.969, 0.35], sw, sh, bg_verts, bg_idx);
+                add_px_rect(
+                    px,
+                    item_y - cell_h * 0.15,
+                    3.0,
+                    cat_item_h,
+                    [0.478, 0.635, 0.969, 1.0],
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
+                add_px_rect(
+                    px + 3.0,
+                    item_y - cell_h * 0.15,
+                    1.0,
+                    cat_item_h,
+                    [0.478, 0.635, 0.969, 0.35],
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
             }
             let label = format!("  {} {}", cat.icon(), cat.label());
-            let fg = if is_active { [0.753, 0.808, 0.969, 1.0] } else { [0.502, 0.533, 0.647, 1.0] };
+            let fg = if is_active {
+                [0.753, 0.808, 0.969, 1.0]
+            } else {
+                [0.502, 0.533, 0.647, 1.0]
+            };
             add_string_verts(
-                &label, px + cell_w * 0.5, item_y,
-                fg, is_active,
-                sw, sh, cell_w, font, atlas, &self.queue,
-                text_verts, text_idx,
+                &label,
+                px + cell_w * 0.5,
+                item_y,
+                fg,
+                is_active,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
             );
         }
 
@@ -1924,49 +2668,143 @@ impl WgpuState {
                 let family_line = format!("Family:  {}{}", sp.font_family, family_cursor);
                 if sp.font_family_editing {
                     let field_w = content_w - cell_w * 2.0;
-                    add_px_rect(content_inner_x, content_top + cell_h * 1.0, field_w, cell_h, [0.149, 0.188, 0.278, 1.0], sw, sh, bg_verts, bg_idx);
+                    add_px_rect(
+                        content_inner_x,
+                        content_top + cell_h * 1.0,
+                        field_w,
+                        cell_h,
+                        [0.149, 0.188, 0.278, 1.0],
+                        sw,
+                        sh,
+                        bg_verts,
+                        bg_idx,
+                    );
                 }
                 add_string_verts(
-                    &family_line, content_inner_x, content_top + cell_h * 1.0,
-                    [0.8, 0.85, 0.9, 1.0], sp.font_family_editing,
-                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                    &family_line,
+                    content_inner_x,
+                    content_top + cell_h * 1.0,
+                    [0.8, 0.85, 0.9, 1.0],
+                    sp.font_family_editing,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
                 );
-                let hint = if sp.font_family_editing { "(Enter=確定  Esc=キャンセル)" } else { "(F キーで編集)" };
+                let hint = if sp.font_family_editing {
+                    "(Enter=確定  Esc=キャンセル)"
+                } else {
+                    "(F キーで編集)"
+                };
                 add_string_verts(
-                    hint, content_inner_x, content_top + cell_h * 1.9,
-                    [0.376, 0.408, 0.518, 1.0], false,
-                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                    hint,
+                    content_inner_x,
+                    content_top + cell_h * 1.9,
+                    [0.376, 0.408, 0.518, 1.0],
+                    false,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
                 );
                 // フォントサイズ
                 let size_line = format!("Size:    {:.1}pt", sp.font_size);
                 add_string_verts(
-                    &size_line, content_inner_x, content_top + cell_h * 3.0,
-                    [0.9, 0.95, 1.0, 1.0], false,
-                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                    &size_line,
+                    content_inner_x,
+                    content_top + cell_h * 3.0,
+                    [0.9, 0.95, 1.0, 1.0],
+                    false,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
                 );
                 // サイズバー（8〜32pt）
                 let bar_w = content_w - cell_w * 3.0;
                 let bar_y = content_top + cell_h * 4.2;
-                add_px_rect(content_inner_x, bar_y, bar_w, cell_h * 0.35, [0.176, 0.192, 0.286, 1.0], sw, sh, bg_verts, bg_idx);
+                add_px_rect(
+                    content_inner_x,
+                    bar_y,
+                    bar_w,
+                    cell_h * 0.35,
+                    [0.176, 0.192, 0.286, 1.0],
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
                 let fill = ((sp.font_size - 8.0) / 24.0).clamp(0.0, 1.0);
-                add_px_rect(content_inner_x, bar_y, bar_w * fill, cell_h * 0.35, [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
+                add_px_rect(
+                    content_inner_x,
+                    bar_y,
+                    bar_w * fill,
+                    cell_h * 0.35,
+                    [0.478, 0.635, 0.969, 1.0],
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
                 add_string_verts(
-                    "(↑/↓ で変更)", content_inner_x, content_top + cell_h * 4.8,
-                    [0.376, 0.408, 0.518, 1.0], false,
-                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                    "(↑/↓ で変更)",
+                    content_inner_x,
+                    content_top + cell_h * 4.8,
+                    [0.376, 0.408, 0.518, 1.0],
+                    false,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
                 );
             }
             SettingsCategory::Theme => {
                 // カラースキーム
                 let scheme_line = format!("テーマ:  {}  (←/→)", sp.scheme_name());
                 add_string_verts(
-                    &scheme_line, content_inner_x, content_top + cell_h * 1.0,
-                    [0.9, 0.95, 1.0, 1.0], false,
-                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                    &scheme_line,
+                    content_inner_x,
+                    content_top + cell_h * 1.0,
+                    [0.9, 0.95, 1.0, 1.0],
+                    false,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
                 );
                 // スキームプレビュードット（9個）
                 let dot_y = content_top + cell_h * 2.5;
-                let scheme_names = ["dark", "light", "tokyonight", "solarized", "gruvbox", "catppuccin", "dracula", "nord", "onedark"];
+                let scheme_names = [
+                    "dark",
+                    "light",
+                    "tokyonight",
+                    "solarized",
+                    "gruvbox",
+                    "catppuccin",
+                    "dracula",
+                    "nord",
+                    "onedark",
+                ];
                 let schemes_colors: [[f32; 4]; 9] = [
                     [0.15, 0.15, 0.18, 1.0],
                     [0.95, 0.95, 0.92, 1.0],
@@ -1980,19 +2818,46 @@ impl WgpuState {
                 ];
                 let dot_size = cell_w * 1.2;
                 let dot_gap = (content_w - cell_w * 2.0) / 9.0;
-                for (i, (&col, name)) in schemes_colors.iter().zip(scheme_names.iter()).enumerate() {
+                for (i, (&col, name)) in schemes_colors.iter().zip(scheme_names.iter()).enumerate()
+                {
                     let dot_x = content_inner_x + i as f32 * dot_gap;
                     let is_sel = sp.scheme_index == i;
                     if is_sel {
-                        add_px_rect(dot_x - 2.0, dot_y - 2.0, dot_size + 4.0, cell_h + 4.0, [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
+                        add_px_rect(
+                            dot_x - 2.0,
+                            dot_y - 2.0,
+                            dot_size + 4.0,
+                            cell_h + 4.0,
+                            [0.478, 0.635, 0.969, 1.0],
+                            sw,
+                            sh,
+                            bg_verts,
+                            bg_idx,
+                        );
                     }
-                    add_px_rect(dot_x, dot_y, dot_size, cell_h, col, sw, sh, bg_verts, bg_idx);
+                    add_px_rect(
+                        dot_x, dot_y, dot_size, cell_h, col, sw, sh, bg_verts, bg_idx,
+                    );
                     let name_y = dot_y + cell_h * 1.3;
                     let short = &name[..3.min(name.len())];
                     add_string_verts(
-                        short, dot_x, name_y,
-                        if is_sel { [0.663, 0.694, 0.839, 1.0] } else { [0.376, 0.408, 0.518, 1.0] },
-                        is_sel, sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                        short,
+                        dot_x,
+                        name_y,
+                        if is_sel {
+                            [0.663, 0.694, 0.839, 1.0]
+                        } else {
+                            [0.376, 0.408, 0.518, 1.0]
+                        },
+                        is_sel,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
                     );
                 }
             }
@@ -2000,48 +2865,129 @@ impl WgpuState {
                 // 不透明度
                 let opacity_line = format!("不透明度:  {:.0}%  (↑/↓)", sp.opacity * 100.0);
                 add_string_verts(
-                    &opacity_line, content_inner_x, content_top + cell_h * 1.0,
-                    [0.9, 0.95, 1.0, 1.0], false,
-                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                    &opacity_line,
+                    content_inner_x,
+                    content_top + cell_h * 1.0,
+                    [0.9, 0.95, 1.0, 1.0],
+                    false,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
                 );
                 let bar_w = content_w - cell_w * 3.0;
                 let bar_y = content_top + cell_h * 2.4;
-                add_px_rect(content_inner_x, bar_y, bar_w, cell_h * 0.35, [0.176, 0.192, 0.286, 1.0], sw, sh, bg_verts, bg_idx);
-                add_px_rect(content_inner_x, bar_y, bar_w * sp.opacity, cell_h * 0.35, [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
+                add_px_rect(
+                    content_inner_x,
+                    bar_y,
+                    bar_w,
+                    cell_h * 0.35,
+                    [0.176, 0.192, 0.286, 1.0],
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
+                add_px_rect(
+                    content_inner_x,
+                    bar_y,
+                    bar_w * sp.opacity,
+                    cell_h * 0.35,
+                    [0.478, 0.635, 0.969, 1.0],
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
             }
             SettingsCategory::Profiles => {
                 add_string_verts(
-                    "プロファイル一覧:", content_inner_x, content_top + cell_h * 0.5,
-                    [0.663, 0.694, 0.839, 1.0], true,
-                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                    "プロファイル一覧:",
+                    content_inner_x,
+                    content_top + cell_h * 0.5,
+                    [0.663, 0.694, 0.839, 1.0],
+                    true,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
                 );
                 if sp.profiles.is_empty() {
                     add_string_verts(
                         "プロファイルがありません",
-                        content_inner_x, content_top + cell_h * 1.8,
-                        [0.376, 0.408, 0.518, 1.0], false,
-                        sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                        content_inner_x,
+                        content_top + cell_h * 1.8,
+                        [0.376, 0.408, 0.518, 1.0],
+                        false,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
                     );
                     add_string_verts(
                         "nexterm.toml に [[profiles]] を追加してください",
-                        content_inner_x, content_top + cell_h * 2.7,
-                        [0.376, 0.408, 0.518, 1.0], false,
-                        sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                        content_inner_x,
+                        content_top + cell_h * 2.7,
+                        [0.376, 0.408, 0.518, 1.0],
+                        false,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
                     );
                 } else {
                     for (i, prof) in sp.profiles.iter().enumerate() {
                         let item_y = content_top + cell_h * (1.5 + i as f32 * 1.2);
                         let is_sel = sp.selected_profile == i;
                         if is_sel {
-                            add_px_rect(content_inner_x - cell_w * 0.3, item_y - cell_h * 0.1,
-                                content_w - cell_w * 0.7, cell_h,
-                                [0.149, 0.188, 0.278, 1.0], sw, sh, bg_verts, bg_idx);
+                            add_px_rect(
+                                content_inner_x - cell_w * 0.3,
+                                item_y - cell_h * 0.1,
+                                content_w - cell_w * 0.7,
+                                cell_h,
+                                [0.149, 0.188, 0.278, 1.0],
+                                sw,
+                                sh,
+                                bg_verts,
+                                bg_idx,
+                            );
                         }
                         let label = format!("{} {}", prof.icon, prof.name);
-                        let fg = if is_sel { [0.753, 0.808, 0.969, 1.0] } else { [0.502, 0.533, 0.647, 1.0] };
+                        let fg = if is_sel {
+                            [0.753, 0.808, 0.969, 1.0]
+                        } else {
+                            [0.502, 0.533, 0.647, 1.0]
+                        };
                         add_string_verts(
-                            &label, content_inner_x, item_y, fg, is_sel,
-                            sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                            &label,
+                            content_inner_x,
+                            item_y,
+                            fg,
+                            is_sel,
+                            sw,
+                            sh,
+                            cell_w,
+                            font,
+                            atlas,
+                            &self.queue,
+                            text_verts,
+                            text_idx,
                         );
                     }
                 }
@@ -2052,16 +2998,34 @@ impl WgpuState {
                 // 言語選択ラベル
                 add_string_verts(
                     "言語 / Language",
-                    content_inner_x, content_top + cell_h * 0.5,
-                    [0.663, 0.694, 0.839, 1.0], false,
-                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                    content_inner_x,
+                    content_top + cell_h * 0.5,
+                    [0.663, 0.694, 0.839, 1.0],
+                    false,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
                 );
 
                 // 選択バー背景
                 let sel_y = content_top + cell_h * 1.6;
                 let sel_w = content_w - cell_w * 2.0;
-                add_px_rect(content_inner_x, sel_y, sel_w, cell_h,
-                    [0.149, 0.188, 0.278, 1.0], sw, sh, bg_verts, bg_idx);
+                add_px_rect(
+                    content_inner_x,
+                    sel_y,
+                    sel_w,
+                    cell_h,
+                    [0.149, 0.188, 0.278, 1.0],
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
 
                 // 現在の言語名表示
                 let lang_label = LANGUAGE_OPTIONS
@@ -2070,9 +3034,19 @@ impl WgpuState {
                     .unwrap_or("Auto");
                 let lang_text = format!("< {} >", lang_label);
                 add_string_verts(
-                    &lang_text, content_inner_x + cell_w * 0.5, sel_y + cell_h * 0.1,
-                    [0.95, 0.96, 1.0, 1.0], true,
-                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                    &lang_text,
+                    content_inner_x + cell_w * 0.5,
+                    sel_y + cell_h * 0.1,
+                    [0.95, 0.96, 1.0, 1.0],
+                    true,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
                 );
 
                 // 更新確認トグル
@@ -2080,11 +3054,24 @@ impl WgpuState {
                 let check_y = content_top + cell_h * 3.0;
                 add_string_verts(
                     check_label,
-                    content_inner_x, check_y,
-                    [0.663, 0.694, 0.839, 1.0], false,
-                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                    content_inner_x,
+                    check_y,
+                    [0.663, 0.694, 0.839, 1.0],
+                    false,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
                 );
-                let toggle_str = if sp.auto_check_update { "[ON ]" } else { "[OFF]" };
+                let toggle_str = if sp.auto_check_update {
+                    "[ON ]"
+                } else {
+                    "[OFF]"
+                };
                 let toggle_color = if sp.auto_check_update {
                     [0.15, 0.85, 0.45, 1.0]
                 } else {
@@ -2094,50 +3081,117 @@ impl WgpuState {
                     toggle_str,
                     content_inner_x + check_label.len() as f32 * cell_w * 0.6 + cell_w,
                     check_y,
-                    toggle_color, true,
-                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                    toggle_color,
+                    true,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
                 );
 
                 // 変更は次回起動時に反映される旨の注記
                 add_string_verts(
                     "※ 言語変更は次回起動時に反映されます",
-                    content_inner_x, content_top + cell_h * 4.4,
-                    [0.376, 0.408, 0.518, 1.0], false,
-                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                    content_inner_x,
+                    content_top + cell_h * 4.4,
+                    [0.376, 0.408, 0.518, 1.0],
+                    false,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
                 );
             }
             _ => {
                 // SSH・キーバインドは近日実装予定
                 let msg = match &sp.category {
                     SettingsCategory::Ssh => "SSH ホストは nexterm.toml の [[hosts]] で管理します",
-                    SettingsCategory::Keybindings => "キーバインドは nexterm.toml の [[keys]] で管理します",
+                    SettingsCategory::Keybindings => {
+                        "キーバインドは nexterm.toml の [[keys]] で管理します"
+                    }
                     _ => "",
                 };
                 add_string_verts(
-                    msg, content_inner_x, content_top + cell_h * 2.0,
-                    [0.376, 0.408, 0.518, 1.0], false,
-                    sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+                    msg,
+                    content_inner_x,
+                    content_top + cell_h * 2.0,
+                    [0.376, 0.408, 0.518, 1.0],
+                    false,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
                 );
             }
         }
 
         // ボトムバー（保存・キャンセル）
         let bottom_y = py + panel_h - cell_h * 1.5;
-        add_px_rect(px, bottom_y, panel_w, 1.0, [0.176, 0.192, 0.286, 1.0], sw, sh, bg_verts, bg_idx);
-        add_px_rect(px, bottom_y + 1.0, panel_w, cell_h * 1.5 - 1.0, [0.118, 0.125, 0.188, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            px,
+            bottom_y,
+            panel_w,
+            1.0,
+            [0.176, 0.192, 0.286, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
+        add_px_rect(
+            px,
+            bottom_y + 1.0,
+            panel_w,
+            cell_h * 1.5 - 1.0,
+            [0.118, 0.125, 0.188, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
         add_string_verts(
             "  Enter=保存  Esc=キャンセル  Tab=次のカテゴリ",
-            px + cell_w * 0.5, bottom_y + cell_h * 0.3,
-            [0.376, 0.408, 0.518, 1.0], false,
-            sw, sh, cell_w, font, atlas, &self.queue, text_verts, text_idx,
+            px + cell_w * 0.5,
+            bottom_y + cell_h * 0.3,
+            [0.376, 0.408, 0.518, 1.0],
+            false,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
         );
 
         // フェードインオーバーレイ: パネルと同色で、open_progress が進むにつれて透明になる
         // eased=1.0 のときはオーバーレイなし（完全に表示）
         let fade_alpha = (1.0 - eased) * 0.95;
         if fade_alpha > 0.01 {
-            add_px_rect(px - 1.0, py - 1.0, panel_w + 2.0, panel_h + 2.0,
-                [0.102, 0.106, 0.149, fade_alpha], sw, sh, bg_verts, bg_idx);
+            add_px_rect(
+                px - 1.0,
+                py - 1.0,
+                panel_w + 2.0,
+                panel_h + 2.0,
+                [0.102, 0.106, 0.149, fade_alpha],
+                sw,
+                sh,
+                bg_verts,
+                bg_idx,
+            );
         }
     }
 
@@ -2148,11 +3202,16 @@ impl WgpuState {
     fn build_file_transfer_verts(
         &self,
         state: &ClientState,
-        sw: f32, sh: f32, cell_w: f32, cell_h: f32,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
-        bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
-        text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
     ) {
         let ft = &state.file_transfer;
         let panel_cols: f32 = 56.0;
@@ -2170,17 +3229,33 @@ impl WgpuState {
             [0.05, 0.20, 0.12, 0.96]
         };
         add_px_rect(px, py, pw, ph, bg_color, sw, sh, bg_verts, bg_idx);
-        let accent = if ft.mode == "upload" { [0.2, 0.8, 1.0, 1.0] } else { [0.2, 1.0, 0.6, 1.0] };
+        let accent = if ft.mode == "upload" {
+            [0.2, 0.8, 1.0, 1.0]
+        } else {
+            [0.2, 1.0, 0.6, 1.0]
+        };
         add_px_rect(px, py, pw, 2.0, accent, sw, sh, bg_verts, bg_idx);
 
         // タイトル
-        let title = if ft.mode == "upload" { "SFTP Upload  (Tab=next, Enter=send, Esc=cancel)" }
-                    else { "SFTP Download  (Tab=next, Enter=send, Esc=cancel)" };
+        let title = if ft.mode == "upload" {
+            "SFTP Upload  (Tab=next, Enter=send, Esc=cancel)"
+        } else {
+            "SFTP Download  (Tab=next, Enter=send, Esc=cancel)"
+        };
         add_string_verts(
-            title, px + cell_w, py + cell_h * 0.1,
-            accent, true,
-            sw, sh, cell_w, font, atlas, &self.queue,
-            text_verts, text_idx,
+            title,
+            px + cell_w,
+            py + cell_h * 0.1,
+            accent,
+            true,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
         );
 
         let field_labels = ["Host:", "Local:", "Remote:"];
@@ -2191,24 +3266,68 @@ impl WgpuState {
             let is_active = i == ft.field;
 
             // フィールド背景（アクティブは明るく）
-            let field_bg = if is_active { [0.15, 0.25, 0.35, 1.0] } else { [0.10, 0.15, 0.20, 1.0] };
-            add_px_rect(px + cell_w * 8.0, row_y, pw - cell_w * 9.0, cell_h, field_bg, sw, sh, bg_verts, bg_idx);
+            let field_bg = if is_active {
+                [0.15, 0.25, 0.35, 1.0]
+            } else {
+                [0.10, 0.15, 0.20, 1.0]
+            };
+            add_px_rect(
+                px + cell_w * 8.0,
+                row_y,
+                pw - cell_w * 9.0,
+                cell_h,
+                field_bg,
+                sw,
+                sh,
+                bg_verts,
+                bg_idx,
+            );
 
             // ラベル
             add_string_verts(
-                label, px + cell_w, row_y,
-                if is_active { [0.9, 0.95, 1.0, 1.0] } else { [0.6, 0.65, 0.7, 1.0] }, is_active,
-                sw, sh, cell_w, font, atlas, &self.queue,
-                text_verts, text_idx,
+                label,
+                px + cell_w,
+                row_y,
+                if is_active {
+                    [0.9, 0.95, 1.0, 1.0]
+                } else {
+                    [0.6, 0.65, 0.7, 1.0]
+                },
+                is_active,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
             );
 
             // 入力値 + カーソル
-            let display = if is_active { format!("{}_", value) } else { value.to_string() };
+            let display = if is_active {
+                format!("{}_", value)
+            } else {
+                value.to_string()
+            };
             add_string_verts(
-                &display, px + cell_w * 8.5, row_y,
-                if is_active { [1.0, 1.0, 0.8, 1.0] } else { [0.8, 0.85, 0.8, 1.0] }, false,
-                sw, sh, cell_w, font, atlas, &self.queue,
-                text_verts, text_idx,
+                &display,
+                px + cell_w * 8.5,
+                row_y,
+                if is_active {
+                    [1.0, 1.0, 0.8, 1.0]
+                } else {
+                    [0.8, 0.85, 0.8, 1.0]
+                },
+                false,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
             );
         }
     }
@@ -2220,11 +3339,16 @@ impl WgpuState {
     fn build_macro_picker_verts(
         &self,
         state: &ClientState,
-        sw: f32, sh: f32, cell_w: f32, cell_h: f32,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
-        bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
-        text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
     ) {
         let mp = &state.macro_picker;
         let items = mp.filtered();
@@ -2237,25 +3361,63 @@ impl WgpuState {
         let py = (sh - ph) / 2.0;
 
         // パネル背景（深紫系）
-        add_px_rect(px, py, pw, ph, [0.12, 0.08, 0.20, 0.96], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            px,
+            py,
+            pw,
+            ph,
+            [0.12, 0.08, 0.20, 0.96],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
         // 上端アクセント線（紫/ピンク）
-        add_px_rect(px, py, pw, 2.0, [0.7, 0.3, 1.0, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            px,
+            py,
+            pw,
+            2.0,
+            [0.7, 0.3, 1.0, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // タイトル行
         add_string_verts(
-            "Lua Macros", px + cell_w, py + cell_h * 0.1,
-            [0.8, 0.5, 1.0, 1.0], true,
-            sw, sh, cell_w, font, atlas, &self.queue,
-            text_verts, text_idx,
+            "Lua Macros",
+            px + cell_w,
+            py + cell_h * 0.1,
+            [0.8, 0.5, 1.0, 1.0],
+            true,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
         );
 
         // クエリ行
         let query_text = format!("> {}", mp.query);
         add_string_verts(
-            &query_text, px + cell_w, py + cell_h * 1.1,
-            [1.0, 1.0, 1.0, 1.0], false,
-            sw, sh, cell_w, font, atlas, &self.queue,
-            text_verts, text_idx,
+            &query_text,
+            px + cell_w,
+            py + cell_h * 1.1,
+            [1.0, 1.0, 1.0, 1.0],
+            false,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
         );
 
         // マクロ一覧
@@ -2263,26 +3425,63 @@ impl WgpuState {
             let item_py = py + cell_h * (i as f32 + 2.2);
             let is_selected = i == mp.selected;
             if is_selected {
-                add_px_rect(px + 2.0, item_py, pw - 4.0, cell_h, [0.35, 0.15, 0.50, 1.0], sw, sh, bg_verts, bg_idx);
+                add_px_rect(
+                    px + 2.0,
+                    item_py,
+                    pw - 4.0,
+                    cell_h,
+                    [0.35, 0.15, 0.50, 1.0],
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
             }
             let prefix = if is_selected { "> " } else { "  " };
-            let desc = if mac.description.is_empty() { &mac.lua_fn } else { &mac.description };
+            let desc = if mac.description.is_empty() {
+                &mac.lua_fn
+            } else {
+                &mac.description
+            };
             let label = format!("{}{:<22} {}", prefix, mac.name, desc);
-            let fg = if is_selected { [0.95, 0.8, 1.0, 1.0] } else { [0.70, 0.60, 0.78, 1.0] };
+            let fg = if is_selected {
+                [0.95, 0.8, 1.0, 1.0]
+            } else {
+                [0.70, 0.60, 0.78, 1.0]
+            };
             add_string_verts(
-                &label, px + cell_w, item_py, fg, is_selected,
-                sw, sh, cell_w, font, atlas, &self.queue,
-                text_verts, text_idx,
+                &label,
+                px + cell_w,
+                item_py,
+                fg,
+                is_selected,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
             );
         }
 
         // 空マクロ時のヒント
         if items.is_empty() {
             add_string_verts(
-                "  (no macros in config)", px + cell_w, py + cell_h * 2.2,
-                [0.5, 0.5, 0.5, 1.0], false,
-                sw, sh, cell_w, font, atlas, &self.queue,
-                text_verts, text_idx,
+                "  (no macros in config)",
+                px + cell_w,
+                py + cell_h * 2.2,
+                [0.5, 0.5, 0.5, 1.0],
+                false,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
             );
         }
     }
@@ -2294,11 +3493,16 @@ impl WgpuState {
     fn build_host_manager_verts(
         &self,
         state: &ClientState,
-        sw: f32, sh: f32, cell_w: f32, cell_h: f32,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
-        bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
-        text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
     ) {
         let hm = &state.host_manager;
         let items = hm.filtered();
@@ -2311,25 +3515,63 @@ impl WgpuState {
         let py = (sh - ph) / 2.0;
 
         // パネル背景（深めの紺）
-        add_px_rect(px, py, pw, ph, [0.08, 0.12, 0.22, 0.96], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            px,
+            py,
+            pw,
+            ph,
+            [0.08, 0.12, 0.22, 0.96],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
         // 上端アクセント線（緑系）
-        add_px_rect(px, py, pw, 2.0, [0.2, 0.8, 0.5, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            px,
+            py,
+            pw,
+            2.0,
+            [0.2, 0.8, 0.5, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // タイトル行
         add_string_verts(
-            "SSH Hosts", px + cell_w, py + cell_h * 0.1,
-            [0.2, 0.9, 0.6, 1.0], true,
-            sw, sh, cell_w, font, atlas, &self.queue,
-            text_verts, text_idx,
+            "SSH Hosts",
+            px + cell_w,
+            py + cell_h * 0.1,
+            [0.2, 0.9, 0.6, 1.0],
+            true,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
         );
 
         // クエリ行
         let query_text = format!("> {}", hm.query);
         add_string_verts(
-            &query_text, px + cell_w, py + cell_h * 1.1,
-            [1.0, 1.0, 1.0, 1.0], false,
-            sw, sh, cell_w, font, atlas, &self.queue,
-            text_verts, text_idx,
+            &query_text,
+            px + cell_w,
+            py + cell_h * 1.1,
+            [1.0, 1.0, 1.0, 1.0],
+            false,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
         );
 
         // ホスト一覧（タイトル+クエリ = 2行分オフセット）
@@ -2337,26 +3579,62 @@ impl WgpuState {
             let item_py = py + cell_h * (i as f32 + 2.2);
             let is_selected = i == hm.selected;
             if is_selected {
-                add_px_rect(px + 2.0, item_py, pw - 4.0, cell_h, [0.15, 0.45, 0.30, 1.0], sw, sh, bg_verts, bg_idx);
+                add_px_rect(
+                    px + 2.0,
+                    item_py,
+                    pw - 4.0,
+                    cell_h,
+                    [0.15, 0.45, 0.30, 1.0],
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
             }
             // 表示フォーマット: "> name  user@host:port"
             let prefix = if is_selected { "> " } else { "  " };
-            let label = format!("{}{:<20} {}@{}:{}", prefix, host.name, host.username, host.host, host.port);
-            let fg = if is_selected { [0.9, 1.0, 0.9, 1.0] } else { [0.70, 0.75, 0.72, 1.0] };
+            let label = format!(
+                "{}{:<20} {}@{}:{}",
+                prefix, host.name, host.username, host.host, host.port
+            );
+            let fg = if is_selected {
+                [0.9, 1.0, 0.9, 1.0]
+            } else {
+                [0.70, 0.75, 0.72, 1.0]
+            };
             add_string_verts(
-                &label, px + cell_w, item_py, fg, is_selected,
-                sw, sh, cell_w, font, atlas, &self.queue,
-                text_verts, text_idx,
+                &label,
+                px + cell_w,
+                item_py,
+                fg,
+                is_selected,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
             );
         }
 
         // 空ホスト時のヒント
         if items.is_empty() {
             add_string_verts(
-                "  (no hosts in config)", px + cell_w, py + cell_h * 2.2,
-                [0.5, 0.5, 0.5, 1.0], false,
-                sw, sh, cell_w, font, atlas, &self.queue,
-                text_verts, text_idx,
+                "  (no hosts in config)",
+                px + cell_w,
+                py + cell_h * 2.2,
+                [0.5, 0.5, 0.5, 1.0],
+                false,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
             );
         }
     }
@@ -2366,13 +3644,20 @@ impl WgpuState {
     fn build_password_modal_verts(
         &self,
         state: &ClientState,
-        sw: f32, sh: f32, cell_w: f32, cell_h: f32,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
-        bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
-        text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
     ) {
-        let Some(modal) = &state.host_manager.password_modal else { return };
+        let Some(modal) = &state.host_manager.password_modal else {
+            return;
+        };
 
         let pw = 44.0 * cell_w;
         let ph = 6.0 * cell_h;
@@ -2380,45 +3665,104 @@ impl WgpuState {
         let py = (sh - ph) / 2.0;
 
         // 背景（濃い紺）
-        add_px_rect(px, py, pw, ph, [0.06, 0.10, 0.20, 0.97], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            px,
+            py,
+            pw,
+            ph,
+            [0.06, 0.10, 0.20, 0.97],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
         // 上端アクセント線（オレンジ）
-        add_px_rect(px, py, pw, 2.0, [0.9, 0.5, 0.1, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            px,
+            py,
+            pw,
+            2.0,
+            [0.9, 0.5, 0.1, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // タイトル
-        let title = format!("Password: {}@{}:{}", modal.host.username, modal.host.host, modal.host.port);
+        let title = format!(
+            "Password: {}@{}:{}",
+            modal.host.username, modal.host.host, modal.host.port
+        );
         add_string_verts(
-            &title, px + cell_w, py + cell_h * 0.15,
-            [0.9, 0.6, 0.2, 1.0], true,
-            sw, sh, cell_w, font, atlas, &self.queue,
-            text_verts, text_idx,
+            &title,
+            px + cell_w,
+            py + cell_h * 0.15,
+            [0.9, 0.6, 0.2, 1.0],
+            true,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
         );
 
         // パスワード入力欄（マスク表示）
         let masked = "*".repeat(modal.input.len());
         let prompt = format!("> {}_", masked);
         add_string_verts(
-            &prompt, px + cell_w, py + cell_h * 1.3,
-            [1.0, 1.0, 1.0, 1.0], false,
-            sw, sh, cell_w, font, atlas, &self.queue,
-            text_verts, text_idx,
+            &prompt,
+            px + cell_w,
+            py + cell_h * 1.3,
+            [1.0, 1.0, 1.0, 1.0],
+            false,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
         );
 
         // エラーメッセージ
         if let Some(err) = &modal.error {
             add_string_verts(
-                err, px + cell_w, py + cell_h * 2.5,
-                [1.0, 0.3, 0.3, 1.0], false,
-                sw, sh, cell_w, font, atlas, &self.queue,
-                text_verts, text_idx,
+                err,
+                px + cell_w,
+                py + cell_h * 2.5,
+                [1.0, 0.3, 0.3, 1.0],
+                false,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
             );
         }
 
         // ヒント
         add_string_verts(
-            "Enter=接続  Esc=キャンセル", px + cell_w, py + cell_h * 4.1,
-            [0.45, 0.50, 0.48, 1.0], false,
-            sw, sh, cell_w, font, atlas, &self.queue,
-            text_verts, text_idx,
+            "Enter=接続  Esc=キャンセル",
+            px + cell_w,
+            py + cell_h * 4.1,
+            [0.45, 0.50, 0.48, 1.0],
+            false,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
         );
     }
 
@@ -2427,22 +3771,49 @@ impl WgpuState {
     fn build_update_banner_verts(
         &self,
         state: &ClientState,
-        sw: f32, sh: f32, cell_w: f32, cell_h: f32,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
-        bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
-        text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
     ) {
-        let Some(ref version) = state.update_banner else { return };
+        let Some(ref version) = state.update_banner else {
+            return;
+        };
 
         // バナーは画面幅全体・1 行分の高さ
         let bar_h = cell_h * 1.4;
         let bar_y = 0.0;
 
         // 背景（深緑）
-        add_px_rect(0.0, bar_y, sw, bar_h, [0.05, 0.28, 0.18, 0.97], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            0.0,
+            bar_y,
+            sw,
+            bar_h,
+            [0.05, 0.28, 0.18, 0.97],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
         // 左端アクセントライン（明緑）
-        add_px_rect(0.0, bar_y, 4.0, bar_h, [0.15, 0.85, 0.45, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            0.0,
+            bar_y,
+            4.0,
+            bar_h,
+            [0.15, 0.85, 0.45, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // 通知テキスト（i18n キー "update-available" を使用、{version} を置換）
         let raw = nexterm_i18n::fl!("update-available");
@@ -2453,8 +3824,14 @@ impl WgpuState {
             bar_y + (bar_h - cell_h) * 0.5,
             [0.88, 1.0, 0.88, 1.0],
             false,
-            sw, sh, cell_w, font, atlas, &self.queue,
-            text_verts, text_idx,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
         );
 
         // 右側ヒント（Esc で閉じる）
@@ -2466,8 +3843,14 @@ impl WgpuState {
             bar_y + (bar_h - cell_h) * 0.5,
             [0.55, 0.80, 0.55, 1.0],
             false,
-            sw, sh, cell_w, font, atlas, &self.queue,
-            text_verts, text_idx,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
         );
     }
 
@@ -2478,11 +3861,16 @@ impl WgpuState {
     fn build_quick_select_verts(
         &self,
         state: &ClientState,
-        sw: f32, sh: f32, cell_w: f32, cell_h: f32,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
-        bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
-        text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
     ) {
         let qs = &state.quick_select;
         if !qs.is_active {
@@ -2492,7 +3880,10 @@ impl WgpuState {
         // フォーカスペインのオフセットを取得する
         let (pane_x, pane_y) = if let Some(pid) = state.focused_pane_id {
             if let Some(layout) = state.pane_layouts.get(&pid) {
-                (layout.col_offset as f32 * cell_w, layout.row_offset as f32 * cell_h)
+                (
+                    layout.col_offset as f32 * cell_w,
+                    layout.row_offset as f32 * cell_h,
+                )
             } else {
                 (0.0, 0.0)
             }
@@ -2507,10 +3898,21 @@ impl WgpuState {
 
             // マッチ全体をセミ透明ハイライト
             let match_w = (m.col_end - m.col_start) as f32 * cell_w;
-            add_px_rect(lx, ly, match_w, cell_h, [0.9, 0.85, 0.2, 0.25], sw, sh, bg_verts, bg_idx);
+            add_px_rect(
+                lx,
+                ly,
+                match_w,
+                cell_h,
+                [0.9, 0.85, 0.2, 0.25],
+                sw,
+                sh,
+                bg_verts,
+                bg_idx,
+            );
 
             // ラベル背景（黄色）
-            let is_partial_match = !qs.typed_label.is_empty() && m.label.starts_with(&qs.typed_label);
+            let is_partial_match =
+                !qs.typed_label.is_empty() && m.label.starts_with(&qs.typed_label);
             let bg_color = if is_partial_match {
                 [1.0, 0.6, 0.0, 0.95]
             } else {
@@ -2520,21 +3922,49 @@ impl WgpuState {
 
             // ラベルテキスト（黒）
             add_string_verts(
-                &m.label, lx, ly,
-                [0.05, 0.05, 0.05, 1.0], true,
-                sw, sh, cell_w, font, atlas, &self.queue,
-                text_verts, text_idx,
+                &m.label,
+                lx,
+                ly,
+                [0.05, 0.05, 0.05, 1.0],
+                true,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
             );
         }
 
         // 入力中ラベルを画面上部に表示する
         let typed = format!("Quick Select: {}_", qs.typed_label);
-        add_px_rect(0.0, 0.0, typed.len() as f32 * cell_w + cell_w, cell_h, [0.15, 0.15, 0.18, 0.92], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            0.0,
+            0.0,
+            typed.len() as f32 * cell_w + cell_w,
+            cell_h,
+            [0.15, 0.15, 0.18, 0.92],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
         add_string_verts(
-            &typed, cell_w * 0.5, 0.0,
-            [1.0, 0.85, 0.2, 1.0], true,
-            sw, sh, cell_w, font, atlas, &self.queue,
-            text_verts, text_idx,
+            &typed,
+            cell_w * 0.5,
+            0.0,
+            [1.0, 0.85, 0.2, 1.0],
+            true,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
         );
     }
 
@@ -2543,19 +3973,30 @@ impl WgpuState {
     fn build_context_menu_verts(
         &self,
         menu: &ContextMenu,
-        sw: f32, sh: f32, cell_w: f32, cell_h: f32,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
-        bg_verts: &mut Vec<BgVertex>, bg_idx: &mut Vec<u16>,
-        text_verts: &mut Vec<TextVertex>, text_idx: &mut Vec<u16>,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
     ) {
         // ラベルとヒントの最大表示幅からメニュー幅を動的に計算する
-        let max_label_w = menu.items.iter()
+        let max_label_w = menu
+            .items
+            .iter()
             .map(|item| visual_width(&item.label))
-            .max().unwrap_or(8);
-        let max_hint_w = menu.items.iter()
+            .max()
+            .unwrap_or(8);
+        let max_hint_w = menu
+            .items
+            .iter()
             .map(|item| visual_width(&item.hint))
-            .max().unwrap_or(0);
+            .max()
+            .unwrap_or(0);
         // 左パディング(0.9) + ラベル + ギャップ(2) + ヒント + 右パディング(1.5)
         let min_cells = max_label_w + max_hint_w + 5;
         let menu_w = (min_cells as f32).max(16.0) * cell_w;
@@ -2564,18 +4005,56 @@ impl WgpuState {
         let my = menu.y;
 
         // ドロップシャドウ（3px オフセット）
-        add_px_rect(mx + 3.0, my + 3.0, menu_w, menu_h,
-            [0.02, 0.02, 0.04, 0.80], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            mx + 3.0,
+            my + 3.0,
+            menu_w,
+            menu_h,
+            [0.02, 0.02, 0.04, 0.80],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // 枠線（外側 1px、アクセントカラー薄め）
-        add_px_rect(mx - 1.0, my - 1.0, menu_w + 2.0, menu_h + 2.0,
-            [0.478, 0.635, 0.969, 0.15], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            mx - 1.0,
+            my - 1.0,
+            menu_w + 2.0,
+            menu_h + 2.0,
+            [0.478, 0.635, 0.969, 0.15],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // メニュー全体の背景（完全不透明: ターミナル透過設定に関わらず常に不透明）
-        add_px_rect(mx, my, menu_w, menu_h, [0.10, 0.11, 0.18, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            mx,
+            my,
+            menu_w,
+            menu_h,
+            [0.10, 0.11, 0.18, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // 上端のアクセント線（3px 太め）
-        add_px_rect(mx, my, menu_w, 3.0, [0.478, 0.635, 0.969, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            mx,
+            my,
+            menu_w,
+            3.0,
+            [0.478, 0.635, 0.969, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         for (i, item) in menu.items.iter().enumerate() {
             use crate::state::ContextMenuAction;
@@ -2584,31 +4063,67 @@ impl WgpuState {
             if matches!(item.action, ContextMenuAction::Separator) {
                 // セパレーター: 中央に水平線を描く
                 let sep_y = item_y + cell_h * 0.45;
-                add_px_rect(mx + cell_w * 0.5, sep_y, menu_w - cell_w, 1.0,
-                    [0.28, 0.32, 0.45, 0.70], sw, sh, bg_verts, bg_idx);
+                add_px_rect(
+                    mx + cell_w * 0.5,
+                    sep_y,
+                    menu_w - cell_w,
+                    1.0,
+                    [0.28, 0.32, 0.45, 0.70],
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
                 continue;
             }
 
             // ホバーハイライト背景（セパレーター以外）
             if menu.hovered == Some(i) {
-                add_px_rect(mx + 2.0, item_y + 1.0, menu_w - 4.0, cell_h - 2.0,
-                    [0.149, 0.200, 0.320, 0.90], sw, sh, bg_verts, bg_idx);
+                add_px_rect(
+                    mx + 2.0,
+                    item_y + 1.0,
+                    menu_w - 4.0,
+                    cell_h - 2.0,
+                    [0.149, 0.200, 0.320, 0.90],
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
                 // ホバー時の左アクセント線（3px）
-                add_px_rect(mx + 2.0, item_y + 1.0, 3.0, cell_h - 2.0,
-                    [0.478, 0.635, 0.969, 0.90], sw, sh, bg_verts, bg_idx);
+                add_px_rect(
+                    mx + 2.0,
+                    item_y + 1.0,
+                    3.0,
+                    cell_h - 2.0,
+                    [0.478, 0.635, 0.969, 0.90],
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
             }
 
             // ラベルテキスト（左パディング 0.9セル分）
             let text_color = if menu.hovered == Some(i) {
-                [0.95, 0.96, 1.0, 1.0]  // ホバー時は少し明るく
+                [0.95, 0.96, 1.0, 1.0] // ホバー時は少し明るく
             } else {
-                [0.75, 0.78, 0.88, 1.0]  // 通常は少し抑えた色
+                [0.75, 0.78, 0.88, 1.0] // 通常は少し抑えた色
             };
             add_string_verts(
-                &item.label, mx + cell_w * 0.9, item_y + cell_h * 0.1,
-                text_color, false,
-                sw, sh, cell_w, font, atlas, &self.queue,
-                text_verts, text_idx,
+                &item.label,
+                mx + cell_w * 0.9,
+                item_y + cell_h * 0.1,
+                text_color,
+                false,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
             );
 
             // キーヒントテキスト（右寄せ、グレー）
@@ -2616,10 +4131,19 @@ impl WgpuState {
                 let hint_visual_w = visual_width(&item.hint) as f32;
                 let hint_x = mx + menu_w - (hint_visual_w * cell_w + cell_w * 0.5);
                 add_string_verts(
-                    &item.hint, hint_x, item_y + cell_h * 0.1,
-                    [0.45, 0.48, 0.60, 0.80], false,
-                    sw, sh, cell_w, font, atlas, &self.queue,
-                    text_verts, text_idx,
+                    &item.hint,
+                    hint_x,
+                    item_y + cell_h * 0.1,
+                    [0.45, 0.48, 0.60, 0.80],
+                    false,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
                 );
             }
         }
@@ -2745,7 +4269,13 @@ impl WgpuState {
                 },
             ],
         });
-        self.image_textures.insert(id, ImageEntry { texture, bind_group });
+        self.image_textures.insert(
+            id,
+            ImageEntry {
+                texture,
+                bind_group,
+            },
+        );
     }
 
     /// カスタムシェーダーを再読み込みし bg/text パイプラインを再構築する。
@@ -2756,78 +4286,117 @@ impl WgpuState {
         let format = self.surface_config.format;
 
         // 背景シェーダー読み込み
-        let bg_src: std::borrow::Cow<'static, str> = if let Some(ref path) = gpu_cfg.custom_bg_shader {
-            let expanded = shellexpand::tilde(path).into_owned();
-            match std::fs::read_to_string(&expanded) {
-                Ok(s) => { info!("シェーダーホットリロード: 背景シェーダーを再読み込みしました: {}", expanded); std::borrow::Cow::Owned(s) }
-                Err(e) => { warn!("背景シェーダーの再読み込みに失敗しました（既存を維持）: {}", e); return; }
-            }
-        } else {
-            std::borrow::Cow::Borrowed(BG_SHADER)
-        };
+        let bg_src: std::borrow::Cow<'static, str> =
+            if let Some(ref path) = gpu_cfg.custom_bg_shader {
+                let expanded = shellexpand::tilde(path).into_owned();
+                match std::fs::read_to_string(&expanded) {
+                    Ok(s) => {
+                        info!(
+                            "シェーダーホットリロード: 背景シェーダーを再読み込みしました: {}",
+                            expanded
+                        );
+                        std::borrow::Cow::Owned(s)
+                    }
+                    Err(e) => {
+                        warn!(
+                            "背景シェーダーの再読み込みに失敗しました（既存を維持）: {}",
+                            e
+                        );
+                        return;
+                    }
+                }
+            } else {
+                std::borrow::Cow::Borrowed(BG_SHADER)
+            };
 
         // テキストシェーダー読み込み
-        let text_src: std::borrow::Cow<'static, str> = if let Some(ref path) = gpu_cfg.custom_text_shader {
-            let expanded = shellexpand::tilde(path).into_owned();
-            match std::fs::read_to_string(&expanded) {
-                Ok(s) => { info!("シェーダーホットリロード: テキストシェーダーを再読み込みしました: {}", expanded); std::borrow::Cow::Owned(s) }
-                Err(e) => { warn!("テキストシェーダーの再読み込みに失敗しました（既存を維持）: {}", e); return; }
-            }
-        } else {
-            std::borrow::Cow::Borrowed(TEXT_SHADER)
-        };
+        let text_src: std::borrow::Cow<'static, str> =
+            if let Some(ref path) = gpu_cfg.custom_text_shader {
+                let expanded = shellexpand::tilde(path).into_owned();
+                match std::fs::read_to_string(&expanded) {
+                    Ok(s) => {
+                        info!(
+                            "シェーダーホットリロード: テキストシェーダーを再読み込みしました: {}",
+                            expanded
+                        );
+                        std::borrow::Cow::Owned(s)
+                    }
+                    Err(e) => {
+                        warn!(
+                            "テキストシェーダーの再読み込みに失敗しました（既存を維持）: {}",
+                            e
+                        );
+                        return;
+                    }
+                }
+            } else {
+                std::borrow::Cow::Borrowed(TEXT_SHADER)
+            };
 
         // 背景パイプラインを再構築する
-        let bg_shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("bg_shader_hot"),
-            source: wgpu::ShaderSource::Wgsl(bg_src),
-        });
-        let bg_layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("bg_pipeline_layout"),
-            bind_group_layouts: &[],
-            push_constant_ranges: &[],
-        });
-        self.bg_pipeline = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("bg_pipeline"),
-            layout: Some(&bg_layout),
-            vertex: wgpu::VertexState {
-                module: &bg_shader,
-                entry_point: "vs_main",
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<BgVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4],
-                }],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &bg_shader,
-                entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    // アルファブレンディングを有効化（画像オーバーレイパイプラインも同様）
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        let bg_shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("bg_shader_hot"),
+                source: wgpu::ShaderSource::Wgsl(bg_src),
+            });
+        let bg_layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("bg_pipeline_layout"),
+                bind_group_layouts: &[],
+                push_constant_ranges: &[],
+            });
+        self.bg_pipeline = self
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("bg_pipeline"),
+                layout: Some(&bg_layout),
+                vertex: wgpu::VertexState {
+                    module: &bg_shader,
+                    entry_point: "vs_main",
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<BgVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4],
+                    }],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &bg_shader,
+                    entry_point: "fs_main",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        // アルファブレンディングを有効化（画像オーバーレイパイプラインも同様）
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
 
         // テキストパイプラインを再構築する
-        let text_shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("text_shader_hot"),
-            source: wgpu::ShaderSource::Wgsl(text_src),
-        });
-        let text_layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("text_pipeline_layout"),
-            bind_group_layouts: &[&self.text_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let text_shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("text_shader_hot"),
+                source: wgpu::ShaderSource::Wgsl(text_src),
+            });
+        let text_layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("text_pipeline_layout"),
+                bind_group_layouts: &[&self.text_bind_group_layout],
+                push_constant_ranges: &[],
+            });
         self.text_pipeline = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("text_pipeline"),
             layout: Some(&text_layout),
@@ -2865,7 +4434,10 @@ impl WgpuState {
 /// 配置済み画像の TextVertex リストを構築する
 fn build_image_verts(
     img: &crate::state::PlacedImage,
-    sw: f32, sh: f32, cell_w: f32, cell_h: f32,
+    sw: f32,
+    sh: f32,
+    cell_w: f32,
+    cell_h: f32,
 ) -> (Vec<TextVertex>, Vec<u16>) {
     let px = img.col as f32 * cell_w;
     let py = img.row as f32 * cell_h;
@@ -2879,10 +4451,26 @@ fn build_image_verts(
 
     let white = [1.0f32; 4];
     let verts = vec![
-        TextVertex { position: [x0, y0], uv: [0.0, 0.0], color: white },
-        TextVertex { position: [x1, y0], uv: [1.0, 0.0], color: white },
-        TextVertex { position: [x1, y1], uv: [1.0, 1.0], color: white },
-        TextVertex { position: [x0, y1], uv: [0.0, 1.0], color: white },
+        TextVertex {
+            position: [x0, y0],
+            uv: [0.0, 0.0],
+            color: white,
+        },
+        TextVertex {
+            position: [x1, y0],
+            uv: [1.0, 0.0],
+            color: white,
+        },
+        TextVertex {
+            position: [x1, y1],
+            uv: [1.0, 1.0],
+            color: white,
+        },
+        TextVertex {
+            position: [x0, y1],
+            uv: [0.0, 1.0],
+            color: white,
+        },
     ];
     let idx = vec![0u16, 1, 2, 0, 2, 3];
     (verts, idx)
@@ -2899,7 +4487,13 @@ pub struct NextermApp {
 
 impl NextermApp {
     pub async fn new(config: Config) -> Result<Self> {
-        let font = FontManager::new(&config.font.family, config.font.size, &config.font.font_fallbacks, 1.0, config.font.ligatures);
+        let font = FontManager::new(
+            &config.font.family,
+            config.font.size,
+            &config.font.font_fallbacks,
+            1.0,
+            config.font.ligatures,
+        );
         let mut state = ClientState::new(80, 24, config.scrollback_lines);
         // 設定ファイルのホスト一覧をホストマネージャに渡す
         state.host_manager = crate::host_manager::HostManager::new(config.hosts.clone());
@@ -2907,7 +4501,11 @@ impl NextermApp {
         state.macro_picker = crate::macro_picker::MacroPicker::new(config.macros.clone());
         // 設定パネルを設定値で初期化する
         state.settings_panel = crate::settings_panel::SettingsPanel::new(&config);
-        Ok(Self { config, state, font })
+        Ok(Self {
+            config,
+            state,
+            font,
+        })
     }
 
     pub fn into_event_handler(
@@ -3013,7 +4611,10 @@ impl EventHandler {
             return SettingsPanelHit::Outside;
         }
         let (sw, sh) = match self.wgpu_state.as_ref() {
-            Some(w) => (w.surface_config.width as f32, w.surface_config.height as f32),
+            Some(w) => (
+                w.surface_config.width as f32,
+                w.surface_config.height as f32,
+            ),
             None => return SettingsPanelHit::Outside,
         };
         let cell_w = self.app.font.cell_width();
@@ -3065,8 +4666,11 @@ impl EventHandler {
             SettingsCategory::Font => {
                 // フォントサイズスライダー
                 let bar_y = content_top + cell_h * 4.2;
-                if cy >= bar_y - cell_h * 0.5 && cy <= bar_y + cell_h
-                    && cx >= content_inner_x && cx <= content_inner_x + bar_w {
+                if cy >= bar_y - cell_h * 0.5
+                    && cy <= bar_y + cell_h
+                    && cx >= content_inner_x
+                    && cx <= content_inner_x + bar_w
+                {
                     return SettingsPanelHit::Slider {
                         slider_type: SliderType::FontSize,
                         track_x: content_inner_x,
@@ -3093,8 +4697,11 @@ impl EventHandler {
             SettingsCategory::Window => {
                 // 不透明度スライダー
                 let bar_y = content_top + cell_h * 2.4;
-                if cy >= bar_y - cell_h * 0.5 && cy <= bar_y + cell_h
-                    && cx >= content_inner_x && cx <= content_inner_x + bar_w {
+                if cy >= bar_y - cell_h * 0.5
+                    && cy <= bar_y + cell_h
+                    && cx >= content_inner_x
+                    && cx <= content_inner_x + bar_w
+                {
                     return SettingsPanelHit::Slider {
                         slider_type: SliderType::WindowOpacity,
                         track_x: content_inner_x,
@@ -3132,7 +4739,11 @@ impl ApplicationHandler for EventHandler {
             .with_transparent(transparent)
             .with_decorations(decorations);
 
-        let window = Arc::new(event_loop.create_window(attrs).expect("Failed to create window"));
+        let window = Arc::new(
+            event_loop
+                .create_window(attrs)
+                .expect("Failed to create window"),
+        );
 
         // アプリケーションアイコンを設定する
         {
@@ -3171,14 +4782,23 @@ impl ApplicationHandler for EventHandler {
         })
         .expect("Failed to initialize wgpu");
 
-        let mut atlas = GlyphAtlas::new_with_config(&wgpu_state.device, self.app.config.gpu.atlas_size);
+        let mut atlas =
+            GlyphAtlas::new_with_config(&wgpu_state.device, self.app.config.gpu.atlas_size);
 
         // ASCII 印字可能文字（0x20-0x7E）をグリフアトラスに事前ロードする。
         // 初回のキーストローク遅延を排除し、起動直後からスムーズな描画を実現する。
         for ch in ' '..='~' {
             for bold in [false, true] {
-                let key = GlyphKey { ch, bold, italic: false, wide: false };
-                let (w, h, pixels) = self.app.font.rasterize_char(ch, bold, false, [220, 220, 220, 255], false);
+                let key = GlyphKey {
+                    ch,
+                    bold,
+                    italic: false,
+                    wide: false,
+                };
+                let (w, h, pixels) =
+                    self.app
+                        .font
+                        .rasterize_char(ch, bold, false, [220, 220, 220, 255], false);
                 if w > 0 && h > 0 {
                     atlas.get_or_insert(key, &pixels, w, h, &wgpu_state.queue);
                 }
@@ -3198,7 +4818,9 @@ impl ApplicationHandler for EventHandler {
         let pad_x = self.app.config.window.padding_x as f32;
         let pad_y = self.app.config.window.padding_y as f32;
         let cols = ((size.width as f32 - pad_x * 2.0) / self.app.font.cell_width()).max(1.0) as u16;
-        let rows = ((size.height as f32 - tab_bar_h_init - status_bar_h_init - pad_y * 2.0) / cell_h_init).max(1.0) as u16;
+        let rows = ((size.height as f32 - tab_bar_h_init - status_bar_h_init - pad_y * 2.0)
+            / cell_h_init)
+            .max(1.0) as u16;
         self.app.state.resize(cols, rows);
 
         self.window = Some(Arc::clone(&window));
@@ -3250,56 +4872,60 @@ impl ApplicationHandler for EventHandler {
 
         // 設定ホットリロードをポーリングする（最新の設定を適用する）
         if let Some(rx) = &mut self.config_rx
-            && let Ok(new_config) = rx.try_recv() {
-                info!("Config reloaded: font={} {}pt", new_config.font.family, new_config.font.size);
-                // フォントサイズ変更時はグリフアトラスも再生成する
-                let font_changed = self.app.config.font != new_config.font;
-                self.app.config = new_config;
-                if font_changed {
-                    self.app.font = crate::font::FontManager::new(
-                        &self.app.config.font.family,
-                        self.app.config.font.size,
-                        &self.app.config.font.font_fallbacks,
-                        self.scale_factor,
-                        self.app.config.font.ligatures,
-                    );
-                    let atlas_size = self.app.config.gpu.atlas_size;
-                    if let Some(wgpu) = &self.wgpu_state {
-                        self.atlas = Some(GlyphAtlas::new_with_config(&wgpu.device, atlas_size));
-                    }
+            && let Ok(new_config) = rx.try_recv()
+        {
+            info!(
+                "Config reloaded: font={} {}pt",
+                new_config.font.family, new_config.font.size
+            );
+            // フォントサイズ変更時はグリフアトラスも再生成する
+            let font_changed = self.app.config.font != new_config.font;
+            self.app.config = new_config;
+            if font_changed {
+                self.app.font = crate::font::FontManager::new(
+                    &self.app.config.font.family,
+                    self.app.config.font.size,
+                    &self.app.config.font.font_fallbacks,
+                    self.scale_factor,
+                    self.app.config.font.ligatures,
+                );
+                let atlas_size = self.app.config.gpu.atlas_size;
+                if let Some(wgpu) = &self.wgpu_state {
+                    self.atlas = Some(GlyphAtlas::new_with_config(&wgpu.device, atlas_size));
                 }
-                had_messages = true;
             }
+            had_messages = true;
+        }
 
         // カスタムシェーダーファイルの変更をポーリングしてパイプラインを再構築する
         if let Some(rx) = &mut self.shader_reload_rx
-            && rx.try_recv().is_ok() {
-                // チャネルをドレインして複数イベントを 1 回にまとめる
-                while rx.try_recv().is_ok() {}
-                if let Some(wgpu) = &mut self.wgpu_state {
-                    wgpu.reload_shader_pipelines(&self.app.config.gpu);
-                }
-                had_messages = true;
+            && rx.try_recv().is_ok()
+        {
+            // チャネルをドレインして複数イベントを 1 回にまとめる
+            while rx.try_recv().is_ok() {}
+            if let Some(wgpu) = &mut self.wgpu_state {
+                wgpu.reload_shader_pipelines(&self.app.config.gpu);
             }
+            had_messages = true;
+        }
 
         // ステータスバーを 1 秒ごとに再評価してキャッシュを更新する
         if self.app.config.status_bar.enabled
             && self.last_status_eval.elapsed() >= Duration::from_secs(1)
-            && let Some(eval) = &self.status_eval {
-                let ctx = nexterm_config::WidgetContext {
-                    session_name: Some("main".to_string()),
-                    pane_id: self.app.state.focused_pane_id,
-                };
-                let sep = &self.app.config.status_bar.separator;
-                self.app.state.status_bar_text = eval.evaluate_with_context(
-                    &self.app.config.status_bar.widgets, &ctx, sep,
-                );
-                self.app.state.status_bar_right_text = eval.evaluate_with_context(
-                    &self.app.config.status_bar.right_widgets, &ctx, sep,
-                );
-                self.last_status_eval = Instant::now();
-                had_messages = true;
-            }
+            && let Some(eval) = &self.status_eval
+        {
+            let ctx = nexterm_config::WidgetContext {
+                session_name: Some("main".to_string()),
+                pane_id: self.app.state.focused_pane_id,
+            };
+            let sep = &self.app.config.status_bar.separator;
+            self.app.state.status_bar_text =
+                eval.evaluate_with_context(&self.app.config.status_bar.widgets, &ctx, sep);
+            self.app.state.status_bar_right_text =
+                eval.evaluate_with_context(&self.app.config.status_bar.right_widgets, &ctx, sep);
+            self.last_status_eval = Instant::now();
+            had_messages = true;
+        }
 
         // 更新チェッカーからの通知をポーリングしてバナーを表示する
         if self.update_rx.has_changed().unwrap_or(false)
@@ -3310,10 +4936,9 @@ impl ApplicationHandler for EventHandler {
             had_messages = true;
         }
 
-        if had_messages
-            && let Some(w) = &self.window {
-                w.request_redraw();
-            }
+        if had_messages && let Some(w) = &self.window {
+            w.request_redraw();
+        }
 
         // 設定パネルの開閉アニメーションを進める（60fps 想定で約 8フレーム = 0.13秒）
         let sp = &mut self.app.state.settings_panel;
@@ -3349,8 +4974,11 @@ impl ApplicationHandler for EventHandler {
                 };
                 let pad_x_r = self.app.config.window.padding_x as f32;
                 let pad_y_r = self.app.config.window.padding_y as f32;
-                let cols = ((size.width as f32 - pad_x_r * 2.0) / self.app.font.cell_width()).max(1.0) as u16;
-                let rows = ((size.height as f32 - tab_bar_h_r - cell_h_r - pad_y_r * 2.0) / cell_h_r).max(1.0) as u16;
+                let cols = ((size.width as f32 - pad_x_r * 2.0) / self.app.font.cell_width())
+                    .max(1.0) as u16;
+                let rows = ((size.height as f32 - tab_bar_h_r - cell_h_r - pad_y_r * 2.0)
+                    / cell_h_r)
+                    .max(1.0) as u16;
                 if let Some(wgpu) = &mut self.wgpu_state {
                     wgpu.resize(size);
                 }
@@ -3386,8 +5014,11 @@ impl ApplicationHandler for EventHandler {
                     };
                     let pad_x_sf = self.app.config.window.padding_x as f32;
                     let pad_y_sf = self.app.config.window.padding_y as f32;
-                    let cols = ((size.width as f32 - pad_x_sf * 2.0) / self.app.font.cell_width()).max(1.0) as u16;
-                    let rows = ((size.height as f32 - tab_bar_h_sf - cell_h_sf - pad_y_sf * 2.0) / cell_h_sf).max(1.0) as u16;
+                    let cols = ((size.width as f32 - pad_x_sf * 2.0) / self.app.font.cell_width())
+                        .max(1.0) as u16;
+                    let rows = ((size.height as f32 - tab_bar_h_sf - cell_h_sf - pad_y_sf * 2.0)
+                        / cell_h_sf)
+                        .max(1.0) as u16;
                     self.app.state.resize(cols, rows);
                     if let Some(conn) = &self.connection {
                         let _ = conn.send_tx.try_send(ClientToServer::Resize { cols, rows });
@@ -3493,14 +5124,32 @@ impl ApplicationHandler for EventHandler {
                     let tmp = ContextMenu::new_default(0.0, 0.0, &profile_list);
                     let item_count = tmp.items.len();
                     // メニュー幅を描画側と同じロジックで計算する
-                    let max_label = tmp.items.iter().map(|i| visual_width(&i.label)).max().unwrap_or(8);
-                    let max_hint = tmp.items.iter().map(|i| visual_width(&i.hint)).max().unwrap_or(0);
+                    let max_label = tmp
+                        .items
+                        .iter()
+                        .map(|i| visual_width(&i.label))
+                        .max()
+                        .unwrap_or(8);
+                    let max_hint = tmp
+                        .items
+                        .iter()
+                        .map(|i| visual_width(&i.hint))
+                        .max()
+                        .unwrap_or(0);
                     let menu_w_px = ((max_label + max_hint + 5) as f64).max(16.0) * cell_w_ctx;
                     let menu_h_px = item_count as f64 * cell_h_ctx;
 
                     // ウィンドウ内に収まるように位置をクランプする
-                    let win_w = self.window.as_ref().map(|w| w.inner_size().width as f64).unwrap_or(800.0);
-                    let win_h = self.window.as_ref().map(|w| w.inner_size().height as f64).unwrap_or(600.0);
+                    let win_w = self
+                        .window
+                        .as_ref()
+                        .map(|w| w.inner_size().width as f64)
+                        .unwrap_or(800.0);
+                    let win_h = self
+                        .window
+                        .as_ref()
+                        .map(|w| w.inner_size().height as f64)
+                        .unwrap_or(600.0);
                     let menu_x = (px).min(win_w - menu_w_px).max(0.0) as f32;
                     let menu_y = (py).min(win_h - menu_h_px).max(0.0) as f32;
 
@@ -3530,24 +5179,44 @@ impl ApplicationHandler for EventHandler {
                             }
                             SettingsPanelHit::Category(idx) => {
                                 // サイドバーカテゴリをクリック → カテゴリ切り替え
-                                if let Some(cat) = crate::settings_panel::SettingsCategory::ALL.get(idx) {
+                                if let Some(cat) =
+                                    crate::settings_panel::SettingsCategory::ALL.get(idx)
+                                {
                                     self.app.state.settings_panel.category = cat.clone();
                                 }
                             }
-                            SettingsPanelHit::Slider { slider_type, track_x, track_w, min: _, max: _ } => {
+                            SettingsPanelHit::Slider {
+                                slider_type,
+                                track_x,
+                                track_w,
+                                min: _,
+                                max: _,
+                            } => {
                                 // スライダーをクリック → 即時値を反映してドラッグ状態を開始する
                                 let fx = px as f32;
                                 let sp = &mut self.app.state.settings_panel;
                                 match slider_type {
-                                    SliderType::FontSize => sp.set_font_size_from_slider(fx, track_x, track_w),
-                                    SliderType::WindowOpacity => sp.set_opacity_from_slider(fx, track_x, track_w),
+                                    SliderType::FontSize => {
+                                        sp.set_font_size_from_slider(fx, track_x, track_w)
+                                    }
+                                    SliderType::WindowOpacity => {
+                                        sp.set_opacity_from_slider(fx, track_x, track_w)
+                                    }
                                 }
                                 sp.drag_slider = Some(crate::settings_panel::SliderDrag {
                                     slider_type,
                                     track_x,
                                     track_w,
-                                    min_val: if matches!(slider_type, SliderType::FontSize) { 8.0 } else { 0.1 },
-                                    max_val: if matches!(slider_type, SliderType::FontSize) { 32.0 } else { 1.0 },
+                                    min_val: if matches!(slider_type, SliderType::FontSize) {
+                                        8.0
+                                    } else {
+                                        0.1
+                                    },
+                                    max_val: if matches!(slider_type, SliderType::FontSize) {
+                                        32.0
+                                    } else {
+                                        1.0
+                                    },
                                 });
                             }
                             SettingsPanelHit::ThemeColor(idx) => {
@@ -3577,7 +5246,10 @@ impl ApplicationHandler for EventHandler {
                     if self.app.config.tab_bar.enabled && py < tab_bar_h_f64 {
                         let px_f32 = px as f32;
                         // 設定ボタンのクリック判定
-                        let hit_settings = self.app.state.settings_tab_rect
+                        let hit_settings = self
+                            .app
+                            .state
+                            .settings_tab_rect
                             .map(|(x0, x1)| px_f32 >= x0 && px_f32 < x1)
                             .unwrap_or(false);
                         if hit_settings {
@@ -3588,34 +5260,48 @@ impl ApplicationHandler for EventHandler {
                             }
                         } else {
                             // タブクリックでペインフォーカスを切り替える
-                            let hit_pane = self.app.state.tab_hit_rects
+                            let hit_pane = self
+                                .app
+                                .state
+                                .tab_hit_rects
                                 .iter()
                                 .find(|&(_, &(x0, x1))| px_f32 >= x0 && px_f32 < x1)
                                 .map(|(&id, _)| id);
                             if let Some(pane_id) = hit_pane {
                                 let now = Instant::now();
                                 // ダブルクリック判定（300ms 以内に同一ペインを再クリック）
-                                let is_double_click = self.last_tab_click
-                                    .map(|(t, id)| id == pane_id && now.duration_since(t) < Duration::from_millis(300))
+                                let is_double_click = self
+                                    .last_tab_click
+                                    .map(|(t, id)| {
+                                        id == pane_id
+                                            && now.duration_since(t) < Duration::from_millis(300)
+                                    })
                                     .unwrap_or(false);
 
                                 if is_double_click {
                                     // ダブルクリック → タブ名変更モードへ
-                                    let current_name = self.app.state.panes
+                                    let current_name = self
+                                        .app
+                                        .state
+                                        .panes
                                         .get(&pane_id)
                                         .map(|p| p.title.clone())
                                         .filter(|t| !t.is_empty())
                                         .unwrap_or_else(|| format!("pane:{}", pane_id));
-                                    self.app.state.settings_panel.begin_tab_rename(pane_id, &current_name);
+                                    self.app
+                                        .state
+                                        .settings_panel
+                                        .begin_tab_rename(pane_id, &current_name);
                                     self.last_tab_click = None;
                                 } else {
                                     self.last_tab_click = Some((now, pane_id));
                                     if self.app.state.focused_pane_id != Some(pane_id)
-                                        && let Some(conn) = &self.connection {
-                                            let _ = conn.send_tx.try_send(
-                                                ClientToServer::FocusPane { pane_id }
-                                            );
-                                        }
+                                        && let Some(conn) = &self.connection
+                                    {
+                                        let _ = conn
+                                            .send_tx
+                                            .try_send(ClientToServer::FocusPane { pane_id });
+                                    }
                                 }
                             }
                         }
@@ -3655,27 +5341,28 @@ impl ApplicationHandler for EventHandler {
 
                 // コンテキストメニューが開いている場合はクリックで処理する
                 if let Some((px, py)) = self.cursor_position
-                    && let Some(menu) = self.app.state.context_menu.take() {
-                        let cell_w = self.app.font.cell_width();
-                        let cell_h = self.app.font.cell_height();
-                        // 描画幅と同じ値を使用する（ここを変えると描画とクリック判定がずれる）
-                        let menu_w = 18.0 * cell_w;
-                        let fx = px as f32;
-                        let fy = py as f32;
-                        if fx >= menu.x && fx <= menu.x + menu_w {
-                            for (i, item) in menu.items.iter().enumerate() {
-                                let item_y = menu.y + i as f32 * cell_h;
-                                if fy >= item_y && fy < item_y + cell_h {
-                                    self.execute_context_menu_action(&item.action);
-                                    break;
-                                }
+                    && let Some(menu) = self.app.state.context_menu.take()
+                {
+                    let cell_w = self.app.font.cell_width();
+                    let cell_h = self.app.font.cell_height();
+                    // 描画幅と同じ値を使用する（ここを変えると描画とクリック判定がずれる）
+                    let menu_w = 18.0 * cell_w;
+                    let fx = px as f32;
+                    let fy = py as f32;
+                    if fx >= menu.x && fx <= menu.x + menu_w {
+                        for (i, item) in menu.items.iter().enumerate() {
+                            let item_y = menu.y + i as f32 * cell_h;
+                            if fy >= item_y && fy < item_y + cell_h {
+                                self.execute_context_menu_action(&item.action);
+                                break;
                             }
                         }
-                        if let Some(w) = &self.window {
-                            w.request_redraw();
-                        }
-                        return;
                     }
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                    return;
+                }
 
                 if let Some((px, py)) = self.cursor_position {
                     let cell_w = self.app.font.cell_width() as f64;
@@ -3704,11 +5391,11 @@ impl ApplicationHandler for EventHandler {
                                     } else {
                                         row.len()
                                     };
-                                    let line: String =
-                                        row[col_start.min(row.len())..col_end.min(row.len())]
-                                            .iter()
-                                            .map(|c| c.ch)
-                                            .collect();
+                                    let line: String = row
+                                        [col_start.min(row.len())..col_end.min(row.len())]
+                                        .iter()
+                                        .map(|c| c.ch)
+                                        .collect();
                                     lines.push(line.trim_end().to_string());
                                 }
                             }
@@ -3718,19 +5405,21 @@ impl ApplicationHandler for EventHandler {
                         };
 
                         if !text.is_empty()
-                            && let Ok(mut clipboard) = arboard::Clipboard::new() {
-                                let _ = clipboard.set_text(text);
-                            }
+                            && let Ok(mut clipboard) = arboard::Clipboard::new()
+                        {
+                            let _ = clipboard.set_text(text);
+                        }
                         // 選択後はリターン（ペインフォーカス切替を行わない）
                         return;
                     }
 
                     // 選択なし（単純クリック）: Ctrl+クリックで URL を開く
                     if self.modifiers.control_key()
-                        && let Some(url) = self.find_url_at(click_col, click_row) {
-                            open_url(&url);
-                            return;
-                        }
+                        && let Some(url) = self.find_url_at(click_col, click_row)
+                    {
+                        open_url(&url);
+                        return;
+                    }
 
                     // クリック座標が含まれるペインを探してフォーカスを移動する
                     let target_pane = self
@@ -3747,11 +5436,10 @@ impl ApplicationHandler for EventHandler {
                         .map(|l| l.pane_id);
                     if let Some(pane_id) = target_pane
                         && self.app.state.focused_pane_id != Some(pane_id)
-                            && let Some(conn) = &self.connection {
-                                let _ = conn
-                                    .send_tx
-                                    .try_send(ClientToServer::FocusPane { pane_id });
-                            }
+                        && let Some(conn) = &self.connection
+                    {
+                        let _ = conn.send_tx.try_send(ClientToServer::FocusPane { pane_id });
+                    }
                 }
             }
 
@@ -3794,16 +5482,18 @@ impl ApplicationHandler for EventHandler {
                     if matches!(physical_key, PhysicalKey::Code(WKeyCode::Backspace)) {
                         self.app.state.pop_search_char();
                     } else if let Some(ref t) = text
-                        && !self.modifiers.control_key() {
-                            for ch in t.chars() {
-                                self.app.state.push_search_char(ch);
-                            }
+                        && !self.modifiers.control_key()
+                    {
+                        for ch in t.chars() {
+                            self.app.state.push_search_char(ch);
                         }
+                    }
                     // Escape / Enter は handle_key で処理する
                     if let PhysicalKey::Code(code) = physical_key
-                        && matches!(code, WKeyCode::Escape | WKeyCode::Enter) {
-                            self.handle_key(code, event_loop);
-                        }
+                        && matches!(code, WKeyCode::Escape | WKeyCode::Enter)
+                    {
+                        self.handle_key(code, event_loop);
+                    }
                     return;
                 }
 
@@ -3820,15 +5510,17 @@ impl ApplicationHandler for EventHandler {
                     && self.app.state.settings_panel.font_family_editing
                 {
                     if let Some(ref t) = text
-                        && !self.modifiers.control_key() && !self.modifiers.alt_key() {
-                            for ch in t.chars() {
-                                self.app.state.settings_panel.push_font_family_char(ch);
-                            }
-                            if let Some(w) = &self.window {
-                                w.request_redraw();
-                            }
-                            return;
+                        && !self.modifiers.control_key()
+                        && !self.modifiers.alt_key()
+                    {
+                        for ch in t.chars() {
+                            self.app.state.settings_panel.push_font_family_char(ch);
                         }
+                        if let Some(w) = &self.window {
+                            w.request_redraw();
+                        }
+                        return;
+                    }
                     // テキストがない場合（矢印キー等）もサーバーへは転送しない
                     return;
                 }
@@ -3886,32 +5578,31 @@ impl ApplicationHandler for EventHandler {
             }
 
             WindowEvent::RedrawRequested => {
-                if let (Some(wgpu), Some(atlas)) =
-                    (&mut self.wgpu_state, &mut self.atlas)
-                    && let Err(e) =
-                        wgpu.render(
-                            &mut self.app.state,
-                            &mut self.app.font,
-                            atlas,
-                            &self.app.config.tab_bar,
-                            &self.app.config.colors,
-                            self.app.config.gpu.fps_limit,
-                            self.app.config.window.background_opacity,
-                            &self.app.config.cursor_style,
-                            self.app.config.window.padding_x as f32,
-                            self.app.config.window.padding_y as f32,
-                        )
-                    {
-                        warn!("Render error: {}", e);
-                    }
+                if let (Some(wgpu), Some(atlas)) = (&mut self.wgpu_state, &mut self.atlas)
+                    && let Err(e) = wgpu.render(
+                        &mut self.app.state,
+                        &mut self.app.font,
+                        atlas,
+                        &self.app.config.tab_bar,
+                        &self.app.config.colors,
+                        self.app.config.gpu.fps_limit,
+                        self.app.config.window.background_opacity,
+                        &self.app.config.cursor_style,
+                        self.app.config.window.padding_x as f32,
+                        self.app.config.window.padding_y as f32,
+                    )
+                {
+                    warn!("Render error: {}", e);
+                }
 
                 // GlyphAtlas の動的拡張: 満杯になったら 2 倍サイズで再生成する
                 // 借用競合を避けるため atlas を一時的に取り出して処理する
                 if let Some(mut atlas) = self.atlas.take() {
                     if atlas.needs_grow
-                        && let Some(wgpu) = &self.wgpu_state {
-                            atlas = atlas.grow(&wgpu.device);
-                        }
+                        && let Some(wgpu) = &self.wgpu_state
+                    {
+                        atlas = atlas.grow(&wgpu.device);
+                    }
                     self.atlas = Some(atlas);
                 }
             }
@@ -3936,9 +5627,10 @@ impl EventHandler {
         if ctrl && shift && code == WKeyCode::KeyV {
             if let Ok(mut clipboard) = arboard::Clipboard::new()
                 && let Ok(text) = clipboard.get_text()
-                    && let Some(conn) = &self.connection {
-                        let _ = conn.send_tx.try_send(ClientToServer::PasteText { text });
-                    }
+                && let Some(conn) = &self.connection
+            {
+                let _ = conn.send_tx.try_send(ClientToServer::PasteText { text });
+            }
             return true;
         }
 
@@ -3980,7 +5672,10 @@ impl EventHandler {
             if self.app.state.macro_picker.is_open {
                 self.app.state.macro_picker.close();
             } else {
-                self.app.state.macro_picker.reload(self.app.config.macros.clone());
+                self.app
+                    .state
+                    .macro_picker
+                    .reload(self.app.config.macros.clone());
                 self.app.state.macro_picker.open();
             }
             return true;
@@ -3992,7 +5687,10 @@ impl EventHandler {
                 self.app.state.host_manager.close();
             } else {
                 // 設定ホスト一覧を最新にリロードしてから開く
-                self.app.state.host_manager.reload(self.app.config.hosts.clone());
+                self.app
+                    .state
+                    .host_manager
+                    .reload(self.app.config.hosts.clone());
                 self.app.state.host_manager.open();
             }
             return true;
@@ -4049,7 +5747,10 @@ impl EventHandler {
                 }
                 WKeyCode::Enter => {
                     let ft = &self.app.state.file_transfer;
-                    if !ft.host_name.is_empty() && !ft.local_path.is_empty() && !ft.remote_path.is_empty() {
+                    if !ft.host_name.is_empty()
+                        && !ft.local_path.is_empty()
+                        && !ft.remote_path.is_empty()
+                    {
                         let msg = if ft.mode == "upload" {
                             ClientToServer::SftpUpload {
                                 host_name: ft.host_name.clone(),
@@ -4089,12 +5790,13 @@ impl EventHandler {
                     let new_name = self.app.state.settings_panel.tab_rename_text.clone();
                     self.app.state.settings_panel.cancel_tab_rename();
                     if let (Some(window_id), Some(conn)) = (rename_id, &self.connection)
-                        && !new_name.is_empty() {
-                            let _ = conn.send_tx.try_send(ClientToServer::RenameWindow {
-                                window_id,
-                                name: new_name,
-                            });
-                        }
+                        && !new_name.is_empty()
+                    {
+                        let _ = conn.send_tx.try_send(ClientToServer::RenameWindow {
+                            window_id,
+                            name: new_name,
+                        });
+                    }
                 }
                 WKeyCode::Backspace => {
                     self.app.state.settings_panel.pop_tab_rename_char();
@@ -4217,8 +5919,12 @@ impl EventHandler {
                 WKeyCode::ArrowUp if !editing => {
                     use crate::settings_panel::SettingsCategory;
                     match &self.app.state.settings_panel.category {
-                        SettingsCategory::Font => self.app.state.settings_panel.increase_font_size(),
-                        SettingsCategory::Window => self.app.state.settings_panel.increase_opacity(),
+                        SettingsCategory::Font => {
+                            self.app.state.settings_panel.increase_font_size()
+                        }
+                        SettingsCategory::Window => {
+                            self.app.state.settings_panel.increase_opacity()
+                        }
                         _ => self.app.state.settings_panel.prev_category(),
                     }
                 }
@@ -4419,7 +6125,9 @@ impl EventHandler {
         // テキストパターンから URL を動的検出する
         let cells = pane.grid.rows.get(row as usize)?;
         let urls = detect_urls_in_row(row, cells);
-        urls.into_iter().find(|u| u.contains(col, row)).map(|u| u.url)
+        urls.into_iter()
+            .find(|u| u.contains(col, row))
+            .map(|u| u.url)
     }
 
     /// コピーモードのキー入力を処理する（true = 消費済み）
@@ -4629,9 +6337,11 @@ impl EventHandler {
                     .unwrap_or(0);
             }
             if let Some(cells) = pane.grid.rows.get(r as usize)
-                && c < cells.len() as isize && !cells[c as usize].ch.is_whitespace() {
-                    break;
-                }
+                && c < cells.len() as isize
+                && !cells[c as usize].ch.is_whitespace()
+            {
+                break;
+            }
             c -= 1;
         }
         // 単語の先頭までスキップ
@@ -4640,9 +6350,7 @@ impl EventHandler {
                 return Some((0, r as u16));
             }
             if let Some(cells) = pane.grid.rows.get(r as usize) {
-                if c - 1 < cells.len() as isize
-                    && cells[(c - 1) as usize].ch.is_whitespace()
-                {
+                if c - 1 < cells.len() as isize && cells[(c - 1) as usize].ch.is_whitespace() {
                     break;
                 }
             } else {
@@ -4711,9 +6419,10 @@ impl EventHandler {
             };
 
             if !text.is_empty()
-                && let Ok(mut clipboard) = arboard::Clipboard::new() {
-                    let _ = clipboard.set_text(text);
-                }
+                && let Ok(mut clipboard) = arboard::Clipboard::new()
+            {
+                let _ = clipboard.set_text(text);
+            }
         }
         self.app.state.copy_mode.exit();
     }
@@ -4854,12 +6563,16 @@ impl EventHandler {
             }
             "SetBroadcastOn" => {
                 if let Some(conn) = &self.connection {
-                    let _ = conn.send_tx.try_send(ClientToServer::SetBroadcast { enabled: true });
+                    let _ = conn
+                        .send_tx
+                        .try_send(ClientToServer::SetBroadcast { enabled: true });
                 }
             }
             "SetBroadcastOff" => {
                 if let Some(conn) = &self.connection {
-                    let _ = conn.send_tx.try_send(ClientToServer::SetBroadcast { enabled: false });
+                    let _ = conn
+                        .send_tx
+                        .try_send(ClientToServer::SetBroadcast { enabled: false });
                 }
             }
             "ToggleZoom" => {
@@ -4881,13 +6594,18 @@ impl EventHandler {
                     if layouts.len() >= 2 {
                         let focused = self.app.state.focused_pane_id.unwrap_or(0);
                         // focused 以外で pane_id が最も近い（次の）ペインを選ぶ
-                        let target = layouts.iter()
+                        let target = layouts
+                            .iter()
                             .filter(|l| l.pane_id != focused)
                             .map(|l| l.pane_id)
                             .min_by_key(|&id| if id > focused { id - focused } else { u32::MAX })
-                            .or_else(|| layouts.iter().map(|l| l.pane_id).find(|&id| id != focused));
+                            .or_else(|| {
+                                layouts.iter().map(|l| l.pane_id).find(|&id| id != focused)
+                            });
                         if let Some(target_id) = target {
-                            let _ = conn.send_tx.try_send(ClientToServer::SwapPane { target_pane_id: target_id });
+                            let _ = conn.send_tx.try_send(ClientToServer::SwapPane {
+                                target_pane_id: target_id,
+                            });
                         }
                     }
                 }
@@ -4897,13 +6615,18 @@ impl EventHandler {
                     let layouts: Vec<_> = self.app.state.pane_layouts.values().collect();
                     if layouts.len() >= 2 {
                         let focused = self.app.state.focused_pane_id.unwrap_or(0);
-                        let target = layouts.iter()
+                        let target = layouts
+                            .iter()
                             .filter(|l| l.pane_id != focused)
                             .map(|l| l.pane_id)
                             .min_by_key(|&id| if id < focused { focused - id } else { u32::MAX })
-                            .or_else(|| layouts.iter().map(|l| l.pane_id).find(|&id| id != focused));
+                            .or_else(|| {
+                                layouts.iter().map(|l| l.pane_id).find(|&id| id != focused)
+                            });
                         if let Some(target_id) = target {
-                            let _ = conn.send_tx.try_send(ClientToServer::SwapPane { target_pane_id: target_id });
+                            let _ = conn.send_tx.try_send(ClientToServer::SwapPane {
+                                target_pane_id: target_id,
+                            });
                         }
                     }
                 }
@@ -4917,11 +6640,17 @@ impl EventHandler {
                 self.app.state.settings_panel.open();
             }
             "ShowHostManager" => {
-                self.app.state.host_manager.reload(self.app.config.hosts.clone());
+                self.app
+                    .state
+                    .host_manager
+                    .reload(self.app.config.hosts.clone());
                 self.app.state.host_manager.open();
             }
             "ShowMacroPicker" => {
-                self.app.state.macro_picker.reload(self.app.config.macros.clone());
+                self.app
+                    .state
+                    .macro_picker
+                    .reload(self.app.config.macros.clone());
                 self.app.state.macro_picker.open();
             }
             "SftpUploadDialog" => {
@@ -4935,16 +6664,23 @@ impl EventHandler {
                 // 設定がない場合は一般的なデフォルト値を使用する
                 if let Some(conn) = &self.connection {
                     let serial_cfg = self.app.config.serial_ports.first().cloned();
-                    let (port, baud_rate, data_bits, stop_bits, parity) = if let Some(cfg) = serial_cfg {
-                        (cfg.port, cfg.baud_rate, cfg.data_bits, cfg.stop_bits, cfg.parity)
-                    } else {
-                        // プラットフォームデフォルト
-                        #[cfg(unix)]
-                        let default_port = "/dev/ttyUSB0".to_string();
-                        #[cfg(windows)]
-                        let default_port = "COM1".to_string();
-                        (default_port, 115200, 8, 1, "none".to_string())
-                    };
+                    let (port, baud_rate, data_bits, stop_bits, parity) =
+                        if let Some(cfg) = serial_cfg {
+                            (
+                                cfg.port,
+                                cfg.baud_rate,
+                                cfg.data_bits,
+                                cfg.stop_bits,
+                                cfg.parity,
+                            )
+                        } else {
+                            // プラットフォームデフォルト
+                            #[cfg(unix)]
+                            let default_port = "/dev/ttyUSB0".to_string();
+                            #[cfg(windows)]
+                            let default_port = "COM1".to_string();
+                            (default_port, 115200, 8, 1, "none".to_string())
+                        };
                     let _ = conn.send_tx.try_send(ClientToServer::ConnectSerial {
                         port,
                         baud_rate,
@@ -4973,9 +6709,10 @@ impl EventHandler {
             ContextMenuAction::Paste => {
                 if let Ok(mut clipboard) = arboard::Clipboard::new()
                     && let Ok(text) = clipboard.get_text()
-                        && let Some(conn) = &self.connection {
-                            let _ = conn.send_tx.try_send(ClientToServer::PasteText { text });
-                        }
+                    && let Some(conn) = &self.connection
+                {
+                    let _ = conn.send_tx.try_send(ClientToServer::PasteText { text });
+                }
             }
             ContextMenuAction::SelectAll => {
                 // グリッド全体のテキストをクリップボードにコピーする
@@ -5009,14 +6746,23 @@ impl EventHandler {
             }
             ContextMenuAction::OpenProfile { profile_name } => {
                 // プロファイルのシェル設定でペインを新規分割する
-                if let Some(prof) = self.app.config.profiles.iter().find(|p| &p.name == profile_name)
+                if let Some(prof) = self
+                    .app
+                    .config
+                    .profiles
+                    .iter()
+                    .find(|p| &p.name == profile_name)
                     && let Some(shell) = &prof.shell
-                        && let Some(conn) = &self.connection {
-                            // まず垂直分割してから ConnectSsh の代わりにシェルパスを環境変数で渡す
-                            // （現時点では SplitVertical で新ペインを開き、プロファイル設定はログとして記録）
-                            let _ = conn.send_tx.try_send(ClientToServer::SplitVertical);
-                            info!("プロファイル '{}' のシェル '{}' で起動を要求", profile_name, shell.program);
-                        }
+                    && let Some(conn) = &self.connection
+                {
+                    // まず垂直分割してから ConnectSsh の代わりにシェルパスを環境変数で渡す
+                    // （現時点では SplitVertical で新ペインを開き、プロファイル設定はログとして記録）
+                    let _ = conn.send_tx.try_send(ClientToServer::SplitVertical);
+                    info!(
+                        "プロファイル '{}' のシェル '{}' で起動を要求",
+                        profile_name, shell.program
+                    );
+                }
             }
             ContextMenuAction::Separator => {
                 // セパレーターはクリック不可のため何もしない
@@ -5068,7 +6814,11 @@ impl EventHandler {
             port: host.port,
             username: host.username.clone(),
             auth_type: host.auth_type.clone(),
-            password: if password.is_empty() { None } else { Some(password) },
+            password: if password.is_empty() {
+                None
+            } else {
+                Some(password)
+            },
             key_path: host.key_path.clone(),
             remote_forwards: host.forward_remote.clone(),
             x11_forward: host.x11_forward,
@@ -5100,15 +6850,16 @@ impl EventHandler {
         // Ctrl 非押下でテキストがある場合はテキスト入力として送信する
         if !ctrl
             && let Some(text_str) = text
-                && !text_str.is_empty() {
-                    for ch in text_str.chars() {
-                        let _ = conn.send_tx.try_send(ClientToServer::KeyEvent {
-                            code: ProtoKeyCode::Char(ch),
-                            modifiers: mods,
-                        });
-                    }
-                    return;
-                }
+            && !text_str.is_empty()
+        {
+            for ch in text_str.chars() {
+                let _ = conn.send_tx.try_send(ClientToServer::KeyEvent {
+                    code: ProtoKeyCode::Char(ch),
+                    modifiers: mods,
+                });
+            }
+            return;
+        }
 
         // 特殊キーおよび Ctrl キーシーケンス
         if let Some(key_code) = physical_to_proto_key(physical_key, self.modifiers) {
@@ -5131,4 +6882,3 @@ struct ImageEntry {
     texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
 }
-

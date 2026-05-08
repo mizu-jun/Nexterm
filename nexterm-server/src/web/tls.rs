@@ -25,7 +25,10 @@ pub fn load_or_generate(
             .map_err(|e| anyhow::anyhow!("証明書ファイルの読み込みに失敗: {}: {}", cert_path, e))?;
         let key = std::fs::read(key_path)
             .map_err(|e| anyhow::anyhow!("秘密鍵ファイルの読み込みに失敗: {}: {}", key_path, e))?;
-        info!("TLS: {} / {} から証明書を読み込みました", cert_path, key_path);
+        info!(
+            "TLS: {} / {} から証明書を読み込みました",
+            cert_path, key_path
+        );
         return Ok((cert, key));
     }
 
@@ -43,10 +46,8 @@ pub fn load_or_generate(
 
     // 新しい自己署名証明書を生成する
     info!("TLS: 自己署名証明書を生成します");
-    let certified = rcgen::generate_simple_self_signed(vec![
-        "localhost".to_string(),
-        "127.0.0.1".to_string(),
-    ])?;
+    let certified =
+        rcgen::generate_simple_self_signed(vec!["localhost".to_string(), "127.0.0.1".to_string()])?;
 
     let cert_pem = certified.cert.pem();
     let key_pem = certified.key_pair.serialize_pem();
@@ -82,20 +83,17 @@ mod tests {
         let temp_dir = std::env::temp_dir().join("nexterm_tls_test");
         let cert_path = temp_dir.join("test_cert.pem");
         let key_path = temp_dir.join("test_key.pem");
-        
+
         // 事前にクリーンアップ
         let _ = std::fs::remove_file(&cert_path);
         let _ = std::fs::remove_file(&key_path);
-        
+
         // 証明書を生成
-        let result = load_or_generate(
-            None,
-            None,
-        );
-        
+        let result = load_or_generate(None, None);
+
         // 自己署名証明書の生成に成功する
         assert!(result.is_ok());
-        
+
         let (cert, key) = result.unwrap();
         // PEM形式であることを確認（先頭にPEMヘッダーがある）
         let cert_str = String::from_utf8_lossy(&cert);
@@ -110,28 +108,28 @@ mod tests {
         let temp_dir = std::env::temp_dir().join("nexterm_tls_test_explicit");
         let cert_path = temp_dir.join("custom_cert.pem");
         let key_path = temp_dir.join("custom_key.pem");
-        
+
         // 事前にクリーンアップ
         let _ = std::fs::remove_dir_all(&temp_dir);
         let _ = std::fs::create_dir_all(&temp_dir);
-        
+
         // ダミーの証明書と鍵を書き込む
         let dummy_cert = b"-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----";
         let dummy_key = b"-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----";
-        
+
         std::fs::write(&cert_path, dummy_cert).unwrap();
         std::fs::write(&key_path, dummy_key).unwrap();
-        
+
         let result = load_or_generate(
             Some(cert_path.to_str().unwrap()),
             Some(key_path.to_str().unwrap()),
         );
-        
+
         assert!(result.is_ok());
         let (cert, key) = result.unwrap();
         assert_eq!(cert, dummy_cert);
         assert_eq!(key, dummy_key);
-        
+
         // クリーンアップ
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -150,10 +148,7 @@ mod tests {
     fn load_or_generate_single_path_falls_back_to_auto() {
         // 証明書のみ指定、鍵が未指定の場合は自動生成パスにフォールバック
         // 明示的パスが存在しない場合も自己署名証明書が生成される
-        let result = load_or_generate(
-            Some("/nonexistent/cert.pem"),
-            None,
-        );
+        let result = load_or_generate(Some("/nonexistent/cert.pem"), None);
         // 片方だけ指定の場合は自動生成パスにフォールバック
         // 存在しない場合は自己署名証明書が生成される
         assert!(result.is_ok());

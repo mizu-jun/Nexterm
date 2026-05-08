@@ -73,8 +73,20 @@ impl Perform for Screen {
             .collect();
 
         // 第1・第2パラメータのデフォルト値を解決するヘルパー
-        let p1 = |default: u16| if p.is_empty() || p[0] == 0 { default } else { p[0] };
-        let p2 = |default: u16| if p.len() < 2 || p[1] == 0 { default } else { p[1] };
+        let p1 = |default: u16| {
+            if p.is_empty() || p[0] == 0 {
+                default
+            } else {
+                p[0]
+            }
+        };
+        let p2 = |default: u16| {
+            if p.len() < 2 || p[1] == 0 {
+                default
+            } else {
+                p[1]
+            }
+        };
 
         match action {
             // CUP / HVP — カーソル位置移動（1始まり → 0始まり）
@@ -157,9 +169,10 @@ impl Perform for Screen {
             // OSC 2: ウィンドウタイトルを設定
             "0" | "1" | "2" => {
                 if let Some(title_bytes) = params.get(1)
-                    && let Ok(title) = std::str::from_utf8(title_bytes) {
-                        self.set_pending_title(title.to_string());
-                    }
+                    && let Ok(title) = std::str::from_utf8(title_bytes)
+                {
+                    self.set_pending_title(title.to_string());
+                }
             }
             // OSC 8: ハイパーリンク
             // フォーマット: ESC ] 8 ; <params> ; <URI> BEL
@@ -181,9 +194,10 @@ impl Perform for Screen {
             // フォーマット: ESC ] 9 ; <メッセージ> BEL
             "9" => {
                 if let Some(msg_bytes) = params.get(1)
-                    && let Ok(msg) = std::str::from_utf8(msg_bytes) {
-                        self.set_pending_notification("Nexterm".to_string(), msg.to_string());
-                    }
+                    && let Ok(msg) = std::str::from_utf8(msg_bytes)
+                {
+                    self.set_pending_notification("Nexterm".to_string(), msg.to_string());
+                }
             }
             // OSC 133: セマンティックゾーン（プロンプト / コマンド / 出力のマーキング）
             // フォーマット: ESC ] 133 ; <A|B|C|D[;exit_code]> ST

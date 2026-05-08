@@ -1,13 +1,13 @@
 #![warn(missing_docs)]
 //! SSH クライアント統合 — russh を使った SSH 接続管理
 
-use anyhow::{bail, Context, Result};
-use russh::client::{self, Handle};
-use russh::keys::{load_secret_key, PublicKey, PrivateKeyWithHashAlg};
+use anyhow::{Context, Result, bail};
 use russh::ChannelMsg;
+use russh::client::{self, Handle};
+use russh::keys::{PrivateKeyWithHashAlg, PublicKey, load_secret_key};
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, warn};
 use zeroize::Zeroizing;
 
@@ -70,7 +70,10 @@ impl client::Handler for SshHandler {
 
         match check_known_hosts(&self.host, self.port, server_public_key) {
             Ok(true) => {
-                debug!("known_hosts: ホスト鍵が一致しました ({}:{})", self.host, self.port);
+                debug!(
+                    "known_hosts: ホスト鍵が一致しました ({}:{})",
+                    self.host, self.port
+                );
                 Ok(true)
             }
             Ok(false) => {
@@ -94,7 +97,10 @@ impl client::Handler for SshHandler {
             }
             Err(e) => {
                 // その他のエラーは警告して続行
-                warn!("known_hosts の検証中にエラーが発生しました: {} — 検証をスキップします", e);
+                warn!(
+                    "known_hosts の検証中にエラーが発生しました: {} — 検証をスキップします",
+                    e
+                );
                 Ok(true)
             }
         }
@@ -130,13 +136,17 @@ impl client::Handler for SshHandler {
         );
 
         tokio::spawn(async move {
-            let mut local_stream = match tokio::net::TcpStream::connect((local_host.as_str(), local_port)).await {
-                Ok(s) => s,
-                Err(e) => {
-                    warn!("リモートフォワーディング: ローカル接続失敗 ({}:{}): {}", local_host, local_port, e);
-                    return;
-                }
-            };
+            let mut local_stream =
+                match tokio::net::TcpStream::connect((local_host.as_str(), local_port)).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        warn!(
+                            "リモートフォワーディング: ローカル接続失敗 ({}:{}): {}",
+                            local_host, local_port, e
+                        );
+                        return;
+                    }
+                };
             let mut ssh_stream = channel.into_stream();
             match tokio::io::copy_bidirectional(&mut local_stream, &mut ssh_stream).await {
                 Ok((sent, recv)) => {
@@ -179,7 +189,8 @@ impl SshSession {
             ..Default::default()
         });
 
-        let forward_map: ForwardMap = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        let forward_map: ForwardMap =
+            Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
 
         let handler = SshHandler {
             host: config.host.clone(),
@@ -190,13 +201,19 @@ impl SshSession {
         // SOCKS5 プロキシ経由接続
         if let Some(socks5_url) = &config.proxy_socks5 {
             let handle = connect_via_socks5(ssh_config, socks5_url, config, handler).await?;
-            return Ok(Self { handle: Arc::new(Mutex::new(handle)), forward_map });
+            return Ok(Self {
+                handle: Arc::new(Mutex::new(handle)),
+                forward_map,
+            });
         }
 
         // ProxyJump 経由接続
         if let Some(jump_spec) = &config.proxy_jump {
             let handle = connect_via_jump(ssh_config, jump_spec, config, handler).await?;
-            return Ok(Self { handle: Arc::new(Mutex::new(handle)), forward_map });
+            return Ok(Self {
+                handle: Arc::new(Mutex::new(handle)),
+                forward_map,
+            });
         }
 
         // 直接接続
@@ -215,19 +232,19 @@ impl SshSession {
             let mut handle = self.handle.lock().await;
             match &config.auth {
                 SshAuth::Password(pw) => {
-                    handle
-                        .authenticate_password(username, pw.as_str())
-                        .await?
+                    handle.authenticate_password(username, pw.as_str()).await?
                 }
-                SshAuth::PrivateKey { key_path, passphrase } => {
+                SshAuth::PrivateKey {
+                    key_path,
+                    passphrase,
+                } => {
                     let key_pair = if let Some(pp) = passphrase {
                         load_secret_key(key_path, Some(pp.as_str()))?
                     } else {
                         load_secret_key(key_path, None)?
                     };
                     let best_hash = handle.best_supported_rsa_hash().await?.flatten();
-                    let key_with_hash =
-                        PrivateKeyWithHashAlg::new(Arc::new(key_pair), best_hash);
+                    let key_with_hash = PrivateKeyWithHashAlg::new(Arc::new(key_pair), best_hash);
                     handle
                         .authenticate_publickey(username, key_with_hash)
                         .await?
@@ -256,9 +273,9 @@ impl SshSession {
             use russh::keys::agent::client::AgentClient;
 
             // エージェントに接続（SSH_AUTH_SOCK を使用）
-            let mut agent = AgentClient::connect_env()
-                .await
-                .context("SSH エージェントへの接続に失敗しました (SSH_AUTH_SOCK を確認してください)")?;
+            let mut agent = AgentClient::connect_env().await.context(
+                "SSH エージェントへの接続に失敗しました (SSH_AUTH_SOCK を確認してください)",
+            )?;
 
             // エージェントから公開鍵一覧を取得
             let identities = agent
@@ -280,12 +297,7 @@ impl SshSession {
 
                 let mut handle = self.handle.lock().await;
                 let result = handle
-                    .authenticate_publickey_with(
-                        username.clone(),
-                        pub_key,
-                        None,
-                        &mut agent,
-                    )
+                    .authenticate_publickey_with(username.clone(), pub_key, None, &mut agent)
                     .await;
                 drop(handle);
 
@@ -345,7 +357,13 @@ impl SshSession {
             let auth_cookie = "00000000000000000000000000000000";
             let screen_number = 0u32;
             if let Err(e) = channel
-                .request_x11(want_reply, single_connection, auth_protocol, auth_cookie, screen_number)
+                .request_x11(
+                    want_reply,
+                    single_connection,
+                    auth_protocol,
+                    auth_cookie,
+                    screen_number,
+                )
                 .await
             {
                 warn!("X11 フォワーディングのリクエストに失敗しました: {}", e);
@@ -519,12 +537,17 @@ impl SshSession {
             handle.channel_open_session().await?
         };
 
-        let sftp = SftpSession::new(channel.into_stream()).await
+        let sftp = SftpSession::new(channel.into_stream())
+            .await
             .context("SFTP セッションの開始に失敗しました")?;
 
         // ローカルファイルを開く
-        let mut local_file = tokio::fs::File::open(local_path).await
-            .with_context(|| format!("ローカルファイルのオープンに失敗しました: {}", local_path.display()))?;
+        let mut local_file = tokio::fs::File::open(local_path).await.with_context(|| {
+            format!(
+                "ローカルファイルのオープンに失敗しました: {}",
+                local_path.display()
+            )
+        })?;
         let total = local_file.metadata().await.map(|m| m.len()).unwrap_or(0);
 
         // リモートファイルを作成して書き込む
@@ -549,7 +572,12 @@ impl SshSession {
             }
         }
 
-        debug!("SFTP アップロード完了: {} → {} ({} bytes)", local_path.display(), remote_path, transferred);
+        debug!(
+            "SFTP アップロード完了: {} → {} ({} bytes)",
+            local_path.display(),
+            remote_path,
+            transferred
+        );
         Ok(())
     }
 
@@ -573,21 +601,29 @@ impl SshSession {
             handle.channel_open_session().await?
         };
 
-        let sftp = SftpSession::new(channel.into_stream()).await
+        let sftp = SftpSession::new(channel.into_stream())
+            .await
             .context("SFTP セッションの開始に失敗しました")?;
 
         // リモートファイルのメタデータを取得してサイズを得る
-        let total = sftp.metadata(remote_path).await.map(|m| m.size.unwrap_or(0)).unwrap_or(0);
+        let total = sftp
+            .metadata(remote_path)
+            .await
+            .map(|m| m.size.unwrap_or(0))
+            .unwrap_or(0);
 
         // リモートファイルを開く
-        let mut remote_file = sftp
-            .open(remote_path)
-            .await
-            .with_context(|| format!("リモートファイルのオープンに失敗しました: {}", remote_path))?;
+        let mut remote_file = sftp.open(remote_path).await.with_context(|| {
+            format!("リモートファイルのオープンに失敗しました: {}", remote_path)
+        })?;
 
         // ローカルファイルに書き込む
-        let mut local_file = tokio::fs::File::create(local_path).await
-            .with_context(|| format!("ローカルファイルの作成に失敗しました: {}", local_path.display()))?;
+        let mut local_file = tokio::fs::File::create(local_path).await.with_context(|| {
+            format!(
+                "ローカルファイルの作成に失敗しました: {}",
+                local_path.display()
+            )
+        })?;
 
         let mut buf = vec![0u8; 32 * 1024]; // 32KB チャンク
         let mut transferred: u64 = 0;
@@ -605,7 +641,12 @@ impl SshSession {
             }
         }
 
-        debug!("SFTP ダウンロード完了: {} → {} ({} bytes)", remote_path, local_path.display(), transferred);
+        debug!(
+            "SFTP ダウンロード完了: {} → {} ({} bytes)",
+            remote_path,
+            local_path.display(),
+            transferred
+        );
         Ok(())
     }
 }
@@ -676,9 +717,14 @@ async fn connect_via_jump(
         let username = jump_user.clone();
         match &target.auth {
             SshAuth::Password(pw) => {
-                jump_handle.authenticate_password(username, pw.as_str()).await?
+                jump_handle
+                    .authenticate_password(username, pw.as_str())
+                    .await?
             }
-            SshAuth::PrivateKey { key_path, passphrase } => {
+            SshAuth::PrivateKey {
+                key_path,
+                passphrase,
+            } => {
                 let key_pair = if let Some(pp) = passphrase {
                     load_secret_key(key_path, Some(pp.as_str()))?
                 } else {
@@ -686,7 +732,9 @@ async fn connect_via_jump(
                 };
                 let best_hash = jump_handle.best_supported_rsa_hash().await?.flatten();
                 let key_with_hash = PrivateKeyWithHashAlg::new(Arc::new(key_pair), best_hash);
-                jump_handle.authenticate_publickey(username, key_with_hash).await?
+                jump_handle
+                    .authenticate_publickey(username, key_with_hash)
+                    .await?
             }
             SshAuth::Agent => {
                 // エージェント認証は SshSession::authenticate_agent で処理するため、
@@ -697,17 +745,17 @@ async fn connect_via_jump(
     };
 
     if !jump_auth_result.success() {
-        bail!("ProxyJump ホストへの認証に失敗しました: {}@{}:{}", jump_user, jump_host, jump_port);
+        bail!(
+            "ProxyJump ホストへの認証に失敗しました: {}@{}:{}",
+            jump_user,
+            jump_host,
+            jump_port
+        );
     }
 
     // ジャンプホスト上でターゲットホストへの direct-tcpip チャネルを開く
     let channel = jump_handle
-        .channel_open_direct_tcpip(
-            target.host.clone(),
-            target.port as u32,
-            "127.0.0.1",
-            0u32,
-        )
+        .channel_open_direct_tcpip(target.host.clone(), target.port as u32, "127.0.0.1", 0u32)
         .await
         .context("ProxyJump: direct-tcpip チャネルのオープンに失敗しました")?;
 
@@ -733,9 +781,7 @@ async fn connect_via_socks5(
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     // "socks5://[user:pass@]host:port" をパースする
-    let without_scheme = socks5_url
-        .strip_prefix("socks5://")
-        .unwrap_or(socks5_url);
+    let without_scheme = socks5_url.strip_prefix("socks5://").unwrap_or(socks5_url);
 
     // "@" がある場合は認証情報を除去してホスト部だけ取り出す
     let host_part = if let Some(at_pos) = without_scheme.find('@') {
@@ -761,7 +807,12 @@ async fn connect_via_socks5(
     // SOCKS5 プロキシに TCP 接続する
     let mut stream = tokio::net::TcpStream::connect((socks_host.as_str(), socks_port))
         .await
-        .with_context(|| format!("SOCKS5 プロキシへの接続に失敗しました: {}:{}", socks_host, socks_port))?;
+        .with_context(|| {
+            format!(
+                "SOCKS5 プロキシへの接続に失敗しました: {}:{}",
+                socks_host, socks_port
+            )
+        })?;
 
     // socks5_url から認証情報を抽出する（"socks5://user:pass@host:port"）
     let (socks_user, socks_pass) = parse_socks5_credentials(socks5_url);
@@ -775,7 +826,7 @@ async fn connect_via_socks5(
     let methods: &[u8] = if socks_user.is_some() {
         &[0x05, 0x02, 0x00, 0x02] // no-auth + user/pass
     } else {
-        &[0x05, 0x01, 0x00]       // no-auth のみ
+        &[0x05, 0x01, 0x00] // no-auth のみ
     };
     stream.write_all(methods).await?;
 
@@ -794,7 +845,10 @@ async fn connect_via_socks5(
             // RFC 1929 ユーザー名/パスワード認証
             let user = socks_user.as_deref().unwrap_or("");
             let pass = socks_pass.as_deref().unwrap_or("");
-            debug!("SOCKS5: ユーザー名/パスワード認証を実行します (user={})", user);
+            debug!(
+                "SOCKS5: ユーザー名/パスワード認証を実行します (user={})",
+                user
+            );
 
             let user_bytes = user.as_bytes();
             let pass_bytes = pass.as_bytes();
@@ -812,7 +866,11 @@ async fn connect_via_socks5(
             let mut auth_resp = [0u8; 2];
             stream.read_exact(&mut auth_resp).await?;
             if auth_resp[1] != 0x00 {
-                bail!("SOCKS5: 認証に失敗しました (user={}, status=0x{:02x})", user, auth_resp[1]);
+                bail!(
+                    "SOCKS5: 認証に失敗しました (user={}, status=0x{:02x})",
+                    user,
+                    auth_resp[1]
+                );
             }
             debug!("SOCKS5: 認証成功");
         }
@@ -820,7 +878,10 @@ async fn connect_via_socks5(
             bail!("SOCKS5: サーバーが利用可能な認証方式を拒否しました");
         }
         other => {
-            bail!("SOCKS5: 認証ネゴシエーションに失敗しました (選択された方式: 0x{:02x})", other);
+            bail!(
+                "SOCKS5: 認証ネゴシエーションに失敗しました (選択された方式: 0x{:02x})",
+                other
+            );
         }
     }
 
@@ -831,11 +892,11 @@ async fn connect_via_socks5(
     let host_bytes = target.host.as_bytes();
     let host_len = host_bytes.len() as u8;
     let mut connect_req = vec![
-        0x05,       // VER
-        0x01,       // CMD=CONNECT
-        0x00,       // RSV
-        0x03,       // ATYP=DOMAINNAME
-        host_len,   // domain length
+        0x05,     // VER
+        0x01,     // CMD=CONNECT
+        0x00,     // RSV
+        0x03,     // ATYP=DOMAINNAME
+        host_len, // domain length
     ];
     connect_req.extend_from_slice(host_bytes);
     connect_req.push((target.port >> 8) as u8);
@@ -848,12 +909,13 @@ async fn connect_via_socks5(
     if header[0] != 0x05 || header[1] != 0x00 {
         bail!(
             "SOCKS5: CONNECT に失敗しました (VER={}, REP={})",
-            header[0], header[1]
+            header[0],
+            header[1]
         );
     }
     // バインドアドレスを読み捨てる
     let bound_addr_len = match header[3] {
-        0x01 => 4usize,  // IPv4
+        0x01 => 4usize, // IPv4
         0x03 => {
             let mut l = [0u8; 1];
             stream.read_exact(&mut l).await?;

@@ -4,9 +4,9 @@
 //! - Windows: Named Pipe (`\\.\pipe\nexterm-<USERNAME>`)
 
 use anyhow::Result;
-use tracing::{error, info};
 #[cfg(unix)]
 use tracing::warn;
+use tracing::{error, info};
 
 use crate::session::SessionManager;
 
@@ -40,7 +40,10 @@ pub(super) async fn serve_unix(
             Ok((stream, _addr)) => {
                 // 接続元の UID がサーバー UID と一致しない場合は拒否する
                 if !verify_peer_uid(&stream, server_uid) {
-                    warn!("UID 不一致の接続を拒否しました（サーバー UID={}）", server_uid);
+                    warn!(
+                        "UID 不一致の接続を拒否しました（サーバー UID={}）",
+                        server_uid
+                    );
                     continue;
                 }
                 let manager = std::sync::Arc::clone(&manager);
@@ -49,9 +52,10 @@ pub(super) async fn serve_unix(
                 let log_config = std::sync::Arc::clone(&log_config);
                 let hosts = std::sync::Arc::clone(&hosts);
                 tokio::spawn(async move {
-                    if let Err(e) =
-                        super::handler::handle_client(stream, manager, hooks, lua, log_config, hosts)
-                            .await
+                    if let Err(e) = super::handler::handle_client(
+                        stream, manager, hooks, lua, log_config, hosts,
+                    )
+                    .await
                     {
                         error!("クライアント処理エラー: {}", e);
                     }
@@ -79,7 +83,11 @@ fn verify_peer_uid(stream: &tokio::net::UnixStream, expected_uid: libc::uid_t) -
 fn peer_uid_impl(stream: &tokio::net::UnixStream) -> Option<libc::uid_t> {
     use std::os::unix::io::AsRawFd;
     let fd = stream.as_raw_fd();
-    let mut cred = libc::ucred { pid: 0, uid: 0, gid: 0 };
+    let mut cred = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
     let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
     // SAFETY: fd は有効な Unix ドメインソケット。cred のサイズは SO_PEERCRED に適合。
     let ret = unsafe {
@@ -95,10 +103,9 @@ fn peer_uid_impl(stream: &tokio::net::UnixStream) -> Option<libc::uid_t> {
         Some(cred.uid)
     } else {
         // SAFETY: __errno_location() はスレッドローカルな errno ポインタを返す。逆参照は常に安全。
-        warn!(
-            "SO_PEERCRED の取得に失敗しました (errno={})",
-            unsafe { *libc::__errno_location() }
-        );
+        warn!("SO_PEERCRED の取得に失敗しました (errno={})", unsafe {
+            *libc::__errno_location()
+        });
         None
     }
 }
@@ -142,8 +149,8 @@ fn peer_uid_impl(_stream: &tokio::net::UnixStream) -> Option<libc::uid_t> {
 pub(super) fn unix_socket_path() -> String {
     // SAFETY: getuid() は常に成功し、副作用なし。
     let uid = unsafe { libc::getuid() };
-    let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-        .unwrap_or_else(|_| format!("/run/user/{}", uid));
+    let runtime_dir =
+        std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/run/user/{}", uid));
     format!("{}/nexterm.sock", runtime_dir)
 }
 
@@ -178,8 +185,7 @@ pub(super) async fn serve_named_pipe(
         let hosts = std::sync::Arc::clone(&hosts);
         tokio::spawn(async move {
             if let Err(e) =
-                super::handler::handle_client(server, manager, hooks, lua, log_config, hosts)
-                    .await
+                super::handler::handle_client(server, manager, hooks, lua, log_config, hosts).await
             {
                 error!("クライアント処理エラー: {}", e);
             }

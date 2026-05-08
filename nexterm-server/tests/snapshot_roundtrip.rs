@@ -4,8 +4,8 @@
 //! ファイルへの書き込み→読み込みラウンドトリップを検証する。
 
 use nexterm_server::snapshot::{
-    ServerSnapshot, SessionSnapshot, SplitDirSnapshot, SplitNodeSnapshot, WindowSnapshot,
-    SNAPSHOT_VERSION, SNAPSHOT_VERSION_MIN,
+    SNAPSHOT_VERSION, SNAPSHOT_VERSION_MIN, ServerSnapshot, SessionSnapshot, SplitDirSnapshot,
+    SplitNodeSnapshot, WindowSnapshot,
 };
 
 fn minimal_snapshot() -> ServerSnapshot {

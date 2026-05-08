@@ -186,9 +186,10 @@ impl ClientState {
     /// 期限切れのエラートーストを消去する（3秒後）
     pub fn tick_toasts(&mut self) {
         if let Some(toast) = &self.error_toast
-            && toast.shown_at.elapsed().as_secs() >= 3 {
-                self.error_toast = None;
-            }
+            && toast.shown_at.elapsed().as_secs() >= 3
+        {
+            self.error_toast = None;
+        }
     }
 
     /// Ctrl+B プレフィックスモードを開始する

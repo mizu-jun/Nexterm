@@ -72,8 +72,14 @@ fn スナップショット変換の往復整合性() {
     let snap_before = SplitNodeSnapshot::Split {
         dir: SplitDirSnapshot::Vertical,
         ratio: 0.5,
-        left: Box::new(SplitNodeSnapshot::Pane { pane_id: 1, cwd: None }),
-        right: Box::new(SplitNodeSnapshot::Pane { pane_id: 2, cwd: None }),
+        left: Box::new(SplitNodeSnapshot::Pane {
+            pane_id: 1,
+            cwd: None,
+        }),
+        right: Box::new(SplitNodeSnapshot::Pane {
+            pane_id: 2,
+            cwd: None,
+        }),
     };
     let node = bsp::SplitNode::from_snapshot(&snap_before);
     let snap_after = node.to_snapshot();

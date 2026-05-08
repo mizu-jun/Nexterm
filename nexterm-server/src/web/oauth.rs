@@ -24,8 +24,8 @@ use std::{
 
 use nexterm_config::OAuthConfig;
 use oauth2::{
-    AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointSet, RedirectUrl,
-    Scope, TokenResponse, TokenUrl,
+    AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointSet, RedirectUrl, Scope,
+    TokenResponse, TokenUrl,
     basic::{BasicClient, BasicTokenResponse},
 };
 use serde::Deserialize;
@@ -93,7 +93,10 @@ impl OAuthManager {
 
         // state を保存する（10 分で自動期限切れ）
         let expiry = Instant::now() + STATE_TTL;
-        let mut states = self.pending_states.lock().expect("OAuth pending_states mutex poisoned");
+        let mut states = self
+            .pending_states
+            .lock()
+            .expect("OAuth pending_states mutex poisoned");
         // 古いエントリを掃除する
         states.retain(|_, v| Instant::now() < *v);
         states.insert(csrf_token.secret().clone(), expiry);
@@ -102,14 +105,13 @@ impl OAuthManager {
     }
 
     /// コールバックの code と state を検証してユーザー情報を取得する
-    pub async fn exchange_code(
-        &self,
-        code: String,
-        state: String,
-    ) -> anyhow::Result<OAuthUser> {
+    pub async fn exchange_code(&self, code: String, state: String) -> anyhow::Result<OAuthUser> {
         // state 検証（CSRF 対策）
         {
-            let mut states = self.pending_states.lock().expect("OAuth pending_states mutex poisoned");
+            let mut states = self
+                .pending_states
+                .lock()
+                .expect("OAuth pending_states mutex poisoned");
             match states.remove(&state) {
                 Some(expiry) if Instant::now() < expiry => {
                     // 有効な state
@@ -311,9 +313,9 @@ impl OAuthManager {
             .json()
             .await?;
 
-        let userinfo_endpoint = discovery
-            .userinfo_endpoint
-            .ok_or_else(|| anyhow::anyhow!("OIDC ディスカバリーに userinfo_endpoint がありません"))?;
+        let userinfo_endpoint = discovery.userinfo_endpoint.ok_or_else(|| {
+            anyhow::anyhow!("OIDC ディスカバリーに userinfo_endpoint がありません")
+        })?;
 
         let user: OidcUser = client
             .get(&userinfo_endpoint)
@@ -339,19 +341,22 @@ impl OAuthManager {
         // メールアドレスチェック
         if !self.config.allowed_emails.is_empty()
             && let Some(email) = &user.email
-                && self.config.allowed_emails.contains(email) {
-                    return true;
-                }
-            // allowed_emails が設定されていてメールが一致しない場合は
-            // allowed_orgs も確認する
+            && self.config.allowed_emails.contains(email)
+        {
+            return true;
+        }
+        // allowed_emails が設定されていてメールが一致しない場合は
+        // allowed_orgs も確認する
 
         // GitHub Organization チェック
-        if !self.config.allowed_orgs.is_empty() && self.config.provider == "github"
+        if !self.config.allowed_orgs.is_empty()
+            && self.config.provider == "github"
             && let Some(login) = &user.login
-                && let Some(token) = self.get_current_token().await
-                    && self.check_github_org(&token, login).await {
-                        return true;
-                    }
+            && let Some(token) = self.get_current_token().await
+            && self.check_github_org(&token, login).await
+        {
+            return true;
+        }
 
         // 両方の許可リストが空 → 全員許可
         if self.config.allowed_emails.is_empty() && self.config.allowed_orgs.is_empty() {
@@ -377,9 +382,10 @@ impl OAuthManager {
                 .header("User-Agent", "nexterm/1.0")
                 .send()
                 .await
-                && resp.status().is_success() {
-                    return true;
-                }
+                && resp.status().is_success()
+            {
+                return true;
+            }
         }
         false
     }
@@ -413,9 +419,11 @@ impl OAuthManager {
 
         let (auth_url, token_url) = self.provider_urls()?;
 
-        let redirect_url = self.config.redirect_url.clone().unwrap_or_else(|| {
-            format!("{}/auth/callback", self.redirect_base)
-        });
+        let redirect_url = self
+            .config
+            .redirect_url
+            .clone()
+            .unwrap_or_else(|| format!("{}/auth/callback", self.redirect_base));
 
         // oauth2 v5: BasicClient::new は client_id のみ受け取り、他はメソッドチェーンで設定する
         let client = BasicClient::new(client_id)
@@ -448,21 +456,14 @@ impl OAuthManager {
                 "https://oauth2.googleapis.com/token".to_string(),
             )),
             "azure" => {
-                let tenant = self
-                    .config
-                    .issuer_url
-                    .as_deref()
-                    .unwrap_or("common");
+                let tenant = self.config.issuer_url.as_deref().unwrap_or("common");
                 // tenant が完全な URL かテナント ID かを判定する
                 let base = if tenant.starts_with("http") {
                     tenant.trim_end_matches('/').to_string()
                 } else {
                     format!("https://login.microsoftonline.com/{}/v2.0", tenant)
                 };
-                Ok((
-                    format!("{}/authorize", base),
-                    format!("{}/token", base),
-                ))
+                Ok((format!("{}/authorize", base), format!("{}/token", base)))
             }
             "oidc" => {
                 // 事前にディスカバリーから取得した URL を使う
@@ -473,10 +474,7 @@ impl OAuthManager {
                     .as_deref()
                     .ok_or_else(|| anyhow::anyhow!("oidc プロバイダーには issuer_url が必要です"))?
                     .trim_end_matches('/');
-                Ok((
-                    format!("{}/authorize", base),
-                    format!("{}/token", base),
-                ))
+                Ok((format!("{}/authorize", base), format!("{}/token", base)))
             }
             other => anyhow::bail!("未対応の OAuth プロバイダー: {}", other),
         }
@@ -486,14 +484,22 @@ impl OAuthManager {
     fn required_scopes(&self) -> Vec<String> {
         match self.config.provider.as_str() {
             "github" => vec!["read:user".to_string(), "user:email".to_string()],
-            "google" => vec!["openid".to_string(), "email".to_string(), "profile".to_string()],
+            "google" => vec![
+                "openid".to_string(),
+                "email".to_string(),
+                "profile".to_string(),
+            ],
             "azure" => vec![
                 "openid".to_string(),
                 "email".to_string(),
                 "profile".to_string(),
                 "User.Read".to_string(),
             ],
-            "oidc" => vec!["openid".to_string(), "email".to_string(), "profile".to_string()],
+            "oidc" => vec![
+                "openid".to_string(),
+                "email".to_string(),
+                "profile".to_string(),
+            ],
             _ => vec![],
         }
     }

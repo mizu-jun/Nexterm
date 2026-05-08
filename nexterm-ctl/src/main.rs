@@ -15,15 +15,15 @@
 //! nexterm-ctl template list                 # List all saved templates
 //! ```
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Arg, Command};
 use clap_complete::{Shell, generate};
 use clap_mangen::Man;
 use nexterm_i18n::fl;
 use nexterm_proto::{ClientToServer, ServerToClient};
+use std::path::Path;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing_subscriber::EnvFilter;
-use std::path::Path;
 
 // ---- CLI 定義（ビルダー形式でロケール対応） ----
 
@@ -107,14 +107,8 @@ fn build_cli() -> Command {
                     Command::new("install")
                         .about("Install nexterm server as an auto-start service"),
                 )
-                .subcommand(
-                    Command::new("uninstall")
-                        .about("Uninstall the nexterm server service"),
-                )
-                .subcommand(
-                    Command::new("status")
-                        .about("Show service installation status"),
-                ),
+                .subcommand(Command::new("uninstall").about("Uninstall the nexterm server service"))
+                .subcommand(Command::new("status").about("Show service installation status")),
         )
         .subcommand(
             Command::new("import-ghostty")
@@ -191,7 +185,10 @@ async fn main() -> Result<()> {
     match matches.subcommand() {
         Some(("list", _)) => cmd_list().await,
         Some(("new", sub)) => {
-            let name = sub.get_one::<String>("name").expect("clap required arg").clone();
+            let name = sub
+                .get_one::<String>("name")
+                .expect("clap required arg")
+                .clone();
             cmd_new(name).await
         }
         Some(("attach", sub)) => {
@@ -199,17 +196,29 @@ async fn main() -> Result<()> {
             cmd_attach(name)
         }
         Some(("kill", sub)) => {
-            let name = sub.get_one::<String>("name").expect("clap required arg").clone();
+            let name = sub
+                .get_one::<String>("name")
+                .expect("clap required arg")
+                .clone();
             cmd_kill(name).await
         }
         Some(("record", sub)) => match sub.subcommand() {
             Some(("start", s)) => {
-                let session = s.get_one::<String>("session").expect("clap required arg").clone();
-                let file = s.get_one::<String>("file").expect("clap required arg").clone();
+                let session = s
+                    .get_one::<String>("session")
+                    .expect("clap required arg")
+                    .clone();
+                let file = s
+                    .get_one::<String>("file")
+                    .expect("clap required arg")
+                    .clone();
                 cmd_record_start(session, file).await
             }
             Some(("stop", s)) => {
-                let session = s.get_one::<String>("session").expect("clap required arg").clone();
+                let session = s
+                    .get_one::<String>("session")
+                    .expect("clap required arg")
+                    .clone();
                 cmd_record_stop(session).await
             }
             _ => unreachable!(),
@@ -227,7 +236,10 @@ async fn main() -> Result<()> {
         }
         Some(("theme", sub)) => match sub.subcommand() {
             Some(("import", s)) => {
-                let path = s.get_one::<String>("path").expect("clap required arg").clone();
+                let path = s
+                    .get_one::<String>("path")
+                    .expect("clap required arg")
+                    .clone();
                 cmd_theme_import(path)
             }
             _ => unreachable!(),
@@ -240,18 +252,35 @@ async fn main() -> Result<()> {
         Some(("completions", sub)) => {
             let shell_str = sub.get_one::<String>("shell").expect("clap required arg");
             let shell: Shell = shell_str.parse().expect("valid shell");
-            generate(shell, &mut build_cli(), "nexterm-ctl", &mut std::io::stdout());
+            generate(
+                shell,
+                &mut build_cli(),
+                "nexterm-ctl",
+                &mut std::io::stdout(),
+            );
             Ok(())
         }
         Some(("template", sub)) => match sub.subcommand() {
             Some(("save", s)) => {
-                let name = s.get_one::<String>("name").expect("clap required arg").clone();
-                let session = s.get_one::<String>("session").expect("clap required arg").clone();
+                let name = s
+                    .get_one::<String>("name")
+                    .expect("clap required arg")
+                    .clone();
+                let session = s
+                    .get_one::<String>("session")
+                    .expect("clap required arg")
+                    .clone();
                 cmd_template_save(name, session).await
             }
             Some(("load", s)) => {
-                let name = s.get_one::<String>("name").expect("clap required arg").clone();
-                let session = s.get_one::<String>("session").expect("clap required arg").clone();
+                let name = s
+                    .get_one::<String>("name")
+                    .expect("clap required arg")
+                    .clone();
+                let session = s
+                    .get_one::<String>("session")
+                    .expect("clap required arg")
+                    .clone();
                 cmd_template_load(name, session).await
             }
             Some(("list", _)) => cmd_template_list().await,
@@ -260,15 +289,24 @@ async fn main() -> Result<()> {
         Some(("plugin", sub)) => match sub.subcommand() {
             Some(("list", _)) => cmd_plugin_list().await,
             Some(("load", s)) => {
-                let path = s.get_one::<String>("path").expect("clap required arg").clone();
+                let path = s
+                    .get_one::<String>("path")
+                    .expect("clap required arg")
+                    .clone();
                 cmd_plugin_load(path).await
             }
             Some(("unload", s)) => {
-                let path = s.get_one::<String>("path").expect("clap required arg").clone();
+                let path = s
+                    .get_one::<String>("path")
+                    .expect("clap required arg")
+                    .clone();
                 cmd_plugin_unload(path).await
             }
             Some(("reload", s)) => {
-                let path = s.get_one::<String>("path").expect("clap required arg").clone();
+                let path = s
+                    .get_one::<String>("path")
+                    .expect("clap required arg")
+                    .clone();
                 cmd_plugin_reload(path).await
             }
             _ => unreachable!(),
@@ -360,7 +398,8 @@ fn cmd_attach(name: &str) -> Result<()> {
 /// セッションを強制終了する
 async fn cmd_kill(name: String) -> Result<()> {
     let mut conn = IpcConn::connect().await?;
-    conn.send(ClientToServer::KillSession { name: name.clone() }).await?;
+    conn.send(ClientToServer::KillSession { name: name.clone() })
+        .await?;
     match conn.recv().await? {
         ServerToClient::SessionList { .. } => {
             println!("{}", fl!("ctl-session-killed", name = name));
@@ -383,7 +422,12 @@ async fn cmd_record_start(session: String, file: String) -> Result<()> {
         ServerToClient::RecordingStarted { pane_id, path } => {
             println!(
                 "{}",
-                fl!("ctl-record-started", session = session, pane_id = pane_id, path = path)
+                fl!(
+                    "ctl-record-started",
+                    session = session,
+                    pane_id = pane_id,
+                    path = path
+                )
             );
         }
         ServerToClient::Error { message } => bail!("{}", fl!("ctl-error", message = message)),
@@ -395,10 +439,16 @@ async fn cmd_record_start(session: String, file: String) -> Result<()> {
 /// セッションのフォーカスペインの録音を停止する
 async fn cmd_record_stop(session: String) -> Result<()> {
     let mut conn = IpcConn::connect().await?;
-    conn.send(ClientToServer::StopRecording { session_name: session.clone() }).await?;
+    conn.send(ClientToServer::StopRecording {
+        session_name: session.clone(),
+    })
+    .await?;
     match conn.recv().await? {
         ServerToClient::RecordingStopped { pane_id } => {
-            println!("{}", fl!("ctl-record-stopped", session = session, pane_id = pane_id));
+            println!(
+                "{}",
+                fl!("ctl-record-stopped", session = session, pane_id = pane_id)
+            );
         }
         ServerToClient::Error { message } => bail!("{}", fl!("ctl-error", message = message)),
         _ => {}
@@ -412,7 +462,10 @@ async fn cmd_record_stop(session: String) -> Result<()> {
 async fn cmd_template_save(name: String, session: String) -> Result<()> {
     let mut conn = IpcConn::connect().await?;
     // セッションにアタッチしてから SaveTemplate を送信する
-    conn.send(ClientToServer::Attach { session_name: session.clone() }).await?;
+    conn.send(ClientToServer::Attach {
+        session_name: session.clone(),
+    })
+    .await?;
     // Attach の応答（FullRefresh, LayoutChanged, SessionList）を読み飛ばす
     for _ in 0..8 {
         match conn.recv().await? {
@@ -421,9 +474,13 @@ async fn cmd_template_save(name: String, session: String) -> Result<()> {
             _ => {}
         }
     }
-    conn.send(ClientToServer::SaveTemplate { name: name.clone() }).await?;
+    conn.send(ClientToServer::SaveTemplate { name: name.clone() })
+        .await?;
     match conn.recv().await? {
-        ServerToClient::TemplateSaved { name: saved_name, path } => {
+        ServerToClient::TemplateSaved {
+            name: saved_name,
+            path,
+        } => {
             println!("テンプレート '{}' を保存しました: {}", saved_name, path);
         }
         ServerToClient::Error { message } => bail!("{}", message),
@@ -436,7 +493,10 @@ async fn cmd_template_save(name: String, session: String) -> Result<()> {
 /// 保存済みテンプレートを読み込む
 async fn cmd_template_load(name: String, session: String) -> Result<()> {
     let mut conn = IpcConn::connect().await?;
-    conn.send(ClientToServer::Attach { session_name: session.clone() }).await?;
+    conn.send(ClientToServer::Attach {
+        session_name: session.clone(),
+    })
+    .await?;
     for _ in 0..8 {
         match conn.recv().await? {
             ServerToClient::SessionList { .. } => break,
@@ -444,7 +504,8 @@ async fn cmd_template_load(name: String, session: String) -> Result<()> {
             _ => {}
         }
     }
-    conn.send(ClientToServer::LoadTemplate { name: name.clone() }).await?;
+    conn.send(ClientToServer::LoadTemplate { name: name.clone() })
+        .await?;
     match conn.recv().await? {
         ServerToClient::TemplateLoaded { name: loaded_name } => {
             println!("テンプレート '{}' を読み込みました", loaded_name);
@@ -523,7 +584,14 @@ fn cmd_service_status() -> Result<()> {
             match status {
                 Ok(o) => {
                     let state = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                    println!("状態: {}", if state == "active" { "実行中" } else { &state });
+                    println!(
+                        "状態: {}",
+                        if state == "active" {
+                            "実行中"
+                        } else {
+                            &state
+                        }
+                    );
                 }
                 Err(_) => println!("状態: 不明（systemctl が見つかりません）"),
             }
@@ -578,7 +646,9 @@ fn systemd_unit_path() -> Result<std::path::PathBuf> {
 fn nexterm_server_bin() -> Result<String> {
     // 自分自身（nexterm-ctl）と同じディレクトリにある nexterm-server を探す
     let exe = std::env::current_exe().context("実行ファイルパスの取得に失敗しました")?;
-    let dir = exe.parent().context("実行ファイルのディレクトリ取得に失敗しました")?;
+    let dir = exe
+        .parent()
+        .context("実行ファイルのディレクトリ取得に失敗しました")?;
     let server = dir.join("nexterm-server");
     if server.exists() {
         Ok(server.to_string_lossy().to_string())
@@ -618,8 +688,12 @@ WantedBy=default.target
         server_bin = server_bin
     );
 
-    std::fs::write(&unit_path, &unit)
-        .with_context(|| format!("ユニットファイルの書き込みに失敗しました: {}", unit_path.display()))?;
+    std::fs::write(&unit_path, &unit).with_context(|| {
+        format!(
+            "ユニットファイルの書き込みに失敗しました: {}",
+            unit_path.display()
+        )
+    })?;
 
     // systemctl --user daemon-reload && enable && start
     let cmds: &[&[&str]] = &[
@@ -656,8 +730,12 @@ fn service_uninstall_systemd() -> Result<()> {
         .status();
 
     if unit_path.exists() {
-        std::fs::remove_file(&unit_path)
-            .with_context(|| format!("ユニットファイルの削除に失敗しました: {}", unit_path.display()))?;
+        std::fs::remove_file(&unit_path).with_context(|| {
+            format!(
+                "ユニットファイルの削除に失敗しました: {}",
+                unit_path.display()
+            )
+        })?;
     }
 
     let _ = std::process::Command::new("systemctl")
@@ -682,7 +760,9 @@ fn launchd_plist_path() -> Result<std::path::PathBuf> {
 #[cfg(target_os = "macos")]
 fn nexterm_server_bin() -> Result<String> {
     let exe = std::env::current_exe().context("実行ファイルパスの取得に失敗しました")?;
-    let dir = exe.parent().context("実行ファイルのディレクトリ取得に失敗しました")?;
+    let dir = exe
+        .parent()
+        .context("実行ファイルのディレクトリ取得に失敗しました")?;
     let server = dir.join("nexterm-server");
     if server.exists() {
         Ok(server.to_string_lossy().to_string())
@@ -729,8 +809,12 @@ fn service_install_launchd() -> Result<()> {
         home = home
     );
 
-    std::fs::write(&plist_path, &plist)
-        .with_context(|| format!("plist ファイルの書き込みに失敗しました: {}", plist_path.display()))?;
+    std::fs::write(&plist_path, &plist).with_context(|| {
+        format!(
+            "plist ファイルの書き込みに失敗しました: {}",
+            plist_path.display()
+        )
+    })?;
 
     let status = std::process::Command::new("launchctl")
         .args(["load", "-w", &plist_path.to_string_lossy()])
@@ -755,8 +839,12 @@ fn service_uninstall_launchd() -> Result<()> {
         let _ = std::process::Command::new("launchctl")
             .args(["unload", "-w", &plist_path.to_string_lossy()])
             .status();
-        std::fs::remove_file(&plist_path)
-            .with_context(|| format!("plist ファイルの削除に失敗しました: {}", plist_path.display()))?;
+        std::fs::remove_file(&plist_path).with_context(|| {
+            format!(
+                "plist ファイルの削除に失敗しました: {}",
+                plist_path.display()
+            )
+        })?;
         println!("nexterm-server サービスを削除しました");
     } else {
         println!("サービスはインストールされていません");
@@ -768,7 +856,9 @@ fn service_uninstall_launchd() -> Result<()> {
 
 #[cfg(windows)]
 fn service_install_windows() -> Result<()> {
-    bail!("Windows サービス登録は現在準備中です。\nタスクスケジューラでの自動起動を代替として使用してください。")
+    bail!(
+        "Windows サービス登録は現在準備中です。\nタスクスケジューラでの自動起動を代替として使用してください。"
+    )
 }
 
 #[cfg(windows)]
@@ -785,9 +875,7 @@ fn cmd_import_ghostty(path: Option<String>, output: Option<String>) -> Result<()
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_else(|_| ".".to_string());
 
-    let input_path = path.unwrap_or_else(|| {
-        format!("{}/.config/ghostty/config", home)
-    });
+    let input_path = path.unwrap_or_else(|| format!("{}/.config/ghostty/config", home));
 
     if !Path::new(&input_path).exists() {
         bail!(
@@ -797,15 +885,17 @@ fn cmd_import_ghostty(path: Option<String>, output: Option<String>) -> Result<()
         );
     }
 
-    let content = std::fs::read_to_string(&input_path)
-        .with_context(|| format!("Ghostty 設定ファイルの読み込みに失敗しました: {}", input_path))?;
+    let content = std::fs::read_to_string(&input_path).with_context(|| {
+        format!(
+            "Ghostty 設定ファイルの読み込みに失敗しました: {}",
+            input_path
+        )
+    })?;
 
     let converted = parse_ghostty_config(&content)?;
 
     // 出力パスのデフォルト: ~/.config/nexterm/config.toml
-    let output_path = output.unwrap_or_else(|| {
-        format!("{}/.config/nexterm/config.toml", home)
-    });
+    let output_path = output.unwrap_or_else(|| format!("{}/.config/nexterm/config.toml", home));
 
     // 出力ディレクトリを作成する
     if let Some(parent) = Path::new(&output_path).parent() {
@@ -871,9 +961,14 @@ fn parse_ghostty_config(content: &str) -> Result<GhosttyConverted> {
         }
 
         // `key = value` を分割する
-        let Some(eq_pos) = trimmed.find('=') else { continue };
+        let Some(eq_pos) = trimmed.find('=') else {
+            continue;
+        };
         let key = trimmed[..eq_pos].trim();
-        let value = trimmed[eq_pos + 1..].trim().trim_matches('"').trim_matches('\'');
+        let value = trimmed[eq_pos + 1..]
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'');
 
         match key {
             "font-family" => font_family = Some(value.to_string()),
@@ -886,16 +981,19 @@ fn parse_ghostty_config(content: &str) -> Result<GhosttyConverted> {
             "palette" => {
                 if let Some((idx_str, color)) = value.split_once('=')
                     && let Ok(idx) = idx_str.trim().parse::<usize>()
-                        && idx < 16 {
-                            ansi[idx] = Some(normalize_color(color.trim()));
-                        }
+                    && idx < 16
+                {
+                    ansi[idx] = Some(normalize_color(color.trim()));
+                }
             }
             // 未対応キーはメモに追記する
             "theme" => notes.push(format!(
-                "theme = \"{}\" は手動で nexterm の color-scheme に変換してください", value
+                "theme = \"{}\" は手動で nexterm の color-scheme に変換してください",
+                value
             )),
             "keybind" => notes.push(format!(
-                "keybind = {} は nexterm の [keybindings] に手動でマッピングしてください", value
+                "keybind = {} は nexterm の [keybindings] に手動でマッピングしてください",
+                value
             )),
             "shell-integration" | "shell-integration-features" => {
                 notes.push(format!("{} は nexterm では自動的に統合されます", key))
@@ -906,11 +1004,18 @@ fn parse_ghostty_config(content: &str) -> Result<GhosttyConverted> {
             }
             _ => {
                 // 重要そうなキーのみメモ（細かいものは無視）
-                if !matches!(key,
-                    "cursor-style" | "cursor-style-blink" | "scrollback-limit" |
-                    "clipboard-read" | "clipboard-write" | "mouse-hide-while-typing"
-                ) && !key.starts_with("gtk-") && !key.starts_with("macos-")
-                    && !key.starts_with("linux-") && !key.starts_with("windows-")
+                if !matches!(
+                    key,
+                    "cursor-style"
+                        | "cursor-style-blink"
+                        | "scrollback-limit"
+                        | "clipboard-read"
+                        | "clipboard-write"
+                        | "mouse-hide-while-typing"
+                ) && !key.starts_with("gtk-")
+                    && !key.starts_with("macos-")
+                    && !key.starts_with("linux-")
+                    && !key.starts_with("windows-")
                 {
                     // 未対応のキーは無視（警告しすぎるとユーザーが混乱する）
                 }
@@ -933,17 +1038,28 @@ fn parse_ghostty_config(content: &str) -> Result<GhosttyConverted> {
     };
 
     // [color-scheme.custom] セクションの生成
-    let palette_toml = if background.is_some() || foreground.is_some() || ansi.iter().any(|a| a.is_some()) {
+    let palette_toml = if background.is_some()
+        || foreground.is_some()
+        || ansi.iter().any(|a| a.is_some())
+    {
         let bg = background.clone().unwrap_or_else(|| "#1d1f21".to_string());
         let fg = foreground.clone().unwrap_or_else(|| "#c5c8c6".to_string());
         let cur = cursor_color.clone().unwrap_or_else(|| fg.clone());
-        let ansi_arr: Vec<String> = ansi.iter().enumerate().map(|(i, a)| {
-            a.clone().unwrap_or_else(|| {
-                // デフォルト ANSI カラー
-                DEFAULT_ANSI_COLORS[i % 16].to_string()
+        let ansi_arr: Vec<String> = ansi
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                a.clone().unwrap_or_else(|| {
+                    // デフォルト ANSI カラー
+                    DEFAULT_ANSI_COLORS[i % 16].to_string()
+                })
             })
-        }).collect();
-        let ansi_str = ansi_arr.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ");
+            .collect();
+        let ansi_str = ansi_arr
+            .iter()
+            .map(|c| format!("\"{}\"", c))
+            .collect::<Vec<_>>()
+            .join(", ");
         Some(format!(
             "[color-scheme.custom]\nforeground = \"{}\"\nbackground = \"{}\"\ncursor = \"{}\"\nansi = [{}]\n",
             fg, bg, cur, ansi_str
@@ -953,9 +1069,15 @@ fn parse_ghostty_config(content: &str) -> Result<GhosttyConverted> {
     };
 
     // [window] セクションの生成
-    let window_toml = background_opacity.map(|opacity| format!("[window]\nbackground_opacity = {:.2}\n", opacity));
+    let window_toml = background_opacity
+        .map(|opacity| format!("[window]\nbackground_opacity = {:.2}\n", opacity));
 
-    Ok(GhosttyConverted { font_toml, palette_toml, window_toml, notes })
+    Ok(GhosttyConverted {
+        font_toml,
+        palette_toml,
+        window_toml,
+        notes,
+    })
 }
 
 /// カラー文字列を正規化する（"RRGGBB" → "#RRGGBB"、既に "#" がある場合はそのまま）
@@ -970,10 +1092,8 @@ fn normalize_color(s: &str) -> String {
 
 /// デフォルト ANSI 16色（フォールバック用）
 const DEFAULT_ANSI_COLORS: &[&str] = &[
-    "#2E3440", "#BF616A", "#A3BE8C", "#EBCB8B",
-    "#81A1C1", "#B48EAD", "#88C0D0", "#E5E9F0",
-    "#4C566A", "#BF616A", "#A3BE8C", "#EBCB8B",
-    "#81A1C1", "#B48EAD", "#8FBCBB", "#ECEFF4",
+    "#2E3440", "#BF616A", "#A3BE8C", "#EBCB8B", "#81A1C1", "#B48EAD", "#88C0D0", "#E5E9F0",
+    "#4C566A", "#BF616A", "#A3BE8C", "#EBCB8B", "#81A1C1", "#B48EAD", "#8FBCBB", "#ECEFF4",
 ];
 
 /// 既存の config.toml に Ghostty から変換した設定をマージする
@@ -1054,10 +1174,22 @@ fn cmd_theme_import(path: String) -> Result<()> {
     println!("  cursor:     {}", palette.cursor);
     println!("  ANSI 16色:");
     let names = [
-        "black  ", "red    ", "green  ", "yellow ",
-        "blue   ", "magenta", "cyan   ", "white  ",
-        "br-black  ", "br-red    ", "br-green  ", "br-yellow ",
-        "br-blue   ", "br-magenta", "br-cyan   ", "br-white  ",
+        "black  ",
+        "red    ",
+        "green  ",
+        "yellow ",
+        "blue   ",
+        "magenta",
+        "cyan   ",
+        "white  ",
+        "br-black  ",
+        "br-red    ",
+        "br-green  ",
+        "br-yellow ",
+        "br-blue   ",
+        "br-magenta",
+        "br-cyan   ",
+        "br-white  ",
     ];
     for (i, color) in palette.ansi.iter().enumerate() {
         let label = names.get(i).copied().unwrap_or("?");
@@ -1120,28 +1252,41 @@ fn iterm_extract_component(dict: &str, component_key: &str) -> Option<f64> {
 fn parse_iterm_colors(content: &str) -> Result<ImportedPalette> {
     // ANSI 0–15 の対応
     let ansi_key_names = [
-        "Ansi 0 Color",  "Ansi 1 Color",  "Ansi 2 Color",  "Ansi 3 Color",
-        "Ansi 4 Color",  "Ansi 5 Color",  "Ansi 6 Color",  "Ansi 7 Color",
-        "Ansi 8 Color",  "Ansi 9 Color",  "Ansi 10 Color", "Ansi 11 Color",
-        "Ansi 12 Color", "Ansi 13 Color", "Ansi 14 Color", "Ansi 15 Color",
+        "Ansi 0 Color",
+        "Ansi 1 Color",
+        "Ansi 2 Color",
+        "Ansi 3 Color",
+        "Ansi 4 Color",
+        "Ansi 5 Color",
+        "Ansi 6 Color",
+        "Ansi 7 Color",
+        "Ansi 8 Color",
+        "Ansi 9 Color",
+        "Ansi 10 Color",
+        "Ansi 11 Color",
+        "Ansi 12 Color",
+        "Ansi 13 Color",
+        "Ansi 14 Color",
+        "Ansi 15 Color",
     ];
 
     let mut ansi = Vec::with_capacity(16);
     for key in &ansi_key_names {
-        ansi.push(
-            iterm_extract_color(content, key)
-                .unwrap_or_else(|| "#000000".to_string()),
-        );
+        ansi.push(iterm_extract_color(content, key).unwrap_or_else(|| "#000000".to_string()));
     }
 
-    let foreground = iterm_extract_color(content, "Foreground Color")
-        .unwrap_or_else(|| "#c5c8c6".to_string());
-    let background = iterm_extract_color(content, "Background Color")
-        .unwrap_or_else(|| "#1d1f21".to_string());
-    let cursor = iterm_extract_color(content, "Cursor Color")
-        .unwrap_or_else(|| foreground.clone());
+    let foreground =
+        iterm_extract_color(content, "Foreground Color").unwrap_or_else(|| "#c5c8c6".to_string());
+    let background =
+        iterm_extract_color(content, "Background Color").unwrap_or_else(|| "#1d1f21".to_string());
+    let cursor = iterm_extract_color(content, "Cursor Color").unwrap_or_else(|| foreground.clone());
 
-    Ok(ImportedPalette { foreground, background, cursor, ansi })
+    Ok(ImportedPalette {
+        foreground,
+        background,
+        cursor,
+        ansi,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1179,12 +1324,24 @@ fn parse_alacritty_yaml(content: &str) -> Result<ImportedPalette> {
 
     // ANSI color name → index mapping
     let normal_map: &[(&str, usize)] = &[
-        ("black", 0), ("red", 1), ("green", 2), ("yellow", 3),
-        ("blue", 4), ("magenta", 5), ("cyan", 6), ("white", 7),
+        ("black", 0),
+        ("red", 1),
+        ("green", 2),
+        ("yellow", 3),
+        ("blue", 4),
+        ("magenta", 5),
+        ("cyan", 6),
+        ("white", 7),
     ];
     let bright_map: &[(&str, usize)] = &[
-        ("black", 8), ("red", 9), ("green", 10), ("yellow", 11),
-        ("blue", 12), ("magenta", 13), ("cyan", 14), ("white", 15),
+        ("black", 8),
+        ("red", 9),
+        ("green", 10),
+        ("yellow", 11),
+        ("blue", 12),
+        ("magenta", 13),
+        ("cyan", 14),
+        ("white", 15),
     ];
 
     let mut in_primary = false;
@@ -1238,33 +1395,41 @@ fn parse_alacritty_yaml(content: &str) -> Result<ImportedPalette> {
                     background = hex;
                 }
             } else if trimmed.starts_with("foreground:")
-                && let Some(hex) = yaml_extract_hex(trimmed) {
-                    foreground = hex;
-                }
+                && let Some(hex) = yaml_extract_hex(trimmed)
+            {
+                foreground = hex;
+            }
         }
 
         if in_normal {
             for (name, idx) in normal_map {
                 if trimmed.starts_with(name)
-                    && let Some(hex) = yaml_extract_hex(trimmed) {
-                        ansi[*idx] = hex;
-                    }
+                    && let Some(hex) = yaml_extract_hex(trimmed)
+                {
+                    ansi[*idx] = hex;
+                }
             }
         }
 
         if in_bright {
             for (name, idx) in bright_map {
                 if trimmed.starts_with(name)
-                    && let Some(hex) = yaml_extract_hex(trimmed) {
-                        ansi[*idx] = hex;
-                    }
+                    && let Some(hex) = yaml_extract_hex(trimmed)
+                {
+                    ansi[*idx] = hex;
+                }
             }
         }
 
         let _ = in_cursor_section;
     }
 
-    Ok(ImportedPalette { foreground, background, cursor, ansi })
+    Ok(ImportedPalette {
+        foreground,
+        background,
+        cursor,
+        ansi,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1276,10 +1441,8 @@ fn parse_base16_toml(content: &str) -> Result<ImportedPalette> {
     // base00 = background, base05 = foreground
     // ANSI マッピング: base16 → 16色
     let base_keys = [
-        "base00", "base01", "base02", "base03",
-        "base04", "base05", "base06", "base07",
-        "base08", "base09", "base0A", "base0B",
-        "base0C", "base0D", "base0E", "base0F",
+        "base00", "base01", "base02", "base03", "base04", "base05", "base06", "base07", "base08",
+        "base09", "base0A", "base0B", "base0C", "base0D", "base0E", "base0F",
     ];
 
     let mut bases: Vec<String> = vec!["#000000".to_string(); 16];
@@ -1293,7 +1456,10 @@ fn parse_base16_toml(content: &str) -> Result<ImportedPalette> {
             if trimmed_lower.starts_with(&key_lower) && trimmed_lower.contains('=') {
                 // 値部分を取り出す: `base00 = "282828"` または `base00 = "#282828"`
                 if let Some(eq_pos) = trimmed.find('=') {
-                    let val = trimmed[eq_pos + 1..].trim().trim_matches('"').trim_matches('\'');
+                    let val = trimmed[eq_pos + 1..]
+                        .trim()
+                        .trim_matches('"')
+                        .trim_matches('\'');
                     let hex = val.trim_start_matches('#');
                     if hex.len() == 6 {
                         bases[i] = format!("#{}", hex.to_uppercase());
@@ -1309,17 +1475,34 @@ fn parse_base16_toml(content: &str) -> Result<ImportedPalette> {
     // 8:br-black=base03, 9:br-red=base08, 10:br-green=base0B, 11:br-yellow=base0A,
     // 12:br-blue=base0D, 13:br-magenta=base0E, 14:br-cyan=base0C, 15:br-white=base07
     let ansi = vec![
-        bases[0x00].clone(), bases[0x08].clone(), bases[0x0B].clone(), bases[0x0A].clone(),
-        bases[0x0D].clone(), bases[0x0E].clone(), bases[0x0C].clone(), bases[0x05].clone(),
-        bases[0x03].clone(), bases[0x08].clone(), bases[0x0B].clone(), bases[0x0A].clone(),
-        bases[0x0D].clone(), bases[0x0E].clone(), bases[0x0C].clone(), bases[0x07].clone(),
+        bases[0x00].clone(),
+        bases[0x08].clone(),
+        bases[0x0B].clone(),
+        bases[0x0A].clone(),
+        bases[0x0D].clone(),
+        bases[0x0E].clone(),
+        bases[0x0C].clone(),
+        bases[0x05].clone(),
+        bases[0x03].clone(),
+        bases[0x08].clone(),
+        bases[0x0B].clone(),
+        bases[0x0A].clone(),
+        bases[0x0D].clone(),
+        bases[0x0E].clone(),
+        bases[0x0C].clone(),
+        bases[0x07].clone(),
     ];
 
     let background = bases[0x00].clone();
     let foreground = bases[0x05].clone();
     let cursor = bases[0x05].clone();
 
-    Ok(ImportedPalette { foreground, background, cursor, ansi })
+    Ok(ImportedPalette {
+        foreground,
+        background,
+        cursor,
+        ansi,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1331,8 +1514,9 @@ fn parse_base16_toml(content: &str) -> Result<ImportedPalette> {
 fn write_custom_palette(config_path: &str, palette: &ImportedPalette) -> Result<()> {
     // ディレクトリを作成する
     if let Some(parent) = Path::new(config_path).parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("設定ディレクトリの作成に失敗しました: {}", parent.display()))?;
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!("設定ディレクトリの作成に失敗しました: {}", parent.display())
+        })?;
     }
 
     // 既存ファイルを読み込む（存在しない場合は空文字）
@@ -1405,27 +1589,32 @@ impl IpcConn {
         #[cfg(windows)]
         {
             use tokio::net::windows::named_pipe::ClientOptions;
-            let username =
-                std::env::var("USERNAME").unwrap_or_else(|_| "nexterm".to_string());
+            let username = std::env::var("USERNAME").unwrap_or_else(|_| "nexterm".to_string());
             let pipe = format!("\\\\.\\pipe\\nexterm-{}", username);
-            let stream = ClientOptions::new().open(&pipe).map_err(|e| {
-                anyhow::anyhow!("{}", fl!("ctl-connect-failed", error = e))
-            })?;
+            let stream = ClientOptions::new()
+                .open(&pipe)
+                .map_err(|e| anyhow::anyhow!("{}", fl!("ctl-connect-failed", error = e)))?;
             let (r, w) = tokio::io::split(stream);
-            Ok(Self { reader: Box::new(r), writer: Box::new(w) })
+            Ok(Self {
+                reader: Box::new(r),
+                writer: Box::new(w),
+            })
         }
 
         #[cfg(unix)]
         {
             let uid = unsafe { libc::getuid() };
-            let dir = std::env::var("XDG_RUNTIME_DIR")
-                .unwrap_or_else(|_| format!("/run/user/{}", uid));
+            let dir =
+                std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/run/user/{}", uid));
             let path = format!("{}/nexterm.sock", dir);
-            let stream = tokio::net::UnixStream::connect(&path).await.map_err(|e| {
-                anyhow::anyhow!("{}", fl!("ctl-connect-failed", error = e))
-            })?;
+            let stream = tokio::net::UnixStream::connect(&path)
+                .await
+                .map_err(|e| anyhow::anyhow!("{}", fl!("ctl-connect-failed", error = e)))?;
             let (r, w) = tokio::io::split(stream);
-            Ok(Self { reader: Box::new(r), writer: Box::new(w) })
+            Ok(Self {
+                reader: Box::new(r),
+                writer: Box::new(w),
+            })
         }
     }
 
@@ -1476,7 +1665,8 @@ async fn cmd_plugin_list() -> Result<()> {
 /// WASM プラグインをロードする
 async fn cmd_plugin_load(path: String) -> Result<()> {
     let mut conn = IpcConn::connect().await?;
-    conn.send(ClientToServer::LoadPlugin { path: path.clone() }).await?;
+    conn.send(ClientToServer::LoadPlugin { path: path.clone() })
+        .await?;
     match conn.recv().await? {
         ServerToClient::PluginOk { path, action } => {
             println!("プラグインを{}しました: {}", action, path);
@@ -1490,7 +1680,8 @@ async fn cmd_plugin_load(path: String) -> Result<()> {
 /// プラグインをアンロードする
 async fn cmd_plugin_unload(path: String) -> Result<()> {
     let mut conn = IpcConn::connect().await?;
-    conn.send(ClientToServer::UnloadPlugin { path: path.clone() }).await?;
+    conn.send(ClientToServer::UnloadPlugin { path: path.clone() })
+        .await?;
     match conn.recv().await? {
         ServerToClient::PluginOk { path, action } => {
             println!("プラグインを{}しました: {}", action, path);
@@ -1504,7 +1695,8 @@ async fn cmd_plugin_unload(path: String) -> Result<()> {
 /// プラグインを再ロードする
 async fn cmd_plugin_reload(path: String) -> Result<()> {
     let mut conn = IpcConn::connect().await?;
-    conn.send(ClientToServer::ReloadPlugin { path: path.clone() }).await?;
+    conn.send(ClientToServer::ReloadPlugin { path: path.clone() })
+        .await?;
     match conn.recv().await? {
         ServerToClient::PluginOk { path, action } => {
             println!("プラグインを{}しました: {}", action, path);
@@ -1529,7 +1721,9 @@ mod tests {
 
     #[test]
     fn bincode_roundtrip_kill_session() {
-        let msg = ClientToServer::KillSession { name: "main".to_string() };
+        let msg = ClientToServer::KillSession {
+            name: "main".to_string(),
+        };
         let encoded = bincode::serialize(&msg).unwrap();
         let decoded: ClientToServer = bincode::deserialize(&encoded).unwrap();
         assert!(matches!(decoded, ClientToServer::KillSession { .. }));

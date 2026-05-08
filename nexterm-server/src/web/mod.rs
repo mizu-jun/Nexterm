@@ -115,7 +115,10 @@ pub async fn start_web_server(config: WebConfig, manager: Arc<SessionManager>) {
                     (Some(mgr), None)
                 }
                 Err(e) => {
-                    warn!("TOTP シークレットが不正です: {}。TOTP 認証を無効化します。", e);
+                    warn!(
+                        "TOTP シークレットが不正です: {}。TOTP 認証を無効化します。",
+                        e
+                    );
                     (None, None)
                 }
             },
@@ -128,11 +131,17 @@ pub async fn start_web_server(config: WebConfig, manager: Arc<SessionManager>) {
                 );
                 match otp::TotpManager::from_secret(&secret, &issuer) {
                     Ok(setup_totp) => {
-                        let pending = PendingSetup { secret, totp: setup_totp };
+                        let pending = PendingSetup {
+                            secret,
+                            totp: setup_totp,
+                        };
                         (None, Some(pending))
                     }
                     Err(e) => {
-                        warn!("セットアップ用 TOTP の生成に失敗: {}。TOTP 認証を無効化します。", e);
+                        warn!(
+                            "セットアップ用 TOTP の生成に失敗: {}。TOTP 認証を無効化します。",
+                            e
+                        );
                         (None, None)
                     }
                 }
@@ -153,9 +162,7 @@ pub async fn start_web_server(config: WebConfig, manager: Arc<SessionManager>) {
             .unwrap_or_else(|| format!("{}://localhost:{}", scheme, config.port));
         let redirect_base = if redirect_base.contains("/auth/callback") {
             // redirect_url が完全な callback URL の場合はベースを抽出する
-            redirect_base
-                .trim_end_matches("/auth/callback")
-                .to_string()
+            redirect_base.trim_end_matches("/auth/callback").to_string()
         } else {
             redirect_base
         };
@@ -205,16 +212,25 @@ pub async fn start_web_server(config: WebConfig, manager: Arc<SessionManager>) {
             config.tls.key_file.as_deref(),
         ) {
             Ok((cert_pem, key_pem)) => {
-                info!("Web ターミナルを起動します (HTTPS): https://localhost:{}", config.port);
+                info!(
+                    "Web ターミナルを起動します (HTTPS): https://localhost:{}",
+                    config.port
+                );
                 start_tls_server(addr, app, cert_pem, key_pem).await;
             }
             Err(e) => {
-                warn!("証明書の読み込みに失敗: {}。HTTP にフォールバックします。", e);
+                warn!(
+                    "証明書の読み込みに失敗: {}。HTTP にフォールバックします。",
+                    e
+                );
                 start_plain_http(addr, app).await;
             }
         }
     } else {
-        info!("Web ターミナルを起動します: http://localhost:{}", config.port);
+        info!(
+            "Web ターミナルを起動します: http://localhost:{}",
+            config.port
+        );
         start_plain_http(addr, app).await;
     }
 }
@@ -248,12 +264,12 @@ async fn start_plain_http(addr: SocketAddr, app: Router) {
 }
 
 async fn start_tls_server(addr: SocketAddr, app: Router, cert_pem: Vec<u8>, key_pem: Vec<u8>) {
-    use std::sync::Arc;
     use hyper_util::{
         rt::{TokioExecutor, TokioIo},
         server::conn::auto::Builder,
         service::TowerToHyperService,
     };
+    use std::sync::Arc;
 
     // PEM 証明書を解析する
     let certs: Vec<rustls::pki_types::CertificateDer<'static>> = {
@@ -377,10 +393,7 @@ fn https_redirect(headers: &HeaderMap, port: u16) -> Response {
 // ── ページハンドラ ────────────────────────────────────────────────────────────
 
 /// GET / — メイン画面（未認証はログインページへリダイレクト）
-async fn serve_index(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Response {
+async fn serve_index(State(state): State<AppState>, headers: HeaderMap) -> Response {
     // force_https: TLS 無効または既に HTTPS の場合は無視する
     // ここでは簡易チェック（X-Forwarded-Proto ヘッダーを確認）
     if state.force_https && !state.tls_enabled {
@@ -440,7 +453,12 @@ fn serve_login_html(state: &AppState) -> Response {
 
 /// GET /setup — 初回 TOTP セットアップページ
 async fn serve_setup(State(state): State<AppState>) -> Response {
-    if state.pending_setup.lock().expect("pending_setup mutex poisoned").is_none() {
+    if state
+        .pending_setup
+        .lock()
+        .expect("pending_setup mutex poisoned")
+        .is_none()
+    {
         return redirect("/");
     }
     serve_asset("setup.html")
@@ -515,10 +533,7 @@ async fn handle_login(
 }
 
 /// GET /auth/oauth — OAuth プロバイダーの認証ページへリダイレクト
-async fn handle_oauth_redirect(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Response {
+async fn handle_oauth_redirect(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let addr = client_ip(&headers);
     let oauth_mgr = match state.oauth_mgr.as_ref() {
         Some(m) => m,
@@ -597,10 +612,7 @@ async fn handle_oauth_callback(
 
     // アクセス許可チェック
     if !oauth_mgr.is_user_allowed(&user).await {
-        warn!(
-            "OAuth アクセス拒否: user_id={} （{}）",
-            user.user_id, addr
-        );
+        warn!("OAuth アクセス拒否: user_id={} （{}）", user.user_id, addr);
         state.access_logger.log(&access_log::AccessLogEntry {
             remote_addr: addr.clone(),
             method: "GET".to_string(),
@@ -643,10 +655,7 @@ async fn handle_oauth_callback(
 }
 
 /// POST /auth/logout — セッションを破棄してログインページへリダイレクト
-async fn handle_logout(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Response {
+async fn handle_logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
     if let Some(token) = auth::extract_session_cookie(&headers) {
         state.auth_mgr.revoke_session(&token);
     }
@@ -667,7 +676,10 @@ struct SetupUrlResponse {
 
 /// GET /auth/setup-url — セットアップ用の otpauth:// URL とシークレットを返す
 async fn handle_setup_url(State(state): State<AppState>) -> Response {
-    let guard = state.pending_setup.lock().expect("pending_setup mutex poisoned");
+    let guard = state
+        .pending_setup
+        .lock()
+        .expect("pending_setup mutex poisoned");
     match guard.as_ref() {
         Some(ps) => Json(SetupUrlResponse {
             url: ps.totp.get_url(),
@@ -686,7 +698,10 @@ async fn handle_setup_verify(
 ) -> Response {
     let addr = client_ip(&headers);
     let (secret_clone, is_valid) = {
-        let guard = state.pending_setup.lock().expect("pending_setup mutex poisoned");
+        let guard = state
+            .pending_setup
+            .lock()
+            .expect("pending_setup mutex poisoned");
         match guard.as_ref() {
             Some(ps) => (ps.secret.clone(), ps.totp.verify(&form.code)),
             None => return redirect("/?setup=done"),
@@ -698,13 +713,19 @@ async fn handle_setup_verify(
     }
 
     if let Err(e) = otp::save_secret_to_config(&secret_clone) {
-        warn!("TOTP シークレットの保存に失敗: {}。インメモリのみで動作します。", e);
+        warn!(
+            "TOTP シークレットの保存に失敗: {}。インメモリのみで動作します。",
+            e
+        );
     }
 
     match otp::TotpManager::from_secret(&secret_clone, &state.issuer) {
         Ok(mgr) => {
             *state.totp.write().await = Some(mgr);
-            *state.pending_setup.lock().expect("pending_setup mutex poisoned") = None;
+            *state
+                .pending_setup
+                .lock()
+                .expect("pending_setup mutex poisoned") = None;
             info!("TOTP セットアップが完了しました（{}）", addr);
         }
         Err(e) => {
@@ -765,10 +786,11 @@ async fn ws_handler(
 
     // 後方互換: クエリパラメータのトークン確認
     if let Some(ref expected) = state.legacy_token
-        && query.token != *expected {
-            warn!("WebSocket 認証失敗: 無効なトークン（{}）", addr);
-            return StatusCode::UNAUTHORIZED.into_response();
-        }
+        && query.token != *expected
+    {
+        warn!("WebSocket 認証失敗: 無効なトークン（{}）", addr);
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
 
     // アクセスログに WebSocket 接続を記録する
     let (auth_method, user_id) = auth::extract_session_cookie(&headers)
@@ -790,7 +812,9 @@ async fn ws_handler(
 
 /// WebSocket 接続ごとの処理 — PTY 出力をブラウザに転送し、キー入力を PTY に転送する
 async fn handle_socket(mut socket: WebSocket, manager: Arc<SessionManager>, session_name: String) {
-    let _ = manager.get_or_create_and_attach(&session_name, 80, 24).await;
+    let _ = manager
+        .get_or_create_and_attach(&session_name, 80, 24)
+        .await;
 
     let sessions_arc = manager.sessions();
     let mut rx = {
@@ -875,7 +899,9 @@ fn pty_message_to_text(msg: &nexterm_proto::ServerToClient) -> Option<String> {
 
 fn serve_asset(name: &str) -> Response {
     match Assets::get(name) {
-        Some(file) => Html(String::from_utf8_lossy(file.data.as_ref()).into_owned()).into_response(),
+        Some(file) => {
+            Html(String::from_utf8_lossy(file.data.as_ref()).into_owned()).into_response()
+        }
         None => Response::builder()
             .status(404)
             .body(axum::body::Body::from(format!("{} not found", name)))
@@ -945,7 +971,15 @@ mod tests {
     fn redirect_creates_302_response() {
         let response = redirect("/login");
         assert_eq!(response.status(), 302);
-        assert!(response.headers().get("location").unwrap().to_str().unwrap().contains("/login"));
+        assert!(
+            response
+                .headers()
+                .get("location")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .contains("/login")
+        );
     }
 
     // ---- https_redirect テスト ----
@@ -956,7 +990,12 @@ mod tests {
         headers.insert("host", "example.com".parse().unwrap());
         let response = https_redirect(&headers, 8443);
         assert_eq!(response.status(), 301);
-        let location = response.headers().get("location").unwrap().to_str().unwrap();
+        let location = response
+            .headers()
+            .get("location")
+            .unwrap()
+            .to_str()
+            .unwrap();
         assert!(location.contains("example.com:8443"));
         assert!(location.starts_with("https://"));
     }
@@ -966,7 +1005,12 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("host", "example.com:8080".parse().unwrap());
         let response = https_redirect(&headers, 8443);
-        let location = response.headers().get("location").unwrap().to_str().unwrap();
+        let location = response
+            .headers()
+            .get("location")
+            .unwrap()
+            .to_str()
+            .unwrap();
         // 元のポートが削除され、HTTPSポートに置き換えられる
         assert!(!location.contains(":8080"));
         assert!(location.contains(":8443"));
@@ -976,7 +1020,12 @@ mod tests {
     fn https_redirect_uses_localhost_fallback() {
         let headers = HeaderMap::new();
         let response = https_redirect(&headers, 8443);
-        let location = response.headers().get("location").unwrap().to_str().unwrap();
+        let location = response
+            .headers()
+            .get("location")
+            .unwrap()
+            .to_str()
+            .unwrap();
         assert!(location.contains("localhost:8443"));
     }
 }

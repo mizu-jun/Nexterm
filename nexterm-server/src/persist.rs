@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use tracing::{info, warn};
 
-use crate::snapshot::{ServerSnapshot, SNAPSHOT_VERSION, SNAPSHOT_VERSION_MIN};
+use crate::snapshot::{SNAPSHOT_VERSION, SNAPSHOT_VERSION_MIN, ServerSnapshot};
 
 // ---- パスヘルパー ----
 
@@ -90,7 +90,10 @@ pub fn load_snapshot() -> Option<ServerSnapshot> {
                     version: SNAPSHOT_VERSION,
                     ..snap
                 };
-                info!("スナップショットを読み込みました（マイグレーション済み）: {:?}", path);
+                info!(
+                    "スナップショットを読み込みました（マイグレーション済み）: {:?}",
+                    path
+                );
                 return Some(migrated);
             }
             info!("スナップショットを読み込みました: {:?}", path);
@@ -108,9 +111,10 @@ pub fn load_snapshot() -> Option<ServerSnapshot> {
 pub fn clear_snapshot() {
     let path = snapshot_path();
     if path.exists()
-        && let Err(e) = std::fs::remove_file(&path) {
-            warn!("スナップショットファイルの削除に失敗しました: {}", e);
-        }
+        && let Err(e) = std::fs::remove_file(&path)
+    {
+        warn!("スナップショットファイルの削除に失敗しました: {}", e);
+    }
 }
 
 #[cfg(test)]
@@ -132,7 +136,8 @@ mod tests {
         std::fs::write(&tmp, &json).unwrap();
 
         // 読み込んで内容を確認する
-        let loaded: ServerSnapshot = serde_json::from_str(&std::fs::read_to_string(&tmp).unwrap()).unwrap();
+        let loaded: ServerSnapshot =
+            serde_json::from_str(&std::fs::read_to_string(&tmp).unwrap()).unwrap();
         assert_eq!(loaded.version, SNAPSHOT_VERSION);
         assert!(loaded.sessions.is_empty());
 

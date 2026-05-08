@@ -7,8 +7,8 @@ mod platform;
 mod plugin_dispatch;
 mod sftp;
 
-use anyhow::Result;
 use crate::session::SessionManager;
+use anyhow::Result;
 
 /// IPC サーバーを起動してクライアント接続を受け付ける
 pub async fn serve(

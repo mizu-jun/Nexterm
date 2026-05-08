@@ -294,7 +294,9 @@ pub enum ContextMenuAction {
     InlineSearch,
     OpenSettings,
     /// プロファイル名を指定してシェルを開く
-    OpenProfile { profile_name: String },
+    OpenProfile {
+        profile_name: String,
+    },
     /// セパレーター（クリック不可）
     Separator,
 }
@@ -310,15 +312,31 @@ pub struct ContextMenuItem {
 
 impl ContextMenuItem {
     fn new(label: impl Into<String>, action: ContextMenuAction) -> Self {
-        Self { label: label.into(), hint: String::new(), action }
+        Self {
+            label: label.into(),
+            hint: String::new(),
+            action,
+        }
     }
 
-    fn with_hint(label: impl Into<String>, hint: impl Into<String>, action: ContextMenuAction) -> Self {
-        Self { label: label.into(), hint: hint.into(), action }
+    fn with_hint(
+        label: impl Into<String>,
+        hint: impl Into<String>,
+        action: ContextMenuAction,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            hint: hint.into(),
+            action,
+        }
     }
 
     fn separator() -> Self {
-        Self { label: String::new(), hint: String::new(), action: ContextMenuAction::Separator }
+        Self {
+            label: String::new(),
+            hint: String::new(),
+            action: ContextMenuAction::Separator,
+        }
     }
 }
 
@@ -343,7 +361,11 @@ impl ContextMenu {
             ContextMenuItem::with_hint("すべて選択", "Ctrl+A", ContextMenuAction::SelectAll),
             ContextMenuItem::separator(),
             ContextMenuItem::with_hint("垂直分割", "Ctrl+B  %", ContextMenuAction::SplitVertical),
-            ContextMenuItem::with_hint("水平分割", "Ctrl+B  \"", ContextMenuAction::SplitHorizontal),
+            ContextMenuItem::with_hint(
+                "水平分割",
+                "Ctrl+B  \"",
+                ContextMenuAction::SplitHorizontal,
+            ),
             ContextMenuItem::with_hint("ペインを閉じる", "Ctrl+B  x", ContextMenuAction::ClosePane),
         ];
 
@@ -358,16 +380,31 @@ impl ContextMenu {
                 };
                 items.push(ContextMenuItem::new(
                     label,
-                    ContextMenuAction::OpenProfile { profile_name: name.clone() },
+                    ContextMenuAction::OpenProfile {
+                        profile_name: name.clone(),
+                    },
                 ));
             }
         }
 
         items.push(ContextMenuItem::separator());
-        items.push(ContextMenuItem::with_hint("検索...", "Ctrl+F", ContextMenuAction::InlineSearch));
-        items.push(ContextMenuItem::with_hint("設定...", "Ctrl+,", ContextMenuAction::OpenSettings));
+        items.push(ContextMenuItem::with_hint(
+            "検索...",
+            "Ctrl+F",
+            ContextMenuAction::InlineSearch,
+        ));
+        items.push(ContextMenuItem::with_hint(
+            "設定...",
+            "Ctrl+,",
+            ContextMenuAction::OpenSettings,
+        ));
 
-        Self { x, y, items, hovered: None }
+        Self {
+            x,
+            y,
+            items,
+            hovered: None,
+        }
     }
 }
 
@@ -677,7 +714,16 @@ impl ClientState {
                 rgba,
             } => {
                 if let Some(pane) = self.panes.get_mut(&pane_id) {
-                    pane.images.insert(image_id, PlacedImage { col, row, width, height, rgba });
+                    pane.images.insert(
+                        image_id,
+                        PlacedImage {
+                            col,
+                            row,
+                            width,
+                            height,
+                            rgba,
+                        },
+                    );
                     if self.focused_pane_id != Some(pane_id) {
                         pane.has_activity = true;
                     }
@@ -709,8 +755,16 @@ impl ClientState {
             // ペイン分離・シリアル接続はサーバーから LayoutChanged / WindowListChanged が後続するため状態更新不要
             ServerToClient::PaneBroken { .. } | ServerToClient::SerialConnected { .. } => {}
             // SFTP 転送進捗・完了はステータスバーに表示する
-            ServerToClient::SftpProgress { path, transferred, total } => {
-                let pct = if total > 0 { transferred * 100 / total } else { 0 };
+            ServerToClient::SftpProgress {
+                path,
+                transferred,
+                total,
+            } => {
+                let pct = if total > 0 {
+                    transferred * 100 / total
+                } else {
+                    0
+                };
                 self.status_bar_text = format!("SFTP {} {}%", path, pct);
             }
             ServerToClient::SftpDone { path, error } => {
@@ -721,34 +775,66 @@ impl ClientState {
                 }
             }
             // OSC 133 セマンティックゾーンマーク — ステータスバーに最新コマンド終了コードを表示
-            ServerToClient::SemanticMark { pane_id, kind, exit_code, .. } => {
-                if kind == "D" && self.focused_pane_id == Some(pane_id)
-                    && let Some(code) = exit_code {
-                        if code != 0 {
-                            self.status_bar_text = format!("[exit: {}]", code);
-                        } else {
-                            self.status_bar_text.clear();
-                        }
+            ServerToClient::SemanticMark {
+                pane_id,
+                kind,
+                exit_code,
+                ..
+            } => {
+                if kind == "D"
+                    && self.focused_pane_id == Some(pane_id)
+                    && let Some(code) = exit_code
+                {
+                    if code != 0 {
+                        self.status_bar_text = format!("[exit: {}]", code);
+                    } else {
+                        self.status_bar_text.clear();
                     }
+                }
             }
             // フローティングペインイベント — 位置情報をキャッシュするが、
             // レンダラー側での描画は renderer.rs で別途実装する
-            ServerToClient::FloatingPaneOpened { pane_id, col_off, row_off, cols, rows } => {
+            ServerToClient::FloatingPaneOpened {
+                pane_id,
+                col_off,
+                row_off,
+                cols,
+                rows,
+            } => {
                 self.floating_pane_rects.insert(
                     pane_id,
-                    FloatRect { col_off, row_off, cols, rows },
+                    FloatRect {
+                        col_off,
+                        row_off,
+                        cols,
+                        rows,
+                    },
                 );
             }
-            ServerToClient::FloatingPaneMoved { pane_id, col_off, row_off, cols, rows } => {
+            ServerToClient::FloatingPaneMoved {
+                pane_id,
+                col_off,
+                row_off,
+                cols,
+                rows,
+            } => {
                 self.floating_pane_rects.insert(
                     pane_id,
-                    FloatRect { col_off, row_off, cols, rows },
+                    FloatRect {
+                        col_off,
+                        row_off,
+                        cols,
+                        rows,
+                    },
                 );
             }
             ServerToClient::FloatingPaneClosed { pane_id } => {
                 self.floating_pane_rects.remove(&pane_id);
             }
-            ServerToClient::LayoutChanged { panes, focused_pane_id } => {
+            ServerToClient::LayoutChanged {
+                panes,
+                focused_pane_id,
+            } => {
                 // レイアウトを全更新する
                 self.pane_layouts.clear();
                 for layout in panes {
@@ -793,8 +879,7 @@ impl ClientState {
     }
 
     pub fn focused_pane_mut(&mut self) -> Option<&mut PaneState> {
-        self.focused_pane_id
-            .and_then(|id| self.panes.get_mut(&id))
+        self.focused_pane_id.and_then(|id| self.panes.get_mut(&id))
     }
 
     /// コマンドパレットをトグルする
@@ -854,9 +939,10 @@ impl ClientState {
             .and_then(|pane| pane.scrollback.search_next(&query, from));
         self.search.current_match = result;
         if let Some(row) = result
-            && let Some(pane) = self.focused_pane_mut() {
-                pane.scroll_offset = row;
-            }
+            && let Some(pane) = self.focused_pane_mut()
+        {
+            pane.scroll_offset = row;
+        }
     }
 
     /// スクロールバックを1画面分上にスクロールする

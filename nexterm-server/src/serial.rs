@@ -6,7 +6,7 @@
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use nexterm_proto::{Grid, ServerToClient};
 use nexterm_vt::VtParser;
 use tokio::sync::broadcast;

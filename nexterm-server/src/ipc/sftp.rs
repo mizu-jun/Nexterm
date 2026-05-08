@@ -57,11 +57,7 @@ pub(super) async fn run_sftp_upload(
     });
 
     session
-        .upload_file(
-            std::path::Path::new(local_path),
-            remote_path,
-            Some(prog_tx),
-        )
+        .upload_file(std::path::Path::new(local_path), remote_path, Some(prog_tx))
         .await
 }
 
@@ -119,10 +115,6 @@ pub(super) async fn run_sftp_download(
     });
 
     session
-        .download_file(
-            remote_path,
-            std::path::Path::new(local_path),
-            Some(prog_tx),
-        )
+        .download_file(remote_path, std::path::Path::new(local_path), Some(prog_tx))
         .await
 }

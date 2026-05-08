@@ -6,7 +6,10 @@ use anyhow::Result;
 use mlua::prelude::*;
 use tracing::{info, warn};
 
-use crate::schema::{ColorScheme, Config, FontConfig, HooksConfig, KeyBinding, ShellConfig, StatusBarConfig, TabBarConfig};
+use crate::schema::{
+    ColorScheme, Config, FontConfig, HooksConfig, KeyBinding, ShellConfig, StatusBarConfig,
+    TabBarConfig,
+};
 
 /// 設定ディレクトリのパスを返す
 pub fn config_dir() -> PathBuf {
@@ -59,7 +62,10 @@ impl ConfigLoader {
             if let Err(e) = Self::write_default_config(&toml_path) {
                 warn!("デフォルト設定ファイルの生成に失敗しました: {}", e);
             } else {
-                info!("デフォルト設定ファイルを生成しました: {}", toml_path.display());
+                info!(
+                    "デフォルト設定ファイルを生成しました: {}",
+                    toml_path.display()
+                );
             }
         }
 
@@ -171,9 +177,10 @@ pub fn merge_toml(mut base: Config, toml: TomlConfig) -> Config {
         base.font = font;
     }
     if let Some(colors) = toml.colors
-        && let Some(scheme) = colors.scheme {
-            base.colors = parse_color_scheme(&scheme);
-        }
+        && let Some(scheme) = colors.scheme
+    {
+        base.colors = parse_color_scheme(&scheme);
+    }
     if let Some(shell) = toml.shell {
         base.shell = shell;
     }
@@ -214,9 +221,11 @@ fn config_to_lua_table(lua: &Lua, config: &Config) -> Result<LuaTable> {
 
     // font テーブル
     let font = lua.create_table().map_err(lua_err)?;
-    font.set("family", config.font.family.clone()).map_err(lua_err)?;
+    font.set("family", config.font.family.clone())
+        .map_err(lua_err)?;
     font.set("size", config.font.size).map_err(lua_err)?;
-    font.set("ligatures", config.font.ligatures).map_err(lua_err)?;
+    font.set("ligatures", config.font.ligatures)
+        .map_err(lua_err)?;
     tbl.set("font", font).map_err(lua_err)?;
 
     // colors（文字列として渡す）
@@ -239,20 +248,40 @@ fn config_to_lua_table(lua: &Lua, config: &Config) -> Result<LuaTable> {
 
     // tab_bar テーブル
     let tab_bar = lua.create_table().map_err(lua_err)?;
-    tab_bar.set("enabled", config.tab_bar.enabled).map_err(lua_err)?;
-    tab_bar.set("height", config.tab_bar.height).map_err(lua_err)?;
-    tab_bar.set("active_tab_bg", config.tab_bar.active_tab_bg.clone()).map_err(lua_err)?;
-    tab_bar.set("inactive_tab_bg", config.tab_bar.inactive_tab_bg.clone()).map_err(lua_err)?;
-    tab_bar.set("separator", config.tab_bar.separator.clone()).map_err(lua_err)?;
+    tab_bar
+        .set("enabled", config.tab_bar.enabled)
+        .map_err(lua_err)?;
+    tab_bar
+        .set("height", config.tab_bar.height)
+        .map_err(lua_err)?;
+    tab_bar
+        .set("active_tab_bg", config.tab_bar.active_tab_bg.clone())
+        .map_err(lua_err)?;
+    tab_bar
+        .set("inactive_tab_bg", config.tab_bar.inactive_tab_bg.clone())
+        .map_err(lua_err)?;
+    tab_bar
+        .set("separator", config.tab_bar.separator.clone())
+        .map_err(lua_err)?;
     tbl.set("tab_bar", tab_bar).map_err(lua_err)?;
 
     // hooks テーブル（nil = 未設定）
     let hooks = lua.create_table().map_err(lua_err)?;
-    hooks.set("on_pane_open", config.hooks.on_pane_open.clone()).map_err(lua_err)?;
-    hooks.set("on_pane_close", config.hooks.on_pane_close.clone()).map_err(lua_err)?;
-    hooks.set("on_session_start", config.hooks.on_session_start.clone()).map_err(lua_err)?;
-    hooks.set("on_attach", config.hooks.on_attach.clone()).map_err(lua_err)?;
-    hooks.set("on_detach", config.hooks.on_detach.clone()).map_err(lua_err)?;
+    hooks
+        .set("on_pane_open", config.hooks.on_pane_open.clone())
+        .map_err(lua_err)?;
+    hooks
+        .set("on_pane_close", config.hooks.on_pane_close.clone())
+        .map_err(lua_err)?;
+    hooks
+        .set("on_session_start", config.hooks.on_session_start.clone())
+        .map_err(lua_err)?;
+    hooks
+        .set("on_attach", config.hooks.on_attach.clone())
+        .map_err(lua_err)?;
+    hooks
+        .set("on_detach", config.hooks.on_detach.clone())
+        .map_err(lua_err)?;
     tbl.set("hooks", hooks).map_err(lua_err)?;
 
     Ok(tbl)
@@ -280,9 +309,10 @@ pub fn apply_lua_table_to_config(config: &mut Config, tbl: &LuaTable) -> Result<
 
     // shell
     if let Ok(LuaValue::Table(shell)) = tbl.get("shell")
-        && let Ok(program) = shell.get::<String>("program") {
-            config.shell.program = program;
-        }
+        && let Ok(program) = shell.get::<String>("program")
+    {
+        config.shell.program = program;
+    }
 
     // scrollback_lines
     if let Ok(lines) = tbl.get::<usize>("scrollback_lines") {
@@ -312,7 +342,10 @@ pub fn apply_lua_table_to_config(config: &mut Config, tbl: &LuaTable) -> Result<
     if let Ok(LuaValue::Table(hooks)) = tbl.get("hooks") {
         config.hooks.on_pane_open = hooks.get::<Option<String>>("on_pane_open").ok().flatten();
         config.hooks.on_pane_close = hooks.get::<Option<String>>("on_pane_close").ok().flatten();
-        config.hooks.on_session_start = hooks.get::<Option<String>>("on_session_start").ok().flatten();
+        config.hooks.on_session_start = hooks
+            .get::<Option<String>>("on_session_start")
+            .ok()
+            .flatten();
         config.hooks.on_attach = hooks.get::<Option<String>>("on_attach").ok().flatten();
         config.hooks.on_detach = hooks.get::<Option<String>>("on_detach").ok().flatten();
     }
@@ -325,9 +358,7 @@ mod dirs_next {
     pub fn config_dir() -> Option<std::path::PathBuf> {
         #[cfg(windows)]
         {
-            std::env::var("APPDATA")
-                .ok()
-                .map(std::path::PathBuf::from)
+            std::env::var("APPDATA").ok().map(std::path::PathBuf::from)
         }
         #[cfg(target_os = "macos")]
         {

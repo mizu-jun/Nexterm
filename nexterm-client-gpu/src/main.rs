@@ -22,7 +22,7 @@ mod update_checker;
 mod vertex_util;
 
 use anyhow::Result;
-use nexterm_config::{watch_config, ConfigLoader, StatusBarEvaluator};
+use nexterm_config::{ConfigLoader, StatusBarEvaluator, watch_config};
 use tokio::sync::mpsc;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -73,15 +73,13 @@ async fn main() -> Result<()> {
 
     // GPU アプリケーションを起動する
     let app = renderer::NextermApp::new(config).await?;
-    event_loop.run_app(
-        &mut app.into_event_handler(
-            Some(config_rx),
-            config_watcher,
-            status_eval,
-            server_handle,
-            update_rx,
-        ),
-    )?;
+    event_loop.run_app(&mut app.into_event_handler(
+        Some(config_rx),
+        config_watcher,
+        status_eval,
+        server_handle,
+        update_rx,
+    ))?;
 
     Ok(())
 }
@@ -98,8 +96,7 @@ fn init_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_env("NEXTERM_LOG")
-                .unwrap_or_else(|_| EnvFilter::new("info")),
+            EnvFilter::try_from_env("NEXTERM_LOG").unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .with_writer(non_blocking)
         .init();

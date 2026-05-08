@@ -48,13 +48,14 @@ impl AccessLogger {
         // ファイルが設定されている場合はヘッダー行を書き込む（ファイルが新規の場合のみ）
         if enabled
             && let Some(ref path) = file_path
-                && !path.exists()
-                    && let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
-                        let _ = writeln!(
-                            f,
-                            "timestamp,remote_addr,method,path,status,auth_method,user_id"
-                        );
-                    }
+            && !path.exists()
+            && let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path)
+        {
+            let _ = writeln!(
+                f,
+                "timestamp,remote_addr,method,path,status,auth_method,user_id"
+            );
+        }
         Self {
             file_path,
             file_lock: Arc::new(Mutex::new(())),
@@ -84,7 +85,9 @@ impl AccessLogger {
 
         // ファイルへの追記
         if let Some(ref path) = self.file_path {
-            let Ok(_lock) = self.file_lock.lock() else { return };
+            let Ok(_lock) = self.file_lock.lock() else {
+                return;
+            };
             let _lock = _lock;
             if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
                 let line = format!(
@@ -180,7 +183,6 @@ mod tests {
         assert_eq!(csv_escape(input), "\"line1\nline2\"");
     }
 
-
     #[test]
     fn csv_escape_empty_string() {
         assert_eq!(csv_escape(""), "");
@@ -251,7 +253,7 @@ mod tests {
             auth_method: "totp".to_string(),
             user_id: "user123".to_string(),
         };
-        
+
         assert_eq!(entry.remote_addr, "192.168.1.1");
         assert_eq!(entry.status, 101);
     }

@@ -55,16 +55,17 @@ impl LuaWorker {
                 let lua = Lua::new();
 
                 if let Some(path) = lua_script_path
-                    && path.exists() {
-                        match std::fs::read_to_string(&path) {
-                            Ok(script) => {
-                                if let Err(e) = lua.load(&script).exec() {
-                                    warn!("Lua ワーカー: スクリプト読み込みエラー: {}", e);
-                                }
+                    && path.exists()
+                {
+                    match std::fs::read_to_string(&path) {
+                        Ok(script) => {
+                            if let Err(e) = lua.load(&script).exec() {
+                                warn!("Lua ワーカー: スクリプト読み込みエラー: {}", e);
                             }
-                            Err(e) => warn!("Lua ワーカー: ファイル読み込みエラー: {}", e),
                         }
+                        Err(e) => warn!("Lua ワーカー: ファイル読み込みエラー: {}", e),
                     }
+                }
 
                 // リクエストを順番に処理する（チャネルが閉じられたら終了）
                 while let Ok(req) = rx.recv() {
@@ -86,19 +87,17 @@ impl LuaWorker {
                     let parts: Vec<String> = req
                         .widgets
                         .iter()
-                        .map(|expr| {
-                            match lua.load(expr.as_str()).eval::<String>() {
-                                Ok(s) => s,
-                                Err(LuaError::RuntimeError(ref msg))
-                                    if msg.contains("タイムアウト") =>
-                                {
-                                    warn!("Lua 評価タイムアウト: {}", expr);
-                                    String::new()
-                                }
-                                Err(e) => {
-                                    error!("Lua 評価エラー: {}", e);
-                                    String::new()
-                                }
+                        .map(|expr| match lua.load(expr.as_str()).eval::<String>() {
+                            Ok(s) => s,
+                            Err(LuaError::RuntimeError(ref msg))
+                                if msg.contains("タイムアウト") =>
+                            {
+                                warn!("Lua 評価タイムアウト: {}", expr);
+                                String::new()
+                            }
+                            Err(e) => {
+                                error!("Lua 評価エラー: {}", e);
+                                String::new()
                             }
                         })
                         .collect();

@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
+use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use nexterm_config::HostConfig;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -664,9 +664,12 @@ mod tests {
     #[test]
     fn 接続履歴が記録される() {
         // テスト用に一時ファイルパスを設定 (リークを避けるため明示的削除)
-        let temp_file = std::env::temp_dir().join(format!("host_history_{}.json", std::process::id()));
-        unsafe { std::env::set_var("__NEXTERM_TEST_HOST_HISTORY_PATH__", &temp_file); }
-        
+        let temp_file =
+            std::env::temp_dir().join(format!("host_history_{}.json", std::process::id()));
+        unsafe {
+            std::env::set_var("__NEXTERM_TEST_HOST_HISTORY_PATH__", &temp_file);
+        }
+
         {
             let host = make_host("prod", "prod.example.com", "ubuntu");
             let mut mgr = HostManager::new(vec![host.clone()]);
@@ -678,10 +681,12 @@ mod tests {
             let entry = mgr.history_for(&host).unwrap();
             assert_eq!(entry.count, 2);
         }
-        
+
         // クリーンアップ
         let _ = std::fs::remove_file(&temp_file);
-        unsafe { std::env::remove_var("__NEXTERM_TEST_HOST_HISTORY_PATH__"); }
+        unsafe {
+            std::env::remove_var("__NEXTERM_TEST_HOST_HISTORY_PATH__");
+        }
     }
 
     #[test]

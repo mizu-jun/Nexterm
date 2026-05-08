@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
 async fn run(mut conn: Connection, state: &mut ClientState) -> Result<()> {
     use crossterm::{
         execute,
-        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+        terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
     };
     use ratatui::prelude::*;
     use std::io;

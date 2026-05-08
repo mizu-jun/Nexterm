@@ -40,7 +40,10 @@ pub fn on_pane_open(hooks: &HooksConfig, lua: &LuaHookRunner, session: &str, pan
     if let Some(cmd) = &hooks.on_pane_open {
         fire(cmd, session, Some(pane_id));
     }
-    lua.fire(HookEvent::PaneOpen { session: session.to_string(), pane_id });
+    lua.fire(HookEvent::PaneOpen {
+        session: session.to_string(),
+        pane_id,
+    });
 }
 
 /// on_pane_close フックを実行する（シェルコマンド + Lua）
@@ -49,7 +52,10 @@ pub fn on_pane_close(hooks: &HooksConfig, lua: &LuaHookRunner, session: &str, pa
     if let Some(cmd) = &hooks.on_pane_close {
         fire(cmd, session, Some(pane_id));
     }
-    lua.fire(HookEvent::PaneClose { session: session.to_string(), pane_id });
+    lua.fire(HookEvent::PaneClose {
+        session: session.to_string(),
+        pane_id,
+    });
 }
 
 /// on_session_start フックを実行する（シェルコマンド + Lua）
@@ -57,7 +63,9 @@ pub fn on_session_start(hooks: &HooksConfig, lua: &LuaHookRunner, session: &str)
     if let Some(cmd) = &hooks.on_session_start {
         fire(cmd, session, None);
     }
-    lua.fire(HookEvent::SessionStart { session: session.to_string() });
+    lua.fire(HookEvent::SessionStart {
+        session: session.to_string(),
+    });
 }
 
 /// on_attach フックを実行する（シェルコマンド + Lua）
@@ -65,7 +73,9 @@ pub fn on_attach(hooks: &HooksConfig, lua: &LuaHookRunner, session: &str) {
     if let Some(cmd) = &hooks.on_attach {
         fire(cmd, session, None);
     }
-    lua.fire(HookEvent::Attach { session: session.to_string() });
+    lua.fire(HookEvent::Attach {
+        session: session.to_string(),
+    });
 }
 
 /// on_detach フックを実行する（シェルコマンド + Lua）
@@ -73,7 +83,9 @@ pub fn on_detach(hooks: &HooksConfig, lua: &LuaHookRunner, session: &str) {
     if let Some(cmd) = &hooks.on_detach {
         fire(cmd, session, None);
     }
-    lua.fire(HookEvent::Detach { session: session.to_string() });
+    lua.fire(HookEvent::Detach {
+        session: session.to_string(),
+    });
 }
 
 #[cfg(test)]
@@ -90,7 +102,7 @@ mod tests {
         // Create dummy configs
         let hooks = HooksConfig::default();
         let lua = LuaHookRunner::new(None);
-        
+
         // This should not panic
         on_pane_open(&hooks, &lua, "test-session", 123);
     }
@@ -99,7 +111,7 @@ mod tests {
     fn test_on_pane_close_calls_fire_and_lua() {
         let hooks = HooksConfig::default();
         let lua = LuaHookRunner::new(None);
-        
+
         on_pane_close(&hooks, &lua, "test-session", 123);
     }
 
@@ -107,7 +119,7 @@ mod tests {
     fn test_on_session_start_calls_fire_and_lua() {
         let hooks = HooksConfig::default();
         let lua = LuaHookRunner::new(None);
-        
+
         on_session_start(&hooks, &lua, "test-session");
     }
 
@@ -115,7 +127,7 @@ mod tests {
     fn test_on_attach_calls_fire_and_lua() {
         let hooks = HooksConfig::default();
         let lua = LuaHookRunner::new(None);
-        
+
         on_attach(&hooks, &lua, "test-session");
     }
 
@@ -123,7 +135,7 @@ mod tests {
     fn test_on_detach_calls_fire_and_lua() {
         let hooks = HooksConfig::default();
         let lua = LuaHookRunner::new(None);
-        
+
         on_detach(&hooks, &lua, "test-session");
     }
 }

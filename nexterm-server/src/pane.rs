@@ -6,9 +6,9 @@
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
 use std::path::Path;
-use std::time::Instant;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use anyhow::Result;
 use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySystem};
@@ -40,7 +40,14 @@ struct LogWriterInner {
 }
 
 impl LogWriterInner {
-    fn new(file: File, timestamp: bool, strip_ansi: bool, path: String, max_bytes: u64, max_files: u32) -> Self {
+    fn new(
+        file: File,
+        timestamp: bool,
+        strip_ansi: bool,
+        path: String,
+        max_bytes: u64,
+        max_files: u32,
+    ) -> Self {
         Self {
             writer: BufWriter::new(file),
             timestamp,
@@ -157,11 +164,7 @@ impl LogWriterInner {
 ///   {session}  — セッション名
 ///   {pane}     — ペイン ID
 ///   {datetime} — 起動時刻 (YYYYMMDD_HHMMSS)
-pub fn expand_log_filename_template(
-    template: &str,
-    session: &str,
-    pane_id: u32,
-) -> String {
+pub fn expand_log_filename_template(template: &str, session: &str, pane_id: u32) -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -266,7 +269,10 @@ impl AsciicastWriter {
             r#"{{"version":2,"width":{},"height":{},"timestamp":{},"title":"nexterm"}}"#,
             cols, rows, unix_start
         )?;
-        Ok(Self { file: w, started_at: Instant::now() })
+        Ok(Self {
+            file: w,
+            started_at: Instant::now(),
+        })
     }
 
     /// PTY 出力データを asciicast イベント行として書き込む
@@ -274,8 +280,7 @@ impl AsciicastWriter {
         let elapsed = self.started_at.elapsed().as_secs_f64();
         let text = String::from_utf8_lossy(data);
         // serde_json で JSON 文字列にエスケープする
-        let escaped = serde_json::to_string(&*text)
-            .unwrap_or_else(|_| "\"\"".to_string());
+        let escaped = serde_json::to_string(&*text).unwrap_or_else(|_| "\"\"".to_string());
         writeln!(self.file, "[{:.6},\"o\",{}]", elapsed, escaped)?;
         Ok(())
     }
@@ -389,12 +394,21 @@ impl Pane {
         let mut cmd = CommandBuilder::new(shell);
         cmd.args(args);
         // 明示的な CWD がなければユーザーのホームディレクトリを使う
-        let home_buf: Option<std::path::PathBuf> = cwd.is_none().then(|| {
-            #[cfg(windows)]
-            { std::env::var("USERPROFILE").ok().map(std::path::PathBuf::from) }
-            #[cfg(not(windows))]
-            { std::env::var("HOME").ok().map(std::path::PathBuf::from) }
-        }).flatten();
+        let home_buf: Option<std::path::PathBuf> = cwd
+            .is_none()
+            .then(|| {
+                #[cfg(windows)]
+                {
+                    std::env::var("USERPROFILE")
+                        .ok()
+                        .map(std::path::PathBuf::from)
+                }
+                #[cfg(not(windows))]
+                {
+                    std::env::var("HOME").ok().map(std::path::PathBuf::from)
+                }
+            })
+            .flatten();
         let effective_cwd = cwd.or(home_buf.as_deref());
         if let Some(c) = effective_cwd {
             cmd.cwd(c);
@@ -442,10 +456,7 @@ impl Pane {
             let mut buf = [0u8; 4096];
 
             /// broadcast::Sender でメッセージを送信するヘルパー（sync、待機なし）
-            fn send_msg(
-                tx: &broadcast::Sender<ServerToClient>,
-                msg: ServerToClient,
-            ) {
+            fn send_msg(tx: &broadcast::Sender<ServerToClient>, msg: ServerToClient) {
                 // 受信者がいない場合は無視（クライアント未接続時）
                 let _ = tx.send(msg);
             }
@@ -474,26 +485,29 @@ impl Pane {
                         // 録音中であれば生バイト列をログファイルに書き込む
                         if let Ok(mut guard) = log_writer_clone.lock()
                             && let Some(w) = guard.as_mut()
-                                && let Err(e) = w.write(&buf[..n]) {
-                                    error!("ログ書き込みエラー: {}", e);
-                                    *guard = None;
-                                }
+                            && let Err(e) = w.write(&buf[..n])
+                        {
+                            error!("ログ書き込みエラー: {}", e);
+                            *guard = None;
+                        }
 
                         // バイナリログ: raw PTY bytes をそのまま保存する
                         if let Ok(mut guard) = binary_log_writer_clone.lock()
                             && let Some(w) = guard.as_mut()
-                                && let Err(e) = w.write(&buf[..n]) {
-                                    error!("バイナリログ書き込みエラー: {}", e);
-                                    *guard = None;
-                                }
+                            && let Err(e) = w.write(&buf[..n])
+                        {
+                            error!("バイナリログ書き込みエラー: {}", e);
+                            *guard = None;
+                        }
 
                         // asciicast 録音中であれば書き込む
                         if let Ok(mut guard) = asciicast_writer_clone.lock()
                             && let Some(w) = guard.as_mut()
-                                && let Err(e) = w.write_output(&buf[..n]) {
-                                    error!("asciicast 書き込みエラー: {}", e);
-                                    *guard = None;
-                                }
+                            && let Err(e) = w.write_output(&buf[..n])
+                        {
+                            error!("asciicast 書き込みエラー: {}", e);
+                            *guard = None;
+                        }
 
                         // グリッド差分を送信する
                         let dirty = parser.screen_mut().take_dirty_rows();
@@ -521,8 +535,13 @@ impl Pane {
                         }
 
                         // デスクトップ通知を送信する（OSC 9）
-                        if let Some((title, body)) = parser.screen_mut().take_pending_notification() {
-                            let msg = ServerToClient::DesktopNotification { pane_id, title, body };
+                        if let Some((title, body)) = parser.screen_mut().take_pending_notification()
+                        {
+                            let msg = ServerToClient::DesktopNotification {
+                                pane_id,
+                                title,
+                                body,
+                            };
                             send_msg(&shared_tx_clone, msg);
                         }
 
@@ -568,14 +587,21 @@ impl Pane {
             // Fix 2: PTY EOF 時にプロセスグループへ SIGHUP を送信してゾンビプロセスを防ぐ
             #[cfg(unix)]
             if let Some(pid_val) = pid
-                && pid_val > 0 {
-                    // SAFETY: kill() は有効な pid に対して安全。pgid は pid と同一（setsid 未使用）。
-                    unsafe { libc::kill(pid_val as libc::pid_t, libc::SIGHUP) };
-                    debug!("ペイン {}: PID {} に SIGHUP を送信しました", pane_id, pid_val);
-                }
+                && pid_val > 0
+            {
+                // SAFETY: kill() は有効な pid に対して安全。pgid は pid と同一（setsid 未使用）。
+                unsafe { libc::kill(pid_val as libc::pid_t, libc::SIGHUP) };
+                debug!(
+                    "ペイン {}: PID {} に SIGHUP を送信しました",
+                    pane_id, pid_val
+                );
+            }
 
             // Fix 1: PTY EOF / シェル終了時に PaneClosed を送信する
-            debug!("ペイン {} の PTY ループが終了しました。PaneClosed を送信します", pane_id);
+            debug!(
+                "ペイン {} の PTY ループが終了しました。PaneClosed を送信します",
+                pane_id
+            );
             send_msg(&shared_tx_clone, ServerToClient::PaneClosed { pane_id });
         });
 
@@ -608,7 +634,9 @@ impl Pane {
 
     /// PTY にデータを書き込む（キー入力転送）
     pub fn write_input(&self, data: &[u8]) -> Result<()> {
-        let mut w = self.writer.lock()
+        let mut w = self
+            .writer
+            .lock()
             .map_err(|e| anyhow::anyhow!("writer ロック取得に失敗しました: {}", e))?;
         w.write_all(data)?;
         Ok(())
@@ -644,9 +672,18 @@ impl Pane {
     ) -> Result<()> {
         let file = File::create(path)?;
         let max_bytes = max_size_mb.saturating_mul(1024 * 1024);
-        let mut guard = self.log_writer.lock()
+        let mut guard = self
+            .log_writer
+            .lock()
             .map_err(|e| anyhow::anyhow!("log_writer ロック取得に失敗しました: {}", e))?;
-        *guard = Some(LogWriterInner::new(file, timestamp, strip_ansi, path.to_string(), max_bytes, max_files));
+        *guard = Some(LogWriterInner::new(
+            file,
+            timestamp,
+            strip_ansi,
+            path.to_string(),
+            max_bytes,
+            max_files,
+        ));
         info!("ペイン {} の録音を開始しました: {}", self.id, path);
         Ok(())
     }
@@ -655,7 +692,9 @@ impl Pane {
     ///
     /// バッファをフラッシュしてからファイルを閉じる。
     pub fn stop_recording(&self) -> Result<()> {
-        let mut guard = self.log_writer.lock()
+        let mut guard = self
+            .log_writer
+            .lock()
             .map_err(|e| anyhow::anyhow!("log_writer ロック取得に失敗しました: {}", e))?;
         if let Some(mut w) = guard.take() {
             w.flush()?;
@@ -692,17 +731,33 @@ impl Pane {
         }
 
         // テキストログを開始する
-        self.start_recording_with_options(&resolved_path, log_config.timestamp, log_config.strip_ansi)?;
+        self.start_recording_with_options(
+            &resolved_path,
+            log_config.timestamp,
+            log_config.strip_ansi,
+        )?;
 
         // バイナリログが有効な場合は raw バイナリファイルも開始する
         if log_config.binary_log {
             let bin_path = format!("{}.bin", resolved_path.trim_end_matches(".log"));
             let bin_file = File::create(&bin_path)?;
             // バイナリログは timestamp/strip_ansi なしで raw bytes を保存する
-            let mut guard = self.binary_log_writer.lock()
+            let mut guard = self
+                .binary_log_writer
+                .lock()
                 .map_err(|e| anyhow::anyhow!("binary_log_writer ロック取得失敗: {}", e))?;
-            *guard = Some(LogWriterInner::new(bin_file, false, false, bin_path.clone(), 0, 0));
-            info!("ペイン {} のバイナリログを開始しました: {}", self.id, bin_path);
+            *guard = Some(LogWriterInner::new(
+                bin_file,
+                false,
+                false,
+                bin_path.clone(),
+                0,
+                0,
+            ));
+            info!(
+                "ペイン {} のバイナリログを開始しました: {}",
+                self.id, bin_path
+            );
         }
 
         Ok(())
@@ -711,10 +766,15 @@ impl Pane {
     /// asciicast v2 形式での録画を開始する
     pub fn start_asciicast(&self, path: &str) -> Result<()> {
         let writer = AsciicastWriter::new(path, self.cols, self.rows)?;
-        let mut guard = self.asciicast_writer.lock()
+        let mut guard = self
+            .asciicast_writer
+            .lock()
             .map_err(|e| anyhow::anyhow!("asciicast_writer ロック取得に失敗しました: {}", e))?;
         *guard = Some(writer);
-        info!("ペイン {} の asciicast 録画を開始しました: {}", self.id, path);
+        info!(
+            "ペイン {} の asciicast 録画を開始しました: {}",
+            self.id, path
+        );
         Ok(())
     }
 
@@ -722,7 +782,9 @@ impl Pane {
     ///
     /// バッファをフラッシュしてからファイルを閉じる。
     pub fn stop_asciicast(&self) -> Result<()> {
-        let mut guard = self.asciicast_writer.lock()
+        let mut guard = self
+            .asciicast_writer
+            .lock()
             .map_err(|e| anyhow::anyhow!("asciicast_writer ロック取得に失敗しました: {}", e))?;
         if let Some(mut w) = guard.take() {
             w.flush()?;

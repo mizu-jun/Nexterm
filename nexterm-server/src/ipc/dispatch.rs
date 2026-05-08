@@ -34,10 +34,7 @@ pub(super) async fn dispatch(
                 let sessions = arc.lock().await;
                 !sessions.contains_key(session_name.as_str())
             };
-            match manager
-                .get_or_create_and_attach(session_name, 80, 24)
-                .await
-            {
+            match manager.get_or_create_and_attach(session_name, 80, 24).await {
                 Ok(()) => {
                     *current_session = Some(session_name.clone());
                     if is_new_session {
@@ -56,9 +53,7 @@ pub(super) async fn dispatch(
                         })
                     };
                     if let Some((pane_id, grid)) = refresh {
-                        let _ = tx
-                            .send(ServerToClient::FullRefresh { pane_id, grid })
-                            .await;
+                        let _ = tx.send(ServerToClient::FullRefresh { pane_id, grid }).await;
                     }
 
                     // レイアウト変更通知を送信する（全ペインの位置・サイズを通知）
@@ -161,7 +156,8 @@ pub(super) async fn dispatch(
                         if let Err(e) = s.resize_focused(*cols, *rows) {
                             error!("リサイズエラー: {}", e);
                         }
-                        s.focused_window().map(|w| w.layout_changed_msg(*cols, *rows))
+                        s.focused_window()
+                            .map(|w| w.layout_changed_msg(*cols, *rows))
                     } else {
                         None
                     }
@@ -199,30 +195,30 @@ pub(super) async fn dispatch(
                         crate::hooks::on_pane_open(hooks, &lua, name, pane_id);
                         if log_config.auto_log
                             && let Some(log_dir) = &log_config.log_dir
-                                && let Err(e) = manager
-                                    .start_recording_with_log_config(name, log_dir, log_config)
-                                    .await
-                                {
-                                    tracing::warn!("auto_log 録音開始失敗 (pane={}): {}", pane_id, e);
-                                }
+                            && let Err(e) = manager
+                                .start_recording_with_log_config(name, log_dir, log_config)
+                                .await
+                        {
+                            tracing::warn!("auto_log 録音開始失敗 (pane={}): {}", pane_id, e);
+                        }
                         let msgs = {
                             let arc = manager.sessions();
                             let sessions = arc.lock().await;
                             sessions.get(name).and_then(|s| {
                                 s.focused_window().map(|w| {
                                     let layout_msg = w.layout_changed_msg(s.cols, s.rows);
-                                    let (pc, pr) = if let ServerToClient::LayoutChanged {
-                                        ref panes, ..
-                                    } = layout_msg
-                                    {
-                                        panes
-                                            .iter()
-                                            .find(|p| p.pane_id == pane_id)
-                                            .map(|r| (r.cols, r.rows))
-                                            .unwrap_or((s.cols, s.rows))
-                                    } else {
-                                        (s.cols, s.rows)
-                                    };
+                                    let (pc, pr) =
+                                        if let ServerToClient::LayoutChanged { ref panes, .. } =
+                                            layout_msg
+                                        {
+                                            panes
+                                                .iter()
+                                                .find(|p| p.pane_id == pane_id)
+                                                .map(|r| (r.cols, r.rows))
+                                                .unwrap_or((s.cols, s.rows))
+                                        } else {
+                                            (s.cols, s.rows)
+                                        };
                                     let refresh = ServerToClient::FullRefresh {
                                         pane_id,
                                         grid: nexterm_proto::Grid::new(pc, pr),
@@ -340,7 +336,13 @@ pub(super) async fn dispatch(
             }
         }
 
-        MouseReport { button, col, row, pressed, motion } => {
+        MouseReport {
+            button,
+            col,
+            row,
+            pressed,
+            motion,
+        } => {
             if let Some(ref name) = *current_session {
                 let arc = manager.sessions();
                 let sessions = arc.lock().await;
@@ -349,8 +351,7 @@ pub(super) async fn dispatch(
                     if mode > 0 {
                         let suffix = if *pressed || *motion { b'M' } else { b'm' };
                         let cb = *button as u32 + if *motion { 32 } else { 0 };
-                        let seq =
-                            format!("\x1b[<{};{};{}{}", cb, col + 1, row + 1, suffix as char);
+                        let seq = format!("\x1b[<{};{};{}{}", cb, col + 1, row + 1, suffix as char);
                         if let Err(e) = s.write_to_focused(seq.as_bytes()) {
                             error!("マウスレポート送信エラー: {}", e);
                         }
@@ -361,29 +362,36 @@ pub(super) async fn dispatch(
 
         ListSessions => {
             let list = manager.list_sessions().await;
-            let _ = tx.send(ServerToClient::SessionList { sessions: list }).await;
+            let _ = tx
+                .send(ServerToClient::SessionList { sessions: list })
+                .await;
         }
 
-        KillSession { name } => {
-            match manager.kill_session(name).await {
-                Ok(()) => {
-                    let list = manager.list_sessions().await;
-                    let _ = tx.send(ServerToClient::SessionList { sessions: list }).await;
-                }
-                Err(e) => {
-                    let _ = tx
-                        .send(ServerToClient::Error {
-                            message: e.to_string(),
-                        })
-                        .await;
-                }
+        KillSession { name } => match manager.kill_session(name).await {
+            Ok(()) => {
+                let list = manager.list_sessions().await;
+                let _ = tx
+                    .send(ServerToClient::SessionList { sessions: list })
+                    .await;
             }
-        }
+            Err(e) => {
+                let _ = tx
+                    .send(ServerToClient::Error {
+                        message: e.to_string(),
+                    })
+                    .await;
+            }
+        },
 
-        StartRecording { session_name, output_path } => {
+        StartRecording {
+            session_name,
+            output_path,
+        } => {
             if let Err(e) = validate_recording_path(output_path) {
                 let _ = tx
-                    .send(ServerToClient::Error { message: e.to_string() })
+                    .send(ServerToClient::Error {
+                        message: e.to_string(),
+                    })
                     .await;
                 return;
             }
@@ -398,26 +406,26 @@ pub(super) async fn dispatch(
                 }
                 Err(e) => {
                     let _ = tx
-                        .send(ServerToClient::Error { message: e.to_string() })
+                        .send(ServerToClient::Error {
+                            message: e.to_string(),
+                        })
                         .await;
                 }
             }
         }
 
-        StopRecording { session_name } => {
-            match manager.stop_recording(session_name).await {
-                Ok(pane_id) => {
-                    let _ = tx
-                        .send(ServerToClient::RecordingStopped { pane_id })
-                        .await;
-                }
-                Err(e) => {
-                    let _ = tx
-                        .send(ServerToClient::Error { message: e.to_string() })
-                        .await;
-                }
+        StopRecording { session_name } => match manager.stop_recording(session_name).await {
+            Ok(pane_id) => {
+                let _ = tx.send(ServerToClient::RecordingStopped { pane_id }).await;
             }
-        }
+            Err(e) => {
+                let _ = tx
+                    .send(ServerToClient::Error {
+                        message: e.to_string(),
+                    })
+                    .await;
+            }
+        },
 
         ClosePane => {
             if let Some(ref name) = *current_session {
@@ -427,7 +435,8 @@ pub(super) async fn dispatch(
                     if let Some(s) = sessions.get_mut(name) {
                         let cols = s.cols;
                         let rows = s.rows;
-                        s.focused_window_mut().map(|w| w.remove_focused_pane(cols, rows))
+                        s.focused_window_mut()
+                            .map(|w| w.remove_focused_pane(cols, rows))
                     } else {
                         None
                     }
@@ -443,7 +452,9 @@ pub(super) async fn dispatch(
                             })
                         };
                         let _ = tx
-                            .send(ServerToClient::PaneClosed { pane_id: removed_id })
+                            .send(ServerToClient::PaneClosed {
+                                pane_id: removed_id,
+                            })
                             .await;
                         if let Some(msg) = layout_msg {
                             let _ = tx.send(msg).await;
@@ -451,7 +462,9 @@ pub(super) async fn dispatch(
                     }
                     Some(Err(e)) => {
                         let _ = tx
-                            .send(ServerToClient::Error { message: e.to_string() })
+                            .send(ServerToClient::Error {
+                                message: e.to_string(),
+                            })
                             .await;
                     }
                     None => {}
@@ -494,9 +507,7 @@ pub(super) async fn dispatch(
                 };
                 match result {
                     Some(Ok((_wid, windows))) => {
-                        let _ = tx
-                            .send(ServerToClient::WindowListChanged { windows })
-                            .await;
+                        let _ = tx.send(ServerToClient::WindowListChanged { windows }).await;
                         let refresh_msg = {
                             let arc = manager.sessions();
                             let sessions = arc.lock().await;
@@ -521,7 +532,9 @@ pub(super) async fn dispatch(
                     }
                     Some(Err(e)) => {
                         let _ = tx
-                            .send(ServerToClient::Error { message: e.to_string() })
+                            .send(ServerToClient::Error {
+                                message: e.to_string(),
+                            })
                             .await;
                     }
                     None => {}
@@ -543,13 +556,13 @@ pub(super) async fn dispatch(
                 };
                 match result {
                     Ok(windows) => {
-                        let _ = tx
-                            .send(ServerToClient::WindowListChanged { windows })
-                            .await;
+                        let _ = tx.send(ServerToClient::WindowListChanged { windows }).await;
                     }
                     Err(e) => {
                         let _ = tx
-                            .send(ServerToClient::Error { message: e.to_string() })
+                            .send(ServerToClient::Error {
+                                message: e.to_string(),
+                            })
                             .await;
                     }
                 }
@@ -581,9 +594,7 @@ pub(super) async fn dispatch(
                 };
                 match result {
                     Ok(Some((windows, layout, refresh))) => {
-                        let _ = tx
-                            .send(ServerToClient::WindowListChanged { windows })
-                            .await;
+                        let _ = tx.send(ServerToClient::WindowListChanged { windows }).await;
                         let _ = tx.send(layout).await;
                         if let Some(r) = refresh {
                             let _ = tx.send(r).await;
@@ -592,14 +603,19 @@ pub(super) async fn dispatch(
                     Ok(None) => {}
                     Err(e) => {
                         let _ = tx
-                            .send(ServerToClient::Error { message: e.to_string() })
+                            .send(ServerToClient::Error {
+                                message: e.to_string(),
+                            })
                             .await;
                     }
                 }
             }
         }
 
-        RenameWindow { window_id, name: new_name } => {
+        RenameWindow {
+            window_id,
+            name: new_name,
+        } => {
             if let Some(ref session_name) = *current_session {
                 let result = {
                     let arc = manager.sessions();
@@ -613,13 +629,13 @@ pub(super) async fn dispatch(
                 };
                 match result {
                     Ok(windows) => {
-                        let _ = tx
-                            .send(ServerToClient::WindowListChanged { windows })
-                            .await;
+                        let _ = tx.send(ServerToClient::WindowListChanged { windows }).await;
                     }
                     Err(e) => {
                         let _ = tx
-                            .send(ServerToClient::Error { message: e.to_string() })
+                            .send(ServerToClient::Error {
+                                message: e.to_string(),
+                            })
                             .await;
                     }
                 }
@@ -643,10 +659,15 @@ pub(super) async fn dispatch(
             // サーバー側での処理は不要（クライアント側のオーバーレイ表示のみ）
         }
 
-        StartAsciicast { session_name, output_path } => {
+        StartAsciicast {
+            session_name,
+            output_path,
+        } => {
             if let Err(e) = validate_recording_path(output_path) {
                 let _ = tx
-                    .send(ServerToClient::Error { message: e.to_string() })
+                    .send(ServerToClient::Error {
+                        message: e.to_string(),
+                    })
                     .await;
                 return;
             }
@@ -661,26 +682,26 @@ pub(super) async fn dispatch(
                 }
                 Err(e) => {
                     let _ = tx
-                        .send(ServerToClient::Error { message: e.to_string() })
+                        .send(ServerToClient::Error {
+                            message: e.to_string(),
+                        })
                         .await;
                 }
             }
         }
 
-        StopAsciicast { session_name } => {
-            match manager.stop_asciicast(session_name).await {
-                Ok(pane_id) => {
-                    let _ = tx
-                        .send(ServerToClient::AsciicastStopped { pane_id })
-                        .await;
-                }
-                Err(e) => {
-                    let _ = tx
-                        .send(ServerToClient::Error { message: e.to_string() })
-                        .await;
-                }
+        StopAsciicast { session_name } => match manager.stop_asciicast(session_name).await {
+            Ok(pane_id) => {
+                let _ = tx.send(ServerToClient::AsciicastStopped { pane_id }).await;
             }
-        }
+            Err(e) => {
+                let _ = tx
+                    .send(ServerToClient::Error {
+                        message: e.to_string(),
+                    })
+                    .await;
+            }
+        },
 
         SaveTemplate { name } => {
             let result: anyhow::Result<String> = async {
@@ -690,9 +711,9 @@ pub(super) async fn dispatch(
                 let (window_titles, pane_counts) = {
                     let arc = manager.sessions();
                     let sessions = arc.lock().await;
-                    let session = sessions
-                        .get(session_name)
-                        .ok_or_else(|| anyhow::anyhow!("セッションが見つかりません: {}", session_name))?;
+                    let session = sessions.get(session_name).ok_or_else(|| {
+                        anyhow::anyhow!("セッションが見つかりません: {}", session_name)
+                    })?;
                     let info = session.window_list();
                     let titles: Vec<String> = info.iter().map(|w| w.name.clone()).collect();
                     let counts: Vec<usize> = info.iter().map(|w| w.pane_count as usize).collect();
@@ -707,44 +728,49 @@ pub(super) async fn dispatch(
             match result {
                 Ok(path) => {
                     let _ = tx
-                        .send(ServerToClient::TemplateSaved { name: name.clone(), path })
+                        .send(ServerToClient::TemplateSaved {
+                            name: name.clone(),
+                            path,
+                        })
                         .await;
                 }
                 Err(e) => {
                     let _ = tx
-                        .send(ServerToClient::Error { message: e.to_string() })
+                        .send(ServerToClient::Error {
+                            message: e.to_string(),
+                        })
                         .await;
                 }
             }
         }
 
-        LoadTemplate { name } => {
-            match crate::template::LayoutTemplate::load(name) {
-                Ok(_template) => {
-                    let _ = tx
-                        .send(ServerToClient::TemplateLoaded { name: name.clone() })
-                        .await;
-                }
-                Err(e) => {
-                    let _ = tx
-                        .send(ServerToClient::Error { message: e.to_string() })
-                        .await;
-                }
+        LoadTemplate { name } => match crate::template::LayoutTemplate::load(name) {
+            Ok(_template) => {
+                let _ = tx
+                    .send(ServerToClient::TemplateLoaded { name: name.clone() })
+                    .await;
             }
-        }
+            Err(e) => {
+                let _ = tx
+                    .send(ServerToClient::Error {
+                        message: e.to_string(),
+                    })
+                    .await;
+            }
+        },
 
-        ListTemplates => {
-            match crate::template::LayoutTemplate::list() {
-                Ok(names) => {
-                    let _ = tx.send(ServerToClient::TemplateList { names }).await;
-                }
-                Err(e) => {
-                    let _ = tx
-                        .send(ServerToClient::Error { message: e.to_string() })
-                        .await;
-                }
+        ListTemplates => match crate::template::LayoutTemplate::list() {
+            Ok(names) => {
+                let _ = tx.send(ServerToClient::TemplateList { names }).await;
             }
-        }
+            Err(e) => {
+                let _ = tx
+                    .send(ServerToClient::Error {
+                        message: e.to_string(),
+                    })
+                    .await;
+            }
+        },
 
         ConnectSsh {
             host,
@@ -769,11 +795,7 @@ pub(super) async fn dispatch(
                     let kp = key_path.clone().unwrap_or_else(|| {
                         std::env::var_os("HOME")
                             .or_else(|| std::env::var_os("USERPROFILE"))
-                            .map(|h| {
-                                std::path::PathBuf::from(h)
-                                    .join(".ssh")
-                                    .join("id_rsa")
-                            })
+                            .map(|h| std::path::PathBuf::from(h).join(".ssh").join("id_rsa"))
                             .map(|p| p.to_string_lossy().to_string())
                             .unwrap_or_default()
                     });
@@ -795,29 +817,27 @@ pub(super) async fn dispatch(
             };
 
             match SshSession::connect(&ssh_config).await {
-                Ok(mut session) => {
-                    match session.authenticate(&ssh_config).await {
-                        Ok(()) => {
-                            for spec in remote_forwards {
-                                if let Err(e) = session.start_remote_forward(spec).await {
-                                    tracing::warn!("リモートフォワーディング失敗 '{}': {}", spec, e);
-                                }
+                Ok(mut session) => match session.authenticate(&ssh_config).await {
+                    Ok(()) => {
+                        for spec in remote_forwards {
+                            if let Err(e) = session.start_remote_forward(spec).await {
+                                tracing::warn!("リモートフォワーディング失敗 '{}': {}", spec, e);
                             }
-                            let _ = tx
-                                .send(ServerToClient::Error {
-                                    message: "SSH 認証成功。シェル統合は開発中です".to_string(),
-                                })
-                                .await;
                         }
-                        Err(e) => {
-                            let _ = tx
-                                .send(ServerToClient::Error {
-                                    message: format!("SSH 認証失敗: {}", e),
-                                })
-                                .await;
-                        }
+                        let _ = tx
+                            .send(ServerToClient::Error {
+                                message: "SSH 認証成功。シェル統合は開発中です".to_string(),
+                            })
+                            .await;
                     }
-                }
+                    Err(e) => {
+                        let _ = tx
+                            .send(ServerToClient::Error {
+                                message: format!("SSH 認証失敗: {}", e),
+                            })
+                            .await;
+                    }
+                },
                 Err(e) => {
                     let _ = tx
                         .send(ServerToClient::Error {
@@ -887,10 +907,8 @@ pub(super) async fn dispatch(
                         let old_layout =
                             s.focused_window().map(|w| w.layout_changed_msg(cols, rows));
                         s.break_pane().ok().map(|new_win_id| {
-                            let pane_id = s
-                                .focused_window()
-                                .map(|w| w.focused_pane_id())
-                                .unwrap_or(0);
+                            let pane_id =
+                                s.focused_window().map(|w| w.focused_pane_id()).unwrap_or(0);
                             let new_layout =
                                 s.focused_window().map(|w| w.layout_changed_msg(cols, rows));
                             let windows = s.window_list();
@@ -902,11 +920,12 @@ pub(super) async fn dispatch(
                 };
                 if let Some((new_win_id, pane_id, old_layout, new_layout, windows)) = result {
                     let _ = tx
-                        .send(ServerToClient::PaneBroken { new_window_id: new_win_id, pane_id })
+                        .send(ServerToClient::PaneBroken {
+                            new_window_id: new_win_id,
+                            pane_id,
+                        })
                         .await;
-                    let _ = tx
-                        .send(ServerToClient::WindowListChanged { windows })
-                        .await;
+                    let _ = tx.send(ServerToClient::WindowListChanged { windows }).await;
                     if let Some(msg) = old_layout {
                         let _ = tx.send(msg).await;
                     }
@@ -936,9 +955,7 @@ pub(super) async fn dispatch(
                     }
                 };
                 if let Some((pane_id, new_layout, windows)) = result {
-                    let _ = tx
-                        .send(ServerToClient::WindowListChanged { windows })
-                        .await;
+                    let _ = tx.send(ServerToClient::WindowListChanged { windows }).await;
                     if let Some(msg) = new_layout {
                         let _ = tx.send(msg).await;
                     }
@@ -961,7 +978,11 @@ pub(super) async fn dispatch(
             }
         }
 
-        SftpUpload { host_name, local_path, remote_path } => {
+        SftpUpload {
+            host_name,
+            local_path,
+            remote_path,
+        } => {
             if let Some(host_cfg) = hosts.iter().find(|h| &h.name == host_name) {
                 let host_cfg = host_cfg.clone();
                 let local = local_path.clone();
@@ -971,8 +992,7 @@ pub(super) async fn dispatch(
 
                 tokio::spawn(async move {
                     let result =
-                        super::sftp::run_sftp_upload(&host_cfg, &local, &remote, tx2.clone())
-                            .await;
+                        super::sftp::run_sftp_upload(&host_cfg, &local, &remote, tx2.clone()).await;
                     let _ = tx2
                         .send(ServerToClient::SftpDone {
                             path: display,
@@ -989,7 +1009,11 @@ pub(super) async fn dispatch(
             }
         }
 
-        SftpDownload { host_name, remote_path, local_path } => {
+        SftpDownload {
+            host_name,
+            remote_path,
+            local_path,
+        } => {
             if let Some(host_cfg) = hosts.iter().find(|h| &h.name == host_name) {
                 let host_cfg = host_cfg.clone();
                 let remote = remote_path.clone();
@@ -1017,7 +1041,10 @@ pub(super) async fn dispatch(
             }
         }
 
-        RunMacro { macro_fn, display_name } => {
+        RunMacro {
+            macro_fn,
+            display_name,
+        } => {
             if let Some(ref name) = *current_session {
                 let focused_pane_id = {
                     let arc = manager.sessions();
@@ -1043,7 +1070,7 @@ pub(super) async fn dispatch(
                         let sessions = arc.lock().await;
                         if let Some(session) = sessions.get(name)
                             && let Some(window) = session.focused_window()
-                                && let Some(pane) = window.pane(pane_id)
+                            && let Some(pane) = window.pane(pane_id)
                         {
                             let _ = pane.write_input(text.as_bytes());
                         }
@@ -1109,7 +1136,9 @@ pub(super) async fn dispatch(
                     }
                     Some(Err(e)) => {
                         let _ = tx
-                            .send(ServerToClient::Error { message: e.to_string() })
+                            .send(ServerToClient::Error {
+                                message: e.to_string(),
+                            })
                             .await;
                     }
                     None => {}
@@ -1135,7 +1164,11 @@ pub(super) async fn dispatch(
             }
         }
 
-        MoveFloatingPane { pane_id, col_off, row_off } => {
+        MoveFloatingPane {
+            pane_id,
+            col_off,
+            row_off,
+        } => {
             if let Some(ref name) = *current_session {
                 let rect_opt = {
                     let arc = manager.sessions();
@@ -1159,7 +1192,11 @@ pub(super) async fn dispatch(
             }
         }
 
-        ResizeFloatingPane { pane_id, cols, rows } => {
+        ResizeFloatingPane {
+            pane_id,
+            cols,
+            rows,
+        } => {
             if let Some(ref name) = *current_session {
                 let rect_opt = {
                     let arc = manager.sessions();
@@ -1183,7 +1220,13 @@ pub(super) async fn dispatch(
             }
         }
 
-        ConnectSerial { port, baud_rate, data_bits, stop_bits, parity } => {
+        ConnectSerial {
+            port,
+            baud_rate,
+            data_bits,
+            stop_bits,
+            parity,
+        } => {
             if let Some(ref name) = *current_session {
                 let result = manager
                     .connect_serial(name, port, *baud_rate, *data_bits, *stop_bits, parity)
@@ -1210,7 +1253,9 @@ pub(super) async fn dispatch(
                     }
                     Err(e) => {
                         let _ = tx
-                            .send(ServerToClient::Error { message: e.to_string() })
+                            .send(ServerToClient::Error {
+                                message: e.to_string(),
+                            })
                             .await;
                     }
                 }
@@ -1219,9 +1264,7 @@ pub(super) async fn dispatch(
 
         ListPlugins => super::plugin_dispatch::handle_list_plugins(manager, &tx).await,
 
-        LoadPlugin { path } => {
-            super::plugin_dispatch::handle_load_plugin(manager, &tx, path).await
-        }
+        LoadPlugin { path } => super::plugin_dispatch::handle_load_plugin(manager, &tx, path).await,
 
         UnloadPlugin { path } => {
             super::plugin_dispatch::handle_unload_plugin(manager, &tx, path).await
@@ -1263,7 +1306,10 @@ fn validate_recording_path(output_path: &str) -> anyhow::Result<()> {
             return Err(anyhow::anyhow!(
                 "セキュリティエラー: 録音ファイルは {} または {} 内に保存してください (指定パス: {})",
                 allowed[0].display(),
-                allowed.get(1).map(|p| p.display().to_string()).unwrap_or_default(),
+                allowed
+                    .get(1)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default(),
                 output_path
             ));
         }
@@ -1278,7 +1324,9 @@ fn allowed_recording_dirs() -> Vec<std::path::PathBuf> {
     let mut dirs = Vec::new();
 
     if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
-        let rec_dir = std::path::PathBuf::from(home).join("nexterm").join("recordings");
+        let rec_dir = std::path::PathBuf::from(home)
+            .join("nexterm")
+            .join("recordings");
         std::fs::create_dir_all(&rec_dir).ok();
         dirs.push(rec_dir);
     }

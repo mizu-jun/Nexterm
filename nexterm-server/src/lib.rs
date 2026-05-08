@@ -56,12 +56,12 @@ pub async fn run_server() -> Result<()> {
 
         // WASM プラグインマネージャーを初期化して SessionManager に登録する
         if !cfg.plugins_disabled {
-            let plugin_dir = cfg.plugin_dir.as_deref()
+            let plugin_dir = cfg
+                .plugin_dir
+                .as_deref()
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(nexterm_plugin::default_plugin_dir);
-            let mgr = nexterm_plugin::PluginManager::new(
-                std::sync::Arc::new(|_pane_id, _data| {}),
-            );
+            let mgr = nexterm_plugin::PluginManager::new(std::sync::Arc::new(|_pane_id, _data| {}));
             if plugin_dir.exists() {
                 match mgr.load_dir(&plugin_dir) {
                     Ok(n) if n > 0 => info!("{} 個の WASM プラグインをロードしました", n),
@@ -72,7 +72,13 @@ pub async fn run_server() -> Result<()> {
             manager.set_plugin_manager(mgr);
         }
 
-        (Arc::new(cfg.hooks), Arc::new(runner), Arc::new(cfg.log), Arc::new(cfg.hosts), cfg.web)
+        (
+            Arc::new(cfg.hooks),
+            Arc::new(runner),
+            Arc::new(cfg.log),
+            Arc::new(cfg.hosts),
+            cfg.web,
+        )
     };
 
     // Web ターミナルが有効な場合はバックグラウンドで起動する
@@ -110,9 +116,10 @@ pub async fn run_server() -> Result<()> {
     // シャットダウン時にスナップショットを保存する
     let snap = manager.to_snapshot().await;
     if !snap.sessions.is_empty()
-        && let Err(e) = persist::save_snapshot(&snap) {
-            tracing::warn!("スナップショットの保存に失敗しました: {}", e);
-        }
+        && let Err(e) = persist::save_snapshot(&snap)
+    {
+        tracing::warn!("スナップショットの保存に失敗しました: {}", e);
+    }
 
     info!("nexterm-server 停止");
     Ok(())
@@ -150,7 +157,7 @@ fn max_window_id_in_snapshot(snap: &snapshot::ServerSnapshot) -> u32 {
 /// シャットダウンシグナルハンドラー（Unix/Windows）
 #[cfg(unix)]
 async fn shutdown_signal() {
-    use tokio::signal::unix::{signal, SignalKind};
+    use tokio::signal::unix::{SignalKind, signal};
     let mut term = signal(SignalKind::terminate()).expect("SIGTERM ハンドラーの設定に失敗");
     let mut int = signal(SignalKind::interrupt()).expect("SIGINT ハンドラーの設定に失敗");
     tokio::select! {
@@ -161,6 +168,8 @@ async fn shutdown_signal() {
 
 #[cfg(windows)]
 async fn shutdown_signal() {
-    tokio::signal::ctrl_c().await.expect("Ctrl+C ハンドラーの設定に失敗");
+    tokio::signal::ctrl_c()
+        .await
+        .expect("Ctrl+C ハンドラーの設定に失敗");
     info!("Ctrl+C を受信しました");
 }

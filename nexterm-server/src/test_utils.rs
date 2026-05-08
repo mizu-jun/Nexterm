@@ -9,7 +9,8 @@ static TEST_PORT: AtomicU16 = AtomicU16::new(9000);
 /// ユニークなテスト用パスを生成する
 pub fn temp_json_path(name: &str) -> PathBuf {
     let temp = TempDir::new().expect("一時ディレクトリの作成に失敗");
-    temp.path().join(format!("{}_{}.json", name, std::process::id()))
+    temp.path()
+        .join(format!("{}_{}.json", name, std::process::id()))
 }
 
 /// テスト用に一時的に環境変数を設定し、スコープ終了時に自動クリーンアップする
@@ -57,8 +58,13 @@ impl TempFile {
     /// 一時ディレクトリ配下に `<name>_<pid>.json` パスを生成する（ファイルは作らない）
     pub fn new(name: &str) -> Self {
         let temp_dir = TempDir::new().expect("一時ディレクトリの作成に失敗");
-        let path = temp_dir.path().join(format!("{}_{}.json", name, std::process::id()));
-        Self { path, _temp_dir: temp_dir }
+        let path = temp_dir
+            .path()
+            .join(format!("{}_{}.json", name, std::process::id()));
+        Self {
+            path,
+            _temp_dir: temp_dir,
+        }
     }
 }
 
@@ -92,13 +98,15 @@ mod tests {
     #[test]
     fn temp_env_var_restores_original() {
         let key = "___TEST_VAR___";
-        unsafe { std::env::remove_var(key); }
-        
+        unsafe {
+            std::env::remove_var(key);
+        }
+
         {
             let _env = TempEnvVar::set(key, "test_value");
             assert_eq!(std::env::var(key).unwrap(), "test_value");
         }
-        
+
         assert!(std::env::var(key).is_err());
     }
 
