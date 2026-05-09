@@ -1,6 +1,7 @@
 //! IPC 層 — Unix Domain Socket (Linux/macOS) / Named Pipe (Windows) の切り替え
 
 mod dispatch;
+mod dispatch_util;
 mod handler;
 mod key;
 mod platform;
