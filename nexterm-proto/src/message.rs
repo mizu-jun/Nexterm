@@ -332,6 +332,31 @@ pub enum ClientToServer {
         /// 再ロードするプラグインのパス
         path: String,
     },
+    /// プロトコルハンドシェイク。接続後の最初のメッセージとして送信する。
+    ///
+    /// サーバーは `proto_version` を `nexterm_proto::PROTOCOL_VERSION` と比較し、
+    /// 不一致ならエラーを返して接続を切断する。
+    Hello {
+        /// `nexterm_proto::PROTOCOL_VERSION`
+        proto_version: u32,
+        /// クライアント種別
+        client_kind: ClientKind,
+        /// クライアントの Cargo バージョン文字列（ログ用）
+        client_version: String,
+    },
+}
+
+/// クライアント種別（IPC ハンドシェイクで識別）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClientKind {
+    /// GPU クライアント (winit + wgpu)
+    Gpu,
+    /// TUI クライアント (ratatui + crossterm)
+    Tui,
+    /// CLI ツール (nexterm-ctl)
+    Ctl,
+    /// その他（プラグイン等）
+    Other,
 }
 
 fn default_data_bits() -> u8 {
@@ -584,6 +609,17 @@ pub enum ServerToClient {
         /// 操作種別: "loaded", "unloaded", "reloaded"
         action: String,
     },
+    /// プロトコルハンドシェイク応答（サーバー → クライアント）。
+    ///
+    /// クライアントが Hello を送ってきた直後に、サーバーが自身のバージョン情報を返す。
+    /// バージョン不一致でサーバーが接続を切断する場合は本メッセージは送信されない
+    /// （`Error` バリアント + 切断のみ）。
+    HelloAck {
+        /// サーバー側がサポートする最低プロトコルバージョン
+        proto_version: u32,
+        /// サーバーの Cargo バージョン文字列
+        server_version: String,
+    },
 }
 
 /// セッション情報
@@ -656,5 +692,42 @@ mod tests {
         let m = Modifiers(Modifiers::CTRL | Modifiers::SHIFT);
         assert!(m.is_ctrl());
         assert!(m.is_shift());
+    }
+
+    #[test]
+    fn hello_メッセージの_bincode_往復() {
+        let msg = ClientToServer::Hello {
+            proto_version: 1,
+            client_kind: ClientKind::Gpu,
+            client_version: "1.0.2".to_string(),
+        };
+        let encoded = bincode::serialize(&msg).unwrap();
+        let decoded: ClientToServer = bincode::deserialize(&encoded).unwrap();
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn hello_ack_メッセージの_bincode_往復() {
+        let msg = ServerToClient::HelloAck {
+            proto_version: 1,
+            server_version: "1.0.2".to_string(),
+        };
+        let encoded = bincode::serialize(&msg).unwrap();
+        let decoded: ServerToClient = bincode::deserialize(&encoded).unwrap();
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn client_kind_の全バリアントが_bincode_往復可能() {
+        for kind in [
+            ClientKind::Gpu,
+            ClientKind::Tui,
+            ClientKind::Ctl,
+            ClientKind::Other,
+        ] {
+            let encoded = bincode::serialize(&kind).unwrap();
+            let decoded: ClientKind = bincode::deserialize(&encoded).unwrap();
+            assert_eq!(kind, decoded);
+        }
     }
 }

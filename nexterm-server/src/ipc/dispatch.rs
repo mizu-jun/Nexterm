@@ -27,6 +27,12 @@ pub(super) async fn dispatch(
             let _ = tx.send(ServerToClient::Pong).await;
         }
 
+        // Hello はハンドシェイク段階で handler.rs が処理する。
+        // ここに到達した場合はプロトコル違反（Hello を再送）として無視する。
+        Hello { .. } => {
+            tracing::warn!("ハンドシェイク後に Hello を再送信されました。無視します。");
+        }
+
         Attach { session_name } => {
             // セッションが存在しない場合は新規作成してアタッチ
             let is_new_session = {

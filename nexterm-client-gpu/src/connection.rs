@@ -41,6 +41,18 @@ where
     let (send_tx, mut send_rx) = mpsc::channel::<ClientToServer>(256);
     let (recv_tx, recv_rx) = mpsc::channel::<ServerToClient>(256);
 
+    // ハンドシェイク: 接続直後にプロトコルバージョンを送信（CRITICAL/B1 対応）
+    let hello = ClientToServer::Hello {
+        proto_version: nexterm_proto::PROTOCOL_VERSION,
+        client_kind: nexterm_proto::ClientKind::Gpu,
+        client_version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    if send_tx.send(hello).await.is_err() {
+        return Err(anyhow::anyhow!(
+            "Hello メッセージの送信キューが閉じています"
+        ));
+    }
+
     tokio::spawn(async move {
         while let Some(msg) = send_rx.recv().await {
             if let Ok(payload) = bincode::serialize(&msg) {

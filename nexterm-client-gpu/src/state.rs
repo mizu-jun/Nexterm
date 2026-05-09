@@ -700,6 +700,16 @@ impl ClientState {
                 }
             }
             ServerToClient::Pong => {}
+            ServerToClient::HelloAck {
+                proto_version,
+                server_version,
+            } => {
+                tracing::info!(
+                    "サーバー HelloAck 受信: proto={}, server_version={}",
+                    proto_version,
+                    server_version
+                );
+            }
             ServerToClient::Error { message } => {
                 tracing::error!("サーバーエラー: {}", message);
             }

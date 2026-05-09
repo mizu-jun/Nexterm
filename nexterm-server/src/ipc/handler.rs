@@ -47,6 +47,9 @@ where
     // broadcast forwarder タスクのハンドル（Attach 時に設定、切断時に abort）
     let mut bcast_forwarder: Option<tokio::task::AbortHandle> = None;
 
+    // ハンドシェイク状態
+    let mut hello_received = false;
+
     // クライアント → サーバー 受信ループ
     loop {
         let mut len_buf = [0u8; 4];
@@ -71,6 +74,59 @@ where
                 continue;
             }
         };
+
+        // ハンドシェイク: 最初のメッセージは Hello でなければならない
+        if !hello_received {
+            match &msg {
+                ClientToServer::Hello {
+                    proto_version,
+                    client_kind,
+                    client_version,
+                } => {
+                    if *proto_version != nexterm_proto::PROTOCOL_VERSION {
+                        error!(
+                            "プロトコルバージョン不一致: クライアント={}, サーバー={}。接続を切断します。",
+                            proto_version,
+                            nexterm_proto::PROTOCOL_VERSION
+                        );
+                        let _ = tx
+                            .send(ServerToClient::Error {
+                                message: format!(
+                                    "プロトコルバージョン不一致 (client={}, server={})。\
+                                     クライアントを更新してください。",
+                                    proto_version,
+                                    nexterm_proto::PROTOCOL_VERSION
+                                ),
+                            })
+                            .await;
+                        break;
+                    }
+                    info!(
+                        "クライアント Hello 受信: kind={:?}, version={}, proto={}",
+                        client_kind, client_version, proto_version
+                    );
+                    // HelloAck で応答
+                    let _ = tx
+                        .send(ServerToClient::HelloAck {
+                            proto_version: nexterm_proto::PROTOCOL_VERSION,
+                            server_version: env!("CARGO_PKG_VERSION").to_string(),
+                        })
+                        .await;
+                    hello_received = true;
+                    continue;
+                }
+                _ => {
+                    error!("ハンドシェイク前に非 Hello メッセージを受信。接続を切断します。");
+                    let _ = tx
+                        .send(ServerToClient::Error {
+                            message: "ハンドシェイクが必要です。Hello メッセージを最初に送信してください。"
+                                .to_string(),
+                        })
+                        .await;
+                    break;
+                }
+            }
+        }
 
         super::dispatch::dispatch(
             &msg,

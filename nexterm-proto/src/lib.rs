@@ -14,8 +14,19 @@ pub mod message;
 pub use cell::{Attrs, Cell, Color};
 pub use grid::{DirtyRow, Grid, HyperlinkSpan};
 pub use message::{
-    ClientToServer, KeyCode, Modifiers, PaneLayout, ServerToClient, SessionInfo, WindowInfo,
+    ClientKind, ClientToServer, KeyCode, Modifiers, PaneLayout, ServerToClient, SessionInfo,
+    WindowInfo,
 };
+
+/// IPC プロトコルバージョン。
+///
+/// クライアントとサーバーが接続時に Hello メッセージで交換する。
+/// バージョン不一致時はサーバーが接続を切断する。
+///
+/// # 履歴
+///
+/// - v1: 初版（PR-C Task 10 で導入）
+pub const PROTOCOL_VERSION: u32 = 1;
 
 /// IPC メッセージ 1 件の最大サイズ（バイト数）。
 ///

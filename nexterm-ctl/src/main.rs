@@ -1586,36 +1586,60 @@ struct IpcConn {
 impl IpcConn {
     /// プラットフォームに応じて IPC に接続する
     async fn connect() -> Result<Self> {
-        #[cfg(windows)]
-        {
-            use tokio::net::windows::named_pipe::ClientOptions;
-            let username = std::env::var("USERNAME").unwrap_or_else(|_| "nexterm".to_string());
-            let pipe = format!("\\\\.\\pipe\\nexterm-{}", username);
-            let stream = ClientOptions::new()
-                .open(&pipe)
-                .map_err(|e| anyhow::anyhow!("{}", fl!("ctl-connect-failed", error = e)))?;
-            let (r, w) = tokio::io::split(stream);
-            Ok(Self {
-                reader: Box::new(r),
-                writer: Box::new(w),
-            })
+        let mut conn: Self = {
+            #[cfg(windows)]
+            {
+                use tokio::net::windows::named_pipe::ClientOptions;
+                let username = std::env::var("USERNAME").unwrap_or_else(|_| "nexterm".to_string());
+                let pipe = format!("\\\\.\\pipe\\nexterm-{}", username);
+                let stream = ClientOptions::new()
+                    .open(&pipe)
+                    .map_err(|e| anyhow::anyhow!("{}", fl!("ctl-connect-failed", error = e)))?;
+                let (r, w) = tokio::io::split(stream);
+                Self {
+                    reader: Box::new(r),
+                    writer: Box::new(w),
+                }
+            }
+
+            #[cfg(unix)]
+            {
+                let uid = unsafe { libc::getuid() };
+                let dir = std::env::var("XDG_RUNTIME_DIR")
+                    .unwrap_or_else(|_| format!("/run/user/{}", uid));
+                let path = format!("{}/nexterm.sock", dir);
+                let stream = tokio::net::UnixStream::connect(&path)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{}", fl!("ctl-connect-failed", error = e)))?;
+                let (r, w) = tokio::io::split(stream);
+                Self {
+                    reader: Box::new(r),
+                    writer: Box::new(w),
+                }
+            }
+        };
+
+        // ハンドシェイク: 接続直後にプロトコルバージョンを送信し、HelloAck を受信する
+        conn.send(ClientToServer::Hello {
+            proto_version: nexterm_proto::PROTOCOL_VERSION,
+            client_kind: nexterm_proto::ClientKind::Ctl,
+            client_version: env!("CARGO_PKG_VERSION").to_string(),
+        })
+        .await?;
+        match conn.recv().await? {
+            ServerToClient::HelloAck { .. } => {}
+            ServerToClient::Error { message } => {
+                anyhow::bail!("サーバーからハンドシェイクエラー: {}", message);
+            }
+            other => {
+                anyhow::bail!(
+                    "予期しないハンドシェイク応答: {:?} （HelloAck を期待）",
+                    other
+                );
+            }
         }
 
-        #[cfg(unix)]
-        {
-            let uid = unsafe { libc::getuid() };
-            let dir =
-                std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/run/user/{}", uid));
-            let path = format!("{}/nexterm.sock", dir);
-            let stream = tokio::net::UnixStream::connect(&path)
-                .await
-                .map_err(|e| anyhow::anyhow!("{}", fl!("ctl-connect-failed", error = e)))?;
-            let (r, w) = tokio::io::split(stream);
-            Ok(Self {
-                reader: Box::new(r),
-                writer: Box::new(w),
-            })
-        }
+        Ok(conn)
     }
 
     /// メッセージを送信する（4B LE 長さプレフィックス + bincode）
