@@ -35,6 +35,8 @@ serde_json = { workspace = true }
 
 serialport = { workspace = true }
 toml_edit = { workspace = true }
+arc-swap = { workspace = true }
+notify = { workspace = true }
 zeroize = "1.8"
 axum = { version = "0.7", features = ["ws"] }
 tower = "0.4"

@@ -6,16 +6,15 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+use crate::runtime_config::SharedRuntimeConfig;
 use crate::session::SessionManager;
 
 /// 接続済みクライアントの読み書きを処理する
 pub(super) async fn handle_client<S>(
     stream: S,
     manager: std::sync::Arc<SessionManager>,
-    hooks: std::sync::Arc<nexterm_config::HooksConfig>,
+    runtime_cfg: SharedRuntimeConfig,
     lua: std::sync::Arc<nexterm_config::LuaHookRunner>,
-    log_config: std::sync::Arc<nexterm_config::LogConfig>,
-    hosts: std::sync::Arc<Vec<nexterm_config::HostConfig>>,
 ) -> Result<()>
 where
     S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 'static,
@@ -128,15 +127,18 @@ where
             }
         }
 
+        // 各メッセージ処理ごとに最新のランタイム設定スナップショットを取得する
+        // （config watcher が ArcSwap を差し替えても次のメッセージから即座に反映される）
+        let snapshot = runtime_cfg.load_full();
         super::dispatch::dispatch(
             &msg,
             &manager,
             tx.clone(),
             &mut current_session,
-            &hooks,
+            &snapshot.hooks,
             std::sync::Arc::clone(&lua),
-            &log_config,
-            &hosts,
+            &snapshot.log_config,
+            &snapshot.hosts,
             &mut bcast_forwarder,
         )
         .await;
@@ -153,8 +155,9 @@ where
             session.detach_one(&tx);
             info!("切断によりセッション '{}' からデタッチしました", name);
         }
-        // on_detach フック（切断時）
-        crate::hooks::on_detach(&hooks, &lua, name);
+        // on_detach フック（切断時、最新スナップショットの hooks を使用）
+        let snapshot = runtime_cfg.load_full();
+        crate::hooks::on_detach(&snapshot.hooks, &lua, name);
     }
 
     Ok(())

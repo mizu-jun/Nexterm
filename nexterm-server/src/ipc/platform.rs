@@ -8,6 +8,7 @@ use anyhow::Result;
 use tracing::warn;
 use tracing::{error, info};
 
+use crate::runtime_config::SharedRuntimeConfig;
 use crate::session::SessionManager;
 
 // ---- Unix Domain Socket 実装 ----
@@ -15,10 +16,8 @@ use crate::session::SessionManager;
 #[cfg(unix)]
 pub(super) async fn serve_unix(
     manager: std::sync::Arc<SessionManager>,
-    hooks: std::sync::Arc<nexterm_config::HooksConfig>,
+    runtime_cfg: SharedRuntimeConfig,
     lua: std::sync::Arc<nexterm_config::LuaHookRunner>,
-    log_config: std::sync::Arc<nexterm_config::LogConfig>,
-    hosts: std::sync::Arc<Vec<nexterm_config::HostConfig>>,
 ) -> Result<()> {
     use tokio::net::UnixListener;
 
@@ -47,15 +46,11 @@ pub(super) async fn serve_unix(
                     continue;
                 }
                 let manager = std::sync::Arc::clone(&manager);
-                let hooks = std::sync::Arc::clone(&hooks);
+                let runtime_cfg = std::sync::Arc::clone(&runtime_cfg);
                 let lua = std::sync::Arc::clone(&lua);
-                let log_config = std::sync::Arc::clone(&log_config);
-                let hosts = std::sync::Arc::clone(&hosts);
                 tokio::spawn(async move {
-                    if let Err(e) = super::handler::handle_client(
-                        stream, manager, hooks, lua, log_config, hosts,
-                    )
-                    .await
+                    if let Err(e) =
+                        super::handler::handle_client(stream, manager, runtime_cfg, lua).await
                     {
                         error!("クライアント処理エラー: {}", e);
                     }
@@ -159,10 +154,8 @@ pub(super) fn unix_socket_path() -> String {
 #[cfg(windows)]
 pub(super) async fn serve_named_pipe(
     manager: std::sync::Arc<SessionManager>,
-    hooks: std::sync::Arc<nexterm_config::HooksConfig>,
+    runtime_cfg: SharedRuntimeConfig,
     lua: std::sync::Arc<nexterm_config::LuaHookRunner>,
-    log_config: std::sync::Arc<nexterm_config::LogConfig>,
-    hosts: std::sync::Arc<Vec<nexterm_config::HostConfig>>,
 ) -> Result<()> {
     use tokio::net::windows::named_pipe::ServerOptions;
 
@@ -179,14 +172,10 @@ pub(super) async fn serve_named_pipe(
         server.connect().await?;
 
         let manager = std::sync::Arc::clone(&manager);
-        let hooks = std::sync::Arc::clone(&hooks);
+        let runtime_cfg = std::sync::Arc::clone(&runtime_cfg);
         let lua = std::sync::Arc::clone(&lua);
-        let log_config = std::sync::Arc::clone(&log_config);
-        let hosts = std::sync::Arc::clone(&hosts);
         tokio::spawn(async move {
-            if let Err(e) =
-                super::handler::handle_client(server, manager, hooks, lua, log_config, hosts).await
-            {
+            if let Err(e) = super::handler::handle_client(server, manager, runtime_cfg, lua).await {
                 error!("クライアント処理エラー: {}", e);
             }
         });

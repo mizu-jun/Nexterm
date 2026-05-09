@@ -6,6 +6,7 @@ mod hooks;
 mod ipc;
 mod pane;
 pub mod persist;
+mod runtime_config;
 mod serial;
 mod session;
 pub mod snapshot;
@@ -49,7 +50,7 @@ pub async fn run_server() -> Result<()> {
     let manager_for_ipc = Arc::clone(&manager);
 
     // 設定を読み込んでフック設定・ログ設定・ホスト設定を抽出する
-    let (hooks, lua_runner, log_config, hosts, web_config) = {
+    let (runtime_cfg, lua_runner, web_config) = {
         let cfg = nexterm_config::ConfigLoader::load().unwrap_or_default();
         let lua_script = nexterm_config::lua_path();
         let runner = nexterm_config::LuaHookRunner::new(Some(lua_script));
@@ -73,12 +74,23 @@ pub async fn run_server() -> Result<()> {
         }
 
         (
-            Arc::new(cfg.hooks),
+            runtime_config::build_shared(&cfg),
             Arc::new(runner),
-            Arc::new(cfg.log),
-            Arc::new(cfg.hosts),
             cfg.web,
         )
+    };
+
+    // config.toml の変更を監視してランタイム設定をホットリロードする
+    // _watcher は drop されると監視を停止するため run_server スコープで保持する
+    let _watcher = match runtime_config::spawn_watcher(Arc::clone(&runtime_cfg)) {
+        Ok(w) => Some(w),
+        Err(e) => {
+            tracing::warn!(
+                "config watcher の起動に失敗しました（ホットリロードは無効）: {}",
+                e
+            );
+            None
+        }
     };
 
     // Web ターミナルが有効な場合はバックグラウンドで起動する
@@ -105,7 +117,7 @@ pub async fn run_server() -> Result<()> {
 
     // IPC サーバーを実行してシャットダウンシグナルを待機する
     tokio::select! {
-        result = ipc::serve(manager_for_ipc, hooks, lua_runner, log_config, hosts) => {
+        result = ipc::serve(manager_for_ipc, runtime_cfg, lua_runner) => {
             result?;
         }
         _ = shutdown_signal() => {

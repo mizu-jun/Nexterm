@@ -97,3 +97,6 @@ serialport = "4"
 
 # 設定ファイルの構造保持付き編集
 toml_edit = "0.22"
+
+# 非ロックなアトミック Arc 差し替え（config ホットリロードで使用）
+arc-swap = "1"

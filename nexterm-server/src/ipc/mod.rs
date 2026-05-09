@@ -7,20 +7,19 @@ mod platform;
 mod plugin_dispatch;
 mod sftp;
 
+use crate::runtime_config::SharedRuntimeConfig;
 use crate::session::SessionManager;
 use anyhow::Result;
 
 /// IPC サーバーを起動してクライアント接続を受け付ける
 pub async fn serve(
     manager: std::sync::Arc<SessionManager>,
-    hooks: std::sync::Arc<nexterm_config::HooksConfig>,
+    runtime_cfg: SharedRuntimeConfig,
     lua: std::sync::Arc<nexterm_config::LuaHookRunner>,
-    log_config: std::sync::Arc<nexterm_config::LogConfig>,
-    hosts: std::sync::Arc<Vec<nexterm_config::HostConfig>>,
 ) -> Result<()> {
     #[cfg(unix)]
-    return platform::serve_unix(manager, hooks, lua, log_config, hosts).await;
+    return platform::serve_unix(manager, runtime_cfg, lua).await;
 
     #[cfg(windows)]
-    return platform::serve_named_pipe(manager, hooks, lua, log_config, hosts).await;
+    return platform::serve_named_pipe(manager, runtime_cfg, lua).await;
 }
