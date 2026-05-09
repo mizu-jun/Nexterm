@@ -17,6 +17,86 @@ const MAX_DCS_BUF_LEN: usize = 16 * 1024 * 1024;
 /// 64 MiB は分割画像の合計上限。
 const MAX_KITTY_CHUNK_LEN: usize = 64 * 1024 * 1024;
 
+/// OSC タイトル文字列の最大長（バイト）。
+///
+/// 長大なタイトルでターミナルバーやウィンドウマネージャーへの DoS を防ぐ
+/// （CRITICAL #13 対応）。256 バイトはほぼ全ターミナルの実用範囲をカバー。
+const MAX_TITLE_LEN: usize = 256;
+
+/// OSC 9 デスクトップ通知のタイトル/本文の最大長（バイト）。
+const MAX_NOTIFICATION_LEN: usize = 1024;
+
+/// OSC 8 ハイパーリンク URI の最大長（バイト）。
+const MAX_HYPERLINK_URI_LEN: usize = 2048;
+
+/// OSC 8 ハイパーリンクで許可する URI スキーム。
+///
+/// 旧実装は `javascript:` / `file:` 等を含む全スキームを通過させていたため、
+/// 悪意ある SSH 接続先がターミナル経由でクリックジャッキング・ローカル
+/// ファイル参照を誘発できる脆弱性があった（CRITICAL #13）。
+const ALLOWED_HYPERLINK_SCHEMES: &[&str] = &[
+    "http://", "https://", "mailto:", "ftp://", "ftps://", "ssh://",
+];
+
+/// OSC 由来の文字列をサニタイズする。
+///
+/// - 制御文字（C0/C1）を除去（ログインジェクション・改行偽装防止）
+/// - 長さ上限で切り詰め（CJK 等の UTF-8 境界を尊重）
+fn sanitize_osc_string(s: String, max_len: usize) -> String {
+    let cleaned: String = s
+        .chars()
+        .filter(|c| {
+            // C0 (0x00-0x1F、ただし TAB/LF/CR は除外)、DEL、C1 (0x80-0x9F) を除去
+            let cp = *c as u32;
+            !(cp <= 0x1F && *c != '\t' && *c != '\n' && *c != '\r')
+                && cp != 0x7F
+                && !(0x80..=0x9F).contains(&cp)
+        })
+        .collect();
+
+    if cleaned.len() <= max_len {
+        return cleaned;
+    }
+    // バイト境界で安全に切り詰める
+    let mut end = max_len;
+    while end > 0 && !cleaned.is_char_boundary(end) {
+        end -= 1;
+    }
+    cleaned[..end].to_string()
+}
+
+/// OSC 8 ハイパーリンク URI を検証する。
+///
+/// 許可スキームに該当しない / 長すぎる URI は `None` を返す（無効化）。
+pub(crate) fn validate_hyperlink_uri(uri: &str) -> Option<String> {
+    if uri.is_empty() || uri.len() > MAX_HYPERLINK_URI_LEN {
+        return None;
+    }
+    let lower = uri.to_lowercase();
+    if !ALLOWED_HYPERLINK_SCHEMES
+        .iter()
+        .any(|s| lower.starts_with(s))
+    {
+        tracing::warn!(
+            "OSC 8: 許可されていない URI スキーム — 無効化: {}",
+            &uri[..uri.len().min(80)]
+        );
+        return None;
+    }
+    // 制御文字を除去
+    let cleaned: String = uri
+        .chars()
+        .filter(|c| {
+            let cp = *c as u32;
+            cp >= 0x20 && cp != 0x7F && !(0x80..=0x9F).contains(&cp)
+        })
+        .collect();
+    if cleaned.is_empty() {
+        return None;
+    }
+    Some(cleaned)
+}
+
 /// OSC 133 セマンティックゾーンのマーク種別
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SemanticMarkKind {
@@ -628,8 +708,11 @@ impl Screen {
     }
 
     /// タイトル変更を設定する（performer から呼ばれる）
+    ///
+    /// OSC 0/1/2 由来の文字列は制御文字除去 + 長さ上限で
+    /// サニタイズしてからセットする（CRITICAL #13）。
     pub(crate) fn set_pending_title(&mut self, title: String) {
-        self.pending_title = Some(title);
+        self.pending_title = Some(sanitize_osc_string(title, MAX_TITLE_LEN));
     }
 
     /// タイトル変更を取り出してクリアする
@@ -638,8 +721,13 @@ impl Screen {
     }
 
     /// デスクトップ通知を設定する（performer から呼ばれる）
+    ///
+    /// OSC 9 由来の文字列はサニタイズ（制御文字除去 + 長さ上限）する（CRITICAL #13）。
     pub(crate) fn set_pending_notification(&mut self, title: String, body: String) {
-        self.pending_notification = Some((title, body));
+        self.pending_notification = Some((
+            sanitize_osc_string(title, MAX_NOTIFICATION_LEN),
+            sanitize_osc_string(body, MAX_NOTIFICATION_LEN),
+        ));
     }
 
     /// デスクトップ通知を取り出してクリアする
@@ -672,6 +760,9 @@ impl Screen {
     }
 
     /// OSC 8 ハイパーリンクの開始（url が Some）または終了（None）を処理する
+    ///
+    /// 許可されていない URI スキーム（`javascript:` / `file:` 等）は無効化する
+    /// （CRITICAL #13: 悪意ある SSH 接続先によるクリックジャッキング対策）。
     pub(crate) fn set_hyperlink(&mut self, url: Option<String>) {
         if let Some(active_url) = self.current_hyperlink_url.take() {
             // 既存リンクを確定させて grid.hyperlinks に追加する
@@ -688,10 +779,105 @@ impl Screen {
             }
         }
         if let Some(url) = url {
+            // URI スキームと長さを検証 — 不正なら無効化（None として扱う）
+            let validated = validate_hyperlink_uri(&url);
+            if validated.is_none() {
+                self.current_hyperlink_url = None;
+                return;
+            }
             // 新しいリンクの開始位置を記録する
-            self.current_hyperlink_url = Some(url);
+            self.current_hyperlink_url = validated;
             self.hyperlink_start_col = self.cursor_col;
             self.hyperlink_start_row = self.cursor_row;
         }
+    }
+}
+
+#[cfg(test)]
+mod osc_security_tests {
+    use super::*;
+
+    #[test]
+    fn 制御文字は_osc_文字列から除去される() {
+        let input = "Title\x00\x01\x07\x1bWith Control".to_string();
+        let cleaned = sanitize_osc_string(input, MAX_TITLE_LEN);
+        assert!(!cleaned.contains('\x00'));
+        assert!(!cleaned.contains('\x01'));
+        assert!(!cleaned.contains('\x07'));
+        assert!(!cleaned.contains('\x1b'));
+        assert_eq!(cleaned, "TitleWith Control");
+    }
+
+    #[test]
+    fn osc_文字列は_max_len_で切り詰められる() {
+        let input = "a".repeat(1000);
+        let cleaned = sanitize_osc_string(input, 100);
+        assert_eq!(cleaned.len(), 100);
+    }
+
+    #[test]
+    fn cjk_文字でも_utf8_境界で切り詰められる() {
+        let input = "あいうえお".repeat(100);
+        let cleaned = sanitize_osc_string(input, 10);
+        assert!(cleaned.len() <= 10);
+        // UTF-8 として有効
+        assert!(cleaned.chars().count() > 0);
+    }
+
+    #[test]
+    fn osc_文字列は_tab_lf_cr_を保持する() {
+        let input = "Hello\tWorld\nNext\rLine".to_string();
+        let cleaned = sanitize_osc_string(input, 100);
+        assert_eq!(cleaned, "Hello\tWorld\nNext\rLine");
+    }
+
+    #[test]
+    fn http_https_uri_は許可される() {
+        assert!(validate_hyperlink_uri("https://example.com").is_some());
+        assert!(validate_hyperlink_uri("http://example.com/path").is_some());
+        assert!(validate_hyperlink_uri("HTTPS://EXAMPLE.COM").is_some());
+    }
+
+    #[test]
+    fn javascript_uri_は拒否される() {
+        // CRITICAL #13: クリックジャッキング対策の核心テスト
+        assert!(validate_hyperlink_uri("javascript:alert(1)").is_none());
+        assert!(validate_hyperlink_uri("JavaScript:void(0)").is_none());
+    }
+
+    #[test]
+    fn file_uri_は拒否される() {
+        assert!(validate_hyperlink_uri("file:///etc/passwd").is_none());
+        assert!(validate_hyperlink_uri("FILE:///c:/windows/system32").is_none());
+    }
+
+    #[test]
+    fn data_uri_は拒否される() {
+        assert!(validate_hyperlink_uri("data:text/html,<script>alert(1)</script>").is_none());
+    }
+
+    #[test]
+    fn 長すぎる_uri_は拒否される() {
+        let long = "https://".to_string() + &"a".repeat(MAX_HYPERLINK_URI_LEN);
+        assert!(validate_hyperlink_uri(&long).is_none());
+    }
+
+    #[test]
+    fn 制御文字を含む_uri_は除去される() {
+        // タブ・改行を含む URI も除去対象（厳密化）
+        let result = validate_hyperlink_uri("https://example.com/\x00path").unwrap();
+        assert!(!result.contains('\x00'));
+    }
+
+    #[test]
+    fn mailto_ssh_ftp_uri_は許可される() {
+        assert!(validate_hyperlink_uri("mailto:user@example.com").is_some());
+        assert!(validate_hyperlink_uri("ssh://server.example.com").is_some());
+        assert!(validate_hyperlink_uri("ftp://files.example.com").is_some());
+    }
+
+    #[test]
+    fn 空文字列_uri_は拒否される() {
+        assert!(validate_hyperlink_uri("").is_none());
     }
 }

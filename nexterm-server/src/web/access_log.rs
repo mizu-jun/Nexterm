@@ -64,19 +64,25 @@ impl AccessLogger {
     }
 
     /// アクセスログエントリを記録する
+    ///
+    /// HIGH H-7 対策: `path` のクエリ文字列（`?...`）は除去する。
+    /// OAuth コールバックの `?code=...&state=...` や TOTP リダイレクトの
+    /// `?token=...` 等の機密情報がログに残るのを防ぐ。
     pub fn log(&self, entry: &AccessLogEntry) {
         if !self.enabled {
             return;
         }
 
         let timestamp = chrono_now();
+        // クエリ文字列を除去（OAuth code / state / token 等の機密漏れ防止）
+        let safe_path = strip_query_string(&entry.path);
 
         // tracing には常に出力する
         info!(
             target: "nexterm::access",
             remote_addr = %entry.remote_addr,
             method = %entry.method,
-            path = %entry.path,
+            path = %safe_path,
             status = entry.status,
             auth_method = %entry.auth_method,
             user_id = %entry.user_id,
@@ -95,7 +101,7 @@ impl AccessLogger {
                     timestamp,
                     csv_escape(&entry.remote_addr),
                     csv_escape(&entry.method),
-                    csv_escape(&entry.path),
+                    csv_escape(&safe_path),
                     entry.status,
                     csv_escape(&entry.auth_method),
                     csv_escape(&entry.user_id),
@@ -104,6 +110,19 @@ impl AccessLogger {
             }
         }
     }
+}
+
+/// パスからクエリ文字列（`?...`）とフラグメント（`#...`）を除去する。
+///
+/// HIGH H-7: OAuth コールバック・TOTP リダイレクト等の機密情報が
+/// アクセスログに残るのを防ぐ。
+fn strip_query_string(path: &str) -> String {
+    let without_fragment = path.split('#').next().unwrap_or(path);
+    let without_query = without_fragment
+        .split('?')
+        .next()
+        .unwrap_or(without_fragment);
+    without_query.to_string()
 }
 
 /// CSV フィールドのエスケープ（カンマや改行を含む場合はクォートで囲む）
@@ -256,5 +275,37 @@ mod tests {
 
         assert_eq!(entry.remote_addr, "192.168.1.1");
         assert_eq!(entry.status, 101);
+    }
+
+    // ---- HIGH H-7: クエリ文字列除去テスト ----
+
+    #[test]
+    fn strip_query_string_は通常パスをそのまま返す() {
+        assert_eq!(strip_query_string("/ws"), "/ws");
+        assert_eq!(strip_query_string("/auth/login"), "/auth/login");
+    }
+
+    #[test]
+    fn strip_query_string_は_oauth_code_を除去する() {
+        // CRITICAL/H-7 核心: OAuth コールバックの code/state がログに残らないこと
+        let input = "/auth/callback?code=abc123secret&state=xyz789";
+        assert_eq!(strip_query_string(input), "/auth/callback");
+    }
+
+    #[test]
+    fn strip_query_string_は_token_クエリを除去する() {
+        let input = "/ws?session=main&token=verysecretvalue";
+        assert_eq!(strip_query_string(input), "/ws");
+    }
+
+    #[test]
+    fn strip_query_string_はフラグメントも除去する() {
+        let input = "/page#section";
+        assert_eq!(strip_query_string(input), "/page");
+    }
+
+    #[test]
+    fn strip_query_string_は空文字列を許容する() {
+        assert_eq!(strip_query_string(""), "");
     }
 }

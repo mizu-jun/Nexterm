@@ -54,7 +54,8 @@ pub fn load_or_generate(
 
     std::fs::create_dir_all(&tls_dir)?;
     std::fs::write(&cert_path, &cert_pem)?;
-    std::fs::write(&key_path, &key_pem)?;
+    // HIGH H-3: TLS 秘密鍵は 0600 で書き込む（同一サーバーの他ユーザーから読み取り不可）
+    write_key_file_secure(&key_path, key_pem.as_bytes())?;
 
     info!(
         "TLS: 自己署名証明書を {:?} に保存しました。\
@@ -63,6 +64,39 @@ pub fn load_or_generate(
     );
 
     Ok((cert_pem.into_bytes(), key_pem.into_bytes()))
+}
+
+/// TLS 秘密鍵ファイルを所有者限定（0600）で書き込む。
+///
+/// HIGH H-3 対策: umask に依存せず確実にパーミッションを 0600 に設定する。
+/// Windows では NTFS ACL がデフォルトでユーザー固有のためそのまま書き込む。
+fn write_key_file_secure(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        f.write_all(content)?;
+        f.sync_all()?;
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)?;
+        f.write_all(content)?;
+        f.sync_all()?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -152,5 +186,26 @@ mod tests {
         // 片方だけ指定の場合は自動生成パスにフォールバック
         // 存在しない場合は自己署名証明書が生成される
         assert!(result.is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_key_file_secure_は_0600_で書き込む() {
+        // HIGH H-3: TLS 秘密鍵が 0600 パーミッションで保存されることを保証
+        use std::os::unix::fs::PermissionsExt;
+        let tmp =
+            std::env::temp_dir().join(format!("nexterm_test_tls_key_{}.pem", std::process::id()));
+        let _ = std::fs::remove_file(&tmp);
+
+        write_key_file_secure(&tmp, b"-----BEGIN PRIVATE KEY-----\nfake\n").unwrap();
+        let mode = std::fs::metadata(&tmp).unwrap().permissions().mode();
+        assert_eq!(
+            mode & 0o777,
+            0o600,
+            "TLS 秘密鍵が 0600 ではない: {:o}",
+            mode & 0o777
+        );
+
+        std::fs::remove_file(&tmp).ok();
     }
 }

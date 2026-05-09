@@ -829,12 +829,27 @@ async fn ws_handler(
         return StatusCode::UNAUTHORIZED.into_response();
     }
 
-    // 後方互換: クエリパラメータのトークン確認
-    if let Some(ref expected) = state.legacy_token
-        && query.token != *expected
-    {
-        warn!("WebSocket 認証失敗: 無効なトークン（{}）", addr);
-        return StatusCode::UNAUTHORIZED.into_response();
+    // 後方互換: クエリパラメータのトークン確認（HIGH H-2 対策: 定数時間比較）
+    if let Some(ref expected) = state.legacy_token {
+        use subtle::ConstantTimeEq;
+        // 長さも含めて定数時間比較する（短絡比較によるサイドチャネル防止）
+        let provided_bytes = query.token.as_bytes();
+        let expected_bytes = expected.as_bytes();
+        // ct_eq は同じ長さの場合のみ意味があるが、長さ不一致でも常にバイト比較を実行
+        // して長さ漏洩を最小化する
+        let len_match = provided_bytes.len() == expected_bytes.len();
+        let bytes_match = if len_match {
+            provided_bytes.ct_eq(expected_bytes).unwrap_u8() == 1
+        } else {
+            // 長さが違っても同じ計算量を費やすために expected と同じ長さで比較
+            let dummy = vec![0u8; expected_bytes.len()];
+            let _ = dummy.ct_eq(expected_bytes).unwrap_u8();
+            false
+        };
+        if !(len_match && bytes_match) {
+            warn!("WebSocket 認証失敗: 無効なトークン（{}）", addr);
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
     }
 
     // アクセスログに WebSocket 接続を記録する

@@ -326,6 +326,10 @@ impl OAuthManager {
             anyhow::anyhow!("OIDC ディスカバリーに userinfo_endpoint がありません")
         })?;
 
+        // SSRF 対策（HIGH H-1）: userinfo_endpoint が discovery_url と同じドメインで
+        // かつ HTTPS スキームに限定する。
+        validate_userinfo_endpoint(&userinfo_endpoint, issuer_url)?;
+
         let user: OidcUser = client
             .get(&userinfo_endpoint)
             .bearer_auth(access_token)
@@ -512,6 +516,113 @@ impl OAuthManager {
             _ => vec![],
         }
     }
+}
+
+/// OIDC userinfo_endpoint URL を SSRF 観点で検証する（HIGH H-1）。
+///
+/// - HTTPS スキームのみ許可（HTTP では平文で access_token が漏れるリスク）
+/// - ホストが `issuer_url` と同じドメインに属していることを検証
+/// - 内部 IP アドレス（127/8、10/8、172.16/12、192.168/16、169.254/16）は拒否
+///
+/// 旧実装はディスカバリードキュメントの `userinfo_endpoint` を無検証で
+/// `reqwest::get()` に渡していたため、攻撃者が制御する OIDC プロバイダー
+/// （または DNS hijacking）で `userinfo_endpoint` をクラウドメタデータ API
+/// (`http://169.254.169.254/...`) に誘導すると、サーバーが内部ネットワークに
+/// 認証済みリクエストを発行する SSRF が成立した。
+fn validate_userinfo_endpoint(userinfo: &str, issuer_url: &str) -> anyhow::Result<()> {
+    // HTTPS 強制
+    if !userinfo.to_lowercase().starts_with("https://") {
+        anyhow::bail!(
+            "OIDC userinfo_endpoint は HTTPS でなければなりません: {}",
+            userinfo
+        );
+    }
+
+    // URL パース（簡易: スキーム除去後の最初の '/' までをホストとする）
+    let host = extract_host(userinfo).ok_or_else(|| {
+        anyhow::anyhow!(
+            "OIDC userinfo_endpoint からホストを抽出できません: {}",
+            userinfo
+        )
+    })?;
+
+    // 内部 IP / リンクローカルへのアクセスを拒否
+    if is_disallowed_host(&host) {
+        anyhow::bail!(
+            "OIDC userinfo_endpoint が内部ネットワークを指しています（SSRF 防止）: host={}",
+            host
+        );
+    }
+
+    // issuer_url のドメインと一致するか検証（subdomain 含む）
+    let issuer_host = extract_host(issuer_url).ok_or_else(|| {
+        anyhow::anyhow!("OIDC issuer_url からホストを抽出できません: {}", issuer_url)
+    })?;
+    if !is_same_or_subdomain(&host, &issuer_host) {
+        anyhow::bail!(
+            "OIDC userinfo_endpoint のホスト '{}' が issuer_url '{}' と異なります（SSRF 防止）",
+            host,
+            issuer_host
+        );
+    }
+
+    Ok(())
+}
+
+/// URL からホスト部分を抽出する（ポート番号付きの場合は除去）
+fn extract_host(url: &str) -> Option<String> {
+    let after_scheme = url.split("://").nth(1)?;
+    let host_with_port = after_scheme.split('/').next()?;
+    let host = host_with_port.split(':').next()?;
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_lowercase())
+    }
+}
+
+/// 内部 IP / リンクローカルアドレスへのアクセスを拒否する
+fn is_disallowed_host(host: &str) -> bool {
+    // localhost / 169.254 / 10.x / 192.168 / 172.16-31 / IPv6 リンクローカル
+    let lower = host.to_lowercase();
+    if lower == "localhost"
+        || lower == "127.0.0.1"
+        || lower == "::1"
+        || lower.starts_with("127.")
+        || lower.starts_with("169.254.")
+        || lower.starts_with("10.")
+        || lower.starts_with("192.168.")
+        || lower.starts_with("0.0.0.0")
+        || lower.starts_with("fe80:")
+        || lower.starts_with("fc")  // ULA
+        || lower.starts_with("fd")
+    {
+        return true;
+    }
+    // 172.16.0.0/12 (172.16 - 172.31)
+    if let Some(rest) = lower.strip_prefix("172.")
+        && let Some(second_octet) = rest.split('.').next()
+        && let Ok(n) = second_octet.parse::<u8>()
+        && (16..=31).contains(&n)
+    {
+        return true;
+    }
+    false
+}
+
+/// host が issuer_host と同一、または同じドメインのサブドメインか検証する
+fn is_same_or_subdomain(host: &str, issuer_host: &str) -> bool {
+    if host == issuer_host {
+        return true;
+    }
+    // subdomain.example.com と example.com を許可（末尾一致 + ドット境界）
+    if host.ends_with(issuer_host)
+        && host.len() > issuer_host.len()
+        && host.as_bytes()[host.len() - issuer_host.len() - 1] == b'.'
+    {
+        return true;
+    }
+    false
 }
 
 #[cfg(test)]
@@ -714,5 +825,89 @@ mod tests {
             mgr.is_user_allowed(&user, "any_token").await,
             "メール一致で Org チェック前に許可されるべき"
         );
+    }
+
+    // ---- SSRF 対策テスト（HIGH H-1）----
+
+    #[test]
+    fn extract_host_は通常_url_からホスト名を取得する() {
+        assert_eq!(
+            extract_host("https://example.com/path"),
+            Some("example.com".to_string())
+        );
+        assert_eq!(
+            extract_host("https://Example.COM:8443/path"),
+            Some("example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn is_disallowed_host_は内部_ip_を拒否する() {
+        // CRITICAL/H-1 核心: クラウドメタデータ API への到達を防ぐ
+        assert!(is_disallowed_host("169.254.169.254"));
+        assert!(is_disallowed_host("127.0.0.1"));
+        assert!(is_disallowed_host("localhost"));
+        assert!(is_disallowed_host("10.0.0.1"));
+        assert!(is_disallowed_host("192.168.1.1"));
+        assert!(is_disallowed_host("172.16.0.1"));
+        assert!(is_disallowed_host("172.31.255.255"));
+        assert!(is_disallowed_host("::1"));
+        assert!(is_disallowed_host("fe80::1"));
+    }
+
+    #[test]
+    fn is_disallowed_host_は通常_ip_を許可する() {
+        assert!(!is_disallowed_host("example.com"));
+        assert!(!is_disallowed_host("8.8.8.8"));
+        assert!(!is_disallowed_host("172.32.0.1")); // 172.16/12 範囲外
+        assert!(!is_disallowed_host("172.15.0.1"));
+        assert!(!is_disallowed_host("login.microsoftonline.com"));
+    }
+
+    #[test]
+    fn is_same_or_subdomain_は同一ドメインを許可する() {
+        assert!(is_same_or_subdomain("example.com", "example.com"));
+        assert!(is_same_or_subdomain("auth.example.com", "example.com"));
+        assert!(is_same_or_subdomain("a.b.example.com", "example.com"));
+    }
+
+    #[test]
+    fn is_same_or_subdomain_は別ドメインを拒否する() {
+        // CRITICAL/H-1 核心: 攻撃者制御ドメインを拒否
+        assert!(!is_same_or_subdomain("attacker.com", "example.com"));
+        assert!(!is_same_or_subdomain("evilexample.com", "example.com"));
+        assert!(!is_same_or_subdomain(
+            "example.com.attacker.com",
+            "example.com"
+        ));
+    }
+
+    #[test]
+    fn validate_userinfo_endpoint_は_https_と一致ドメインを許可する() {
+        let r =
+            validate_userinfo_endpoint("https://idp.example.com/userinfo", "https://example.com");
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn validate_userinfo_endpoint_は_http_を拒否する() {
+        let r = validate_userinfo_endpoint("http://example.com/userinfo", "https://example.com");
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn validate_userinfo_endpoint_は内部_ip_を拒否する() {
+        // 旧 SSRF 攻撃ベクター: クラウドメタデータ API 到達を防ぐ
+        let r = validate_userinfo_endpoint(
+            "https://169.254.169.254/latest/meta-data/",
+            "https://example.com",
+        );
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn validate_userinfo_endpoint_は別ドメインを拒否する() {
+        let r = validate_userinfo_endpoint("https://attacker.com/userinfo", "https://example.com");
+        assert!(r.is_err());
     }
 }

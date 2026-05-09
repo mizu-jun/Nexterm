@@ -313,11 +313,15 @@ fn write_atomic_secure(path: &std::path::Path, content: &[u8]) -> std::io::Resul
 }
 
 /// パスワード入力モーダルの状態
+///
+/// HIGH H-6 対策: 入力中のパスワード文字列を `Zeroizing<String>` でラップし、
+/// drop 時に確実にメモリ上の内容をゼロクリアする。これによりキーロガー
+/// やメモリスクレイプによるパスワード漏洩のリスクを低減する。
 pub struct PasswordModal {
     /// 対象ホスト設定
     pub host: HostConfig,
-    /// 入力中のパスワード（表示しない）
-    pub input: String,
+    /// 入力中のパスワード（表示しない、drop 時にゼロクリア）
+    input: zeroize::Zeroizing<String>,
     /// エラーメッセージ（認証失敗時）
     pub error: Option<String>,
 }
@@ -326,7 +330,7 @@ impl PasswordModal {
     pub fn new(host: HostConfig) -> Self {
         Self {
             host,
-            input: String::new(),
+            input: zeroize::Zeroizing::new(String::new()),
             error: None,
         }
     }
@@ -339,9 +343,18 @@ impl PasswordModal {
         self.input.pop();
     }
 
+    /// 現在の入力長を取得する（マスク表示用）
+    pub fn input_len(&self) -> usize {
+        self.input.chars().count()
+    }
+
     /// 入力済みパスワードを取り出してクリアする（接続送信後に呼ぶ）
-    pub fn take_password(&mut self) -> String {
-        std::mem::take(&mut self.input)
+    ///
+    /// 戻り値も `Zeroizing<String>` として返し、呼び出し側でも drop 時
+    /// ゼロクリアされるようにする。
+    pub fn take_password(&mut self) -> zeroize::Zeroizing<String> {
+        let taken = std::mem::take(&mut *self.input);
+        zeroize::Zeroizing::new(taken)
     }
 }
 

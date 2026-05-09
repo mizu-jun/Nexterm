@@ -42,7 +42,20 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use tracing::{error, info, warn};
-use wasmi::{Engine, Linker, Module, Store};
+use wasmi::{Config, Engine, Linker, Module, Store};
+
+/// プラグイン 1 回の呼び出しごとに供給する fuel（命令数の概算）。
+///
+/// 無限ループや極端に重い処理でホスト側を停止させない上限。
+/// CRITICAL #10 対応: wasmi はデフォルトで fuel 制限がない。
+const FUEL_PER_CALL: u64 = 10_000_000;
+
+/// プラグインメモリの最大ページ数 (1 ページ = 64 KiB)。
+///
+/// 256 ページ = 16 MiB を上限とする。CRITICAL #10 対応:
+/// wasmi はデフォルトで線形メモリ上限がなく、悪意あるプラグインが
+/// `memory.grow` で GB 単位のメモリを確保できる。
+const MAX_MEMORY_PAGES: u32 = 256;
 
 // ---- ホストステート -------------------------------------------------------
 
@@ -84,8 +97,17 @@ impl PluginManager {
     /// 新しいプラグインマネージャーを作成する
     ///
     /// `write_pane` はプラグインが `nexterm.write_pane` を呼んだときに実行されるコールバック。
+    ///
+    /// # サンドボックス設定（CRITICAL #10 対応）
+    ///
+    /// - fuel 計測を有効化（デフォルト全有効）
+    /// - 各 `on_output` / `on_command` 呼び出し前に `FUEL_PER_CALL` を供給
+    /// - fuel 枯渇時は呼び出しが TrappedFuelExhausted エラーで中断
     pub fn new(write_pane: WritePaneFn) -> Self {
-        let engine = Engine::default();
+        let mut config = Config::default();
+        // fuel 計測 = 命令単位の上限を強制
+        config.consume_fuel(true);
+        let engine = Engine::new(&config);
         Self {
             engine,
             plugins: Mutex::new(Vec::new()),
@@ -154,18 +176,66 @@ impl PluginManager {
             },
         )?;
 
+        // 初期 fuel を供給（インスタンス化・nexterm_init・nexterm_meta で消費される）
+        store
+            .set_fuel(FUEL_PER_CALL)
+            .with_context(|| "fuel 設定に失敗")?;
+
         let instance = linker
             .instantiate(&mut store, &module)
             .with_context(|| "プラグインのインスタンス化に失敗")?
             .start(&mut store)
             .with_context(|| "プラグインの起動に失敗")?;
 
+        // メモリ制限検証（CRITICAL #10）: 初期メモリサイズが上限を超えていたら拒否
+        if let Some(mem) = instance.get_memory(&store, "memory")
+            && mem.size(&store) > MAX_MEMORY_PAGES
+        {
+            anyhow::bail!(
+                "プラグインメモリが上限を超えています: {} pages > {} pages (上限 {} MiB)",
+                mem.size(&store),
+                MAX_MEMORY_PAGES,
+                MAX_MEMORY_PAGES * 64 / 1024
+            );
+        }
+
+        // API バージョン検証（CRITICAL: HIGH 5 対応）
+        // プラグインが nexterm_api_version() をエクスポートしていたら呼んで検証
+        if let Ok(version_fn) = instance.get_typed_func::<(), i32>(&store, "nexterm_api_version") {
+            store
+                .set_fuel(FUEL_PER_CALL)
+                .with_context(|| "fuel 設定に失敗")?;
+            match version_fn.call(&mut store, ()) {
+                Ok(v) if v as u32 == PLUGIN_API_VERSION => {}
+                Ok(v) => {
+                    anyhow::bail!(
+                        "プラグイン API バージョン不一致: plugin={}, host={}",
+                        v,
+                        PLUGIN_API_VERSION
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "プラグイン API バージョン取得失敗（続行）: {}: {}",
+                        path.display(),
+                        e
+                    );
+                }
+            }
+        }
+
         // nexterm_init があれば呼ぶ（オプション）
         if let Ok(init_fn) = instance.get_typed_func::<(), ()>(&store, "nexterm_init") {
+            store
+                .set_fuel(FUEL_PER_CALL)
+                .with_context(|| "fuel 設定に失敗")?;
             init_fn.call(&mut store, ()).ok();
         }
 
         // nexterm_meta があればメタデータを取得する（オプション）
+        store
+            .set_fuel(FUEL_PER_CALL)
+            .with_context(|| "fuel 設定に失敗")?;
         let (meta_name, meta_version) = read_plugin_meta(&mut store, &instance);
 
         info!(
@@ -175,7 +245,10 @@ impl PluginManager {
             meta_version
         );
 
-        let mut plugins = self.plugins.lock().expect("plugins mutex poisoned");
+        let mut plugins = self.plugins.lock().unwrap_or_else(|poisoned| {
+            tracing::warn!("plugins mutex がポイズン状態。回復して継続します");
+            poisoned.into_inner()
+        });
         plugins.push(PluginInstance {
             path: path.to_path_buf(),
             meta_name,
@@ -189,7 +262,10 @@ impl PluginManager {
 
     /// 指定パスのプラグインをアンロードする。存在しない場合は Ok(false) を返す。
     pub fn unload(&self, path: &Path) -> Result<bool> {
-        let mut plugins = self.plugins.lock().expect("plugins mutex poisoned");
+        let mut plugins = self.plugins.lock().unwrap_or_else(|poisoned| {
+            tracing::warn!("plugins mutex がポイズン状態。回復して継続します");
+            poisoned.into_inner()
+        });
         let before = plugins.len();
         plugins.retain(|p| p.path != path);
         let removed = plugins.len() < before;
@@ -230,7 +306,10 @@ impl PluginManager {
     ///
     /// 戻り値: `true` = 抑制（クライアントに転送しない）
     pub fn on_output(&self, pane_id: u32, data: &[u8]) -> bool {
-        let mut plugins = self.plugins.lock().expect("plugins mutex poisoned");
+        let mut plugins = self.plugins.lock().unwrap_or_else(|poisoned| {
+            tracing::warn!("plugins mutex がポイズン状態。回復して継続します");
+            poisoned.into_inner()
+        });
         for plugin in plugins.iter_mut() {
             let Ok(func) = plugin
                 .instance
@@ -244,6 +323,11 @@ impl PluginManager {
                 let mem_size = mem.data_size(&plugin.store);
                 if offset + data.len() <= mem_size {
                     mem.write(&mut plugin.store, offset, data).ok();
+                    // 各呼び出し前に fuel を補充（無限ループ防止、CRITICAL #10）
+                    if let Err(e) = plugin.store.set_fuel(FUEL_PER_CALL) {
+                        error!("[plugin {}] fuel 設定失敗: {}", plugin.path.display(), e);
+                        continue;
+                    }
                     match func.call(
                         &mut plugin.store,
                         (pane_id as i32, offset as i32, data.len() as i32),
@@ -265,7 +349,10 @@ impl PluginManager {
     /// 戻り値: `true` = いずれかのプラグインが処理済み
     pub fn on_command(&self, cmd: &str) -> bool {
         let cmd_bytes = cmd.as_bytes();
-        let mut plugins = self.plugins.lock().expect("plugins mutex poisoned");
+        let mut plugins = self.plugins.lock().unwrap_or_else(|poisoned| {
+            tracing::warn!("plugins mutex がポイズン状態。回復して継続します");
+            poisoned.into_inner()
+        });
         for plugin in plugins.iter_mut() {
             let Ok(func) = plugin
                 .instance
@@ -278,6 +365,11 @@ impl PluginManager {
                 let mem_size = mem.data_size(&plugin.store);
                 if offset + cmd_bytes.len() <= mem_size {
                     mem.write(&mut plugin.store, offset, cmd_bytes).ok();
+                    // 各呼び出し前に fuel を補充（無限ループ防止、CRITICAL #10）
+                    if let Err(e) = plugin.store.set_fuel(FUEL_PER_CALL) {
+                        error!("[plugin {}] fuel 設定失敗: {}", plugin.path.display(), e);
+                        continue;
+                    }
                     match func.call(&mut plugin.store, (offset as i32, cmd_bytes.len() as i32)) {
                         Ok(0) => return true, // 処理済み
                         Ok(_) => {}
@@ -295,14 +387,17 @@ impl PluginManager {
 
     /// ロード済みプラグイン数を返す
     pub fn plugin_count(&self) -> usize {
-        self.plugins.lock().expect("plugins mutex poisoned").len()
+        self.plugins
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len()
     }
 
     /// ロード済みプラグインのパス一覧を返す
     pub fn plugin_paths(&self) -> Vec<PathBuf> {
         self.plugins
             .lock()
-            .unwrap()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .iter()
             .map(|p| p.path.clone())
             .collect()

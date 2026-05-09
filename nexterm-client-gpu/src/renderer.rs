@@ -3711,7 +3711,8 @@ impl WgpuState {
         );
 
         // パスワード入力欄（マスク表示）
-        let masked = "*".repeat(modal.input.len());
+        // HIGH H-6: input は private な Zeroizing<String> なので input_len() 経由で文字数のみ取得
+        let masked = "*".repeat(modal.input_len());
         let prompt = format!("> {}_", masked);
         add_string_verts(
             &prompt,
@@ -6806,19 +6807,31 @@ impl EventHandler {
     }
 
     /// パスワード付きで新しいタブを開いて ConnectSsh メッセージを送信する（パスワード認証ホスト用）
-    fn connect_ssh_host_with_password(&self, host: &nexterm_config::HostConfig, password: String) {
+    ///
+    /// HIGH H-6: パスワード文字列は `Zeroizing<String>` で受け取り、
+    /// IPC 送信後に drop されてメモリゼロクリアされる。
+    fn connect_ssh_host_with_password(
+        &self,
+        host: &nexterm_config::HostConfig,
+        password: zeroize::Zeroizing<String>,
+    ) {
         let Some(conn) = &self.connection else { return };
         let _ = conn.send_tx.try_send(ClientToServer::NewWindow);
+        // IPC bincode シリアライズ時に String が必要なので一時 clone する。
+        // 旧 password は関数終了時に drop されゼロクリアされる。
+        // TODO(future): IPC 経由で平文パスワードを送る代わりに OS keyring に
+        // 一時保存する設計に変更する（HIGH H-6 の根本対策）。
+        let pwd_string: Option<String> = if password.is_empty() {
+            None
+        } else {
+            Some((*password).clone())
+        };
         let _ = conn.send_tx.try_send(ClientToServer::ConnectSsh {
             host: host.host.clone(),
             port: host.port,
             username: host.username.clone(),
             auth_type: host.auth_type.clone(),
-            password: if password.is_empty() {
-                None
-            } else {
-                Some(password)
-            },
+            password: pwd_string,
             key_path: host.key_path.clone(),
             remote_forwards: host.forward_remote.clone(),
             x11_forward: host.x11_forward,
