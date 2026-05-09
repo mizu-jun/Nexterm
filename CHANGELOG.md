@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security — Sprint 1〜3 セキュリティ強化
+
+包括的なセキュリティ監査により判明した CRITICAL / HIGH 課題を修正。
+**互換性破壊を含む変更があります。詳細は [docs/MIGRATION.md](docs/MIGRATION.md) を参照。**
+
+#### 認証・認可（Web ターミナル）
+
+- **OAuth GitHub Org 検証バイパス修正**（CRITICAL）: 旧実装は `get_current_token()` が常に `None` を返すバグで Org メンバーシップ検証が一切実行されていなかった。`exchange_code()` の戻り値に `access_token` を含めて `is_user_allowed()` に伝播するよう修正。
+- **TOTP リプレイ攻撃対策**（CRITICAL）: 同一 OTP コードの ±1 ウィンドウ内再利用を `subtle::ConstantTimeEq` 定数時間比較 + `HashSet<(window, code)>` で検出・拒否。
+- **TOTP IP ベースレート制限**（CRITICAL）: `5 試行/60 秒` のブルートフォース対策を `web::rate_limit` モジュールで実装。429 + `Retry-After: 60` を返す。
+- **TLS フォールバック既定禁止**（CRITICAL）: TLS 設定失敗時の HTTP サイレント降格を廃止。`[web] allow_http_fallback = true` で明示オプトインが必要。
+- **OIDC userinfo_endpoint SSRF 対策**（HIGH）: HTTPS 強制 + 内部 IP 拒否 + issuer ドメイン一致検証。
+- **legacy_token 定数時間比較**（HIGH）: `subtle::ConstantTimeEq` でタイミング攻撃を防止。
+
+#### IPC / プロトコル
+
+- **bincode メッセージサイズ上限**（CRITICAL）: `MAX_MSG_LEN = 64 MiB` でローカル OOM 攻撃を防止（サーバー / GPU/TUI クライアント / ctl の 4 箇所）。
+- **プロトコル Hello + バージョニング**: 接続時に `ClientToServer::Hello { proto_version, client_kind, client_version }` を必須化。`PROTOCOL_VERSION = 1`。バージョン不一致は接続切断。
+
+#### VT パーサ・画像
+
+- **VT バッファ上限**（CRITICAL）: APC 4 MiB / DCS Sixel 16 MiB / Kitty 分割転送 64 MiB の上限導入。悪意ある PTY による DoS 防止。
+- **画像デコード u32 オーバーフロー修正**（CRITICAL）: `width * height * 4` を u64 で計算し `MAX_IMAGE_BYTES = 256 MiB` で制限。
+- **OSC 8 URI allowlist**（CRITICAL）: `javascript:` / `file:` 等のスキームを拒否、許可スキームは `http/https/mailto/ftp/ftps/ssh`。タイトル 256 / 通知 1024 / URI 2048 バイト上限。
+
+#### サンドボックス
+
+- **Lua サンドボックス**（CRITICAL）: `os` / `io` / `package` / `require` / `dofile` / `loadfile` / `debug` を無効化。`config.lua` 経由の RCE を阻止。
+- **WASM サンドボックス強化**（CRITICAL）: wasmi の `consume_fuel(true)` + 各呼び出し前に `FUEL_PER_CALL = 10M` を供給。`MAX_MEMORY_PAGES = 256` (16 MiB) でメモリ上限。`nexterm_api_version()` でロード時バージョン検証。Mutex ポイズン回復。
+
+#### シークレット・永続化
+
+- **snapshot/host_history を atomic write + 0600**（CRITICAL）: 一時ファイル → fsync → rename + Unix では `mode(0o600)` 強制。クラッシュ時破損 + 機密情報漏洩を防止。
+- **TLS 秘密鍵 0600 強制保存**（HIGH）: 自己署名証明書生成時の鍵ファイルを umask 非依存で 0600 化。
+- **GUI PasswordModal `Zeroizing<String>`**（HIGH）: パスワード入力バッファを drop 時にメモリゼロクリア。
+
+#### ロギング
+
+- **アクセスログのクエリ文字列除去**（HIGH）: OAuth `?code=` / `?state=` / `?token=` 等の機密情報がアクセスログに残るのを防ぐ。
+
+### Fixed
+
+- **TomlConfig 機能不全修正**: 旧 `TomlConfig` 中間構造体は `window/web/hosts/macros/log/cursor_style/auto_check_update/language` 等を欠いており、ユーザーが `config.toml` に書いた設定の大半がサイレント無視されていた。`Config` を直接 deserialize する設計に変更。
+- **DEFAULT_CONFIG_TOML テンプレート修正**: 初回起動時テンプレートが `[color_scheme] builtin = ...` / `[tab_bar] show = ...` 等の実装と一致しないキーを使用していた。実装に合わせたキー名に修正。
+- **CI 修復**: `cargo fmt --check` が master で失敗していた状態を解消。
+
+### Added
+
+- **テスト**: 全 CRITICAL/HIGH 修正に核心テストを追加（合計 約 60 件、proto / vt / config / server / plugin の各クレート）。
+- **`docs/MIGRATION.md`**: 互換性破壊変更（Lua サンドボックス・プロトコル Hello・TLS フォールバック既定禁止）の移行ドキュメント。
+
 ## [1.0.0] - 2026-04-27
 
 ### Added
