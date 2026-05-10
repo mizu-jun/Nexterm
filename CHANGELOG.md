@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security — Sprint 5-1 (G2) GitHub Actions SHA ピン留め
+
+- **全 GitHub Actions を Git SHA でピン留め**（SLSA 2 要件）。
+  `actions/checkout@v4` のような可変タグ参照を、対応する Git commit SHA
+  + `# v4.3.1` 形式のコメントに変換した。これにより、上流アクション側で
+  タグが書き換えられた場合のサプライチェーン攻撃に耐性を持つ。
+  - 対象: `ci.yml` / `release.yml` / `sbom.yml` / `fuzz.yml` / `flatpak.yml` / `pages.yml`（合計 36 箇所）
+  - ピン留め対象アクション 9 種:
+    `actions/checkout`、`actions/upload-artifact`、`actions/upload-pages-artifact`、
+    `actions/deploy-pages`、`actions/attest-build-provenance`、
+    `Swatinem/rust-cache`、`EmbarkStudios/cargo-deny-action`、
+    `softprops/action-gh-release`、`dtolnay/rust-toolchain` (stable/nightly)
+
 ## [1.1.0] - 2026-05-10
 
 Sprint 1〜4 全完了の総まとめリリース。互換性破壊を含む変更があるため、移行時は
