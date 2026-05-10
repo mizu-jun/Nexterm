@@ -18,11 +18,9 @@ impl Perform for Screen {
                 self.set_pending_bell();
             }
             // BS (バックスペース)
-            0x08 => {
-                if self.cursor().0 > 0 {
-                    let (col, row) = self.cursor();
-                    self.move_cursor(col - 1, row);
-                }
+            0x08 if self.cursor().0 > 0 => {
+                let (col, row) = self.cursor();
+                self.move_cursor(col - 1, row);
             }
             // HT (水平タブ) — 次の8の倍数列へ
             0x09 => {

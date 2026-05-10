@@ -1,0 +1,30 @@
+# cargo-audit 設定（Sprint 5-1 / CI 修復）
+#
+# 目的:
+#   `cargo audit` 単体実行時に許容する advisory を管理する。
+#   `deny.toml` の `[advisories].ignore` と整合させる。
+#
+# 重要: cargo-audit は **`~/.cargo/audit.toml` (グローバル) のみ読み込む**。
+# リポジトリ内の本ファイルは自動では参照されない。
+# ローカルで `cargo audit` を実行する場合は、以下のいずれかで設定する:
+#
+#   1. このファイルを `~/.cargo/audit.toml` にコピー
+#        cp .cargo/audit.toml ~/.cargo/audit.toml
+#
+#   2. コマンドラインで明示
+#        cargo audit --ignore RUSTSEC-2023-0071
+#
+# CI: .github/workflows/ci.yml の `security` ジョブで `--ignore` を明示している。
+#
+# 注意: 新規 ignore 追加時は deny.toml と .github/workflows/ci.yml にも
+#       同じエントリを追加し、「依存先 / 上流追跡 / 影響範囲」をコメントで記載すること。
+
+[advisories]
+ignore = [
+    # rsa 0.10.0-rc.16 の Marvin Attack (タイミングサイドチャネル) は
+    # russh 0.60 経由で依存。リモート攻撃にはネットワーク観測が必要で、
+    # nexterm のローカル使用パターンでは現実的なリスクは限定的。
+    # RustCrypto/RSA 側で constant-time 実装に移行中（GitHub issues/626）。
+    # deny.toml と同期。
+    "RUSTSEC-2023-0071",
+]
