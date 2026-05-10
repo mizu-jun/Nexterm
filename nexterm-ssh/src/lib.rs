@@ -379,10 +379,10 @@ impl SshSession {
                     // SSH チャネルからの出力を受信する
                     msg = channel.wait() => {
                         match msg {
-                            Some(ChannelMsg::Data { data }) => {
-                                if output_tx.send(data.to_vec()).await.is_err() {
-                                    break;
-                                }
+                            Some(ChannelMsg::Data { data })
+                                if output_tx.send(data.to_vec()).await.is_err() =>
+                            {
+                                break;
                             }
                             Some(ChannelMsg::ExitStatus { .. }) | None => break,
                             _ => {}

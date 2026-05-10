@@ -32,11 +32,13 @@ jobs:
 
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
+        # libudev-dev: serialport クレートが Linux で libudev-sys に依存するため必須
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libx11-dev libxkbcommon-dev libwayland-dev \
-            libasound2-dev libpulse-dev
+            libasound2-dev libpulse-dev \
+            libudev-dev
 
       - name: Check formatting
         run: cargo fmt --all -- --check
