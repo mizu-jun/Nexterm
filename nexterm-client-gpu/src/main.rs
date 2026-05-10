@@ -17,6 +17,7 @@ mod renderer;
 mod scrollback;
 mod settings_panel;
 mod shaders;
+mod signature_verify;
 mod state;
 mod update_checker;
 mod vertex_util;

@@ -8,9 +8,11 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-# GitHub Release への書き込み権限
+# GitHub Release への書き込み権限 + SLSA Provenance 生成（attestations）
 permissions:
   contents: write
+  id-token: write       # OIDC トークン（attest-build-provenance に必須）
+  attestations: write   # SLSA Provenance アテステーション
 
 jobs:
   # ── Step 1: Release ページを先に作成する ──────────────────────────
@@ -87,6 +89,10 @@ jobs:
         # nexterm-client-gpu は v0.9.3 でバイナリ名を nexterm に変更し、
         # サーバーを内部起動するシングルバイナリとなった。
         # nexterm-launcher は nexterm.exe と同名バイナリを生成するため除外する。
+        # NEXTERM_MINISIGN_PUBLIC_KEY (Sprint 3-4): 設定されている場合は signature_verify
+        # モジュールに公開鍵が埋め込まれ、自動更新時の minisign 検証が有効化される。
+        env:
+          NEXTERM_MINISIGN_PUBLIC_KEY: ${{ vars.NEXTERM_MINISIGN_PUBLIC_KEY }}
         run: >
           cargo build --release --target ${{ matrix.target }}
           -p nexterm-server
@@ -289,14 +295,116 @@ jobs:
 
           Remove-Item $certPath -Force
 
+      # ── Sprint 3-4: minisign 署名（秘密鍵が Secrets に設定されている場合のみ）──
+      # MINISIGN_SECRET_KEY: minisign -G で生成した秘密鍵ファイルの内容（複数行）
+      # MINISIGN_PASSWORD:   秘密鍵のパスワード（鍵生成時に設定したもの）
+      - name: Set up minisign (Linux)
+        if: runner.os == 'Linux' && env.MINISIGN_SECRET_KEY != ''
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          sudo apt-get install -y minisign
+
+      - name: Set up minisign (macOS)
+        if: runner.os == 'macOS' && env.MINISIGN_SECRET_KEY != ''
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          brew install minisign
+
+      - name: Set up minisign (Windows)
+        if: runner.os == 'Windows' && env.MINISIGN_SECRET_KEY != ''
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        shell: pwsh
+        run: |
+          choco install minisign -y --no-progress
+
+      - name: Sign release archives with minisign (Unix)
+        if: runner.os != 'Windows' && env.MINISIGN_SECRET_KEY != ''
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          # 秘密鍵を一時ファイルに書き出す
+          KEY_FILE="$RUNNER_TEMP/nexterm-minisign.key"
+          printf '%s' "$MINISIGN_SECRET_KEY" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+
+          # tar.gz および AppImage（Linux のみ）を署名
+          for archive in \
+            "nexterm-${{ github.ref_name }}-${{ matrix.name }}.tar.gz" \
+            "nexterm-${{ github.ref_name }}-${{ matrix.name }}.AppImage"; do
+            if [ -f "$archive" ]; then
+              echo "$MINISIGN_PASSWORD" | minisign -S -s "$KEY_FILE" -m "$archive"
+              echo "Signed: $archive -> $archive.minisig"
+            fi
+          done
+
+          # 秘密鍵を削除
+          rm -f "$KEY_FILE"
+
+      - name: Sign release archives with minisign (Windows)
+        if: runner.os == 'Windows' && env.MINISIGN_SECRET_KEY != ''
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        shell: pwsh
+        run: |
+          $keyFile = Join-Path $env:RUNNER_TEMP "nexterm-minisign.key"
+          [System.IO.File]::WriteAllText($keyFile, $env:MINISIGN_SECRET_KEY)
+
+          $targets = @(
+            "nexterm-${{ github.ref_name }}-${{ matrix.name }}.zip",
+            "nexterm-${{ github.ref_name }}-${{ matrix.name }}.msi"
+          )
+          foreach ($archive in $targets) {
+            if (Test-Path $archive) {
+              $env:MINISIGN_PASSWORD | minisign -S -s $keyFile -m $archive
+              Write-Host "Signed: $archive -> $archive.minisig"
+            }
+          }
+
+          Remove-Item $keyFile -Force
+
+      # ── Sprint 3-4: SLSA Build Provenance（全リリースアーティファクト）──
+      # 検証コマンド: gh attestation verify <archive> -R mizu-jun/Nexterm
+      - name: Generate SLSA Provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            nexterm-${{ github.ref_name }}-${{ matrix.name }}.${{ matrix.archive_ext }}
+
+      - name: Generate SLSA Provenance (MSI)
+        if: runner.os == 'Windows'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: nexterm-${{ github.ref_name }}-${{ matrix.name }}.msi
+
+      - name: Generate SLSA Provenance (AppImage)
+        if: runner.os == 'Linux'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: nexterm-${{ github.ref_name }}-${{ matrix.name }}.AppImage
+
       # ── GitHub Release にアーカイブを添付 ──
       - name: Upload ZIP to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: nexterm-${{ github.ref_name }}-${{ matrix.name }}.${{ matrix.archive_ext }}
+          files: |
+            nexterm-${{ github.ref_name }}-${{ matrix.name }}.${{ matrix.archive_ext }}
+            nexterm-${{ github.ref_name }}-${{ matrix.name }}.${{ matrix.archive_ext }}.minisig
 
       - name: Upload MSI to GitHub Release
         if: runner.os == 'Windows'
         uses: softprops/action-gh-release@v2
         with:
-          files: nexterm-${{ github.ref_name }}-${{ matrix.name }}.msi
+          files: |
+            nexterm-${{ github.ref_name }}-${{ matrix.name }}.msi
+            nexterm-${{ github.ref_name }}-${{ matrix.name }}.msi.minisig
+
+      - name: Upload AppImage minisig to GitHub Release
+        if: runner.os == 'Linux'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: nexterm-${{ github.ref_name }}-${{ matrix.name }}.AppImage.minisig

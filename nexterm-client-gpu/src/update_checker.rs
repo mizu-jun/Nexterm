@@ -2,7 +2,15 @@
 //!
 //! 起動後 5 秒待機してから GitHub Releases API をポーリングし、
 //! 現在バージョンより新しいリリースがあれば `tokio::sync::watch` 経由で通知する。
+//!
+//! Sprint 3-4: 自動ダウンロード時のリリースアセット検証は
+//! [`crate::signature_verify`] モジュールの [`verify_minisign`] を使用する。
+//! 通知段階ではアーカイブをダウンロードしないため、検証はダウンロード実行時に
+//! [`download_and_verify_asset`] 経由で行う。
+//!
+//! [`verify_minisign`]: crate::signature_verify::verify_minisign
 
+use crate::signature_verify;
 use tokio::sync::watch;
 use tracing::{info, warn};
 
@@ -62,6 +70,58 @@ async fn fetch_latest_version() -> anyhow::Result<String> {
 
     // タグ名の先頭 "v" を除去して返す（例: "v0.9.15" → "0.9.15"）
     Ok(release.tag_name.trim_start_matches('v').to_string())
+}
+
+/// 指定 URL のリリースアセットと対応する `.minisig` をダウンロードし、
+/// minisign 署名を検証してバイト列を返す。
+///
+/// 公開鍵が埋め込まれていない開発ビルドでは `Err` を返す
+/// （[`signature_verify::is_signature_verification_enabled`] で事前確認可能）。
+///
+/// # Arguments
+/// - `asset_url`: リリースアーカイブの直リンク（例: `nexterm-v1.0.0-linux-x86_64.tar.gz`）
+///
+/// # Returns
+/// - `Ok(bytes)`: 検証済みのアーカイブ本体
+/// - `Err(...)`: ダウンロード失敗 / 公開鍵未設定 / 署名検証失敗
+#[allow(dead_code)] // Sprint 3-4: 将来の自動更新フローで使用予定
+pub async fn download_and_verify_asset(asset_url: &str) -> anyhow::Result<Vec<u8>> {
+    if !signature_verify::is_signature_verification_enabled() {
+        anyhow::bail!(
+            "minisign 公開鍵が埋め込まれていないため自動更新を中断します（リリースビルドで NEXTERM_MINISIGN_PUBLIC_KEY を設定してください）"
+        );
+    }
+
+    let client = reqwest::Client::builder()
+        .user_agent(concat!("nexterm/", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(60))
+        .build()?;
+
+    let bytes = client
+        .get(asset_url)
+        .send()
+        .await?
+        .error_for_status()?
+        .bytes()
+        .await?
+        .to_vec();
+
+    let sig_url = format!("{}.minisig", asset_url);
+    let signature_text = client
+        .get(&sig_url)
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+
+    signature_verify::verify_minisign(&bytes, &signature_text)?;
+    info!(
+        "minisign 署名検証 OK: {} ({} bytes)",
+        asset_url,
+        bytes.len()
+    );
+    Ok(bytes)
 }
 
 /// `latest` が `current` より新しいかどうかをセマンティックバージョン比較で判定する。
