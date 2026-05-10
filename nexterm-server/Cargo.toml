@@ -59,6 +59,9 @@ rustls = "0.23"
 rustls-pemfile = "2"
 rcgen = "0.13"
 
+# アクセスログのローテーション時 gzip 圧縮（Sprint 3-3 後半）
+flate2 = "1"
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

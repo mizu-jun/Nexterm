@@ -82,13 +82,43 @@ pub struct TlsConfig {
 }
 
 /// アクセスログ設定
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AccessLogConfig {
     /// アクセスログを有効にするか（デフォルト: false）
     #[serde(default)]
     pub enabled: bool,
     /// ログファイルパス。省略時はサーバーログ（tracing）に出力
     pub file: Option<String>,
+    /// 1 ファイルあたりの最大サイズ（MiB）。0 = サイズベースのローテーション無効
+    #[serde(default = "default_access_log_max_size_mib")]
+    pub max_size_mib: u64,
+    /// 保持する世代数（0 = ローテーション無効。1 以上で `.1`〜`.N` を保持）
+    #[serde(default = "default_access_log_max_generations")]
+    pub max_generations: u32,
+    /// gzip 圧縮を有効化するか（ローテーション時に `.{N}.gz` として保存）
+    #[serde(default)]
+    pub compress: bool,
+}
+
+fn default_access_log_max_size_mib() -> u64 {
+    10
+}
+
+fn default_access_log_max_generations() -> u32 {
+    7
+}
+
+impl Default for AccessLogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            file: None,
+            max_size_mib: default_access_log_max_size_mib(),
+            max_generations: default_access_log_max_generations(),
+            compress: false,
+        }
+    }
 }
 
 /// Web ターミナル設定（WebSocket + xterm.js）

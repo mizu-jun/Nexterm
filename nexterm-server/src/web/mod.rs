@@ -183,10 +183,7 @@ pub async fn start_web_server(config: WebConfig, manager: Arc<SessionManager>) {
     };
 
     // アクセスログライターの初期化
-    let access_logger = Arc::new(access_log::AccessLogger::new(
-        config.access_log.enabled,
-        config.access_log.file.as_deref(),
-    ));
+    let access_logger = Arc::new(access_log::AccessLogger::new(&config.access_log));
 
     let state = AppState {
         manager,

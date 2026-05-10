@@ -3443,6 +3443,7 @@ dependencies = [
  "axum",
  "bincode",
  "dirs 5.0.1",
+ "flate2",
  "hyper-util",
  "libc",
  "nexterm-config",
