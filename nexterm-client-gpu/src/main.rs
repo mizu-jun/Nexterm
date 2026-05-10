@@ -11,6 +11,7 @@ mod glyph_atlas;
 mod host_manager;
 mod key_map;
 mod macro_picker;
+mod notification;
 mod palette;
 mod platform;
 mod renderer;

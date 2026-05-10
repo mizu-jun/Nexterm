@@ -54,6 +54,8 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 zeroize = "1.8"
 # Sprint 3-4: リリースアセットの minisign 署名検証
 minisign-verify = "0.2"
+# Sprint 4-1: OSC 9/777 デスクトップ通知。同意ダイアログを経て呼び出される
+notify-rust = "4"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

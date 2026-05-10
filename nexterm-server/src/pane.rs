@@ -534,7 +534,7 @@ impl Pane {
                             send_msg(&shared_tx_clone, msg);
                         }
 
-                        // デスクトップ通知を送信する（OSC 9）
+                        // デスクトップ通知を送信する（OSC 9 / 777）
                         if let Some((title, body)) = parser.screen_mut().take_pending_notification()
                         {
                             let msg = ServerToClient::DesktopNotification {
@@ -542,6 +542,13 @@ impl Pane {
                                 title,
                                 body,
                             };
+                            send_msg(&shared_tx_clone, msg);
+                        }
+
+                        // OSC 52 クリップボード書き込み要求を送信する（Sprint 4-1）
+                        // クライアント側で SecurityConfig.osc52_clipboard ポリシーに従って処理する
+                        for text in parser.screen_mut().take_pending_clipboard_writes() {
+                            let msg = ServerToClient::ClipboardWriteRequest { pane_id, text };
                             send_msg(&shared_tx_clone, msg);
                         }
 

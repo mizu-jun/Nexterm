@@ -1702,4 +1702,257 @@ impl WgpuState {
             }
         }
     }
+
+    /// 同意ダイアログ（Sprint 4-1: 機密操作確認モーダル）の頂点を構築する
+    ///
+    /// 中央フローティング。種別に応じてタイトル・プレビュー・ボタンを描画する。
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn build_consent_dialog_verts(
+        &self,
+        state: &ClientState,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
+        font: &mut FontManager,
+        atlas: &mut GlyphAtlas,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
+    ) {
+        use crate::state::ConsentKind;
+
+        let Some(dialog) = &state.pending_consent else {
+            return;
+        };
+
+        // 背景半透明オーバーレイ（画面全体）
+        add_px_rect(
+            0.0,
+            0.0,
+            sw,
+            sh,
+            [0.0, 0.0, 0.0, 0.55],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
+
+        // ダイアログ寸法（横 60 セル、縦 12 セル）
+        let pw = (60.0 * cell_w).min(sw - cell_w * 4.0);
+        let ph = 12.0 * cell_h;
+        let px = (sw - pw) / 2.0;
+        let py = (sh - ph) / 2.0;
+
+        // 背景（濃い紺）
+        add_px_rect(
+            px,
+            py,
+            pw,
+            ph,
+            [0.08, 0.12, 0.20, 0.97],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
+        // 上端アクセント線（黄色 = 警告色）
+        add_px_rect(
+            px,
+            py,
+            pw,
+            3.0,
+            [0.95, 0.75, 0.15, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
+
+        // タイトル
+        let title_key = match dialog.kind {
+            ConsentKind::OpenUrl(_) => "consent-title-open-url",
+            ConsentKind::ClipboardWrite { .. } => "consent-title-clipboard-write",
+            ConsentKind::Notification { .. } => "consent-title-notification",
+        };
+        let title = nexterm_i18n::t(title_key);
+        add_string_verts(
+            &title,
+            px + cell_w,
+            py + cell_h * 0.4,
+            [0.95, 0.75, 0.15, 1.0],
+            true,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
+        );
+
+        // 要求元ペイン情報
+        let mut content_y = py + cell_h * 1.8;
+        if let Some(pane_id) = pane_id_for(&dialog.kind) {
+            let label = nexterm_i18n::fl!("consent-source-pane", pane_id = pane_id);
+            add_string_verts(
+                &label,
+                px + cell_w,
+                content_y,
+                [0.7, 0.7, 0.8, 1.0],
+                false,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
+            );
+            content_y += cell_h * 1.3;
+        }
+
+        // ペイロードプレビュー（最大 2 行・各行 56 文字）
+        let preview = preview_text(&dialog.kind);
+        for (i, line) in wrap_text(&preview, 56).iter().take(2).enumerate() {
+            add_string_verts(
+                line,
+                px + cell_w,
+                content_y + i as f32 * cell_h,
+                [1.0, 1.0, 1.0, 1.0],
+                false,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
+            );
+        }
+
+        // ボタン行（4 ボタン、選択中はハイライト）
+        let buttons = [
+            nexterm_i18n::t("consent-allow"),
+            nexterm_i18n::t("consent-deny"),
+            nexterm_i18n::t("consent-always-allow"),
+            nexterm_i18n::t("consent-always-deny"),
+        ];
+        let btn_y = py + ph - cell_h * 2.6;
+        let total_w: f32 = buttons
+            .iter()
+            .map(|b| visual_width(b) as f32 * cell_w + cell_w * 2.0)
+            .sum();
+        let mut bx = px + (pw - total_w) / 2.0;
+        for (i, btn) in buttons.iter().enumerate() {
+            let bw = visual_width(btn) as f32 * cell_w + cell_w * 1.5;
+            let is_selected = dialog.selected == i;
+            let bg = if is_selected {
+                [0.95, 0.75, 0.15, 1.0]
+            } else {
+                [0.16, 0.20, 0.30, 1.0]
+            };
+            add_px_rect(bx, btn_y, bw, cell_h * 1.4, bg, sw, sh, bg_verts, bg_idx);
+            let fg = if is_selected {
+                [0.10, 0.10, 0.10, 1.0]
+            } else {
+                [0.95, 0.95, 0.95, 1.0]
+            };
+            add_string_verts(
+                btn,
+                bx + cell_w * 0.75,
+                btn_y + cell_h * 0.2,
+                fg,
+                false,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
+            );
+            bx += bw + cell_w * 0.5;
+        }
+
+        // 操作ヒント（最下行）
+        let hint = nexterm_i18n::t("consent-hint");
+        add_string_verts(
+            &hint,
+            px + cell_w,
+            py + ph - cell_h * 1.0,
+            [0.6, 0.6, 0.7, 1.0],
+            false,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
+        );
+    }
+}
+
+/// 同意ダイアログの種別から要求元ペイン ID を取り出す
+fn pane_id_for(kind: &crate::state::ConsentKind) -> Option<u32> {
+    use crate::state::ConsentKind;
+    match kind {
+        ConsentKind::OpenUrl(_) => None,
+        ConsentKind::ClipboardWrite { source_pane, .. } => *source_pane,
+        ConsentKind::Notification { source_pane, .. } => Some(*source_pane),
+    }
+}
+
+/// 同意ダイアログの種別からプレビューに表示する文字列を返す
+fn preview_text(kind: &crate::state::ConsentKind) -> String {
+    use crate::state::ConsentKind;
+    match kind {
+        ConsentKind::OpenUrl(url) => url.clone(),
+        ConsentKind::ClipboardWrite { text, .. } => {
+            // 制御文字や改行は安全のため空白に置換
+            let safe: String = text
+                .chars()
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect();
+            // バイト長で切り詰める
+            if safe.len() > 200 {
+                let mut end = 200;
+                while end > 0 && !safe.is_char_boundary(end) {
+                    end -= 1;
+                }
+                format!("{}…", &safe[..end])
+            } else {
+                safe
+            }
+        }
+        ConsentKind::Notification { title, body, .. } => format!("{title}: {body}"),
+    }
+}
+
+/// テキストを指定列幅で複数行に折り返す（CJK 全角は 2 列分カウント）
+fn wrap_text(s: &str, max_cols: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut current_cols = 0usize;
+    for c in s.chars() {
+        let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1);
+        if current_cols + w > max_cols && !current.is_empty() {
+            lines.push(std::mem::take(&mut current));
+            current_cols = 0;
+        }
+        current.push(c);
+        current_cols += w;
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
 }

@@ -49,5 +49,14 @@
   "palette-show-settings": "設定を開く",
   "update-available": "アップデートあり: v{version}  — Enter で詳細を開く",
   "update-dismiss": "更新通知を閉じる",
-  "update-open-releases": "リリースノートを開く"
+  "update-open-releases": "リリースノートを開く",
+  "consent-title-open-url": "外部 URL を開きますか?",
+  "consent-title-clipboard-write": "クリップボードに書き込みますか?",
+  "consent-title-notification": "デスクトップ通知を表示しますか?",
+  "consent-source-pane": "ペイン {pane_id} からの要求",
+  "consent-allow": "[Y] 許可",
+  "consent-deny": "[N] 拒否",
+  "consent-always-allow": "[A] 常に許可",
+  "consent-always-deny": "[D] 常に拒否",
+  "consent-hint": "Y/N: 今回のみ  •  A/D: このセッション中ずっと  •  Esc: 拒否"
 }

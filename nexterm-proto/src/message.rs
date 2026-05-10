@@ -486,6 +486,16 @@ pub enum ServerToClient {
         /// 通知本文
         body: String,
     },
+    /// OSC 52 クリップボード書き込み要求（Sprint 4-1）
+    ///
+    /// クライアントは `SecurityConfig.osc52_clipboard` ポリシーに従って
+    /// 同意ダイアログを表示するか、即時許可/拒否するかを判断する。
+    ClipboardWriteRequest {
+        /// 要求元ペイン ID
+        pane_id: u32,
+        /// 書き込み内容（サーバー側で制御文字除去済み）
+        text: String,
+    },
     /// ブロードキャストモード状態通知
     BroadcastModeChanged {
         /// true = 全ペインに入力、false = フォーカスペインのみ

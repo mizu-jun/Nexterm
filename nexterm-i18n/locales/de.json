@@ -49,5 +49,14 @@
   "palette-show-settings": "Einstellungen öffnen",
   "update-available": "Update verfügbar: v{version}  — Enter drücken für Details",
   "update-dismiss": "Update-Benachrichtigung schließen",
-  "update-open-releases": "Versionshinweise öffnen"
+  "update-open-releases": "Versionshinweise öffnen",
+  "consent-title-open-url": "Externe URL öffnen?",
+  "consent-title-clipboard-write": "In die Zwischenablage schreiben?",
+  "consent-title-notification": "Desktop-Benachrichtigung anzeigen?",
+  "consent-source-pane": "Angefordert von Pane {pane_id}",
+  "consent-allow": "[Y] Erlauben",
+  "consent-deny": "[N] Verweigern",
+  "consent-always-allow": "[A] Immer erlauben",
+  "consent-always-deny": "[D] Immer verweigern",
+  "consent-hint": "Y/N: nur diesmal  •  A/D: für diese Sitzung  •  Esc: verweigern"
 }

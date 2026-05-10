@@ -203,6 +203,9 @@ pub struct Screen {
     hyperlink_start_col: u16,
     /// OSC 8 ハイパーリンクの開始行
     hyperlink_start_row: u16,
+    /// OSC 52 で受信したクリップボード書き込み要求のキュー（Sprint 4-1）
+    /// クライアント側で SecurityConfig.osc52_clipboard ポリシーに従って処理する
+    pending_clipboard_writes: Vec<String>,
 }
 
 impl Screen {
@@ -238,6 +241,7 @@ impl Screen {
             current_hyperlink_url: None,
             hyperlink_start_col: 0,
             hyperlink_start_row: 0,
+            pending_clipboard_writes: Vec::new(),
         }
     }
 
@@ -733,6 +737,22 @@ impl Screen {
     /// デスクトップ通知を取り出してクリアする
     pub fn take_pending_notification(&mut self) -> Option<(String, String)> {
         self.pending_notification.take()
+    }
+
+    /// OSC 52 クリップボード書き込み要求をキューに追加する（Sprint 4-1）
+    ///
+    /// 1 度のフラッシュで複数の OSC 52 が来る可能性があるため Vec で蓄積する。
+    /// 制御文字は除去し、長さは MAX_NOTIFICATION_LEN の 1024 倍（約 1 MiB）で打ち切る。
+    /// 実際の上限はクライアント側の SecurityConfig.osc52_max_bytes でも再チェックされる。
+    pub(crate) fn queue_clipboard_write(&mut self, text: String) {
+        const MAX_CLIPBOARD_LEN: usize = MAX_NOTIFICATION_LEN * 1024; // 約 1 MiB
+        let cleaned = sanitize_osc_string(text, MAX_CLIPBOARD_LEN);
+        self.pending_clipboard_writes.push(cleaned);
+    }
+
+    /// OSC 52 クリップボード書き込み要求を取り出してクリアする
+    pub fn take_pending_clipboard_writes(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pending_clipboard_writes)
     }
 
     /// ブラケットペーストモード（DEC ?2004）の状態を返す

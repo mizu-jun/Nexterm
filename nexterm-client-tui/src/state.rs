@@ -179,6 +179,8 @@ impl ClientState {
             | ServerToClient::FloatingPaneClosed { .. } => {}
             // プラグイン操作応答は TUI では無視する
             ServerToClient::PluginList { .. } | ServerToClient::PluginOk { .. } => {}
+            // Sprint 4-1: TUI には同意ダイアログ UI がないため OSC 52 要求は無視する
+            ServerToClient::ClipboardWriteRequest { .. } => {}
         }
     }
 

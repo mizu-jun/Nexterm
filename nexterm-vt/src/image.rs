@@ -330,7 +330,7 @@ fn parse_u32_bytes(data: &[u8]) -> u32 {
 }
 
 /// Base64 デコード（パディング有無どちらも対応）
-fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
     fn decode_char(c: u8) -> Option<u8> {
         match c {
             b'A'..=b'Z' => Some(c - b'A'),

@@ -9,6 +9,7 @@ pub mod font;
 pub mod gpu;
 pub mod hosts;
 pub mod log;
+pub mod security;
 pub mod shell;
 pub mod web;
 pub mod window;
@@ -18,6 +19,7 @@ pub use font::FontConfig;
 pub use gpu::{ApiVersion, GpuConfig, PresentModeConfig, Profile};
 pub use hosts::{HooksConfig, HostConfig};
 pub use log::{LogConfig, StatusBarConfig};
+pub use security::{ConsentPolicy, SecurityConfig};
 pub use shell::{KeyBinding, MacroConfig, SerialPortConfig, ShellConfig};
 pub use web::{AccessLogConfig, OAuthConfig, TlsConfig, WebAuthConfig, WebConfig};
 pub use window::{CursorStyle, TabBarConfig, WindowConfig, WindowDecorations};
@@ -124,6 +126,10 @@ pub struct Config {
     /// 起動時に GitHub Releases API で最新バージョンを確認するか（デフォルト: true）
     #[serde(default = "default_auto_check_update")]
     pub auto_check_update: bool,
+
+    /// セキュリティ・同意ポリシー（外部 URL / OSC 52 / OSC 通知）
+    #[serde(default)]
+    pub security: SecurityConfig,
 }
 
 fn default_auto_check_update() -> bool {
@@ -165,6 +171,7 @@ impl Default for Config {
             language: default_language(),
             cursor_style: CursorStyle::default(),
             auto_check_update: default_auto_check_update(),
+            security: SecurityConfig::default(),
         }
     }
 }

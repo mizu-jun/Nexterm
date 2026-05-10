@@ -49,5 +49,14 @@
   "palette-show-settings": "打开设置",
   "update-available": "有新版本可用: v{version}  — 按 Enter 查看详情",
   "update-dismiss": "关闭更新通知",
-  "update-open-releases": "打开发行说明"
+  "update-open-releases": "打开发行说明",
+  "consent-title-open-url": "打开外部 URL？",
+  "consent-title-clipboard-write": "写入剪贴板？",
+  "consent-title-notification": "显示桌面通知？",
+  "consent-source-pane": "来自面板 {pane_id} 的请求",
+  "consent-allow": "[Y] 允许",
+  "consent-deny": "[N] 拒绝",
+  "consent-always-allow": "[A] 始终允许",
+  "consent-always-deny": "[D] 始终拒绝",
+  "consent-hint": "Y/N：仅此一次  •  A/D：本次会话期间  •  Esc：拒绝"
 }

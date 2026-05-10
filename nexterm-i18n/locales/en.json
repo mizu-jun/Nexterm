@@ -49,5 +49,14 @@
   "palette-show-settings": "Open Settings",
   "update-available": "Update available: v{version}  — press Enter to open releases",
   "update-dismiss": "Dismiss update notification",
-  "update-open-releases": "Open release notes"
+  "update-open-releases": "Open release notes",
+  "consent-title-open-url": "Open external URL?",
+  "consent-title-clipboard-write": "Write to clipboard?",
+  "consent-title-notification": "Show desktop notification?",
+  "consent-source-pane": "Requested by pane {pane_id}",
+  "consent-allow": "[Y] Allow",
+  "consent-deny": "[N] Deny",
+  "consent-always-allow": "[A] Always allow",
+  "consent-always-deny": "[D] Always deny",
+  "consent-hint": "Y/N: this time only  •  A/D: remember for this session  •  Esc: deny"
 }

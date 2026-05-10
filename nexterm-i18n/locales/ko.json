@@ -49,5 +49,14 @@
   "palette-show-settings": "설정 열기",
   "update-available": "업데이트 있음: v{version}  — Enter 키로 자세히 보기",
   "update-dismiss": "업데이트 알림 닫기",
-  "update-open-releases": "릴리스 노트 열기"
+  "update-open-releases": "릴리스 노트 열기",
+  "consent-title-open-url": "외부 URL을 열까요?",
+  "consent-title-clipboard-write": "클립보드에 쓸까요?",
+  "consent-title-notification": "데스크톱 알림을 표시할까요?",
+  "consent-source-pane": "페인 {pane_id}에서 요청",
+  "consent-allow": "[Y] 허용",
+  "consent-deny": "[N] 거부",
+  "consent-always-allow": "[A] 항상 허용",
+  "consent-always-deny": "[D] 항상 거부",
+  "consent-hint": "Y/N: 이번만  •  A/D: 이 세션 동안  •  Esc: 거부"
 }

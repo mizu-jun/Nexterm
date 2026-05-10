@@ -26,6 +26,11 @@ impl EventHandler {
         let ctrl = self.modifiers.control_key();
         let shift = self.modifiers.shift_key();
 
+        // Sprint 4-1: 同意ダイアログが開いている間はすべてのキーをダイアログが消費する
+        if self.app.state.pending_consent.is_some() {
+            return self.handle_consent_dialog_key(code);
+        }
+
         // Ctrl+Shift+V: クリップボードからペーストする
         if ctrl && shift && code == WKeyCode::KeyV {
             if let Ok(mut clipboard) = arboard::Clipboard::new()
@@ -1289,5 +1294,40 @@ impl EventHandler {
                 modifiers: mods,
             });
         }
+    }
+
+    /// 同意ダイアログのキーボード処理（Sprint 4-1）
+    ///
+    /// キー割当:
+    /// - Y / Enter: 1 度許可
+    /// - N / Esc:   1 度拒否
+    /// - A:         セッション中常に許可
+    /// - D:         セッション中常に拒否
+    /// - 矢印 / Tab: 選択ボタン移動
+    fn handle_consent_dialog_key(&mut self, code: WKeyCode) -> bool {
+        match code {
+            WKeyCode::KeyY | WKeyCode::Enter => {
+                self.resolve_pending_consent(Some(true), false);
+            }
+            WKeyCode::KeyN | WKeyCode::Escape => {
+                self.resolve_pending_consent(Some(false), false);
+            }
+            WKeyCode::KeyA => {
+                self.resolve_pending_consent(Some(true), true);
+            }
+            WKeyCode::KeyD => {
+                self.resolve_pending_consent(Some(false), true);
+            }
+            WKeyCode::ArrowLeft | WKeyCode::ArrowRight | WKeyCode::Tab => {
+                if let Some(dialog) = self.app.state.pending_consent.as_mut() {
+                    let dir = if code == WKeyCode::ArrowLeft { 3 } else { 1 };
+                    dialog.selected = (dialog.selected + dir) % 4;
+                }
+            }
+            _ => {
+                // 他のキーは消費するが何もしない（誤入力で予期せぬ操作を防ぐ）
+            }
+        }
+        true
     }
 }

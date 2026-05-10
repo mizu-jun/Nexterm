@@ -270,6 +270,97 @@ mod tests {
         assert_eq!(marks[0].exit_code, Some(1));
     }
 
+    // ---- OSC 52 クリップボード書き込み（Sprint 4-1）----
+
+    #[test]
+    fn osc52_クリップボード書き込み要求がキューされる() {
+        let mut parser = VtParser::new(80, 24);
+        // "Hello" を base64 エンコード = "SGVsbG8=" (パディングあり)
+        parser.advance(b"\x1b]52;c;SGVsbG8=\x07");
+        let writes = parser.screen_mut().take_pending_clipboard_writes();
+        assert_eq!(writes, vec!["Hello".to_string()]);
+    }
+
+    #[test]
+    fn osc52_読み出し要求は無視される() {
+        let mut parser = VtParser::new(80, 24);
+        // "?" は読み出し要求 → セキュリティ上拒否
+        parser.advance(b"\x1b]52;c;?\x07");
+        let writes = parser.screen_mut().take_pending_clipboard_writes();
+        assert!(writes.is_empty(), "読み出し要求はキューされないこと");
+    }
+
+    #[test]
+    fn osc52_primary_selection_は無視される() {
+        let mut parser = VtParser::new(80, 24);
+        // "p" のみ（primary selection）→ 対象外
+        parser.advance(b"\x1b]52;p;SGVsbG8=\x07");
+        let writes = parser.screen_mut().take_pending_clipboard_writes();
+        assert!(writes.is_empty(), "primary selection は対象外");
+    }
+
+    #[test]
+    fn osc52_複数指定cs_は許可される() {
+        let mut parser = VtParser::new(80, 24);
+        // "cs" (clipboard + selection) は c を含むので許可
+        parser.advance(b"\x1b]52;cs;V29ybGQ=\x07");
+        let writes = parser.screen_mut().take_pending_clipboard_writes();
+        assert_eq!(writes, vec!["World".to_string()]);
+    }
+
+    #[test]
+    fn osc52_不正な_base64_は無視される() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]52;c;!!invalid!!\x07");
+        let writes = parser.screen_mut().take_pending_clipboard_writes();
+        assert!(writes.is_empty(), "不正な base64 は無視");
+    }
+
+    #[test]
+    fn osc52_制御文字は除去される() {
+        let mut parser = VtParser::new(80, 24);
+        // "A\x01B" を base64 エンコード = "QQFC"
+        parser.advance(b"\x1b]52;c;QQFC\x07");
+        let writes = parser.screen_mut().take_pending_clipboard_writes();
+        assert_eq!(
+            writes,
+            vec!["AB".to_string()],
+            "C0 制御文字 (0x01) は除去されること"
+        );
+    }
+
+    // ---- OSC 9 / 777 デスクトップ通知（Sprint 4-1）----
+
+    #[test]
+    fn osc9_iterm_互換通知がキューされる() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]9;Build complete\x07");
+        let notif = parser.screen_mut().take_pending_notification();
+        assert_eq!(
+            notif,
+            Some(("Nexterm".to_string(), "Build complete".to_string()))
+        );
+    }
+
+    #[test]
+    fn osc777_rxvt_互換通知がキューされる() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]777;notify;Title;Message body\x07");
+        let notif = parser.screen_mut().take_pending_notification();
+        assert_eq!(
+            notif,
+            Some(("Title".to_string(), "Message body".to_string()))
+        );
+    }
+
+    #[test]
+    fn osc777_notify_以外のサブコマンドは無視される() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]777;custom;foo\x07");
+        let notif = parser.screen_mut().take_pending_notification();
+        assert!(notif.is_none(), "notify 以外のサブコマンドは無視");
+    }
+
     #[test]
     fn osc8ハイパーリンクがグリッドに記録される() {
         let mut parser = VtParser::new(80, 24);

@@ -632,6 +632,60 @@ pub struct ClientState {
     pub settings_tab_rect: Option<(f32, f32)>,
     /// 更新通知バナー（Some(version) = 表示中、None = 非表示）
     pub update_banner: Option<String>,
+    /// 機密操作の同意ダイアログ（Sprint 4-1）
+    /// Some の間はキー入力をすべてダイアログが消費する
+    pub pending_consent: Option<ConsentDialog>,
+    /// セッション中の「常に許可」決定（次回起動時はリセットされる）
+    pub session_consent_overrides: SessionConsentOverrides,
+}
+
+/// 同意ダイアログの種別ごとに「セッション内で常に許可/拒否」を保持する
+///
+/// `None` のままならポリシーに従う（つまり再びダイアログが出る）。
+/// ユーザーが [Always Allow] / [Always Deny] を選んだ場合のみ書き込まれる。
+#[derive(Default)]
+pub struct SessionConsentOverrides {
+    pub external_url: Option<bool>,
+    pub osc52_clipboard: Option<bool>,
+    pub osc_notification: Option<bool>,
+}
+
+/// 同意ダイアログの種別
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ConsentKind {
+    /// 外部 URL を開こうとしている
+    OpenUrl(String),
+    /// OSC 52 クリップボード書き込み要求
+    ClipboardWrite {
+        /// 要求元ペイン ID（None = ローカル発行）
+        source_pane: Option<u32>,
+        /// 書き込みテキスト
+        text: String,
+    },
+    /// OSC 9 / 777 デスクトップ通知要求
+    Notification {
+        /// 要求元ペイン ID
+        source_pane: u32,
+        /// 通知タイトル
+        title: String,
+        /// 通知本文
+        body: String,
+    },
+}
+
+/// 同意ダイアログの状態
+#[derive(Clone, Debug)]
+pub struct ConsentDialog {
+    /// 同意要求の種別
+    pub kind: ConsentKind,
+    /// 選択中のボタンインデックス (0=Allow, 1=Deny, 2=Always Allow, 3=Always Deny)
+    pub selected: usize,
+}
+
+impl ConsentDialog {
+    pub fn new(kind: ConsentKind) -> Self {
+        Self { kind, selected: 0 }
+    }
 }
 
 impl ClientState {
@@ -665,6 +719,8 @@ impl ClientState {
             tab_hit_rects: HashMap::new(),
             settings_tab_rect: None,
             update_banner: None,
+            pending_consent: None,
+            session_consent_overrides: SessionConsentOverrides::default(),
         }
     }
 
@@ -751,7 +807,10 @@ impl ClientState {
                     pane.title = title;
                 }
             }
+            // DesktopNotification と ClipboardWriteRequest は event_handler 側で
+            // SecurityConfig ポリシーに従って処理する（state.rs では何もしない）
             ServerToClient::DesktopNotification { .. } => {}
+            ServerToClient::ClipboardWriteRequest { .. } => {}
             ServerToClient::BroadcastModeChanged { enabled } => {
                 self.broadcast_mode = enabled;
             }

@@ -958,6 +958,24 @@ impl WgpuState {
             );
         }
 
+        // ---- 同意ダイアログ（Sprint 4-1: 機密操作確認モーダル）----
+        // 最前面表示するため最後に追加する
+        if state.pending_consent.is_some() {
+            self.build_consent_dialog_verts(
+                state,
+                sw,
+                sh,
+                cell_w,
+                cell_h,
+                font,
+                atlas,
+                &mut bg_verts,
+                &mut bg_idx,
+                &mut text_verts,
+                &mut text_idx,
+            );
+        }
+
         // ---- IME プリエディットオーバーレイ（変換中テキスト） ----
         if let Some(ref preedit) = state.ime_preedit
             && let Some(pane) = state.focused_pane()

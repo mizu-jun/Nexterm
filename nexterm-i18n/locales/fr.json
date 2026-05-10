@@ -49,5 +49,14 @@
   "palette-show-settings": "Ouvrir les paramètres",
   "update-available": "Mise à jour disponible: v{version}  — Appuyer sur Entrée pour les détails",
   "update-dismiss": "Fermer la notification de mise à jour",
-  "update-open-releases": "Ouvrir les notes de version"
+  "update-open-releases": "Ouvrir les notes de version",
+  "consent-title-open-url": "Ouvrir l'URL externe ?",
+  "consent-title-clipboard-write": "Écrire dans le presse-papiers ?",
+  "consent-title-notification": "Afficher la notification du bureau ?",
+  "consent-source-pane": "Demandé par le panneau {pane_id}",
+  "consent-allow": "[Y] Autoriser",
+  "consent-deny": "[N] Refuser",
+  "consent-always-allow": "[A] Toujours autoriser",
+  "consent-always-deny": "[D] Toujours refuser",
+  "consent-hint": "Y/N : cette fois  •  A/D : pour cette session  •  Esc : refuser"
 }

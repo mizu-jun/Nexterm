@@ -199,6 +199,66 @@ impl Perform for Screen {
                     self.set_pending_notification("Nexterm".to_string(), msg.to_string());
                 }
             }
+            // OSC 52: クリップボード書き込み要求（Sprint 4-1）
+            // フォーマット: ESC ] 52 ; <selection> ; <base64 ペイロード> BEL/ST
+            // selection は c (clipboard) のみ対応。p (primary) や s (secondary) は無視する。
+            // ペイロードが "?" の場合はクリップボード読み出し要求だが、
+            // セキュリティ上の理由から読み出しはサポートしない（全要求を無視）。
+            // クライアント側で SecurityConfig.osc52_clipboard ポリシーに従って
+            // 確認ダイアログを表示するため、本ハンドラは pending として queue するだけ。
+            "52" => {
+                let selection = params
+                    .get(1)
+                    .and_then(|b| std::str::from_utf8(b).ok())
+                    .unwrap_or("");
+                // selection が "c" を含むときのみ処理する（複数指定 "cs" 等にも対応）
+                if !selection.contains('c') {
+                    return;
+                }
+                let payload = params
+                    .get(2)
+                    .and_then(|b| std::str::from_utf8(b).ok())
+                    .unwrap_or("")
+                    .trim();
+                // "?" は読み出し要求 → セキュリティ上拒否
+                if payload == "?" {
+                    return;
+                }
+                // OSC 52 のペイロードサイズには上限を設ける（DoS 対策）。
+                // 実際の上限は SecurityConfig.osc52_max_bytes でクライアント側がチェックする。
+                // ここでは VT パーサ側でも 16 MiB で打ち切る（base64 で 12 MiB 相当）。
+                const MAX_OSC52_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
+                if payload.len() > MAX_OSC52_PAYLOAD_BYTES {
+                    return;
+                }
+                if let Some(decoded) = crate::image::base64_decode(payload.as_bytes())
+                    && let Ok(text) = String::from_utf8(decoded)
+                {
+                    self.queue_clipboard_write(text);
+                }
+            }
+            // OSC 777: rxvt 互換デスクトップ通知
+            // フォーマット: ESC ] 777 ; notify ; <タイトル> ; <本文> BEL/ST
+            "777" => {
+                let cmd = params
+                    .get(1)
+                    .and_then(|b| std::str::from_utf8(b).ok())
+                    .unwrap_or("");
+                if cmd != "notify" {
+                    return;
+                }
+                let title = params
+                    .get(2)
+                    .and_then(|b| std::str::from_utf8(b).ok())
+                    .unwrap_or("Nexterm")
+                    .to_string();
+                let body = params
+                    .get(3)
+                    .and_then(|b| std::str::from_utf8(b).ok())
+                    .unwrap_or("")
+                    .to_string();
+                self.set_pending_notification(title, body);
+            }
             // OSC 133: セマンティックゾーン（プロンプト / コマンド / 出力のマーキング）
             // フォーマット: ESC ] 133 ; <A|B|C|D[;exit_code]> ST
             "133" => {

@@ -49,5 +49,14 @@
   "palette-show-settings": "Abrir configuración",
   "update-available": "Actualización disponible: v{version}  — pulsa Intro para ver detalles",
   "update-dismiss": "Cerrar notificación de actualización",
-  "update-open-releases": "Abrir notas de versión"
+  "update-open-releases": "Abrir notas de versión",
+  "consent-title-open-url": "¿Abrir URL externa?",
+  "consent-title-clipboard-write": "¿Escribir en el portapapeles?",
+  "consent-title-notification": "¿Mostrar notificación de escritorio?",
+  "consent-source-pane": "Solicitado por el panel {pane_id}",
+  "consent-allow": "[Y] Permitir",
+  "consent-deny": "[N] Denegar",
+  "consent-always-allow": "[A] Permitir siempre",
+  "consent-always-deny": "[D] Denegar siempre",
+  "consent-hint": "Y/N: solo esta vez  •  A/D: para esta sesión  •  Esc: denegar"
 }
