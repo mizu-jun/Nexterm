@@ -2,11 +2,15 @@
 
 mod dispatch;
 mod dispatch_util;
+mod file_dispatch;
 mod handler;
 mod key;
+mod pane_dispatch;
 mod platform;
 mod plugin_dispatch;
+mod session_dispatch;
 mod sftp;
+mod window_dispatch;
 
 use crate::runtime_config::SharedRuntimeConfig;
 use crate::session::SessionManager;

@@ -1,10 +1,18 @@
-//! IPC メッセージディスパッチ — ClientToServer メッセージを処理する
+//! IPC メッセージディスパッチ — ClientToServer メッセージを各機能モジュールへルーティングする
+//!
+//! 実際のハンドラは以下のモジュールに分散している:
+//! - `session_dispatch` — セッション管理 (Attach/Detach/ListSessions/...)
+//! - `pane_dispatch`    — ペイン操作 (KeyEvent/Focus*/フローティング系)
+//! - `window_dispatch`  — ウィンドウ操作 (Resize/Split/NewWindow/...)
+//! - `file_dispatch`    — テンプレート / SSH / SFTP / Macro / Serial
+//! - `plugin_dispatch`  — プラグイン管理
+//!
+//! 各ハンドラは `&mut DispatchContext<'_>` を受け取り、必要な依存にアクセスする。
 
 use nexterm_proto::{ClientToServer, ServerToClient};
 use tokio::sync::mpsc;
-use tracing::{error, info};
 
-use super::dispatch_util::validate_recording_path;
+use super::{file_dispatch, pane_dispatch, session_dispatch, window_dispatch};
 use crate::session::SessionManager;
 use crate::window::SplitDir;
 
@@ -39,7 +47,7 @@ pub(super) async fn dispatch(
 ) {
     let mut ctx = DispatchContext {
         manager,
-        tx: tx.clone(),
+        tx,
         current_session,
         hooks,
         lua,
@@ -52,774 +60,88 @@ pub(super) async fn dispatch(
 
 /// `DispatchContext` を引数とする内部ディスパッチャ — 各機能モジュールから直接呼び出せる
 pub(super) async fn dispatch_inner(msg: &ClientToServer, ctx: &mut DispatchContext<'_>) {
-    // 既存ロジックは context フィールドへ参照を貼り直して継続使用する
-    let manager = ctx.manager;
-    let tx = ctx.tx.clone();
-    let current_session = &mut *ctx.current_session;
-    let hooks = ctx.hooks;
-    let lua = std::sync::Arc::clone(&ctx.lua);
-    let log_config = ctx.log_config;
-    let hosts = ctx.hosts;
-    let bcast_forwarder = &mut *ctx.bcast_forwarder;
-
     use ClientToServer::*;
 
     match msg {
-        Ping => {
-            let _ = tx.send(ServerToClient::Pong).await;
+        // ----- session_dispatch -----
+        Ping => session_dispatch::handle_ping(ctx).await,
+        Hello { .. } => session_dispatch::handle_hello(),
+        Attach { session_name } => session_dispatch::handle_attach(ctx, session_name).await,
+        Detach => session_dispatch::handle_detach(ctx).await,
+        ListSessions => session_dispatch::handle_list_sessions(ctx).await,
+        KillSession { name } => session_dispatch::handle_kill_session(ctx, name).await,
+        StartRecording {
+            session_name,
+            output_path,
+        } => session_dispatch::handle_start_recording(ctx, session_name, output_path).await,
+        StopRecording { session_name } => {
+            session_dispatch::handle_stop_recording(ctx, session_name).await
         }
-
-        // Hello はハンドシェイク段階で handler.rs が処理する。
-        // ここに到達した場合はプロトコル違反（Hello を再送）として無視する。
-        Hello { .. } => {
-            tracing::warn!("ハンドシェイク後に Hello を再送信されました。無視します。");
+        StartAsciicast {
+            session_name,
+            output_path,
+        } => session_dispatch::handle_start_asciicast(ctx, session_name, output_path).await,
+        StopAsciicast { session_name } => {
+            session_dispatch::handle_stop_asciicast(ctx, session_name).await
         }
+        SetBroadcast { enabled } => session_dispatch::handle_set_broadcast(ctx, *enabled).await,
+        DisplayPanes { .. } => session_dispatch::handle_display_panes(),
 
-        Attach { session_name } => {
-            // セッションが存在しない場合は新規作成してアタッチ
-            let is_new_session = {
-                let arc = manager.sessions();
-                let sessions = arc.lock().await;
-                !sessions.contains_key(session_name.as_str())
-            };
-            match manager.get_or_create_and_attach(session_name, 80, 24).await {
-                Ok(()) => {
-                    *current_session = Some(session_name.clone());
-                    if is_new_session {
-                        crate::hooks::on_session_start(hooks, &lua, session_name);
-                    }
-
-                    // Full Refresh を送信する
-                    let refresh = {
-                        let arc = manager.sessions();
-                        let sessions = arc.lock().await;
-                        sessions.get(session_name).and_then(|s| {
-                            s.focused_window().and_then(|w| {
-                                let pid = w.focused_pane_id();
-                                w.pane(pid).map(|p| (p.id, p.make_full_refresh()))
-                            })
-                        })
-                    };
-                    if let Some((pane_id, grid)) = refresh {
-                        let _ = tx.send(ServerToClient::FullRefresh { pane_id, grid }).await;
-                    }
-
-                    // レイアウト変更通知を送信する（全ペインの位置・サイズを通知）
-                    let layout_msg = {
-                        let arc = manager.sessions();
-                        let sessions = arc.lock().await;
-                        sessions.get(session_name).and_then(|s| {
-                            s.focused_window()
-                                .map(|w| w.layout_changed_msg(s.cols, s.rows))
-                        })
-                    };
-                    if let Some(msg) = layout_msg {
-                        let _ = tx.send(msg).await;
-                    }
-
-                    // セッション一覧も送信する
-                    let list = manager.list_sessions().await;
-                    let _ = tx
-                        .send(ServerToClient::SessionList { sessions: list })
-                        .await;
-
-                    // on_attach フック
-                    crate::hooks::on_attach(hooks, &lua, session_name);
-
-                    // broadcast forwarder タスクを起動する
-                    let bcast_rx = {
-                        let arc = manager.sessions();
-                        let sessions = arc.lock().await;
-                        sessions.get(session_name).map(|s| s.attach())
-                    };
-                    if let Some(mut bcast_rx) = bcast_rx {
-                        let fwd_tx = tx.clone();
-                        if let Some(h) = bcast_forwarder.take() {
-                            let _: () = h.abort();
-                        }
-                        let handle = tokio::spawn(async move {
-                            loop {
-                                match bcast_rx.recv().await {
-                                    Ok(msg) => {
-                                        if fwd_tx.send(msg).await.is_err() {
-                                            break;
-                                        }
-                                    }
-                                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                                        tracing::warn!(
-                                            "broadcast: {} メッセージをスキップしました（バッファ溢れ）",
-                                            n
-                                        );
-                                        continue;
-                                    }
-                                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                                }
-                            }
-                        });
-                        *bcast_forwarder = Some(handle.abort_handle());
-                    }
-                }
-                Err(e) => {
-                    let _ = tx
-                        .send(ServerToClient::Error {
-                            message: e.to_string(),
-                        })
-                        .await;
-                }
-            }
-        }
-
-        Detach => {
-            if let Some(name) = current_session.take() {
-                let arc = manager.sessions();
-                let mut sessions = arc.lock().await;
-                if let Some(s) = sessions.get_mut(&name) {
-                    s.detach_all();
-                    info!("セッション '{}' をデタッチしました", name);
-                }
-            }
-        }
-
+        // ----- pane_dispatch -----
         KeyEvent { code, modifiers } => {
-            if let Some(ref name) = *current_session {
-                let bytes = super::key::key_to_bytes(code, *modifiers);
-                if !bytes.is_empty() {
-                    let arc = manager.sessions();
-                    let sessions = arc.lock().await;
-                    if let Some(s) = sessions.get(name)
-                        && let Err(e) = s.write_to_focused(&bytes)
-                    {
-                        error!("PTY 書き込みエラー: {}", e);
-                    }
-                }
-            }
+            pane_dispatch::handle_key_event(ctx, code, *modifiers).await
         }
-
-        Resize { cols, rows } => {
-            if let Some(ref name) = *current_session {
-                let layout_msg = {
-                    let arc = manager.sessions();
-                    let mut sessions = arc.lock().await;
-                    if let Some(s) = sessions.get_mut(name) {
-                        if let Err(e) = s.resize_focused(*cols, *rows) {
-                            error!("リサイズエラー: {}", e);
-                        }
-                        s.focused_window()
-                            .map(|w| w.layout_changed_msg(*cols, *rows))
-                    } else {
-                        None
-                    }
-                };
-                if let Some(msg) = layout_msg {
-                    let _ = tx.send(msg).await;
-                }
-            }
-        }
-
-        SplitVertical | SplitHorizontal => {
-            if let Some(ref name) = *current_session {
-                let dir = if matches!(msg, SplitVertical) {
-                    SplitDir::Vertical
-                } else {
-                    SplitDir::Horizontal
-                };
-                let split_result = {
-                    let arc = manager.sessions();
-                    let mut sessions = arc.lock().await;
-                    if let Some(s) = sessions.get_mut(name) {
-                        let cols = s.cols;
-                        let rows = s.rows;
-                        let shell = s.shell().to_string();
-                        let args = s.shell_args().to_vec();
-                        let pane_tx = s.broadcast_sender();
-                        s.focused_window_mut()
-                            .map(|w| w.add_pane(cols, rows, pane_tx, &shell, &args, dir))
-                    } else {
-                        None
-                    }
-                };
-                match split_result {
-                    Some(Ok(pane_id)) => {
-                        crate::hooks::on_pane_open(hooks, &lua, name, pane_id);
-                        if log_config.auto_log
-                            && let Some(log_dir) = &log_config.log_dir
-                            && let Err(e) = manager
-                                .start_recording_with_log_config(name, log_dir, log_config)
-                                .await
-                        {
-                            tracing::warn!("auto_log 録音開始失敗 (pane={}): {}", pane_id, e);
-                        }
-                        let msgs = {
-                            let arc = manager.sessions();
-                            let sessions = arc.lock().await;
-                            sessions.get(name).and_then(|s| {
-                                s.focused_window().map(|w| {
-                                    let layout_msg = w.layout_changed_msg(s.cols, s.rows);
-                                    let (pc, pr) =
-                                        if let ServerToClient::LayoutChanged { ref panes, .. } =
-                                            layout_msg
-                                        {
-                                            panes
-                                                .iter()
-                                                .find(|p| p.pane_id == pane_id)
-                                                .map(|r| (r.cols, r.rows))
-                                                .unwrap_or((s.cols, s.rows))
-                                        } else {
-                                            (s.cols, s.rows)
-                                        };
-                                    let refresh = ServerToClient::FullRefresh {
-                                        pane_id,
-                                        grid: nexterm_proto::Grid::new(pc, pr),
-                                    };
-                                    (refresh, layout_msg)
-                                })
-                            })
-                        };
-                        if let Some((refresh, layout)) = msgs {
-                            let _ = tx.send(refresh).await;
-                            let _ = tx.send(layout).await;
-                        }
-                    }
-                    Some(Err(e)) => {
-                        let _ = tx
-                            .send(ServerToClient::Error {
-                                message: e.to_string(),
-                            })
-                            .await;
-                    }
-                    None => {}
-                }
-            }
-        }
-
-        FocusNextPane => {
-            if let Some(ref name) = *current_session {
-                let layout_msg = {
-                    let arc = manager.sessions();
-                    let mut sessions = arc.lock().await;
-                    if let Some(s) = sessions.get_mut(name) {
-                        let cols = s.cols;
-                        let rows = s.rows;
-                        if let Some(w) = s.focused_window_mut() {
-                            w.focus_next();
-                            Some(w.layout_changed_msg(cols, rows))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                };
-                if let Some(msg) = layout_msg {
-                    let _ = tx.send(msg).await;
-                }
-            }
-        }
-
-        FocusPrevPane => {
-            if let Some(ref name) = *current_session {
-                let layout_msg = {
-                    let arc = manager.sessions();
-                    let mut sessions = arc.lock().await;
-                    if let Some(s) = sessions.get_mut(name) {
-                        let cols = s.cols;
-                        let rows = s.rows;
-                        if let Some(w) = s.focused_window_mut() {
-                            w.focus_prev();
-                            Some(w.layout_changed_msg(cols, rows))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                };
-                if let Some(msg) = layout_msg {
-                    let _ = tx.send(msg).await;
-                }
-            }
-        }
-
-        FocusPane { pane_id } => {
-            if let Some(ref name) = *current_session {
-                let layout_msg = {
-                    let arc = manager.sessions();
-                    let mut sessions = arc.lock().await;
-                    if let Some(s) = sessions.get_mut(name) {
-                        let cols = s.cols;
-                        let rows = s.rows;
-                        if let Some(w) = s.focused_window_mut() {
-                            w.set_focused_pane(*pane_id);
-                            Some(w.layout_changed_msg(cols, rows))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                };
-                if let Some(msg) = layout_msg {
-                    let _ = tx.send(msg).await;
-                }
-            }
-        }
-
-        PasteText { text } => {
-            if let Some(ref name) = *current_session {
-                let arc = manager.sessions();
-                let sessions = arc.lock().await;
-                if let Some(s) = sessions.get(name) {
-                    let data: Vec<u8> = if s.focused_bracketed_paste_mode() {
-                        let mut v = b"\x1b[200~".to_vec();
-                        v.extend_from_slice(text.as_bytes());
-                        v.extend_from_slice(b"\x1b[201~");
-                        v
-                    } else {
-                        text.as_bytes().to_vec()
-                    };
-                    if let Err(e) = s.write_to_focused(&data) {
-                        error!("ペーストエラー: {}", e);
-                    }
-                }
-            }
-        }
-
+        PasteText { text } => pane_dispatch::handle_paste_text(ctx, text).await,
         MouseReport {
             button,
             col,
             row,
             pressed,
             motion,
-        } => {
-            if let Some(ref name) = *current_session {
-                let arc = manager.sessions();
-                let sessions = arc.lock().await;
-                if let Some(s) = sessions.get(name) {
-                    let mode = s.focused_mouse_mode();
-                    if mode > 0 {
-                        let suffix = if *pressed || *motion { b'M' } else { b'm' };
-                        let cb = *button as u32 + if *motion { 32 } else { 0 };
-                        let seq = format!("\x1b[<{};{};{}{}", cb, col + 1, row + 1, suffix as char);
-                        if let Err(e) = s.write_to_focused(seq.as_bytes()) {
-                            error!("マウスレポート送信エラー: {}", e);
-                        }
-                    }
-                }
-            }
+        } => pane_dispatch::handle_mouse_report(ctx, *button, *col, *row, *pressed, *motion).await,
+        FocusNextPane => pane_dispatch::handle_focus_next_pane(ctx).await,
+        FocusPrevPane => pane_dispatch::handle_focus_prev_pane(ctx).await,
+        FocusPane { pane_id } => pane_dispatch::handle_focus_pane(ctx, *pane_id).await,
+        ClosePane => pane_dispatch::handle_close_pane(ctx).await,
+        ToggleZoom => pane_dispatch::handle_toggle_zoom(ctx).await,
+        SwapPane { target_pane_id } => pane_dispatch::handle_swap_pane(ctx, *target_pane_id).await,
+        BreakPane => pane_dispatch::handle_break_pane(ctx).await,
+        JoinPane { target_window_id } => {
+            pane_dispatch::handle_join_pane(ctx, *target_window_id).await
         }
-
-        ListSessions => {
-            let list = manager.list_sessions().await;
-            let _ = tx
-                .send(ServerToClient::SessionList { sessions: list })
-                .await;
+        OpenFloatingPane => pane_dispatch::handle_open_floating_pane(ctx).await,
+        CloseFloatingPane { pane_id } => {
+            pane_dispatch::handle_close_floating_pane(ctx, *pane_id).await
         }
+        MoveFloatingPane {
+            pane_id,
+            col_off,
+            row_off,
+        } => pane_dispatch::handle_move_floating_pane(ctx, *pane_id, *col_off, *row_off).await,
+        ResizeFloatingPane {
+            pane_id,
+            cols,
+            rows,
+        } => pane_dispatch::handle_resize_floating_pane(ctx, *pane_id, *cols, *rows).await,
 
-        KillSession { name } => match manager.kill_session(name).await {
-            Ok(()) => {
-                let list = manager.list_sessions().await;
-                let _ = tx
-                    .send(ServerToClient::SessionList { sessions: list })
-                    .await;
-            }
-            Err(e) => {
-                let _ = tx
-                    .send(ServerToClient::Error {
-                        message: e.to_string(),
-                    })
-                    .await;
-            }
-        },
-
-        StartRecording {
-            session_name,
-            output_path,
-        } => {
-            if let Err(e) = validate_recording_path(output_path) {
-                let _ = tx
-                    .send(ServerToClient::Error {
-                        message: e.to_string(),
-                    })
-                    .await;
-                return;
-            }
-            match manager.start_recording(session_name, output_path).await {
-                Ok(pane_id) => {
-                    let _ = tx
-                        .send(ServerToClient::RecordingStarted {
-                            pane_id,
-                            path: output_path.to_string(),
-                        })
-                        .await;
-                }
-                Err(e) => {
-                    let _ = tx
-                        .send(ServerToClient::Error {
-                            message: e.to_string(),
-                        })
-                        .await;
-                }
-            }
-        }
-
-        StopRecording { session_name } => match manager.stop_recording(session_name).await {
-            Ok(pane_id) => {
-                let _ = tx.send(ServerToClient::RecordingStopped { pane_id }).await;
-            }
-            Err(e) => {
-                let _ = tx
-                    .send(ServerToClient::Error {
-                        message: e.to_string(),
-                    })
-                    .await;
-            }
-        },
-
-        ClosePane => {
-            if let Some(ref name) = *current_session {
-                let result = {
-                    let arc = manager.sessions();
-                    let mut sessions = arc.lock().await;
-                    if let Some(s) = sessions.get_mut(name) {
-                        let cols = s.cols;
-                        let rows = s.rows;
-                        s.focused_window_mut()
-                            .map(|w| w.remove_focused_pane(cols, rows))
-                    } else {
-                        None
-                    }
-                };
-                match result {
-                    Some(Ok(removed_id)) => {
-                        let layout_msg = {
-                            let arc = manager.sessions();
-                            let sessions = arc.lock().await;
-                            sessions.get(name).and_then(|s| {
-                                s.focused_window()
-                                    .map(|w| w.layout_changed_msg(s.cols, s.rows))
-                            })
-                        };
-                        let _ = tx
-                            .send(ServerToClient::PaneClosed {
-                                pane_id: removed_id,
-                            })
-                            .await;
-                        if let Some(msg) = layout_msg {
-                            let _ = tx.send(msg).await;
-                        }
-                    }
-                    Some(Err(e)) => {
-                        let _ = tx
-                            .send(ServerToClient::Error {
-                                message: e.to_string(),
-                            })
-                            .await;
-                    }
-                    None => {}
-                }
-            }
-        }
-
-        ResizeSplit { delta } => {
-            if let Some(ref name) = *current_session {
-                let layout_msg = {
-                    let arc = manager.sessions();
-                    let mut sessions = arc.lock().await;
-                    if let Some(s) = sessions.get_mut(name) {
-                        let cols = s.cols;
-                        let rows = s.rows;
-                        if let Some(w) = s.focused_window_mut() {
-                            w.adjust_split_ratio(*delta, cols, rows);
-                            Some(w.layout_changed_msg(cols, rows))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                };
-                if let Some(msg) = layout_msg {
-                    let _ = tx.send(msg).await;
-                }
-            }
-        }
-
-        NewWindow => {
-            if let Some(ref name) = *current_session {
-                let result = {
-                    let arc = manager.sessions();
-                    let mut sessions = arc.lock().await;
-                    sessions
-                        .get_mut(name)
-                        .map(|s| s.add_window().map(|wid| (wid, s.window_list())))
-                };
-                match result {
-                    Some(Ok((_wid, windows))) => {
-                        let _ = tx.send(ServerToClient::WindowListChanged { windows }).await;
-                        let refresh_msg = {
-                            let arc = manager.sessions();
-                            let sessions = arc.lock().await;
-                            sessions.get(name).and_then(|s| {
-                                s.focused_window().and_then(|w| {
-                                    let pid = w.focused_pane_id();
-                                    w.pane(pid).map(|p| {
-                                        let layout = w.layout_changed_msg(s.cols, s.rows);
-                                        let refresh = ServerToClient::FullRefresh {
-                                            pane_id: p.id,
-                                            grid: p.make_full_refresh(),
-                                        };
-                                        (refresh, layout)
-                                    })
-                                })
-                            })
-                        };
-                        if let Some((refresh, layout)) = refresh_msg {
-                            let _ = tx.send(refresh).await;
-                            let _ = tx.send(layout).await;
-                        }
-                    }
-                    Some(Err(e)) => {
-                        let _ = tx
-                            .send(ServerToClient::Error {
-                                message: e.to_string(),
-                            })
-                            .await;
-                    }
-                    None => {}
-                }
-            }
-        }
-
-        CloseWindow { window_id } => {
-            if let Some(ref name) = *current_session {
-                let result = {
-                    let arc = manager.sessions();
-                    let mut sessions = arc.lock().await;
-                    if let Some(s) = sessions.get_mut(name) {
-                        let r = s.remove_window(*window_id);
-                        r.map(|_| s.window_list())
-                    } else {
-                        Ok(vec![])
-                    }
-                };
-                match result {
-                    Ok(windows) => {
-                        let _ = tx.send(ServerToClient::WindowListChanged { windows }).await;
-                    }
-                    Err(e) => {
-                        let _ = tx
-                            .send(ServerToClient::Error {
-                                message: e.to_string(),
-                            })
-                            .await;
-                    }
-                }
-            }
-        }
-
-        FocusWindow { window_id } => {
-            if let Some(ref name) = *current_session {
-                let result = {
-                    let arc = manager.sessions();
-                    let mut sessions = arc.lock().await;
-                    if let Some(s) = sessions.get_mut(name) {
-                        let r = s.focus_window(*window_id);
-                        r.map(|_| {
-                            let windows = s.window_list();
-                            s.focused_window().map(|w| {
-                                let layout = w.layout_changed_msg(s.cols, s.rows);
-                                let pid = w.focused_pane_id();
-                                let refresh = w.pane(pid).map(|p| ServerToClient::FullRefresh {
-                                    pane_id: p.id,
-                                    grid: p.make_full_refresh(),
-                                });
-                                (windows, layout, refresh)
-                            })
-                        })
-                    } else {
-                        Ok(None)
-                    }
-                };
-                match result {
-                    Ok(Some((windows, layout, refresh))) => {
-                        let _ = tx.send(ServerToClient::WindowListChanged { windows }).await;
-                        let _ = tx.send(layout).await;
-                        if let Some(r) = refresh {
-                            let _ = tx.send(r).await;
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(e) => {
-                        let _ = tx
-                            .send(ServerToClient::Error {
-                                message: e.to_string(),
-                            })
-                            .await;
-                    }
-                }
-            }
-        }
-
+        // ----- window_dispatch -----
+        Resize { cols, rows } => window_dispatch::handle_resize(ctx, *cols, *rows).await,
+        SplitVertical => window_dispatch::handle_split(ctx, SplitDir::Vertical).await,
+        SplitHorizontal => window_dispatch::handle_split(ctx, SplitDir::Horizontal).await,
+        ResizeSplit { delta } => window_dispatch::handle_resize_split(ctx, *delta).await,
+        NewWindow => window_dispatch::handle_new_window(ctx).await,
+        CloseWindow { window_id } => window_dispatch::handle_close_window(ctx, *window_id).await,
+        FocusWindow { window_id } => window_dispatch::handle_focus_window(ctx, *window_id).await,
         RenameWindow {
             window_id,
             name: new_name,
-        } => {
-            if let Some(ref session_name) = *current_session {
-                let result = {
-                    let arc = manager.sessions();
-                    let mut sessions = arc.lock().await;
-                    if let Some(s) = sessions.get_mut(session_name) {
-                        let r = s.rename_window(*window_id, new_name.clone());
-                        r.map(|_| s.window_list())
-                    } else {
-                        Ok(vec![])
-                    }
-                };
-                match result {
-                    Ok(windows) => {
-                        let _ = tx.send(ServerToClient::WindowListChanged { windows }).await;
-                    }
-                    Err(e) => {
-                        let _ = tx
-                            .send(ServerToClient::Error {
-                                message: e.to_string(),
-                            })
-                            .await;
-                    }
-                }
-            }
-        }
+        } => window_dispatch::handle_rename_window(ctx, *window_id, new_name).await,
+        SetLayoutMode { mode } => window_dispatch::handle_set_layout_mode(ctx, mode).await,
 
-        SetBroadcast { enabled } => {
-            if let Some(ref name) = *current_session {
-                let arc = manager.sessions();
-                let mut sessions = arc.lock().await;
-                if let Some(s) = sessions.get_mut(name) {
-                    s.set_broadcast(*enabled);
-                    let _ = tx
-                        .send(ServerToClient::BroadcastModeChanged { enabled: *enabled })
-                        .await;
-                }
-            }
-        }
-
-        DisplayPanes { .. } => {
-            // サーバー側での処理は不要（クライアント側のオーバーレイ表示のみ）
-        }
-
-        StartAsciicast {
-            session_name,
-            output_path,
-        } => {
-            if let Err(e) = validate_recording_path(output_path) {
-                let _ = tx
-                    .send(ServerToClient::Error {
-                        message: e.to_string(),
-                    })
-                    .await;
-                return;
-            }
-            match manager.start_asciicast(session_name, output_path).await {
-                Ok(pane_id) => {
-                    let _ = tx
-                        .send(ServerToClient::AsciicastStarted {
-                            pane_id,
-                            path: output_path.to_string(),
-                        })
-                        .await;
-                }
-                Err(e) => {
-                    let _ = tx
-                        .send(ServerToClient::Error {
-                            message: e.to_string(),
-                        })
-                        .await;
-                }
-            }
-        }
-
-        StopAsciicast { session_name } => match manager.stop_asciicast(session_name).await {
-            Ok(pane_id) => {
-                let _ = tx.send(ServerToClient::AsciicastStopped { pane_id }).await;
-            }
-            Err(e) => {
-                let _ = tx
-                    .send(ServerToClient::Error {
-                        message: e.to_string(),
-                    })
-                    .await;
-            }
-        },
-
-        SaveTemplate { name } => {
-            let result: anyhow::Result<String> = async {
-                let session_name = current_session
-                    .as_deref()
-                    .ok_or_else(|| anyhow::anyhow!("セッションにアタッチしていません"))?;
-                let (window_titles, pane_counts) = {
-                    let arc = manager.sessions();
-                    let sessions = arc.lock().await;
-                    let session = sessions.get(session_name).ok_or_else(|| {
-                        anyhow::anyhow!("セッションが見つかりません: {}", session_name)
-                    })?;
-                    let info = session.window_list();
-                    let titles: Vec<String> = info.iter().map(|w| w.name.clone()).collect();
-                    let counts: Vec<usize> = info.iter().map(|w| w.pane_count as usize).collect();
-                    (titles, counts)
-                };
-                let template =
-                    crate::template::template_from_session_info(name, window_titles, pane_counts);
-                let path = template.save()?;
-                Ok(path)
-            }
-            .await;
-            match result {
-                Ok(path) => {
-                    let _ = tx
-                        .send(ServerToClient::TemplateSaved {
-                            name: name.clone(),
-                            path,
-                        })
-                        .await;
-                }
-                Err(e) => {
-                    let _ = tx
-                        .send(ServerToClient::Error {
-                            message: e.to_string(),
-                        })
-                        .await;
-                }
-            }
-        }
-
-        LoadTemplate { name } => match crate::template::LayoutTemplate::load(name) {
-            Ok(_template) => {
-                let _ = tx
-                    .send(ServerToClient::TemplateLoaded { name: name.clone() })
-                    .await;
-            }
-            Err(e) => {
-                let _ = tx
-                    .send(ServerToClient::Error {
-                        message: e.to_string(),
-                    })
-                    .await;
-            }
-        },
-
-        ListTemplates => match crate::template::LayoutTemplate::list() {
-            Ok(names) => {
-                let _ = tx.send(ServerToClient::TemplateList { names }).await;
-            }
-            Err(e) => {
-                let _ = tx
-                    .send(ServerToClient::Error {
-                        message: e.to_string(),
-                    })
-                    .await;
-            }
-        },
-
+        // ----- file_dispatch -----
+        SaveTemplate { name } => file_dispatch::handle_save_template(ctx, name).await,
+        LoadTemplate { name } => file_dispatch::handle_load_template(ctx, name).await,
+        ListTemplates => file_dispatch::handle_list_templates(ctx).await,
         ConnectSsh {
             host,
             port,
@@ -831,443 +153,32 @@ pub(super) async fn dispatch_inner(msg: &ClientToServer, ctx: &mut DispatchConte
             x11_forward: _,
             x11_trusted: _,
         } => {
-            use nexterm_ssh::{SshAuth, SshConfig, SshSession};
-            use zeroize::Zeroizing;
-
-            let auth = match auth_type.as_str() {
-                "password" => {
-                    let pw = password.clone().unwrap_or_default();
-                    SshAuth::Password(Zeroizing::new(pw))
-                }
-                "key" => {
-                    let kp = key_path.clone().unwrap_or_else(|| {
-                        std::env::var_os("HOME")
-                            .or_else(|| std::env::var_os("USERPROFILE"))
-                            .map(|h| std::path::PathBuf::from(h).join(".ssh").join("id_rsa"))
-                            .map(|p| p.to_string_lossy().to_string())
-                            .unwrap_or_default()
-                    });
-                    SshAuth::PrivateKey {
-                        key_path: std::path::PathBuf::from(kp),
-                        passphrase: None,
-                    }
-                }
-                _ => SshAuth::Agent,
-            };
-
-            let ssh_config = SshConfig {
-                host: host.clone(),
-                port: *port,
-                username: username.clone(),
-                auth,
-                proxy_jump: None,
-                proxy_socks5: None,
-            };
-
-            match SshSession::connect(&ssh_config).await {
-                Ok(mut session) => match session.authenticate(&ssh_config).await {
-                    Ok(()) => {
-                        for spec in remote_forwards {
-                            if let Err(e) = session.start_remote_forward(spec).await {
-                                tracing::warn!("リモートフォワーディング失敗 '{}': {}", spec, e);
-                            }
-                        }
-                        let _ = tx
-                            .send(ServerToClient::Error {
-                                message: "SSH 認証成功。シェル統合は開発中です".to_string(),
-                            })
-                            .await;
-                    }
-                    Err(e) => {
-                        let _ = tx
-                            .send(ServerToClient::Error {
-                                message: format!("SSH 認証失敗: {}", e),
-                            })
-                            .await;
-                    }
-                },
-                Err(e) => {
-                    let _ = tx
-                        .send(ServerToClient::Error {
-                            message: format!("SSH 接続失敗: {}", e),
-                        })
-                        .await;
-                }
-            }
+            file_dispatch::handle_connect_ssh(
+                ctx,
+                host,
+                *port,
+                username,
+                auth_type,
+                password,
+                key_path,
+                remote_forwards,
+            )
+            .await
         }
-
-        ToggleZoom => {
-            if let Some(ref name) = *current_session {
-                let result = {
-                    let arc = manager.sessions();
-                    let mut sessions = arc.lock().await;
-                    if let Some(s) = sessions.get_mut(name) {
-                        let cols = s.cols;
-                        let rows = s.rows;
-                        s.focused_window_mut().map(|w| {
-                            let is_zoomed = w.toggle_zoom(cols, rows);
-                            let layout_msg = w.layout_changed_msg(cols, rows);
-                            (is_zoomed, layout_msg)
-                        })
-                    } else {
-                        None
-                    }
-                };
-                if let Some((is_zoomed, layout_msg)) = result {
-                    let _ = tx.send(ServerToClient::ZoomChanged { is_zoomed }).await;
-                    let _ = tx.send(layout_msg).await;
-                }
-            }
-        }
-
-        SwapPane { target_pane_id } => {
-            if let Some(ref name) = *current_session {
-                let layout_msg = {
-                    let arc = manager.sessions();
-                    let mut sessions = arc.lock().await;
-                    if let Some(s) = sessions.get_mut(name) {
-                        let cols = s.cols;
-                        let rows = s.rows;
-                        if let Some(w) = s.focused_window_mut() {
-                            w.swap_focused_with(*target_pane_id);
-                            Some(w.layout_changed_msg(cols, rows))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                };
-                if let Some(msg) = layout_msg {
-                    let _ = tx.send(msg).await;
-                }
-            }
-        }
-
-        BreakPane => {
-            if let Some(ref name) = *current_session {
-                let result = {
-                    let arc = manager.sessions();
-                    let mut sessions = arc.lock().await;
-                    if let Some(s) = sessions.get_mut(name) {
-                        let cols = s.cols;
-                        let rows = s.rows;
-                        let old_layout =
-                            s.focused_window().map(|w| w.layout_changed_msg(cols, rows));
-                        s.break_pane().ok().map(|new_win_id| {
-                            let pane_id =
-                                s.focused_window().map(|w| w.focused_pane_id()).unwrap_or(0);
-                            let new_layout =
-                                s.focused_window().map(|w| w.layout_changed_msg(cols, rows));
-                            let windows = s.window_list();
-                            (new_win_id, pane_id, old_layout, new_layout, windows)
-                        })
-                    } else {
-                        None
-                    }
-                };
-                if let Some((new_win_id, pane_id, old_layout, new_layout, windows)) = result {
-                    let _ = tx
-                        .send(ServerToClient::PaneBroken {
-                            new_window_id: new_win_id,
-                            pane_id,
-                        })
-                        .await;
-                    let _ = tx.send(ServerToClient::WindowListChanged { windows }).await;
-                    if let Some(msg) = old_layout {
-                        let _ = tx.send(msg).await;
-                    }
-                    if let Some(msg) = new_layout {
-                        let _ = tx.send(msg).await;
-                    }
-                }
-            }
-        }
-
-        JoinPane { target_window_id } => {
-            if let Some(ref name) = *current_session {
-                let result = {
-                    let arc = manager.sessions();
-                    let mut sessions = arc.lock().await;
-                    if let Some(s) = sessions.get_mut(name) {
-                        let cols = s.cols;
-                        let rows = s.rows;
-                        s.join_pane(*target_window_id).ok().map(|pane_id| {
-                            let new_layout =
-                                s.focused_window().map(|w| w.layout_changed_msg(cols, rows));
-                            let windows = s.window_list();
-                            (pane_id, new_layout, windows)
-                        })
-                    } else {
-                        None
-                    }
-                };
-                if let Some((pane_id, new_layout, windows)) = result {
-                    let _ = tx.send(ServerToClient::WindowListChanged { windows }).await;
-                    if let Some(msg) = new_layout {
-                        let _ = tx.send(msg).await;
-                    }
-                    let refresh = {
-                        let arc = manager.sessions();
-                        let sessions = arc.lock().await;
-                        sessions.get(name).and_then(|s| {
-                            s.focused_window().and_then(|w| {
-                                w.pane(pane_id).map(|p| ServerToClient::FullRefresh {
-                                    pane_id,
-                                    grid: p.make_full_refresh(),
-                                })
-                            })
-                        })
-                    };
-                    if let Some(r) = refresh {
-                        let _ = tx.send(r).await;
-                    }
-                }
-            }
-        }
-
         SftpUpload {
             host_name,
             local_path,
             remote_path,
-        } => {
-            if let Some(host_cfg) = hosts.iter().find(|h| &h.name == host_name) {
-                let host_cfg = host_cfg.clone();
-                let local = local_path.clone();
-                let remote = remote_path.clone();
-                let tx2 = tx.clone();
-                let display = local_path.clone();
-
-                tokio::spawn(async move {
-                    let result =
-                        super::sftp::run_sftp_upload(&host_cfg, &local, &remote, tx2.clone()).await;
-                    let _ = tx2
-                        .send(ServerToClient::SftpDone {
-                            path: display,
-                            error: result.err().map(|e| e.to_string()),
-                        })
-                        .await;
-                });
-            } else {
-                let _ = tx
-                    .send(ServerToClient::Error {
-                        message: format!("SFTP: ホスト '{}' が設定に見つかりません", host_name),
-                    })
-                    .await;
-            }
-        }
-
+        } => file_dispatch::handle_sftp_upload(ctx, host_name, local_path, remote_path).await,
         SftpDownload {
             host_name,
             remote_path,
             local_path,
-        } => {
-            if let Some(host_cfg) = hosts.iter().find(|h| &h.name == host_name) {
-                let host_cfg = host_cfg.clone();
-                let remote = remote_path.clone();
-                let local = local_path.clone();
-                let tx2 = tx.clone();
-                let display = remote_path.clone();
-
-                tokio::spawn(async move {
-                    let result =
-                        super::sftp::run_sftp_download(&host_cfg, &remote, &local, tx2.clone())
-                            .await;
-                    let _ = tx2
-                        .send(ServerToClient::SftpDone {
-                            path: display,
-                            error: result.err().map(|e| e.to_string()),
-                        })
-                        .await;
-                });
-            } else {
-                let _ = tx
-                    .send(ServerToClient::Error {
-                        message: format!("SFTP: ホスト '{}' が設定に見つかりません", host_name),
-                    })
-                    .await;
-            }
-        }
-
+        } => file_dispatch::handle_sftp_download(ctx, host_name, remote_path, local_path).await,
         RunMacro {
             macro_fn,
             display_name,
-        } => {
-            if let Some(ref name) = *current_session {
-                let focused_pane_id = {
-                    let arc = manager.sessions();
-                    let sessions = arc.lock().await;
-                    sessions
-                        .get(name)
-                        .and_then(|s| s.focused_window())
-                        .map(|w| w.focused_pane_id())
-                };
-                if let Some(pane_id) = focused_pane_id {
-                    tracing::info!("RunMacro: {} (fn={})", display_name, macro_fn);
-                    let lua_ref = lua.clone();
-                    let fn_name = macro_fn.clone();
-                    let session_name = name.clone();
-                    let output = tokio::task::spawn_blocking(move || {
-                        lua_ref.call_macro(&fn_name, &session_name, pane_id)
-                    })
-                    .await
-                    .unwrap_or(None);
-
-                    if let Some(text) = output {
-                        let arc = manager.sessions();
-                        let sessions = arc.lock().await;
-                        if let Some(session) = sessions.get(name)
-                            && let Some(window) = session.focused_window()
-                            && let Some(pane) = window.pane(pane_id)
-                        {
-                            let _ = pane.write_input(text.as_bytes());
-                        }
-                    }
-                }
-            }
-        }
-
-        SetLayoutMode { mode } => {
-            if let Some(ref name) = *current_session {
-                let layout_msg = {
-                    let arc = manager.sessions();
-                    let mut sessions = arc.lock().await;
-                    if let Some(s) = sessions.get_mut(name) {
-                        let cols = s.cols;
-                        let rows = s.rows;
-                        s.focused_window_mut().map(|w| {
-                            w.set_layout_mode(
-                                crate::window::LayoutMode::from_str(mode),
-                                cols,
-                                rows,
-                            );
-                            w.layout_changed_msg(cols, rows)
-                        })
-                    } else {
-                        None
-                    }
-                };
-                if let Some(msg) = layout_msg {
-                    let _ = tx.send(msg).await;
-                }
-            }
-        }
-
-        OpenFloatingPane => {
-            if let Some(ref name) = *current_session {
-                let result = {
-                    let arc = manager.sessions();
-                    let mut sessions = arc.lock().await;
-                    if let Some(s) = sessions.get_mut(name) {
-                        let cols = s.cols;
-                        let rows = s.rows;
-                        let shell = s.shell().to_string();
-                        let args = s.shell_args().to_vec();
-                        let sender = s.broadcast_sender();
-                        s.focused_window_mut()
-                            .map(|w| w.open_floating_pane(cols, rows, sender, &shell, &args))
-                    } else {
-                        None
-                    }
-                };
-                match result {
-                    Some(Ok((pane_id, rect))) => {
-                        let _ = tx
-                            .send(ServerToClient::FloatingPaneOpened {
-                                pane_id,
-                                col_off: rect.col_off,
-                                row_off: rect.row_off,
-                                cols: rect.cols,
-                                rows: rect.rows,
-                            })
-                            .await;
-                    }
-                    Some(Err(e)) => {
-                        let _ = tx
-                            .send(ServerToClient::Error {
-                                message: e.to_string(),
-                            })
-                            .await;
-                    }
-                    None => {}
-                }
-            }
-        }
-
-        CloseFloatingPane { pane_id } => {
-            if let Some(ref name) = *current_session {
-                let closed = {
-                    let arc = manager.sessions();
-                    let mut sessions = arc.lock().await;
-                    sessions.get_mut(name).and_then(|s| {
-                        s.focused_window_mut()
-                            .map(|w| w.close_floating_pane(*pane_id))
-                    })
-                };
-                if closed == Some(true) {
-                    let _ = tx
-                        .send(ServerToClient::FloatingPaneClosed { pane_id: *pane_id })
-                        .await;
-                }
-            }
-        }
-
-        MoveFloatingPane {
-            pane_id,
-            col_off,
-            row_off,
-        } => {
-            if let Some(ref name) = *current_session {
-                let rect_opt = {
-                    let arc = manager.sessions();
-                    let mut sessions = arc.lock().await;
-                    sessions.get_mut(name).and_then(|s| {
-                        s.focused_window_mut()
-                            .and_then(|w| w.move_floating_pane(*pane_id, *col_off, *row_off))
-                    })
-                };
-                if let Some(rect) = rect_opt {
-                    let _ = tx
-                        .send(ServerToClient::FloatingPaneMoved {
-                            pane_id: *pane_id,
-                            col_off: rect.col_off,
-                            row_off: rect.row_off,
-                            cols: rect.cols,
-                            rows: rect.rows,
-                        })
-                        .await;
-                }
-            }
-        }
-
-        ResizeFloatingPane {
-            pane_id,
-            cols,
-            rows,
-        } => {
-            if let Some(ref name) = *current_session {
-                let rect_opt = {
-                    let arc = manager.sessions();
-                    let mut sessions = arc.lock().await;
-                    sessions.get_mut(name).and_then(|s| {
-                        s.focused_window_mut()
-                            .and_then(|w| w.resize_floating_pane(*pane_id, *cols, *rows))
-                    })
-                };
-                if let Some(rect) = rect_opt {
-                    let _ = tx
-                        .send(ServerToClient::FloatingPaneMoved {
-                            pane_id: *pane_id,
-                            col_off: rect.col_off,
-                            row_off: rect.row_off,
-                            cols: rect.cols,
-                            rows: rect.rows,
-                        })
-                        .await;
-                }
-            }
-        }
-
+        } => file_dispatch::handle_run_macro(ctx, macro_fn, display_name).await,
         ConnectSerial {
             port,
             baud_rate,
@@ -1275,53 +186,22 @@ pub(super) async fn dispatch_inner(msg: &ClientToServer, ctx: &mut DispatchConte
             stop_bits,
             parity,
         } => {
-            if let Some(ref name) = *current_session {
-                let result = manager
-                    .connect_serial(name, port, *baud_rate, *data_bits, *stop_bits, parity)
-                    .await;
-                match result {
-                    Ok(pane_id) => {
-                        let _ = tx
-                            .send(ServerToClient::SerialConnected {
-                                pane_id,
-                                port: port.clone(),
-                            })
-                            .await;
-                        let layout_msg = {
-                            let arc = manager.sessions();
-                            let sessions = arc.lock().await;
-                            sessions.get(name).and_then(|s| {
-                                s.focused_window()
-                                    .map(|w| w.layout_changed_msg(s.cols, s.rows))
-                            })
-                        };
-                        if let Some(msg) = layout_msg {
-                            let _ = tx.send(msg).await;
-                        }
-                    }
-                    Err(e) => {
-                        let _ = tx
-                            .send(ServerToClient::Error {
-                                message: e.to_string(),
-                            })
-                            .await;
-                    }
-                }
-            }
+            file_dispatch::handle_connect_serial(
+                ctx, port, *baud_rate, *data_bits, *stop_bits, parity,
+            )
+            .await
         }
 
-        ListPlugins => super::plugin_dispatch::handle_list_plugins(manager, &tx).await,
-
-        LoadPlugin { path } => super::plugin_dispatch::handle_load_plugin(manager, &tx, path).await,
-
+        // ----- plugin_dispatch (既存) -----
+        ListPlugins => super::plugin_dispatch::handle_list_plugins(ctx.manager, &ctx.tx).await,
+        LoadPlugin { path } => {
+            super::plugin_dispatch::handle_load_plugin(ctx.manager, &ctx.tx, path).await
+        }
         UnloadPlugin { path } => {
-            super::plugin_dispatch::handle_unload_plugin(manager, &tx, path).await
+            super::plugin_dispatch::handle_unload_plugin(ctx.manager, &ctx.tx, path).await
         }
-
         ReloadPlugin { path } => {
-            super::plugin_dispatch::handle_reload_plugin(manager, &tx, path).await
+            super::plugin_dispatch::handle_reload_plugin(ctx.manager, &ctx.tx, path).await
         }
     }
 }
-
-// 録画パス検証ヘルパは dispatch_util.rs に移動した
