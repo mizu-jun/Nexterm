@@ -53,7 +53,10 @@ vte = "0.15"
 
 # シリアライズ
 serde = { version = "1", features = ["derive"] }
-bincode = "1"
+# Sprint 5-1 / G3: bincode 1.x → postcard 移行 (RUSTSEC-2025-0141 対応)
+# postcard は no_std 対応 + varint エンコードでサイズ削減 + `serde` 互換 API。
+# `use-std` feature で `to_stdvec` (Vec<u8> 返却) / `from_bytes` を有効化する。
+postcard = { version = "1", features = ["use-std"] }
 
 # TUI クライアント（Phase 1）
 ratatui = "0.30"

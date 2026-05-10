@@ -25,7 +25,7 @@ where
     // サーバー → クライアント 送信タスク
     tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            match bincode::serialize(&msg) {
+            match postcard::to_stdvec(&msg) {
                 Ok(payload) => {
                     let len = payload.len() as u32;
                     if write_half.write_all(&len.to_le_bytes()).await.is_err() {
@@ -66,7 +66,7 @@ where
         if read_half.read_exact(&mut payload).await.is_err() {
             break;
         }
-        let msg: ClientToServer = match bincode::deserialize(&payload) {
+        let msg: ClientToServer = match postcard::from_bytes(&payload) {
             Ok(m) => m,
             Err(e) => {
                 error!("デシリアライズエラー: {}", e);

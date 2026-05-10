@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security — Sprint 5-1 (G3) IPC ワイヤフォーマットを bincode → postcard へ移行
+
+**互換性破壊**: `PROTOCOL_VERSION` が `2` → `3` にバンプ。詳細は
+[docs/MIGRATION.md](docs/MIGRATION.md) を参照。
+
+- **`bincode = "1"` を全クレートで撤去**し、`postcard = "1" (use-std)` に置換。
+  - 対象クレート: `nexterm-proto` / `nexterm-server` / `nexterm-client-core` /
+    `nexterm-client-gpu` / `nexterm-client-tui` / `nexterm-ctl`
+  - 対象呼び出し: `bincode::serialize` → `postcard::to_stdvec`、
+    `bincode::deserialize` → `postcard::from_bytes`（実装 3 箇所 + テスト 19 箇所）
+- **`RUSTSEC-2025-0141` (bincode 1.x unmaintained) の `deny.toml` ignore を削除**。
+  `cargo deny check` の `advisories` セクションが ignore 0 件で通過。
+- **副次効果**: postcard の varint エンコードで IPC メッセージが平均 10〜20% 縮小。
+- 効果: bincode 1.x への lock-in を解消、長期メンテ可能なサプライチェーンへ。
+
 ### Security — Sprint 5-1 (G1) SSH パスワード IPC 平文流通の排除
 
 **互換性破壊**: `PROTOCOL_VERSION` が `1` → `2` にバンプ。詳細は

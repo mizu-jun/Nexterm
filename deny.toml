@@ -50,11 +50,8 @@ ignore = [
     # 移行作業は別チケットで管理（影響範囲限定: TLS 証明書ロード時のみ）。
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained; rustls-pki-types への移行を別途計画" },
 
-    # bincode 1.x は IPC プロトコルの中核（nexterm-proto）で広範に利用。
-    # 上流は v1.3.3 を「完成版」と宣言しメンテ終了（doxxing インシデントによる）。
-    # 後継候補: postcard / bitcode / rkyv（移行は破壊的変更を伴うため独立 Sprint で計画）。
-    # 影響: 機能追加なし・既知脆弱性なし（unmaintained 警告のみ）。
-    { id = "RUSTSEC-2025-0141", reason = "bincode 1.x はメンテ終了だが脆弱性なし; 後継への移行は別 Sprint で計画" },
+    # RUSTSEC-2025-0141 (bincode 1.x): Sprint 5-1 / G3 で postcard 1.x へ移行済み。
+    # ignore エントリは削除済み。
 ]
 
 # ─── ライセンスポリシー ─────────────────────────────────────────

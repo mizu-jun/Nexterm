@@ -13,7 +13,7 @@ repository.workspace = true
 [dependencies]
 nexterm-proto = { path = "../nexterm-proto" }
 tokio = { workspace = true }
-bincode = { workspace = true }
+postcard = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 

@@ -24,7 +24,7 @@ nexterm-ssh = { path = "../nexterm-ssh" }
 nexterm-plugin = { path = "../nexterm-plugin" }
 tokio = { workspace = true }
 portable-pty = { workspace = true }
-bincode = { workspace = true }
+postcard = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }

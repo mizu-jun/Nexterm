@@ -112,7 +112,7 @@ where
     // 送信タスク: チャネルから取り出してソケットへ書き込む
     tokio::spawn(async move {
         while let Some(msg) = send_rx.recv().await {
-            match bincode::serialize(&msg) {
+            match postcard::to_stdvec(&msg) {
                 Ok(payload) => {
                     let len = payload.len() as u32;
                     if write_half.write_all(&len.to_le_bytes()).await.is_err() {
@@ -149,7 +149,7 @@ where
                 break;
             }
 
-            match bincode::deserialize::<ServerToClient>(&payload) {
+            match postcard::from_bytes::<ServerToClient>(&payload) {
                 Ok(msg) => {
                     if recv_tx.send(msg).await.is_err() {
                         break;

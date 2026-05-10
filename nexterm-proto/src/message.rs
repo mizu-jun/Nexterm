@@ -677,27 +677,27 @@ mod tests {
     use crate::{Cell, Grid};
 
     #[test]
-    fn キーイベントのbincode往復() {
+    fn キーイベントのpostcard往復() {
         let msg = ClientToServer::KeyEvent {
             code: KeyCode::Char('a'),
             modifiers: Modifiers(Modifiers::CTRL),
         };
-        let encoded = bincode::serialize(&msg).unwrap();
-        let decoded: ClientToServer = bincode::deserialize(&encoded).unwrap();
+        let encoded = postcard::to_stdvec(&msg).unwrap();
+        let decoded: ClientToServer = postcard::from_bytes(&encoded).unwrap();
         assert_eq!(msg, decoded);
     }
 
     #[test]
-    fn full_refreshのbincode往復() {
+    fn full_refreshのpostcard往復() {
         let grid = Grid::new(80, 24);
         let msg = ServerToClient::FullRefresh { pane_id: 1, grid };
-        let encoded = bincode::serialize(&msg).unwrap();
-        let decoded: ServerToClient = bincode::deserialize(&encoded).unwrap();
+        let encoded = postcard::to_stdvec(&msg).unwrap();
+        let decoded: ServerToClient = postcard::from_bytes(&encoded).unwrap();
         assert_eq!(msg, decoded);
     }
 
     #[test]
-    fn grid_diffのbincode往復() {
+    fn grid_diffのpostcard往復() {
         let msg = ServerToClient::GridDiff {
             pane_id: 0,
             dirty_rows: vec![DirtyRow {
@@ -707,8 +707,8 @@ mod tests {
             cursor_col: 5,
             cursor_row: 3,
         };
-        let encoded = bincode::serialize(&msg).unwrap();
-        let decoded: ServerToClient = bincode::deserialize(&encoded).unwrap();
+        let encoded = postcard::to_stdvec(&msg).unwrap();
+        let decoded: ServerToClient = postcard::from_bytes(&encoded).unwrap();
         assert_eq!(msg, decoded);
     }
 
@@ -720,38 +720,38 @@ mod tests {
     }
 
     #[test]
-    fn hello_メッセージの_bincode_往復() {
+    fn hello_メッセージの_postcard_往復() {
         let msg = ClientToServer::Hello {
             proto_version: 1,
             client_kind: ClientKind::Gpu,
             client_version: "1.0.2".to_string(),
         };
-        let encoded = bincode::serialize(&msg).unwrap();
-        let decoded: ClientToServer = bincode::deserialize(&encoded).unwrap();
+        let encoded = postcard::to_stdvec(&msg).unwrap();
+        let decoded: ClientToServer = postcard::from_bytes(&encoded).unwrap();
         assert_eq!(msg, decoded);
     }
 
     #[test]
-    fn hello_ack_メッセージの_bincode_往復() {
+    fn hello_ack_メッセージの_postcard_往復() {
         let msg = ServerToClient::HelloAck {
             proto_version: 1,
             server_version: "1.0.2".to_string(),
         };
-        let encoded = bincode::serialize(&msg).unwrap();
-        let decoded: ServerToClient = bincode::deserialize(&encoded).unwrap();
+        let encoded = postcard::to_stdvec(&msg).unwrap();
+        let decoded: ServerToClient = postcard::from_bytes(&encoded).unwrap();
         assert_eq!(msg, decoded);
     }
 
     #[test]
-    fn client_kind_の全バリアントが_bincode_往復可能() {
+    fn client_kind_の全バリアントが_postcard_往復可能() {
         for kind in [
             ClientKind::Gpu,
             ClientKind::Tui,
             ClientKind::Ctl,
             ClientKind::Other,
         ] {
-            let encoded = bincode::serialize(&kind).unwrap();
-            let decoded: ClientKind = bincode::deserialize(&encoded).unwrap();
+            let encoded = postcard::to_stdvec(&kind).unwrap();
+            let decoded: ClientKind = postcard::from_bytes(&encoded).unwrap();
             assert_eq!(kind, decoded);
         }
     }

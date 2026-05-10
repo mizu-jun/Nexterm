@@ -11,7 +11,7 @@ nexterm-proto = { path = "../nexterm-proto" }
 # Sprint 3-6: クライアント-サーバー IPC 共通実装（GPU/TUI 共有）
 nexterm-client-core = { path = "../nexterm-client-core" }
 tokio = { workspace = true }
-bincode = { workspace = true }
+postcard = { workspace = true }
 serde = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }

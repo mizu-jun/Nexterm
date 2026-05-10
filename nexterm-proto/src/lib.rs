@@ -1,7 +1,7 @@
 //! nexterm-proto — IPC 通信プロトコル定義
 //!
 //! nexterm-server と nexterm-client 間で交わすメッセージ型を定義する。
-//! bincode でシリアライズしてUnix Domain Socket / Named Pipe で転送する。
+//! postcard でシリアライズしてUnix Domain Socket / Named Pipe で転送する。
 #![warn(missing_docs)]
 
 /// ターミナルセル型定義（`Attrs`・`Cell`・`Color`）
@@ -29,7 +29,10 @@ pub use message::{
 /// - v2: Sprint 5-1 / G1 — `ConnectSsh` から `password: Option<String>` を削除し、
 ///   `password_keyring_account: Option<String>` + `ephemeral_password: bool` に置換。
 ///   IPC 経路で SSH パスワード平文が流れないようサーバー側 keyring 取得に統一。
-pub const PROTOCOL_VERSION: u32 = 2;
+/// - v3: Sprint 5-1 / G3 — IPC ワイヤフォーマットを `bincode` 1.x から
+///   `postcard` 1.x に変更。RUSTSEC-2025-0141 (bincode 1.x の supply chain 状態) 対応。
+///   varint エンコードでメッセージサイズが縮小する。
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// IPC メッセージ 1 件の最大サイズ（バイト数）。
 ///

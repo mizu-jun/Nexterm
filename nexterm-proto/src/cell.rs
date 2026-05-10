@@ -98,15 +98,15 @@ mod tests {
     }
 
     #[test]
-    fn セルのbincodeシリアライズ往復() {
+    fn セルのpostcardシリアライズ往復() {
         let cell = Cell {
             ch: 'A',
             fg: Color::Rgb(255, 0, 0),
             bg: Color::Indexed(0),
             attrs: Attrs(Attrs::BOLD),
         };
-        let encoded = bincode::serialize(&cell).unwrap();
-        let decoded: Cell = bincode::deserialize(&encoded).unwrap();
+        let encoded = postcard::to_stdvec(&cell).unwrap();
+        let decoded: Cell = postcard::from_bytes(&encoded).unwrap();
         assert_eq!(cell, decoded);
     }
 
@@ -148,8 +148,8 @@ mod tests {
             bg: Color::Rgb(0, 0, 255),
             attrs: Attrs(Attrs::ITALIC),
         };
-        let encoded = bincode::serialize(&cell).unwrap();
-        let decoded: Cell = bincode::deserialize(&encoded).unwrap();
+        let encoded = postcard::to_stdvec(&cell).unwrap();
+        let decoded: Cell = postcard::from_bytes(&encoded).unwrap();
         assert_eq!(cell, decoded);
         assert_eq!(decoded.ch, '日');
     }

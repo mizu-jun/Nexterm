@@ -1642,9 +1642,9 @@ impl IpcConn {
         Ok(conn)
     }
 
-    /// メッセージを送信する（4B LE 長さプレフィックス + bincode）
+    /// メッセージを送信する（4B LE 長さプレフィックス + postcard）
     async fn send(&mut self, msg: ClientToServer) -> Result<()> {
-        let payload = bincode::serialize(&msg)?;
+        let payload = postcard::to_stdvec(&msg)?;
         let len = payload.len() as u32;
         self.writer.write_all(&len.to_le_bytes()).await?;
         self.writer.write_all(&payload).await?;
@@ -1660,7 +1660,7 @@ impl IpcConn {
         nexterm_proto::validate_msg_len(msg_len).map_err(|e| anyhow::anyhow!("{}", e))?;
         let mut payload = vec![0u8; msg_len];
         self.reader.read_exact(&mut payload).await?;
-        Ok(bincode::deserialize(&payload)?)
+        Ok(postcard::from_bytes(&payload)?)
     }
 }
 
@@ -1738,20 +1738,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bincode_roundtrip_list_sessions() {
+    fn postcard_roundtrip_list_sessions() {
         let msg = ClientToServer::ListSessions;
-        let encoded = bincode::serialize(&msg).unwrap();
-        let decoded: ClientToServer = bincode::deserialize(&encoded).unwrap();
+        let encoded = postcard::to_stdvec(&msg).unwrap();
+        let decoded: ClientToServer = postcard::from_bytes(&encoded).unwrap();
         assert!(matches!(decoded, ClientToServer::ListSessions));
     }
 
     #[test]
-    fn bincode_roundtrip_kill_session() {
+    fn postcard_roundtrip_kill_session() {
         let msg = ClientToServer::KillSession {
             name: "main".to_string(),
         };
-        let encoded = bincode::serialize(&msg).unwrap();
-        let decoded: ClientToServer = bincode::deserialize(&encoded).unwrap();
+        let encoded = postcard::to_stdvec(&msg).unwrap();
+        let decoded: ClientToServer = postcard::from_bytes(&encoded).unwrap();
         assert!(matches!(decoded, ClientToServer::KillSession { .. }));
     }
 }

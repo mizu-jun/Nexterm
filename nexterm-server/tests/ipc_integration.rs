@@ -1,27 +1,27 @@
 //! IPC プロトコルのエンコード・フレーミング統合テスト
 //!
-//! bincode シリアライズ + 4 バイト LE 長さプレフィックスフレーミングを検証する。
+//! postcard シリアライズ + 4 バイト LE 長さプレフィックスフレーミングを検証する。
 //! サーバープロセスを起動せずにプロトコル仕様の整合性を確認する。
 
 use nexterm_proto::{ClientToServer, KeyCode, Modifiers, ServerToClient};
 
-// ── bincode ラウンドトリップ ─────────────────────────────────────────────────
+// ── postcard ラウンドトリップ ─────────────────────────────────────────────────
 
 #[test]
 fn test_ping_encode_decode() {
     let msg = ClientToServer::Ping;
-    let encoded = bincode::serialize(&msg).expect("Ping のシリアライズ失敗");
+    let encoded = postcard::to_stdvec(&msg).expect("Ping のシリアライズ失敗");
     let decoded: ClientToServer =
-        bincode::deserialize(&encoded).expect("Ping のデシリアライズ失敗");
+        postcard::from_bytes(&encoded).expect("Ping のデシリアライズ失敗");
     assert!(matches!(decoded, ClientToServer::Ping));
 }
 
 #[test]
 fn test_pong_encode_decode() {
     let msg = ServerToClient::Pong;
-    let encoded = bincode::serialize(&msg).expect("Pong のシリアライズ失敗");
+    let encoded = postcard::to_stdvec(&msg).expect("Pong のシリアライズ失敗");
     let decoded: ServerToClient =
-        bincode::deserialize(&encoded).expect("Pong のデシリアライズ失敗");
+        postcard::from_bytes(&encoded).expect("Pong のデシリアライズ失敗");
     assert!(matches!(decoded, ServerToClient::Pong));
 }
 
@@ -31,8 +31,8 @@ fn test_attach_roundtrip() {
         session_name: "test-session".to_string(),
     };
 
-    let encoded = bincode::serialize(&msg).expect("Attach のシリアライズ失敗");
-    let decoded: ClientToServer = bincode::deserialize(&encoded).expect("デシリアライズ失敗");
+    let encoded = postcard::to_stdvec(&msg).expect("Attach のシリアライズ失敗");
+    let decoded: ClientToServer = postcard::from_bytes(&encoded).expect("デシリアライズ失敗");
 
     match decoded {
         ClientToServer::Attach { session_name } => {
@@ -48,8 +48,8 @@ fn test_paste_text_roundtrip() {
         text: "hello world".to_string(),
     };
 
-    let encoded = bincode::serialize(&msg).expect("PasteText のシリアライズ失敗");
-    let decoded: ClientToServer = bincode::deserialize(&encoded).expect("デシリアライズ失敗");
+    let encoded = postcard::to_stdvec(&msg).expect("PasteText のシリアライズ失敗");
+    let decoded: ClientToServer = postcard::from_bytes(&encoded).expect("デシリアライズ失敗");
 
     match decoded {
         ClientToServer::PasteText { text } => {
@@ -62,8 +62,8 @@ fn test_paste_text_roundtrip() {
 #[test]
 fn test_list_sessions_roundtrip() {
     let msg = ClientToServer::ListSessions;
-    let encoded = bincode::serialize(&msg).expect("ListSessions のシリアライズ失敗");
-    let decoded: ClientToServer = bincode::deserialize(&encoded).expect("デシリアライズ失敗");
+    let encoded = postcard::to_stdvec(&msg).expect("ListSessions のシリアライズ失敗");
+    let decoded: ClientToServer = postcard::from_bytes(&encoded).expect("デシリアライズ失敗");
     assert!(matches!(decoded, ClientToServer::ListSessions));
 }
 
@@ -74,8 +74,8 @@ fn test_key_event_roundtrip() {
         modifiers: Modifiers(Modifiers::CTRL),
     };
 
-    let encoded = bincode::serialize(&msg).expect("KeyEvent のシリアライズ失敗");
-    let decoded: ClientToServer = bincode::deserialize(&encoded).expect("デシリアライズ失敗");
+    let encoded = postcard::to_stdvec(&msg).expect("KeyEvent のシリアライズ失敗");
+    let decoded: ClientToServer = postcard::from_bytes(&encoded).expect("デシリアライズ失敗");
 
     match decoded {
         ClientToServer::KeyEvent { code, modifiers } => {
@@ -99,7 +99,7 @@ fn frame(payload: &[u8]) -> Vec<u8> {
 
 #[test]
 fn test_frame_length_prefix_ping() {
-    let payload = bincode::serialize(&ClientToServer::Ping).expect("Ping のシリアライズ失敗");
+    let payload = postcard::to_stdvec(&ClientToServer::Ping).expect("Ping のシリアライズ失敗");
     let framed = frame(&payload);
 
     assert!(framed.len() >= 4);
@@ -107,7 +107,7 @@ fn test_frame_length_prefix_ping() {
     assert_eq!(declared_len, payload.len());
 
     let body = &framed[4..];
-    let decoded: ClientToServer = bincode::deserialize(body).expect("デシリアライズ失敗");
+    let decoded: ClientToServer = postcard::from_bytes(body).expect("デシリアライズ失敗");
     assert!(matches!(decoded, ClientToServer::Ping));
 }
 
@@ -117,7 +117,7 @@ fn test_frame_multiple_messages() {
 
     let mut buffer: Vec<u8> = Vec::new();
     for msg in &msgs {
-        let payload = bincode::serialize(msg).expect("シリアライズ失敗");
+        let payload = postcard::to_stdvec(msg).expect("シリアライズ失敗");
         buffer.extend_from_slice(&frame(&payload));
     }
 
@@ -127,7 +127,7 @@ fn test_frame_multiple_messages() {
         assert!(buffer.len() >= pos + 4);
         let len = u32::from_le_bytes(buffer[pos..pos + 4].try_into().unwrap()) as usize;
         let payload = &buffer[pos + 4..pos + 4 + len];
-        let decoded: ClientToServer = bincode::deserialize(payload).expect("デシリアライズ失敗");
+        let decoded: ClientToServer = postcard::from_bytes(payload).expect("デシリアライズ失敗");
         assert_eq!(
             std::mem::discriminant(&decoded),
             std::mem::discriminant(expected),
@@ -167,8 +167,8 @@ fn test_resize_message_roundtrip() {
         cols: 120,
         rows: 40,
     };
-    let encoded = bincode::serialize(&msg).expect("Resize のシリアライズ失敗");
-    let decoded: ClientToServer = bincode::deserialize(&encoded).expect("デシリアライズ失敗");
+    let encoded = postcard::to_stdvec(&msg).expect("Resize のシリアライズ失敗");
+    let decoded: ClientToServer = postcard::from_bytes(&encoded).expect("デシリアライズ失敗");
     match decoded {
         ClientToServer::Resize { cols, rows } => {
             assert_eq!(cols, 120);

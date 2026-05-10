@@ -127,7 +127,7 @@ mod tests {
     }
 
     #[test]
-    fn グリッドのbincode往復() {
+    fn グリッドのpostcard往復() {
         let mut grid = Grid::new(10, 5);
         grid.set(
             3,
@@ -139,8 +139,8 @@ mod tests {
                 attrs: Attrs(Attrs::BOLD),
             },
         );
-        let encoded = bincode::serialize(&grid).unwrap();
-        let decoded: Grid = bincode::deserialize(&encoded).unwrap();
+        let encoded = postcard::to_stdvec(&grid).unwrap();
+        let decoded: Grid = postcard::from_bytes(&encoded).unwrap();
         assert_eq!(grid, decoded);
     }
 
@@ -179,8 +179,8 @@ mod tests {
                 },
             ],
         };
-        let encoded = bincode::serialize(&row).unwrap();
-        let decoded: DirtyRow = bincode::deserialize(&encoded).unwrap();
+        let encoded = postcard::to_stdvec(&row).unwrap();
+        let decoded: DirtyRow = postcard::from_bytes(&encoded).unwrap();
         assert_eq!(row, decoded);
     }
 
