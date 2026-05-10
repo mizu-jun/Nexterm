@@ -829,11 +829,7 @@ impl ClientState {
                 transferred,
                 total,
             } => {
-                let pct = if total > 0 {
-                    transferred * 100 / total
-                } else {
-                    0
-                };
+                let pct = (transferred * 100).checked_div(total).unwrap_or(0);
                 self.status_bar_text = format!("SFTP {} {}%", path, pct);
             }
             ServerToClient::SftpDone { path, error } => {

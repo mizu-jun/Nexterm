@@ -599,7 +599,7 @@ fn cmd_service_status() -> Result<()> {
             println!("サービス: 未インストール");
             println!("インストールするには: nexterm-ctl service install");
         }
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
