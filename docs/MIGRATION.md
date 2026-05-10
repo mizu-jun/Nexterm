@@ -4,6 +4,44 @@
 
 ---
 
+## v1.1.0 → Unreleased（Sprint 5-1 / G1: SSH パスワード keyring 化）
+
+`PROTOCOL_VERSION` が `1` から `2` にバンプされました。**新サーバーは旧クライアント
+を Hello ハンドシェイクで拒否し、旧サーバーは新クライアントを拒否します**。
+クライアントとサーバーは必ず一緒にアップグレードしてください。
+
+### 何が変わるか
+
+`ClientToServer::ConnectSsh` メッセージから `password: Option<String>`
+フィールドが削除され、以下の 2 フィールドに置換されました:
+
+- `password_keyring_account: Option<String>` — `<username>@<host_name>` 形式の
+  キーリングアカウント識別子
+- `ephemeral_password: bool` — `true` の場合、サーバーは認証完了後に
+  keyring エントリを削除する
+
+これにより、IPC 経路（Unix Domain Socket / Named Pipe）でパスワード平文が
+流れなくなりました。クライアントが OS のキーリング（Service=`"nexterm-ssh"`）に
+保存し、サーバーが同じユーザーの権限で取得します。
+
+### 影響
+
+- 旧 `nexterm-ctl` バイナリと新サーバーの混在は不可（IPC 互換性破壊）。
+- パスワード認証の SSH ホストを利用する場合、サーバーホストとクライアントホストが
+  **同じ OS ユーザー**で動作している必要があります（OS キーリングはユーザー単位
+  でアクセス制御されるため）。
+- OS キーリングサービスが利用できない環境（headless Linux で
+  Secret Service 未起動など）ではパスワード認証 SSH 接続ができなくなります。
+  鍵認証または `secret-tool`/`gnome-keyring`/`KWallet` 等のセットアップを推奨します。
+
+### 移行手順
+
+クライアント/サーバーバイナリを同時に v1.2.0+ へアップグレードするだけです。
+追加設定は不要。`HostManager` のパスワードモーダルは「保存する/しない」UI を
+継続利用できます。
+
+---
+
 ## v1.0.2 → Unreleased（Sprint 4-2 プラグイン API v2）
 
 `PLUGIN_API_VERSION` が `1` から `2` にバンプされました。**v1 プラグインは

@@ -431,10 +431,13 @@ impl EventHandler {
                 WKeyCode::Enter => {
                     if let Some(m) = &mut self.app.state.host_manager.password_modal {
                         let host = m.host.clone();
+                        // Sprint 5-1 / G1: take_password() の前に remember を読み出す
+                        // （IPC で ephemeral_password = !remember として送信するため）
+                        let remember = m.remember;
                         let password = m.take_password();
                         self.app.state.host_manager.password_modal = None;
                         self.app.state.host_manager.record_connection(&host);
-                        self.connect_ssh_host_with_password(&host, password);
+                        self.connect_ssh_host_with_password(&host, password, remember);
                     }
                 }
                 _ => {
@@ -1193,7 +1196,8 @@ impl EventHandler {
             port: host.port,
             username: host.username.clone(),
             auth_type: host.auth_type.clone(),
-            password: None,
+            password_keyring_account: None,
+            ephemeral_password: false,
             key_path: host.key_path.clone(),
             remote_forwards: host.forward_remote.clone(),
             x11_forward: host.x11_forward,
@@ -1211,7 +1215,8 @@ impl EventHandler {
             port: host.port,
             username: host.username.clone(),
             auth_type: host.auth_type.clone(),
-            password: None,
+            password_keyring_account: None,
+            ephemeral_password: false,
             key_path: host.key_path.clone(),
             remote_forwards: host.forward_remote.clone(),
             x11_forward: host.x11_forward,
@@ -1221,30 +1226,51 @@ impl EventHandler {
 
     /// パスワード付きで新しいタブを開いて ConnectSsh メッセージを送信する（パスワード認証ホスト用）
     ///
-    /// HIGH H-6: パスワード文字列は `Zeroizing<String>` で受け取り、
-    /// IPC 送信後に drop されてメモリゼロクリアされる。
+    /// **Sprint 5-1 / G1**: IPC 経路にパスワード平文を流さない。
+    /// クライアントが事前に OS キーリング（Service="nexterm-ssh", Account="<user>@<host>"）
+    /// に保存し、IPC では account 名のみ送る。サーバーは keyring から取得する。
+    ///
+    /// `remember=false`（PasswordModal でユーザーが「保存しない」を選んだ場合）でも、
+    /// `take_password()` 側で永続保存していない場合はここで一時保存する。
+    /// `ephemeral_password=true` をサーバーに通知し、認証完了後に keyring エントリを削除させる。
+    ///
+    /// パスワード文字列は `Zeroizing<String>` で受け取り、関数終了時にゼロクリアされる。
     fn connect_ssh_host_with_password(
         &self,
         host: &nexterm_config::HostConfig,
         password: zeroize::Zeroizing<String>,
+        remember: bool,
     ) {
         let Some(conn) = &self.connection else { return };
         let _ = conn.send_tx.try_send(ClientToServer::NewWindow);
-        // IPC bincode シリアライズ時に String が必要なので一時 clone する。
-        // 旧 password は関数終了時に drop されゼロクリアされる。
-        // TODO(future): IPC 経由で平文パスワードを送る代わりに OS keyring に
-        // 一時保存する設計に変更する（HIGH H-6 の根本対策）。
-        let pwd_string: Option<String> = if password.is_empty() {
+
+        let password_keyring_account = if password.is_empty() {
             None
         } else {
-            Some((*password).clone())
+            // remember=true の場合は PasswordModal::take_password() 内で既に保存済み。
+            // remember=false の場合のみ一時的に keyring に書き込む（サーバーが認証後に削除）。
+            if !remember
+                && let Err(e) =
+                    nexterm_config::keyring::store_password(&host.name, &host.username, &password)
+            {
+                tracing::error!(
+                    "OS キーリングへの一時保存に失敗したため SSH 接続を中止します: host={} user={} err={}",
+                    host.name,
+                    host.username,
+                    e
+                );
+                return;
+            }
+            Some(format!("{}@{}", host.username, host.name))
         };
+
         let _ = conn.send_tx.try_send(ClientToServer::ConnectSsh {
             host: host.host.clone(),
             port: host.port,
             username: host.username.clone(),
             auth_type: host.auth_type.clone(),
-            password: pwd_string,
+            password_keyring_account,
+            ephemeral_password: !remember,
             key_path: host.key_path.clone(),
             remote_forwards: host.forward_remote.clone(),
             x11_forward: host.x11_forward,

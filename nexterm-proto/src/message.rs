@@ -140,6 +140,12 @@ pub enum ClientToServer {
         delta: f32,
     },
     /// SSH 接続（設定済みホスト名を指定）
+    ///
+    /// **PROTOCOL_VERSION 2（Sprint 5-1 / G1）からの非互換変更**:
+    /// 旧フィールド `password: Option<String>` を削除し、
+    /// `password_keyring_account` + `ephemeral_password` に置換した。
+    /// IPC 経路でパスワード平文を流さないため、クライアントが OS キーリングに
+    /// 保存し、サーバーが `Service="nexterm-ssh"` + `Account=<account>` で取得する。
     ConnectSsh {
         /// 接続先ホスト名または IP アドレス
         host: String,
@@ -149,8 +155,17 @@ pub enum ClientToServer {
         username: String,
         /// 認証方式: "password", "key", "agent"
         auth_type: String,
-        /// パスワード認証時のパスワード（平文、将来はキーチェーンから取得）
-        password: Option<String>,
+        /// パスワード認証時にサーバーが OS キーリングから取得するアカウント識別子。
+        /// `<username>@<host_name>` 形式（`host_name` は `HostConfig.name`）。
+        /// `Service` は固定で `"nexterm-ssh"`。
+        ///
+        /// クライアントは事前にこの account 名で keyring に保存してから IPC 送信する。
+        /// auth_type が "password" 以外、もしくは空パスワードを意図する場合は `None`。
+        password_keyring_account: Option<String>,
+        /// `true` の場合、サーバーは認証完了（成功・失敗のいずれでも）後に
+        /// 該当 keyring エントリを削除する。`PasswordModal.remember=false` 用。
+        #[serde(default)]
+        ephemeral_password: bool,
         /// 公開鍵認証時の秘密鍵パス
         key_path: Option<String>,
         /// リモートポートフォワーディング指定（"remote_port:local_host:local_port" 形式、複数可）

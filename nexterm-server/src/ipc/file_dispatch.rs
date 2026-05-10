@@ -93,18 +93,65 @@ pub(super) async fn handle_connect_ssh(
     port: u16,
     username: &str,
     auth_type: &str,
-    password: &Option<String>,
+    password_keyring_account: &Option<String>,
+    ephemeral_password: bool,
     key_path: &Option<String>,
     remote_forwards: &[String],
 ) {
     use nexterm_ssh::{SshAuth, SshConfig, SshSession};
     use zeroize::Zeroizing;
 
+    // Sprint 5-1 / G1: パスワード認証時は IPC 経由ではなく OS キーリング経由で取得する。
+    // クライアントが事前に Service="nexterm-ssh", Account="<username>@<host_name>" で
+    // 保存したエントリをサーバーが取り出して russh に渡す。
+    // ephemeral_password=true（PasswordModal.remember=false 由来）のときは
+    // 認証完了後にエントリを削除する。
+    let mut keyring_cleanup: Option<(String, String)> = None;
+
     let auth = match auth_type {
-        "password" => {
-            let pw = password.clone().unwrap_or_default();
-            SshAuth::Password(Zeroizing::new(pw))
-        }
+        "password" => match password_keyring_account {
+            Some(account) => match parse_keyring_account(account) {
+                Some((kr_user, kr_host)) => {
+                    match nexterm_config::keyring::get_password(&kr_host, &kr_user) {
+                        Ok(pw) => {
+                            if ephemeral_password {
+                                keyring_cleanup = Some((kr_host.clone(), kr_user.clone()));
+                            }
+                            // Zeroizing<String> を SshAuth::Password に渡す
+                            SshAuth::Password(pw)
+                        }
+                        Err(e) => {
+                            let _ = ctx
+                                .tx
+                                .send(ServerToClient::Error {
+                                    message: format!(
+                                        "OS キーリングからのパスワード取得に失敗しました: {}",
+                                        e
+                                    ),
+                                })
+                                .await;
+                            return;
+                        }
+                    }
+                }
+                None => {
+                    let _ = ctx
+                        .tx
+                        .send(ServerToClient::Error {
+                            message: format!(
+                                "不正な keyring account 形式 (期待: <username>@<host_name>): '{}'",
+                                account
+                            ),
+                        })
+                        .await;
+                    return;
+                }
+            },
+            None => {
+                // パスワード認証なのに account がない場合は空パスワードで進む（既存挙動を保持）
+                SshAuth::Password(Zeroizing::new(String::new()))
+            }
+        },
         "key" => {
             let kp = key_path.clone().unwrap_or_else(|| {
                 std::env::var_os("HOME")
@@ -163,6 +210,30 @@ pub(super) async fn handle_connect_ssh(
                 .await;
         }
     }
+
+    // ephemeral_password=true の場合は keyring エントリを削除（成功・失敗を問わず）
+    if let Some((host_name, user)) = keyring_cleanup
+        && let Err(e) = nexterm_config::keyring::delete_password(&host_name, &user)
+    {
+        tracing::warn!(
+            "ephemeral keyring エントリ削除に失敗しました (host={}, user={}): {}",
+            host_name,
+            user,
+            e
+        );
+    }
+}
+
+/// `<username>@<host_name>` 形式の keyring account を `(username, host_name)` に分解する。
+///
+/// `host_name` 側に `@` が含まれる場合は最初の `@` で分割し、残りはすべて host 部とする。
+/// account に `@` が無い、もしくは username 部が空の場合は `None` を返す。
+fn parse_keyring_account(account: &str) -> Option<(String, String)> {
+    let (user, host) = account.split_once('@')?;
+    if user.is_empty() || host.is_empty() {
+        return None;
+    }
+    Some((user.to_string(), host.to_string()))
 }
 
 pub(super) async fn handle_sftp_upload(
@@ -314,5 +385,45 @@ pub(super) async fn handle_connect_serial(
                     .await;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod connect_ssh_tests {
+    use super::parse_keyring_account;
+
+    #[test]
+    fn parse_keyring_account_標準形式() {
+        let parsed = parse_keyring_account("alice@dev-server").unwrap();
+        assert_eq!(parsed.0, "alice");
+        assert_eq!(parsed.1, "dev-server");
+    }
+
+    #[test]
+    fn parse_keyring_account_host側に_at_を含む() {
+        // host_name にラベルとして @ が含まれていても最初の @ で分割される
+        let parsed = parse_keyring_account("alice@host@label").unwrap();
+        assert_eq!(parsed.0, "alice");
+        assert_eq!(parsed.1, "host@label");
+    }
+
+    #[test]
+    fn parse_keyring_account_at_無し() {
+        assert!(parse_keyring_account("alice").is_none());
+    }
+
+    #[test]
+    fn parse_keyring_account_空ユーザー() {
+        assert!(parse_keyring_account("@dev-server").is_none());
+    }
+
+    #[test]
+    fn parse_keyring_account_空ホスト() {
+        assert!(parse_keyring_account("alice@").is_none());
+    }
+
+    #[test]
+    fn parse_keyring_account_空文字列() {
+        assert!(parse_keyring_account("").is_none());
     }
 }

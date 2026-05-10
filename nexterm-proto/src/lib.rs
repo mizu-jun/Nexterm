@@ -26,7 +26,10 @@ pub use message::{
 /// # 履歴
 ///
 /// - v1: 初版（PR-C Task 10 で導入）
-pub const PROTOCOL_VERSION: u32 = 1;
+/// - v2: Sprint 5-1 / G1 — `ConnectSsh` から `password: Option<String>` を削除し、
+///   `password_keyring_account: Option<String>` + `ephemeral_password: bool` に置換。
+///   IPC 経路で SSH パスワード平文が流れないようサーバー側 keyring 取得に統一。
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// IPC メッセージ 1 件の最大サイズ（バイト数）。
 ///

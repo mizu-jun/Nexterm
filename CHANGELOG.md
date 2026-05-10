@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security — Sprint 5-1 (G1) SSH パスワード IPC 平文流通の排除
+
+**互換性破壊**: `PROTOCOL_VERSION` が `1` → `2` にバンプ。詳細は
+[docs/MIGRATION.md](docs/MIGRATION.md) を参照。
+
+- **`ClientToServer::ConnectSsh` から `password: Option<String>` を削除**。
+  代わりに以下を導入:
+  - `password_keyring_account: Option<String>` — OS キーリングのアカウント識別子
+  - `ephemeral_password: bool` — 認証完了後に keyring エントリを削除するフラグ
+- **クライアント (nexterm-client-gpu)**: `connect_ssh_host_with_password()` で
+  事前に `nexterm_config::keyring::store_password()` を呼んで保存し、IPC では
+  account 名のみ送信する。`PasswordModal.remember=false` の場合は
+  `ephemeral_password=true` を立てる。
+- **サーバー (nexterm-server)**: `handle_connect_ssh()` で
+  `nexterm_config::keyring::get_password()` から取得し、`Zeroizing<String>` で
+  russh に渡す。`ephemeral_password=true` のときは認証完了後に削除。
+- 効果: Unix Domain Socket / Named Pipe 上でパスワード平文が流れなくなり、
+  HIGH H-6 (`input_handler.rs` の TODO) が解消。
+
 ### Security — Sprint 5-1 (G2) GitHub Actions SHA ピン留め
 
 - **全 GitHub Actions を Git SHA でピン留め**（SLSA 2 要件）。
