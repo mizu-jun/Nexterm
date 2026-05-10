@@ -1,7 +1,22 @@
 # WASM プラグイン
 
 Nexterm は **WebAssembly (WASM)** ベースのプラグインシステムを内蔵しています。
-プラグインはサンドボックス化されたWASM環境で動作するため、システムへの直接アクセスはできません。
+プラグインはサンドボックス化された WASM 環境（wasmi）で動作するため、システムへの直接アクセスはできません。
+
+## API バージョン
+
+- **現行**: `PLUGIN_API_VERSION = 2`
+- **後方互換**: `MIN_SUPPORTED_API_VERSION = 1` で v1 プラグインも継続サポート（deprecation 警告付き）
+
+詳細仕様: [docs/plugin-api.md](../../plugin-api.md) / 移行手順: [docs/MIGRATION.md](../../MIGRATION.md)
+
+### v1 / v2 の主な違い
+
+| 機能 | v1 | v2 |
+|------|----|----|
+| 入力データ | 生バイト列（ESC 含む） | **サニタイズ済み**（ESC/CSI/OSC/DCS/APC + C0 制御を除去、`\t\r\n` 除く） |
+| `write_pane` 宛先 | 任意の `pane_id` 可 | **PaneId 許可リスト**: `on_output(pane_id)` 中はその ID のみ、`on_command` 中は不可 |
+| ロード時 | deprecation 警告ログ | サイレント |
 
 ## プラグインの仕組み
 
@@ -16,8 +31,9 @@ PTY 出力 → PluginManager.on_output() → 各プラグインの nexterm_on_ou
 
 | 関数 | シグネチャ | 説明 |
 |------|-----------|------|
+| `nexterm.api_version` | `() -> i32` | ホストの API バージョンを返す（現行: `2`）|
 | `nexterm.log` | `(ptr: i32, len: i32)` | ログメッセージ（nexterm-server のログに出力）|
-| `nexterm.write_pane` | `(pane_id: i32, ptr: i32, len: i32)` | ペインへのテキスト書き込み |
+| `nexterm.write_pane` | `(pane_id: i32, ptr: i32, len: i32)` | ペインへのテキスト書き込み（v2 では許可リストでフィルタ）|
 
 ---
 

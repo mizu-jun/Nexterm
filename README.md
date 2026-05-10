@@ -6,16 +6,38 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 
 [![CI](https://github.com/mizu-jun/nexterm/actions/workflows/ci.yml/badge.svg)](https://github.com/mizu-jun/nexterm/actions/workflows/ci.yml)
 
-## What's New in v0.9.0
+## What's New in v1.1.0
 
-**GPU client: major redesign and competitive feature additions**
+**Sprint 1〜4 全完了 — セキュリティ強化・サプライチェーン整備・拡張性向上の総まとめリリース**
 
-- **Tokyo Night theme**: Changed the default color scheme from dark to Tokyo Night. Refreshed the tab bar with an accent line and pane borders with 1px thin lines.
-- **Settings panel redesign**: New 7-category settings screen with a left sidebar (Startup / Font / Theme / Window / SSH / Keybindings / Profiles).
-- **Tab rename UI**: Double-clicking a tab (within 300 ms) shows an inline edit field; pressing Enter sends a RenameWindow command to the server.
-- **Context menu enhancements**: Added profile list, inline search, and open-settings menu entries with keyboard shortcut hints.
-- **App icon update**: Changed to a blue-gradient "N" logo (updated nexterm-source.png / nexterm.ico).
-- **Black margin fix**: Fixed a black window border appearing before the pane layout is received; the background color is now used to fill the gap.
+### Security & Sandboxing
+- **Web auth hardening**: OAuth Org 検証バイパス修正、TOTP リプレイ攻撃対策・IP レート制限、TLS フォールバック既定禁止、OIDC SSRF 対策。
+- **IPC OOM 防止**: `MAX_MSG_LEN = 64 MiB` で bincode メッセージ上限を強制。プロトコル Hello + バージョニング (`PROTOCOL_VERSION = 1`) を必須化。
+- **VT パーサ DoS 対策**: APC 4 MiB / DCS Sixel 16 MiB / Kitty 64 MiB の上限。画像デコード u32 オーバーフロー修正 (`MAX_IMAGE_BYTES = 256 MiB`)。
+- **Lua / WASM サンドボックス**: Lua の `os` / `io` / `package` / `require` / `dofile` / `debug` を無効化。WASM は `consume_fuel(true)` + `MAX_MEMORY_PAGES = 256` で制限。
+- **機密操作の同意ダイアログ**: クリップボード書き込み・URL オープン・通知に `prompt`/`allow`/`deny` ポリシーを実装（Wezterm/iTerm2 流の UX）。
+- **シークレット zeroize + keyring 統合**: パスワード入力を `Zeroizing<String>` でドロップ時クリア、OS keychain に保存可能。
+
+### Plugin Runtime
+- **WASM プラグイン (wasmi)**: `nexterm-ctl plugin {list,load,unload,reload}` でランタイム管理。フック: `nexterm_init` / `nexterm_meta` / `nexterm_on_output` / `nexterm_on_command`。
+- **Plugin API v2**: 入力サニタイズ（ESC/CSI/OSC/DCS/APC + C0 制御文字を除去）+ `write_pane` の PaneId 許可リスト。`MIN_SUPPORTED_API_VERSION = 1` で v1 プラグインも graceful 降格で動作（deprecation 警告付き）。
+
+### Supply Chain & Quality
+- **`cargo-deny` 統合**: ライセンス allow リスト + RustSec advisory 照合 + 不審ソース禁止を CI で強制。
+- **SBOM 自動生成**: タグ push 時に CycloneDX JSON を全 12 ワークスペース crate から生成し、リリース成果物に添付。
+- **STRIDE 脅威モデル**: 9 信頼境界 × STRIDE 6 カテゴリで残存リスクと既存対策を文書化 (`docs/THREAT_MODEL.md`)。
+- **minisign 署名 + SLSA Provenance**: アップデートチェッカーで `.minisig` を検証、リリースワークフローで attestation 生成。
+- **proptest 整備**: Sixel/Kitty パーサ・BSP/タイリングレイアウトの不変条件を property test で検証（約 3,500 ランダム入力）。
+- **cargo-fuzz 基盤**: `nexterm-vt` に 4 ターゲット（VtParser / Sixel / Kitty / OSC URL）の fuzzing 基盤を導入、毎日 CI で 60 秒 × 4 並列実行。
+
+### Architecture
+- **巨大ファイル分割**: `renderer.rs` (6,947 行) → 8 ファイル / `dispatch.rs` (1,327 行) → 6 ファイル / `schema.rs` (1,417 行) → 9 ファイル。
+- **共有 IPC コア**: `nexterm-client-core` クレートを新設し、GPU / TUI / ctl で IPC 接続ロジックを共通化。
+- **Config ホットリロード**: `arc-swap::ArcSwap<RuntimeConfig>` で hooks / log_config / hosts を lock-free に更新。
+
+### Docs & Migration
+- **互換性破壊あり**: プロトコル Hello メッセージ・Lua サンドボックス・TLS フォールバック既定禁止・Plugin API v2。詳細は [docs/MIGRATION.md](docs/MIGRATION.md) を参照。
+- **新規ドキュメント**: [docs/SBOM.md](docs/SBOM.md) / [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) / [docs/plugin-api.md](docs/plugin-api.md) を追加。
 
 ---
 
@@ -91,8 +113,25 @@ For full release history, see [CHANGELOG.md](CHANGELOG.md).
 - **Localization** — UI in English, French, German, Spanish, Italian, Simplified Chinese, Japanese, Korean
 - **macOS session restore** — CWD preserved on reconnect via `lsof`
 
+### Plugin Runtime (WASM)
+- **WASM plugin host** — wasmi-based sandboxed runtime with fuel + memory limits
+- **Stable ABI v2** — Sanitized inputs + per-call PaneId allowlist; `MIN_SUPPORTED_API_VERSION = 1` keeps v1 plugins working with deprecation warnings
+- **Auto-load on startup** — Drop `.wasm` files in `~/.config/nexterm/plugins/` (or `%APPDATA%\nexterm\plugins\`)
+- **Runtime control** — `nexterm-ctl plugin {list,load,unload,reload}` without server restart
+- **Sample plugins** — `echo-suppress` / `error-detector` / `command-counter` / `timestamp-injector` in `examples/plugins/`
+
+### Security & Supply Chain
+- **Sandboxed Lua / WASM** — Lua `os`/`io`/`package` disabled; WASM `consume_fuel(true)` + 16 MiB memory cap
+- **Sensitive operation prompts** — Clipboard / URL open / notifications gated by `prompt`/`allow`/`deny` policy
+- **OS keychain integration** — Passwords saved via `keyring` crate (macOS Keychain / Windows Credential Store / Linux Secret Service)
+- **minisign signature verification** — Update checker validates `.minisig` against build-time-embedded public key
+- **SBOM (CycloneDX JSON)** — Generated for every tagged release via `cargo-cyclonedx`
+- **SLSA Build Provenance** — Attestations generated via `actions/attest-build-provenance@v2`
+- **`cargo-deny` enforced in CI** — Licenses, advisories, sources, and bans checked on every PR
+- **STRIDE threat model** — 9 trust boundaries documented in [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)
+
 ### CLI Tool
-- **nexterm-ctl** — Session management CLI (list, create, attach, kill, record, import themes)
+- **nexterm-ctl** — Session / plugin management CLI (list, create, attach, kill, record, import themes, `plugin {list,load,unload,reload}`)
 
 ## Implementation status
 
@@ -236,22 +275,24 @@ Based on comparison with rlogin, Tera Term, WezTerm, and tmux.
 | 12-7 | winget manifest | ✅ |
 | 12-8 | GitHub Pages documentation site (mdBook, CI auto-deploy) | ✅ |
 
-**Tests**: 178+ passing
+**Tests**: 240+ passing (unit + integration + proptest); cargo-fuzz daily at UTC 03:00
 
 ## Crate structure
 
 ```
 nexterm/
-├── nexterm-proto        # IPC message types and serialization
-├── nexterm-vt           # VT100 parser, virtual screen, image decode
-├── nexterm-server       # PTY server (IPC + session management)
-├── nexterm-config       # Config loader (TOML + Lua) + StatusBarEvaluator
-├── nexterm-client-tui   # TUI client
-├── nexterm-client-gpu   # GPU client (wgpu + winit)
-├── nexterm-launcher     # nexterm.exe — auto-starts server + opens GPU client
-├── nexterm-ctl          # Session management CLI
-├── nexterm-i18n         # Localization support (8 languages)
-└── nexterm-ssh          # SSH client (russh) — connection, auth, PTY channel
+├── nexterm-proto         # IPC message types and serialization
+├── nexterm-vt            # VT100 parser, virtual screen, image decode (+ proptest + fuzz)
+├── nexterm-server        # PTY server (IPC + session management)
+├── nexterm-config        # Config loader (TOML + Lua) + StatusBarEvaluator
+├── nexterm-client-core   # Shared IPC connection layer (Hello handshake, OOM guards)
+├── nexterm-client-tui    # TUI client (ratatui + crossterm)
+├── nexterm-client-gpu    # GPU client (wgpu + winit + cosmic-text)
+├── nexterm-launcher      # nexterm.exe — auto-starts server + opens GPU client
+├── nexterm-ctl           # Session / plugin management CLI
+├── nexterm-i18n          # Localization support (8 languages)
+├── nexterm-ssh           # SSH client (russh) — connection, auth, PTY channel
+└── nexterm-plugin        # WASM plugin host runtime (wasmi, API v2)
 ```
 
 ## macOS Quick Start

@@ -4,6 +4,21 @@ Nexterm has a built-in **WebAssembly (WASM)** plugin system.
 Plugins run in a sandboxed `wasmi` runtime with no direct system access —
 they can only interact with Nexterm through the defined host import API.
 
+## API Versions
+
+- **Current**: `PLUGIN_API_VERSION = 2`
+- **Backwards-compat**: `MIN_SUPPORTED_API_VERSION = 1` (v1 plugins still load with a deprecation warning)
+
+Full reference: [docs/plugin-api.md](../../plugin-api.md) — Migration: [docs/MIGRATION.md](../../MIGRATION.md)
+
+### v1 vs v2 differences
+
+| Capability | v1 | v2 |
+|---|----|----|
+| Input data | Raw bytes (incl. ESC) | **Sanitized** (ESC/CSI/OSC/DCS/APC + C0 controls stripped, `\t\r\n` kept) |
+| `write_pane` target | Any `pane_id` allowed | **PaneId allowlist**: only `pane_id` in `on_output(pane_id)`; none in `on_command` |
+| Load behavior | Deprecation warning logged | Silent |
+
 ## How It Works
 
 ```
@@ -30,9 +45,9 @@ A plugin can suppress output (return 1 from `nexterm_on_output`) to replace it.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `nexterm.api_version` | `() -> i32` | Returns the host's API version (currently `2`) |
 | `nexterm.log` | `(ptr: i32, len: i32)` | Write a UTF-8 string to the nexterm-server log |
-| `nexterm.write_pane` | `(pane_id: i32, ptr: i32, len: i32)` | Write UTF-8 text to a pane (`pane_id=0` = focused pane) |
-| `nexterm.now_ms` | `() -> i64` | Current Unix timestamp in milliseconds |
+| `nexterm.write_pane` | `(pane_id: i32, ptr: i32, len: i32)` | Write UTF-8 text to a pane (in v2, gated by per-call PaneId allowlist) |
 
 ---
 

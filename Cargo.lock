@@ -3545,7 +3545,7 @@ dependencies = [
 
 [[package]]
 name = "nexterm-client-core"
-version = "1.0.2"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -3557,7 +3557,7 @@ dependencies = [
 
 [[package]]
 name = "nexterm-client-gpu"
-version = "1.0.2"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -3598,7 +3598,7 @@ dependencies = [
 
 [[package]]
 name = "nexterm-client-tui"
-version = "1.0.2"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -3615,7 +3615,7 @@ dependencies = [
 
 [[package]]
 name = "nexterm-config"
-version = "1.0.2"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "keyring",
@@ -3631,7 +3631,7 @@ dependencies = [
 
 [[package]]
 name = "nexterm-ctl"
-version = "1.0.2"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -3649,7 +3649,7 @@ dependencies = [
 
 [[package]]
 name = "nexterm-i18n"
-version = "1.0.2"
+version = "1.1.0"
 dependencies = [
  "serde_json",
  "sys-locale",
@@ -3657,7 +3657,7 @@ dependencies = [
 
 [[package]]
 name = "nexterm-launcher"
-version = "1.0.2"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "libc",
@@ -3666,7 +3666,7 @@ dependencies = [
 
 [[package]]
 name = "nexterm-plugin"
-version = "1.0.2"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -3678,7 +3678,7 @@ dependencies = [
 
 [[package]]
 name = "nexterm-proto"
-version = "1.0.2"
+version = "1.1.0"
 dependencies = [
  "bincode",
  "serde",
@@ -3687,7 +3687,7 @@ dependencies = [
 
 [[package]]
 name = "nexterm-server"
-version = "1.0.2"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3731,7 +3731,7 @@ dependencies = [
 
 [[package]]
 name = "nexterm-ssh"
-version = "1.0.2"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "russh",
@@ -3743,7 +3743,7 @@ dependencies = [
 
 [[package]]
 name = "nexterm-vt"
-version = "1.0.2"
+version = "1.1.0"
 dependencies = [
  "nexterm-proto",
  "proptest",

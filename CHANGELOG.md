@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-05-10
+
+Sprint 1〜4 全完了の総まとめリリース。互換性破壊を含む変更があるため、移行時は
+[docs/MIGRATION.md](docs/MIGRATION.md) を必ず参照すること。
+
 ### Added — Sprint 4-2 プラグイン API v2
 
 - **`PLUGIN_API_VERSION = 2`** にバンプ。新ホスト規約:
