@@ -3314,6 +3314,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexterm-client-core"
+version = "1.0.2"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "libc",
+ "nexterm-proto",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "nexterm-client-gpu"
 version = "1.0.2"
 dependencies = [
@@ -3328,6 +3340,7 @@ dependencies = [
  "libc",
  "lru 0.17.0",
  "minisign-verify",
+ "nexterm-client-core",
  "nexterm-config",
  "nexterm-i18n",
  "nexterm-proto",
@@ -3359,7 +3372,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "crossterm 0.28.1",
- "libc",
+ "nexterm-client-core",
  "nexterm-proto",
  "ratatui",
  "serde",

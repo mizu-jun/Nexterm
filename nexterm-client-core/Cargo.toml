@@ -1,24 +1,24 @@
 [package]
-name = "nexterm-client-tui"
+name = "nexterm-client-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
 
+# クライアント-サーバー IPC 共通実装。
+# nexterm-client-gpu と nexterm-client-tui の両方が利用する。
+# Sprint 3-6: 重複していた connection.rs ロジックをここに集約した。
+
 [dependencies]
 nexterm-proto = { path = "../nexterm-proto" }
-# Sprint 3-6: クライアント-サーバー IPC 共通実装（GPU/TUI 共有）
-nexterm-client-core = { path = "../nexterm-client-core" }
 tokio = { workspace = true }
 bincode = { workspace = true }
-serde = { workspace = true }
-ratatui = { workspace = true }
-crossterm = { workspace = true }
-thiserror = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [lints]
 workspace = true

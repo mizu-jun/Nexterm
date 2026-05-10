@@ -14,6 +14,8 @@ path = "src/main.rs"
 [dependencies]
 nexterm-proto = { path = "../nexterm-proto" }
 nexterm-config = { path = "../nexterm-config" }
+# Sprint 3-6: クライアント-サーバー IPC 共通実装（GPU/TUI 共有）
+nexterm-client-core = { path = "../nexterm-client-core" }
 # サーバーを同一プロセス内の Tokio タスクとして起動するために組み込む
 nexterm-server = { path = "../nexterm-server" }
 nexterm-i18n = { path = "../nexterm-i18n" }

@@ -3,6 +3,7 @@ members = [
     "nexterm-proto",
     "nexterm-vt",
     "nexterm-server",
+    "nexterm-client-core",
     "nexterm-client-tui",
     "nexterm-config",
     "nexterm-client-gpu",

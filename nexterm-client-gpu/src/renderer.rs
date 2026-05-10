@@ -32,7 +32,7 @@ use winit::{
 };
 
 use crate::{
-    connection::Connection,
+    connection::{Connection, ConnectionExt},
     font::FontManager,
     state::{ClientState, ContextMenu, ContextMenuAction},
 };
@@ -4875,7 +4875,7 @@ impl ApplicationHandler for EventHandler {
         // サーバーに接続してデフォルトセッションにアタッチする
         let conn = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                match Connection::connect().await {
+                match Connection::connect_gpu().await {
                     Ok(conn) => {
                         // セッションにアタッチ → 実際のサイズを通知
                         let _ = conn.send_tx.try_send(ClientToServer::Attach {

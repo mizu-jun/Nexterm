@@ -8,7 +8,7 @@ mod state;
 use anyhow::Result;
 use tracing_subscriber::EnvFilter;
 
-use connection::Connection;
+use connection::{Connection, ConnectionExt};
 use state::ClientState;
 
 #[tokio::main]
@@ -18,7 +18,7 @@ async fn main() -> Result<()> {
         .init();
 
     // IPC ソケットへ接続する
-    let mut conn = Connection::connect().await?;
+    let mut conn = Connection::connect_tui().await?;
 
     // セッションにアタッチしてターミナルサイズを通知する
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
