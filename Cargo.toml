@@ -106,3 +106,7 @@ toml_edit = "0.22"
 
 # 非ロックなアトミック Arc 差し替え（config ホットリロードで使用）
 arc-swap = "1"
+
+# Sprint 4-4: プロパティベーステスト（Sixel/Kitty パーサ・BSP レイアウト用）
+# dev-dependencies としてのみ使うため、各クレートで dev-deps に展開する。
+proptest = "1"

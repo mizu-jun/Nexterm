@@ -1,1 +1,6 @@
 /target
+
+# Sprint 4-4: proptest が縮約した過去失敗ケースのシード。
+# 現実装の制限（BSP の右偏りツリーで指数サイズ要求）に合わせて proptest 側で
+# 入力範囲を絞ったため、旧シードは新仕様では到達不能。コミット不要。
+proptest-regressions/

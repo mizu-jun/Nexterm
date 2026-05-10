@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Sprint 4-2 プラグイン API v2
+
+- **`PLUGIN_API_VERSION = 2`** にバンプ。新ホスト規約:
+  - **入力サニタイズ**: `nexterm_on_output` / `nexterm_on_command` に渡す前に
+    ESC・OSC/CSI/DCS/APC シーケンス・C0 制御文字（`\t\r\n` 除く）を除去。
+    プラグインに渡る情報をプレーンテキストに限定する。
+  - **`write_pane` PaneId 許可リスト**: 呼び出しスコープごとに許可された
+    pane_id でのみ書き込み可能。`nexterm_on_output(pane_id, ...)` 中は
+    その `pane_id` のみ、`nexterm_on_command` 中はどのペインにも書き込めない。
+- **`MIN_SUPPORTED_API_VERSION = 1`** で v1 プラグインの後方互換を維持。
+  v1 プラグインは旧挙動（サニタイズなし、書き込み制限なし）で動作するが、
+  ロード時に deprecation 警告がログに出る。
+- **`PluginInfo.api_version`** フィールド追加（`nexterm-ctl plugin list` で表示）。
+- **`sanitize_for_plugin(input: &[u8]) -> Vec<u8>`** を pub 公開（テスト・診断用）。
+
+### Added — Sprint 4-4 プロパティテスト
+
+- **`proptest` (1.x) を workspace 依存に追加**（`[workspace.dependencies]`）。
+  `nexterm-vt` / `nexterm-server` の `[dev-dependencies]` から参照。
+- **Sixel / Kitty パーサプロパティテスト** (`nexterm-vt/tests/proptest_image.rs`):
+  - `decode_sixel` / `decode_kitty` が任意バイト列でパニックしないこと
+  - 成功時は `rgba.len() == width * height * 4` が常に成立
+  - 巨大寸法 (>= 8193x8192) は必ず None で拒否
+  - VtParser に渡す経路（APC 含む）でもパニック耐性を確認
+- **BSP / タイリングプロパティテスト** (`nexterm-server/src/window/tests.rs`):
+  - 任意の Insert/Remove 操作シーケンスで `compute()` がパニックしないこと
+  - 十分な領域がある場合、矩形が画面内に収まり・重ならず・ID 一意
+  - スナップショット往復が pane ID と矩形を保存
+  - タイリング不変条件（pane 数一致・領域内・ID 一致）
+
 ### Security — Sprint 1〜3 セキュリティ強化
 
 包括的なセキュリティ監査により判明した CRITICAL / HIGH 課題を修正。

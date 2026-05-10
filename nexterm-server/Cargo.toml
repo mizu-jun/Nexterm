@@ -70,6 +70,8 @@ dirs = "5"
 
 [dev-dependencies]
 tempfile = "3"
+# Sprint 4-4: BSP レイアウト・タイリング・スナップショット往復のプロパティテスト
+proptest = { workspace = true }
 
 [lints]
 workspace = true
