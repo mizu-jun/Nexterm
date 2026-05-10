@@ -2,6 +2,9 @@
 name = "nexterm-ssh"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
 
 [dependencies]
 russh = { version = "0.60", default-features = false, features = ["ring", "rsa", "flate2"] }

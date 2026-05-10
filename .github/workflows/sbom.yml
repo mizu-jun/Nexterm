@@ -1,0 +1,92 @@
+name: SBOM
+
+# Sprint 4-3: Software Bill of Materials (CycloneDX 形式) を生成して
+# GitHub Release に添付する。
+#
+# 検証手順は docs/SBOM.md を参照。
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    # 手動実行時はリリースページへの添付をスキップ（artifact のみ）
+
+permissions:
+  contents: write       # Release への添付に必要
+  id-token: write       # SLSA Provenance（attest-build-provenance）に必要
+  attestations: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  sbom:
+    name: Generate CycloneDX SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      # cargo-cyclonedx は依存解決のみ行うが、一部 build script が
+      # ネイティブライブラリを要求するため Linux 開発依存をインストール
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libx11-dev libxkbcommon-dev libwayland-dev \
+            libasound2-dev libpulse-dev libudev-dev
+
+      - name: Install cargo-cyclonedx
+        run: cargo install cargo-cyclonedx --locked
+
+      - name: Generate CycloneDX SBOM (per-crate)
+        # workspace 全 crate に対して JSON 形式で SBOM を生成する。
+        # 出力ファイル名は {crate-name}.cdx.json（各 crate ディレクトリ直下）。
+        run: cargo cyclonedx --all --format json
+
+      - name: Aggregate SBOMs
+        run: |
+          set -eux
+          mkdir -p sbom-out
+          # 各クレートディレクトリ配下の *.cdx.json を集約
+          # （target/ 配下は除外）
+          while IFS= read -r f; do
+            if [ -f "$f" ]; then
+              cp "$f" "sbom-out/$(basename "$f")"
+            fi
+          done < <(find . -name '*.cdx.json' -not -path './target/*' -not -path './sbom-out/*')
+
+          ls -la sbom-out/
+
+          # アーカイブ作成（リリース時のみ）
+          TAG="${GITHUB_REF_NAME:-manual}"
+          tar -czf "nexterm-sbom-${TAG}.tar.gz" -C sbom-out .
+          echo "Generated SBOM archive: nexterm-sbom-${TAG}.tar.gz"
+
+      - name: Upload SBOM artifact (workflow run)
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexterm-sbom-${{ github.ref_name }}
+          path: |
+            sbom-out/
+            nexterm-sbom-*.tar.gz
+          retention-days: 90
+
+      # SLSA Provenance アテステーションを SBOM アーカイブにも付与
+      - name: Generate SLSA Provenance for SBOM
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: nexterm-sbom-${{ github.ref_name }}.tar.gz
+
+      - name: Upload SBOM to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: nexterm-sbom-${{ github.ref_name }}.tar.gz

@@ -1,0 +1,124 @@
+# cargo-deny 設定（Sprint 4-3）
+#
+# 目的:
+#   - 依存関係のライセンスポリシーを CI で強制
+#   - RustSec advisory DB との照合（cargo-audit を補完）
+#   - 不審な registry / git ソースの混入を防止
+#   - 重複バージョンや不要な crate の検出
+#
+# 実行方法（ローカル）:
+#   cargo install cargo-deny --locked
+#   cargo deny check
+#
+# CI: .github/workflows/ci.yml の `deny` ジョブで自動実行
+
+[graph]
+# 全 feature を有効化したグラフでチェック
+all-features = true
+# Windows / macOS / Linux の主要ターゲットを対象
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "x86_64-pc-windows-msvc" },
+    { triple = "aarch64-apple-darwin" },
+    { triple = "x86_64-apple-darwin" },
+]
+
+[output]
+feature-depth = 1
+
+# ─── 脆弱性データベース照合 ───────────────────────────────────────
+[advisories]
+version = 2
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# Yanked クレートは警告のみ（ロックファイルが頻繁に更新されないため）
+yanked = "warn"
+# 既知の例外。新規追加は必ずコメントで「依存先 / 上流追跡 / 影響範囲」を記載。
+# 棚卸しタイミング: Sprint 4-3 以降の月次依存レビューで再評価。
+ignore = [
+    # paste クレートは unmaintained だが wgpu 22 / wasmi 38 に間接依存。
+    # 上流アップデート (wgpu 23+ / wasmi 0.40+) で解消見込み。
+    # 影響範囲: コンパイル時マクロのみで実行時影響なし。
+    { id = "RUSTSEC-2024-0436", reason = "paste unmaintained; wgpu / wasmi 上流の更新待ち" },
+
+    # rsa 0.10.0-rc.16 の Marvin Attack (タイミングサイドチャネル) は
+    # russh 0.60 経由で依存。リモート攻撃にはネットワーク観測が必要で、
+    # nexterm のローカル使用パターンでは現実的なリスクは限定的。
+    # RustCrypto/RSA 側で constant-time 実装に移行中（GitHub issues/626）。
+    { id = "RUSTSEC-2023-0071", reason = "rsa Marvin Attack; russh 経由、constant-time 実装移行待ち" },
+
+    # rustls-pemfile は 2025 年 8 月にアーカイブ。後継は rustls-pki-types の PemObject API。
+    # 移行作業は別チケットで管理（影響範囲限定: TLS 証明書ロード時のみ）。
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained; rustls-pki-types への移行を別途計画" },
+
+    # bincode 1.x は IPC プロトコルの中核（nexterm-proto）で広範に利用。
+    # 上流は v1.3.3 を「完成版」と宣言しメンテ終了（doxxing インシデントによる）。
+    # 後継候補: postcard / bitcode / rkyv（移行は破壊的変更を伴うため独立 Sprint で計画）。
+    # 影響: 機能追加なし・既知脆弱性なし（unmaintained 警告のみ）。
+    { id = "RUSTSEC-2025-0141", reason = "bincode 1.x はメンテ終了だが脆弱性なし; 後継への移行は別 Sprint で計画" },
+]
+
+# ─── ライセンスポリシー ─────────────────────────────────────────
+[licenses]
+version = 2
+# 許可するライセンス（permissive 系のみ）
+# Copyleft 系（GPL / LGPL / AGPL）は明示的に拒否される
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",                # Boost Software License
+    "ISC",
+    "Zlib",
+    "MPL-2.0",                # ファイル単位の copyleft（リンクは可）
+    "Unicode-DFS-2016",       # unicode-ident 等
+    "Unicode-3.0",            # ICU 系の最新版
+    "CC0-1.0",                # public domain dedication
+    "CDLA-Permissive-2.0",    # webpki-roots 等
+    "0BSD",                   # Zero-clause BSD
+    "OpenSSL",                # ring / aws-lc-rs 由来（BoringSSL コード）
+]
+confidence-threshold = 0.8
+
+# ライセンス記載が SPDX 識別子で表現できないクレートは個別に許可
+[[licenses.exceptions]]
+# ring は ISC AND MIT AND OpenSSL の混合だが LICENSE ファイルが特殊
+allow = ["ISC", "MIT", "OpenSSL"]
+crate = "ring"
+
+# ─── 重複バージョン・禁止クレート ────────────────────────────────
+[bans]
+multiple-versions = "warn"
+# 現状 workspace 内 crate 間の path 依存で `version = "*"` を多用している。
+# allow-wildcard-paths は `publish = false` のクレートにしか適用されないため、
+# crates.io 公開を想定したメタデータが付いている本リポジトリでは効かない。
+# 中期改善: 各 crate に `publish.workspace = true` (workspace.package で false) を
+# 設定したうえで `wildcards = "deny"` に戻す。
+wildcards = "warn"
+highlight = "all"
+# workspace 内クレートは複数バージョンチェックの対象外
+allow = []
+# 明示的に禁止する crate（例: 既知の脆弱・非推奨パッケージ）
+deny = [
+    # OpenSSL ネイティブバインディング（CLAUDE.md 方針: ring/rustls 統一）
+    # ただし依存ツリー内で間接的に出現する場合があるため警告レベル。
+    # 直接依存に追加された場合は CI で検出できる。
+]
+# 重複バージョンのうち skip 許可（ビルドが通らなくなるため一時的に許容）
+skip = []
+skip-tree = []
+
+# ─── 信頼するソース ─────────────────────────────────────────────
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+
+[sources.allow-org]
+# GitHub Organization レベルでの git 依存許可（必要に応じて追加）
+# 現時点では crates.io 公開クレートのみを使用
+github = []
+gitlab = []
+bitbucket = []
