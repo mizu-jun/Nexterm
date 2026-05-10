@@ -3749,9 +3749,53 @@ impl WgpuState {
             );
         }
 
+        // remember 状態（OS キーチェーン保存トグル）
+        let remember_label = if modal.remember {
+            "[X] OS キーチェーンに保存する (Tab で切替)"
+        } else {
+            "[ ] OS キーチェーンに保存する (Tab で切替)"
+        };
+        let remember_color = if modal.remember {
+            [0.4, 0.9, 0.5, 1.0]
+        } else {
+            [0.6, 0.6, 0.6, 1.0]
+        };
+        add_string_verts(
+            remember_label,
+            px + cell_w,
+            py + cell_h * 3.2,
+            remember_color,
+            false,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
+        );
+        if modal.prefilled {
+            add_string_verts(
+                "(キーチェーンから自動入力済み)",
+                px + cell_w,
+                py + cell_h * 2.0,
+                [0.5, 0.7, 1.0, 1.0],
+                false,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
+            );
+        }
+
         // ヒント
         add_string_verts(
-            "Enter=接続  Esc=キャンセル",
+            "Enter=接続  Tab=保存切替  Esc=キャンセル",
             px + cell_w,
             py + cell_h * 4.1,
             [0.45, 0.50, 0.48, 1.0],
@@ -6009,6 +6053,12 @@ impl EventHandler {
             match code {
                 WKeyCode::Escape => {
                     self.app.state.host_manager.password_modal = None;
+                }
+                WKeyCode::Tab => {
+                    // OS キーチェーン保存フラグの切り替え（Sprint 3-2 後半）
+                    if let Some(m) = &mut self.app.state.host_manager.password_modal {
+                        m.toggle_remember();
+                    }
                 }
                 WKeyCode::Backspace => {
                     if let Some(m) = &mut self.app.state.host_manager.password_modal {

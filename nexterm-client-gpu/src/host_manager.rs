@@ -317,6 +317,14 @@ fn write_atomic_secure(path: &std::path::Path, content: &[u8]) -> std::io::Resul
 /// HIGH H-6 対策: 入力中のパスワード文字列を `Zeroizing<String>` でラップし、
 /// drop 時に確実にメモリ上の内容をゼロクリアする。これによりキーロガー
 /// やメモリスクレイプによるパスワード漏洩のリスクを低減する。
+///
+/// Sprint 3-2 後半: OS キーチェーン統合
+/// - `new()` 時に `nexterm_config::keyring::get_password()` で既存パスワードを
+///   プリフィル（無ければ空文字のまま）
+/// - `remember` フラグが true で `take_password()` 呼出時に
+///   `keyring::store_password()` で保存（失敗してもログのみで処理続行）
+/// - host_history.json には引き続きパスワードを書き込まない（HistoryEntry に
+///   password フィールドが無いことで保証）
 pub struct PasswordModal {
     /// 対象ホスト設定
     pub host: HostConfig,
@@ -324,14 +332,27 @@ pub struct PasswordModal {
     input: zeroize::Zeroizing<String>,
     /// エラーメッセージ（認証失敗時）
     pub error: Option<String>,
+    /// keyring から事前に取得できたか（プリフィル状態の表示用）
+    pub prefilled: bool,
+    /// パスワードを OS キーチェーンに保存するか（Tab キーでトグル）
+    pub remember: bool,
 }
 
 impl PasswordModal {
     pub fn new(host: HostConfig) -> Self {
+        // 起動時に keyring からパスワード取得を試行する。失敗しても無視する。
+        let (input, prefilled) =
+            match nexterm_config::keyring::get_password(&host.name, &host.username) {
+                Ok(stored) => (zeroize::Zeroizing::new((*stored).clone()), true),
+                Err(_) => (zeroize::Zeroizing::new(String::new()), false),
+            };
         Self {
             host,
-            input: zeroize::Zeroizing::new(String::new()),
+            input,
             error: None,
+            prefilled,
+            // プリフィル成功時は remember=true をデフォルトに（既存利用継続）
+            remember: prefilled,
         }
     }
 
@@ -348,12 +369,45 @@ impl PasswordModal {
         self.input.chars().count()
     }
 
+    /// remember フラグをトグルする（UI から Tab キーで呼ぶ）
+    pub fn toggle_remember(&mut self) {
+        self.remember = !self.remember;
+    }
+
     /// 入力済みパスワードを取り出してクリアする（接続送信後に呼ぶ）
     ///
     /// 戻り値も `Zeroizing<String>` として返し、呼び出し側でも drop 時
     /// ゼロクリアされるようにする。
+    ///
+    /// `remember` が true の場合は OS キーチェーンへの保存を試みる。
+    /// 保存失敗時は `tracing::warn!` でログのみ出して処理を続行する
+    /// （keyring サービスが利用できない環境への配慮）。
     pub fn take_password(&mut self) -> zeroize::Zeroizing<String> {
         let taken = std::mem::take(&mut *self.input);
+
+        if self.remember && !taken.is_empty() {
+            if let Err(e) = nexterm_config::keyring::store_password(
+                &self.host.name,
+                &self.host.username,
+                &taken,
+            ) {
+                warn!(
+                    "OS キーチェーンへのパスワード保存に失敗しました（host={}, user={}）: {}",
+                    self.host.name, self.host.username, e
+                );
+            }
+        } else if !self.remember && self.prefilled {
+            // remember を OFF にした場合は既存の保存パスワードを削除する
+            if let Err(e) =
+                nexterm_config::keyring::delete_password(&self.host.name, &self.host.username)
+            {
+                warn!(
+                    "OS キーチェーンからのパスワード削除に失敗しました（host={}, user={}）: {}",
+                    self.host.name, self.host.username, e
+                );
+            }
+        }
+
         zeroize::Zeroizing::new(taken)
     }
 }
@@ -859,5 +913,85 @@ Host myhost
         let hosts = parse_ssh_config(config);
         assert_eq!(hosts.len(), 1);
         assert_eq!(hosts[0].host, "10.0.0.1");
+    }
+
+    // ---- PasswordModal: keyring 統合（Sprint 3-2 後半）----
+    //
+    // 注: keyring は OS キーチェーンに依存するため、本番のキーチェーンへの
+    // 副作用を避けるためにテスト用ホスト名は他テストと衝突しない一意の
+    // 名前を使い、テスト終了時に delete_password で必ず後始末する。
+    // CI 環境で keyring が利用できない場合は new() 時に prefilled=false に
+    // フォールバックするだけで panic しない設計のため、テストは安全に通る。
+
+    fn make_test_host_for_modal(name: &str) -> HostConfig {
+        HostConfig {
+            name: name.to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 22,
+            username: "testuser".to_string(),
+            auth_type: "password".to_string(),
+            key_path: None,
+            forward_local: vec![],
+            forward_remote: vec![],
+            proxy_jump: None,
+            x11_forward: false,
+            x11_trusted: false,
+            group: String::new(),
+            tags: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn password_modal_新規生成は空入力で開始する() {
+        // 衝突しない一意のホスト名（テスト名のハッシュ的な接尾辞）
+        let host = make_test_host_for_modal("__pm_test_init__");
+        // 事前削除（前のテスト失敗の影響を排除する）
+        let _ = nexterm_config::keyring::delete_password(&host.name, &host.username);
+
+        let modal = PasswordModal::new(host.clone());
+        assert_eq!(modal.input_len(), 0);
+        assert!(!modal.prefilled);
+        assert!(!modal.remember);
+    }
+
+    #[test]
+    fn password_modal_push_pop_と入力長が一貫している() {
+        let host = make_test_host_for_modal("__pm_test_input__");
+        let _ = nexterm_config::keyring::delete_password(&host.name, &host.username);
+
+        let mut modal = PasswordModal::new(host);
+        modal.push_char('a');
+        modal.push_char('b');
+        modal.push_char('c');
+        assert_eq!(modal.input_len(), 3);
+        modal.pop_char();
+        assert_eq!(modal.input_len(), 2);
+    }
+
+    #[test]
+    fn password_modal_toggle_remember_でフラグが反転する() {
+        let host = make_test_host_for_modal("__pm_test_toggle__");
+        let _ = nexterm_config::keyring::delete_password(&host.name, &host.username);
+
+        let mut modal = PasswordModal::new(host);
+        assert!(!modal.remember);
+        modal.toggle_remember();
+        assert!(modal.remember);
+        modal.toggle_remember();
+        assert!(!modal.remember);
+    }
+
+    #[test]
+    fn password_modal_take_password_で入力がクリアされる() {
+        let host = make_test_host_for_modal("__pm_test_take__");
+        let _ = nexterm_config::keyring::delete_password(&host.name, &host.username);
+
+        let mut modal = PasswordModal::new(host);
+        modal.push_char('p');
+        modal.push_char('w');
+        // remember=false なので keyring 副作用なし
+        let pw = modal.take_password();
+        assert_eq!(&*pw, "pw");
+        assert_eq!(modal.input_len(), 0);
     }
 }
