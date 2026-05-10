@@ -13,6 +13,11 @@ members = [
     "nexterm-launcher",
     "nexterm-plugin",
 ]
+# Sprint 3-5: cargo-fuzz は nightly toolchain と独立した libfuzzer-sys 依存を必要とするため
+# ワークスペースから除外する（手動で `cargo +nightly fuzz run <target>` を実行）
+exclude = [
+    "nexterm-vt/fuzz",
+]
 resolver = "2"
 
 [workspace.package]

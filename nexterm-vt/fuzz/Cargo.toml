@@ -1,0 +1,53 @@
+[package]
+name = "nexterm-vt-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+# Sprint 3-5: nexterm-vt の VT パーサ・Sixel/Kitty デコーダ・OSC URL ハンドラに対する
+# cargo-fuzz ベースのファジング基盤。親ワークスペースから除外している
+# （ルート Cargo.toml の `exclude = ["nexterm-vt/fuzz"]` 参照）。
+#
+# 実行例:
+#   cargo install cargo-fuzz
+#   cd nexterm-vt
+#   cargo +nightly fuzz run vt_parser_input -- -max_total_time=60
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+nexterm-vt = { path = ".." }
+
+[[bin]]
+name = "vt_parser_input"
+path = "fuzz_targets/vt_parser_input.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sixel_decode"
+path = "fuzz_targets/sixel_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "kitty_image"
+path = "fuzz_targets/kitty_image.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "osc_url"
+path = "fuzz_targets/osc_url.rs"
+test = false
+doc = false
+bench = false
+
+# fuzz バイナリは riscv-none-eabi 等を使わないので、最適化を高めて実行時間を短縮する
+[profile.release]
+debug = 1

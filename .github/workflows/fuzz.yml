@@ -1,0 +1,65 @@
+name: Fuzz (nightly)
+
+# Sprint 3-5: nexterm-vt の cargo-fuzz ターゲットを毎晩短時間ずつ実行する。
+# 4 ターゲット × 60 秒 = 4 分 + セットアップで合計 ~10 分以内に完了する。
+# クラッシュ発見時はジョブが赤くなり、artifacts に再現ペイロードがアップロードされる。
+
+on:
+  schedule:
+    # 毎日 UTC 03:00 (JST 12:00) — マスターブランチに対する追加検証
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      max_total_time:
+        description: '各ターゲットの実行秒数 (デフォルト 60)'
+        required: false
+        default: '60'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  fuzz:
+    name: Fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - vt_parser_input
+          - sixel_decode
+          - kitty_image
+          - osc_url
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            nexterm-vt/fuzz
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Run fuzz target (${{ matrix.target }})
+        working-directory: nexterm-vt
+        run: |
+          MAX_TIME="${{ github.event.inputs.max_total_time || '60' }}"
+          cargo +nightly fuzz run ${{ matrix.target }} \
+            -- -max_total_time="${MAX_TIME}" -timeout=10
+
+      - name: Upload crash artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes-${{ matrix.target }}
+          path: nexterm-vt/fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore
+          retention-days: 30
