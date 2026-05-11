@@ -46,7 +46,11 @@ jobs:
             nexterm-vt/fuzz
 
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
+        # --locked を外して nightly 互換の最新依存 (rustix 等) を解決する。
+        # cargo-fuzz 自身の Cargo.lock は古い rustix 0.36 をピン留めしており、
+        # nightly の内部 attribute 変更 (rustc_layout_scalar_valid_range_end など)
+        # で rustc がエラーになるため。
+        run: cargo install cargo-fuzz
 
       - name: Run fuzz target (${{ matrix.target }})
         working-directory: nexterm-vt

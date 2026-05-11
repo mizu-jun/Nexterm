@@ -139,9 +139,22 @@ fn test_persist_save_and_load() {
 
 #[test]
 fn test_load_snapshot_returns_none_when_missing() {
+    // state_dir() は OS によって参照する環境変数が異なるため両方を tmpdir に向ける:
+    //   Unix:    XDG_STATE_HOME（無ければ HOME/.local/state/nexterm）
+    //   Windows: APPDATA/nexterm
     let dir = tempfile::tempdir().expect("tmpdir 作成失敗");
+
     let old_home = std::env::var("HOME").ok();
-    unsafe { std::env::set_var("HOME", dir.path()) };
+    let old_xdg = std::env::var("XDG_STATE_HOME").ok();
+    let old_appdata = std::env::var("APPDATA").ok();
+
+    // SAFETY: テスト内環境変数書き換え。並列実行時の競合は cargo test の
+    // テストランナーに任せる（同一ファイルパスは単一テストでしか触らない）。
+    unsafe {
+        std::env::set_var("HOME", dir.path());
+        std::env::set_var("XDG_STATE_HOME", dir.path());
+        std::env::set_var("APPDATA", dir.path());
+    }
 
     // スナップショットファイルが存在しない → None を返す
     let result = nexterm_server::persist::load_snapshot();
@@ -151,6 +164,14 @@ fn test_load_snapshot_returns_none_when_missing() {
         match old_home {
             Some(h) => std::env::set_var("HOME", h),
             None => std::env::remove_var("HOME"),
+        }
+        match old_xdg {
+            Some(v) => std::env::set_var("XDG_STATE_HOME", v),
+            None => std::env::remove_var("XDG_STATE_HOME"),
+        }
+        match old_appdata {
+            Some(v) => std::env::set_var("APPDATA", v),
+            None => std::env::remove_var("APPDATA"),
         }
     }
 }
