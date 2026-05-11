@@ -3781,6 +3781,7 @@ dependencies = [
  "clap_complete",
  "clap_mangen",
  "libc",
+ "nexterm-config",
  "nexterm-i18n",
  "nexterm-proto",
  "postcard",

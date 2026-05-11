@@ -40,6 +40,15 @@ fn write_pane(pane_id: i32, msg: &str) {
     unsafe { nexterm_write_pane(pane_id, b.as_ptr(), b.len()) };
 }
 
+/// Plugin ABI バージョンを宣言する（Sprint 5-4 / F1 で v2 化）。
+///
+/// v2 では `pane_id` 引数が有効値として渡され、`write_pane` は
+/// `allowed_panes` リストに登録された pane のみ書き込み可能。
+#[no_mangle]
+pub extern "C" fn nexterm_api_version() -> i32 {
+    2
+}
+
 #[no_mangle]
 pub extern "C" fn nexterm_init() {
     log("[command-counter] 初期化完了");

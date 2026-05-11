@@ -44,6 +44,15 @@ fn write_pane(pane_id: i32, msg: &str) {
 
 // ---- エクスポート関数 -------------------------------------------------------
 
+/// Plugin ABI バージョンを宣言する（Sprint 5-4 / F1 で v2 化）。
+///
+/// v2 では `nexterm_on_output` の `pane_id` 引数が有効値として渡され、
+/// `write_pane` は `allowed_panes` リストの pane のみ書き込み可能。
+#[no_mangle]
+pub extern "C" fn nexterm_api_version() -> i32 {
+    2
+}
+
 /// プラグイン初期化（オプション）
 #[no_mangle]
 pub extern "C" fn nexterm_init() {

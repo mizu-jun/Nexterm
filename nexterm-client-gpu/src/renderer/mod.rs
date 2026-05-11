@@ -29,8 +29,9 @@ use crate::shaders::{BG_SHADER, IMAGE_SHADER, TEXT_SHADER};
 use crate::vertex_util::{add_px_rect, add_string_verts};
 
 // ---- サブモジュール（Sprint 2-1 Phase A: vertex builders 抽出）----
+// Sprint 5-4 / A2: overlay_verts.rs (1,958 行) を overlay/ サブディレクトリに再分割
 mod grid_verts;
-mod overlay_verts;
+mod overlay;
 mod ui_verts;
 
 // ---- サブモジュール（Sprint 2-1 Phase B/C: app + event_handler + input_handler 抽出）----

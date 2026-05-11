@@ -16,6 +16,7 @@ pub mod lua_worker;
 pub mod schema;
 pub mod status_bar;
 pub mod watcher;
+pub mod wsl;
 
 pub use loader::{ConfigLoader, lua_path, toml_path};
 pub use lua_hooks::{HookEvent, LuaHookRunner};

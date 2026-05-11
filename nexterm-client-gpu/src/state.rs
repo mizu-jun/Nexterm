@@ -534,42 +534,83 @@ impl QuickSelectState {
     }
 }
 
-/// グリッドから Quick Select マッチを検索する（URL・パス・単語）
+/// グリッドから Quick Select マッチを検索する。
+///
+/// パターンは Sprint 5-4 / D1 で拡充済み。マッチ範囲が重複した場合は、
+/// 先頭にあるパターン（より具体的なもの）を優先して残す。
 fn find_quick_select_matches(rows: &[Vec<nexterm_proto::Cell>]) -> Vec<QuickSelectMatch> {
-    let patterns: &[(&str, &str)] = &[
-        // URL
-        (r#"https?://[^\s<>"'\]]+"#, "url"),
-        // ファイルパス (Unix)
-        (r"(?:^|[\s(])((?:/[^\s/:]+)+/?)", "path"),
-        // IPv4 アドレス
-        (r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b", "ip"),
+    // 優先順位順（先頭ほど高優先）:
+    //   1. URL（必ず先に取り、後段の path/IPv4 にマッチを奪われないようにする）
+    //   2. Email
+    //   3. UUID
+    //   4. file:line:col 形式（行番号付き、エディタジャンプ用）
+    //   5. Jira チケット (`PROJ-123`)
+    //   6. Unix path
+    //   7. Windows path (`C:\foo\bar`)
+    //   8. IPv4 / IPv6
+    //   9. SHA / Git ハッシュ
+    //  10. 単独数字（最後 — 他のどれにも引っかからなかったもののみ）
+    let patterns: &[&str] = &[
+        // URL (http/https/ftp)
+        r#"\b(?:https?|ftp)://[^\s<>"'\]]+"#,
+        // Email
+        r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b",
+        // UUID v1〜v5 (8-4-4-4-12 hex)
+        r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b",
+        // file:line[:col] 形式 (例: src/main.rs:42 or src/main.rs:42:10)
+        r"[A-Za-z0-9_./\\-]+\.[A-Za-z0-9]+:\d+(?::\d+)?",
+        // Jira / 課題チケット ID (例: PROJ-123, ABC-9999)
+        r"\b[A-Z][A-Z0-9]{1,9}-\d+\b",
+        // Unix パス
+        r"(?:^|[\s(])((?:/[^\s/:]+)+/?)",
+        // Windows パス (例: C:\foo\bar)
+        r#"\b[A-Za-z]:\\[^\s<>:"|?*]+"#,
+        // IPv4 アドレス（ポート省略可）
+        r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b",
+        // IPv6 アドレス（簡易: 16 進グループ 2 個以上 + コロン区切り）
+        r"\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}\b",
         // SHA / Git ハッシュ (7-40 hex)
-        (r"\b[0-9a-f]{7,40}\b", "hash"),
-        // 数字
-        (r"\b\d+\b", "num"),
+        r"\b[0-9a-f]{7,40}\b",
+        // 単独数字
+        r"\b\d+\b",
     ];
 
+    // 正規表現は一度だけコンパイルする（パターン件数 × 行数の重複コンパイルを防ぐ）
+    let compiled: Vec<regex::Regex> = patterns
+        .iter()
+        .filter_map(|p| regex::Regex::new(p).ok())
+        .collect();
+
     let mut all_matches: Vec<QuickSelectMatch> = Vec::new();
-    let label_chars: Vec<char> = "abcdefghijklmnopqrstuvwxyz".chars().collect();
 
     for (row_idx, cells) in rows.iter().enumerate() {
         let line: String = cells.iter().map(|c| c.ch).collect();
-        for (pat_str, _) in patterns {
-            if let Ok(re) = regex::Regex::new(pat_str) {
-                for m in re.find_iter(&line) {
-                    all_matches.push(QuickSelectMatch {
-                        row: row_idx as u16,
-                        col_start: m.start() as u16,
-                        col_end: m.end() as u16,
-                        text: m.as_str().to_string(),
-                        label: String::new(), // will be filled below
-                    });
+        // 行ごとに「占有済み列範囲」を管理し、優先順位の高いパターンが取った範囲を
+        // 後段のパターンが奪わないようにする。
+        let mut occupied: Vec<(usize, usize)> = Vec::new();
+
+        for re in &compiled {
+            for m in re.find_iter(&line) {
+                let (start, end) = (m.start(), m.end());
+                // 既存マッチと重複したらスキップ（より高優先のパターンを優先）
+                let overlaps = occupied.iter().any(|(s, e)| !(end <= *s || start >= *e));
+                if overlaps {
+                    continue;
                 }
+                occupied.push((start, end));
+                all_matches.push(QuickSelectMatch {
+                    row: row_idx as u16,
+                    col_start: start as u16,
+                    col_end: end as u16,
+                    text: m.as_str().to_string(),
+                    label: String::new(), // 後段で割り当てる
+                });
             }
         }
     }
 
     // ラベルを割り当てる（a, b, ..., z, aa, ab, ...）
+    let label_chars: Vec<char> = "abcdefghijklmnopqrstuvwxyz".chars().collect();
     let n = all_matches.len();
     for (i, m) in all_matches.iter_mut().enumerate() {
         m.label = index_to_label(i, n, &label_chars);
@@ -1172,5 +1213,107 @@ mod tests {
         state.end_search();
         assert!(!state.search.is_active);
         assert!(state.search.query.is_empty());
+    }
+
+    // ---- Sprint 5-4 / D1: Quick Select 拡充テスト ----
+
+    /// テキストを `Vec<Vec<Cell>>` に変換するヘルパー
+    fn text_to_rows(lines: &[&str]) -> Vec<Vec<nexterm_proto::Cell>> {
+        lines
+            .iter()
+            .map(|line| {
+                line.chars()
+                    .map(|c| nexterm_proto::Cell {
+                        ch: c,
+                        ..Default::default()
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn quick_select_detects_url() {
+        let rows = text_to_rows(&["Visit https://example.com/path?q=1 today"]);
+        let matches = find_quick_select_matches(&rows);
+        assert!(matches.iter().any(|m| m.text.starts_with("https://")));
+    }
+
+    #[test]
+    fn quick_select_detects_email() {
+        let rows = text_to_rows(&["Contact alice@example.com for details"]);
+        let matches = find_quick_select_matches(&rows);
+        assert!(matches.iter().any(|m| m.text == "alice@example.com"));
+    }
+
+    #[test]
+    fn quick_select_detects_uuid() {
+        let rows = text_to_rows(&["session-id: 550e8400-e29b-41d4-a716-446655440000"]);
+        let matches = find_quick_select_matches(&rows);
+        assert!(
+            matches
+                .iter()
+                .any(|m| m.text == "550e8400-e29b-41d4-a716-446655440000")
+        );
+    }
+
+    #[test]
+    fn quick_select_detects_file_with_line_column() {
+        let rows = text_to_rows(&["error in src/main.rs:42:10 — unused variable"]);
+        let matches = find_quick_select_matches(&rows);
+        assert!(matches.iter().any(|m| m.text.contains("src/main.rs:42:10")));
+    }
+
+    #[test]
+    fn quick_select_detects_jira_ticket() {
+        let rows = text_to_rows(&["See PROJ-1234 for tracking"]);
+        let matches = find_quick_select_matches(&rows);
+        assert!(matches.iter().any(|m| m.text == "PROJ-1234"));
+    }
+
+    #[test]
+    fn quick_select_detects_windows_path() {
+        let rows = text_to_rows(&[r"open C:\Users\test\file.txt in editor"]);
+        let matches = find_quick_select_matches(&rows);
+        assert!(matches.iter().any(|m| m.text.starts_with("C:\\")));
+    }
+
+    #[test]
+    fn quick_select_detects_ipv4_with_port() {
+        let rows = text_to_rows(&["connect to 192.168.1.100:8080"]);
+        let matches = find_quick_select_matches(&rows);
+        assert!(matches.iter().any(|m| m.text == "192.168.1.100:8080"));
+    }
+
+    #[test]
+    fn quick_select_url_priority_over_path() {
+        // URL に // 含まれるので path パターンとも重複しうるが、URL を優先すること
+        let rows = text_to_rows(&["url: https://github.com/foo/bar"]);
+        let matches = find_quick_select_matches(&rows);
+        let url_match = matches
+            .iter()
+            .find(|m| m.text.starts_with("https://"))
+            .expect("URL を検出できなかった");
+        // path パターンが「/foo/bar」を奪っていないこと（URL に内包されている）
+        assert!(url_match.text.contains("github.com/foo/bar"));
+        // URL マッチが path マッチと完全重複していないこと
+        let path_count = matches.iter().filter(|m| m.text == "/foo/bar").count();
+        assert_eq!(path_count, 0, "URL に含まれる path はマッチしないこと");
+    }
+
+    #[test]
+    fn quick_select_labels_are_assigned() {
+        let rows = text_to_rows(&["https://a.com https://b.com https://c.com"]);
+        let matches = find_quick_select_matches(&rows);
+        assert_eq!(matches.len(), 3);
+        let labels: Vec<&str> = matches.iter().map(|m| m.label.as_str()).collect();
+        assert_eq!(labels, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn quick_select_empty_grid_yields_no_matches() {
+        let rows: Vec<Vec<nexterm_proto::Cell>> = vec![];
+        let matches = find_quick_select_matches(&rows);
+        assert!(matches.is_empty());
     }
 }

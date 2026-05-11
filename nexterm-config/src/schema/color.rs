@@ -14,7 +14,7 @@ pub struct SchemePalette {
 }
 
 /// 組み込みカラースキーム
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BuiltinScheme {
     /// ダークテーマ
@@ -51,6 +51,55 @@ impl BuiltinScheme {
             Self::Dracula => "Dracula",
             Self::Nord => "Nord",
             Self::OneDark => "One Dark",
+        }
+    }
+
+    /// スキームの TOML 識別子（lowercase）を返す
+    pub fn toml_name(&self) -> &'static str {
+        match self {
+            Self::Dark => "dark",
+            Self::Light => "light",
+            Self::TokyoNight => "tokyonight",
+            Self::Solarized => "solarized",
+            Self::Gruvbox => "gruvbox",
+            Self::Catppuccin => "catppuccin",
+            Self::Dracula => "dracula",
+            Self::Nord => "nord",
+            Self::OneDark => "onedark",
+        }
+    }
+
+    /// すべての組み込みスキームをリストで返す（Sprint 5-4 / D4: テーマギャラリー）
+    pub fn all() -> &'static [Self] {
+        &[
+            Self::Dark,
+            Self::Light,
+            Self::TokyoNight,
+            Self::Solarized,
+            Self::Gruvbox,
+            Self::Catppuccin,
+            Self::Dracula,
+            Self::Nord,
+            Self::OneDark,
+        ]
+    }
+
+    /// TOML 識別子から組み込みスキームを取得する。
+    ///
+    /// 大文字小文字は問わない。未知の名前は `None` を返す（旧 `parse_builtin_scheme`
+    /// は不明値を Dark にフォールバックしていたが、本メソッドは厳格チェック用）。
+    pub fn from_toml_name(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "dark" => Some(Self::Dark),
+            "light" => Some(Self::Light),
+            "tokyonight" => Some(Self::TokyoNight),
+            "solarized" => Some(Self::Solarized),
+            "gruvbox" => Some(Self::Gruvbox),
+            "catppuccin" => Some(Self::Catppuccin),
+            "dracula" => Some(Self::Dracula),
+            "nord" => Some(Self::Nord),
+            "onedark" => Some(Self::OneDark),
+            _ => None,
         }
     }
 
@@ -351,13 +400,10 @@ impl<'de> Deserialize<'de> for ColorScheme {
 }
 
 /// 組み込みスキーム名を `BuiltinScheme` にパースする。未知の値は Dark にフォールバック。
+///
+/// Sprint 5-4 / D4: 旧版では 5 種類しかパースできず、Catppuccin / Dracula / Nord /
+/// OneDark を指定しても Dark にフォールバックしていた。`BuiltinScheme::from_toml_name`
+/// に委譲して全 9 種類を扱えるように修正。
 fn parse_builtin_scheme(s: &str) -> BuiltinScheme {
-    match s.to_lowercase().as_str() {
-        "dark" => BuiltinScheme::Dark,
-        "light" => BuiltinScheme::Light,
-        "tokyonight" => BuiltinScheme::TokyoNight,
-        "solarized" => BuiltinScheme::Solarized,
-        "gruvbox" => BuiltinScheme::Gruvbox,
-        _ => BuiltinScheme::Dark,
-    }
+    BuiltinScheme::from_toml_name(s).unwrap_or(BuiltinScheme::Dark)
 }

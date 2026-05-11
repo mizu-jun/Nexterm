@@ -228,6 +228,11 @@ fn default_keybindings() -> Vec<KeyBinding> {
             key: "ctrl+b z".to_string(),
             action: "ToggleZoom".to_string(),
         },
+        // Sprint 5-4 / D8: tmux 流の Ctrl+B Z に加えて、初心者向けの直感的バインド
+        KeyBinding {
+            key: "ctrl+shift+z".to_string(),
+            action: "ToggleZoom".to_string(),
+        },
         KeyBinding {
             key: "ctrl+b {".to_string(),
             action: "SwapPanePrev".to_string(),
@@ -265,6 +270,36 @@ mod tests {
         let font = FontConfig::default();
         assert!(font.ligatures);
         assert_eq!(font.size, 15.0);
+    }
+
+    /// Sprint 5-4 / D8: ToggleZoom はデフォルトキーバインドに 2 つ存在する
+    /// （tmux 流 `Ctrl+B Z` + 初心者向け `Ctrl+Shift+Z`）
+    #[test]
+    fn toggle_zoom_has_two_default_bindings() {
+        let bindings = default_keybindings();
+        let zoom_bindings: Vec<&KeyBinding> = bindings
+            .iter()
+            .filter(|b| b.action == "ToggleZoom")
+            .collect();
+        assert_eq!(
+            zoom_bindings.len(),
+            2,
+            "ToggleZoom は 2 つのデフォルトバインドを持つべき"
+        );
+        let keys: Vec<&str> = zoom_bindings.iter().map(|b| b.key.as_str()).collect();
+        assert!(keys.contains(&"ctrl+b z"));
+        assert!(keys.contains(&"ctrl+shift+z"));
+    }
+
+    /// Sprint 5-4 / D8: QuickSelect もキーバインド経由でアクセスできる
+    #[test]
+    fn quick_select_has_default_binding() {
+        let bindings = default_keybindings();
+        assert!(
+            bindings
+                .iter()
+                .any(|b| b.action == "QuickSelect" && b.key == "ctrl+shift+space")
+        );
     }
 
     #[test]

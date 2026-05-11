@@ -62,6 +62,14 @@ fn format_time(ms: u64) -> String {
     format!("{:02}:{:02}:{:02}.{:03}", hour, min, sec, millis)
 }
 
+/// Plugin ABI バージョンを宣言する（Sprint 5-4 / F1 で v2 化）。
+///
+/// v2 では `pane_id` 引数が有効値として渡される。
+#[no_mangle]
+pub extern "C" fn nexterm_api_version() -> i32 {
+    2
+}
+
 #[no_mangle]
 pub extern "C" fn nexterm_init() {
     log("[timestamp-injector] 初期化完了（デフォルト: 無効）");
