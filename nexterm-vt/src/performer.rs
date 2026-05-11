@@ -172,6 +172,19 @@ impl Perform for Screen {
                     self.set_pending_title(title.to_string());
                 }
             }
+            // OSC 7: 現在の作業ディレクトリ (CWD) 報告
+            // フォーマット: ESC ] 7 ; file://[host]/path BEL
+            // - host 部は無視（ローカル/リモートで一律 path のみ採用）
+            // - path はパーセントエンコードされている可能性あり
+            // - 親 Pane の CWD を新規 Pane に継承するために使う
+            "7" => {
+                if let Some(payload_bytes) = params.get(1)
+                    && let Ok(payload) = std::str::from_utf8(payload_bytes)
+                    && let Some(cwd) = crate::screen::parse_osc7_cwd(payload.trim())
+                {
+                    self.set_pending_cwd(cwd);
+                }
+            }
             // OSC 8: ハイパーリンク
             // フォーマット: ESC ] 8 ; <params> ; <URI> BEL
             // URI が空文字列の場合はリンク終了

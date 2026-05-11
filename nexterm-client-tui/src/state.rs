@@ -181,6 +181,8 @@ impl ClientState {
             ServerToClient::PluginList { .. } | ServerToClient::PluginOk { .. } => {}
             // Sprint 4-1: TUI には同意ダイアログ UI がないため OSC 52 要求は無視する
             ServerToClient::ClipboardWriteRequest { .. } => {}
+            // Sprint 5-2: TUI にはタブ/CWD 表示 UI がないため OSC 7 CWD 通知は無視する
+            ServerToClient::CwdChanged { .. } => {}
         }
     }
 

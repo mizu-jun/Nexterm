@@ -171,7 +171,17 @@ impl Window {
             });
 
         // 3. 計算済みサイズで新ペインを spawn する
-        let pane = Pane::spawn_with_id(new_id, new_rect.cols, new_rect.rows, tx, shell, args)?;
+        // Sprint 5-2 / B2: 親ペインの CWD（OSC 7 由来、なければ /proc/{pid}/cwd 由来）を継承する
+        let parent_cwd = self
+            .panes
+            .get(&self.focused_pane_id)
+            .and_then(|p| p.osc7_cwd().or_else(|| p.working_dir()));
+        let pane = match parent_cwd {
+            Some(ref cwd) => {
+                Pane::spawn_with_cwd(new_id, new_rect.cols, new_rect.rows, tx, shell, args, cwd)?
+            }
+            None => Pane::spawn_with_id(new_id, new_rect.cols, new_rect.rows, tx, shell, args)?,
+        };
         self.panes.insert(new_id, pane);
         self.focused_pane_id = new_id;
 
@@ -230,8 +240,24 @@ impl Window {
         let col_off = (total_cols.saturating_sub(fp_cols)) / 2;
         let row_off = (total_rows.saturating_sub(fp_rows)) / 2;
 
-        let pane = Pane::spawn(fp_cols.max(10), fp_rows.max(5), tx, shell, args)?;
-        let pane_id = pane.id;
+        // Sprint 5-2 / B2: フォーカス中ペインの CWD を継承する
+        let parent_cwd = self
+            .panes
+            .get(&self.focused_pane_id)
+            .and_then(|p| p.osc7_cwd().or_else(|| p.working_dir()));
+        let pane_id = crate::pane::new_pane_id();
+        let pane = match parent_cwd {
+            Some(ref cwd) => Pane::spawn_with_cwd(
+                pane_id,
+                fp_cols.max(10),
+                fp_rows.max(5),
+                tx,
+                shell,
+                args,
+                cwd,
+            )?,
+            None => Pane::spawn_with_id(pane_id, fp_cols.max(10), fp_rows.max(5), tx, shell, args)?,
+        };
         let rect = FloatRect {
             col_off,
             row_off,

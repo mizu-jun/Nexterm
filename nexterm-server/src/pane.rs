@@ -333,6 +333,13 @@ pub struct Pane {
     pub bracketed_paste: Arc<std::sync::atomic::AtomicBool>,
     /// マウスレポーティングモード（0=無効, 1=X11 ?1000, 2=SGR ?1006）
     pub mouse_mode: Arc<std::sync::atomic::AtomicU8>,
+    /// OSC 7 で報告された現在の作業ディレクトリ（Sprint 5-2 / B2）
+    ///
+    /// シェルが `printf '\\033]7;file://...' "$PWD"` などを出力したときに更新される。
+    /// 新規ペイン分割時に親 CWD として子に継承する用途。
+    /// OSC 7 が一度も来ていない場合は `None`（その場合は `working_dir()` で `/proc/{pid}/cwd`
+    /// にフォールバックする）。
+    pub current_cwd: Arc<Mutex<Option<std::path::PathBuf>>>,
 }
 
 impl Pane {
@@ -450,6 +457,10 @@ impl Pane {
             Arc::new(std::sync::atomic::AtomicU8::new(0));
         let mouse_mode_clone = Arc::clone(&mouse_mode);
 
+        // OSC 7 で受信した CWD を Arc<Mutex<Option<PathBuf>>> で共有する（Sprint 5-2 / B2）
+        let current_cwd: Arc<Mutex<Option<std::path::PathBuf>>> = Arc::new(Mutex::new(None));
+        let current_cwd_clone = Arc::clone(&current_cwd);
+
         // PTY 読み取りスレッドを起動する
         tokio::task::spawn_blocking(move || {
             let mut parser = VtParser::new(cols, rows);
@@ -552,6 +563,15 @@ impl Pane {
                             send_msg(&shared_tx_clone, msg);
                         }
 
+                        // OSC 7 CWD 変更通知を送信する（Sprint 5-2 / B2）
+                        if let Some(cwd) = parser.screen_mut().take_pending_cwd() {
+                            if let Ok(mut guard) = current_cwd_clone.lock() {
+                                *guard = Some(std::path::PathBuf::from(&cwd));
+                            }
+                            let msg = ServerToClient::CwdChanged { pane_id, cwd };
+                            send_msg(&shared_tx_clone, msg);
+                        }
+
                         // OSC 133 セマンティックゾーンマークを送信する
                         for mark in parser.screen_mut().take_semantic_marks() {
                             let kind = match mark.kind {
@@ -625,7 +645,16 @@ impl Pane {
             asciicast_writer,
             bracketed_paste,
             mouse_mode,
+            current_cwd,
         })
+    }
+
+    /// 直近に OSC 7 で報告された CWD を返す（一度も来ていなければ `None`）。
+    ///
+    /// 親ペイン分割時に子へ継承する用途で使う。OSC 7 がない場合は呼び出し側で
+    /// `working_dir()` (`/proc/{pid}/cwd` 等) にフォールバックする。
+    pub fn osc7_cwd(&self) -> Option<std::path::PathBuf> {
+        self.current_cwd.lock().ok().and_then(|g| g.clone())
     }
 
     /// Full Refresh グリッドを生成する（アタッチ時用）

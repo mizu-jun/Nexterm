@@ -29,6 +29,11 @@ const MAX_NOTIFICATION_LEN: usize = 1024;
 /// OSC 8 ハイパーリンク URI の最大長（バイト）。
 const MAX_HYPERLINK_URI_LEN: usize = 2048;
 
+/// OSC 7 CWD (working directory) パスの最大長（バイト）。
+///
+/// Linux の `PATH_MAX` 相当の 4096。長すぎるパスは DoS 防止のため切り詰める。
+const MAX_CWD_LEN: usize = 4096;
+
 /// OSC 8 ハイパーリンクで許可する URI スキーム。
 ///
 /// 旧実装は `javascript:` / `file:` 等を含む全スキームを通過させていたため、
@@ -95,6 +100,81 @@ pub(crate) fn validate_hyperlink_uri(uri: &str) -> Option<String> {
         return None;
     }
     Some(cleaned)
+}
+
+/// OSC 7 の `file://[host]/percent-encoded-path` 形式から CWD パスを抽出する。
+///
+/// 受け付ける入力例:
+/// - `file:///home/user/proj` (host 省略、先頭 `/` 維持)
+/// - `file://hostname/home/user` (host あり、無視して path のみ取り出す)
+/// - `file:///C:/Users/foo` (Windows 形式、先頭の `/` を除去して `C:/Users/foo` に正規化)
+/// - `/home/user/proj` (スキームなし、互換目的で素通し)
+///
+/// 制御文字は除去し、`MAX_CWD_LEN` で切り詰める。
+/// 完全に空になった場合は `None`。
+pub(crate) fn parse_osc7_cwd(input: &str) -> Option<String> {
+    if input.is_empty() || input.len() > MAX_CWD_LEN * 4 {
+        // 過大な入力は DoS 防止で即拒否（パーセントデコード前なので *4 程度の余裕）
+        return None;
+    }
+
+    // `file://` プレフィックスを除去し、ホスト部 (`//host/path`) もスキップする
+    let after_scheme = if let Some(rest) = input.strip_prefix("file://") {
+        // `/path` まで進める（host 部が空でもそうでなくても最初の `/` まで）
+        match rest.find('/') {
+            Some(idx) => &rest[idx..],
+            None => return None, // パスがない
+        }
+    } else {
+        input
+    };
+
+    // パーセントデコード
+    let decoded = percent_decode(after_scheme);
+
+    // Windows パス対応: `/C:/Users/foo` → `C:/Users/foo`
+    #[cfg(windows)]
+    let decoded = if decoded.len() >= 3
+        && decoded.starts_with('/')
+        && decoded.as_bytes()[2] == b':'
+        && decoded.as_bytes()[1].is_ascii_alphabetic()
+    {
+        decoded[1..].to_string()
+    } else {
+        decoded
+    };
+
+    // 制御文字除去 + 長さ上限
+    let cleaned = sanitize_osc_string(decoded, MAX_CWD_LEN);
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
+/// `%XX` 形式のパーセントエンコーディングをデコードする（OSC 7 用の最小実装）。
+///
+/// 不正な `%XX` は素通し（`%` を含むパス名を破壊しないため）。
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(h), Some(l)) = (hi, lo) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    // 不正な UTF-8 はロスでデコード（OSC 7 path には通常 UTF-8 が来る）
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// OSC 133 セマンティックゾーンのマーク種別
@@ -185,6 +265,8 @@ pub struct Screen {
     pending_title: Option<String>,
     /// デスクトップ通知（OSC 9 で設定）
     pending_notification: Option<(String, String)>,
+    /// CWD 変更通知（OSC 7 で設定、`file://` 除去 + パーセントデコード済み）
+    pending_cwd: Option<String>,
     /// 代替スクリーンバッファ（None = 主画面モード）
     alt_screen: Option<Box<ScreenBuffer>>,
     /// 代替画面モード中か
@@ -232,6 +314,7 @@ impl Screen {
             pending_bell: false,
             pending_title: None,
             pending_notification: None,
+            pending_cwd: None,
             alt_screen: None,
             alt_mode: false,
             bracketed_paste: false,
@@ -739,6 +822,19 @@ impl Screen {
         self.pending_notification.take()
     }
 
+    /// CWD 変更を設定する（performer が OSC 7 受信時に呼び出す）。
+    ///
+    /// `path` は既に `parse_osc7_cwd` で `file://` 除去 + パーセントデコード済みであることを期待する。
+    /// ここで追加のサニタイズ（制御文字除去 + 長さ上限）を行う。
+    pub(crate) fn set_pending_cwd(&mut self, path: String) {
+        self.pending_cwd = Some(sanitize_osc_string(path, MAX_CWD_LEN));
+    }
+
+    /// CWD 変更を取り出してクリアする
+    pub fn take_pending_cwd(&mut self) -> Option<String> {
+        self.pending_cwd.take()
+    }
+
     /// OSC 52 クリップボード書き込み要求をキューに追加する（Sprint 4-1）
     ///
     /// 1 度のフラッシュで複数の OSC 52 が来る可能性があるため Vec で蓄積する。
@@ -899,5 +995,111 @@ mod osc_security_tests {
     #[test]
     fn 空文字列_uri_は拒否される() {
         assert!(validate_hyperlink_uri("").is_none());
+    }
+
+    // ---- OSC 7 (CWD reporting) のテスト群（Sprint 5-2 / B2） ----
+
+    #[test]
+    fn osc7_file_uri_スキーム付きパスを抽出する() {
+        assert_eq!(
+            parse_osc7_cwd("file:///home/user/projects"),
+            Some("/home/user/projects".to_string())
+        );
+    }
+
+    #[test]
+    fn osc7_host_部分を無視する() {
+        // file://hostname/path 形式（host 部は無視して path のみ採用）
+        assert_eq!(
+            parse_osc7_cwd("file://example.host/home/user"),
+            Some("/home/user".to_string())
+        );
+    }
+
+    #[test]
+    fn osc7_スキームなしも素通しする() {
+        assert_eq!(
+            parse_osc7_cwd("/home/user/proj"),
+            Some("/home/user/proj".to_string())
+        );
+    }
+
+    #[test]
+    fn osc7_パーセントエンコードをデコードする() {
+        // " " (0x20) は %20
+        assert_eq!(
+            parse_osc7_cwd("file:///home/user/dir%20with%20space"),
+            Some("/home/user/dir with space".to_string())
+        );
+        // 日本語パス（UTF-8: あ = E3 81 82）
+        assert_eq!(parse_osc7_cwd("file:///%E3%81%82"), Some("/あ".to_string()));
+    }
+
+    #[test]
+    fn osc7_不正なパーセント_xx_は素通しする() {
+        // `%ZZ` は16進ではないので変換せずに元の文字列を残す
+        assert_eq!(
+            parse_osc7_cwd("file:///path/%ZZ/foo"),
+            Some("/path/%ZZ/foo".to_string())
+        );
+    }
+
+    #[test]
+    fn osc7_空入力は_none() {
+        assert!(parse_osc7_cwd("").is_none());
+    }
+
+    #[test]
+    fn osc7_file_スキームだけでパスなしは_none() {
+        assert!(parse_osc7_cwd("file://hostname").is_none());
+    }
+
+    #[test]
+    fn osc7_制御文字は除去される() {
+        let result = parse_osc7_cwd("file:///home/\x00user\x07/dir").unwrap();
+        assert!(!result.contains('\x00'));
+        assert!(!result.contains('\x07'));
+        assert_eq!(result, "/home/user/dir");
+    }
+
+    #[test]
+    fn osc7_長い入力は早期拒否される() {
+        // 入力長が `MAX_CWD_LEN * 4` を超えると DoS 防止で None
+        let huge_path = format!("file:///{}", "a".repeat(MAX_CWD_LEN * 5));
+        assert!(parse_osc7_cwd(&huge_path).is_none());
+    }
+
+    #[test]
+    fn osc7_max_cwd_len_で結果が切り詰められる() {
+        // 入力が早期拒否されない範囲内で、結果が MAX_CWD_LEN 以下に収まることを検証
+        let near_limit = format!("file:///{}", "a".repeat(MAX_CWD_LEN + 100));
+        let result = parse_osc7_cwd(&near_limit).expect("早期拒否範囲内では Some を返すこと");
+        assert!(
+            result.len() <= MAX_CWD_LEN,
+            "結果は MAX_CWD_LEN 以下に切り詰められること。実際: {}",
+            result.len()
+        );
+    }
+
+    #[test]
+    fn osc7_screen_の_pending_cwd_で取り出せる() {
+        let mut screen = Screen::new(80, 24);
+        screen.set_pending_cwd("/home/user/test".to_string());
+        assert_eq!(
+            screen.take_pending_cwd(),
+            Some("/home/user/test".to_string())
+        );
+        // take 後はクリアされる
+        assert!(screen.take_pending_cwd().is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn osc7_windows_パスの先頭スラッシュを除去する() {
+        // file:///C:/Users/foo → C:/Users/foo
+        assert_eq!(
+            parse_osc7_cwd("file:///C:/Users/foo"),
+            Some("C:/Users/foo".to_string())
+        );
     }
 }

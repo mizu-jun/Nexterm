@@ -32,7 +32,11 @@ pub use message::{
 /// - v3: Sprint 5-1 / G3 — IPC ワイヤフォーマットを `bincode` 1.x から
 ///   `postcard` 1.x に変更。RUSTSEC-2025-0141 (bincode 1.x の supply chain 状態) 対応。
 ///   varint エンコードでメッセージサイズが縮小する。
-pub const PROTOCOL_VERSION: u32 = 3;
+/// - v4: Sprint 5-2 / B2 — `ServerToClient::CwdChanged` を追加。
+///   OSC 7 (`file://host/path`) で受信したシェルの現在ディレクトリをクライアントに伝搬し、
+///   新規ペイン作成時の親 CWD 継承・タブ表示に利用する。enum バリアント追加のため
+///   旧クライアント (v3) は新サーバーが送る `CwdChanged` をデコードできない。
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// IPC メッセージ 1 件の最大サイズ（バイト数）。
 ///

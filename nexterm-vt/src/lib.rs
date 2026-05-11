@@ -237,6 +237,86 @@ mod tests {
         assert!(!dirty.is_empty(), "モード無効化後にダーティ行を返すべき");
     }
 
+    // ---- Sprint 5-2 / B5: 同期出力（DEC ?2026）追加テスト ----
+
+    #[test]
+    fn 同期出力_複数行をバッチでフラッシュする() {
+        // シェルが TUI を全画面再描画する典型シナリオ
+        // 同期出力なしだと部分描画でちらつく
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b[?2026h");
+        // 5 行に渡る描画
+        parser.advance(b"Line1\r\nLine2\r\nLine3\r\nLine4\r\nLine5");
+        // 同期中は何度 take_dirty_rows() を呼んでも空
+        assert!(parser.screen_mut().take_dirty_rows().is_empty());
+        assert!(parser.screen_mut().take_dirty_rows().is_empty());
+        // 同期解除で一気にフラッシュ
+        parser.advance(b"\x1b[?2026l");
+        let dirty = parser.screen_mut().take_dirty_rows();
+        assert!(
+            dirty.len() >= 5,
+            "同期解除で5行分のダーティ行がまとめてフラッシュされること。実際: {} 行",
+            dirty.len()
+        );
+    }
+
+    #[test]
+    fn 同期出力_重複した_h_は冪等() {
+        // mode を 2 回有効化しても状態が壊れない
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b[?2026h");
+        parser.advance(b"X");
+        parser.advance(b"\x1b[?2026h"); // 重複
+        parser.advance(b"Y");
+        assert!(parser.synchronized_output_mode());
+        assert!(parser.screen_mut().take_dirty_rows().is_empty());
+        parser.advance(b"\x1b[?2026l");
+        assert!(!parser.synchronized_output_mode());
+        // 解除後に "XY" が見えるはず
+        assert!(!parser.screen_mut().take_dirty_rows().is_empty());
+    }
+
+    #[test]
+    fn 同期出力_未有効状態で_l_を出しても問題ない() {
+        // 仕様: 未有効状態での解除はノーオペ
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b[?2026l"); // 未有効状態で l
+        assert!(!parser.synchronized_output_mode());
+        // 通常書き込みも動く
+        parser.advance(b"Z");
+        let dirty = parser.screen_mut().take_dirty_rows();
+        assert!(!dirty.is_empty(), "未有効状態では通常通りダーティ行が返る");
+    }
+
+    #[test]
+    fn 同期出力_モード切替を繰り返してもバッファが壊れない() {
+        let mut parser = VtParser::new(80, 24);
+        for _ in 0..10 {
+            parser.advance(b"\x1b[?2026h");
+            parser.advance(b"A");
+            parser.advance(b"\x1b[?2026l");
+            parser.advance(b"B");
+        }
+        // 最終状態は無効
+        assert!(!parser.synchronized_output_mode());
+        // 何らかのダーティ行が取得できる（壊れていない）
+        let dirty = parser.screen_mut().take_dirty_rows();
+        assert!(!dirty.is_empty());
+    }
+
+    #[test]
+    fn 同期出力_モード中の_take_dirty_は空でもセルは反映される() {
+        // dirty rows は保留されるが、grid 自体は更新されている
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b[?2026h");
+        parser.advance(b"Hi");
+        // dirty は空
+        assert!(parser.screen_mut().take_dirty_rows().is_empty());
+        // しかし grid のセルには反映されている
+        assert_eq!(parser.screen().grid().get(0, 0).unwrap().ch, 'H');
+        assert_eq!(parser.screen().grid().get(1, 0).unwrap().ch, 'i');
+    }
+
     #[test]
     fn ブラケットペーストモードを無効化できる() {
         let mut parser = VtParser::new(80, 24);
@@ -380,6 +460,58 @@ mod tests {
         assert_eq!(span.row, 0);
         assert_eq!(span.col_start, 0);
         assert_eq!(span.col_end, 5); // "Click" は 5 文字
+    }
+
+    // ---- OSC 7 CWD reporting テスト（Sprint 5-2 / B2）----
+
+    #[test]
+    fn osc7_file_uri_でpending_cwdに格納される() {
+        let mut parser = VtParser::new(80, 24);
+        // ESC ] 7 ; file:///home/user/proj BEL
+        parser.advance(b"\x1b]7;file:///home/user/proj\x07");
+        let cwd = parser.screen_mut().take_pending_cwd();
+        assert_eq!(cwd, Some("/home/user/proj".to_string()));
+        // take 後はクリアされる
+        assert!(parser.screen_mut().take_pending_cwd().is_none());
+    }
+
+    #[test]
+    fn osc7_host付きuriでもpathのみ採用される() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]7;file://myhost/home/user\x07");
+        assert_eq!(
+            parser.screen_mut().take_pending_cwd(),
+            Some("/home/user".to_string())
+        );
+    }
+
+    #[test]
+    fn osc7_st終端でも動作する() {
+        // ESC ] 7 ; file:///tmp ST (ST = ESC \)
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]7;file:///tmp\x1b\\");
+        assert_eq!(
+            parser.screen_mut().take_pending_cwd(),
+            Some("/tmp".to_string())
+        );
+    }
+
+    #[test]
+    fn osc7_パーセントエンコードがデコードされる() {
+        let mut parser = VtParser::new(80, 24);
+        // /home/user/with space (space = %20)
+        parser.advance(b"\x1b]7;file:///home/user/with%20space\x07");
+        assert_eq!(
+            parser.screen_mut().take_pending_cwd(),
+            Some("/home/user/with space".to_string())
+        );
+    }
+
+    #[test]
+    fn osc7_空パラメータは無視される() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]7;\x07");
+        assert!(parser.screen_mut().take_pending_cwd().is_none());
     }
 
     // ---- ANSI 256色・True Color テスト ----

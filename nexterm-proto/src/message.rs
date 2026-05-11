@@ -591,6 +591,17 @@ pub enum ServerToClient {
         /// D マーク時のみ Some
         exit_code: Option<i32>,
     },
+    /// OSC 7 現在の作業ディレクトリ（CWD）変更通知（Sprint 5-2 / B2）
+    ///
+    /// シェルが `printf '\033]7;file://%s%s\033\\' "$HOSTNAME" "$PWD"` などを
+    /// 出力したときに通知される。クライアントはタブ表示・タイトル表示・新規ペイン
+    /// 作成時の親 CWD 継承に利用する。
+    CwdChanged {
+        /// CWD が変わったペイン ID
+        pane_id: u32,
+        /// 新しい CWD（`file://` 除去 + パーセントデコード済み、絶対パス想定）
+        cwd: String,
+    },
     /// フローティングペイン開始通知
     FloatingPaneOpened {
         /// 開かれたフローティングペイン ID
