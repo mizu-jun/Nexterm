@@ -47,6 +47,8 @@
   "palette-sftp-upload": "SFTP アップロード...",
   "palette-sftp-download": "SFTP ダウンロード...",
   "palette-show-settings": "設定を開く",
+  "palette-jump-prev-prompt": "前のプロンプトへジャンプ",
+  "palette-jump-next-prompt": "次のプロンプトへジャンプ",
   "update-available": "アップデートあり: v{version}  — Enter で詳細を開く",
   "update-dismiss": "更新通知を閉じる",
   "update-open-releases": "リリースノートを開く",

@@ -46,6 +46,18 @@ pub struct PaneState {
     pub has_activity: bool,
     /// OSC 0/2 で設定されたタイトル（シェルや vim がウィンドウタイトルを設定する）
     pub title: String,
+    /// OSC 7 で報告された現在の作業ディレクトリ（Sprint 5-2 / B2）
+    ///
+    /// シェルが `printf '\\033]7;file://...' "$PWD"` 等を出力したときに更新される。
+    /// タブのツールチップ表示・新規ペイン作成時の親 CWD 継承に利用する。
+    /// 一度も OSC 7 が来ていない場合は `None`。
+    pub cwd: Option<String>,
+    /// OSC 133 A (PromptStart) マークが届いた時点の scrollback 長を保持する（Sprint 5-2 / B1）
+    ///
+    /// `scroll_offset` と同じ「scrollback 内の行インデックス」空間で表現する。
+    /// `jump_prev_prompt` / `jump_next_prompt` でこのリストを辿って前後のプロンプトへジャンプする。
+    /// 概算であり、画面再描画やリサイズで多少ズレる可能性がある。
+    pub prompt_anchors: Vec<usize>,
 }
 
 impl PaneState {
@@ -59,6 +71,8 @@ impl PaneState {
             images: HashMap::new(),
             has_activity: false,
             title: String::new(),
+            cwd: None,
+            prompt_anchors: Vec::new(),
         }
     }
 
@@ -840,12 +854,28 @@ impl ClientState {
                 }
             }
             // OSC 133 セマンティックゾーンマーク — ステータスバーに最新コマンド終了コードを表示
+            //   + A (PromptStart) で jump-to-prompt 用の anchor を記録（Sprint 5-2 / B1）
             ServerToClient::SemanticMark {
                 pane_id,
                 kind,
                 exit_code,
                 ..
             } => {
+                if kind == "A"
+                    && let Some(pane) = self.panes.get_mut(&pane_id)
+                {
+                    // 重複登録防止: 最後の anchor と同一なら追加しない
+                    let next_idx = pane.scrollback.len();
+                    if pane.prompt_anchors.last().copied() != Some(next_idx) {
+                        pane.prompt_anchors.push(next_idx);
+                    }
+                    // anchor の保持上限（メモリ DoS 防止）。古いものから削除。
+                    const MAX_PROMPT_ANCHORS: usize = 1024;
+                    if pane.prompt_anchors.len() > MAX_PROMPT_ANCHORS {
+                        let excess = pane.prompt_anchors.len() - MAX_PROMPT_ANCHORS;
+                        pane.prompt_anchors.drain(..excess);
+                    }
+                }
                 if kind == "D"
                     && self.focused_pane_id == Some(pane_id)
                     && let Some(code) = exit_code
@@ -913,6 +943,12 @@ impl ClientState {
             }
             // プラグイン操作応答は GPU クライアントでは無視する
             ServerToClient::PluginList { .. } | ServerToClient::PluginOk { .. } => {}
+            // Sprint 5-2 / B2: OSC 7 CWD 通知 — PaneState に保存（UI 表示は今後拡張）
+            ServerToClient::CwdChanged { pane_id, cwd } => {
+                if let Some(pane) = self.panes.get_mut(&pane_id) {
+                    pane.cwd = Some(cwd);
+                }
+            }
         }
     }
 
@@ -1032,6 +1068,61 @@ impl ClientState {
         self.search.current_match = None;
         if let Some(pane) = self.focused_pane_mut() {
             pane.scroll_offset = 0;
+        }
+    }
+
+    /// 直前のシェルプロンプトへスクロールバックジャンプする（Sprint 5-2 / B1）
+    ///
+    /// `prompt_anchors` を新しいものから順に走査し、現在の `scroll_offset` より大きい
+    /// 最小の anchor へジャンプする（= 画面上で1つ前の prompt）。
+    /// anchor がない or 最古に到達済みの場合は no-op。
+    /// 戻り値: ジャンプに成功したら `true`。
+    pub fn jump_prev_prompt(&mut self) -> bool {
+        let Some(pane) = self.focused_pane_mut() else {
+            return false;
+        };
+        let current = pane.scroll_offset;
+        let max_offset = pane.scrollback.len().saturating_sub(1);
+        // anchor は scrollback の len ベースなので、scroll_offset との比較を直接行う
+        let target = pane
+            .prompt_anchors
+            .iter()
+            .rev()
+            .copied()
+            .find(|&idx| idx > current && idx <= max_offset);
+        if let Some(idx) = target {
+            pane.scroll_offset = idx;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// 次のシェルプロンプトへスクロールバックジャンプする（Sprint 5-2 / B1）
+    ///
+    /// 現在の `scroll_offset` より小さい最大の anchor へジャンプする（= 画面上で1つ後の prompt）。
+    /// anchor がない場合は no-op。最新の prompt より新しい位置にいる場合は `scroll_offset = 0` で
+    /// ライブ画面へ戻る。戻り値: ジャンプに成功したら `true`。
+    pub fn jump_next_prompt(&mut self) -> bool {
+        let Some(pane) = self.focused_pane_mut() else {
+            return false;
+        };
+        let current = pane.scroll_offset;
+        let target = pane
+            .prompt_anchors
+            .iter()
+            .copied()
+            .rev()
+            .find(|&idx| idx < current);
+        if let Some(idx) = target {
+            pane.scroll_offset = idx;
+            true
+        } else if current > 0 && !pane.prompt_anchors.is_empty() {
+            // 全ての anchor より下にいる場合はライブ画面に戻す
+            pane.scroll_offset = 0;
+            true
+        } else {
+            false
         }
     }
 }

@@ -47,6 +47,8 @@
   "palette-sftp-upload": "Upload SFTP...",
   "palette-sftp-download": "Télécharger SFTP...",
   "palette-show-settings": "Ouvrir les paramètres",
+  "palette-jump-prev-prompt": "Aller à l'invite précédente",
+  "palette-jump-next-prompt": "Aller à l'invite suivante",
   "update-available": "Mise à jour disponible: v{version}  — Appuyer sur Entrée pour les détails",
   "update-dismiss": "Fermer la notification de mise à jour",
   "update-open-releases": "Ouvrir les notes de version",

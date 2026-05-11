@@ -47,6 +47,8 @@
   "palette-sftp-upload": "SFTP 업로드...",
   "palette-sftp-download": "SFTP 다운로드...",
   "palette-show-settings": "설정 열기",
+  "palette-jump-prev-prompt": "이전 프롬프트로 이동",
+  "palette-jump-next-prompt": "다음 프롬프트로 이동",
   "update-available": "업데이트 있음: v{version}  — Enter 키로 자세히 보기",
   "update-dismiss": "업데이트 알림 닫기",
   "update-open-releases": "릴리스 노트 열기",

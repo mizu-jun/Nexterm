@@ -265,6 +265,17 @@ impl EventHandler {
             return true;
         }
 
+        // Ctrl+Shift+ArrowUp / ArrowDown: 前後のシェルプロンプトへジャンプ（Sprint 5-2 / B1）
+        // OSC 133 A (PromptStart) で記録した anchor を辿る
+        if ctrl && shift && code == WKeyCode::ArrowUp {
+            self.app.state.jump_prev_prompt();
+            return true;
+        }
+        if ctrl && shift && code == WKeyCode::ArrowDown {
+            self.app.state.jump_next_prompt();
+            return true;
+        }
+
         // Escape: 検索・パレット・ホストマネージャを閉じる
         if code == WKeyCode::Escape {
             if self.app.state.settings_panel.is_open {
@@ -1106,6 +1117,13 @@ impl EventHandler {
                         parity,
                     });
                 }
+            }
+            // Sprint 5-2 / B1: OSC 133 セマンティックマークによるプロンプトジャンプ
+            "JumpPrevPrompt" => {
+                self.app.state.jump_prev_prompt();
+            }
+            "JumpNextPrompt" => {
+                self.app.state.jump_next_prompt();
             }
             _ => debug!("Execute action: {}", action),
         }

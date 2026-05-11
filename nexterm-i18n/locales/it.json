@@ -47,6 +47,8 @@
   "palette-sftp-upload": "Carica SFTP...",
   "palette-sftp-download": "Scarica SFTP...",
   "palette-show-settings": "Apri impostazioni",
+  "palette-jump-prev-prompt": "Vai al prompt precedente",
+  "palette-jump-next-prompt": "Vai al prompt successivo",
   "update-available": "Aggiornamento disponibile: v{version}  — premi Invio per i dettagli",
   "update-dismiss": "Chiudi notifica aggiornamento",
   "update-open-releases": "Apri note di rilascio",

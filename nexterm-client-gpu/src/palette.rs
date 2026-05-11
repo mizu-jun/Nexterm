@@ -98,6 +98,15 @@ impl CommandPalette {
                 label: fl!("palette-show-settings"),
                 action: "ShowSettings".to_string(),
             },
+            // Sprint 5-2 / B1: OSC 133 セマンティックマークによるプロンプトジャンプ
+            PaletteAction {
+                label: fl!("palette-jump-prev-prompt"),
+                action: "JumpPrevPrompt".to_string(),
+            },
+            PaletteAction {
+                label: fl!("palette-jump-next-prompt"),
+                action: "JumpNextPrompt".to_string(),
+            },
         ];
 
         Self {
