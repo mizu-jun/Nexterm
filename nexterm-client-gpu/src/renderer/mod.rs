@@ -180,11 +180,9 @@ impl WgpuState {
             .copied()
             .unwrap_or(surface_caps.formats[0]);
 
-        let present_mode = match gpu_cfg.present_mode {
-            nexterm_config::PresentModeConfig::Fifo => wgpu::PresentMode::Fifo,
-            nexterm_config::PresentModeConfig::Mailbox => wgpu::PresentMode::Mailbox,
-            nexterm_config::PresentModeConfig::Auto => wgpu::PresentMode::AutoVsync,
-        };
+        // Sprint 5-3 / C3: 希望のモードがアダプタ非対応の場合、Fifo にフォールバックする。
+        // Fifo は WebGPU 仕様上すべてのアダプタでサポートが保証されている。
+        let present_mode = select_present_mode(&gpu_cfg.present_mode, &surface_caps.present_modes);
 
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -1474,4 +1472,107 @@ struct ImageEntry {
     #[allow(dead_code)]
     texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
+}
+
+/// Sprint 5-3 / C3: 設定値とアダプタの対応モードから実際の `wgpu::PresentMode` を決定する。
+///
+/// - 希望が `Fifo`: 常に `Fifo`（WebGPU 仕様上必ずサポートされる）
+/// - 希望が `Mailbox`: サポートされていれば `Mailbox`、それ以外は `Fifo` にフォールバック
+/// - 希望が `Auto`: `AutoVsync` がサポートされていればそれ、なければ `Fifo`
+///
+/// この関数は単純なため、surface に依存せずスライスを受け取ってユニットテスト可能にしている。
+fn select_present_mode(
+    desired: &nexterm_config::PresentModeConfig,
+    supported: &[wgpu::PresentMode],
+) -> wgpu::PresentMode {
+    match desired {
+        nexterm_config::PresentModeConfig::Fifo => wgpu::PresentMode::Fifo,
+        nexterm_config::PresentModeConfig::Mailbox => {
+            if supported.contains(&wgpu::PresentMode::Mailbox) {
+                wgpu::PresentMode::Mailbox
+            } else {
+                tracing::info!(
+                    "present_mode=mailbox は本アダプタでサポートされていません。fifo にフォールバックします。"
+                );
+                wgpu::PresentMode::Fifo
+            }
+        }
+        nexterm_config::PresentModeConfig::Auto => {
+            if supported.contains(&wgpu::PresentMode::AutoVsync) {
+                wgpu::PresentMode::AutoVsync
+            } else if supported.contains(&wgpu::PresentMode::Mailbox) {
+                wgpu::PresentMode::Mailbox
+            } else {
+                wgpu::PresentMode::Fifo
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod present_mode_tests {
+    use super::*;
+    use nexterm_config::PresentModeConfig;
+
+    #[test]
+    fn fifo_is_always_fifo() {
+        // Fifo は supported に関わらず常に Fifo
+        assert_eq!(
+            select_present_mode(&PresentModeConfig::Fifo, &[wgpu::PresentMode::Mailbox]),
+            wgpu::PresentMode::Fifo
+        );
+        assert_eq!(
+            select_present_mode(&PresentModeConfig::Fifo, &[]),
+            wgpu::PresentMode::Fifo
+        );
+    }
+
+    #[test]
+    fn mailbox_uses_mailbox_when_supported() {
+        assert_eq!(
+            select_present_mode(
+                &PresentModeConfig::Mailbox,
+                &[wgpu::PresentMode::Fifo, wgpu::PresentMode::Mailbox]
+            ),
+            wgpu::PresentMode::Mailbox
+        );
+    }
+
+    #[test]
+    fn mailbox_falls_back_to_fifo_when_unsupported() {
+        assert_eq!(
+            select_present_mode(&PresentModeConfig::Mailbox, &[wgpu::PresentMode::Fifo]),
+            wgpu::PresentMode::Fifo
+        );
+        // supported が空でも Fifo に落ちる
+        assert_eq!(
+            select_present_mode(&PresentModeConfig::Mailbox, &[]),
+            wgpu::PresentMode::Fifo
+        );
+    }
+
+    #[test]
+    fn auto_prefers_auto_vsync_then_mailbox_then_fifo() {
+        // AutoVsync 対応時はそれを優先
+        assert_eq!(
+            select_present_mode(
+                &PresentModeConfig::Auto,
+                &[wgpu::PresentMode::AutoVsync, wgpu::PresentMode::Mailbox]
+            ),
+            wgpu::PresentMode::AutoVsync
+        );
+        // AutoVsync なしなら Mailbox
+        assert_eq!(
+            select_present_mode(
+                &PresentModeConfig::Auto,
+                &[wgpu::PresentMode::Mailbox, wgpu::PresentMode::Fifo]
+            ),
+            wgpu::PresentMode::Mailbox
+        );
+        // どちらもなければ Fifo
+        assert_eq!(
+            select_present_mode(&PresentModeConfig::Auto, &[wgpu::PresentMode::Fifo]),
+            wgpu::PresentMode::Fifo
+        );
+    }
 }

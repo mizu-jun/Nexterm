@@ -91,3 +91,67 @@ jobs:
           # advisories / licenses / bans / sources を全てチェック
           arguments: --all-features
           rust-version: stable
+
+  # Sprint 5-3 / I5: cargo-llvm-cov によるテストカバレッジ計測
+  # 目標 20%（現状 1.7% 推定）。lcov 形式で artifact 保存し、
+  # サマリーは GitHub Actions のステップサマリに出力する。
+  # Codecov / Coveralls 統合は別 PR で検討（現状は artifact + summary のみ）。
+  coverage:
+    name: Coverage (Ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libx11-dev libxkbcommon-dev libwayland-dev \
+            libasound2-dev libpulse-dev \
+            libudev-dev
+
+      # cargo-llvm-cov の prebuilt バイナリを GitHub Releases から直接取得する。
+      # 外部 action に依存しないので Sprint 5-1 / G2 の SHA pin ポリシー違反にならない。
+      # バージョンは Cargo crates.io 最新を参照して固定する（手動更新）。
+      - name: Install cargo-llvm-cov (prebuilt binary)
+        env:
+          LLVM_COV_VERSION: "0.6.20"
+        run: |
+          set -eux
+          mkdir -p "$HOME/.cargo/bin"
+          curl -fsSL \
+            "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v${LLVM_COV_VERSION}/cargo-llvm-cov-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar -xz -C "$HOME/.cargo/bin"
+          cargo llvm-cov --version
+
+      # session::tests::session_manager_* は PTY fork する重テストで >60 秒ハングするため除外。
+      # ci.yml の通常テストでも実質これらは別カバーされていない。
+      - name: Run tests with coverage
+        run: |
+          cargo llvm-cov --workspace --lcov --output-path lcov.info \
+            --ignore-filename-regex 'benches/' \
+            -- --skip session_manager
+
+      - name: Generate summary
+        run: |
+          echo "## カバレッジサマリー" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cargo llvm-cov report --summary-only \
+            --ignore-filename-regex 'benches/' \
+            >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-lcov
+          path: lcov.info
+          retention-days: 14

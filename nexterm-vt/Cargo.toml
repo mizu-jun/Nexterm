@@ -16,6 +16,14 @@ tracing = { workspace = true }
 [dev-dependencies]
 # Sprint 4-4: Sixel / Kitty パーサのプロパティテスト
 proptest = { workspace = true }
+# Sprint 5-3 / C5: criterion ベンチマーク
+criterion = { workspace = true }
 
 [lints]
 workspace = true
+
+# Sprint 5-3 / C5: VT advance のスループットベンチマーク
+# 実行: cargo bench -p nexterm-vt --bench vt_throughput
+[[bench]]
+name = "vt_throughput"
+harness = false

@@ -84,13 +84,19 @@ impl Profile {
 }
 
 /// wgpu の Present Mode 設定
+///
+/// Sprint 5-3 / C3: デフォルトを `Fifo` → `Mailbox` に変更。
+/// Mailbox はティアリングなしで Fifo より 1 フレーム分（約 16 ms @60Hz）レイテンシが低い。
+/// 非対応環境（一部の Linux Wayland コンポジタ等）では renderer 側で自動的に Fifo に
+/// フォールバックする（`renderer/mod.rs` の `select_present_mode` 参照）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum PresentModeConfig {
-    /// 垂直同期（ティアリングなし、レイテンシ高め）。デフォルト
-    #[default]
+    /// 垂直同期（ティアリングなし、レイテンシ高め）
     Fifo,
-    /// 最新フレームのみキュー（低レイテンシ、非対応環境では Fifo にフォールバック）
+    /// 最新フレームのみキュー（低レイテンシ、非対応環境では Fifo にフォールバック）。
+    /// Sprint 5-3 / C3 以降のデフォルト
+    #[default]
     Mailbox,
     /// アダプタが最適なモードを自動選択
     Auto,
@@ -124,7 +130,8 @@ pub struct GpuConfig {
     #[serde(default = "default_atlas_size")]
     pub atlas_size: u32,
 
-    /// wgpu Present Mode 設定。デフォルト: fifo（垂直同期）
+    /// wgpu Present Mode 設定。Sprint 5-3 / C3 以降のデフォルト: mailbox（低レイテンシ）
+    /// fifo: 垂直同期（ティアリングなし、レイテンシ高め、約 16 ms @60Hz 増）
     /// mailbox: 低レイテンシ（非対応環境では fifo にフォールバック）
     /// auto: アダプタ自動選択
     #[serde(default)]

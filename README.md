@@ -724,6 +724,7 @@ For details, see the documentation:
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | IPC protocol spec (message types, framing, sequence diagrams) |
 | [docs/DESIGN.md](docs/DESIGN.md) | Design document and ADRs |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Full TOML / Lua configuration reference |
+| [docs/benchmarks.md](docs/benchmarks.md) | VT layer throughput / keystroke latency benchmarks (Sprint 5-3) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Build instructions, coding conventions, PR guidelines |
 
 ## License

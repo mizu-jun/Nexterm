@@ -113,3 +113,9 @@ arc-swap = "1"
 # Sprint 4-4: プロパティベーステスト（Sixel/Kitty パーサ・BSP レイアウト用）
 # dev-dependencies としてのみ使うため、各クレートで dev-deps に展開する。
 proptest = "1"
+
+# Sprint 5-3 / C5: criterion ベンチマーク（VT advance / Sixel デコード / スクロール等）
+# dev-dependencies としてのみ使う。`cargo bench -p <crate> --bench <name>` で実行。
+# CI ではベンチを走らせず、ローカル / ベンチ専用ジョブのみで使用する想定。
+# html_reports は plotters への依存が重いため無効化（コア機能のみ使用）。
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
