@@ -107,11 +107,21 @@ fn test_bsp_split_node_roundtrip() {
 fn test_persist_save_and_load() {
     let dir = tempfile::tempdir().expect("tmpdir 作成失敗");
 
-    // XDG_STATE_HOME を tmpdir に設定してスナップショットパスを隔離する
-    // HOME より競合しにくい専用変数を使うことでテスト並列実行時の安全性を高める
+    // state_dir() は OS によって参照する環境変数が異なるため両方を tmpdir に向ける:
+    //   Unix:    XDG_STATE_HOME（無ければ HOME/.local/state/nexterm）
+    //   Windows: APPDATA/nexterm
+    // 旧実装は XDG_STATE_HOME しか書き換えず、Windows CI で他テスト
+    // (`test_load_snapshot_returns_none_when_missing`) と APPDATA が並列競合して
+    // save 直後の load が None を返す flaky test の原因になっていた。
     let old_xdg = std::env::var("XDG_STATE_HOME").ok();
-    // SAFETY: テスト内での環境変数書き換え。XDG_STATE_HOME は nexterm 専用で他テストとの競合なし
-    unsafe { std::env::set_var("XDG_STATE_HOME", dir.path()) };
+    let old_appdata = std::env::var("APPDATA").ok();
+    // SAFETY: テスト内での環境変数書き換え。XDG_STATE_HOME / APPDATA は同 OS 上の
+    // 他テストと競合し得るが、tempdir() で隔離した一時ディレクトリを向け、
+    // テスト末尾で必ず元値に復元するため副作用は限定的。
+    unsafe {
+        std::env::set_var("XDG_STATE_HOME", dir.path());
+        std::env::set_var("APPDATA", dir.path());
+    }
 
     let snap = ServerSnapshot {
         version: SNAPSHOT_VERSION,
@@ -133,6 +143,10 @@ fn test_persist_save_and_load() {
         match old_xdg {
             Some(v) => std::env::set_var("XDG_STATE_HOME", v),
             None => std::env::remove_var("XDG_STATE_HOME"),
+        }
+        match old_appdata {
+            Some(v) => std::env::set_var("APPDATA", v),
+            None => std::env::remove_var("APPDATA"),
         }
     }
 }
