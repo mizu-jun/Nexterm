@@ -7,6 +7,16 @@ use nexterm_server::snapshot::{
     SNAPSHOT_VERSION, SNAPSHOT_VERSION_MIN, ServerSnapshot, SessionSnapshot, SplitDirSnapshot,
     SplitNodeSnapshot, WindowSnapshot,
 };
+use std::sync::Mutex;
+
+/// 環境変数 (`XDG_STATE_HOME` / `APPDATA`) を書き換えるテストをシリアル化する。
+///
+/// `std::env::set_var` はプロセスグローバルなため、cargo の test thread 並列実行で
+/// 競合する。特に Windows CI で `test_persist_save_and_load` と
+/// `test_load_snapshot_returns_none_when_missing` の `APPDATA` 書き換えが衝突して
+/// snapshot_path() が想定外の場所を返し、save 直後の load が None を返す flaky に
+/// なっていた。このグローバル Mutex で env 触るテストの相互排他を保証する。
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 fn minimal_snapshot() -> ServerSnapshot {
     ServerSnapshot {
@@ -105,19 +115,18 @@ fn test_bsp_split_node_roundtrip() {
 
 #[test]
 fn test_persist_save_and_load() {
+    // ENV_LOCK は env var 触る他テストとの相互排他に必要（CI flaky 対策）
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
     let dir = tempfile::tempdir().expect("tmpdir 作成失敗");
 
     // state_dir() は OS によって参照する環境変数が異なるため両方を tmpdir に向ける:
     //   Unix:    XDG_STATE_HOME（無ければ HOME/.local/state/nexterm）
     //   Windows: APPDATA/nexterm
-    // 旧実装は XDG_STATE_HOME しか書き換えず、Windows CI で他テスト
-    // (`test_load_snapshot_returns_none_when_missing`) と APPDATA が並列競合して
-    // save 直後の load が None を返す flaky test の原因になっていた。
     let old_xdg = std::env::var("XDG_STATE_HOME").ok();
     let old_appdata = std::env::var("APPDATA").ok();
-    // SAFETY: テスト内での環境変数書き換え。XDG_STATE_HOME / APPDATA は同 OS 上の
-    // 他テストと競合し得るが、tempdir() で隔離した一時ディレクトリを向け、
-    // テスト末尾で必ず元値に復元するため副作用は限定的。
+    // SAFETY: テスト内での環境変数書き換え。ENV_LOCK でシリアル化済みなので
+    // 並列テストとの競合はない。テスト末尾で必ず元値に復元する。
     unsafe {
         std::env::set_var("XDG_STATE_HOME", dir.path());
         std::env::set_var("APPDATA", dir.path());
@@ -153,6 +162,9 @@ fn test_persist_save_and_load() {
 
 #[test]
 fn test_load_snapshot_returns_none_when_missing() {
+    // ENV_LOCK は env var 触る他テストとの相互排他に必要（CI flaky 対策）
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
     // state_dir() は OS によって参照する環境変数が異なるため両方を tmpdir に向ける:
     //   Unix:    XDG_STATE_HOME（無ければ HOME/.local/state/nexterm）
     //   Windows: APPDATA/nexterm
@@ -162,8 +174,7 @@ fn test_load_snapshot_returns_none_when_missing() {
     let old_xdg = std::env::var("XDG_STATE_HOME").ok();
     let old_appdata = std::env::var("APPDATA").ok();
 
-    // SAFETY: テスト内環境変数書き換え。並列実行時の競合は cargo test の
-    // テストランナーに任せる（同一ファイルパスは単一テストでしか触らない）。
+    // SAFETY: テスト内環境変数書き換え。ENV_LOCK でシリアル化済みなので並列競合なし。
     unsafe {
         std::env::set_var("HOME", dir.path());
         std::env::set_var("XDG_STATE_HOME", dir.path());
