@@ -57,7 +57,7 @@ pub struct OAuthConfig {
     /// クライアントシークレット（環境変数 NEXTERM_OAUTH_CLIENT_SECRET での上書き推奨）
     pub client_secret: Option<String>,
     /// OIDC ディスカバリー URL（provider = "oidc" の場合に使用）
-    /// 例: "https://login.microsoftonline.com/{tenant}/v2.0"
+    /// 例: `"https://login.microsoftonline.com/{tenant}/v2.0"`
     pub issuer_url: Option<String>,
     /// 許可するメールアドレスのリスト（空 = 全員許可）
     #[serde(default)]

@@ -31,6 +31,9 @@ use std::path::PathBuf;
 pub const SNAPSHOT_VERSION: u32 = 2;
 
 /// 旧バージョン（v1）との互換読み込みに使う最低サポートバージョン
+///
+/// v2.0.0 リリース時に `2` へ bump 予定。
+/// 詳細は ADR-0007 (`docs/adr/0007-snapshot-v1-deprecation.md`) を参照。
 pub const SNAPSHOT_VERSION_MIN: u32 = 1;
 
 /// サーバー全体のスナップショット（保存の最上位単位）

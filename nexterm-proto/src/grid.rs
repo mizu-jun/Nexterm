@@ -33,7 +33,7 @@ pub struct Grid {
     pub width: u16,
     /// グリッドの行数（文字単位）
     pub height: u16,
-    /// 行優先の二次元配列（rows[y][x]）
+    /// 行優先の二次元配列（`rows[y][x]`）
     pub rows: Vec<Vec<Cell>>,
     /// カーソルの列位置（0始まり）
     pub cursor_col: u16,

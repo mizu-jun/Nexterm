@@ -92,7 +92,7 @@ fn default_parity() -> String {
     "none".to_string()
 }
 
-/// Lua マクロ定義（設定ファイルで [[macros]] として登録する）
+/// Lua マクロ定義（設定ファイルで `[[macros]]` として登録する）
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MacroConfig {
     /// コマンドパレット / マクロピッカーに表示する名前

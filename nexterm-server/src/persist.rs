@@ -8,7 +8,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use tracing::{info, warn};
+use tracing::{info, instrument, warn};
 
 use crate::snapshot::{SNAPSHOT_VERSION, SNAPSHOT_VERSION_MIN, ServerSnapshot};
 
@@ -130,6 +130,7 @@ fn snapshot_path() -> PathBuf {
 ///
 /// atomic write（一時ファイル → rename）で書き込み、Unix では 0600 パーミッションを強制する。
 /// クラッシュ時の破損と、共有ホストでの他ユーザーによる機密情報読み取りを防ぐ。
+#[instrument(name = "save_snapshot", skip(snap), fields(version = snap.version, sessions = snap.sessions.len()))]
 pub fn save_snapshot(snap: &ServerSnapshot) -> Result<()> {
     let path = snapshot_path();
     let json = serde_json::to_string_pretty(snap)?;
@@ -142,6 +143,7 @@ pub fn save_snapshot(snap: &ServerSnapshot) -> Result<()> {
 ///
 /// ファイルが存在しない場合や解析エラーの場合は `None` を返す。
 /// 旧バージョン（v1）のスナップショットは自動マイグレーションを試みる。
+#[instrument(name = "load_snapshot")]
 pub fn load_snapshot() -> Option<ServerSnapshot> {
     let path = snapshot_path();
     if !path.exists() {

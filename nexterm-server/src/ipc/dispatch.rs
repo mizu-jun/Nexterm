@@ -11,6 +11,7 @@
 
 use nexterm_proto::{ClientToServer, ServerToClient};
 use tokio::sync::mpsc;
+use tracing::instrument;
 
 use super::{file_dispatch, pane_dispatch, session_dispatch, window_dispatch};
 use crate::session::SessionManager;
@@ -59,6 +60,10 @@ pub(super) async fn dispatch(
 }
 
 /// `DispatchContext` を引数とする内部ディスパッチャ — 各機能モジュールから直接呼び出せる
+///
+/// `msg` のペイロードはパスワード等の機密を含み得るため `skip_all` で span に乗せない。
+/// バリアント識別は個別ハンドラ側のログ出力に委ねる。
+#[instrument(name = "ipc_dispatch", skip_all)]
 pub(super) async fn dispatch_inner(msg: &ClientToServer, ctx: &mut DispatchContext<'_>) {
     use ClientToServer::*;
 

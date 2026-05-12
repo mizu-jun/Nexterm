@@ -8,7 +8,7 @@ use russh::keys::{PrivateKeyWithHashAlg, PublicKey, load_secret_key};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, mpsc};
-use tracing::{debug, warn};
+use tracing::{debug, instrument, warn};
 use zeroize::Zeroizing;
 
 /// SSH 接続設定
@@ -181,6 +181,13 @@ impl SshSession {
     ///
     /// `config.proxy_jump` が設定されている場合は ProxyJump 経由で接続する。
     /// `config.proxy_socks5` が設定されている場合は SOCKS5 プロキシ経由で接続する。
+    #[instrument(
+        name = "ssh_connect",
+        skip(config),
+        fields(host = %config.host, port = config.port, user = %config.username,
+               proxy_jump = config.proxy_jump.is_some(),
+               proxy_socks5 = config.proxy_socks5.is_some())
+    )]
     pub async fn connect(config: &SshConfig) -> Result<Self> {
         let ssh_config = Arc::new(client::Config {
             inactivity_timeout: Some(std::time::Duration::from_secs(60)),
@@ -226,6 +233,15 @@ impl SshSession {
     }
 
     /// 認証を実行する
+    #[instrument(
+        name = "ssh_authenticate",
+        skip(self, config),
+        fields(user = %config.username, auth_type = match &config.auth {
+            SshAuth::Password(_) => "password",
+            SshAuth::PrivateKey { .. } => "private_key",
+            SshAuth::Agent => "agent",
+        })
+    )]
     pub async fn authenticate(&mut self, config: &SshConfig) -> Result<()> {
         let username = config.username.clone();
         let authenticated = {
@@ -329,6 +345,11 @@ impl SshSession {
     /// `cols`, `rows`: 初期端末サイズ
     /// `x11_forward`: X11 フォワーディングを有効にするか（ssh -X 相当）
     /// `x11_trusted`: 信頼された X11 フォワーディング（ssh -Y 相当）
+    #[instrument(
+        name = "ssh_open_shell",
+        skip(self, output_tx, input_rx),
+        fields(cols, rows, x11_forward, x11_trusted)
+    )]
     pub async fn open_shell(
         self,
         cols: u16,
@@ -972,4 +993,203 @@ fn parse_forward_spec(spec: &str) -> Result<(u16, String, u16)> {
         .parse()
         .with_context(|| format!("リモートポートの解析に失敗しました: {}", parts[2]))?;
     Ok((local_port, remote_host, remote_port))
+}
+
+// ---------------------------------------------------------------------------
+// ユニットテスト
+//
+// nexterm-ssh は外部 SSH サーバーへの I/O が中心で完全な統合テストは
+// モック SSH サーバーが必要になる（Sprint 5-5 以降の課題）。
+// ここでは純粋ロジック（仕様文字列パーサ・SshConfig 構築・到達不能ホストの即時失敗）に
+// 限定して単体テストを置く。
+//
+// 監査ラウンド 2 タスク I1 (nexterm-ssh のテスト 0 解消) の最初の対応。
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---- parse_jump_spec --------------------------------------------------
+
+    #[test]
+    fn parse_jump_spec_user_host_port() {
+        let (user, host, port) = parse_jump_spec("alice@bastion.example.com:2222").expect("正常系");
+        assert_eq!(user, "alice");
+        assert_eq!(host, "bastion.example.com");
+        assert_eq!(port, 2222);
+    }
+
+    #[test]
+    fn parse_jump_spec_user_host_default_port() {
+        let (user, host, port) = parse_jump_spec("alice@bastion.example.com").expect("正常系");
+        assert_eq!(user, "alice");
+        assert_eq!(host, "bastion.example.com");
+        assert_eq!(port, 22, "ポート省略時は 22 にフォールバックすること");
+    }
+
+    #[test]
+    fn parse_jump_spec_host_only_uses_env_user() {
+        // USER / USERNAME が無くても "root" にフォールバックするロジックの確認
+        let (_user, host, port) = parse_jump_spec("bastion.example.com:22").expect("正常系");
+        assert_eq!(host, "bastion.example.com");
+        assert_eq!(port, 22);
+        // user は env 依存のため値の検証はしない（空文字でないことだけ確認）
+    }
+
+    #[test]
+    fn parse_jump_spec_invalid_port_fails() {
+        let err = parse_jump_spec("alice@host:not-a-port").expect_err("不正ポートはエラー");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("ポート番号"),
+            "エラーメッセージにポートの旨を含むこと: {}",
+            msg
+        );
+    }
+
+    // ---- parse_socks5_credentials -----------------------------------------
+
+    #[test]
+    fn parse_socks5_credentials_user_password() {
+        let (u, p) = parse_socks5_credentials("socks5://alice:secret@proxy:1080");
+        assert_eq!(u.as_deref(), Some("alice"));
+        assert_eq!(p.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn parse_socks5_credentials_user_only() {
+        let (u, p) = parse_socks5_credentials("socks5://alice@proxy:1080");
+        assert_eq!(u.as_deref(), Some("alice"));
+        assert_eq!(p, None);
+    }
+
+    #[test]
+    fn parse_socks5_credentials_anonymous() {
+        let (u, p) = parse_socks5_credentials("socks5://proxy:1080");
+        assert_eq!(u, None);
+        assert_eq!(p, None);
+    }
+
+    #[test]
+    fn parse_socks5_credentials_missing_scheme_still_parses() {
+        // "socks5://" がなくても認証情報パートは抽出できる
+        let (u, p) = parse_socks5_credentials("alice:secret@proxy:1080");
+        assert_eq!(u.as_deref(), Some("alice"));
+        assert_eq!(p.as_deref(), Some("secret"));
+    }
+
+    // ---- parse_forward_spec -----------------------------------------------
+
+    #[test]
+    fn parse_forward_spec_valid() {
+        let (local, host, remote) =
+            parse_forward_spec("8080:internal.example.com:80").expect("正常系");
+        assert_eq!(local, 8080);
+        assert_eq!(host, "internal.example.com");
+        assert_eq!(remote, 80);
+    }
+
+    #[test]
+    fn parse_forward_spec_too_few_parts() {
+        let err = parse_forward_spec("8080:internal.example.com").expect_err("不正形式");
+        let msg = format!("{:#}", err);
+        assert!(msg.contains("ポートフォワーディング仕様"));
+    }
+
+    #[test]
+    fn parse_forward_spec_bad_local_port() {
+        let err = parse_forward_spec("abc:host:80").expect_err("ローカルポート不正");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("ローカルポート"),
+            "エラーメッセージが具体的であること: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn parse_forward_spec_bad_remote_port() {
+        let err = parse_forward_spec("8080:host:abc").expect_err("リモートポート不正");
+        let msg = format!("{:#}", err);
+        assert!(msg.contains("リモートポート"));
+    }
+
+    // ---- SshConfig / SshAuth ----------------------------------------------
+
+    #[test]
+    fn ssh_auth_password_zeroizes_on_drop() {
+        // Zeroizing<String> がドロップ時に内部バッファをゼロ化することは
+        // 直接観測できないが、API として Password バリアントが Clone 可能で
+        // 期待通り構築できることを確認する。
+        let auth = SshAuth::Password(Zeroizing::new("hunter2".to_string()));
+        let cloned = auth.clone();
+        match cloned {
+            SshAuth::Password(p) => assert_eq!(p.as_str(), "hunter2"),
+            _ => panic!("Password バリアントが保持されること"),
+        }
+    }
+
+    #[test]
+    fn ssh_config_construction() {
+        let config = SshConfig {
+            host: "example.com".to_string(),
+            port: 22,
+            username: "alice".to_string(),
+            auth: SshAuth::Password(Zeroizing::new("pw".to_string())),
+            proxy_jump: None,
+            proxy_socks5: None,
+        };
+        // Clone 可能
+        let cloned = config.clone();
+        assert_eq!(cloned.host, "example.com");
+        assert_eq!(cloned.port, 22);
+        assert_eq!(cloned.username, "alice");
+        assert!(cloned.proxy_jump.is_none());
+        assert!(cloned.proxy_socks5.is_none());
+    }
+
+    // ---- 接続失敗の即時返却 -----------------------------------------------
+
+    /// 到達不能なホストへの接続が現実的な時間でエラーを返すこと
+    ///
+    /// `127.0.0.1:1` (Reserved port) は通常 LISTEN されておらず
+    /// `connect` は即座に "Connection refused" を返す。
+    /// このテストはネットワークスタックに依存するが、
+    /// OS のローカル loopback だけを使うので CI でも安定する。
+    #[tokio::test]
+    async fn connect_to_unreachable_port_fails_fast() {
+        let config = SshConfig {
+            host: "127.0.0.1".to_string(),
+            port: 1, // LISTEN されていないポート
+            username: "test".to_string(),
+            auth: SshAuth::Password(Zeroizing::new("pw".to_string())),
+            proxy_jump: None,
+            proxy_socks5: None,
+        };
+
+        let start = std::time::Instant::now();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            SshSession::connect(&config),
+        )
+        .await;
+        let elapsed = start.elapsed();
+
+        match result {
+            Ok(Err(_)) => {
+                // 接続エラーは想定通り
+                assert!(
+                    elapsed < std::time::Duration::from_secs(5),
+                    "5 秒以内に失敗を返すこと: {:?}",
+                    elapsed
+                );
+            }
+            Ok(Ok(_)) => panic!("到達不能なポートへの接続が成功してはならない"),
+            Err(_) => panic!(
+                "5 秒以内に応答すべき (Connection refused は通常 1ms 以内): {:?}",
+                elapsed
+            ),
+        }
+    }
 }

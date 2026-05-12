@@ -74,7 +74,7 @@ pub struct Config {
     #[serde(default)]
     pub hosts: Vec<HostConfig>,
 
-    /// Lua マクロ一覧（[[macros]] テーブルで定義）
+    /// Lua マクロ一覧（`[[macros]]` テーブルで定義）
     #[serde(default)]
     pub macros: Vec<MacroConfig>,
 

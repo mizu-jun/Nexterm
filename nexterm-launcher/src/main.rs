@@ -264,3 +264,110 @@ fn tui_exe(dir: &Path) -> PathBuf {
     #[cfg(not(windows))]
     dir.join("nexterm-client-tui")
 }
+
+// ---- スモークテスト --------------------------------------------------------
+//
+// launcher は IPC ソケットや外部プロセス起動に依存するため完全な統合テストは難しい。
+// ここでは副作用のない純粋関数（パス組み立てなど）と、外部依存があっても
+// タイムアウト経路だけを検証する軽量テストを置く。
+//
+// 監査ラウンド 2 タスク I2 (`nexterm-launcher` smoke test) に対応する。
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `server_exe()` が OS ごとに正しい実行ファイル名を組み立てること
+    #[test]
+    fn server_exe_uses_platform_extension() {
+        let base = PathBuf::from("/tmp/nexterm");
+        let p = server_exe(&base);
+        let name = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("server_exe のパスからファイル名が取得できること");
+        #[cfg(windows)]
+        assert_eq!(name, "nexterm-server.exe");
+        #[cfg(not(windows))]
+        assert_eq!(name, "nexterm-server");
+
+        // 親ディレクトリは入力をそのまま保持していること
+        assert_eq!(p.parent(), Some(base.as_path()));
+    }
+
+    /// `client_exe()` / `tui_exe()` も同様に OS 依存の拡張子を持つこと
+    #[test]
+    fn client_and_tui_exe_use_platform_extension() {
+        let base = PathBuf::from("/tmp/nexterm");
+        let client = client_exe(&base);
+        let tui = tui_exe(&base);
+        let client_name = client
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("client_exe のファイル名");
+        let tui_name = tui
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("tui_exe のファイル名");
+
+        #[cfg(windows)]
+        {
+            assert_eq!(client_name, "nexterm-client-gpu.exe");
+            assert_eq!(tui_name, "nexterm-client-tui.exe");
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(client_name, "nexterm-client-gpu");
+            assert_eq!(tui_name, "nexterm-client-tui");
+        }
+    }
+
+    /// `server_exe` / `client_exe` / `tui_exe` の戻り値は重複しないこと
+    /// （3 つの実行ファイル名が偶然同じになっていないことの簡易チェック）
+    #[test]
+    fn exe_names_are_distinct() {
+        let base = PathBuf::from("/tmp/nexterm");
+        let s = server_exe(&base);
+        let c = client_exe(&base);
+        let t = tui_exe(&base);
+        assert_ne!(s, c);
+        assert_ne!(s, t);
+        assert_ne!(c, t);
+    }
+
+    /// `exe_dir()` は `std::env::current_exe()` の親ディレクトリを返すこと
+    #[test]
+    fn exe_dir_returns_parent_of_current_exe() {
+        let dir = exe_dir().expect("テスト実行中は current_exe が取得できる");
+        let expected_parent = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(PathBuf::from))
+            .expect("current_exe の親が存在する");
+        assert_eq!(dir, expected_parent);
+    }
+
+    /// `wait_for_server()` はサーバーが見つからない場合タイムアウトでエラーを返すこと
+    ///
+    /// `server_is_running()` は IPC エンドポイントの存在をチェックするだけなので、
+    /// 本テストでサーバーが起動していない環境では短時間でタイムアウトする。
+    /// 万一サーバーが偶然起動している環境では本テストはスキップする。
+    #[test]
+    fn wait_for_server_times_out_when_no_server() {
+        if server_is_running() {
+            eprintln!("nexterm-server が既に起動しているためテストをスキップ");
+            return;
+        }
+
+        let start = Instant::now();
+        let result = wait_for_server(Duration::from_millis(50));
+        let elapsed = start.elapsed();
+
+        assert!(result.is_err(), "サーバー未起動時はエラーを返すこと");
+        // 50ms タイムアウト + バックオフのオーバーヘッドを考慮して 1 秒以内には返る
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "タイムアウトが想定より大幅に長い: {:?}",
+            elapsed
+        );
+    }
+}

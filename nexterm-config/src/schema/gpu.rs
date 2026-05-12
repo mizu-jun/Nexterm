@@ -108,7 +108,7 @@ pub struct GpuConfig {
     /// 背景矩形用カスタム WGSL シェーダーファイルのパス（省略時はビルトイン使用）
     ///
     /// シェーダーは `@vertex fn vs_main` / `@fragment fn fs_main` を実装する必要がある。
-    /// 頂点入力: position: vec2<f32>, color: vec4<f32>
+    /// 頂点入力: `position: vec2<f32>`, `color: vec4<f32>`
     ///
     /// 例: `custom_bg_shader = "~/.config/nexterm/shaders/crt.wgsl"`
     #[serde(default)]
@@ -116,8 +116,8 @@ pub struct GpuConfig {
 
     /// テキスト（グリフ）用カスタム WGSL シェーダーファイルのパス
     ///
-    /// 頂点入力: position: vec2<f32>, uv: vec2<f32>, color: vec4<f32>
-    /// バインディング: @group(0) @binding(0) glyph_texture, @binding(1) glyph_sampler
+    /// 頂点入力: `position: vec2<f32>`, `uv: vec2<f32>`, `color: vec4<f32>`
+    /// バインディング: `@group(0) @binding(0)` glyph_texture, `@binding(1)` glyph_sampler
     #[serde(default)]
     pub custom_text_shader: Option<String>,
 

@@ -31,3 +31,7 @@
 
 # Architecture
 - [Architecture Overview](architecture.md)
+- [Architecture Decision Records](adr-index.md)
+
+# Reference
+- [Troubleshooting](troubleshooting.md)
