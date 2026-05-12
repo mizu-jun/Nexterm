@@ -7,6 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-05-13
+
+監査ラウンド 2（70 件タスク）の Sprint 5-1 〜 5-5 完了に伴うリリース。
+互換性破壊を含む変更があるため、移行時は
+[docs/MIGRATION.md](docs/MIGRATION.md) を必ず参照すること。
+
+### 互換性破壊サマリ（v1.1.0 → v1.2.0）
+
+- **`PROTOCOL_VERSION` を `1` → `4` に bump**
+  - `2`: SSH パスワード IPC 平文流通の排除 (Sprint 5-1 / G1)
+  - `3`: IPC ワイヤフォーマットを bincode → postcard 移行 (Sprint 5-1 / G3)
+  - `4`: OSC 7 CWD reporting と `CwdChanged` イベント追加 (Sprint 5-2 / B2)
+- **IPC ワイヤフォーマット**: bincode → postcard に置換
+  （旧 v1.1.0 client は v1.2.0 server に接続不可）
+- **GPU present mode のデフォルト**: `fifo` → `mailbox`
+  （tearing を許容して 1 frame レイテンシ低減、明示的に `present_mode = "fifo"` で従来挙動に戻せる）
+
+### Sprint 5-5 — テスト・観測性・ドキュメント (I1/I2/A6/A9/J1/J2)
+
+- **`nexterm-ssh` 単体テスト 15 件追加** (I1): `parse_jump_spec` / `parse_socks5_credentials` /
+  `parse_forward_spec` / `SshConfig` 構築 / 到達不能ポートへの fast-fail。
+  完全なモック SSH サーバーは将来課題。
+- **`nexterm-launcher` smoke テスト 5 件追加** (I2): `server_exe`/`client_exe`/`tui_exe` の
+  OS 別拡張子・`exe_dir`・`wait_for_server` タイムアウト経路。
+- **`tracing::instrument` を主要 async に付与** (A6): `SshSession::connect/authenticate/open_shell`、
+  `persist::save_snapshot/load_snapshot`、IPC `dispatch_inner`。
+  `dispatch_inner` は機密ペイロード保護のため `skip_all`。
+- **Snapshot v1 削除タイミングを ADR-0007 で明示** (A9): v2.0.0 で `SNAPSHOT_VERSION_MIN`
+  を `1` → `2` に bump 予定。`nexterm-plugin` の v1 削除タイミングも ADR-0003 へ参照を統一。
+- **mdBook 骨子整備** (J1): `docs/src/troubleshooting.md` / `docs/src/adr-index.md` 新規追加。
+  `SUMMARY.md` に Reference セクション。`README.md` を v1.2.0 ベースに更新。
+- **rustdoc 警告 9 → 0** (J2): `[[macros]]` / `vec2<f32>` / `https://...` / `rows[y][x]` を
+  backtick で囲んでリンク解釈を抑制。`cargo doc --no-deps --lib --workspace` が警告 0 で完走。
+
+### Sprint 5-4 — アーキテクチャ整理 + UX + ADR (A1/A2/A3/D1/D4/D8/E1/F1/J3)
+
+- **`overlay_verts.rs` (1,958 行) を 5 ファイルに分割** (A2):
+  `renderer/overlay/{picker, dialog, settings, util, mod}.rs`。最大 settings.rs 795 行。
+- **`nexterm-ctl/main.rs` (1,757 行) を分割** (A1):
+  `main.rs` 343 行 + `ipc.rs` 96 行 + `cmd/{session, record, template, service, ghostty, theme, plugin, wsl, util, mod}.rs`。
+- **`nexterm-server/web/mod.rs` (1,088 行) を分割** (A3):
+  `mod.rs` 247 行 + `router.rs` 129 行 + `middleware.rs` 144 行 + `handlers/{page, login, oauth, ws, assets, mod}.rs`。
+- **examples/plugins (4 件) を Plugin API v2 化** (F1): `nexterm_api_version() -> 2` を追加、
+  プラグインバージョンを `0.2.0` へ bump、`examples/plugins/README.md` に v1→v2 移行ガイド。
+- **WSL ディストロ自動検出 + Profile インポート** (E1):
+  `nexterm-ctl wsl import-profiles [--dry-run]` で Ubuntu 等の WSL ディストロを
+  自動検出して `config.toml` の `[[profiles]]` を生成。
+- **Quick Select 拡充: パターン 5 → 11 種** (D1): Email / UUID / file:line / Jira /
+  Windows path / IPv6 等を追加。優先順位付き + 重複排除 + 単体テスト 10 件。
+- **テーマギャラリー隠れバグ修正 + `nexterm-ctl theme` サブコマンド** (D4):
+  `parse_builtin_scheme` が Catppuccin / Dracula / Nord / OneDark を Dark にフォールバック
+  していた問題を修正。`BuiltinScheme::all() / from_toml_name()` 追加。
+- **Pane Zen mode に `Ctrl+Shift+Z` 代替バインド追加** (D8): tmux 流の `Ctrl+B Z` に加えて。
+- **ADR ディレクトリ整備** (J3): `docs/adr/` に template / README index / 遡及 ADR 5 件
+  (0002-0006) を整備。
+
+### Sprint 5-3 — 性能計測基盤 (C5/C1/C2/C3/I5/J4)
+
+- **`nexterm-vt` の criterion ベンチマーク導入** (C5): VT パーサ・スクロール・Sixel デコードの
+  性能リグレッション検出が可能に。`cargo bench -p nexterm-vt`。
+- **入力レイテンシ計測スクリプト追加** (C1): VT advance 1 ms / wgpu present queue サイズ
+  などをスクリプト化。
+- **wgpu アップグレード方針を ADR-0001 化** (C2): 22 → 26 をテスト・代替分析と共に整理。
+- **present_mode のデフォルトを `mailbox` に変更** (C3): 1 frame 短縮。
+  `[gpu] present_mode = "fifo"` で従来挙動に戻せる。
+- **GitHub Actions に coverage ジョブ追加** (I5): `cargo-llvm-cov` で `target/coverage` を生成。
+- **ベンチマーク結果を `docs/benchmarks.md` に公表** (J4): リファレンス値と再計測手順を明文化。
+
+### Sprint 5-2 — ターミナル互換性 (B1/B2/B5)
+
+- **OSC 133 (semantic prompt marks) + jump-to-prompt 完全対応** (B1):
+  クライアントでプロンプト境界を記録し、`Ctrl+Up` / `Ctrl+Down` で前後プロンプトへジャンプ。
+  コマンドパレットからも「Jump to previous prompt / next prompt」を選択可能。8 言語対応。
+- **OSC 7 (CWD reporting) + 親 CWD 継承** (B2):
+  `CwdChanged` IPC イベントを追加（`PROTOCOL_VERSION` 4）。
+  分割で新規 pane を作成する際に親 pane の CWD を継承する。
+- **Synchronized Output (DCS=2026) のテスト整備** (B5):
+  既存実装の挙動を VT スナップショットテストで固定化。
+
 ### Security — Sprint 5-1 (G3) IPC ワイヤフォーマットを bincode → postcard へ移行
 
 **互換性破壊**: `PROTOCOL_VERSION` が `2` → `3` にバンプ。詳細は
