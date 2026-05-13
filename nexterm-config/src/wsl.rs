@@ -18,7 +18,9 @@
 //! }
 //! ```
 
-use crate::schema::{Profile, ShellConfig};
+use crate::schema::Profile;
+#[cfg(windows)]
+use crate::schema::ShellConfig;
 
 /// 検出された WSL ディストロを `Profile` のベクタとして返す。
 ///

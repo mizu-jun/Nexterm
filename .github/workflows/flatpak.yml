@@ -28,11 +28,12 @@ jobs:
             https://dl.flathub.org/repo/flathub.flatpakrepo
 
       - name: Install freedesktop SDK
+        # 24.08 系列で Rust 1.85+ が提供されるため、edition = "2024" を満たすために必須
         run: |
           flatpak install --user -y flathub \
-            org.freedesktop.Platform//23.08 \
-            org.freedesktop.Sdk//23.08 \
-            org.freedesktop.Sdk.Extension.rust-stable//23.08
+            org.freedesktop.Platform//24.08 \
+            org.freedesktop.Sdk//24.08 \
+            org.freedesktop.Sdk.Extension.rust-stable//24.08
 
       - name: Build Flatpak bundle
         run: |

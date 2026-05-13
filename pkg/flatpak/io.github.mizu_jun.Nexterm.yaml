@@ -1,6 +1,7 @@
 app-id: io.github.mizu_jun.Nexterm
 runtime: org.freedesktop.Platform
-runtime-version: '23.08'
+# 24.08 に bump (Rust 1.85+ を含む rust-stable Extension が必要 — workspace edition = 2024)
+runtime-version: '24.08'
 sdk: org.freedesktop.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
