@@ -142,8 +142,12 @@ impl WgpuState {
         // フォーカスペインの ID で「アクティブタブ」を表示する
         let focused_id = state.focused_pane_id.unwrap_or(0);
         let active_bg = hex_to_rgba(&cfg.active_tab_bg, 1.0);
-        let text_fg = [0.95, 0.95, 0.95, 1.0];
-        let inactive_fg = [0.65, 0.65, 0.65, 1.0];
+        let activity_bg = hex_to_rgba(&cfg.activity_tab_bg, 1.0);
+        let accent_color = hex_to_rgba(&cfg.active_accent_color, 1.0);
+        // テキスト色: アクティブは白に近い、非アクティブは設定値でミュート化（Sprint 5-7 / UI-1-1）
+        let text_fg = [0.97, 0.97, 0.97, 1.0];
+        let dim = cfg.inactive_text_brightness.clamp(0.2, 1.0);
+        let inactive_fg = [dim, dim, dim, 1.0];
 
         let padding = cell_w;
         let sep = cfg.separator.clone();
@@ -165,6 +169,7 @@ impl WgpuState {
 
         for (i, &pane_id) in pane_ids.iter().enumerate() {
             let is_active = pane_id == focused_id;
+            let is_hovered = state.hovered_tab_id == Some(pane_id);
             // アクティビティフラグ・タイトルを取得する
             let (has_activity, raw_title) = state
                 .panes
@@ -184,10 +189,16 @@ impl WgpuState {
                     truncated
                 }
             };
-            let label = if has_activity && !is_active {
-                format!(" {} ● ", base_label)
+            // タブ番号プレフィックス（Windows Terminal 風）: 設定 ON で [N] を前置
+            let numbered = if cfg.show_tab_number {
+                format!("[{}] {}", i + 1, base_label)
             } else {
-                format!(" {} ", base_label)
+                base_label
+            };
+            let label = if has_activity && !is_active {
+                format!(" {} ● ", numbered)
+            } else {
+                format!(" {} ", numbered)
             };
             let label_w =
                 (label.chars().count() as f32 * cell_w + padding * 2.0).min(tab_area_w - x_offset); // タブエリアをはみ出さない
@@ -196,11 +207,22 @@ impl WgpuState {
                 break; // これ以上タブを描画するスペースがない
             }
 
-            // アクティビティがある非アクティブタブは背景をオレンジ寄りに変更する
+            // タブ背景色を決定する:
+            //   1. アクティブ → active_bg
+            //   2. アクティビティあり非アクティブ → activity_bg（設定）
+            //   3. ホバー中 → inactive_bg を明るく
+            //   4. 通常 → inactive_bg
             let tab_bg = if is_active {
                 active_bg
             } else if has_activity {
-                [0.45, 0.30, 0.10, 1.0]
+                activity_bg
+            } else if is_hovered && cfg.hover_highlight {
+                [
+                    (inactive_bg[0] + 0.06).min(1.0),
+                    (inactive_bg[1] + 0.06).min(1.0),
+                    (inactive_bg[2] + 0.08).min(1.0),
+                    inactive_bg[3],
+                ]
             } else {
                 inactive_bg
             };
@@ -209,14 +231,14 @@ impl WgpuState {
             add_px_rect(
                 x_offset, bar_y, label_w, bar_h, tab_bg, sw, sh, bg_verts, bg_idx,
             );
-            // アクティブタブの下部にアクセントライン（#7AA2F7）を描画する
+            // アクティブタブの下部にアクセントライン（設定色）を描画する
             if is_active {
                 add_px_rect(
                     x_offset,
                     bar_y + bar_h - accent_h,
                     label_w,
                     accent_h,
-                    [0.478, 0.635, 0.969, 1.0],
+                    accent_color,
                     sw,
                     sh,
                     bg_verts,

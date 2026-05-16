@@ -88,6 +88,41 @@ pub struct TabBarConfig {
     pub inactive_tab_bg: String,
     /// タブセパレータ文字
     pub separator: String,
+    /// アクティビティのある非アクティブタブの背景色（RRGGBB）。
+    /// Sprint 5-7 / UI-1-1: WezTerm の `format-tab-title` 相当でハイライト色を指定可能に。
+    #[serde(default = "default_activity_tab_bg")]
+    pub activity_tab_bg: String,
+    /// アクティブタブ下端のアクセントライン色（RRGGBB）。
+    #[serde(default = "default_active_accent_color")]
+    pub active_accent_color: String,
+    /// タブラベルにペイン番号を `[1]` 形式で前置するか（Windows Terminal 風）。
+    #[serde(default)]
+    pub show_tab_number: bool,
+    /// 非アクティブタブのテキスト色をどれだけミュート（暗く）するか（0.0=暗い〜1.0=明るい）。
+    /// デフォルト 0.55 で WezTerm の `#5c6d74` に近い暗さ。
+    #[serde(default = "default_inactive_text_brightness")]
+    pub inactive_text_brightness: f32,
+    /// マウスホバー時にタブ背景を明るくするか。
+    #[serde(default = "default_true")]
+    pub hover_highlight: bool,
+}
+
+fn default_activity_tab_bg() -> String {
+    // やや暖色気味のオレンジで activity をハイライト（WezTerm 流の `#ae8b2d` 近似）
+    "#7A4D1A".to_string()
+}
+
+fn default_active_accent_color() -> String {
+    // Tokyo Night blue (#7AA2F7)
+    "#7AA2F7".to_string()
+}
+
+fn default_inactive_text_brightness() -> f32 {
+    0.55
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for TabBarConfig {
@@ -99,6 +134,11 @@ impl Default for TabBarConfig {
             active_tab_bg: "#3B4261".to_string(),
             inactive_tab_bg: "#1E2030".to_string(),
             separator: "❯".to_string(),
+            activity_tab_bg: default_activity_tab_bg(),
+            active_accent_color: default_active_accent_color(),
+            show_tab_number: false,
+            inactive_text_brightness: default_inactive_text_brightness(),
+            hover_highlight: true,
         }
     }
 }

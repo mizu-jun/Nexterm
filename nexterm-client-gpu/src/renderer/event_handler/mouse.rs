@@ -30,6 +30,28 @@ impl EventHandler {
         };
         let col = (position.x / cell_w) as u16;
         let row = ((position.y - tab_bar_h_f64).max(0.0) / cell_h) as u16;
+
+        // Sprint 5-7 / UI-1-1: タブバー上のホバー追跡
+        // カーソルがタブバー領域内（y < tab_bar_h）にあるとき、x 座標で hit テストして
+        // ホバー中のタブ ID を更新する。範囲外なら None。タブバー無効時は常に None。
+        let prev_hovered = self.app.state.hovered_tab_id;
+        let new_hovered = if self.app.config.tab_bar.enabled && position.y < tab_bar_h_f64 {
+            let px = position.x as f32;
+            self.app
+                .state
+                .tab_hit_rects
+                .iter()
+                .find(|&(_, &(x0, x1))| px >= x0 && px < x1)
+                .map(|(&id, _)| id)
+        } else {
+            None
+        };
+        if prev_hovered != new_hovered {
+            self.app.state.hovered_tab_id = new_hovered;
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+        }
         if self.app.state.mouse_sel.is_dragging {
             self.app.state.mouse_sel.update(col, row);
             if let Some(w) = &self.window {

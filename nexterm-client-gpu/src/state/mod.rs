@@ -93,6 +93,9 @@ pub struct ClientState {
     pub tab_hit_rects: HashMap<u32, (f32, f32)>,
     /// タブバーの設定ボタンのクリック範囲（x_start, x_end）
     pub settings_tab_rect: Option<(f32, f32)>,
+    /// 現在マウスがホバーしているタブの pane_id（Sprint 5-7 / UI-1-1）。
+    /// マウス移動時に renderer/event_handler/mouse.rs が更新し、タブバー描画で背景を明るくする。
+    pub hovered_tab_id: Option<u32>,
     /// 更新通知バナー（Some(version) = 表示中、None = 非表示）
     pub update_banner: Option<String>,
     /// 機密操作の同意ダイアログ（Sprint 4-1）
@@ -132,6 +135,7 @@ impl ClientState {
             floating_pane_rects: HashMap::new(),
             tab_hit_rects: HashMap::new(),
             settings_tab_rect: None,
+            hovered_tab_id: None,
             update_banner: None,
             pending_consent: None,
             session_consent_overrides: SessionConsentOverrides::default(),
