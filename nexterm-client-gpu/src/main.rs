@@ -14,6 +14,7 @@ mod macro_picker;
 mod notification;
 mod palette;
 mod platform;
+mod quake;
 mod renderer;
 mod scrollback;
 mod settings_panel;

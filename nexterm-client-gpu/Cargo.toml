@@ -56,6 +56,9 @@ zeroize = "1.8"
 minisign-verify = "0.2"
 # Sprint 4-1: OSC 9/777 デスクトップ通知。同意ダイアログを経て呼び出される
 notify-rust = "4"
+# Sprint 5-7 / Phase 2-2: Quake モードのグローバルホットキー登録
+# (Windows/macOS/X11 対応。Wayland は nexterm-ctl quake toggle 経由で代替)
+global-hotkey = "0.8"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

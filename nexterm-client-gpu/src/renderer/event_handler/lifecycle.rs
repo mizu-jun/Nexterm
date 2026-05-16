@@ -296,5 +296,69 @@ impl EventHandler {
                 w.request_redraw();
             }
         }
+
+        // Sprint 5-7 / Phase 2-2: Quake モード処理
+        // 1) global-hotkey 押下イベントを排出し、押下があれば "toggle" として扱う
+        // 2) サーバー経由のトグル要求 (`pending_quake_action`) を取り出す
+        // 3) 両者を統合して 1 回だけウィンドウ操作する（同フレームで複数発火しても 1 回）
+        self.handle_quake_tick();
+    }
+
+    /// Quake モードのトグル要求を 1 フレームに 1 回処理する
+    pub(super) fn handle_quake_tick(&mut self) {
+        // ホットキー押下を排出
+        let hotkey_pressed = self.quake.drain_pressed();
+        // IPC 経由の保留アクション
+        let pending = self.app.state.pending_quake_action.take();
+
+        // 何も無ければ早期 return
+        if !hotkey_pressed && pending.is_none() {
+            return;
+        }
+
+        // 統合: ホットキーは常に "toggle"。IPC 経由のアクション指定があればそちらを優先
+        let action = pending.unwrap_or_else(|| "toggle".to_string());
+
+        let Some(window) = self.window.as_ref().cloned() else {
+            warn!("Quake トグル要求を受け取りましたがウィンドウが未初期化です");
+            return;
+        };
+
+        let cfg = self.app.config.quake_mode.clone();
+        match action.as_str() {
+            "toggle" => {
+                if self.quake.visible {
+                    crate::quake::hide_window(&window, &cfg, self.quake.saved.as_ref());
+                    self.quake.visible = false;
+                } else {
+                    let saved = crate::quake::show_window(&window, &cfg);
+                    if saved.is_some() {
+                        self.quake.saved = saved;
+                    }
+                    self.quake.visible = true;
+                }
+            }
+            "show" => {
+                if !self.quake.visible {
+                    let saved = crate::quake::show_window(&window, &cfg);
+                    if saved.is_some() {
+                        self.quake.saved = saved;
+                    }
+                    self.quake.visible = true;
+                } else {
+                    window.focus_window();
+                }
+            }
+            "hide" => {
+                if self.quake.visible {
+                    crate::quake::hide_window(&window, &cfg, self.quake.saved.as_ref());
+                    self.quake.visible = false;
+                }
+            }
+            other => {
+                warn!("未知の Quake action '{}' を受信。無視します", other);
+            }
+        }
+        window.request_redraw();
     }
 }

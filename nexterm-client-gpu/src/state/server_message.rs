@@ -234,6 +234,14 @@ impl ClientState {
             ServerToClient::WorkspaceSwitched { name } => {
                 self.current_workspace = name;
             }
+            // Sprint 5-7 / Phase 2-2: Quake モード トグル要求
+            //
+            // nexterm-ctl などから IPC 経由でトグル要求が来た場合、ここでは
+            // 「保留中の Quake アクション」だけを記録し、実際のウィンドウ操作は
+            // lifecycle 側で winit Window への mutable アクセスを持って実行する。
+            ServerToClient::QuakeToggleRequest { action } => {
+                self.pending_quake_action = Some(action);
+            }
         }
     }
 

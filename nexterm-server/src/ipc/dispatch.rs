@@ -100,6 +100,7 @@ pub(super) async fn dispatch_inner(msg: &ClientToServer, ctx: &mut DispatchConte
         DeleteWorkspace { name, force } => {
             session_dispatch::handle_delete_workspace(ctx, name, *force).await
         }
+        QuakeToggle { action } => session_dispatch::handle_quake_toggle(ctx, action).await,
 
         // ----- pane_dispatch -----
         KeyEvent { code, modifiers } => {

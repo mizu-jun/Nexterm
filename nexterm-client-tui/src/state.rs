@@ -185,6 +185,8 @@ impl ClientState {
             ServerToClient::CwdChanged { .. } => {}
             // Sprint 5-7 / Phase 2-1: TUI にはワークスペース UI がないため一覧/切替通知は無視する
             ServerToClient::WorkspaceList { .. } | ServerToClient::WorkspaceSwitched { .. } => {}
+            // Sprint 5-7 / Phase 2-2: TUI には Quake モードがないため無視する
+            ServerToClient::QuakeToggleRequest { .. } => {}
         }
     }
 

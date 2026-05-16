@@ -111,6 +111,13 @@ pub struct ClientState {
     /// サーバーから `WorkspaceList` / `WorkspaceSwitched` を受信した時点で更新する。
     /// ステータスバーの `workspace` ビルトインウィジェットで参照される。
     pub current_workspace: String,
+    /// Quake モード トグル要求の保留キュー（Sprint 5-7 / Phase 2-2）。
+    ///
+    /// `apply_server_message` で `QuakeToggleRequest` を受信した時点で値を入れ、
+    /// lifecycle が次フレームで取り出して実際にウィンドウ操作を行う（winit Window
+    /// への mutable アクセスを ClientState 内に閉じ込めない設計）。
+    /// 値は `"toggle"` / `"show"` / `"hide"` のいずれか。
+    pub pending_quake_action: Option<String>,
 }
 
 impl ClientState {
@@ -149,6 +156,7 @@ impl ClientState {
             pending_consent: None,
             session_consent_overrides: SessionConsentOverrides::default(),
             current_workspace: "default".to_string(),
+            pending_quake_action: None,
         }
     }
 

@@ -41,7 +41,12 @@ pub use message::{
 ///   と `ServerToClient::{WorkspaceList, WorkspaceSwitched}` を新設。`SessionInfo` に
 ///   `workspace_name: String`（`#[serde(default)]` で旧クライアント互換）を追加し、
 ///   セッションを論理グループに束ねる上位概念を導入する。
-pub const PROTOCOL_VERSION: u32 = 5;
+/// - v6: Sprint 5-7 / Phase 2-2 — Quake モード（グローバルホットキー表示切替）を追加。
+///   `ClientToServer::QuakeToggle { action }` を新設（nexterm-ctl が Wayland 等で
+///   compositor の `bindsym` 経由でトリガーするために必要）。サーバーは接続中の全
+///   GPU クライアントに `ServerToClient::QuakeToggleRequest { action }` をブロード
+///   キャストして実際のウィンドウ操作を依頼する。
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// IPC メッセージ 1 件の最大サイズ（バイト数）。
 ///

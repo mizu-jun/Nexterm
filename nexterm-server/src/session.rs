@@ -644,6 +644,25 @@ impl SessionManager {
         )
     }
 
+    // ---- Quake モード（Sprint 5-7 / Phase 2-2） ----
+
+    /// 接続中の全 GPU クライアントに Quake トグル要求を配信する。
+    ///
+    /// 各 Session の broadcast::Sender に `ServerToClient::QuakeToggleRequest` を送る。
+    /// receiver（アタッチ中のクライアント）がいないセッションへの送信は無視される。
+    /// 戻り値: 配信先となった broadcast チャネル数（= セッション数）。
+    pub async fn broadcast_quake_request(&self, action: &str) -> usize {
+        let sessions = self.sessions.lock().await;
+        let mut delivered = 0;
+        for session in sessions.values() {
+            let _ = session.broadcast_sender().send(ServerToClient::QuakeToggleRequest {
+                action: action.to_string(),
+            });
+            delivered += 1;
+        }
+        delivered
+    }
+
     // ---- ワークスペース管理（Sprint 5-7 / Phase 2-1） ----
 
     /// 現在アクティブなワークスペース名を返す（テスト・将来のフック用）

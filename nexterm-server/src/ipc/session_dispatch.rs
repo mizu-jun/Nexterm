@@ -371,6 +371,31 @@ pub(super) async fn handle_rename_workspace(ctx: &mut DispatchContext<'_>, from:
     }
 }
 
+// ---- Quake モード (Sprint 5-7 / Phase 2-2) ----
+
+/// Quake トグル要求を全 GPU クライアントへ配信する
+///
+/// `action` は "toggle" / "show" / "hide" のいずれか。それ以外は警告ログを出して
+/// "toggle" として扱う（クライアント側で再度厳密にパースする）。
+pub(super) async fn handle_quake_toggle(ctx: &mut DispatchContext<'_>, action: &str) {
+    let normalized = match action {
+        "toggle" | "show" | "hide" => action.to_string(),
+        other => {
+            tracing::warn!(
+                "QuakeToggle に未知の action='{}' が指定されました。'toggle' として処理します",
+                other
+            );
+            "toggle".to_string()
+        }
+    };
+    let delivered = ctx.manager.broadcast_quake_request(&normalized).await;
+    tracing::info!(
+        "Quake トグル要求 '{}' を {} セッションにブロードキャストしました",
+        normalized,
+        delivered
+    );
+}
+
 /// ワークスペースを削除し、最新の一覧を送信する
 pub(super) async fn handle_delete_workspace(
     ctx: &mut DispatchContext<'_>,

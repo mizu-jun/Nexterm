@@ -184,6 +184,19 @@ fn build_cli() -> Command {
                 ),
         )
         .subcommand(
+            Command::new("quake")
+                .about(
+                    "Quake mode control (Sprint 5-7 / Phase 2-2) — toggle the slide-down terminal window. \
+                     Useful as a workaround on Wayland where the global hotkey cannot be registered \
+                     (bind this command to your compositor's keybinding).",
+                )
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .subcommand(Command::new("toggle").about("Toggle quake window visibility"))
+                .subcommand(Command::new("show").about("Show the quake window"))
+                .subcommand(Command::new("hide").about("Hide the quake window")),
+        )
+        .subcommand(
             Command::new("workspace")
                 .about("Workspace management (Sprint 5-7 / Phase 2-1)")
                 .subcommand_required(true)
@@ -361,6 +374,12 @@ async fn main() -> Result<()> {
                 cmd::template::cmd_template_load(name, session).await
             }
             Some(("list", _)) => cmd::template::cmd_template_list().await,
+            _ => unreachable!(),
+        },
+        Some(("quake", sub)) => match sub.subcommand() {
+            Some(("toggle", _)) => cmd::quake::cmd_quake_toggle().await,
+            Some(("show", _)) => cmd::quake::cmd_quake_show().await,
+            Some(("hide", _)) => cmd::quake::cmd_quake_hide().await,
             _ => unreachable!(),
         },
         Some(("workspace", sub)) => match sub.subcommand() {

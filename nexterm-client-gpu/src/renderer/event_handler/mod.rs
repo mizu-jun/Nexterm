@@ -69,6 +69,11 @@ pub struct EventHandler {
     pub(super) pixel_scroll_accumulator: f64,
     /// 更新チェッカーからの通知受信チャネル（Some(version) = 新バージョンあり）
     pub(super) update_rx: tokio::sync::watch::Receiver<Option<String>>,
+    /// Quake モード ランタイム（Sprint 5-7 / Phase 2-2）。
+    /// global-hotkey マネージャを drop しないように保持する。
+    /// `pending_quake_action` (state) と組み合わせてホットキー押下 / IPC 経由の
+    /// トグル要求を一元処理する。
+    pub(super) quake: crate::quake::QuakeRuntime,
 }
 
 impl ApplicationHandler for EventHandler {

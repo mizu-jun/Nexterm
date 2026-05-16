@@ -57,6 +57,9 @@ impl NextermApp {
         // カスタムシェーダーファイルが設定されていれば監視を開始する
         let (shader_reload_rx, _shader_watcher) = start_shader_watcher(&self.config.gpu);
 
+        // Sprint 5-7 / Phase 2-2: Quake モードランタイム初期化（global-hotkey 登録）
+        let quake = crate::quake::QuakeRuntime::new(&self.config.quake_mode);
+
         EventHandler {
             app: self,
             wgpu_state: None,
@@ -76,6 +79,7 @@ impl NextermApp {
             server_handle,
             pixel_scroll_accumulator: 0.0,
             update_rx,
+            quake,
         }
     }
 }

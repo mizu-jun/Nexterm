@@ -9,6 +9,7 @@ pub mod font;
 pub mod gpu;
 pub mod hosts;
 pub mod log;
+pub mod quake;
 pub mod security;
 pub mod shell;
 pub mod web;
@@ -19,6 +20,7 @@ pub use font::FontConfig;
 pub use gpu::{ApiVersion, GpuConfig, PresentModeConfig, Profile};
 pub use hosts::{HooksConfig, HostConfig};
 pub use log::{LogConfig, StatusBarConfig};
+pub use quake::{QuakeEdge, QuakeModeConfig};
 pub use security::{ConsentPolicy, SecurityConfig};
 pub use shell::{KeyBinding, MacroConfig, SerialPortConfig, ShellConfig};
 pub use web::{AccessLogConfig, OAuthConfig, TlsConfig, WebAuthConfig, WebConfig};
@@ -136,6 +138,12 @@ pub struct Config {
     /// Sprint 5-7 / UI-1-3。
     #[serde(default = "default_leader_key")]
     pub leader_key: String,
+
+    /// Quake モード設定（Sprint 5-7 / Phase 2-2）。
+    /// グローバルホットキーで画面端からスライド表示する Tilix / Guake 風機能。
+    /// デフォルトは `enabled = false`。
+    #[serde(default)]
+    pub quake_mode: QuakeModeConfig,
 }
 
 fn default_leader_key() -> String {
@@ -183,6 +191,7 @@ impl Default for Config {
             auto_check_update: default_auto_check_update(),
             security: SecurityConfig::default(),
             leader_key: default_leader_key(),
+            quake_mode: QuakeModeConfig::default(),
         }
     }
 }

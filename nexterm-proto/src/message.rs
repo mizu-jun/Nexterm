@@ -390,6 +390,17 @@ pub enum ClientToServer {
         #[serde(default)]
         force: bool,
     },
+    /// Quake モードのトグル要求（Sprint 5-7 / Phase 2-2）。
+    ///
+    /// nexterm-ctl が Wayland など `global-hotkey` が動かない環境で、compositor
+    /// の `bindsym` 経由でトリガーするために用いる。サーバーは接続中の全 GPU
+    /// クライアントに `ServerToClient::QuakeToggleRequest` をブロードキャストし、
+    /// 実際のウィンドウ操作（表示・非表示・アンカー位置）はクライアント側で行う。
+    QuakeToggle {
+        /// 操作種別: "toggle" / "show" / "hide"
+        #[serde(default = "default_quake_action")]
+        action: String,
+    },
     /// プロトコルハンドシェイク。接続後の最初のメッセージとして送信する。
     ///
     /// サーバーは `proto_version` を `nexterm_proto::PROTOCOL_VERSION` と比較し、
@@ -425,6 +436,9 @@ fn default_stop_bits() -> u8 {
 }
 fn default_parity() -> String {
     "none".to_string()
+}
+fn default_quake_action() -> String {
+    "toggle".to_string()
 }
 
 /// ペインのレイアウト情報（グリッド座標系）
@@ -703,6 +717,15 @@ pub enum ServerToClient {
         /// 切り替え後のワークスペース名
         name: String,
     },
+    /// Quake モード トグル要求（Sprint 5-7 / Phase 2-2）。
+    ///
+    /// `ClientToServer::QuakeToggle` を受け取ったサーバーが、接続中の全 GPU
+    /// クライアントへブロードキャストする。Quake モード対応クライアント（GPU 版）
+    /// は `action` に従ってウィンドウを表示・非表示・トグルする。
+    QuakeToggleRequest {
+        /// "toggle" / "show" / "hide" のいずれか
+        action: String,
+    },
     /// プロトコルハンドシェイク応答（サーバー → クライアント）。
     ///
     /// クライアントが Hello を送ってきた直後に、サーバーが自身のバージョン情報を返す。
@@ -919,6 +942,25 @@ mod tests {
         let enc = postcard::to_stdvec(&info).unwrap();
         let dec: SessionInfo = postcard::from_bytes(&enc).unwrap();
         assert_eq!(info, dec);
+    }
+
+    #[test]
+    fn quake_toggle_ipc_の_postcard_往復() {
+        // QuakeToggle（クライアント → サーバー）
+        let msg = ClientToServer::QuakeToggle {
+            action: "toggle".to_string(),
+        };
+        let enc = postcard::to_stdvec(&msg).unwrap();
+        let dec: ClientToServer = postcard::from_bytes(&enc).unwrap();
+        assert_eq!(msg, dec);
+
+        // QuakeToggleRequest（サーバー → クライアント、ブロードキャスト）
+        let req = ServerToClient::QuakeToggleRequest {
+            action: "show".to_string(),
+        };
+        let enc = postcard::to_stdvec(&req).unwrap();
+        let dec: ServerToClient = postcard::from_bytes(&enc).unwrap();
+        assert_eq!(req, dec);
     }
 
     #[test]
