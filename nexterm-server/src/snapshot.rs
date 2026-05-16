@@ -20,6 +20,9 @@
 //!
 //! - v1: 初期バージョン（`shell_args` が後から追加、`#[serde(default)]` で互換）
 //! - v2: `session_title` フィールドを追加。v1 スナップショットは自動マイグレーション可能
+//! - v3: Sprint 5-7 / Phase 2-1 — `SessionSnapshot.workspace_name` を追加し、
+//!   セッションをワークスペースにグルーピングする。v2 以前は `default` ワークスペース
+//!   に所属するものとして自動マイグレーション可能
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -28,13 +31,20 @@ use std::path::PathBuf;
 ///
 /// フォーマットを変更した場合はインクリメントする。
 /// 旧バージョンのスナップショットは `persist::load_snapshot` でマイグレーションを試みる。
-pub const SNAPSHOT_VERSION: u32 = 2;
+pub const SNAPSHOT_VERSION: u32 = 3;
 
 /// 旧バージョン（v1）との互換読み込みに使う最低サポートバージョン
 ///
 /// v2.0.0 リリース時に `2` へ bump 予定。
 /// 詳細は ADR-0007 (`docs/adr/0007-snapshot-v1-deprecation.md`) を参照。
 pub const SNAPSHOT_VERSION_MIN: u32 = 1;
+
+/// デフォルトワークスペース名。新規セッションや旧スナップショットの復元時に使用する。
+pub const DEFAULT_WORKSPACE: &str = "default";
+
+fn default_workspace() -> String {
+    DEFAULT_WORKSPACE.to_string()
+}
 
 /// サーバー全体のスナップショット（保存の最上位単位）
 #[derive(Debug, Serialize, Deserialize)]
@@ -45,6 +55,9 @@ pub struct ServerSnapshot {
     pub sessions: Vec<SessionSnapshot>,
     /// 保存時の Unix タイムスタンプ（秒）
     pub saved_at: u64,
+    /// 保存時にアクティブだったワークスペース名（v3 追加。省略時は `default`）
+    #[serde(default = "default_workspace")]
+    pub current_workspace: String,
 }
 
 /// セッションのスナップショット
@@ -68,6 +81,9 @@ pub struct SessionSnapshot {
     /// セッションの表示タイトル（v2 追加。省略時はセッション名を使用）
     #[serde(default)]
     pub session_title: Option<String>,
+    /// 所属ワークスペース名（v3 追加。省略時は `default`）
+    #[serde(default = "default_workspace")]
+    pub workspace_name: String,
 }
 
 /// ウィンドウのスナップショット

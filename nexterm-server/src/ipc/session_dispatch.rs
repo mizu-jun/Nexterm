@@ -278,3 +278,123 @@ pub(super) async fn handle_set_broadcast(ctx: &mut DispatchContext<'_>, enabled:
 pub(super) fn handle_display_panes() {
     // サーバー側での処理は不要（クライアント側のオーバーレイ表示のみ）
 }
+
+// ---- ワークスペース管理 (Sprint 5-7 / Phase 2-1) ----
+
+/// 現在のワークスペース一覧をクライアントに送信する
+pub(super) async fn handle_list_workspaces(ctx: &mut DispatchContext<'_>) {
+    let (current, workspaces) = ctx.manager.list_workspaces().await;
+    let _ = ctx
+        .tx
+        .send(ServerToClient::WorkspaceList {
+            current,
+            workspaces,
+        })
+        .await;
+}
+
+/// ワークスペースを新規作成し、最新の一覧を送信する
+pub(super) async fn handle_create_workspace(ctx: &mut DispatchContext<'_>, name: &str) {
+    match ctx.manager.create_workspace(name).await {
+        Ok(()) => {
+            let (current, workspaces) = ctx.manager.list_workspaces().await;
+            let _ = ctx
+                .tx
+                .send(ServerToClient::WorkspaceList {
+                    current,
+                    workspaces,
+                })
+                .await;
+        }
+        Err(e) => {
+            let _ = ctx
+                .tx
+                .send(ServerToClient::Error {
+                    message: e.to_string(),
+                })
+                .await;
+        }
+    }
+}
+
+/// 現在のワークスペースを切り替え、切替通知と最新一覧を送信する
+pub(super) async fn handle_switch_workspace(ctx: &mut DispatchContext<'_>, name: &str) {
+    match ctx.manager.switch_workspace(name).await {
+        Ok(switched) => {
+            let _ = ctx
+                .tx
+                .send(ServerToClient::WorkspaceSwitched {
+                    name: switched.clone(),
+                })
+                .await;
+            let (current, workspaces) = ctx.manager.list_workspaces().await;
+            let _ = ctx
+                .tx
+                .send(ServerToClient::WorkspaceList {
+                    current,
+                    workspaces,
+                })
+                .await;
+        }
+        Err(e) => {
+            let _ = ctx
+                .tx
+                .send(ServerToClient::Error {
+                    message: e.to_string(),
+                })
+                .await;
+        }
+    }
+}
+
+/// ワークスペースをリネームし、最新の一覧を送信する
+pub(super) async fn handle_rename_workspace(ctx: &mut DispatchContext<'_>, from: &str, to: &str) {
+    match ctx.manager.rename_workspace(from, to).await {
+        Ok(()) => {
+            let (current, workspaces) = ctx.manager.list_workspaces().await;
+            let _ = ctx
+                .tx
+                .send(ServerToClient::WorkspaceList {
+                    current,
+                    workspaces,
+                })
+                .await;
+        }
+        Err(e) => {
+            let _ = ctx
+                .tx
+                .send(ServerToClient::Error {
+                    message: e.to_string(),
+                })
+                .await;
+        }
+    }
+}
+
+/// ワークスペースを削除し、最新の一覧を送信する
+pub(super) async fn handle_delete_workspace(
+    ctx: &mut DispatchContext<'_>,
+    name: &str,
+    force: bool,
+) {
+    match ctx.manager.delete_workspace(name, force).await {
+        Ok(()) => {
+            let (current, workspaces) = ctx.manager.list_workspaces().await;
+            let _ = ctx
+                .tx
+                .send(ServerToClient::WorkspaceList {
+                    current,
+                    workspaces,
+                })
+                .await;
+        }
+        Err(e) => {
+            let _ = ctx
+                .tx
+                .send(ServerToClient::Error {
+                    message: e.to_string(),
+                })
+                .await;
+        }
+    }
+}

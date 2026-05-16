@@ -23,6 +23,7 @@ fn minimal_snapshot() -> ServerSnapshot {
         version: SNAPSHOT_VERSION,
         sessions: vec![],
         saved_at: 1_700_000_000,
+        current_workspace: "default".to_string(),
     }
 }
 
@@ -44,6 +45,7 @@ fn session_with_single_pane() -> SessionSnapshot {
         }],
         focused_window_id: 1,
         session_title: None,
+        workspace_name: "default".to_string(),
     }
 }
 
@@ -67,6 +69,7 @@ fn test_session_snapshot_roundtrip() {
         version: SNAPSHOT_VERSION,
         sessions: vec![session],
         saved_at: 42,
+        current_workspace: "default".to_string(),
     };
 
     let json = serde_json::to_string_pretty(&snap).expect("シリアライズ失敗");
@@ -136,6 +139,7 @@ fn test_persist_save_and_load() {
         version: SNAPSHOT_VERSION,
         sessions: vec![session_with_single_pane()],
         saved_at: 999,
+        current_workspace: "default".to_string(),
     };
 
     nexterm_server::persist::save_snapshot(&snap).expect("保存失敗");
@@ -204,7 +208,7 @@ fn test_load_snapshot_returns_none_when_missing() {
 #[test]
 fn test_snapshot_version_is_current() {
     assert_eq!(
-        SNAPSHOT_VERSION, 2,
+        SNAPSHOT_VERSION, 3,
         "スキーマバージョンが変更された場合は移行処理を追加すること"
     );
     assert_eq!(SNAPSHOT_VERSION_MIN, 1, "最低サポートバージョンは 1 のまま");
@@ -212,7 +216,7 @@ fn test_snapshot_version_is_current() {
 
 #[test]
 fn test_v1_snapshot_migrates_to_v2() {
-    // v1 形式のスナップショット JSON（session_title フィールドなし）
+    // v1 形式のスナップショット JSON（session_title / workspace_name / current_workspace なし）
     let v1_json = r#"{
         "version": 1,
         "sessions": [],
@@ -223,6 +227,34 @@ fn test_v1_snapshot_migrates_to_v2() {
     // serde(default) により v1 でも正常に読めるはず
     assert_eq!(snap.version, 1);
     assert!(snap.sessions.is_empty());
+    // v3 で追加された current_workspace は default を補完される
+    assert_eq!(snap.current_workspace, "default");
+}
+
+#[test]
+fn test_v2_snapshot_migrates_to_v3() {
+    // v2 形式のスナップショット JSON（workspace_name / current_workspace を含まない）
+    let v2_json = r#"{
+        "version": 2,
+        "sessions": [
+            {
+                "name": "main",
+                "shell": "/bin/bash",
+                "shell_args": [],
+                "cols": 80,
+                "rows": 24,
+                "windows": [],
+                "focused_window_id": 0,
+                "session_title": null
+            }
+        ],
+        "saved_at": 99
+    }"#;
+
+    let snap: ServerSnapshot = serde_json::from_str(v2_json).expect("v2 デシリアライズ失敗");
+    assert_eq!(snap.version, 2);
+    assert_eq!(snap.current_workspace, "default");
+    assert_eq!(snap.sessions[0].workspace_name, "default");
 }
 
 #[test]

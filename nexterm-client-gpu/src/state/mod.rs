@@ -107,6 +107,10 @@ pub struct ClientState {
     pub pending_consent: Option<ConsentDialog>,
     /// セッション中の「常に許可」決定（次回起動時はリセットされる）
     pub session_consent_overrides: SessionConsentOverrides,
+    /// 現在アクティブなワークスペース名（Sprint 5-7 / Phase 2-1）。
+    /// サーバーから `WorkspaceList` / `WorkspaceSwitched` を受信した時点で更新する。
+    /// ステータスバーの `workspace` ビルトインウィジェットで参照される。
+    pub current_workspace: String,
 }
 
 impl ClientState {
@@ -144,6 +148,7 @@ impl ClientState {
             update_banner: None,
             pending_consent: None,
             session_consent_overrides: SessionConsentOverrides::default(),
+            current_workspace: "default".to_string(),
         }
     }
 

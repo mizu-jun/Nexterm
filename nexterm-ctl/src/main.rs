@@ -184,6 +184,41 @@ fn build_cli() -> Command {
                 ),
         )
         .subcommand(
+            Command::new("workspace")
+                .about("Workspace management (Sprint 5-7 / Phase 2-1)")
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .subcommand(Command::new("list").about("List all workspaces"))
+                .subcommand(
+                    Command::new("create")
+                        .about("Create a new workspace")
+                        .arg(Arg::new("name").help("Workspace name").required(true)),
+                )
+                .subcommand(
+                    Command::new("switch")
+                        .about("Switch the active workspace")
+                        .arg(Arg::new("name").help("Workspace name").required(true)),
+                )
+                .subcommand(
+                    Command::new("rename")
+                        .about("Rename an existing workspace")
+                        .arg(Arg::new("from").help("Old name").required(true))
+                        .arg(Arg::new("to").help("New name").required(true)),
+                )
+                .subcommand(
+                    Command::new("delete")
+                        .about("Delete a workspace (default cannot be deleted)")
+                        .arg(Arg::new("name").help("Workspace name").required(true))
+                        .arg(
+                            Arg::new("force")
+                                .long("force")
+                                .short('f')
+                                .help("Move remaining sessions to 'default' and delete anyway")
+                                .action(clap::ArgAction::SetTrue),
+                        ),
+                ),
+        )
+        .subcommand(
             Command::new("wsl")
                 .about("WSL distro management (Windows only)")
                 .subcommand_required(true)
@@ -326,6 +361,43 @@ async fn main() -> Result<()> {
                 cmd::template::cmd_template_load(name, session).await
             }
             Some(("list", _)) => cmd::template::cmd_template_list().await,
+            _ => unreachable!(),
+        },
+        Some(("workspace", sub)) => match sub.subcommand() {
+            Some(("list", _)) => cmd::workspace::cmd_workspace_list().await,
+            Some(("create", s)) => {
+                let name = s
+                    .get_one::<String>("name")
+                    .expect("clap required arg")
+                    .clone();
+                cmd::workspace::cmd_workspace_create(name).await
+            }
+            Some(("switch", s)) => {
+                let name = s
+                    .get_one::<String>("name")
+                    .expect("clap required arg")
+                    .clone();
+                cmd::workspace::cmd_workspace_switch(name).await
+            }
+            Some(("rename", s)) => {
+                let from = s
+                    .get_one::<String>("from")
+                    .expect("clap required arg")
+                    .clone();
+                let to = s
+                    .get_one::<String>("to")
+                    .expect("clap required arg")
+                    .clone();
+                cmd::workspace::cmd_workspace_rename(from, to).await
+            }
+            Some(("delete", s)) => {
+                let name = s
+                    .get_one::<String>("name")
+                    .expect("clap required arg")
+                    .clone();
+                let force = s.get_flag("force");
+                cmd::workspace::cmd_workspace_delete(name, force).await
+            }
             _ => unreachable!(),
         },
         Some(("wsl", sub)) => match sub.subcommand() {

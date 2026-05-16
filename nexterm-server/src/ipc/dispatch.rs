@@ -91,6 +91,15 @@ pub(super) async fn dispatch_inner(msg: &ClientToServer, ctx: &mut DispatchConte
         }
         SetBroadcast { enabled } => session_dispatch::handle_set_broadcast(ctx, *enabled).await,
         DisplayPanes { .. } => session_dispatch::handle_display_panes(),
+        ListWorkspaces => session_dispatch::handle_list_workspaces(ctx).await,
+        CreateWorkspace { name } => session_dispatch::handle_create_workspace(ctx, name).await,
+        SwitchWorkspace { name } => session_dispatch::handle_switch_workspace(ctx, name).await,
+        RenameWorkspace { from, to } => {
+            session_dispatch::handle_rename_workspace(ctx, from, to).await
+        }
+        DeleteWorkspace { name, force } => {
+            session_dispatch::handle_delete_workspace(ctx, name, *force).await
+        }
 
         // ----- pane_dispatch -----
         KeyEvent { code, modifiers } => {

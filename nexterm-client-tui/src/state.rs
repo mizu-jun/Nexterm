@@ -183,6 +183,8 @@ impl ClientState {
             ServerToClient::ClipboardWriteRequest { .. } => {}
             // Sprint 5-2: TUI にはタブ/CWD 表示 UI がないため OSC 7 CWD 通知は無視する
             ServerToClient::CwdChanged { .. } => {}
+            // Sprint 5-7 / Phase 2-1: TUI にはワークスペース UI がないため一覧/切替通知は無視する
+            ServerToClient::WorkspaceList { .. } | ServerToClient::WorkspaceSwitched { .. } => {}
         }
     }
 

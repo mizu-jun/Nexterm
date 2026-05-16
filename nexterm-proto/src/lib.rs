@@ -15,7 +15,7 @@ pub use cell::{Attrs, Cell, Color};
 pub use grid::{DirtyRow, Grid, HyperlinkSpan};
 pub use message::{
     ClientKind, ClientToServer, KeyCode, Modifiers, PaneLayout, ServerToClient, SessionInfo,
-    WindowInfo,
+    WindowInfo, WorkspaceInfo,
 };
 
 /// IPC プロトコルバージョン。
@@ -36,7 +36,12 @@ pub use message::{
 ///   OSC 7 (`file://host/path`) で受信したシェルの現在ディレクトリをクライアントに伝搬し、
 ///   新規ペイン作成時の親 CWD 継承・タブ表示に利用する。enum バリアント追加のため
 ///   旧クライアント (v3) は新サーバーが送る `CwdChanged` をデコードできない。
-pub const PROTOCOL_VERSION: u32 = 4;
+/// - v5: Sprint 5-7 / Phase 2-1 — ワークスペース機能を追加。
+///   `ClientToServer::{CreateWorkspace, SwitchWorkspace, ListWorkspaces, RenameWorkspace, DeleteWorkspace}`
+///   と `ServerToClient::{WorkspaceList, WorkspaceSwitched}` を新設。`SessionInfo` に
+///   `workspace_name: String`（`#[serde(default)]` で旧クライアント互換）を追加し、
+///   セッションを論理グループに束ねる上位概念を導入する。
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// IPC メッセージ 1 件の最大サイズ（バイト数）。
 ///

@@ -224,6 +224,16 @@ impl ClientState {
                     pane.cwd = Some(cwd);
                 }
             }
+            // Sprint 5-7 / Phase 2-1: ワークスペース一覧 / 切替通知
+            ServerToClient::WorkspaceList {
+                current,
+                workspaces: _,
+            } => {
+                self.current_workspace = current;
+            }
+            ServerToClient::WorkspaceSwitched { name } => {
+                self.current_workspace = name;
+            }
         }
     }
 

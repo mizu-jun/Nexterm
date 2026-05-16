@@ -8,9 +8,11 @@ use anyhow::{Result, bail};
 use tokio::sync::{Mutex, broadcast, mpsc};
 use tracing::{info, warn};
 
-use nexterm_proto::{ServerToClient, SessionInfo, WindowInfo};
+use nexterm_proto::{ServerToClient, SessionInfo, WindowInfo, WorkspaceInfo};
 
-use crate::snapshot::{SNAPSHOT_VERSION, SNAPSHOT_VERSION_MIN, ServerSnapshot, SessionSnapshot};
+use crate::snapshot::{
+    DEFAULT_WORKSPACE, SNAPSHOT_VERSION, SNAPSHOT_VERSION_MIN, ServerSnapshot, SessionSnapshot,
+};
 use crate::window::Window;
 
 static NEXT_WINDOW_ID: AtomicU32 = AtomicU32::new(1);
@@ -42,16 +44,42 @@ pub struct Session {
     pub rows: u16,
     /// ブロードキャストモードフラグ（全ペインへの入力転送）
     broadcast: bool,
+    /// 所属ワークスペース名（Sprint 5-7 / Phase 2-1）。
+    /// デフォルトは `"default"`。`SessionManager` 経由で変更する。
+    pub workspace_name: String,
 }
 
 impl Session {
-    /// 最初のウィンドウを持つセッションを生成する
+    /// 最初のウィンドウを持つセッションを生成する（デフォルトワークスペース所属）
+    ///
+    /// 内部的には `new_in_workspace(.., DEFAULT_WORKSPACE)` を呼ぶ薄いラッパー。
+    /// テストおよび後方互換 API のために残している。
+    #[allow(dead_code)]
     pub fn new(
         name: String,
         cols: u16,
         rows: u16,
         shell: String,
         shell_args: Vec<String>,
+    ) -> Result<Self> {
+        Self::new_in_workspace(
+            name,
+            cols,
+            rows,
+            shell,
+            shell_args,
+            DEFAULT_WORKSPACE.to_string(),
+        )
+    }
+
+    /// 指定ワークスペースに所属するセッションを生成する（Sprint 5-7 / Phase 2-1）
+    pub fn new_in_workspace(
+        name: String,
+        cols: u16,
+        rows: u16,
+        shell: String,
+        shell_args: Vec<String>,
+        workspace_name: String,
     ) -> Result<Self> {
         let (broadcast_tx, _) = broadcast::channel::<ServerToClient>(2048);
         let window_id = new_window_id();
@@ -77,6 +105,7 @@ impl Session {
             cols,
             rows,
             broadcast: false,
+            workspace_name,
         })
     }
 
@@ -86,6 +115,7 @@ impl Session {
             name: self.name.clone(),
             window_count: self.windows.len() as u32,
             attached: self.broadcast_tx.receiver_count() > 0,
+            workspace_name: self.workspace_name.clone(),
         }
     }
 
@@ -337,6 +367,7 @@ impl Session {
             windows: self.windows.values().map(|w| w.to_snapshot()).collect(),
             focused_window_id: self.focused_window_id,
             session_title: None,
+            workspace_name: self.workspace_name.clone(),
         }
     }
 
@@ -383,6 +414,11 @@ impl Session {
             cols: snap.cols,
             rows: snap.rows,
             broadcast: false,
+            workspace_name: if snap.workspace_name.is_empty() {
+                DEFAULT_WORKSPACE.to_string()
+            } else {
+                snap.workspace_name.clone()
+            },
         })
     }
 }
@@ -394,6 +430,27 @@ pub struct SessionManager {
     shell_config: nexterm_config::ShellConfig,
     /// WASM プラグインマネージャー（IPC 経由でロード/アンロード操作を受け付ける）
     pub plugin_manager: Arc<std::sync::Mutex<Option<nexterm_plugin::PluginManager>>>,
+    /// ワークスペース管理状態（Sprint 5-7 / Phase 2-1）。
+    ///
+    /// 既知のワークスペース集合（`default` を必ず含む）と、現在アクティブな名前を保持する。
+    workspace_state: Arc<Mutex<WorkspaceState>>,
+}
+
+/// SessionManager 内部のワークスペース状態
+struct WorkspaceState {
+    /// 既知のワークスペース名（順序保持のため Vec を使用）
+    known: Vec<String>,
+    /// 現在アクティブなワークスペース名
+    current: String,
+}
+
+impl WorkspaceState {
+    fn new() -> Self {
+        Self {
+            known: vec![DEFAULT_WORKSPACE.to_string()],
+            current: DEFAULT_WORKSPACE.to_string(),
+        }
+    }
 }
 
 impl SessionManager {
@@ -402,6 +459,7 @@ impl SessionManager {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             shell_config,
             plugin_manager: Arc::new(std::sync::Mutex::new(None)),
+            workspace_state: Arc::new(Mutex::new(WorkspaceState::new())),
         }
     }
 
@@ -425,7 +483,8 @@ impl SessionManager {
         }
         let shell = self.shell_config.program.clone();
         let args = self.shell_config.args.clone();
-        let session = Session::new(name.clone(), cols, rows, shell, args)?;
+        let workspace = self.workspace_state.lock().await.current.clone();
+        let session = Session::new_in_workspace(name.clone(), cols, rows, shell, args, workspace)?;
         sessions.insert(name.clone(), session);
         info!("セッション '{}' を作成しました", name);
         Ok(())
@@ -457,7 +516,9 @@ impl SessionManager {
         } else {
             let shell = self.shell_config.program.clone();
             let args = self.shell_config.args.clone();
-            let session = Session::new(name.to_string(), cols, rows, shell, args)?;
+            let workspace = self.workspace_state.lock().await.current.clone();
+            let session =
+                Session::new_in_workspace(name.to_string(), cols, rows, shell, args, workspace)?;
             sessions.insert(name.to_string(), session);
             info!("セッション '{}' を新規作成しました", name);
         }
@@ -583,11 +644,173 @@ impl SessionManager {
         )
     }
 
+    // ---- ワークスペース管理（Sprint 5-7 / Phase 2-1） ----
+
+    /// 現在アクティブなワークスペース名を返す（テスト・将来のフック用）
+    #[allow(dead_code)]
+    pub async fn current_workspace(&self) -> String {
+        self.workspace_state.lock().await.current.clone()
+    }
+
+    /// 全ワークスペースの情報を返す（IPC `ListWorkspaces` 用）。
+    ///
+    /// 各ワークスペースのセッション数は `sessions` の `workspace_name` から集計する。
+    /// 既知のワークスペース集合にはセッションが 0 件でも残る（明示削除されるまで保持）。
+    pub async fn list_workspaces(&self) -> (String, Vec<WorkspaceInfo>) {
+        let state = self.workspace_state.lock().await;
+        let sessions = self.sessions.lock().await;
+
+        // セッション数集計
+        let mut counts: HashMap<String, u32> = HashMap::new();
+        for session in sessions.values() {
+            *counts.entry(session.workspace_name.clone()).or_insert(0) += 1;
+        }
+
+        let workspaces = state
+            .known
+            .iter()
+            .map(|name| WorkspaceInfo {
+                name: name.clone(),
+                session_count: counts.get(name).copied().unwrap_or(0),
+                is_active: name == &state.current,
+            })
+            .collect();
+        (state.current.clone(), workspaces)
+    }
+
+    /// 新しいワークスペースを作成する
+    pub async fn create_workspace(&self, name: &str) -> Result<()> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            bail!("ワークスペース名が空です");
+        }
+        let mut state = self.workspace_state.lock().await;
+        if state.known.iter().any(|w| w == trimmed) {
+            bail!("ワークスペース '{}' は既に存在します", trimmed);
+        }
+        state.known.push(trimmed.to_string());
+        info!("ワークスペース '{}' を作成しました", trimmed);
+        Ok(())
+    }
+
+    /// 現在アクティブなワークスペースを切り替える
+    ///
+    /// 切替後のワークスペース名を返す。
+    pub async fn switch_workspace(&self, name: &str) -> Result<String> {
+        let mut state = self.workspace_state.lock().await;
+        if !state.known.iter().any(|w| w == name) {
+            bail!("ワークスペース '{}' が見つかりません", name);
+        }
+        state.current = name.to_string();
+        info!("ワークスペース '{}' に切り替えました", name);
+        Ok(state.current.clone())
+    }
+
+    /// ワークスペースをリネームする
+    ///
+    /// 配下のセッションの `workspace_name` も一括更新する。
+    pub async fn rename_workspace(&self, from: &str, to: &str) -> Result<()> {
+        let to_trimmed = to.trim();
+        if to_trimmed.is_empty() {
+            bail!("新しいワークスペース名が空です");
+        }
+        if from == to_trimmed {
+            return Ok(());
+        }
+        let mut state = self.workspace_state.lock().await;
+        if !state.known.iter().any(|w| w == from) {
+            bail!("ワークスペース '{}' が見つかりません", from);
+        }
+        if state.known.iter().any(|w| w == to_trimmed) {
+            bail!("ワークスペース '{}' は既に存在します", to_trimmed);
+        }
+        if from == DEFAULT_WORKSPACE {
+            bail!(
+                "デフォルトワークスペース '{}' はリネームできません",
+                DEFAULT_WORKSPACE
+            );
+        }
+
+        // known 内の名前を置換
+        for w in state.known.iter_mut() {
+            if w == from {
+                *w = to_trimmed.to_string();
+            }
+        }
+        // current も更新
+        if state.current == from {
+            state.current = to_trimmed.to_string();
+        }
+        // セッション側の workspace_name も更新
+        let mut sessions = self.sessions.lock().await;
+        for session in sessions.values_mut() {
+            if session.workspace_name == from {
+                session.workspace_name = to_trimmed.to_string();
+            }
+        }
+        info!(
+            "ワークスペース '{}' を '{}' にリネームしました",
+            from, to_trimmed
+        );
+        Ok(())
+    }
+
+    /// ワークスペースを削除する
+    ///
+    /// `default` は削除不可。配下にセッションがある場合は `force=true` で default に
+    /// 退避させて削除を強行する。削除したワークスペースが current の場合、
+    /// current は default に戻る。
+    pub async fn delete_workspace(&self, name: &str, force: bool) -> Result<()> {
+        if name == DEFAULT_WORKSPACE {
+            bail!(
+                "デフォルトワークスペース '{}' は削除できません",
+                DEFAULT_WORKSPACE
+            );
+        }
+        let mut state = self.workspace_state.lock().await;
+        if !state.known.iter().any(|w| w == name) {
+            bail!("ワークスペース '{}' が見つかりません", name);
+        }
+        // 配下セッション数チェック
+        let mut sessions = self.sessions.lock().await;
+        let session_count = sessions
+            .values()
+            .filter(|s| s.workspace_name == name)
+            .count();
+        if session_count > 0 && !force {
+            bail!(
+                "ワークスペース '{}' にはセッションが {} 件残っています。force=true で再試行してください",
+                name,
+                session_count
+            );
+        }
+        // force=true: セッションを default に退避
+        if force {
+            for session in sessions.values_mut() {
+                if session.workspace_name == name {
+                    session.workspace_name = DEFAULT_WORKSPACE.to_string();
+                }
+            }
+        }
+        // known から除去
+        state.known.retain(|w| w != name);
+        // current だった場合は default に戻す
+        if state.current == name {
+            state.current = DEFAULT_WORKSPACE.to_string();
+        }
+        info!(
+            "ワークスペース '{}' を削除しました（force={}）",
+            name, force
+        );
+        Ok(())
+    }
+
     // ---- スナップショット ----
 
     /// 全セッションをスナップショットに変換する
     pub async fn to_snapshot(&self) -> ServerSnapshot {
         let sessions = self.sessions.lock().await;
+        let current_workspace = self.workspace_state.lock().await.current.clone();
         let saved_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -596,6 +819,7 @@ impl SessionManager {
             version: SNAPSHOT_VERSION,
             sessions: sessions.values().map(|s| s.to_snapshot()).collect(),
             saved_at,
+            current_workspace,
         }
     }
 
@@ -615,6 +839,8 @@ impl SessionManager {
 
         let mut sessions = self.sessions.lock().await;
         let mut restored = Vec::new();
+        // 復元したセッションのワークスペース集合（既知集合に追加するため）
+        let mut restored_workspaces: Vec<String> = Vec::new();
 
         for sess_snap in &snap.sessions {
             if sessions.contains_key(&sess_snap.name) {
@@ -626,6 +852,10 @@ impl SessionManager {
             }
             match Session::restore_from_snapshot(sess_snap) {
                 Ok(session) => {
+                    let ws = session.workspace_name.clone();
+                    if !ws.is_empty() && !restored_workspaces.contains(&ws) {
+                        restored_workspaces.push(ws);
+                    }
                     sessions.insert(sess_snap.name.clone(), session);
                     restored.push(sess_snap.name.clone());
                     info!("セッション '{}' を復元しました", sess_snap.name);
@@ -637,6 +867,21 @@ impl SessionManager {
                     );
                 }
             }
+        }
+        drop(sessions);
+
+        // ワークスペース状態を復元
+        let mut state = self.workspace_state.lock().await;
+        for ws in restored_workspaces {
+            if !state.known.iter().any(|w| w == &ws) {
+                state.known.push(ws);
+            }
+        }
+        // current_workspace を復元（既知集合にあれば採用、なければ default のまま）
+        if !snap.current_workspace.is_empty()
+            && state.known.iter().any(|w| w == &snap.current_workspace)
+        {
+            state.current = snap.current_workspace.clone();
         }
 
         restored
@@ -686,6 +931,102 @@ mod tests {
         let list = manager.list_sessions().await;
         assert_eq!(list.len(), 0, "初期状態では空のリストを返すべき");
     }
+
+    // ---- ワークスペース API ユニットテスト（PTY 不要） ----
+
+    #[tokio::test]
+    async fn ワークスペース初期状態() {
+        let manager = SessionManager::new(nexterm_config::ShellConfig::default());
+        assert_eq!(manager.current_workspace().await, DEFAULT_WORKSPACE);
+        let (current, list) = manager.list_workspaces().await;
+        assert_eq!(current, DEFAULT_WORKSPACE);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, DEFAULT_WORKSPACE);
+        assert!(list[0].is_active);
+        assert_eq!(list[0].session_count, 0);
+    }
+
+    #[tokio::test]
+    async fn ワークスペース作成と切替() {
+        let manager = SessionManager::new(nexterm_config::ShellConfig::default());
+        manager.create_workspace("dev").await.unwrap();
+
+        let (_, list) = manager.list_workspaces().await;
+        assert_eq!(list.len(), 2);
+        assert!(list.iter().any(|w| w.name == "dev"));
+
+        manager.switch_workspace("dev").await.unwrap();
+        assert_eq!(manager.current_workspace().await, "dev");
+
+        // 存在しないワークスペースへの切替はエラー
+        assert!(manager.switch_workspace("unknown").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn ワークスペース重複作成はエラー() {
+        let manager = SessionManager::new(nexterm_config::ShellConfig::default());
+        manager.create_workspace("dev").await.unwrap();
+        assert!(manager.create_workspace("dev").await.is_err());
+        assert!(manager.create_workspace("").await.is_err());
+        assert!(manager.create_workspace("   ").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn ワークスペース削除() {
+        let manager = SessionManager::new(nexterm_config::ShellConfig::default());
+        manager.create_workspace("tmp").await.unwrap();
+        manager.delete_workspace("tmp", false).await.unwrap();
+        let (_, list) = manager.list_workspaces().await;
+        assert_eq!(list.len(), 1);
+
+        // default は削除不可
+        assert!(
+            manager
+                .delete_workspace(DEFAULT_WORKSPACE, true)
+                .await
+                .is_err()
+        );
+
+        // 存在しないワークスペース削除はエラー
+        assert!(manager.delete_workspace("ghost", false).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn ワークスペース削除でアクティブが_default_に戻る() {
+        let manager = SessionManager::new(nexterm_config::ShellConfig::default());
+        manager.create_workspace("dev").await.unwrap();
+        manager.switch_workspace("dev").await.unwrap();
+        manager.delete_workspace("dev", false).await.unwrap();
+        assert_eq!(manager.current_workspace().await, DEFAULT_WORKSPACE);
+    }
+
+    #[tokio::test]
+    async fn ワークスペースリネーム() {
+        let manager = SessionManager::new(nexterm_config::ShellConfig::default());
+        manager.create_workspace("old").await.unwrap();
+        manager.switch_workspace("old").await.unwrap();
+        manager.rename_workspace("old", "new").await.unwrap();
+        assert_eq!(manager.current_workspace().await, "new");
+        let (_, list) = manager.list_workspaces().await;
+        assert!(list.iter().any(|w| w.name == "new"));
+        assert!(!list.iter().any(|w| w.name == "old"));
+
+        // default のリネームは禁止
+        assert!(
+            manager
+                .rename_workspace(DEFAULT_WORKSPACE, "x")
+                .await
+                .is_err()
+        );
+
+        // 存在しない名前のリネームはエラー
+        assert!(manager.rename_workspace("ghost", "y").await.is_err());
+
+        // 既存名との衝突はエラー
+        manager.create_workspace("a").await.unwrap();
+        manager.create_workspace("b").await.unwrap();
+        assert!(manager.rename_workspace("a", "b").await.is_err());
+    }
     // ── 実 PTY を spawn するテスト ────────────────────────────────────────────
     //
     // 以下 4 つのテストは実際にシェル (PowerShell / $SHELL) を spawn し、
@@ -732,6 +1073,7 @@ mod tests {
         assert_eq!(info.name, "test");
         assert_eq!(info.window_count, 1);
         assert!(!info.attached);
+        assert_eq!(info.workspace_name, DEFAULT_WORKSPACE);
     }
 
     #[tokio::test]

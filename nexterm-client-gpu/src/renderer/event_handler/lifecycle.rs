@@ -254,7 +254,7 @@ impl EventHandler {
                 session_name: Some("main".to_string()),
                 pane_id: self.app.state.focused_pane_id,
                 cwd,
-                workspace_name: None, // Phase 2-1 で導入
+                workspace_name: Some(self.app.state.current_workspace.clone()),
             };
             let sep = &self.app.config.status_bar.separator;
             self.app.state.status_bar_text =

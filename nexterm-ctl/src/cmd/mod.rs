@@ -9,6 +9,7 @@
 //! - [`ghostty`][] import-ghostty (Ghostty 設定の変換)
 //! - [`theme`][] theme import (iTerm2 / Alacritty / Base16)
 //! - [`plugin`][] WASM プラグイン管理 (list / load / unload / reload)
+//! - [`workspace`][] ワークスペース管理 (list / create / switch / rename / delete)
 
 pub(crate) mod ghostty;
 pub(crate) mod plugin;
@@ -18,4 +19,5 @@ pub(crate) mod session;
 pub(crate) mod template;
 pub(crate) mod theme;
 pub(crate) mod util;
+pub(crate) mod workspace;
 pub(crate) mod wsl;
