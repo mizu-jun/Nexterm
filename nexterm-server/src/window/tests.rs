@@ -431,3 +431,71 @@ proptest! {
         let _ = compute_tiling_layouts(&ids, cols, rows);
     }
 }
+
+// ---- compute_reordered（Sprint 5-7 / Phase 2-3）テスト ----
+
+use super::compute_reordered;
+use std::collections::HashSet;
+
+fn known_set(ids: &[u32]) -> HashSet<u32> {
+    ids.iter().copied().collect()
+}
+
+#[test]
+fn reorder_完全な順列を反映する() {
+    let current = vec![1, 2, 3, 4];
+    let known = known_set(&current);
+    let requested = vec![3, 1, 4, 2];
+    let next = compute_reordered(&current, &requested, &known);
+    assert_eq!(next, vec![3, 1, 4, 2]);
+}
+
+#[test]
+fn reorder_未指定idは元の相対順で末尾補完される() {
+    let current = vec![10, 20, 30, 40];
+    let known = known_set(&current);
+    // 30 と 10 だけ指定。残り 20, 40 は元の相対順で末尾に
+    let requested = vec![30, 10];
+    let next = compute_reordered(&current, &requested, &known);
+    assert_eq!(next, vec![30, 10, 20, 40]);
+}
+
+#[test]
+fn reorder_未知idは無視される() {
+    let current = vec![1, 2, 3];
+    let known = known_set(&current);
+    // 99 は未知 → 無視。1, 3 だけ採用、2 が末尾補完
+    let requested = vec![99, 3, 99, 1];
+    let next = compute_reordered(&current, &requested, &known);
+    assert_eq!(next, vec![3, 1, 2]);
+}
+
+#[test]
+fn reorder_重複指定は最初の出現のみ採用() {
+    let current = vec![1, 2, 3];
+    let known = known_set(&current);
+    let requested = vec![2, 2, 1, 3, 1];
+    let next = compute_reordered(&current, &requested, &known);
+    assert_eq!(next, vec![2, 1, 3]);
+}
+
+#[test]
+fn reorder_空指定は元の順序を保つ() {
+    let current = vec![5, 6, 7];
+    let known = known_set(&current);
+    let next = compute_reordered(&current, &[], &known);
+    assert_eq!(next, vec![5, 6, 7]);
+}
+
+#[test]
+fn reorder_currentにない既知idは末尾に昇順で追加() {
+    // 何らかのバグで pane_order に登録漏れの既知ペインがあったケース
+    let current = vec![1, 3];
+    let mut known = known_set(&current);
+    known.insert(5);
+    known.insert(2);
+    let requested = vec![3, 1];
+    let next = compute_reordered(&current, &requested, &known);
+    // 3, 1 → current から漏れていた 5, 2 を昇順で末尾追加
+    assert_eq!(next, vec![3, 1, 2, 5]);
+}

@@ -207,6 +207,9 @@ impl ClientState {
             } => {
                 // レイアウトを全更新する
                 self.pane_layouts.clear();
+                // Sprint 5-7 / Phase 2-3: panes 配列の登場順を tab_order に反映
+                // （サーバーが Window.pane_order に従って並べているため、これが論理タブ順）
+                self.tab_order = panes.iter().map(|l| l.pane_id).collect();
                 for layout in panes {
                     self.pane_layouts.insert(layout.pane_id, layout);
                 }

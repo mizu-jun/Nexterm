@@ -46,7 +46,12 @@ pub use message::{
 ///   compositor の `bindsym` 経由でトリガーするために必要）。サーバーは接続中の全
 ///   GPU クライアントに `ServerToClient::QuakeToggleRequest { action }` をブロード
 ///   キャストして実際のウィンドウ操作を依頼する。
-pub const PROTOCOL_VERSION: u32 = 6;
+/// - v7: Sprint 5-7 / Phase 2-3 — タブ並べ替えドラッグ。
+///   `ClientToServer::ReorderPanes { pane_ids }` を新設。クライアントがタブバー上の
+///   ドラッグ&ドロップで決めた新順序をサーバーに送り、サーバーは `Window.pane_order`
+///   を更新して `LayoutChanged.panes` 配列の順序に反映する（既存メッセージの
+///   フィールド順序変更のみで、enum バリアント追加は本変更では ReorderPanes のみ）。
+pub const PROTOCOL_VERSION: u32 = 7;
 
 /// IPC メッセージ 1 件の最大サイズ（バイト数）。
 ///

@@ -213,6 +213,37 @@ pub(super) async fn handle_toggle_zoom(ctx: &mut DispatchContext<'_>) {
     }
 }
 
+/// タブ並べ替え要求を処理する（Sprint 5-7 / Phase 2-3）。
+///
+/// クライアントから受信した新順序を `Window::reorder_panes` に渡して反映させ、
+/// 順序に変更があった場合のみ最新の `LayoutChanged` を送信する（無変化なら no-op）。
+pub(super) async fn handle_reorder_panes(ctx: &mut DispatchContext<'_>, pane_ids: &[u32]) {
+    if let Some(ref name) = *ctx.current_session {
+        let layout_msg = {
+            let arc = ctx.manager.sessions();
+            let mut sessions = arc.lock().await;
+            if let Some(s) = sessions.get_mut(name) {
+                let cols = s.cols;
+                let rows = s.rows;
+                if let Some(w) = s.focused_window_mut() {
+                    if w.reorder_panes(pane_ids.to_vec()) {
+                        Some(w.layout_changed_msg(cols, rows))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+        if let Some(msg) = layout_msg {
+            let _ = ctx.tx.send(msg).await;
+        }
+    }
+}
+
 pub(super) async fn handle_swap_pane(ctx: &mut DispatchContext<'_>, target_pane_id: u32) {
     if let Some(ref name) = *ctx.current_session {
         let layout_msg = {

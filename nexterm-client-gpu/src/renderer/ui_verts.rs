@@ -157,9 +157,21 @@ impl WgpuState {
         let settings_w = 12.0 * cell_w;
         let tab_area_w = sw - settings_w;
 
-        // ペイン ID 順にタブを並べる
-        let mut pane_ids: Vec<u32> = state.pane_layouts.keys().copied().collect();
-        pane_ids.sort();
+        // Sprint 5-7 / Phase 2-3: タブ表示順序は ClientState.tab_order に従う
+        // （サーバーが Window.pane_order に従って並べた論理タブ順）。
+        // tab_order が空の場合（接続直後など）は pane_layouts のキー昇順にフォールバック。
+        let pane_ids: Vec<u32> = if state.tab_order.is_empty() {
+            let mut v: Vec<u32> = state.pane_layouts.keys().copied().collect();
+            v.sort();
+            v
+        } else {
+            state
+                .tab_order
+                .iter()
+                .copied()
+                .filter(|id| state.pane_layouts.contains_key(id))
+                .collect()
+        };
 
         // クリック判定テーブルを毎フレーム更新する
         state.tab_hit_rects.clear();
@@ -313,6 +325,66 @@ impl WgpuState {
                     );
                     x_offset += sep_w;
                 }
+            }
+        }
+
+        // Sprint 5-7 / Phase 2-3: タブドラッグ中のオーバーレイ描画
+        //   1. ドラッグ中ターゲットタブの左端に縦インジケータ線（挿入位置）
+        //   2. マウスカーソル位置に半透明のゴーストタブ
+        if let Some(drag) = state.tab_drag.as_ref().filter(|d| d.committed) {
+            // 挿入インジケータ: hover_target が存在し、ドラッグ中タブと異なる場合のみ
+            if let Some(target_id) = drag.hover_target
+                && target_id != drag.pane_id
+                && let Some(&(tx0, _tx1)) = state.tab_hit_rects.get(&target_id)
+            {
+                let indicator_w = 3.0;
+                add_px_rect(
+                    tx0,
+                    bar_y,
+                    indicator_w,
+                    bar_h,
+                    accent_color,
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
+            }
+            // ゴーストタブ: ドラッグ中のラベルをカーソル位置に半透明で
+            if let Some(&(orig_x0, orig_x1)) = state.tab_hit_rects.get(&drag.pane_id) {
+                let ghost_w = orig_x1 - orig_x0;
+                let ghost_x = (drag.current_x - ghost_w / 2.0)
+                    .max(0.0)
+                    .min(tab_area_w - ghost_w);
+                // 半透明の active 色（α=0.65 でドロップ先の下のタブが見える）
+                let ghost_bg = [active_bg[0], active_bg[1], active_bg[2], 0.65];
+                add_px_rect(
+                    ghost_x, bar_y, ghost_w, bar_h, ghost_bg, sw, sh, bg_verts, bg_idx,
+                );
+                // ゴーストラベル（元のタブ名）
+                let ghost_title = state
+                    .panes
+                    .get(&drag.pane_id)
+                    .map(|p| p.title.clone())
+                    .filter(|t| !t.is_empty())
+                    .unwrap_or_else(|| format!("pane:{}", drag.pane_id));
+                let truncated: String = ghost_title.chars().take(24).collect();
+                let ghost_label = format!(" {} ", truncated);
+                add_string_verts(
+                    &ghost_label,
+                    ghost_x + padding,
+                    text_y,
+                    text_fg,
+                    false,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
+                );
             }
         }
 

@@ -118,6 +118,32 @@ pub struct ClientState {
     /// への mutable アクセスを ClientState 内に閉じ込めない設計）。
     /// 値は `"toggle"` / `"show"` / `"hide"` のいずれか。
     pub pending_quake_action: Option<String>,
+    /// タブ表示順序（Sprint 5-7 / Phase 2-3）。
+    ///
+    /// サーバーから受信した `LayoutChanged.panes` の配列順序を反映する（サーバーが
+    /// `Window.pane_order` に従って並べた論理タブ順）。タブバー描画ループはこの
+    /// 順序に従う。
+    pub tab_order: Vec<u32>,
+    /// タブドラッグ中の状態（Sprint 5-7 / Phase 2-3）。
+    /// `Some` の間はゴーストタブを描画し、ドロップ時に並べ替えを実施する。
+    pub tab_drag: Option<TabDragState>,
+}
+
+/// タブドラッグ中の状態（Sprint 5-7 / Phase 2-3）
+#[derive(Debug, Clone)]
+pub struct TabDragState {
+    /// ドラッグ開始時の pane ID（移動対象のタブ）
+    pub pane_id: u32,
+    /// ドラッグ開始時のマウス X 座標（クリック判定との閾値判定に使用）
+    pub start_x: f32,
+    /// 現在のマウス X 座標（ゴースト描画位置に使用）
+    pub current_x: f32,
+    /// 現在ホバー中の挿入先 pane ID（ドロップ時に target_id の位置に移動）
+    /// `None` は挿入先未確定（タブバー外 or 自分自身の上）
+    pub hover_target: Option<u32>,
+    /// 実際にドラッグと判定済みか（X 移動量が閾値超え）。
+    /// `false` のままリリースされた場合は通常クリック扱い。
+    pub committed: bool,
 }
 
 impl ClientState {
@@ -157,6 +183,8 @@ impl ClientState {
             session_consent_overrides: SessionConsentOverrides::default(),
             current_workspace: "default".to_string(),
             pending_quake_action: None,
+            tab_order: Vec::new(),
+            tab_drag: None,
         }
     }
 

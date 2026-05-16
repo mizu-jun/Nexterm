@@ -401,6 +401,16 @@ pub enum ClientToServer {
         #[serde(default = "default_quake_action")]
         action: String,
     },
+    /// タブ表示順序の並べ替え要求（Sprint 5-7 / Phase 2-3）。
+    ///
+    /// クライアントがタブバー上でドラッグ&ドロップして決めた新順序をサーバーに送る。
+    /// サーバーは `Window.pane_order` を新順序で上書きし、後続の `LayoutChanged` の
+    /// `panes` 配列順序に反映する。`pane_ids` に未知の ID が含まれる場合や、現在の
+    /// 既知ペインを網羅していない場合はサーバー側でフィルタ + 補完する。
+    ReorderPanes {
+        /// 新しい表示順序（タブバー左から右へ）
+        pane_ids: Vec<u32>,
+    },
     /// プロトコルハンドシェイク。接続後の最初のメッセージとして送信する。
     ///
     /// サーバーは `proto_version` を `nexterm_proto::PROTOCOL_VERSION` と比較し、
@@ -942,6 +952,22 @@ mod tests {
         let enc = postcard::to_stdvec(&info).unwrap();
         let dec: SessionInfo = postcard::from_bytes(&enc).unwrap();
         assert_eq!(info, dec);
+    }
+
+    #[test]
+    fn reorder_panes_ipc_の_postcard_往復() {
+        let msg = ClientToServer::ReorderPanes {
+            pane_ids: vec![3, 1, 4, 1, 5, 9, 2, 6],
+        };
+        let enc = postcard::to_stdvec(&msg).unwrap();
+        let dec: ClientToServer = postcard::from_bytes(&enc).unwrap();
+        assert_eq!(msg, dec);
+
+        // 空ベクタも往復可能
+        let empty = ClientToServer::ReorderPanes { pane_ids: vec![] };
+        let enc = postcard::to_stdvec(&empty).unwrap();
+        let dec: ClientToServer = postcard::from_bytes(&enc).unwrap();
+        assert_eq!(empty, dec);
     }
 
     #[test]

@@ -17,6 +17,47 @@ use super::settings_panel_hit::SettingsPanelHit;
 use crate::state::ContextMenu;
 use crate::vertex_util::visual_width;
 
+/// タブドラッグの新順序を計算する（Sprint 5-7 / Phase 2-3）。
+///
+/// `current` から `dragged_id` を取り出し、`target_id` の位置に挿入する。
+/// 挙動: 「ターゲットタブの位置に dragged を押し込む」モデル。
+///
+/// - `from < target_pos`（右へ移動）: dragged を取り除くと target が 1 つ左にズレるため、
+///   `insert_at = target_pos - 1` で「元の target_pos」と同じ表示位置に着地する。
+/// - `from > target_pos`（左へ移動）: dragged の削除は target に影響しないため、
+///   `insert_at = target_pos` で target を右に 1 つ押し出す。
+///
+/// 隣接 swap（`|from - target_pos| == 1` のうち右ドラッグ）は本モデルでは結果が元と
+/// 同一になり `None` を返す（往復不要）。左右判定が必要な場合は将来 `hover_target` を
+/// `(pane_id, Before/After)` に拡張すること。
+///
+/// `current` に `dragged_id` または `target_id` が含まれない場合は `None`。
+pub(super) fn compute_reordered_tab_order(
+    current: &[u32],
+    dragged_id: u32,
+    target_id: u32,
+) -> Option<Vec<u32>> {
+    if dragged_id == target_id {
+        return None;
+    }
+    let from = current.iter().position(|&id| id == dragged_id)?;
+    let target_pos = current.iter().position(|&id| id == target_id)?;
+
+    let mut new_order: Vec<u32> = current.to_vec();
+    new_order.remove(from);
+    let insert_at = if from < target_pos {
+        target_pos - 1
+    } else {
+        target_pos
+    };
+    new_order.insert(insert_at, dragged_id);
+
+    if new_order == current {
+        return None;
+    }
+    Some(new_order)
+}
+
 impl EventHandler {
     /// `WindowEvent::CursorMoved` — マウスカーソル位置を追跡し、ドラッグ中は選択範囲を更新する
     pub(super) fn on_cursor_moved(&mut self, position: winit::dpi::PhysicalPosition<f64>) {
@@ -49,6 +90,35 @@ impl EventHandler {
         if prev_hovered != new_hovered {
             self.app.state.hovered_tab_id = new_hovered;
             if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+        }
+
+        // Sprint 5-7 / Phase 2-3: タブドラッグ中の追跡
+        // タブバー領域内 + 進行中ドラッグがある場合、current_x / hover_target / committed を更新する
+        if let Some(drag) = self.app.state.tab_drag.as_mut() {
+            let px_f32 = position.x as f32;
+            drag.current_x = px_f32;
+            // 6px 以上動いたらドラッグ確定
+            const DRAG_THRESHOLD: f32 = 6.0;
+            if !drag.committed && (px_f32 - drag.start_x).abs() >= DRAG_THRESHOLD {
+                drag.committed = true;
+            }
+            // 挿入先タブを決定（タブバー領域内のタブにヒットしているか）
+            let on_tab_bar = position.y < tab_bar_h_f64;
+            drag.hover_target = if on_tab_bar {
+                self.app
+                    .state
+                    .tab_hit_rects
+                    .iter()
+                    .find(|&(_, &(x0, x1))| px_f32 >= x0 && px_f32 < x1)
+                    .map(|(&id, _)| id)
+            } else {
+                None
+            };
+            if drag.committed
+                && let Some(w) = &self.window
+            {
                 w.request_redraw();
             }
         }
@@ -299,6 +369,15 @@ impl EventHandler {
                                 let _ =
                                     conn.send_tx.try_send(ClientToServer::FocusPane { pane_id });
                             }
+                            // Sprint 5-7 / Phase 2-3: ドラッグ可能性を記録（committed=false）。
+                            // CursorMoved で閾値を超えたら committed=true となり、Released で並べ替えを送信する。
+                            self.app.state.tab_drag = Some(crate::state::TabDragState {
+                                pane_id,
+                                start_x: px_f32,
+                                current_x: px_f32,
+                                hover_target: Some(pane_id),
+                                committed: false,
+                            });
                         }
                     }
                 }
@@ -327,6 +406,25 @@ impl EventHandler {
         if self.app.state.settings_panel.drag_slider.take().is_some() {
             let _ = self.app.state.settings_panel.save_to_toml();
             self.app.state.settings_panel.dirty = false;
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+        }
+
+        // Sprint 5-7 / Phase 2-3: タブドラッグ終了処理
+        // committed なら新順序を計算して ReorderPanes を送信、未 committed は通常クリック扱い（なにもしない）
+        if let Some(drag) = self.app.state.tab_drag.take() {
+            if drag.committed
+                && let Some(target_id) = drag.hover_target
+                && target_id != drag.pane_id
+                && let Some(new_order) =
+                    compute_reordered_tab_order(&self.app.state.tab_order, drag.pane_id, target_id)
+                && let Some(conn) = &self.connection
+            {
+                let _ = conn.send_tx.try_send(ClientToServer::ReorderPanes {
+                    pane_ids: new_order,
+                });
+            }
             if let Some(w) = &self.window {
                 w.request_redraw();
             }
@@ -459,5 +557,70 @@ impl EventHandler {
         if let Some(w) = &self.window {
             w.request_redraw();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compute_reordered_tab_order;
+
+    #[test]
+    fn tab_drag_自分自身へのドロップはnone() {
+        let current = vec![1, 2, 3];
+        assert!(compute_reordered_tab_order(&current, 2, 2).is_none());
+    }
+
+    #[test]
+    fn tab_drag_右へ移動() {
+        // 1, 2, 3 で 1 を 3 の位置にドロップ → 2, 3 の右に 1 が来るはず
+        // ただし現実装は「target_id の位置に置き換える」挙動なので、
+        // 1 を 3 にドロップ → [2, 1, 3]（target_id=3 の位置に 1 を挿入）
+        let current = vec![1, 2, 3];
+        let next = compute_reordered_tab_order(&current, 1, 3).unwrap();
+        assert_eq!(next, vec![2, 1, 3]);
+    }
+
+    #[test]
+    fn tab_drag_左へ移動() {
+        // 1, 2, 3 で 3 を 1 の位置にドロップ → [3, 1, 2]
+        let current = vec![1, 2, 3];
+        let next = compute_reordered_tab_order(&current, 3, 1).unwrap();
+        assert_eq!(next, vec![3, 1, 2]);
+    }
+
+    #[test]
+    fn tab_drag_隣接右ドロップはno_op() {
+        // [1, 2] で 1 を 2 にドロップしても「target の位置に押し込む」挙動では
+        // 結果が [1, 2] となり current と一致。ネットワーク往復を避けるため None。
+        let current = vec![1, 2];
+        assert!(compute_reordered_tab_order(&current, 1, 2).is_none());
+    }
+
+    #[test]
+    fn tab_drag_隣接左ドロップはスワップ() {
+        // [1, 2] で 2 を 1 にドロップ: from=1, target_pos=0, from>target_pos
+        // → insert_at=0, new=[1] → [2, 1]。隣接スワップは左ドラッグ方向でのみ実現可能。
+        let current = vec![1, 2];
+        let next = compute_reordered_tab_order(&current, 2, 1).unwrap();
+        assert_eq!(next, vec![2, 1]);
+    }
+
+    #[test]
+    fn tab_drag_存在しないidはnone() {
+        let current = vec![1, 2, 3];
+        assert!(compute_reordered_tab_order(&current, 99, 1).is_none());
+        assert!(compute_reordered_tab_order(&current, 1, 99).is_none());
+    }
+
+    #[test]
+    fn tab_drag_3つの中央への移動() {
+        // 1, 2, 3, 4, 5 で 1 を 3 にドロップ → [2, 1, 3, 4, 5]
+        let current = vec![1, 2, 3, 4, 5];
+        let next = compute_reordered_tab_order(&current, 1, 3).unwrap();
+        assert_eq!(next, vec![2, 1, 3, 4, 5]);
+
+        // 5 を 2 にドロップ → [1, 5, 2, 3, 4]
+        let next = compute_reordered_tab_order(&current, 5, 2).unwrap();
+        assert_eq!(next, vec![1, 5, 2, 3, 4]);
     }
 }

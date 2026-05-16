@@ -655,9 +655,11 @@ impl SessionManager {
         let sessions = self.sessions.lock().await;
         let mut delivered = 0;
         for session in sessions.values() {
-            let _ = session.broadcast_sender().send(ServerToClient::QuakeToggleRequest {
-                action: action.to_string(),
-            });
+            let _ = session
+                .broadcast_sender()
+                .send(ServerToClient::QuakeToggleRequest {
+                    action: action.to_string(),
+                });
             delivered += 1;
         }
         delivered

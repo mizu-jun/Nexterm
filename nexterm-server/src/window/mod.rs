@@ -23,6 +23,40 @@ use crate::snapshot::{SplitNodeSnapshot, WindowSnapshot};
 use bsp::SplitNode;
 use tiling::{compute_pane_sizes, compute_tiling_layouts, find_cwd_in_snapshot};
 
+/// `reorder_panes` のロジック中核（テスト容易のため純粋関数として分離）。
+///
+/// `current` を基準にした安定な「指定優先 + 補完」並べ替えを行う:
+/// 1. `requested` を順番に走査し、`known` に含まれる ID を重複なく採用
+/// 2. その後 `current` を走査し、未採用の既知 ID を末尾に追加（元の相対順を保つ）
+/// 3. それでも漏れる既知 ID（current にも無い）があれば昇順で末尾に追加
+pub(crate) fn compute_reordered(
+    current: &[u32],
+    requested: &[u32],
+    known: &std::collections::HashSet<u32>,
+) -> Vec<u32> {
+    let mut next: Vec<u32> = Vec::with_capacity(known.len());
+    let mut seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
+
+    for &id in requested {
+        if known.contains(&id) && seen.insert(id) {
+            next.push(id);
+        }
+    }
+    for &id in current {
+        if known.contains(&id) && seen.insert(id) {
+            next.push(id);
+        }
+    }
+    let mut leftover: Vec<u32> = known
+        .iter()
+        .copied()
+        .filter(|id| !seen.contains(id))
+        .collect();
+    leftover.sort();
+    next.extend(leftover);
+    next
+}
+
 // ---- レイアウトモード ----
 
 /// ウィンドウのレイアウトモード
@@ -72,6 +106,15 @@ pub struct Window {
     pub layout_mode: LayoutMode,
     /// フローティングペイン（通常レイアウトの前面に重なるペイン）
     floating_panes: HashMap<u32, (Pane, FloatRect)>,
+    /// タブ表示順序（Sprint 5-7 / Phase 2-3）。
+    ///
+    /// `panes`/`serial_panes` は HashMap でキー順序が定まらないため、タブバーに
+    /// 表示する論理順序を別途 `Vec<u32>` で保持する。新規ペイン追加時は末尾に
+    /// push、削除時は `retain`、ユーザーのドラッグ&ドロップによる並べ替えは
+    /// [`Window::reorder_panes`] で置換する。
+    ///
+    /// LayoutChanged メッセージの panes 配列順序はこの順序に従ってソートされる。
+    pane_order: Vec<u32>,
 }
 
 impl Window {
@@ -103,6 +146,7 @@ impl Window {
             zoomed: false,
             layout_mode: LayoutMode::Bsp,
             floating_panes: HashMap::new(),
+            pane_order: vec![focused_pane_id],
         })
     }
 
@@ -124,6 +168,7 @@ impl Window {
             zoomed: false,
             layout_mode: LayoutMode::Bsp,
             floating_panes: HashMap::new(),
+            pane_order: vec![focused_pane_id],
         })
     }
 
@@ -184,6 +229,8 @@ impl Window {
         };
         self.panes.insert(new_id, pane);
         self.focused_pane_id = new_id;
+        // タブ順序: 末尾に追加（既存タブの右側に表示）
+        self.pane_order.push(new_id);
 
         // 4. 既存ペインを新しいサイズにリサイズする
         for rect in &layouts {
@@ -330,7 +377,11 @@ impl Window {
         self.floating_panes.contains_key(&pane_id)
     }
 
-    /// LayoutChanged メッセージを生成する（IPC 送信用）
+    /// LayoutChanged メッセージを生成する（IPC 送信用）。
+    ///
+    /// `panes` 配列の順序は `pane_order` の論理タブ順に従う（Sprint 5-7 / Phase 2-3）。
+    /// 物理レイアウト計算結果（BSP 再帰順）とは独立に管理されるため、ドラッグ&ドロップで
+    /// 並べ替えても各ペインの画面上の位置・サイズは変わらない。
     pub fn layout_changed_msg(&self, cols: u16, rows: u16) -> ServerToClient {
         // ズーム中はフォーカスペインのみをウィンドウ全体サイズで返す
         if self.zoomed {
@@ -347,10 +398,13 @@ impl Window {
             };
         }
         let rects = self.compute_layouts(cols, rows);
-        ServerToClient::LayoutChanged {
-            panes: rects
-                .into_iter()
-                .map(|r| PaneLayout {
+        // rect を pane_id でルックアップできるよう Map 化してから pane_order の順で並べる
+        let rect_by_id: HashMap<u32, &PaneRect> = rects.iter().map(|r| (r.pane_id, r)).collect();
+        let mut ordered: Vec<PaneLayout> = self
+            .pane_order
+            .iter()
+            .filter_map(|id| {
+                rect_by_id.get(id).map(|r| PaneLayout {
                     pane_id: r.pane_id,
                     col_offset: r.col_off,
                     row_offset: r.row_off,
@@ -358,9 +412,54 @@ impl Window {
                     rows: r.rows,
                     is_focused: r.pane_id == self.focused_pane_id,
                 })
-                .collect(),
+            })
+            .collect();
+        // pane_order に未登録のペイン（バグ防止のフォールバック）も末尾に追加
+        for rect in &rects {
+            if !self.pane_order.contains(&rect.pane_id) {
+                ordered.push(PaneLayout {
+                    pane_id: rect.pane_id,
+                    col_offset: rect.col_off,
+                    row_offset: rect.row_off,
+                    cols: rect.cols,
+                    rows: rect.rows,
+                    is_focused: rect.pane_id == self.focused_pane_id,
+                });
+            }
+        }
+        ServerToClient::LayoutChanged {
+            panes: ordered,
             focused_pane_id: self.focused_pane_id,
         }
+    }
+
+    /// タブ表示順序を新しい順列で置き換える（Sprint 5-7 / Phase 2-3）。
+    ///
+    /// `new_order` には現在の既知ペイン集合のすべてが含まれていなくても、また
+    /// 存在しないペイン ID が含まれていても安全に動作する:
+    /// - 未知の ID は無視
+    /// - 既知だが指定されなかった ID は末尾に補完（元の `pane_order` の相対順を維持）
+    ///
+    /// 戻り値: 実際に並び替えが行われた場合 `true`、無変化なら `false`。
+    pub fn reorder_panes(&mut self, new_order: Vec<u32>) -> bool {
+        let known: std::collections::HashSet<u32> = self
+            .panes
+            .keys()
+            .copied()
+            .chain(self.serial_panes.keys().copied())
+            .collect();
+        let next = compute_reordered(&self.pane_order, &new_order, &known);
+        if next == self.pane_order {
+            return false;
+        }
+        self.pane_order = next;
+        true
+    }
+
+    /// 現在のタブ表示順序を返す（テスト・デバッグ用）。
+    #[allow(dead_code)]
+    pub fn pane_order(&self) -> &[u32] {
+        &self.pane_order
     }
 
     /// フォーカスペインのズームをトグルする。
@@ -439,6 +538,8 @@ impl Window {
         // ペイン Map から削除する（PTY またはシリアルポート）
         self.panes.remove(&target_id);
         self.serial_panes.remove(&target_id);
+        // タブ順序からも除去（Sprint 5-7 / Phase 2-3）
+        self.pane_order.retain(|&id| id != target_id);
 
         // 残ったペインにフォーカスを移す（ID が最も小さいものを選ぶ）
         let next_id = self
@@ -531,6 +632,8 @@ impl Window {
         }
         // ペイン Map から取り出す
         let pane = self.panes.remove(&target_id)?;
+        // タブ順序からも除去（Sprint 5-7 / Phase 2-3）
+        self.pane_order.retain(|&id| id != target_id);
         // フォーカスを残ったペインの最小 ID に移す
         let next_id = self
             .panes
@@ -557,6 +660,15 @@ impl Window {
         self.panes.insert(new_id, pane);
         self.focused_pane_id = new_id;
         self.zoomed = false;
+        // タブ順序: フォーカスペインの直後に挿入（Sprint 5-7 / Phase 2-3）
+        let pos = self
+            .pane_order
+            .iter()
+            .position(|&id| id == self.focused_pane_id);
+        match pos {
+            Some(p) if p + 1 < self.pane_order.len() => self.pane_order.insert(p + 1, new_id),
+            _ => self.pane_order.push(new_id),
+        }
         // 全ペインをリサイズする
         let layouts = self.compute_layouts(total_cols, total_rows);
         for rect in &layouts {
@@ -641,6 +753,8 @@ impl Window {
         self.layout.insert_after(self.focused_pane_id, new_id, dir);
         self.serial_panes.insert(new_id, sp);
         self.focused_pane_id = new_id;
+        // タブ順序: 末尾に追加（Sprint 5-7 / Phase 2-3）
+        self.pane_order.push(new_id);
         Ok(new_id)
     }
 
@@ -723,6 +837,10 @@ impl Window {
         compute_pane_sizes(&snap.layout, cols, rows, &mut size_map);
 
         let mut panes = HashMap::new();
+        // タブ順序は BSP ツリーの DFS 順序を初期値として採用する。
+        // スナップショット v3 以前には pane_order が存在しないため、復元時に
+        // size_map（compute_pane_sizes が DFS で並べる）の登場順をそのまま使う。
+        let mut pane_order: Vec<u32> = Vec::with_capacity(size_map.len());
         for (pane_id, pane_cols, pane_rows) in size_map {
             let cwd = find_cwd_in_snapshot(&snap.layout, pane_id);
             let pane = match cwd {
@@ -738,6 +856,7 @@ impl Window {
                 None => Pane::spawn_with_id(pane_id, pane_cols, pane_rows, tx.clone(), shell, &[])?,
             };
             panes.insert(pane_id, pane);
+            pane_order.push(pane_id);
         }
 
         Ok(Self {
@@ -750,6 +869,7 @@ impl Window {
             zoomed: false,
             layout_mode: LayoutMode::Bsp,
             floating_panes: HashMap::new(),
+            pane_order,
         })
     }
 
