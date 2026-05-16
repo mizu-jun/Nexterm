@@ -265,6 +265,16 @@ impl EventHandler {
             had_messages = true;
         }
 
+        // Sprint 5-7 / UI-1-4: キーヒントオーバーレイの期限切れ判定
+        if let Some(deadline) = self.app.state.key_hint_visible_until
+            && Instant::now() >= deadline
+        {
+            self.app.state.key_hint_visible_until = None;
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+        }
+
         // 更新チェッカーからの通知をポーリングしてバナーを表示する
         if self.update_rx.has_changed().unwrap_or(false)
             && let Some(ver) = self.update_rx.borrow_and_update().clone()

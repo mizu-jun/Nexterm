@@ -544,6 +544,19 @@ impl EventHandler {
             return true;
         }
 
+        // Sprint 5-7 / UI-1-4: Leader 単独押下を検知してキーヒントオーバーレイを表示する
+        // leader_key（例: "ctrl+b"）が現在の修飾子+キーと一致するなら、後続バインドを
+        // 表示するためのヒントを 2 秒間表示する。PTY には送らずに後続処理に流して
+        // 他バインドがあれば優先で消費されるが、なければ PTY へ流れる。
+        let leader_str = self.app.config.leader_key.clone();
+        if !leader_str.is_empty() && config_key_matches(&leader_str, code, self.modifiers) {
+            self.app.state.key_hint_visible_until =
+                Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+        }
+
         // 設定ファイルのカスタムキーバインドをチェックする
         if self.check_config_keybindings(code, event_loop) {
             return true;

@@ -151,6 +151,7 @@ impl EventHandler {
                 &self.app.config.cursor_style,
                 self.app.config.window.padding_x as f32,
                 self.app.config.window.padding_y as f32,
+                &self.app.config,
             )
         {
             warn!("Render error: {}", e);

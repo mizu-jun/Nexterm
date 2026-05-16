@@ -96,6 +96,10 @@ pub struct ClientState {
     /// 現在マウスがホバーしているタブの pane_id（Sprint 5-7 / UI-1-1）。
     /// マウス移動時に renderer/event_handler/mouse.rs が更新し、タブバー描画で背景を明るくする。
     pub hovered_tab_id: Option<u32>,
+    /// キーヒントオーバーレイの表示終了時刻（Sprint 5-7 / UI-1-4）。
+    /// Leader 単独押下で 2 秒後の時刻をセットし、`lifecycle` でこの時刻を過ぎたら None に戻す。
+    /// Some の間は画面下部に config.keys の prefix 系バインドを半透明表示する。
+    pub key_hint_visible_until: Option<std::time::Instant>,
     /// 更新通知バナー（Some(version) = 表示中、None = 非表示）
     pub update_banner: Option<String>,
     /// 機密操作の同意ダイアログ（Sprint 4-1）
@@ -136,6 +140,7 @@ impl ClientState {
             tab_hit_rects: HashMap::new(),
             settings_tab_rect: None,
             hovered_tab_id: None,
+            key_hint_visible_until: None,
             update_banner: None,
             pending_consent: None,
             session_consent_overrides: SessionConsentOverrides::default(),

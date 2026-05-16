@@ -13,6 +13,7 @@
 //! 呼び出し側（`renderer/mod.rs`）から `self.build_*_verts(...)` で従来通り呼べる。
 
 mod dialog;
+mod key_hint;
 mod picker;
 mod settings;
 mod util;

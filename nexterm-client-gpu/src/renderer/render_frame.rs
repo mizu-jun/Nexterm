@@ -32,6 +32,8 @@ impl WgpuState {
         cursor_style: &nexterm_config::CursorStyle,
         padding_x: f32,
         padding_y: f32,
+        // Sprint 5-7 / UI-1-4: キーヒントオーバーレイ用の全設定参照
+        config: &nexterm_config::Config,
     ) -> Result<()> {
         // FPS 制限: 前フレームからの経過時間が 1/fps より短い場合はスキップ
         if fps_limit > 0 {
@@ -504,6 +506,23 @@ impl WgpuState {
                 &mut text_idx,
             );
         }
+
+        // ---- キーヒントオーバーレイ（Sprint 5-7 / UI-1-4）----
+        // Leader 単独押下後 2 秒間、画面下部に prefix 系バインドの一覧を表示
+        self.build_key_hint_verts(
+            state,
+            config,
+            sw,
+            sh,
+            cell_w,
+            cell_h,
+            font,
+            atlas,
+            &mut bg_verts,
+            &mut bg_idx,
+            &mut text_verts,
+            &mut text_idx,
+        );
 
         // ---- IME プリエディットオーバーレイ（変換中テキスト） ----
         if let Some(ref preedit) = state.ime_preedit
