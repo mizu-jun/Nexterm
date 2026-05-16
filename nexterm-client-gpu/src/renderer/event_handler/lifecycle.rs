@@ -83,11 +83,14 @@ impl EventHandler {
         crate::platform::apply_acrylic_blur(&window);
 
         // wgpu を非同期で初期化する（tokio runtime が必要）
-        let wgpu_state = tokio::task::block_in_place(|| {
+        let mut wgpu_state = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current()
                 .block_on(WgpuState::new(Arc::clone(&window), &self.app.config.gpu))
         })
         .expect("Failed to initialize wgpu");
+
+        // 背景画像をロード（Sprint 5-7 / Phase 3-1）。失敗時は内部で warn ログ
+        wgpu_state.load_background(&self.app.config.window);
 
         let mut atlas =
             GlyphAtlas::new_with_config(&wgpu_state.device, self.app.config.gpu.atlas_size);

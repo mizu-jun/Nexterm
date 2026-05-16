@@ -15,6 +15,143 @@ pub enum WindowDecorations {
     NoTitle,
 }
 
+/// 背景画像のフィット方式（Sprint 5-7 / Phase 3-1）
+///
+/// アスペクト比保持の有無と切り取り/余白の扱いを決定する。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum BackgroundFit {
+    /// 画面を完全に覆う（アスペクト比保持・はみ出し部分は切り取り）
+    #[default]
+    Cover,
+    /// 画面に収める（アスペクト比保持・余白部分は透明）
+    Contain,
+    /// 画面サイズに完全フィット（アスペクト比無視・引き伸ばし）
+    Stretch,
+    /// 画像サイズのまま画面中央に配置（拡縮なし）
+    Center,
+    /// 画像をタイル状に並べる（拡縮なし）
+    Tile,
+}
+
+/// 背景画像設定（Sprint 5-7 / Phase 3-1）
+///
+/// ターミナル背面に画像を表示する。画像は起動時に 1 度ロードされる
+/// （ホットリロードは未対応）。サポート形式: PNG / JPEG。
+///
+/// ```toml
+/// [window.background_image]
+/// path = "~/wallpaper.png"
+/// opacity = 0.3
+/// fit = "cover"
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BackgroundImageConfig {
+    /// 画像ファイルパス（チルダ `~` 展開対応）
+    pub path: String,
+    /// 画像の不透明度（0.0 = 完全透明、1.0 = 不透明）。デフォルト 0.3
+    #[serde(default = "default_image_opacity")]
+    pub opacity: f32,
+    /// フィット方式（cover / contain / stretch / center / tile）。デフォルト cover
+    #[serde(default)]
+    pub fit: BackgroundFit,
+}
+
+fn default_image_opacity() -> f32 {
+    // 0.3 は読みやすさを保ちつつ画像を視認できる中庸な値
+    0.3
+}
+
+impl Default for BackgroundImageConfig {
+    fn default() -> Self {
+        Self {
+            path: String::new(),
+            opacity: default_image_opacity(),
+            fit: BackgroundFit::default(),
+        }
+    }
+}
+
+impl BackgroundImageConfig {
+    /// `path` が空文字でない場合のみ有効とみなす。
+    pub fn is_enabled(&self) -> bool {
+        !self.path.trim().is_empty()
+    }
+
+    /// `opacity` を `[0.0, 1.0]` の範囲にクランプして返す。
+    pub fn clamped_opacity(&self) -> f32 {
+        self.opacity.clamp(0.0, 1.0)
+    }
+}
+
+#[cfg(test)]
+mod background_image_tests {
+    use super::*;
+
+    #[test]
+    fn デフォルト値は空パスで無効() {
+        let cfg = BackgroundImageConfig::default();
+        assert!(cfg.path.is_empty());
+        assert!(!cfg.is_enabled());
+        assert_eq!(cfg.fit, BackgroundFit::Cover);
+        assert!((cfg.opacity - 0.3).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn 空白パスは無効扱い() {
+        let cfg = BackgroundImageConfig {
+            path: "   ".to_string(),
+            ..BackgroundImageConfig::default()
+        };
+        assert!(!cfg.is_enabled());
+    }
+
+    #[test]
+    fn パスが指定されると有効() {
+        let cfg = BackgroundImageConfig {
+            path: "~/wall.png".to_string(),
+            ..BackgroundImageConfig::default()
+        };
+        assert!(cfg.is_enabled());
+    }
+
+    #[test]
+    fn opacity_は_0_から_1_にクランプ() {
+        let cfg = BackgroundImageConfig {
+            opacity: -0.5,
+            ..BackgroundImageConfig::default()
+        };
+        assert!((cfg.clamped_opacity() - 0.0).abs() < f32::EPSILON);
+        let cfg = BackgroundImageConfig {
+            opacity: 1.5,
+            ..BackgroundImageConfig::default()
+        };
+        assert!((cfg.clamped_opacity() - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn tomlでパースできる() {
+        let toml_str = r#"
+[window.background_image]
+path = "~/wallpaper.png"
+opacity = 0.5
+fit = "contain"
+"#;
+        let parsed: super::super::Config = toml::from_str(toml_str).unwrap();
+        let bg = parsed.window.background_image.unwrap();
+        assert_eq!(bg.path, "~/wallpaper.png");
+        assert!((bg.opacity - 0.5).abs() < f32::EPSILON);
+        assert_eq!(bg.fit, BackgroundFit::Contain);
+    }
+
+    #[test]
+    fn デフォルトでは_background_image_は_none() {
+        let cfg = WindowConfig::default();
+        assert!(cfg.background_image.is_none());
+    }
+}
+
 /// ウィンドウ設定（透過・ぼかし・装飾）
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -37,6 +174,9 @@ pub struct WindowConfig {
     /// ウィンドウ内の垂直パディング（ピクセル）。デフォルト: 0
     #[serde(default)]
     pub padding_y: u32,
+    /// 背景画像設定（Sprint 5-7 / Phase 3-1）。None = 背景画像なし。
+    #[serde(default)]
+    pub background_image: Option<BackgroundImageConfig>,
 }
 
 fn default_background_opacity() -> f32 {
@@ -57,6 +197,7 @@ impl Default for WindowConfig {
             layout_mode: default_layout_mode(),
             padding_x: 0,
             padding_y: 0,
+            background_image: None,
         }
     }
 }

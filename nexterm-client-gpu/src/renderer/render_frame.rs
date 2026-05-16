@@ -15,6 +15,7 @@ use crate::state::ClientState;
 use crate::vertex_util::{add_px_rect, add_string_verts};
 
 use super::WgpuState;
+use super::background_pass::build_background_verts;
 use super::image::build_image_verts;
 
 impl WgpuState {
@@ -593,12 +594,12 @@ impl WgpuState {
             ],
         });
 
-        // ---- メインレンダーパス（背景 + テキスト） ----
+        // ---- クリアパス（パレット背景色で塗りつぶし） ----
+        // 背景画像がある場合は描画の前にクリアを完了させるため、独立パスにする
         {
-            // パレット背景色でクリアして黒い余白が残らないようにする
             let clear_bg = scheme_palette.as_ref().map(|p| p.bg).unwrap_or([0, 0, 0]);
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("main_render_pass"),
+            let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("clear_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
@@ -610,6 +611,74 @@ impl WgpuState {
                             // background_opacity 設定値を alpha に反映（透過ターミナル対応）
                             a: background_opacity as f64,
                         }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+        }
+
+        // ---- 背景画像パス（Sprint 5-7 / Phase 3-1）----
+        // 設定されている場合のみ、clear の後・bg_verts の前に描画する。
+        // image_pipeline を再利用（独自パイプラインは作らない）
+        if let Some(ref bg_img) = self.background {
+            let (bg_verts_img, bg_idx_img) = build_background_verts(
+                sw,
+                sh,
+                bg_img.width,
+                bg_img.height,
+                &bg_img.fit,
+                bg_img.opacity,
+            );
+            if !bg_idx_img.is_empty() {
+                let vbuf = self
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("bg_image_vbuf"),
+                        contents: bytemuck::cast_slice(&bg_verts_img),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
+                let ibuf = self
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("bg_image_ibuf"),
+                        contents: bytemuck::cast_slice(&bg_idx_img),
+                        usage: wgpu::BufferUsages::INDEX,
+                    });
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("background_image_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&self.image_pipeline);
+                pass.set_bind_group(0, &bg_img.bind_group, &[]);
+                pass.set_vertex_buffer(0, vbuf.slice(..));
+                pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint16);
+                pass.draw_indexed(0..bg_idx_img.len() as u32, 0, 0..1);
+            }
+        }
+
+        // ---- メインレンダーパス（セル背景 + テキスト） ----
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("main_render_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        // クリア + 背景画像の結果を保持して上にセル背景・テキストを描く
+                        load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],

@@ -21,11 +21,11 @@ pub mod wsl;
 pub use loader::{ConfigLoader, lua_path, toml_path};
 pub use lua_hooks::{HookEvent, LuaHookRunner};
 pub use schema::{
-    AccessLogConfig, BuiltinScheme, ColorScheme, Config, ConsentPolicy, CursorStyle, CustomPalette,
-    FontConfig, GpuConfig, HooksConfig, HostConfig, KeyBinding, LogConfig, MacroConfig,
-    OAuthConfig, PresentModeConfig, Profile, QuakeEdge, QuakeModeConfig, SchemePalette,
-    SecurityConfig, SerialPortConfig, ShellConfig, StatusBarConfig, TabBarConfig, TlsConfig,
-    WebAuthConfig, WebConfig, WindowConfig, WindowDecorations,
+    AccessLogConfig, BackgroundFit, BackgroundImageConfig, BuiltinScheme, ColorScheme, Config,
+    ConsentPolicy, CursorStyle, CustomPalette, FontConfig, GpuConfig, HooksConfig, HostConfig,
+    KeyBinding, LogConfig, MacroConfig, OAuthConfig, PresentModeConfig, Profile, QuakeEdge,
+    QuakeModeConfig, SchemePalette, SecurityConfig, SerialPortConfig, ShellConfig, StatusBarConfig,
+    TabBarConfig, TlsConfig, WebAuthConfig, WebConfig, WindowConfig, WindowDecorations,
 };
 pub use status_bar::{StatusBarEvaluator, WidgetContext, evaluate_builtin};
 pub use watcher::{ConfigRx, watch_config};

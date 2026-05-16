@@ -24,7 +24,10 @@ pub use quake::{QuakeEdge, QuakeModeConfig};
 pub use security::{ConsentPolicy, SecurityConfig};
 pub use shell::{KeyBinding, MacroConfig, SerialPortConfig, ShellConfig};
 pub use web::{AccessLogConfig, OAuthConfig, TlsConfig, WebAuthConfig, WebConfig};
-pub use window::{CursorStyle, TabBarConfig, WindowConfig, WindowDecorations};
+pub use window::{
+    BackgroundFit, BackgroundImageConfig, CursorStyle, TabBarConfig, WindowConfig,
+    WindowDecorations,
+};
 
 use serde::{Deserialize, Serialize};
 

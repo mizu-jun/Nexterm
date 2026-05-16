@@ -39,6 +39,7 @@ mod event_handler;
 mod input_handler;
 
 // ---- wgpu 内部サブモジュール（Sprint 5-6 でファイル分割）----
+mod background_pass;
 mod gpu_buffers;
 mod image;
 mod render_frame;
@@ -48,6 +49,7 @@ mod wgpu_init;
 pub use app::NextermApp;
 pub use event_handler::EventHandler;
 
+use background_pass::BackgroundTexture;
 use image::ImageEntry;
 
 // ---- シェーダーファイル監視 ----
@@ -131,6 +133,8 @@ struct WgpuState {
     image_sampler: wgpu::Sampler,
     /// 画像テクスチャキャッシュ（image_id → ImageEntry）
     image_textures: HashMap<u32, ImageEntry>,
+    /// 背景画像（Sprint 5-7 / Phase 3-1）。`WindowConfig.background_image` 設定時のみロード
+    background: Option<BackgroundTexture>,
     // ---- フレーム間再利用バッファ（毎フレームの GPU アロケーションを回避）----
     /// 背景頂点バッファ（VERTEX | COPY_DST、容量超過時は再確保）
     buf_bg_v: wgpu::Buffer,
