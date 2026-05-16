@@ -576,9 +576,11 @@ impl EventHandler {
     /// 消費した場合は true を返す
     fn check_config_keybindings(&mut self, code: WKeyCode, event_loop: &ActiveEventLoop) -> bool {
         // config.keys を走査してマッチするバインドを探す
+        // Sprint 5-7 / UI-1-3: キー文字列の `<leader>` プレースホルダーを leader_key で展開
         let bindings = self.app.config.keys.clone();
         for binding in &bindings {
-            if config_key_matches(&binding.key, code, self.modifiers) {
+            let expanded = self.app.config.expand_leader(&binding.key);
+            if config_key_matches(&expanded, code, self.modifiers) {
                 let action = binding.action.clone();
                 self.execute_action(&action, event_loop);
                 return true;

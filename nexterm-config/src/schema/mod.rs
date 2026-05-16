@@ -130,6 +130,16 @@ pub struct Config {
     /// セキュリティ・同意ポリシー（外部 URL / OSC 52 / OSC 通知）
     #[serde(default)]
     pub security: SecurityConfig,
+
+    /// Leader key（tmux prefix 風）。キーバインド内の `<leader>` をこの値に展開する。
+    /// 既定: `"ctrl+b"`（tmux 互換）。Emacs の C-b 競合を避けたい場合は `"ctrl+q"` 等を指定。
+    /// Sprint 5-7 / UI-1-3。
+    #[serde(default = "default_leader_key")]
+    pub leader_key: String,
+}
+
+fn default_leader_key() -> String {
+    "ctrl+b".to_string()
 }
 
 fn default_auto_check_update() -> bool {
@@ -172,11 +182,24 @@ impl Default for Config {
             cursor_style: CursorStyle::default(),
             auto_check_update: default_auto_check_update(),
             security: SecurityConfig::default(),
+            leader_key: default_leader_key(),
         }
     }
 }
 
 impl Config {
+    /// キーバインド文字列の `<leader>` を `self.leader_key` で展開する（Sprint 5-7 / UI-1-3）。
+    ///
+    /// 例: leader_key = "ctrl+q" のとき、`"<leader> %"` → `"ctrl+q %"`。
+    /// `<leader>` を含まない文字列はそのまま返す（後方互換）。
+    pub fn expand_leader(&self, key: &str) -> String {
+        if key.contains("<leader>") {
+            key.replace("<leader>", &self.leader_key)
+        } else {
+            key.to_string()
+        }
+    }
+
     /// アクティブプロファイルを適用した設定を返す。
     /// プロファイルが未設定または存在しない場合は self を clone して返す。
     pub fn effective(&self) -> Config {
@@ -270,6 +293,38 @@ mod tests {
         let font = FontConfig::default();
         assert!(font.ligatures);
         assert_eq!(font.size, 15.0);
+    }
+
+    // ---- Sprint 5-7 / UI-1-3: Leader key 展開テスト ----
+
+    #[test]
+    fn leader_key_デフォルトはctrl_b() {
+        let cfg = Config::default();
+        assert_eq!(cfg.leader_key, "ctrl+b");
+    }
+
+    #[test]
+    fn expand_leader_は_leader_を展開する() {
+        let cfg = Config {
+            leader_key: "ctrl+q".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(cfg.expand_leader("<leader> %"), "ctrl+q %");
+        assert_eq!(cfg.expand_leader("<leader> \""), "ctrl+q \"");
+    }
+
+    #[test]
+    fn expand_leader_は_leader_を含まないキーをそのまま返す() {
+        let cfg = Config::default();
+        assert_eq!(cfg.expand_leader("ctrl+b %"), "ctrl+b %");
+        assert_eq!(cfg.expand_leader("ctrl+shift+p"), "ctrl+shift+p");
+    }
+
+    #[test]
+    fn expand_leader_は複数の_leader_も置換する() {
+        let cfg = Config::default();
+        // 通常は1個だが念のため
+        assert_eq!(cfg.expand_leader("<leader>+<leader>"), "ctrl+b+ctrl+b");
     }
 
     /// Sprint 5-4 / D8: ToggleZoom はデフォルトキーバインドに 2 つ存在する
