@@ -242,9 +242,19 @@ impl EventHandler {
             && self.last_status_eval.elapsed() >= Duration::from_secs(1)
             && let Some(eval) = &self.status_eval
         {
+            // フォーカスペインの cwd を取得して WidgetContext に詰める
+            // （Sprint 5-7 / UI-1-2: cwd / cwd_short / git_branch ウィジェット用）
+            let cwd = self
+                .app
+                .state
+                .focused_pane_id
+                .and_then(|id| self.app.state.panes.get(&id))
+                .and_then(|p| p.cwd.clone());
             let ctx = nexterm_config::WidgetContext {
                 session_name: Some("main".to_string()),
                 pane_id: self.app.state.focused_pane_id,
+                cwd,
+                workspace_name: None, // Phase 2-1 で導入
             };
             let sep = &self.app.config.status_bar.separator;
             self.app.state.status_bar_text =

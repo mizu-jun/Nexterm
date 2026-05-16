@@ -8,6 +8,10 @@
 //!    - `"hostname"` → システムのホスト名
 //!    - `"session"` → 現在のセッション名（IPC から受信した値）
 //!    - `"pane_id"` → フォーカスペインの ID
+//!    - `"cwd"` → フォーカスペインの作業ディレクトリ（OSC 7 が来ていれば。Sprint 5-7 / UI-1-2）
+//!    - `"cwd_short"` → cwd のホームディレクトリを `~` に置換、長すぎる場合は末尾のみ
+//!    - `"git_branch"` → cwd 配下の `.git/HEAD` を読んだブランチ名（無ければ空）
+//!    - `"workspace"` → 現在のワークスペース名（Phase 2-1 後に有効化）
 //!
 //! 2. **Lua 式** — バックグラウンドスレッドで評価する
 //!    - `'os.date("%H:%M")'` → Lua の `os.date` を実行した結果
@@ -20,7 +24,7 @@
 //!   status_bar = {
 //!     enabled = true,
 //!     widgets = { "session", "pane_id" },
-//!     right_widgets = { "time" },
+//!     right_widgets = { "git_branch", "cwd_short", "time" },
 //!   }
 //! }
 //! ```
@@ -30,7 +34,7 @@ use crate::lua_worker::LuaWorker;
 
 // ---- ビルトインウィジェット評価 -------------------------------------------
 
-/// 現在のコンテキスト（セッション名・ペイン ID）
+/// 現在のコンテキスト（セッション名・ペイン ID・cwd・ワークスペース）
 ///
 /// `evaluate_builtin` に渡すことで動的なビルトインウィジェットを評価できる。
 #[derive(Debug, Clone, Default)]
@@ -39,6 +43,11 @@ pub struct WidgetContext {
     pub session_name: Option<String>,
     /// フォーカス中のペイン ID
     pub pane_id: Option<u32>,
+    /// フォーカス中のペインの作業ディレクトリ（OSC 7 で報告された CWD）。
+    /// `cwd` / `cwd_short` / `git_branch` ウィジェットで利用する（Sprint 5-7 / UI-1-2）。
+    pub cwd: Option<String>,
+    /// 現在のワークスペース名（Phase 2-1 で導入予定）
+    pub workspace_name: Option<String>,
 }
 
 /// ビルトインウィジェットキーワードを評価する
@@ -80,8 +89,76 @@ pub fn evaluate_builtin(keyword: &str, ctx: &WidgetContext) -> Option<String> {
                 .map(|id| format!("pane:{}", id))
                 .unwrap_or_else(|| "pane:—".to_string()),
         ),
+        "workspace" => Some(
+            ctx.workspace_name
+                .clone()
+                .unwrap_or_else(|| "—".to_string()),
+        ),
+        "cwd" => Some(ctx.cwd.clone().unwrap_or_default()),
+        "cwd_short" => Some(shorten_cwd(ctx.cwd.as_deref().unwrap_or_default())),
+        "git_branch" => Some(read_git_branch(ctx.cwd.as_deref().unwrap_or_default())),
         _ => None, // Lua 式として扱う
     }
+}
+
+/// cwd をホーム短縮 + 末尾 2 階層に整形する。
+///
+/// 例: `/home/alice/projects/foo` → `~/projects/foo`
+/// 長すぎる場合は末尾 30 文字程度に省略する。
+fn shorten_cwd(path: &str) -> String {
+    if path.is_empty() {
+        return String::new();
+    }
+    let home = std::env::var("HOME")
+        .ok()
+        .or_else(|| std::env::var("USERPROFILE").ok())
+        .unwrap_or_default();
+    let mut s = if !home.is_empty() && path.starts_with(&home) {
+        format!("~{}", &path[home.len()..])
+    } else {
+        path.to_string()
+    };
+    // パス区切りの揺れを統一
+    s = s.replace('\\', "/");
+    // 長すぎる場合は末尾のみ
+    const MAX: usize = 40;
+    if s.chars().count() > MAX {
+        let tail: String = s.chars().rev().take(MAX - 1).collect::<String>();
+        let tail: String = tail.chars().rev().collect();
+        format!("…{}", tail)
+    } else {
+        s
+    }
+}
+
+/// 指定された cwd 配下の `.git/HEAD` を読み、現在のブランチ名（または短縮 SHA）を返す。
+///
+/// 親ディレクトリを再帰的に遡って `.git` を探す。`cwd` が空または .git が見つからなければ
+/// 空文字列を返す（外部プロセスを呼ばないので毎秒の評価でも軽量）。
+fn read_git_branch(cwd: &str) -> String {
+    if cwd.is_empty() {
+        return String::new();
+    }
+    let mut dir = std::path::PathBuf::from(cwd);
+    for _ in 0..30 {
+        let head = dir.join(".git").join("HEAD");
+        if let Ok(content) = std::fs::read_to_string(&head) {
+            let trimmed = content.trim();
+            // `ref: refs/heads/master` のフォーマット
+            if let Some(refpath) = trimmed.strip_prefix("ref: refs/heads/") {
+                return refpath.to_string();
+            }
+            // detached HEAD（コミット SHA 直書き）
+            if trimmed.len() >= 7 && trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+                return trimmed.chars().take(7).collect();
+            }
+            return String::new();
+        }
+        if !dir.pop() {
+            break;
+        }
+    }
+    String::new()
 }
 
 /// エポック日数 (1970-01-01 = 0) を (year, month, day) に変換する
@@ -314,7 +391,7 @@ mod tests {
     fn ビルトインsession_はコンテキストのセッション名を返す() {
         let ctx = WidgetContext {
             session_name: Some("my-session".to_string()),
-            pane_id: None,
+            ..Default::default()
         };
         assert_eq!(evaluate_builtin("session", &ctx).unwrap(), "my-session");
     }
@@ -322,8 +399,8 @@ mod tests {
     #[test]
     fn ビルトインpane_id_はフォーカスペイン番号を返す() {
         let ctx = WidgetContext {
-            session_name: None,
             pane_id: Some(42),
+            ..Default::default()
         };
         assert_eq!(evaluate_builtin("pane_id", &ctx).unwrap(), "pane:42");
     }
@@ -332,6 +409,49 @@ mod tests {
     fn 未知キーワードはnoneを返す() {
         let ctx = WidgetContext::default();
         assert!(evaluate_builtin("unknown_widget", &ctx).is_none());
+    }
+
+    #[test]
+    fn ビルトインcwd_はコンテキストのcwdを返す() {
+        let ctx = WidgetContext {
+            cwd: Some("/tmp/foo".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(evaluate_builtin("cwd", &ctx).unwrap(), "/tmp/foo");
+    }
+
+    #[test]
+    fn ビルトインcwd_short_はホーム短縮形を返す() {
+        // HOME を一時的に上書きしてテスト独立性を保つ
+        unsafe {
+            std::env::set_var("HOME", "/home/alice");
+        }
+        let ctx = WidgetContext {
+            cwd: Some("/home/alice/projects/foo".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            evaluate_builtin("cwd_short", &ctx).unwrap(),
+            "~/projects/foo"
+        );
+    }
+
+    #[test]
+    fn ビルトインworkspace_は名前を返す() {
+        let ctx = WidgetContext {
+            workspace_name: Some("work".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(evaluate_builtin("workspace", &ctx).unwrap(), "work");
+    }
+
+    #[test]
+    fn ビルトインgit_branch_はgit外なら空を返す() {
+        let ctx = WidgetContext {
+            cwd: Some("/nonexistent_path_for_test_xyz123".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(evaluate_builtin("git_branch", &ctx).unwrap(), "");
     }
 
     #[test]
