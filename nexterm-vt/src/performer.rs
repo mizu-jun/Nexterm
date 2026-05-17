@@ -101,13 +101,20 @@ impl Perform for Screen {
             // CUD — カーソル下移動
             'B' => {
                 let (col, row) = self.cursor();
-                let new_row = (row + p1(1)).min(self.grid().height.saturating_sub(1));
+                // 巨大な引数 (例: `\x1b[99999999B`) で u32 加算 panic を起こさないよう
+                // saturating_add を使う。後段の `.min` で grid 範囲内にクランプされる。
+                let new_row = row
+                    .saturating_add(p1(1))
+                    .min(self.grid().height.saturating_sub(1));
                 self.move_cursor(col, new_row);
             }
             // CUF — カーソル右移動
             'C' => {
                 let (col, row) = self.cursor();
-                let new_col = (col + p1(1)).min(self.grid().width.saturating_sub(1));
+                // 同上。Sprint 5-7 後段 fuzz `osc_url` が発見した panic の修正。
+                let new_col = col
+                    .saturating_add(p1(1))
+                    .min(self.grid().width.saturating_sub(1));
                 self.move_cursor(new_col, row);
             }
             // CUB — カーソル左移動
