@@ -185,6 +185,8 @@ CIは`.github/workflows/ci.yml`で`master`ブランチへの push / PR をトリ
 
 Flatpakビルドは`.github/workflows/flatpak.yml`で`ubuntu-latest`ランナー上で実行する。`container:`ブロックを使うと`apt-get`が利用できなくなるため使用しないこと。`flatpak remote-add`・`flatpak install`・`flatpak-builder`にはすべて`--user`フラグが必要（CI環境ではシステム操作の権限がない）。
 
+flatpak-builder のサンドボックスはネットワーク隔離されているため、cargo の依存は事前に vendor して `pkg/flatpak/cargo-sources.json` に格納し、manifest の `sources` から参照する。**Cargo.lock を変更したら必ず `bash scripts/regenerate-flatpak-sources.sh` を実行して `cargo-sources.json` を再生成しコミットすること**。CI (`flatpak.yml`) は最初のステップで `flatpak-cargo-generator.py` を走らせて `cargo-sources.json` との diff を取り、不一致なら失敗するため再生成漏れを早期検知できる。ビルドは `CARGO_NET_OFFLINE=true` + `cargo --offline build` でオフライン強制。
+
 russh 0.59 / 0.60 の SSH エージェント認証では `request_identities()` が返す `Vec<AgentIdentity>` のループ変数は `&AgentIdentity` 型。`authenticate_publickey_with` の第2引数は `ssh_key::PublicKey` であるため `identity.public_key().into_owned()` で取得すること（russh 0.58 では `identity.clone()` で `PublicKey` を取得していたが、0.59 で型が変わった）。0.59 → 0.60 では本コードベースで使用する API に破壊的変更なし。`Cargo.toml` で `default-features = false, features = ["ring", "rsa", "flate2"]` を指定して `aws-lc-rs` backend を回避することで、Windows 等の NASM 未導入環境でもビルド可能。
 
 WiX v3 の `candle.exe` にプリプロセッサ変数を渡す際は `-dName=Value` 形式（スペースなし）を使うこと。PowerShell から呼び出す場合は `-d "Name=Value"` とすると2引数に分割されて `CNDL0289` エラーになる。正しい形式: `"-dVersion=$version"`。

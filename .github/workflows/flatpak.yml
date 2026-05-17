@@ -17,6 +17,25 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
+      - name: Verify cargo-sources.json is in sync with Cargo.lock
+        # Cargo.lock を更新したのに pkg/flatpak/cargo-sources.json を再生成し忘れた場合に
+        # ここでビルドを止めてメンテナンス漏れを早期検知する。
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user --quiet \
+            'aiohttp>=3.9.5,<4.0.0' 'PyYAML>=6.0.2,<7.0.0' 'tomlkit>=0.13.3,<1.0'
+          curl -fsSL \
+            -o /tmp/flatpak-cargo-generator.py \
+            https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
+          python3 /tmp/flatpak-cargo-generator.py Cargo.lock -o /tmp/cargo-sources.json
+          if ! diff -q pkg/flatpak/cargo-sources.json /tmp/cargo-sources.json >/dev/null 2>&1; then
+            echo "::error::pkg/flatpak/cargo-sources.json が Cargo.lock と整合していません。"
+            echo "::error::ローカルで 'bash scripts/regenerate-flatpak-sources.sh' を実行してコミットしてください。"
+            diff -u pkg/flatpak/cargo-sources.json /tmp/cargo-sources.json | head -200 || true
+            exit 1
+          fi
+          echo "OK: cargo-sources.json は Cargo.lock と整合しています。"
+
       - name: Install flatpak-builder
         run: |
           sudo apt-get update -y

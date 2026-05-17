@@ -29,13 +29,16 @@ build-options:
   env:
     CARGO_HOME: /run/build/nexterm/cargo
     RUST_BACKTRACE: '1'
+    # flatpak-builder のサンドボックスはネットワーク隔離されているため、
+    # cargo-sources.json で vendor 済みの依存を使ってオフラインビルドする。
+    CARGO_NET_OFFLINE: 'true'
 
 modules:
   - name: nexterm
     buildsystem: simple
     build-commands:
-      # Rust ビルド
-      - cargo build --release
+      # Rust ビルド（--offline で crates.io への接続を完全に禁止）
+      - cargo --offline build --release
           -p nexterm-server
           -p nexterm-client-gpu
           -p nexterm-client-tui
@@ -61,3 +64,6 @@ modules:
         skip:
           - .git
           - target
+      # Cargo の vendor 済みクレート群（flatpak-cargo-generator.py で生成）。
+      # Cargo.lock が変わったら scripts/regenerate-flatpak-sources.sh で再生成する。
+      - cargo-sources.json
