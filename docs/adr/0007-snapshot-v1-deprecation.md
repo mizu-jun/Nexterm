@@ -4,13 +4,15 @@
 
 採用 (2026-05-12、Sprint 5-5 / A9 対応)
 
+> **2026-05-17 追記**: Sprint 5-7 / Phase 2-1 で `workspace_name` を追加し、`SNAPSHOT_VERSION` は **v3** に bump された。v3 は v1 / v2 の両方を自動マイグレートする。本 ADR の「v2 を標準スキーマ」は「v3 を標準スキーマ」と読み替える。v2.0.0 リリース時の `SNAPSHOT_VERSION_MIN = 2` への引き上げ方針は変更なし（v2 まで吸収して v1 のみ切り捨てる）。
+
 ## コンテキスト
 
 `nexterm-server` のセッション永続化スナップショットは v1 / v2 の二バージョンを並行サポートしている。
 
 ```rust
-// nexterm-server/src/snapshot.rs
-pub const SNAPSHOT_VERSION: u32 = 2;
+// nexterm-server/src/snapshot.rs（2026-05-17 時点）
+pub const SNAPSHOT_VERSION: u32 = 3;
 pub const SNAPSHOT_VERSION_MIN: u32 = 1;
 ```
 
@@ -18,6 +20,7 @@ pub const SNAPSHOT_VERSION_MIN: u32 = 1;
 
 - **v1**: 初期スキーマ（`shell_args` は後から追加し `#[serde(default)]` で互換維持）
 - **v2**: `session_title` フィールドを追加。Sprint 5-1 以降で `persist::load_snapshot` が v1 を v2 に自動マイグレート
+- **v3**: Sprint 5-7 / Phase 2-1 で `workspace_name` を追加。v1 / v2 はロード時に v3 へ自動アップグレード
 
 ### 監査ラウンド 2 タスク A9
 

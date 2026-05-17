@@ -12,7 +12,7 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 
 ### Security & Sandboxing
 - **Web auth hardening**: OAuth Org 検証バイパス修正、TOTP リプレイ攻撃対策・IP レート制限、TLS フォールバック既定禁止、OIDC SSRF 対策。
-- **IPC OOM 防止**: `MAX_MSG_LEN = 64 MiB` で bincode メッセージ上限を強制。プロトコル Hello + バージョニング (`PROTOCOL_VERSION = 1`) を必須化。
+- **IPC OOM 防止**: `MAX_MSG_LEN = 64 MiB` で postcard メッセージ上限を強制。プロトコル Hello + バージョニング (`PROTOCOL_VERSION = 7`、最新値は `nexterm-proto/src/lib.rs` 参照) を必須化。
 - **VT パーサ DoS 対策**: APC 4 MiB / DCS Sixel 16 MiB / Kitty 64 MiB の上限。画像デコード u32 オーバーフロー修正 (`MAX_IMAGE_BYTES = 256 MiB`)。
 - **Lua / WASM サンドボックス**: Lua の `os` / `io` / `package` / `require` / `dofile` / `debug` を無効化。WASM は `consume_fuel(true)` + `MAX_MEMORY_PAGES = 256` で制限。
 - **機密操作の同意ダイアログ**: クリップボード書き込み・URL オープン・通知に `prompt`/`allow`/`deny` ポリシーを実装（Wezterm/iTerm2 流の UX）。
@@ -139,7 +139,7 @@ For full release history, see [CHANGELOG.md](CHANGELOG.md).
 
 | Crate | Description | Status |
 |-------|-------------|--------|
-| `nexterm-proto` | IPC protocol types (bincode) | ✅ |
+| `nexterm-proto` | IPC protocol types (postcard) | ✅ |
 | `nexterm-vt` | VT100/ANSI parser + Sixel/Kitty decode | ✅ |
 | `nexterm-server` | PTY server (session / window / pane management) | ✅ |
 | `nexterm-client-tui` | TUI client (ratatui + crossterm) | ✅ |
@@ -275,7 +275,7 @@ Based on comparison with rlogin, Tera Term, WezTerm, and tmux.
 | 12-7 | winget manifest | ✅ |
 | 12-8 | GitHub Pages documentation site (mdBook, CI auto-deploy) | ✅ |
 
-**Tests**: 240+ passing (unit + integration + proptest); cargo-fuzz daily at UTC 03:00
+**Tests**: 660+ passing (unit + integration + proptest); cargo-fuzz daily at UTC 03:00
 
 ## Crate structure
 
@@ -482,7 +482,7 @@ automatic signing in CI:
 
 ### Prerequisites
 
-- Rust 1.80 or later
+- Rust 1.85 or later (workspace `edition = "2024"` requires 1.85+)
 - **Windows**: Visual Studio Build Tools (C++ components)
 - **Linux**: `libx11-dev libxkbcommon-dev libwayland-dev`
 - **macOS**: Xcode Command Line Tools (`xcode-select --install`)
@@ -702,7 +702,7 @@ return cfg
 │         nexterm-client-gpu           │
 │   wgpu renderer / winit event loop   │
 └───────────────┬──────────────────────┘
-                │ IPC (bincode / Named Pipe / Unix Socket)
+                │ IPC (postcard / Named Pipe / Unix Socket)
 ┌───────────────▼──────────────────────┐
 │         nexterm-server               │
 │  Session → Window → Pane (PTY)       │

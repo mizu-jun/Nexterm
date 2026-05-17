@@ -78,13 +78,15 @@ Pass 3: Images (Sixel/Kitty RGBA textures)
 
 ---
 
-## ADR-004: bincode for IPC Format
+## ADR-004: bincode for IPC Format (superseded by ADR-0006)
+
+> **Status:** Superseded by [ADR-0006](adr/0006-postcard-vs-bincode.md) — Sprint 5-1 / G3 migrated the IPC serializer from `bincode` 1.x to `postcard` 1.x in response to RUSTSEC-2025-0141. The decision below is retained for historical context.
 
 ### Background
 
 JSON is human-readable but slow. Protobuf requires a schema definition and has poor ergonomics with Rust.
 
-### Decision
+### Decision (original, now superseded)
 
 Adopt the `bincode` crate.
 

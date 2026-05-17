@@ -196,7 +196,7 @@ Log levels: `error` / `warn` / `info` / `debug` / `trace`
 | Crate | Version | Purpose |
 |-------|---------|---------|
 | `tokio` | 1 | Async runtime |
-| `bincode` | 1 | IPC serialization |
+| `postcard` | 1 (use-std) | IPC serialization (Sprint 5-1 / ADR-0006 で bincode から移行) |
 | `serde` | 1 | Serialization |
 | `anyhow` | 1 | Error handling |
 | `tracing` | 0.1 | Logging |

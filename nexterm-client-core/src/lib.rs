@@ -21,7 +21,7 @@
 //!
 //! # フレーミング
 //!
-//! - 各メッセージは「4 バイトの長さプレフィックス（little-endian）+ bincode ペイロード」
+//! - 各メッセージは「4 バイトの長さプレフィックス（little-endian）+ postcard ペイロード」（Sprint 5-1 / ADR-0006 で bincode から移行）
 //! - 受信側は [`nexterm_proto::validate_msg_len`] で OOM 攻撃を防ぐ
 //! - 接続直後に `ClientToServer::Hello { proto_version, client_kind, client_version }` を送信
 //!

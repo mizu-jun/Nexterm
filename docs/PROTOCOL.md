@@ -2,8 +2,10 @@
 
 ## Overview
 
-Communication between nexterm's client and server is defined using **bincode** serialization with a **4-byte little-endian length prefix** framing.
+Communication between nexterm's client and server is defined using **postcard** serialization with a **4-byte little-endian length prefix** framing.
 The transport layer differs by OS, but the framing and message format are common across all platforms.
+
+> **History:** Initially used `bincode` 1.x. Migrated to `postcard` 1.x in Sprint 5-1 / G3 (commit 35b9c5b) to address RUSTSEC-2025-0141. See [ADR-0006](adr/0006-postcard-vs-bincode.md).
 
 ---
 
@@ -24,13 +26,13 @@ The transport layer differs by OS, but the framing and message format are common
 ├─────────────────────────────────────────────────────────────────┤
 │              Payload Length (u32, little-endian)                │
 ├─────────────────────────────────────────────────────────────────┤
-│              Payload (bincode-encoded message)                  │
+│              Payload (postcard-encoded message)                 │
 │                        (variable length)                        │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 - `Payload Length` is the number of bytes in the payload (not including the header itself)
-- The payload is an enum encoded with `bincode` default settings
+- The payload is an enum encoded with `postcard` default settings (varint integers, little-endian)
 
 ---
 
@@ -638,6 +640,6 @@ PTY (Shell)         Server                GPU Client
 
 ## Versioning
 
-The current protocol version is **1.0**.
-Uses bincode default settings (little-endian, fixed-width integers).
+The current protocol version is **7** (see `PROTOCOL_VERSION` in `nexterm-proto/src/lib.rs` for the authoritative value).
+Uses `postcard` default settings (varint integers, little-endian). Migrated from `bincode` 1.x in Sprint 5-1 (see [ADR-0006](adr/0006-postcard-vs-bincode.md)).
 When changing the protocol, avoid backward-incompatible changes; extend by adding new message variants instead.

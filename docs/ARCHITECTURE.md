@@ -39,7 +39,7 @@ There are no circular dependencies. `nexterm-proto` is the sole shared crate and
 │   winit event loop / crossterm         │
 │   wgpu renderer / ratatui renderer     │
 └──────────────────┬────────────────────┘
-                   │ IPC (bincode / Named Pipe / Unix Socket)
+                   │ IPC (postcard / Named Pipe / Unix Socket)
 ┌──────────────────▼────────────────────┐
 │          nexterm-server                │
 │   SessionManager                       │
@@ -170,11 +170,11 @@ compute(col_off, row_off, cols, rows, out):
 
 ### Framing
 
-All messages are sent and received as a 4-byte LE length prefix followed by a bincode payload.
+All messages are sent and received as a 4-byte LE length prefix followed by a postcard payload.
 
 ```
 ┌────────────────┬─────────────────────────┐
-│ 4B (LE u32)    │ N bytes (bincode)        │
+│ 4B (LE u32)    │ N bytes (postcard)       │
 │ payload length │ message body             │
 └────────────────┴─────────────────────────┘
 ```
@@ -442,15 +442,17 @@ Returns `None` on non-Linux platforms (the shell starts in its default directory
 
 ## Test Strategy
 
-| Layer | Test Coverage | Count |
+> The per-crate breakdown below is the original Phase 3 baseline. As of 2026-05-17 the workspace has grown to **660+ passing tests** across unit / integration / proptest. Re-run `cargo test --workspace` for the latest count.
+
+| Layer | Test Coverage | Count (baseline) |
 |-------|--------------|-------|
-| nexterm-proto | bincode round-trip serialization | 4 |
+| nexterm-proto | postcard round-trip serialization | 4 |
 | nexterm-vt | VT sequences, dirty flags, resize | 6 |
 | nexterm-config | default construction, TOML round-trip, LuaWorker async evaluation | 5 |
 | nexterm-server | BSP calculation, session management, IPC path validation, snapshot round-trip | 14 |
 | nexterm-client-gpu | ClientState message application, search lifecycle, `hex_to_rgba`, ANSI256 | 21 |
 | nexterm-client-tui | ClientState message application | 2 |
-| **Total** | | **86+** |
+| **Total (current, 2026-05-17)** | unit + integration + proptest across the workspace | **660+** |
 
 ---
 

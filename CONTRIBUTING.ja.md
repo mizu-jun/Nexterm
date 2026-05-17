@@ -181,7 +181,7 @@ set NEXTERM_LOG=debug && nexterm-server.exe
 | クレート | バージョン | 用途 |
 |---------|-----------|------|
 | `tokio` | 1 | 非同期ランタイム |
-| `bincode` | 1 | IPC シリアライズ |
+| `postcard` | 1 (use-std) | IPC シリアライズ（Sprint 5-1 / ADR-0006 で bincode から移行） |
 | `serde` | 1 | シリアライズ |
 | `anyhow` | 1 | エラーハンドリング |
 | `tracing` | 0.1 | ログ |

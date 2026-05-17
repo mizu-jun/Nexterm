@@ -32,7 +32,7 @@ Download the MSI installer from the [releases page](https://github.com/mizu-jun/
 
 ## Building from Source
 
-Requires Rust 1.78+ and the platform graphics SDK (DirectX on Windows, Metal on macOS, Vulkan headers on Linux).
+Requires Rust 1.85+ (workspace `edition = "2024"` requires 1.85+) and the platform graphics SDK (DirectX on Windows, Metal on macOS, Vulkan headers on Linux).
 
 ```sh
 git clone https://github.com/mizu-jun/Nexterm
