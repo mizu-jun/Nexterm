@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **プレフィックスバインドの誤発火を修正** (`config_key_matches`): 旧実装は `split_whitespace().last()`
+  で末尾トークンのみ評価していたため、`keys = [{ key = "<leader> d", action = "ClosePane" }]`
+  等の設定下で `d` 単独押下にも誤マッチしてアクションが即発火していた（`"<leader> %"` は `5`
+  単独押下で発火する経路もあり）。`config_key_matches` をスペース区切りなら false を返す単発キー
+  専用に変更し、`ClientState.prefix_pending_until: Option<Instant>` を追加。Leader 単独押下時に
+  `<leader> X` 形式バインドが 1 件以上設定されている場合のみ prefix モード突入＋ PTY 送信抑制。
+  `check_config_keybindings` を prefix / 単発の 2 経路に分割、2 秒で自動解除。key_map に 13 件の
+  ユニットテスト追加（バグ回帰防止 4 件 + 単発正常系 + エッジケース 9 件）
+
+### Removed
+
+- **`nexterm-launcher` クレートを削除**: v0.9.3 で `nexterm-client-gpu` がサーバーを内部 tokio
+  タスクとして起動する**シングルバイナリ設計**（`bin name = "nexterm"`）に移行した時点で
+  launcher は役目を終えていたが、削除し忘れていた。v1.3.1 まで `nexterm-launcher` と
+  `nexterm-client-gpu` の両方が `bin name = "nexterm"` で衝突しており、`cargo build` のコンパイル
+  順により `target/release/nexterm` がどちらか上書きされる脆い状態（実態は client-gpu 版が勝ち
+  取っていた）。今回 launcher クレートを完全削除し bin name 衝突を根本解消。WiX / Flatpak /
+  `release.yml` の `if [ -f ]` ガード（client-gpu 用）も整理。一般的なターミナルエミュレータ
+  （Alacritty / kitty / Ghostty / WezTerm）と同様に「メインバイナリ 1 つ（`nexterm`）+ 補助 CLI
+  数個（`nexterm-ctl` / `nexterm-client-tui` / `nexterm-server`）」の構成になった。ユーザーへの
+  影響なし（`nexterm` コマンドの挙動・配布物の構成・MSI ショートカット等すべて維持）。workspace
+  は 12 → 11 クレートに整理
+
 ## [1.3.0] - 2026-05-17
 
 Sprint 5-6（GPU クライアントの大規模ファイル分割）と Sprint 5-7（UI/UX モダン化 Phase 1 + 2 + 3）

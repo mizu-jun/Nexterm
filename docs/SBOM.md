@@ -28,13 +28,12 @@ SPDX 形式が必要な場合は `cyclonedx-cli` で相互変換可能。
 
 ## 添付ファイル
 
-リリースには `nexterm-sbom-vX.Y.Z.tar.gz` という単一アーカイブを添付する。展開すると workspace 内 12 クレートそれぞれの SBOM が並ぶ:
+リリースには `nexterm-sbom-vX.Y.Z.tar.gz` という単一アーカイブを添付する。展開すると workspace 内 11 クレートそれぞれの SBOM が並ぶ（v1.3.1 までは 12 クレート、v1.4.0 で `nexterm-launcher` を削除して 11 クレートに整理）:
 
 ```
-nexterm-sbom-v1.0.2/
-  nexterm.cdx.json                     # nexterm-launcher (バイナリ名 nexterm)
+nexterm-sbom-v1.4.0/
+  nexterm-client-gpu.cdx.json          # バイナリ名 nexterm（シングルバイナリ）
   nexterm-server.cdx.json
-  nexterm-client-gpu.cdx.json
   nexterm-client-tui.cdx.json
   nexterm-client-core.cdx.json
   nexterm-ctl.cdx.json

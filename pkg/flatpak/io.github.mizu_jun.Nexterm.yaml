@@ -38,17 +38,14 @@ modules:
     buildsystem: simple
     build-commands:
       # Rust ビルド（--offline で crates.io への接続を完全に禁止）
+      # nexterm-client-gpu の bin name = "nexterm" がエントリポイント。
+      # サーバーは nexterm-client-gpu が内部 tokio タスクとして起動するため別プロセス不要。
       - cargo --offline build --release
           -p nexterm-server
           -p nexterm-client-gpu
           -p nexterm-client-tui
           -p nexterm-ctl
-          -p nexterm-launcher
       # バイナリをインストール
-      # 注: nexterm-launcher と nexterm-client-gpu の bin 名は両方とも "nexterm" で衝突する。
-      #     Linux ではコンパイル順により target/release/nexterm が一方で上書きされ、
-      #     nexterm-client-gpu という独立バイナリは生成されない（Windows でも wix/main.wxs
-      #     から除外済み。release.yml も `if [ -f ]` でスキップしている）。
       - install -Dm755 target/release/nexterm          /app/bin/nexterm
       - install -Dm755 target/release/nexterm-server   /app/bin/nexterm-server
       - install -Dm755 target/release/nexterm-client-tui  /app/bin/nexterm-client-tui

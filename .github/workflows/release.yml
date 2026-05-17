@@ -87,8 +87,8 @@ jobs:
 
       - name: Build release binaries
         # nexterm-client-gpu は v0.9.3 でバイナリ名を nexterm に変更し、
-        # サーバーを内部起動するシングルバイナリとなった。
-        # nexterm-launcher は nexterm.exe と同名バイナリを生成するため除外する。
+        # サーバーを内部起動するシングルバイナリとなった。旧 nexterm-launcher は
+        # 役目を終え v1.4.0 で削除済み。
         # NEXTERM_MINISIGN_PUBLIC_KEY (Sprint 3-4): 設定されている場合は signature_verify
         # モジュールに公開鍵が埋め込まれ、自動更新時の minisign 検証が有効化される。
         env:

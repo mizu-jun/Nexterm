@@ -256,7 +256,7 @@ Based on comparison with rlogin, Tera Term, WezTerm, and tmux.
 |------|-------------|--------|
 | W-1 | MSI installer (WiX Toolset v3, CI-automated) | ✅ |
 | W-2 | Code signing workflow (`signtool.exe`, CI secrets) | ✅ |
-| W-3 | `nexterm-launcher` — single `nexterm.exe` entry point | ✅ |
+| W-3 | Single `nexterm.exe` entry point (server runs as an internal tokio task) | ✅ |
 | W-4 | Windows Service install / uninstall scripts | ✅ |
 | W-5 | PowerShell default args (`-NoLogo`) + cmd.exe fallback | ✅ |
 | W-7 | Windows Quick Start documentation | ✅ |
@@ -287,8 +287,7 @@ nexterm/
 ├── nexterm-config        # Config loader (TOML + Lua) + StatusBarEvaluator
 ├── nexterm-client-core   # Shared IPC connection layer (Hello handshake, OOM guards)
 ├── nexterm-client-tui    # TUI client (ratatui + crossterm)
-├── nexterm-client-gpu    # GPU client (wgpu + winit + cosmic-text)
-├── nexterm-launcher      # nexterm.exe — auto-starts server + opens GPU client
+├── nexterm-client-gpu    # GPU client (wgpu + winit + cosmic-text). Built bin is `nexterm` — auto-starts server as an internal tokio task
 ├── nexterm-ctl           # Session / plugin management CLI
 ├── nexterm-i18n          # Localization support (8 languages)
 ├── nexterm-ssh           # SSH client (russh) — connection, auth, PTY channel
