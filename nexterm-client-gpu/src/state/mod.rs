@@ -160,7 +160,8 @@ impl ClientState {
             pane_layouts: HashMap::new(),
             cols,
             rows,
-            palette: CommandPalette::new(),
+            // Sprint 5-7 / Phase 3-3: 永続化された使用履歴をロード
+            palette: CommandPalette::new_with_history(),
             search: SearchState::new(),
             scrollback_capacity,
             status_bar_text: String::new(),

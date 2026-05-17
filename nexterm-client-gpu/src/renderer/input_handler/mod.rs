@@ -411,6 +411,8 @@ impl EventHandler {
                     if let Some(action) = self.app.state.palette.selected_action() {
                         let action_id = action.action.clone();
                         self.app.state.palette.close();
+                        // Sprint 5-7 / Phase 3-3: 使用履歴を記録して永続化
+                        self.app.state.palette.record_use(&action_id);
                         self.execute_action(&action_id, event_loop);
                     }
                 }
