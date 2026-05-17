@@ -152,6 +152,29 @@ fit = "contain"
     }
 }
 
+/// OS ウィンドウ閉じ操作時の挙動（Sprint 5-7 / Phase 4-1）
+///
+/// クライアントの OS Window（× ボタン / Cmd+W / Ctrl+Shift+Q 等）を閉じたとき、
+/// 対応するサーバー側 Window（論理ウィンドウ）の扱いを決定する。Phase 4 未決事項 #1 のハイブリッド方針:
+///
+/// - `Prompt`（デフォルト）: foreground プロセスが残っている場合のみ確認ダイアログ。
+///   それ以外は kill 相当（誤クローズ防止と直感性のバランス）。
+/// - `Detach`: 常にサーバー側 Window を残す（tmux 流の detached session）。
+///   `nexterm-ctl attach` で再表示可能。長時間ジョブを誤って失う事故に強い。
+/// - `Kill`: 常に破棄。配下の Pane を全て kill し Server Window も削除。
+///   モダン GUI 流（Windows Terminal / VS Code）の挙動。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CloseAction {
+    /// foreground プロセスがある場合のみ確認ダイアログを表示。それ以外は kill。
+    #[default]
+    Prompt,
+    /// 常にサーバー側 Window を保持（detach）。
+    Detach,
+    /// 常にサーバー側 Window を破棄（kill）。
+    Kill,
+}
+
 /// ウィンドウ設定（透過・ぼかし・装飾）
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -177,6 +200,11 @@ pub struct WindowConfig {
     /// 背景画像設定（Sprint 5-7 / Phase 3-1）。None = 背景画像なし。
     #[serde(default)]
     pub background_image: Option<BackgroundImageConfig>,
+    /// OS Window の閉じる操作時の挙動（Sprint 5-7 / Phase 4-1）。
+    /// `prompt` / `detach` / `kill` のいずれか。デフォルト `prompt`。
+    /// 詳細は [`CloseAction`] を参照。
+    #[serde(default)]
+    pub close_action: CloseAction,
 }
 
 fn default_background_opacity() -> f32 {
@@ -198,6 +226,84 @@ impl Default for WindowConfig {
             padding_x: 0,
             padding_y: 0,
             background_image: None,
+            close_action: CloseAction::default(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod close_action_tests {
+    use super::*;
+
+    #[test]
+    fn デフォルトは_prompt() {
+        assert_eq!(CloseAction::default(), CloseAction::Prompt);
+        let cfg = WindowConfig::default();
+        assert_eq!(cfg.close_action, CloseAction::Prompt);
+    }
+
+    #[test]
+    fn toml_で_prompt_をパースできる() {
+        let toml_str = r#"
+[window]
+close_action = "prompt"
+"#;
+        let parsed: super::super::Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.window.close_action, CloseAction::Prompt);
+    }
+
+    #[test]
+    fn toml_で_detach_をパースできる() {
+        let toml_str = r#"
+[window]
+close_action = "detach"
+"#;
+        let parsed: super::super::Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.window.close_action, CloseAction::Detach);
+    }
+
+    #[test]
+    fn toml_で_kill_をパースできる() {
+        let toml_str = r#"
+[window]
+close_action = "kill"
+"#;
+        let parsed: super::super::Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.window.close_action, CloseAction::Kill);
+    }
+
+    #[test]
+    fn toml_未指定時はデフォルト() {
+        let toml_str = r#"
+[window]
+background_opacity = 0.9
+"#;
+        let parsed: super::super::Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.window.close_action, CloseAction::Prompt);
+    }
+
+    #[test]
+    fn 不正な値はパースエラー() {
+        let toml_str = r#"
+[window]
+close_action = "invalid"
+"#;
+        let result: Result<super::super::Config, _> = toml::from_str(toml_str);
+        assert!(result.is_err(), "未知の値はパースエラーとなるべき");
+    }
+
+    #[test]
+    fn toml_ラウンドトリップで値を保つ() {
+        // 各バリアントを `WindowConfig` 経由で serialize → deserialize して同値性を確認
+        for action in [CloseAction::Prompt, CloseAction::Detach, CloseAction::Kill] {
+            let cfg = WindowConfig {
+                close_action: action,
+                ..WindowConfig::default()
+            };
+            let s = toml::to_string(&cfg).expect("WindowConfig は serialize 可能");
+            let parsed: WindowConfig =
+                toml::from_str(&s).expect("シリアライズしたものは deserialize 可能");
+            assert_eq!(parsed.close_action, action);
         }
     }
 }
