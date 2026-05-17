@@ -53,11 +53,16 @@ modules:
       - install -Dm755 target/release/nexterm-server   /app/bin/nexterm-server
       - install -Dm755 target/release/nexterm-client-tui  /app/bin/nexterm-client-tui
       - install -Dm755 target/release/nexterm-ctl      /app/bin/nexterm-ctl
-      # .desktop ファイルとアイコン
-      - install -Dm644 linux/nexterm.desktop
+      # .desktop ファイル: Flatpak は app-id と同名の Icon= が必須なので
+      # linux/nexterm.desktop の Icon=utilities-terminal を io.github.mizu_jun.Nexterm に書き換える。
+      - sed 's|^Icon=.*|Icon=io.github.mizu_jun.Nexterm|'
+          linux/nexterm.desktop
+          > nexterm.flatpak.desktop
+      - install -Dm644 nexterm.flatpak.desktop
           /app/share/applications/io.github.mizu_jun.Nexterm.desktop
-      - install -Dm644 assets/icon.png
-          /app/share/icons/hicolor/256x256/apps/io.github.mizu_jun.Nexterm.png
+      # 実体は 512x512 の assets/nexterm-source.png（hicolor の 512x512 階層に配置）
+      - install -Dm644 assets/nexterm-source.png
+          /app/share/icons/hicolor/512x512/apps/io.github.mizu_jun.Nexterm.png
       # AppStream メタデータ
       - install -Dm644 pkg/flatpak/io.github.mizu_jun.Nexterm.metainfo.xml
           /app/share/metainfo/io.github.mizu_jun.Nexterm.metainfo.xml
