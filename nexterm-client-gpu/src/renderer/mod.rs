@@ -23,6 +23,7 @@
 //! - `shader_reload` — カスタムシェーダーのホットリロード
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 
 use tracing::{info, warn};
@@ -119,7 +120,10 @@ pub(super) fn start_shader_watcher(
 ///
 /// 全フィールドは renderer サブモジュール（wgpu_init / render_frame / gpu_buffers /
 /// image / shader_reload）から直接アクセスする。
-struct WgpuState {
+///
+/// 可視性 `pub(super)` は Sprint 5-8 Phase 4-1 Step 1.2 で `ClientWindow.wgpu` の
+/// 公開可視性に揃えるため。EventHandler 等の親モジュールからも参照可能。
+pub(super) struct WgpuState {
     device: wgpu::Device,
     pub(super) queue: wgpu::Queue,
     surface: wgpu::Surface<'static>,
@@ -154,4 +158,51 @@ struct WgpuState {
     txt_i_cap: u64,
     /// 最後にフレームを描画した時刻（FPS 制限用）
     last_frame_at: Instant,
+}
+
+// ---- 複数 OS Window 対応スケルトン（Sprint 5-8 Phase 4-1 Step 1.2）----
+
+/// 各 OS Window 固有の表示状態を集約する型（Sprint 5-8 Phase 4-1 Step 1.3 で詳細化予定）。
+///
+/// 現状は空のマーカー構造体。Step 1.3 で以下を移行する想定:
+/// - `focused_server_window_id: u32`
+/// - `scrollback_view` / `copy_mode` / `search` / `context_menu`
+/// - `hovered_tab_id` 等のホバー状態
+///
+/// これらは現在 `ClientState` 内に格納されているが、複数 OS Window 化に伴い
+/// per-OS-Window へ分割される。
+#[allow(dead_code)]
+#[derive(Default)]
+pub(super) struct PerWindowViewState;
+
+/// 1 個の OS Window に紐付くペア型（Sprint 5-8 Phase 4-1 Step 1.2 スケルトン）。
+///
+/// 現状は単一 Window のみだが、Phase 4-2 以降で
+/// `EventHandler.windows: HashMap<WindowId, ClientWindow>` として複数 OS Window を保持する。
+///
+/// 移行期間中（Step 1.2〜1.3）は既存の `EventHandler.window` / `EventHandler.wgpu_state`
+/// フィールドと並行して保持され、Step 1.3 以降で段階的に統合していく。
+#[allow(dead_code)]
+pub(super) struct ClientWindow {
+    /// winit ネイティブウィンドウ
+    pub(super) window: Arc<winit::window::Window>,
+    /// wgpu 描画ステート
+    pub(super) wgpu: WgpuState,
+    /// per-OS-Window 表示状態（Step 1.3 で詳細フィールド追加予定）
+    pub(super) view_state: PerWindowViewState,
+}
+
+#[cfg(test)]
+mod client_window_tests {
+    use super::*;
+
+    #[test]
+    // Step 1.3 で PerWindowViewState にフィールドを追加した時点で Default::default() が
+    // 非冗長になるため、それまでの暫定として clippy ルールを抑制する。
+    #[allow(clippy::default_constructed_unit_structs)]
+    fn per_window_view_state_default() {
+        // PerWindowViewState は Default 実装を持ち、空構造体としてインスタンス化できる。
+        // Step 1.3 でフィールド追加後もこのテストが基底チェックとして機能する。
+        let _ = PerWindowViewState::default();
+    }
 }

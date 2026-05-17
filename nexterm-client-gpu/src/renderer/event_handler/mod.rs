@@ -11,6 +11,7 @@
 //! 各サブモジュールは `impl EventHandler` ブロックを介して機能を追加する。
 //! 本ファイルは `EventHandler` 構造体と `ApplicationHandler` トレイト実装（dispatch のみ）を保持する。
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -26,7 +27,7 @@ use winit::{
 use crate::connection::Connection;
 use crate::glyph_atlas::GlyphAtlas;
 
-use super::{NextermApp, WgpuState};
+use super::{ClientWindow, NextermApp, WgpuState};
 
 // ---- サブモジュール ----
 mod consent;
@@ -74,6 +75,14 @@ pub struct EventHandler {
     /// `pending_quake_action` (state) と組み合わせてホットキー押下 / IPC 経由の
     /// トグル要求を一元処理する。
     pub(super) quake: crate::quake::QuakeRuntime,
+    /// 複数 OS Window 対応用 HashMap（Sprint 5-8 Phase 4-1 Step 1.2 スケルトン）。
+    ///
+    /// 現状は空のまま保持。Step 1.3 以降で `on_resumed` フローを移行し、
+    /// `windows` に登録した `ClientWindow` を一次データソースとする。
+    /// 移行完了までは既存の `window` / `wgpu_state` / `atlas` フィールドが
+    /// 一次データソース。
+    #[allow(dead_code)]
+    pub(super) windows: HashMap<WindowId, ClientWindow>,
 }
 
 impl ApplicationHandler for EventHandler {

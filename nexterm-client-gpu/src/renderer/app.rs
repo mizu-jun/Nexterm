@@ -5,6 +5,7 @@
 
 use anyhow::Result;
 use nexterm_config::{Config, StatusBarEvaluator};
+use std::collections::HashMap;
 use std::time::Instant;
 
 use winit::keyboard::ModifiersState;
@@ -80,6 +81,9 @@ impl NextermApp {
             pixel_scroll_accumulator: 0.0,
             update_rx,
             quake,
+            // Sprint 5-8 Phase 4-1 Step 1.2: 複数 OS Window 対応スケルトン。
+            // Step 1.3 以降で resumed フローを移行する。
+            windows: HashMap::new(),
         }
     }
 }
