@@ -313,7 +313,13 @@ fn parse_decimal(data: &[u8], i: &mut usize) -> Option<u16> {
     }
     let mut result: u32 = 0;
     while *i < data.len() && data[*i].is_ascii_digit() {
-        result = result * 10 + (data[*i] - b'0') as u32;
+        // 悪意あるエスケープシーケンスで巨大な数字列を渡されたとき u32 が overflow して
+        // panic することを防ぐため saturating 演算を使う。最終的に u16 にクランプする
+        // 用途なので、上限を超えた値はすべて u16::MAX に丸めて構わない。
+        // Sprint 5-7 後段で nightly Fuzz が発見した DoS バグの修正。
+        result = result
+            .saturating_mul(10)
+            .saturating_add((data[*i] - b'0') as u32);
         *i += 1;
     }
     Some(result.min(u16::MAX as u32) as u16)
@@ -323,7 +329,9 @@ fn parse_u32_bytes(data: &[u8]) -> u32 {
     let mut result: u32 = 0;
     for &b in data {
         if b.is_ascii_digit() {
-            result = result * 10 + (b - b'0') as u32;
+            // 上に同じ。Kitty image protocol のパラメータが巨大数値を含むケースで
+            // panic していたバグの修正（fuzz `kitty_image` ターゲットで再現可能）。
+            result = result.saturating_mul(10).saturating_add((b - b'0') as u32);
         }
     }
     result
@@ -444,5 +452,51 @@ mod tests {
         let result = decode_kitty(&data);
         // 巨大画像なので checked_image_bytes が None を返し、結果は None
         assert!(result.is_none(), "巨大画像のデコードは拒否されるべき");
+    }
+
+    // ---- 数値パース系の panic 回帰テスト（Sprint 5-7 後段 fuzz 発見バグ） ----
+
+    #[test]
+    fn parse_decimal_は巨大数字列でpanicしない() {
+        // u32 を桁あふれさせる長さ（10 文字以上）の数字列を渡しても
+        // saturating_mul/add で吸収して panic しないことを確認する。
+        let data = b"99999999999999999999"; // 20 桁、u32::MAX (10 桁) を大幅超過
+        let mut i = 0;
+        let result = parse_decimal(data, &mut i).unwrap();
+        // 上限は u16::MAX (65535)
+        assert_eq!(result, u16::MAX);
+        assert_eq!(i, data.len(), "全桁を消費しているはず");
+    }
+
+    #[test]
+    fn parse_decimal_は通常値を正しく返す() {
+        let data = b"12345abc";
+        let mut i = 0;
+        let result = parse_decimal(data, &mut i).unwrap();
+        assert_eq!(result, 12345);
+        assert_eq!(i, 5, "数字でない文字の手前で停止する");
+    }
+
+    #[test]
+    fn parse_decimal_は非数字で_none_を返す() {
+        let data = b"abc";
+        let mut i = 0;
+        assert!(parse_decimal(data, &mut i).is_none());
+    }
+
+    #[test]
+    fn parse_u32_bytes_は巨大数字列でpanicしない() {
+        // u32 を桁あふれさせる長さでも saturating で吸収。
+        let data = b"99999999999999999999"; // 20 桁
+        let result = parse_u32_bytes(data);
+        assert_eq!(result, u32::MAX);
+    }
+
+    #[test]
+    fn parse_u32_bytes_は通常値を正しく返す() {
+        assert_eq!(parse_u32_bytes(b"42"), 42);
+        // 非数字はスキップされる
+        assert_eq!(parse_u32_bytes(b"1a2b3"), 123);
+        assert_eq!(parse_u32_bytes(b""), 0);
     }
 }
