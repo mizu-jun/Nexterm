@@ -25,6 +25,17 @@
   <url type="homepage">https://github.com/mizu-jun/nexterm</url>
   <url type="bugtracker">https://github.com/mizu-jun/nexterm/issues</url>
   <releases>
+    <release version="1.3.1" date="2026-05-17">
+      <description>
+        <p>v1.3.1: Hotfix release for v1.3.0.</p>
+        <ul>
+          <li>vt: fix u32 overflow panic in image.rs parse_decimal/parse_u32_bytes (DoS via crafted Sixel/Kitty escape)</li>
+          <li>vt: fix u32 add overflow panic in CSI CUF/CUD cursor movement (DoS via crafted CSI escape)</li>
+          <li>flatpak: enable Flatpak distribution channel (vendor cargo sources for offline sandbox build)</li>
+          <li>ci: stabilize Fuzz nightly with independent workspace declaration</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.3.0" date="2026-05-17">
       <description>
         <p>v1.3.0: Sprint 5-6 refactor (state.rs / renderer / event_handler / input_handler split)
