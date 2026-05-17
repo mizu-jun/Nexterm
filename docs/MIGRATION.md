@@ -4,6 +4,93 @@
 
 ---
 
+## v1.2.0 → v1.3.0（Sprint 5-7 Phase 2: IPC バリアント追加とスナップショット拡張）
+
+`PROTOCOL_VERSION` が `4` から `7` にバンプされ、`SNAPSHOT_VERSION` が `2` から `3` に
+バンプされました。**新サーバーは旧クライアントを Hello ハンドシェイクで拒否し、
+旧サーバーは新クライアントを拒否します**。クライアントとサーバーは必ず一緒にアップグレードしてください。
+
+### 何が変わるか
+
+#### PROTOCOL_VERSION 5（Sprint 5-7 / Phase 2-1: ワークスペース機能）
+
+`ClientToServer` に 5 バリアント、`ServerToClient` に 2 バリアントを追加:
+
+- `ListWorkspaces` / `CreateWorkspace { name }` / `SwitchWorkspace { name }` /
+  `RenameWorkspace { from, to }` / `DeleteWorkspace { name, force }`
+- `WorkspaceList { workspaces, current }` / `WorkspaceSwitched { name }`
+
+postcard は enum バリアント追加に対して**前方互換性を持たない**ため、旧クライアント
+（PROTOCOL_VERSION 4）は新サーバーから送られる `WorkspaceList` をデコードできません。
+
+#### PROTOCOL_VERSION 6（Sprint 5-7 / Phase 2-2: Quake モード）
+
+`ClientToServer::QuakeToggle { action }` と `ServerToClient::QuakeToggleRequest { action }`
+を追加。`action` は `"toggle"` / `"show"` / `"hide"` のいずれか。
+
+#### PROTOCOL_VERSION 7（Sprint 5-7 / Phase 2-3: タブ並べ替え）
+
+`ClientToServer::ReorderPanes { pane_ids: Vec<u32> }` を追加。サーバーは指定された
+順序でタブを並べ替え、変更があった場合のみ `LayoutChanged` を送り返します。
+`LayoutChanged.panes` 配列の順序の意味が「BSP DFS 順」から「論理タブ表示順」に
+変わりますが、旧クライアントは順序に依存していなかったため動作には影響しません。
+
+#### SNAPSHOT_VERSION 3（Sprint 5-7 / Phase 2-1）
+
+`SessionSnapshot.workspace_name: String` と `ServerSnapshot.current_workspace: String`
+を追加。**v2 JSON は `serde(default = "default_workspace")` で自動マイグレーションされる**
+ため、既存スナップショットを手動で書き換える必要はありません。マイグレーション後、
+全セッションは `"default"` ワークスペースに所属します。
+
+### 移行手順
+
+1. **クライアントとサーバーを同時にアップグレード**: PROTOCOL_VERSION ミスマッチで
+   ハンドシェイクが失敗します
+2. **既存スナップショット**: 自動マイグレートされるため操作不要。`~/.local/state/nexterm/snapshot.json`
+   を読み込み時にバージョンが 2 → 3 へ更新される
+3. **設定ファイル変更不要**: 新機能はすべてオプションで、既存の `config.toml` をそのまま使えます
+
+### Quake モード（Wayland 制限）
+
+`global-hotkey` 0.8 crate は Wayland のセキュリティモデル上、グローバルホットキーを
+登録できません。Wayland 環境では `nexterm-ctl quake toggle/show/hide` を compositor の
+キーバインド（Sway の `bindsym` / Hyprland の `bind` 等）から呼び出してください:
+
+```
+# Sway 例
+bindsym Mod4+grave exec nexterm-ctl quake toggle
+
+# Hyprland 例
+bind = SUPER, grave, exec, nexterm-ctl quake toggle
+```
+
+X11 環境では `config.toml` の `[quake_mode] hotkey = "ctrl+\`"` でホットキーを直接登録できます。
+
+### 背景画像（Phase 3-1）
+
+背景画像は起動時のみロードされます。`config.toml` を変更した場合は再起動が必要です。
+
+```toml
+[window.background_image]
+path = "~/wallpaper.png"
+opacity = 0.3
+fit = "cover"  # cover / contain / stretch / center / tile
+```
+
+### アニメーション（Phase 3-2）
+
+新規ペイン追加・タブ切替時に ease-out アニメーションが既定で有効になります。
+アクセシビリティ（reduced motion）の観点で動きを抑えたい場合は以下を設定してください:
+
+```toml
+[animations]
+enabled = false                # 全アニメーション無効
+# または
+intensity = "off"              # off / subtle / normal / energetic
+```
+
+---
+
 ## v1.1.0 → Unreleased（Sprint 5-1 / G3: IPC ワイヤフォーマットを postcard へ移行）
 
 `PROTOCOL_VERSION` が `2` から `3` にバンプされました。**新サーバーは旧クライアント

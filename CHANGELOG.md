@@ -7,7 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.2.0] - 2026-05-13
+## [1.3.0] - 2026-05-17
+
+Sprint 5-6（GPU クライアントの大規模ファイル分割）と Sprint 5-7（UI/UX モダン化 Phase 1 + 2 + 3）
+完了に伴うマイナーバージョンリリース。IPC プロトコルとスナップショットフォーマットに
+互換性破壊を含むため、移行時は [docs/MIGRATION.md](docs/MIGRATION.md) を必ず参照すること。
+
+### 互換性破壊サマリ（v1.2.0 → v1.3.0）
+
+- **`PROTOCOL_VERSION` を `4` → `7` に bump**
+  - `5`: ワークスペース IPC（`ListWorkspaces` / `CreateWorkspace` / `SwitchWorkspace` /
+    `RenameWorkspace` / `DeleteWorkspace` + `WorkspaceList` / `WorkspaceSwitched`） (Phase 2-1)
+  - `6`: Quake モード IPC（`QuakeToggle` + `QuakeToggleRequest`） (Phase 2-2)
+  - `7`: タブ並べ替え IPC（`ReorderPanes`） (Phase 2-3)
+- **`SNAPSHOT_VERSION` を `2` → `3` に bump**: `SessionSnapshot.workspace_name` と
+  `ServerSnapshot.current_workspace` を追加。v2 JSON は `serde(default)` で自動マイグレ
+- **新サーバーは旧クライアントを Hello ハンドシェイクで拒否し、旧サーバーは新クライアントを拒否**。
+  クライアントとサーバーは必ず一緒にアップグレードすること
+
+### Sprint 5-7 Phase 3 — 視覚的洗練
+
+- **背景画像対応** (Phase 3-1): `[window.background_image]` で壁紙風の背景画像を表示。
+  `fit = "cover"/"contain"/"stretch"/"center"/"tile"` の 5 モード + 不透明度調整。
+  4096x4096 超は Lanczos3 で自動ダウンスケール。既存 `image_pipeline`（Sixel/Kitty 用）を再利用
+- **UI アニメーション** (Phase 3-2): タブ切替 200ms（アクセントライン伸長 + フェードイン）と
+  ペイン追加 250ms（白いオーバーレイフェードアウト）の ease-out アニメーション。
+  `[animations] enabled = false` または `intensity = "off"` で即時反映に切替可能
+  （reduced motion 対応）。intensity 4 段階: `off`/`subtle`(×0.5)/`normal`(×1.0)/`energetic`(×1.5)
+- **コマンドパレット網羅 + 履歴永続化** (Phase 3-3): 不足アクション 6 件追加（Quit/ClosePane/
+  NewWindow/QuickSelect/SetBroadcastOn/SetBroadcastOff）で全 25 アクション完備。
+  使用履歴を `~/.local/state/nexterm/palette_history.json` (atomic write + Unix 0600) に永続化。
+  クエリ空時は履歴順、クエリ有時は fuzzy スコア + history_bonus（use_count×10 上限 100 +
+  24h以内 +100 / 1週間以内 +50）でランキング
+
+### Sprint 5-7 Phase 2 — 目玉機能
+
+- **ワークスペース機能** (Phase 2-1): セッションをグループ化する「ワークスペース」概念を導入。
+  `nexterm-ctl workspace list/create/switch/rename/delete [--force]` サブコマンド追加。
+  ステータスバーの `workspace` ビルトインウィジェットで現在のワークスペースを表示。
+  `default` ワークスペースは削除・リネーム不可
+- **Quake モード** (Phase 2-2): グローバルホットキー（既定: `Ctrl+\``）でウィンドウを画面端
+  （Top/Bottom/Left/Right）から滑り出させて表示するモード。`global-hotkey` 0.8 crate を使用。
+  Wayland は global hotkey API 未対応のため `nexterm-ctl quake toggle/show/hide` 経由で
+  compositor の bindsym から呼ぶワークアラウンドを提供
+- **タブ並べ替え** (Phase 2-3): タブバーのタブを左右にドラッグして並べ替え可能。
+  6px の閾値超でドラッグ確定、未満ならクリック扱い。ドラッグ中はゴーストタブ + 挿入位置
+  インジケータを描画。`pane_order: Vec<u32>` を物理レイアウトから分離して管理
+
+### Sprint 5-7 Phase 1 — 磨き上げ群
+
+- **タブ色分け動的化 + ホバーハイライト** (UI-1-1): `TabBarConfig` に `activity_tab_bg` /
+  `active_accent_color` / `show_tab_number` / `inactive_text_brightness` / `hover_highlight`
+  を追加。マウスホバー時にタブ背景を明るく
+- **ステータスバー右端ウィジェット拡張** (UI-1-2): ビルトインに `cwd` / `cwd_short` /
+  `git_branch` / `workspace` を追加。`WidgetContext` を拡張して focused pane の cwd を伝播
+- **Leader key 対応** (UI-1-3): `Config.leader_key` で `<leader>` プレースホルダーを設定可能。
+  WezTerm 風の prefix キーバインドを簡潔に記述できる
+- **キーヒントオーバーレイ** (UI-1-4): Leader 単独押下で 2 秒間、prefix 系バインドを画面下部に
+  半透明表示。新規 `renderer/overlay/key_hint.rs` モジュール
+
+### Sprint 5-6 — GPU クライアントの大規模ファイル分割（リファクタリング）
+
+機能変更なし。GPU クライアントの 4 つの巨大ファイルをサブモジュールに分割し、保守性を改善。
+
+- `event_handler.rs` (1,318 行) → 7 サブモジュール（consent / settings_panel_hit / lifecycle /
+  window / mouse / keyboard）
+- `input_handler.rs` (1,377 行) → 6 サブモジュール
+- `renderer/mod.rs` (1,579 行) → 6 ファイル（wgpu_init / render_frame / event_handler / 等）
+- `state.rs` (1,319 行) → 7 ファイル（pane / search / selection / menus / consent /
+  server_message + state/mod.rs）
+
+### 追加された i18n エントリ
+
+8 言語（en/ja/zh-CN/ko/de/fr/es/it）に Sprint 5-7 関連の新規 UI 文字列を追加。
+コマンドパレット用 6 キー × 8 言語 = 48 件、ワークスペース・Quake・キーヒント関連を含む。
+
+
 
 監査ラウンド 2（70 件タスク）の Sprint 5-1 〜 5-5 完了に伴うリリース。
 互換性破壊を含む変更があるため、移行時は
