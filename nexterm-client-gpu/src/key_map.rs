@@ -106,16 +106,33 @@ pub(crate) fn proto_modifiers(state: ModifiersState) -> nexterm_proto::Modifiers
     nexterm_proto::Modifiers(bits)
 }
 
-/// 設定キー文字列（例: "ctrl+shift+p", "ctrl+b d"）と winit キーイベントを照合する
+/// 設定キー文字列（例: "ctrl+shift+p"）と winit キーイベントを照合する
 ///
 /// フォーマット: 修飾キー（ctrl/shift/alt/meta）と最終キー文字を `+` で区切る。
-/// スペース区切りのプレフィックス（tmux 風: "ctrl+b d"）は先頭の修飾シーケンス + 末尾の単一文字として扱う。
+///
+/// **重要**: 単発キー専用。スペース区切りのプレフィックスバインド（tmux 風 "ctrl+b d"）は
+/// false を返す。prefix 系バインドは呼び出し側で第1トークン（leader）と残りトークンに
+/// 分解してから本関数を 2 段階で呼ぶこと（[`input_handler::check_config_keybindings`] 参照）。
+///
+/// 過去のバグ: 旧実装は `split_whitespace().last()` で末尾トークンのみ評価していたため、
+/// `"ctrl+b d"` バインド設定下で `d` 単独押下にもマッチして誤発火していた。
 pub(crate) fn config_key_matches(key_str: &str, code: WKeyCode, mods: ModifiersState) -> bool {
-    // スペース区切りで最後のトークンをメインキーとして扱う（tmux プレフィックス互換は未実装 → 最後トークンのみ比較）
-    let last_token = key_str.split_whitespace().last().unwrap_or(key_str);
+    // スペース区切りのプレフィックスバインドは本関数では扱わない（呼び出し側で分解する）
+    if key_str.split_whitespace().count() > 1 {
+        return false;
+    }
+    let token = key_str.trim();
+    if token.is_empty() {
+        return false;
+    }
+    config_key_matches_token(token, code, mods)
+}
 
+/// `+` 区切りの単一キー仕様（例: "ctrl+shift+p"）を照合する内部関数。
+/// スペースを含まない前提（呼び出し側で保証）。
+pub(crate) fn config_key_matches_token(token: &str, code: WKeyCode, mods: ModifiersState) -> bool {
     // `+` で分割して修飾キーとメインキーを取得する
-    let parts: Vec<&str> = last_token.split('+').collect();
+    let parts: Vec<&str> = token.split('+').collect();
     if parts.is_empty() {
         return false;
     }
@@ -249,5 +266,127 @@ pub(crate) fn char_to_keycode(ch: char) -> Option<WKeyCode> {
         ';' => Some(WKeyCode::Semicolon),
         '`' => Some(WKeyCode::Backquote),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use winit::keyboard::{KeyCode as WKeyCode, ModifiersState};
+
+    fn mods_none() -> ModifiersState {
+        ModifiersState::empty()
+    }
+
+    fn mods_ctrl() -> ModifiersState {
+        ModifiersState::CONTROL
+    }
+
+    fn mods_ctrl_shift() -> ModifiersState {
+        ModifiersState::CONTROL | ModifiersState::SHIFT
+    }
+
+    // === 単発バインドの正常系 ===
+
+    #[test]
+    fn 単発_ctrl_shift_p_は_ctrlshift_p_で_true() {
+        assert!(config_key_matches(
+            "ctrl+shift+p",
+            WKeyCode::KeyP,
+            mods_ctrl_shift()
+        ));
+    }
+
+    #[test]
+    fn 単発_ctrl_b_は_ctrl_b_で_true() {
+        assert!(config_key_matches("ctrl+b", WKeyCode::KeyB, mods_ctrl()));
+    }
+
+    #[test]
+    fn 単発_ctrl_b_は_b_単独_で_false() {
+        assert!(!config_key_matches("ctrl+b", WKeyCode::KeyB, mods_none()));
+    }
+
+    // === バグ回帰防止: スペース区切りは常に false ===
+
+    #[test]
+    fn prefix_バインド_ctrl_b_d_は_d_単独_で_false() {
+        // 旧バグ: split_whitespace().last() で "d" だけ評価して true を返していた
+        assert!(!config_key_matches("ctrl+b d", WKeyCode::KeyD, mods_none()));
+    }
+
+    #[test]
+    fn prefix_バインド_ctrl_b_pct_は_5_単独_で_false() {
+        // 旧バグ: "%" → Digit5 で 5 単独押下にマッチしていた
+        assert!(!config_key_matches(
+            "ctrl+b %",
+            WKeyCode::Digit5,
+            mods_none()
+        ));
+    }
+
+    #[test]
+    fn prefix_バインド_ctrl_b_d_は_ctrl_b_押下_でも_false() {
+        // prefix モード突入のキーには別ロジックで対応するため、本関数は常に false
+        assert!(!config_key_matches("ctrl+b d", WKeyCode::KeyB, mods_ctrl()));
+    }
+
+    #[test]
+    fn prefix_バインド_leader_d_は_d_単独_で_false() {
+        // <leader> 展開後の文字列も同様
+        assert!(!config_key_matches("ctrl+b d", WKeyCode::KeyD, mods_none()));
+    }
+
+    // === エッジケース ===
+
+    #[test]
+    fn 空文字列は_false() {
+        assert!(!config_key_matches("", WKeyCode::KeyA, mods_none()));
+    }
+
+    #[test]
+    fn 空白のみは_false() {
+        assert!(!config_key_matches("   ", WKeyCode::KeyA, mods_none()));
+    }
+
+    #[test]
+    fn 修飾子のミスマッチは_false() {
+        // shift が要求されているが押されていない
+        assert!(!config_key_matches(
+            "ctrl+shift+p",
+            WKeyCode::KeyP,
+            mods_ctrl()
+        ));
+    }
+
+    #[test]
+    fn 余分な修飾子は_false() {
+        // ctrl+p バインドに対して Ctrl+Shift+p を押した場合
+        assert!(!config_key_matches(
+            "ctrl+p",
+            WKeyCode::KeyP,
+            mods_ctrl_shift()
+        ));
+    }
+
+    // === 内部関数 config_key_matches_token のスペース不可前提を確認 ===
+
+    #[test]
+    fn token_関数は_p_と_ctrl_p_で_true() {
+        assert!(config_key_matches_token(
+            "ctrl+p",
+            WKeyCode::KeyP,
+            mods_ctrl()
+        ));
+    }
+
+    #[test]
+    fn token_関数は_前後空白を含むと_main_key_変換失敗で_false() {
+        // 呼び出し側で trim 済みを前提にしているため、空白入りの token は意図的に通さない
+        assert!(!config_key_matches_token(
+            " ctrl+p ",
+            WKeyCode::KeyP,
+            mods_ctrl()
+        ));
     }
 }

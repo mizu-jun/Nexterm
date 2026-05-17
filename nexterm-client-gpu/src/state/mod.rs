@@ -100,6 +100,11 @@ pub struct ClientState {
     /// Leader 単独押下で 2 秒後の時刻をセットし、`lifecycle` でこの時刻を過ぎたら None に戻す。
     /// Some の間は画面下部に config.keys の prefix 系バインドを半透明表示する。
     pub key_hint_visible_until: Option<std::time::Instant>,
+    /// tmux 風 prefix モード（Leader 押下直後）の終了時刻（Sprint 5-7 / UI-1-4 bug fix）。
+    /// Leader 単独押下時に key_hint_visible_until と同時にセットされる。
+    /// Some の間に来たキー入力は `<leader> X` 形式のバインドのみ照合され、
+    /// マッチしなければ通常入力にフォールスルーする。期限切れまたはマッチ時に None に戻る。
+    pub prefix_pending_until: Option<std::time::Instant>,
     /// 更新通知バナー（Some(version) = 表示中、None = 非表示）
     pub update_banner: Option<String>,
     /// 機密操作の同意ダイアログ（Sprint 4-1）
@@ -185,6 +190,7 @@ impl ClientState {
             settings_tab_rect: None,
             hovered_tab_id: None,
             key_hint_visible_until: None,
+            prefix_pending_until: None,
             update_banner: None,
             pending_consent: None,
             session_consent_overrides: SessionConsentOverrides::default(),

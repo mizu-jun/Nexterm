@@ -21,7 +21,8 @@ use winit::{
 };
 
 use crate::key_map::{
-    config_key_matches, physical_to_proto_key, proto_modifiers, winit_code_to_char,
+    config_key_matches, config_key_matches_token, physical_to_proto_key, proto_modifiers,
+    winit_code_to_char,
 };
 use crate::vertex_util::grid_to_text;
 
@@ -546,17 +547,24 @@ impl EventHandler {
             return true;
         }
 
-        // Sprint 5-7 / UI-1-4: Leader 単独押下を検知してキーヒントオーバーレイを表示する
-        // leader_key（例: "ctrl+b"）が現在の修飾子+キーと一致するなら、後続バインドを
-        // 表示するためのヒントを 2 秒間表示する。PTY には送らずに後続処理に流して
-        // 他バインドがあれば優先で消費されるが、なければ PTY へ流れる。
+        // Sprint 5-7 / UI-1-4 + bug fix: Leader 単独押下を検知して prefix モードに突入する
+        // leader_key（例: "ctrl+b"）が現在の修飾子+キーと一致し、かつ `<leader> X` 形式の
+        // バインドが 1 つ以上設定されている場合のみ prefix モード突入＋ PTY に送らない。
+        // prefix バインドが設定されていない場合は素通りで通常の Ctrl+B 等として PTY に流す
+        // （ユーザーの既存ワークフロー破壊を避けるため）。
         let leader_str = self.app.config.leader_key.clone();
-        if !leader_str.is_empty() && config_key_matches(&leader_str, code, self.modifiers) {
-            self.app.state.key_hint_visible_until =
-                Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+        if !leader_str.is_empty()
+            && config_key_matches(&leader_str, code, self.modifiers)
+            && self.has_prefix_bindings()
+        {
+            let now = std::time::Instant::now();
+            let until = now + std::time::Duration::from_secs(2);
+            self.app.state.key_hint_visible_until = Some(until);
+            self.app.state.prefix_pending_until = Some(until);
             if let Some(w) = &self.window {
                 w.request_redraw();
             }
+            return true; // PTY へは送らない（prefix モード突入を消費）
         }
 
         // 設定ファイルのカスタムキーバインドをチェックする
@@ -565,6 +573,22 @@ impl EventHandler {
         }
 
         false
+    }
+
+    /// 設定に `<leader> X` 形式のプレフィックスバインドが 1 つでも存在するかを返す。
+    /// Leader 単独押下時に prefix モード突入するかどうかの判定に使う。
+    fn has_prefix_bindings(&self) -> bool {
+        let leader = &self.app.config.leader_key;
+        if leader.is_empty() {
+            return false;
+        }
+        self.app.config.keys.iter().any(|b| {
+            let expanded = self.app.config.expand_leader(&b.key);
+            let mut tokens = expanded.split_whitespace();
+            let first = tokens.next();
+            // 2 トークン以上 + 先頭が leader と一致する
+            first.is_some_and(|t| t.eq_ignore_ascii_case(leader)) && tokens.next().is_some()
+        })
     }
 
     /// クリック座標 (col, row) に URL があれば返す
@@ -587,14 +611,60 @@ impl EventHandler {
             .map(|u| u.url)
     }
 
-    /// 設定のキーバインド一覧から一致するものを探してアクションを実行する
-    /// 消費した場合は true を返す
+    /// 設定のキーバインド一覧から一致するものを探してアクションを実行する。
+    /// 消費した場合は true を返す。
+    ///
+    /// Sprint 5-7 / UI-1-3 + bug fix: 2 経路でディスパッチする:
+    /// - **prefix モード中** (`prefix_pending_until` が有効): `<leader> X` 形式のバインドのみ
+    ///   照合し、第 1 トークンが leader と一致するエントリの残り token を本キー入力と比較する。
+    ///   マッチで実行＆ prefix モード解除。未マッチでも prefix モード解除して単発バインド照合に
+    ///   フォールスルーする（後続のキーが通常入力として動作するようにするため、本キーは消費しない）。
+    /// - **prefix モード外**: スペース区切りのバインドはスキップし、単発バインドのみ照合する。
     fn check_config_keybindings(&mut self, code: WKeyCode, event_loop: &ActiveEventLoop) -> bool {
-        // config.keys を走査してマッチするバインドを探す
-        // Sprint 5-7 / UI-1-3: キー文字列の `<leader>` プレースホルダーを leader_key で展開
         let bindings = self.app.config.keys.clone();
+        let leader = self.app.config.leader_key.clone();
+        let now = std::time::Instant::now();
+
+        let in_prefix = matches!(
+            self.app.state.prefix_pending_until,
+            Some(t) if now < t
+        );
+
+        if in_prefix {
+            // prefix モード中: <leader> X 形式のバインドのみ照合
+            for binding in &bindings {
+                let expanded = self.app.config.expand_leader(&binding.key);
+                let tokens: Vec<&str> = expanded.split_whitespace().collect();
+                if tokens.len() < 2 {
+                    continue;
+                }
+                // 第 1 トークンは leader と一致する必要あり
+                if !tokens[0].eq_ignore_ascii_case(leader.as_str()) {
+                    continue;
+                }
+                // 残り token を結合（将来の多段 prefix に備える。現状は単一 token 想定）
+                let rest = tokens[1..].join(" ");
+                if config_key_matches_token(&rest, code, self.modifiers) {
+                    let action = binding.action.clone();
+                    self.app.state.prefix_pending_until = None;
+                    self.app.state.key_hint_visible_until = None;
+                    self.execute_action(&action, event_loop);
+                    return true;
+                }
+            }
+            // prefix モード中にマッチしなかった: モード解除して通常バインド照合へフォールスルー
+            // （本キーは消費せず、未マッチなら最終的に PTY 入力として処理される）
+            self.app.state.prefix_pending_until = None;
+            self.app.state.key_hint_visible_until = None;
+        }
+
+        // 単発バインド照合（prefix モード外、または prefix モード未マッチ時のフォールスルー）
         for binding in &bindings {
             let expanded = self.app.config.expand_leader(&binding.key);
+            // スペース区切り（prefix 系）は本経路ではスキップ
+            if expanded.split_whitespace().count() > 1 {
+                continue;
+            }
             if config_key_matches(&expanded, code, self.modifiers) {
                 let action = binding.action.clone();
                 self.execute_action(&action, event_loop);

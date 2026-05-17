@@ -277,6 +277,12 @@ impl EventHandler {
                 w.request_redraw();
             }
         }
+        // Sprint 5-7 / UI-1-4 bug fix: prefix モードの期限切れ判定（タイムアウト 2 秒）
+        if let Some(deadline) = self.app.state.prefix_pending_until
+            && Instant::now() >= deadline
+        {
+            self.app.state.prefix_pending_until = None;
+        }
 
         // 更新チェッカーからの通知をポーリングしてバナーを表示する
         if self.update_rx.has_changed().unwrap_or(false)
