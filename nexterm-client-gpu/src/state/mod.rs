@@ -127,6 +127,12 @@ pub struct ClientState {
     /// タブドラッグ中の状態（Sprint 5-7 / Phase 2-3）。
     /// `Some` の間はゴーストタブを描画し、ドロップ時に並べ替えを実施する。
     pub tab_drag: Option<TabDragState>,
+    /// アニメーション管理（Sprint 5-7 / Phase 3-2）。
+    ///
+    /// タブ切替・ペイン追加の時刻を記録し、レンダラーから [0,1] 進捗値を取得する。
+    /// `AnimationsConfig.enabled = false` または `intensity = "off"` の場合、
+    /// `scaled_duration_ms` が 0 を返すため進捗は常に 1.0 となり実質無効になる。
+    pub animations: crate::animations::AnimationManager,
 }
 
 /// タブドラッグ中の状態（Sprint 5-7 / Phase 2-3）
@@ -185,15 +191,24 @@ impl ClientState {
             pending_quake_action: None,
             tab_order: Vec::new(),
             tab_drag: None,
+            animations: crate::animations::AnimationManager::new(),
         }
     }
 
-    /// フォーカスペインを切り替え、アクティビティフラグをクリアする
+    /// フォーカスペインを切り替え、アクティビティフラグをクリアする。
+    ///
+    /// Sprint 5-7 / Phase 3-2: 切替時にタブ切替アニメーションも記録する
+    /// （前回と同じ pane を再フォーカスした場合はアニメーション再開なし）。
     #[allow(dead_code)]
     pub fn set_focused_pane(&mut self, pane_id: u32) {
+        let prev = self.focused_pane_id;
         self.focused_pane_id = Some(pane_id);
         if let Some(pane) = self.panes.get_mut(&pane_id) {
             pane.has_activity = false;
+        }
+        if prev != Some(pane_id) {
+            self.animations
+                .record_tab_switch(pane_id, std::time::Instant::now());
         }
     }
 

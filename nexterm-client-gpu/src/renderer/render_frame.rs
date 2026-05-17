@@ -289,11 +289,51 @@ impl WgpuState {
             }
         }
 
+        // ---- ペインフェードインオーバーレイ（Sprint 5-7 / Phase 3-2）----
+        // 新規追加されたペインに半透明の白いオーバーレイを重ね、ease-out でフェードアウトする。
+        // 既存のセル背景の上から alpha blending で重ねるため別途バーテックスを追加。
+        {
+            let fade_duration = config.animations.scaled_duration_ms(250);
+            if fade_duration > 0 && !state.pane_layouts.is_empty() {
+                let now = std::time::Instant::now();
+                let layout_ids: Vec<u32> = state.pane_layouts.keys().copied().collect();
+                for pane_id in layout_ids {
+                    let raw = state
+                        .animations
+                        .pane_fade_in_progress(pane_id, now, fade_duration);
+                    if raw >= 1.0 {
+                        continue;
+                    }
+                    let eased = crate::animations::ease_out_cubic(raw);
+                    // 初期 alpha=0.35 → 0.0 にフェード
+                    let overlay_alpha = 0.35 * (1.0 - eased);
+                    if let Some(layout) = state.pane_layouts.get(&pane_id) {
+                        let px = layout.col_offset as f32 * cell_w;
+                        let py = layout.row_offset as f32 * cell_h + grid_offset_y;
+                        let pw = layout.cols as f32 * cell_w;
+                        let ph = layout.rows as f32 * cell_h;
+                        add_px_rect(
+                            px,
+                            py,
+                            pw,
+                            ph,
+                            [1.0, 1.0, 1.0, overlay_alpha],
+                            sw,
+                            sh,
+                            &mut bg_verts,
+                            &mut bg_idx,
+                        );
+                    }
+                }
+            }
+        }
+
         // ---- タブバー（設定で有効な場合）----
         if tab_bar_cfg.enabled {
             self.build_tab_bar_verts(
                 state,
                 tab_bar_cfg,
+                &config.animations,
                 sw,
                 sh,
                 cell_w,

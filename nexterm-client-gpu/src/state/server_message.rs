@@ -205,6 +205,23 @@ impl ClientState {
                 panes,
                 focused_pane_id,
             } => {
+                let prev_focused = self.focused_pane_id;
+                // Sprint 5-7 / Phase 3-2: 新規追加されたペインを検出してフェードインアニメーションを記録
+                let now = std::time::Instant::now();
+                let prev_pane_ids: std::collections::HashSet<u32> =
+                    self.pane_layouts.keys().copied().collect();
+                for layout in &panes {
+                    if !prev_pane_ids.contains(&layout.pane_id) {
+                        self.animations.record_pane_added(layout.pane_id, now);
+                    }
+                }
+                // 消えたペインの状態をクリーンアップ
+                let new_pane_ids: std::collections::HashSet<u32> =
+                    panes.iter().map(|l| l.pane_id).collect();
+                for removed_id in prev_pane_ids.difference(&new_pane_ids) {
+                    self.animations.record_pane_removed(*removed_id);
+                }
+
                 // レイアウトを全更新する
                 self.pane_layouts.clear();
                 // Sprint 5-7 / Phase 2-3: panes 配列の登場順を tab_order に反映
@@ -217,6 +234,10 @@ impl ClientState {
                 self.focused_pane_id = Some(focused_pane_id);
                 if let Some(pane) = self.panes.get_mut(&focused_pane_id) {
                     pane.has_activity = false;
+                }
+                // Sprint 5-7 / Phase 3-2: タブ切替アニメーションを記録（変化があった場合のみ）
+                if prev_focused != Some(focused_pane_id) {
+                    self.animations.record_tab_switch(focused_pane_id, now);
                 }
             }
             // プラグイン操作応答は GPU クライアントでは無視する

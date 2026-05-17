@@ -4,6 +4,7 @@
 //! デフォルトキーバインドを保持する。外部からの利用は `nexterm_config::*` の
 //! 再 export 経由を推奨する。
 
+pub mod animations;
 pub mod color;
 pub mod font;
 pub mod gpu;
@@ -15,6 +16,7 @@ pub mod shell;
 pub mod web;
 pub mod window;
 
+pub use animations::{AnimationIntensity, AnimationsConfig};
 pub use color::{BuiltinScheme, ColorScheme, CustomPalette, SchemePalette};
 pub use font::FontConfig;
 pub use gpu::{ApiVersion, GpuConfig, PresentModeConfig, Profile};
@@ -147,6 +149,12 @@ pub struct Config {
     /// デフォルトは `enabled = false`。
     #[serde(default)]
     pub quake_mode: QuakeModeConfig,
+
+    /// アニメーション設定（Sprint 5-7 / Phase 3-2）。
+    /// タブ切替・ペイン追加等の UI アニメーションを統一制御する。
+    /// `enabled = false` または `intensity = "off"` で全て即時反映（reduced motion 対応）。
+    #[serde(default)]
+    pub animations: AnimationsConfig,
 }
 
 fn default_leader_key() -> String {
@@ -195,6 +203,7 @@ impl Default for Config {
             security: SecurityConfig::default(),
             leader_key: default_leader_key(),
             quake_mode: QuakeModeConfig::default(),
+            animations: AnimationsConfig::default(),
         }
     }
 }

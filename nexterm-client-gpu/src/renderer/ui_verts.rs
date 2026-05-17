@@ -107,6 +107,7 @@ impl WgpuState {
         &mut self,
         state: &mut ClientState,
         cfg: &nexterm_config::TabBarConfig,
+        animations_cfg: &nexterm_config::AnimationsConfig,
         sw: f32,
         sh: f32,
         cell_w: f32,
@@ -243,14 +244,32 @@ impl WgpuState {
             add_px_rect(
                 x_offset, bar_y, label_w, bar_h, tab_bg, sw, sh, bg_verts, bg_idx,
             );
-            // アクティブタブの下部にアクセントライン（設定色）を描画する
+            // アクティブタブの下部にアクセントライン（設定色）を描画する。
+            // Sprint 5-7 / Phase 3-2: タブ切替直後はアクセントラインを ease-out で
+            // フェードイン + 横方向に伸びる演出を付与する（reduced motion 設定で抑制可能）。
             if is_active {
+                let tab_switch_duration = animations_cfg.scaled_duration_ms(200);
+                let progress = if tab_switch_duration == 0
+                    || state.animations.current_tab_switch_target() != Some(pane_id)
+                {
+                    1.0
+                } else {
+                    let raw = state
+                        .animations
+                        .tab_switch_progress(std::time::Instant::now(), tab_switch_duration);
+                    crate::animations::ease_out_cubic(raw)
+                };
+                let mut accent = accent_color;
+                accent[3] = accent_color[3] * progress;
+                // アンダーラインは中央から両端に伸びる演出
+                let accent_w = label_w * progress;
+                let accent_x = x_offset + (label_w - accent_w) / 2.0;
                 add_px_rect(
-                    x_offset,
+                    accent_x,
                     bar_y + bar_h - accent_h,
-                    label_w,
+                    accent_w,
                     accent_h,
-                    accent_color,
+                    accent,
                     sw,
                     sh,
                     bg_verts,

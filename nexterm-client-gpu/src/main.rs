@@ -4,6 +4,7 @@
 //! nexterm-server のロジックを Tokio タスクとして内部起動し、
 //! 単一プロセスで全機能を提供する。
 
+mod animations;
 mod color_util;
 mod connection;
 mod font;
