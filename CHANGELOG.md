@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-05-17
+
+v1.3.1 の hotfix からの後続マイナーバージョン。**ユーザー影響のある破壊的変更はなし**（`nexterm`
+コマンドの挙動・配布物の構成・MSI ショートカット等すべて維持）。内部構造の整理として
+`nexterm-launcher` クレートを削除し workspace を 12 → 11 クレートに整理したため、PATCH ではなく
+MINOR を採用した。プレフィックスバインドの誤発火バグ修正（実害あり）も同梱。
+
 ### Fixed
 
 - **プレフィックスバインドの誤発火を修正** (`config_key_matches`): 旧実装は `split_whitespace().last()`
@@ -31,6 +38,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   数個（`nexterm-ctl` / `nexterm-client-tui` / `nexterm-server`）」の構成になった。ユーザーへの
   影響なし（`nexterm` コマンドの挙動・配布物の構成・MSI ショートカット等すべて維持）。workspace
   は 12 → 11 クレートに整理
+
+### Documentation
+
+- **公開ドキュメントの実態乖離を解消**: 新規ユーザーが誤解しやすい古い記述を一括修正。
+  - `bincode` → `postcard` の更新漏れ（Sprint 5-1 / ADR-0006 で 2026-05-12 に移行済み）を
+    README.md / README.ja.md / docs/ARCHITECTURE.md / docs/THREAT_MODEL.md / docs/PROTOCOL.md
+    の本文 + 図表で修正。docs/DESIGN.md の ADR-004 は ADR-0006 で superseded と明示
+  - `PROTOCOL_VERSION = 1` → `7`（README/README.ja の v1.1.0 セクション。"最新値は
+    nexterm-proto/src/lib.rs 参照" 注釈付き）
+  - Rust 最低バージョン `1.78` / `1.80` → `1.85`（workspace の `edition = "2024"` 必須）を
+    README.md / README.ja.md / docs/src/install.md で訂正
+  - `SNAPSHOT_VERSION = 2` → `3`（Sprint 5-7 / Phase 2-1 で `workspace_name` 追加済み）を
+    CLAUDE.md / docs/THREAT_MODEL.md / docs/adr/0007-snapshot-v1-deprecation.md で訂正
+  - CONTRIBUTING.md / CONTRIBUTING.ja.md の依存リスト bincode → postcard
+  - nexterm-client-core/src/lib.rs のフレーミングコメント postcard 化
+  - README.md のテスト数 "240+ tests" → 実測 **660+**（docs/ARCHITECTURE.md の Test Strategy 表
+    にも現状値の注釈を追加）
+  - README.ja.md の「デーモンレス設計」表現を「内部 tokio タスクが PTY を保持」と
+    シングルバイナリ実装に合わせて明示
+
+### Build
+
+- workspace version `1.3.1` → `1.4.0`（破壊的変更なしの整理リリース）
 
 ## [1.3.0] - 2026-05-17
 
