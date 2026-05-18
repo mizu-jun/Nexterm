@@ -7,6 +7,7 @@
 mod animations;
 mod color_util;
 mod connection;
+mod drop_target;
 mod font;
 mod glyph_atlas;
 mod host_manager;

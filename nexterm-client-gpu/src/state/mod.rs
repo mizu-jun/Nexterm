@@ -14,6 +14,7 @@
 use std::collections::HashMap;
 
 use nexterm_proto::PaneLayout;
+use winit::window::WindowId;
 
 use crate::host_manager::HostManager;
 use crate::macro_picker::MacroPicker;
@@ -155,6 +156,26 @@ pub struct TabDragState {
     /// 実際にドラッグと判定済みか（X 移動量が閾値超え）。
     /// `false` のままリリースされた場合は通常クリック扱い。
     pub committed: bool,
+    /// ドラッグ開始時の OS Window ID（Sprint 5-8 Phase 4-2）。
+    ///
+    /// Phase 4-2 ではタブ外ドロップ判定で source を識別するために使用する。
+    /// 主 Window 未初期化時の安全性を `Option` で確保（実運用では常に `Some`）。
+    #[allow(dead_code)]
+    pub source_os_window_id: Option<WindowId>,
+    /// ドラッグ開始時のスクリーン座標（Sprint 5-8 Phase 4-2）。
+    ///
+    /// `event_handler::mouse::on_mouse_left_pressed` で
+    /// プラットフォーム別ヘルパー（Step 2.3 で追加）から取得する。
+    /// グローバル座標が取得不能なプラットフォーム（Wayland）では `None`。
+    #[allow(dead_code)]
+    pub start_screen_pos: Option<(i32, i32)>,
+    /// 現在のスクリーン座標（Sprint 5-8 Phase 4-2）。
+    ///
+    /// `event_handler::mouse::on_cursor_moved` で更新（Step 2.4 配線）。
+    /// ドロップ時の判定（Step 2.5）で `compute_drop_target` の引数に渡す。
+    /// `None` の場合は新規 OS Window 生成判定を行わない（既存挙動維持）。
+    #[allow(dead_code)]
+    pub current_screen_pos: Option<(i32, i32)>,
 }
 
 impl ClientState {

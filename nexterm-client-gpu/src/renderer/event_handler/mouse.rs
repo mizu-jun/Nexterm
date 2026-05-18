@@ -7,6 +7,7 @@
 //! - `on_mouse_left_released` — 選択確定・クリップボードコピー・URL オープン・フォーカス切替
 //! - `on_mouse_wheel`
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use nexterm_proto::ClientToServer;
@@ -59,6 +60,115 @@ pub(super) fn compute_reordered_tab_order(
 }
 
 impl EventHandler {
+    /// タブバー外でドロップされた場合の処理（Sprint 5-8 Phase 4-2）。
+    ///
+    /// `drag.current_screen_pos` と現在登録されている全 OS Window の bounds から
+    /// `compute_drop_target` を呼んでドロップ先を判定する:
+    ///
+    /// - `SameWindow`: 同一 Window 内ペイン領域 → 何もしない（既存挙動と一致）
+    /// - `OtherWindowTabBar`: 別 Window のタブバー上 → Phase 4-4 で merge 実装、現状はログのみ
+    /// - `NewWindow`: どの Window 外 → `spawn_os_window` 呼び出し（Phase 4-2 はスケルトン）
+    ///
+    /// `current_screen_pos` が `None`（Wayland 等のフォールバック失敗）の場合は
+    /// 何もしない（決定 #4 の代替 UX が機能パリティを提供）。
+    fn handle_tab_drag_drop_outside(&mut self, drag: &crate::state::TabDragState) {
+        let Some(drop_pos) = drag.current_screen_pos else {
+            tracing::debug!("タブ外ドロップ: グローバル座標取得不能（Wayland 等）→ 機能無効化");
+            return;
+        };
+        let Some(source_id) = drag.source_os_window_id else {
+            tracing::debug!("タブ外ドロップ: source_os_window_id 未設定 → スキップ");
+            return;
+        };
+
+        // 現在登録されている OS Window の bounds を収集する
+        // Phase 4-2 時点では主 Window 1 個のみだが、Phase 4-4 以降で複数 Window 化対応
+        let tab_bar_h = if self.app.config.tab_bar.enabled {
+            self.app.config.tab_bar.height as f32
+        } else {
+            0.0
+        };
+        let mut bounds_vec: Vec<crate::drop_target::OsWindowBounds<winit::window::WindowId>> =
+            Vec::new();
+        if let Some(w) = &self.window
+            && let Ok(outer_pos) = w.outer_position()
+        {
+            let outer_size = w.outer_size();
+            bounds_vec.push(crate::drop_target::OsWindowBounds {
+                window_id: w.id(),
+                position: (outer_pos.x, outer_pos.y),
+                size: (outer_size.width, outer_size.height),
+                tab_bar_y_range: (0.0, tab_bar_h),
+            });
+        }
+        // Phase 4-1 で導入した `self.windows` HashMap の OS Window も収集する。
+        // 主 Window と重複しないように id でフィルタする（Phase 4-4 で `self.window` 廃止予定）。
+        for (id, cw) in &self.windows {
+            if Some(*id) == self.window.as_ref().map(|w| w.id()) {
+                continue;
+            }
+            if let Ok(outer_pos) = cw.window.outer_position() {
+                let outer_size = cw.window.outer_size();
+                bounds_vec.push(crate::drop_target::OsWindowBounds {
+                    window_id: *id,
+                    position: (outer_pos.x, outer_pos.y),
+                    size: (outer_size.width, outer_size.height),
+                    tab_bar_y_range: (0.0, tab_bar_h),
+                });
+            }
+        }
+
+        let target = crate::drop_target::compute_drop_target(drop_pos, source_id, &bounds_vec);
+        match target {
+            crate::drop_target::DropTarget::SameWindow { .. } => {
+                // ペイン領域へのドロップ: 既存仕様と整合（何もしない）
+            }
+            crate::drop_target::DropTarget::OtherWindowTabBar { window_id } => {
+                tracing::info!(
+                    "タブ外ドロップ: 別 OS Window のタブバー上にドロップ（target={:?}）。Phase 4-4 で MovePaneToWindow 実装予定",
+                    window_id
+                );
+            }
+            crate::drop_target::DropTarget::NewWindow => {
+                tracing::info!(
+                    "タブ外ドロップ: 新規 OS Window 生成（drop_pos={:?}, pane_id={}）。spawn_os_window 呼び出し（Phase 4-2 スケルトン）",
+                    drop_pos,
+                    drag.pane_id
+                );
+                // Phase 4-1 で導入した spawn_os_window スケルトンを呼ぶ。
+                // 実 wgpu 初期化と IPC `MovePaneToWindow` 送信は Phase 4-3 で本実装する。
+                // 現状は警告ログ + 主 Window の WindowId フォールバックのみ。
+                // 注: `spawn_os_window` 呼び出しには `&ActiveEventLoop` が必要だが、
+                //     mouse handler の文脈では持っていないため Phase 4-3 で関数化見直し予定。
+                //     Phase 4-2 完了時点ではここまで（ログ出力のみで動作確認可能）。
+            }
+        }
+    }
+
+    /// マウスカーソルのグローバルスクリーン座標を解決する（Sprint 5-8 Phase 4-2）。
+    ///
+    /// 優先順位:
+    /// 1. プラットフォーム別 OS API（Windows: `GetCursorPos`）から取得
+    /// 2. winit の `window.outer_position()` + クライアント領域のカーソル座標を加算
+    /// 3. どちらも失敗（Wayland など）→ `None`
+    ///
+    /// `client_x` / `client_y` は winit `CursorMoved` の `position`（ウィンドウ
+    /// クライアント領域の左上原点座標、ピクセル単位）。フォールバック計算で使用する。
+    ///
+    /// 戻り値 `None` の場合、呼び出し側はタブ外ドロップ判定を実行せず、既存の
+    /// `ReorderPanes` 経路にフォールバックする（決定 #4: Wayland は代替 UX）。
+    fn resolve_screen_pos(
+        window: &Option<Arc<winit::window::Window>>,
+        client_x: i32,
+        client_y: i32,
+    ) -> Option<(i32, i32)> {
+        if let Some(pos) = crate::platform::cursor_screen_pos() {
+            return Some(pos);
+        }
+        let outer = window.as_ref()?.outer_position().ok()?;
+        Some((outer.x + client_x, outer.y + client_y))
+    }
+
     /// `WindowEvent::CursorMoved` — マウスカーソル位置を追跡し、ドラッグ中は選択範囲を更新する
     pub(super) fn on_cursor_moved(&mut self, position: winit::dpi::PhysicalPosition<f64>) {
         self.cursor_position = Some((position.x, position.y));
@@ -96,30 +206,39 @@ impl EventHandler {
 
         // Sprint 5-7 / Phase 2-3: タブドラッグ中の追跡
         // タブバー領域内 + 進行中ドラッグがある場合、current_x / hover_target / committed を更新する
-        if let Some(drag) = self.app.state.tab_drag.as_mut() {
-            let px_f32 = position.x as f32;
-            drag.current_x = px_f32;
-            // 6px 以上動いたらドラッグ確定
-            const DRAG_THRESHOLD: f32 = 6.0;
-            if !drag.committed && (px_f32 - drag.start_x).abs() >= DRAG_THRESHOLD {
-                drag.committed = true;
-            }
-            // 挿入先タブを決定（タブバー領域内のタブにヒットしているか）
-            let on_tab_bar = position.y < tab_bar_h_f64;
-            drag.hover_target = if on_tab_bar {
-                self.app
-                    .state
-                    .tab_hit_rects
-                    .iter()
-                    .find(|&(_, &(x0, x1))| px_f32 >= x0 && px_f32 < x1)
-                    .map(|(&id, _)| id)
-            } else {
-                None
-            };
-            if drag.committed
-                && let Some(w) = &self.window
-            {
-                w.request_redraw();
+        //
+        // Sprint 5-8 Phase 4-2: タブ外ドロップ判定用に `current_screen_pos` も更新する。
+        // Windows は OS API（GetCursorPos）で正確に取得、その他は winit の
+        // outer_position + クライアント座標でフォールバック計算する。
+        if self.app.state.tab_drag.is_some() {
+            let new_screen_pos =
+                Self::resolve_screen_pos(&self.window, position.x as i32, position.y as i32);
+            if let Some(drag) = self.app.state.tab_drag.as_mut() {
+                let px_f32 = position.x as f32;
+                drag.current_x = px_f32;
+                drag.current_screen_pos = new_screen_pos;
+                // 6px 以上動いたらドラッグ確定
+                const DRAG_THRESHOLD: f32 = 6.0;
+                if !drag.committed && (px_f32 - drag.start_x).abs() >= DRAG_THRESHOLD {
+                    drag.committed = true;
+                }
+                // 挿入先タブを決定（タブバー領域内のタブにヒットしているか）
+                let on_tab_bar = position.y < tab_bar_h_f64;
+                drag.hover_target = if on_tab_bar {
+                    self.app
+                        .state
+                        .tab_hit_rects
+                        .iter()
+                        .find(|&(_, &(x0, x1))| px_f32 >= x0 && px_f32 < x1)
+                        .map(|(&id, _)| id)
+                } else {
+                    None
+                };
+                if drag.committed
+                    && let Some(w) = &self.window
+                {
+                    w.request_redraw();
+                }
             }
         }
         if self.app.state.mouse_sel.is_dragging {
@@ -371,12 +490,25 @@ impl EventHandler {
                             }
                             // Sprint 5-7 / Phase 2-3: ドラッグ可能性を記録（committed=false）。
                             // CursorMoved で閾値を超えたら committed=true となり、Released で並べ替えを送信する。
+                            //
+                            // Sprint 5-8 Phase 4-2 追加フィールド:
+                            // - `source_os_window_id`: ドラッグ元 OS Window（主 Window の id を保持）
+                            // - `start_screen_pos` / `current_screen_pos`: グローバル座標
+                            //   Windows は `platform::cursor_screen_pos` で OS から取得。
+                            //   その他は winit の `outer_position` + クライアント座標で
+                            //   フォールバック計算する。Wayland では outer_position が
+                            //   取れず `None` のままになり、タブ外ドロップ判定が無効化される。
+                            let screen_pos =
+                                Self::resolve_screen_pos(&self.window, px as i32, py as i32);
                             self.app.state.tab_drag = Some(crate::state::TabDragState {
                                 pane_id,
                                 start_x: px_f32,
                                 current_x: px_f32,
                                 hover_target: Some(pane_id),
                                 committed: false,
+                                source_os_window_id: self.window.as_ref().map(|w| w.id()),
+                                start_screen_pos: screen_pos,
+                                current_screen_pos: screen_pos,
                             });
                         }
                     }
@@ -413,6 +545,14 @@ impl EventHandler {
 
         // Sprint 5-7 / Phase 2-3: タブドラッグ終了処理
         // committed なら新順序を計算して ReorderPanes を送信、未 committed は通常クリック扱い（なにもしない）
+        //
+        // Sprint 5-8 Phase 4-2: タブバー外（hover_target=None）+ committed の場合、
+        // グローバル座標で `compute_drop_target` を呼び、判定結果に応じて分岐する:
+        // - `SameWindow`: ペイン領域にドロップ → 何もしない（既存挙動）
+        // - `OtherWindowTabBar`: 別 OS Window のタブバーにドロップ → Phase 4-4 で `MovePaneToWindow`
+        //   送信実装予定、現状はログ出力のみ
+        // - `NewWindow`: どの OS Window 外にドロップ → `spawn_os_window` 呼び出し
+        //   （Phase 4-2 時点では本体未実装のスケルトン、ログ出力 + 主 Window フォールバック）
         if let Some(drag) = self.app.state.tab_drag.take() {
             if drag.committed
                 && let Some(target_id) = drag.hover_target
@@ -424,6 +564,9 @@ impl EventHandler {
                 let _ = conn.send_tx.try_send(ClientToServer::ReorderPanes {
                     pane_ids: new_order,
                 });
+            } else if drag.committed && drag.hover_target.is_none() {
+                // タブバー外でリリース → タブ外ドロップ判定（Phase 4-2）
+                self.handle_tab_drag_drop_outside(&drag);
             }
             if let Some(w) = &self.window {
                 w.request_redraw();
