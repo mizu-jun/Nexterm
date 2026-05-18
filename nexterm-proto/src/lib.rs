@@ -51,7 +51,13 @@ pub use message::{
 ///   ドラッグ&ドロップで決めた新順序をサーバーに送り、サーバーは `Window.pane_order`
 ///   を更新して `LayoutChanged.panes` 配列の順序に反映する（既存メッセージの
 ///   フィールド順序変更のみで、enum バリアント追加は本変更では ReorderPanes のみ）。
-pub const PROTOCOL_VERSION: u32 = 7;
+/// - v8: Sprint 5-8 / Phase 4-3 — タブ外ドロップ（tab tearing）。
+///   `ClientToServer::MovePaneToWindow { pane_id, target_window_id, insert_at }` を
+///   新設。クライアントがタブを別 OS Window（または新規 OS Window）にドロップした際、
+///   サーバー内で `Window::detach_pane` + `Window::attach_pane` を実行して
+///   セッションの Window 構成を変更する。v7 クライアントは新メッセージをデコードできない
+///   ため、サーバーは Hello 時にバージョン不一致で接続を切断する。
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// IPC メッセージ 1 件の最大サイズ（バイト数）。
 ///

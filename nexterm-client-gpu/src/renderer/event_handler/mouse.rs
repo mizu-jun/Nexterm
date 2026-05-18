@@ -131,16 +131,25 @@ impl EventHandler {
             }
             crate::drop_target::DropTarget::NewWindow => {
                 tracing::info!(
-                    "タブ外ドロップ: 新規 OS Window 生成（drop_pos={:?}, pane_id={}）。spawn_os_window 呼び出し（Phase 4-2 スケルトン）",
+                    "タブ外ドロップ: 新規 Window 生成要求送信（drop_pos={:?}, pane_id={}）",
                     drop_pos,
                     drag.pane_id
                 );
-                // Phase 4-1 で導入した spawn_os_window スケルトンを呼ぶ。
-                // 実 wgpu 初期化と IPC `MovePaneToWindow` 送信は Phase 4-3 で本実装する。
-                // 現状は警告ログ + 主 Window の WindowId フォールバックのみ。
-                // 注: `spawn_os_window` 呼び出しには `&ActiveEventLoop` が必要だが、
-                //     mouse handler の文脈では持っていないため Phase 4-3 で関数化見直し予定。
-                //     Phase 4-2 完了時点ではここまで（ログ出力のみで動作確認可能）。
+                // Sprint 5-8 Phase 4-3: サーバーに `MovePaneToWindow { target_window_id: 0 }`
+                // を送り、サーバー側で新規 Server Window を生成してペインを移動する。
+                // クライアント側の新規 **OS Window** スポーン（`spawn_os_window` 本実装）は
+                // Phase 4-4 以降で EventLoopProxy 経由のユーザーイベント機構と合わせて実装する。
+                // 現状はサーバー側のみ移動が反映され、クライアントは既存 OS Window で
+                // 新しい Server Window を `WindowListChanged` 経由で認識する。
+                if let Some(conn) = &self.connection {
+                    let _ =
+                        conn.send_tx
+                            .try_send(nexterm_proto::ClientToServer::MovePaneToWindow {
+                                pane_id: drag.pane_id,
+                                target_window_id: 0,
+                                insert_at: None,
+                            });
+                }
             }
         }
     }

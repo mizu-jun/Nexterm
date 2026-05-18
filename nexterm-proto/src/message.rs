@@ -411,6 +411,35 @@ pub enum ClientToServer {
         /// 新しい表示順序（タブバー左から右へ）
         pane_ids: Vec<u32>,
     },
+    /// ペインを別 Window に移動する要求（Sprint 5-8 / Phase 4-3、PROTOCOL_VERSION 8）。
+    ///
+    /// クライアントがタブを **別 OS Window のタブバー上** または **OS Window 外**
+    /// にドロップした際に送信する。サーバーは:
+    /// 1. ソース Window から `Pane` を `detach_pane` で取り出す
+    /// 2. 取り出した `Pane` をターゲット Window に `attach_pane` で挿入する
+    /// 3. ソース・ターゲット双方の Window に `LayoutChanged` をブロードキャストする
+    ///
+    /// `target_window_id == 0` は **新規 Window 生成** を意味し、サーバーは新規
+    /// `Window` を生成して `Session.windows` に登録する。新規 Window の `id` は
+    /// `LayoutChanged.window_id` 経由でクライアントに通知される（クライアントは
+    /// 受信時に新規 OS Window をスポーンして `Attach` する）。
+    ///
+    /// `insert_at` は **ターゲット Window 内の挿入位置**（`pane_order` インデックス、
+    /// 0-origin）。`None` なら末尾に追加。
+    ///
+    /// 失敗条件:
+    /// - `pane_id` がソース Window に存在しない → サーバーログにエラー出力 + 何もしない
+    /// - `target_window_id` がセッション内に存在しない（かつ 0 でもない）→ 同上
+    /// - ソース Window のペインが 1 個のみで detach するとソースが空になる場合 →
+    ///   ソース Window を自動削除（既存の `close_pane` フローと整合）
+    MovePaneToWindow {
+        /// 移動対象のペイン ID
+        pane_id: u32,
+        /// 移動先 Window ID（`0` = 新規 Window 生成）
+        target_window_id: u32,
+        /// ターゲット Window 内での挿入位置（`pane_order` インデックス）。`None` で末尾。
+        insert_at: Option<u32>,
+    },
     /// プロトコルハンドシェイク。接続後の最初のメッセージとして送信する。
     ///
     /// サーバーは `proto_version` を `nexterm_proto::PROTOCOL_VERSION` と比較し、
@@ -968,6 +997,30 @@ mod tests {
         let enc = postcard::to_stdvec(&empty).unwrap();
         let dec: ClientToServer = postcard::from_bytes(&enc).unwrap();
         assert_eq!(empty, dec);
+    }
+
+    #[test]
+    fn move_pane_to_window_ipc_の_postcard_往復() {
+        // Sprint 5-8 / Phase 4-3 — PROTOCOL_VERSION 8 で追加。
+        // target_window_id != 0、insert_at = Some の典型パターン
+        let msg = ClientToServer::MovePaneToWindow {
+            pane_id: 42,
+            target_window_id: 7,
+            insert_at: Some(2),
+        };
+        let enc = postcard::to_stdvec(&msg).unwrap();
+        let dec: ClientToServer = postcard::from_bytes(&enc).unwrap();
+        assert_eq!(msg, dec);
+
+        // target_window_id = 0（新規 Window 生成）、insert_at = None（末尾追加）
+        let new_window = ClientToServer::MovePaneToWindow {
+            pane_id: 99,
+            target_window_id: 0,
+            insert_at: None,
+        };
+        let enc = postcard::to_stdvec(&new_window).unwrap();
+        let dec: ClientToServer = postcard::from_bytes(&enc).unwrap();
+        assert_eq!(new_window, dec);
     }
 
     #[test]

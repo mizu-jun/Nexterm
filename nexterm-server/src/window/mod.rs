@@ -653,6 +653,55 @@ impl Window {
         Some(pane)
     }
 
+    /// 指定 `pane_id` のペインをこのウィンドウから取り出す（Sprint 5-8 Phase 4-3、move-pane-to-window 用）
+    ///
+    /// `take_focused_pane` の汎用版。任意の `pane_id` を引数で指定する。
+    /// 振る舞いは `take_focused_pane` と同じ:
+    /// - ペインが 1 つしかない場合は `None` を返す（最後のペインは取り出せない）
+    /// - シリアルペインは取り出せない（PTY のみ対応）
+    /// - 取り出し後はフォーカスを残った最小 ID に移し、残りペインをリサイズする
+    ///
+    /// 戻り値 `None` のケース:
+    /// - 指定 `pane_id` が存在しない
+    /// - `pane_id` がシリアルペイン
+    /// - このウィンドウのペイン総数が 1 個（取り出すとウィンドウが空になる）
+    pub fn take_pane_by_id(&mut self, pane_id: u32, cols: u16, rows: u16) -> Option<Pane> {
+        if self.panes.len() <= 1 {
+            return None;
+        }
+        if !self.panes.contains_key(&pane_id) {
+            return None;
+        }
+        if self.serial_panes.contains_key(&pane_id) {
+            return None;
+        }
+        // BSP ツリーから削除する
+        self.layout.remove(pane_id);
+        // ペイン Map から取り出す
+        let pane = self.panes.remove(&pane_id)?;
+        // タブ順序からも除去
+        self.pane_order.retain(|&id| id != pane_id);
+        // フォーカスが取り出したペインだった場合は残ったペインの最小 ID に移す
+        if self.focused_pane_id == pane_id {
+            let next_id = self
+                .panes
+                .keys()
+                .copied()
+                .min()
+                .expect("panes は len > 1 ガード済みのため少なくとも1つ残っているはず");
+            self.focused_pane_id = next_id;
+        }
+        self.zoomed = false;
+        // 残ったペインをリサイズする
+        let layouts = self.compute_layouts(cols, rows);
+        for rect in &layouts {
+            if let Some(p) = self.panes.get_mut(&rect.pane_id) {
+                let _ = p.resize_pty(rect.cols, rect.rows);
+            }
+        }
+        Some(pane)
+    }
+
     /// 外部から持ち込まれたペインをフォーカスペインの後に追加する（join-pane 用）
     pub fn insert_pane(&mut self, pane: Pane, total_cols: u16, total_rows: u16, dir: SplitDir) {
         let new_id = pane.id;

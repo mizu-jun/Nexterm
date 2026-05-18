@@ -121,6 +121,14 @@ pub(super) async fn dispatch_inner(msg: &ClientToServer, ctx: &mut DispatchConte
         ToggleZoom => pane_dispatch::handle_toggle_zoom(ctx).await,
         SwapPane { target_pane_id } => pane_dispatch::handle_swap_pane(ctx, *target_pane_id).await,
         ReorderPanes { pane_ids } => pane_dispatch::handle_reorder_panes(ctx, pane_ids).await,
+        MovePaneToWindow {
+            pane_id,
+            target_window_id,
+            insert_at,
+        } => {
+            pane_dispatch::handle_move_pane_to_window(ctx, *pane_id, *target_window_id, *insert_at)
+                .await
+        }
         BreakPane => pane_dispatch::handle_break_pane(ctx).await,
         JoinPane { target_window_id } => {
             pane_dispatch::handle_join_pane(ctx, *target_window_id).await

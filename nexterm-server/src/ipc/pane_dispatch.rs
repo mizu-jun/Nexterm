@@ -353,6 +353,97 @@ pub(super) async fn handle_join_pane(ctx: &mut DispatchContext<'_>, target_windo
     }
 }
 
+/// `ClientToServer::MovePaneToWindow` ハンドラ（Sprint 5-8 Phase 4-3、PROTOCOL_VERSION 8）。
+///
+/// クライアントがタブを別 OS Window または OS Window 外にドロップしたとき呼ばれる。
+/// `Session::move_pane` を実行して:
+/// 1. ペインをソース Window から取り出す
+/// 2. 移動先 Window（`target_window_id == 0` なら新規生成）に追加する
+/// 3. 双方の Window に対する `LayoutChanged` と `WindowListChanged` を全クライアントに送信
+///
+/// 失敗時は info ログのみ出力（クライアントへのエラー応答は Phase 4-4 以降の `ErrorResponse`
+/// メッセージ整備時に検討）。
+pub(super) async fn handle_move_pane_to_window(
+    ctx: &mut DispatchContext<'_>,
+    pane_id: u32,
+    target_window_id: u32,
+    insert_at: Option<u32>,
+) {
+    let Some(ref name) = *ctx.current_session else {
+        return;
+    };
+    let result = {
+        let arc = ctx.manager.sessions();
+        let mut sessions = arc.lock().await;
+        let Some(s) = sessions.get_mut(name) else {
+            return;
+        };
+        let cols = s.cols;
+        let rows = s.rows;
+        match s.move_pane(pane_id, target_window_id, insert_at) {
+            Ok((src_window_id, new_window_id, moved_pane_id)) => {
+                // 移動先 Window の LayoutChanged を構築
+                let dst_layout = s
+                    .window(new_window_id)
+                    .map(|w| w.layout_changed_msg(cols, rows));
+                // ソース Window の LayoutChanged を構築（Window が削除されていなければ）
+                let src_layout = s
+                    .window(src_window_id)
+                    .map(|w| w.layout_changed_msg(cols, rows));
+                let windows = s.window_list();
+                Some((
+                    src_window_id,
+                    new_window_id,
+                    moved_pane_id,
+                    src_layout,
+                    dst_layout,
+                    windows,
+                ))
+            }
+            Err(e) => {
+                tracing::info!("MovePaneToWindow 失敗: {}", e);
+                None
+            }
+        }
+    };
+    if let Some((src_window_id, new_window_id, moved_pane_id, src_layout, dst_layout, windows)) =
+        result
+    {
+        tracing::info!(
+            "ペイン {} を Window {} → Window {} に移動",
+            moved_pane_id,
+            src_window_id,
+            new_window_id
+        );
+        let _ = ctx
+            .tx
+            .send(ServerToClient::WindowListChanged { windows })
+            .await;
+        if let Some(msg) = src_layout {
+            let _ = ctx.tx.send(msg).await;
+        }
+        if let Some(msg) = dst_layout {
+            let _ = ctx.tx.send(msg).await;
+        }
+        // 移動先ペインの FullRefresh を送って画面再描画を促す
+        let refresh = {
+            let arc = ctx.manager.sessions();
+            let sessions = arc.lock().await;
+            sessions.get(name).and_then(|s: &crate::session::Session| {
+                s.window(new_window_id).and_then(|w| {
+                    w.pane(moved_pane_id).map(|p| ServerToClient::FullRefresh {
+                        pane_id: moved_pane_id,
+                        grid: p.make_full_refresh(),
+                    })
+                })
+            })
+        };
+        if let Some(r) = refresh {
+            let _ = ctx.tx.send(r).await;
+        }
+    }
+}
+
 pub(super) async fn handle_open_floating_pane(ctx: &mut DispatchContext<'_>) {
     if let Some(ref name) = *ctx.current_session {
         let result = {

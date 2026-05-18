@@ -124,6 +124,14 @@ impl Session {
         self.windows.get(&self.focused_window_id)
     }
 
+    /// 指定 `window_id` のウィンドウ参照を返す（Sprint 5-8 Phase 4-3）。
+    ///
+    /// 移動後の各 Window への `LayoutChanged` メッセージ構築や FullRefresh 取得など、
+    /// 「特定の Window」を参照する用途で使う。
+    pub fn window(&self, window_id: u32) -> Option<&Window> {
+        self.windows.get(&window_id)
+    }
+
     /// フォーカス中のウィンドウへの可変参照を返す
     pub fn focused_window_mut(&mut self) -> Option<&mut Window> {
         self.windows.get_mut(&self.focused_window_id)
@@ -261,6 +269,93 @@ impl Session {
         self.windows.insert(new_window_id, new_window);
         self.focused_window_id = new_window_id;
         Ok(new_window_id)
+    }
+
+    /// 指定 `pane_id` のペインを別の Window に移動する（Sprint 5-8 Phase 4-3、tab tearing 用）。
+    ///
+    /// クライアントがタブを別 OS Window または OS Window 外にドロップしたとき、
+    /// `ClientToServer::MovePaneToWindow` から呼ばれる。
+    ///
+    /// 動作:
+    /// - `target_window_id == 0`: **新規 Window 生成**。`break_pane` と同じく
+    ///   `Window::new_with_pane` で新規 Window を作り、`focused_window_id` を切り替える
+    /// - `target_window_id != 0`: 既存 Window への移動。`take_pane_by_id` で取り出して
+    ///   `insert_pane` で末尾追加する（`insert_at` の位置指定は Phase 4-4 で本実装）
+    ///
+    /// 戻り値: `(source_window_id, new_window_id, moved_pane_id)`
+    /// - `source_window_id`: ソース Window が空になって削除された場合は `None`
+    /// - `new_window_id`: 移動先 Window ID（`target_window_id == 0` の場合は新規生成された ID）
+    /// - `moved_pane_id`: 移動したペイン ID（= 引数の `pane_id`）
+    ///
+    /// エラー条件:
+    /// - `pane_id` がどの Window にも見つからない
+    /// - `target_window_id != 0` かつ Window が存在しない
+    /// - ソース Window のペインが 1 個のみ（取り出すと空になる、現状は move 不可）
+    ///
+    /// 注: `insert_at` パラメータは現状未使用（末尾追加）。Phase 4-4 で merge UI を
+    /// 実装する際に `Window::insert_pane_at` を追加して位置指定対応する予定。
+    pub fn move_pane(
+        &mut self,
+        pane_id: u32,
+        target_window_id: u32,
+        _insert_at: Option<u32>,
+    ) -> Result<(u32, u32, u32)> {
+        let cols = self.cols;
+        let rows = self.rows;
+
+        // ペインが存在するソース Window を特定する
+        let source_window_id = self
+            .windows
+            .iter()
+            .find(|(_, w)| w.pane_ids().contains(&pane_id))
+            .map(|(id, _)| *id)
+            .ok_or_else(|| anyhow::anyhow!("ペイン {} が見つかりません", pane_id))?;
+
+        // ソース Window から自分自身への移動は no-op エラー
+        if source_window_id == target_window_id {
+            return Err(anyhow::anyhow!(
+                "ペイン {} は既に Window {} にあります",
+                pane_id,
+                target_window_id
+            ));
+        }
+
+        // ペインを取り出す
+        let pane = {
+            let source = self
+                .windows
+                .get_mut(&source_window_id)
+                .ok_or_else(|| anyhow::anyhow!("ソース Window が見つかりません"))?;
+            source.take_pane_by_id(pane_id, cols, rows).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "ペイン {} を Window {} から取り出せません（最後のペインまたはシリアル）",
+                    pane_id,
+                    source_window_id
+                )
+            })?
+        };
+
+        // 移動先 Window を準備する
+        let new_window_id = if target_window_id == 0 {
+            // 新規 Window 生成（break_pane と同じパターン）
+            let new_id = new_window_id();
+            let new_window = Window::new_with_pane(new_id, "window-torn".to_string(), pane)?;
+            self.windows.insert(new_id, new_window);
+            new_id
+        } else {
+            // 既存 Window に追加
+            let target = self
+                .windows
+                .get_mut(&target_window_id)
+                .ok_or_else(|| anyhow::anyhow!("Window {} が見つかりません", target_window_id))?;
+            target.insert_pane(pane, cols, rows, crate::window::SplitDir::Vertical);
+            target_window_id
+        };
+
+        // フォーカスを移動先に切り替える
+        self.focused_window_id = new_window_id;
+
+        Ok((source_window_id, new_window_id, pane_id))
     }
 
     /// フォーカスペインを指定ウィンドウに移動する（join-pane）
