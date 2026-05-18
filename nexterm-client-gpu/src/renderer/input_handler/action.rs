@@ -192,6 +192,42 @@ impl EventHandler {
             "JumpNextPrompt" => {
                 self.app.state.jump_next_prompt();
             }
+            // Sprint 5-8 / Phase 4-5: tab tearing 関連アクション（Wayland 代替 UX）
+            //
+            // **`DetachToNewWindow`** — 現在フォーカスペインを新規 OS Window に分離する。
+            // タブ外ドロップで自動発火する Phase 4-2 経路と同じ `BreakPane` を起点に、
+            // `pending_new_window_drop_pos` を `None` でセットすることで「マウス座標非依存の
+            // detach」として扱う。Wayland ではグローバル座標が取れずドラッグ判定ができないため、
+            // このアクション経由が代替経路になる。
+            //
+            // 補足: `BreakPane` 送信後、サーバーから `WindowListChanged` が返ってきた時点で
+            // `lifecycle::on_about_to_wait` の new_ids 検出ロジックが `SpawnOsWindow` を送る。
+            // `pending_new_window_drop_pos` が `Some(None)` のときも `take()` で `Some(_)` が
+            // 返るため判定は維持される（Wayland 等で `pos = None` の場合、winit にウィンドウ
+            // 位置決定を委ねる）。
+            "DetachToNewWindow" => {
+                info!("DetachToNewWindow: BreakPane + 新規 OS Window スポーン要求");
+                // pos = None で記録（Wayland でも動作可能なように画面外ヒントなし）
+                self.pending_new_window_drop_pos = Some(winit::dpi::PhysicalPosition::new(0, 0));
+                if let Some(conn) = &self.connection {
+                    let _ = conn.send_tx.try_send(ClientToServer::BreakPane);
+                }
+            }
+            // **`CloseOsWindow`** — 現在の OS Window だけを閉じる（プロセス全体は終了しない）。
+            // `CloseOsWindow` UserEvent を送信し、`EventHandler::close_os_window` が
+            // 実行する。最後の OS Window だった場合のみ `event_loop.exit()` に到達する。
+            "CloseOsWindow" => {
+                info!("CloseOsWindow: 現在の OS Window を閉じる UserEvent 送出");
+                if let Some(w) = &self.window {
+                    let wid = w.id();
+                    if let Err(e) = self
+                        .proxy
+                        .send_event(crate::renderer::UserEvent::CloseOsWindow { window_id: wid })
+                    {
+                        tracing::warn!("CloseOsWindow UserEvent 送信失敗: {}", e);
+                    }
+                }
+            }
             _ => debug!("Execute action: {}", action),
         }
     }
@@ -268,6 +304,28 @@ impl EventHandler {
             }
             ContextMenuAction::Separator => {
                 // セパレーターはクリック不可のため何もしない
+            }
+            // Sprint 5-8 / Phase 4-5: tab tearing 関連 (Wayland 代替 UX)
+            // `execute_action` の同名アクションに委譲して経路を一元化する。
+            ContextMenuAction::DetachToNewWindow => {
+                info!("ContextMenu: DetachToNewWindow");
+                // pos = (0,0) で記録（Wayland でも動作可能、winit が画面位置を決定）
+                self.pending_new_window_drop_pos = Some(winit::dpi::PhysicalPosition::new(0, 0));
+                if let Some(conn) = &self.connection {
+                    let _ = conn.send_tx.try_send(ClientToServer::BreakPane);
+                }
+            }
+            ContextMenuAction::CloseOsWindow => {
+                info!("ContextMenu: CloseOsWindow");
+                if let Some(w) = &self.window {
+                    let wid = w.id();
+                    if let Err(e) = self
+                        .proxy
+                        .send_event(crate::renderer::UserEvent::CloseOsWindow { window_id: wid })
+                    {
+                        tracing::warn!("CloseOsWindow UserEvent 送信失敗: {}", e);
+                    }
+                }
             }
         }
     }

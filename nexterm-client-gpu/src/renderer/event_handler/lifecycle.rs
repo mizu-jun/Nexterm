@@ -168,7 +168,7 @@ impl EventHandler {
     }
 
     /// `ApplicationHandler::about_to_wait` の実装
-    pub(super) fn on_about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+    pub(super) fn on_about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         // サーバーからのメッセージをポーリングして状態を更新する
         // borrow checker のため、まず受信したメッセージを Vec に集めてから処理する
         let mut had_messages = false;
@@ -240,6 +240,10 @@ impl EventHandler {
                 w.request_user_attention(Some(winit::window::UserAttentionType::Informational));
             }
         }
+
+        // Phase 4-5: 保留中の Window 閉じ要求を処理する
+        // （QueryForegroundProcess の応答受信 → 確認ダイアログ表示 or 即時 Kill）
+        self.poll_pending_close_request(event_loop);
 
         // 設定ホットリロードをポーリングする（最新の設定を適用する）
         if let Some(rx) = &mut self.config_rx

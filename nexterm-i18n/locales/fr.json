@@ -66,5 +66,13 @@
   "consent-deny": "[N] Refuser",
   "consent-always-allow": "[A] Toujours autoriser",
   "consent-always-deny": "[D] Toujours refuser",
-  "consent-hint": "Y/N : cette fois  •  A/D : pour cette session  •  Esc : refuser"
+  "consent-hint": "Y/N : cette fois  •  A/D : pour cette session  •  Esc : refuser",
+  "close_window_confirm_foreground": "Un processus de premier plan est en cours. Fermer quand même cette fenêtre ?",
+  "close_window_button_kill": "Fermer",
+  "close_window_button_cancel": "Annuler",
+  "context-menu-detach-to-new-window": "Détacher vers une nouvelle fenêtre",
+  "context-menu-close-this-os-window": "Fermer uniquement cette fenêtre",
+  "palette-detach-to-new-window": "Détacher l'onglet courant vers une nouvelle fenêtre",
+  "palette-close-os-window": "Fermer cette fenêtre OS",
+  "tab-tearout-button-tooltip": "Détacher vers une nouvelle fenêtre"
 }

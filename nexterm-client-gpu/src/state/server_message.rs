@@ -10,6 +10,7 @@
 use nexterm_proto::ServerToClient;
 
 use super::ClientState;
+use super::ForegroundProcessStatus;
 use super::pane::{FloatRect, PaneState, PlacedImage};
 
 impl ClientState {
@@ -273,6 +274,18 @@ impl ClientState {
             // lifecycle 側で winit Window への mutable アクセスを持って実行する。
             ServerToClient::QuakeToggleRequest { action } => {
                 self.pending_quake_action = Some(action);
+            }
+            // Phase 4-5: QueryForegroundProcess の応答。
+            // pending_close_request が該当 window_id の応答を待っている場合のみ
+            // 反映し、確認ダイアログ表示 / 即時 detach の判定材料にする。
+            ServerToClient::ForegroundProcessStatus {
+                window_id,
+                has_foreground,
+            } => {
+                self.foreground_process_status = Some(ForegroundProcessStatus {
+                    window_id,
+                    has_foreground,
+                });
             }
         }
     }

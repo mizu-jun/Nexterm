@@ -66,5 +66,13 @@
   "consent-deny": "[N] 拒绝",
   "consent-always-allow": "[A] 始终允许",
   "consent-always-deny": "[D] 始终拒绝",
-  "consent-hint": "Y/N：仅此一次  •  A/D：本次会话期间  •  Esc：拒绝"
+  "consent-hint": "Y/N：仅此一次  •  A/D：本次会话期间  •  Esc：拒绝",
+  "close_window_confirm_foreground": "有前台进程正在运行。仍要关闭此窗口吗？",
+  "close_window_button_kill": "关闭",
+  "close_window_button_cancel": "取消",
+  "context-menu-detach-to-new-window": "分离到新窗口",
+  "context-menu-close-this-os-window": "仅关闭此窗口",
+  "palette-detach-to-new-window": "将当前标签分离到新窗口",
+  "palette-close-os-window": "关闭此 OS 窗口",
+  "tab-tearout-button-tooltip": "分离到新窗口"
 }

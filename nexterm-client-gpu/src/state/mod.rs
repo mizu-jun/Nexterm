@@ -145,6 +145,85 @@ pub struct ClientState {
     /// このフィールドに反映する。Tab tearing で主 Window のタブバーにドロップされた場合、
     /// このフィールド経由で `MovePaneToWindow.target_window_id` を解決する。
     pub focused_server_window_id: u32,
+    /// `QueryForegroundProcess` の最新応答（Sprint 5-8 Phase 4-5）。
+    ///
+    /// `apply_server_message` で `ForegroundProcessStatus` を受信した時点で値を入れる。
+    /// `event_handler` 側が `pending_close_request` と突き合わせて確認ダイアログ表示 /
+    /// 即時 detach の判定を行ったあとに `take()` で取り出してクリアする。
+    pub foreground_process_status: Option<ForegroundProcessStatus>,
+    /// OS Window 閉じ要求の保留状態（Sprint 5-8 Phase 4-5）。
+    ///
+    /// `close_action = "prompt"` 設定時、ユーザーが OS Window の閉じ操作を発火させると
+    /// `QueryForegroundProcess` を送信して本フィールドに記録する。応答（または確認ダイアログ
+    /// での選択）に応じて detach / kill / cancel のいずれかを実行する。
+    pub pending_close_request: Option<PendingCloseRequest>,
+    /// 「Window を閉じますか？」確認ダイアログの表示状態（Sprint 5-8 Phase 4-5）。
+    ///
+    /// `Some` の間はレンダラーがモーダルダイアログを描画する。`Enter` で確定、
+    /// `Esc` でキャンセル。Wayland 環境では `[↗]` 経路でも同じダイアログを再利用する。
+    pub close_window_dialog: Option<CloseWindowDialog>,
+}
+
+/// `QueryForegroundProcess` への応答情報（Sprint 5-8 Phase 4-5）
+#[derive(Debug, Clone, Copy)]
+pub struct ForegroundProcessStatus {
+    /// 問い合わせ対象の Server Window ID
+    pub window_id: u32,
+    /// 前景プロセスが動作中なら `true`
+    pub has_foreground: bool,
+}
+
+/// OS Window 閉じ要求の保留状態（Sprint 5-8 Phase 4-5）。
+///
+/// `close_action` フィールドは将来 `Detach`/`Kill` でも保留経路を通す拡張用に保持する。
+/// 現状 `Prompt` のみ pending 状態を取るため、レンダラー側からは未読 (dead_code 抑制)。
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
+pub struct PendingCloseRequest {
+    /// 閉じ要求の発火元 OS Window が表示している Server Window ID
+    pub server_window_id: u32,
+    /// `window.close_action` 設定値
+    pub close_action: CloseActionKind,
+}
+
+/// `WindowConfig.close_action` のクライアント側ミラー（Sprint 5-8 Phase 4-5）。
+///
+/// サーバー側 `nexterm_config::CloseAction` と意味的に等価。クライアント側で
+/// `pending_close_request` を判断するため独立した enum を持つ（クレート間依存を増やさない）。
+///
+/// `Detach` / `Kill` バリアントは現状 `pending_close_request.close_action` には設定されない
+/// （`Prompt` のときのみ pending 状態に入るため）が、将来 `Detach` でも確認ダイアログを出す
+/// 設定や、複数 Window 個別 close で `Kill` を保留する経路で利用される予定。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum CloseActionKind {
+    /// 前景プロセス検知時のみ確認ダイアログを表示（デフォルト）
+    Prompt,
+    /// 確認なしで detach（サーバー側は維持）
+    Detach,
+    /// 確認なしで kill（既存挙動）
+    Kill,
+}
+
+/// Window 閉じ確認ダイアログの表示状態（Sprint 5-8 Phase 4-5）。
+///
+/// レンダラー側でのダイアログ描画は後続実装で接続予定のため、`server_window_id` /
+/// `message` / `kill_label` / `cancel_label` は現状未読 (dead_code 抑制)。
+/// 状態フローのみ `poll_pending_close_request` で読まれ、`selected_button` の
+/// シグナル値（`0xFE` = Kill 確定、`0xFF` = キャンセル）で確定判定する。
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct CloseWindowDialog {
+    /// 確認対象の Server Window ID
+    pub server_window_id: u32,
+    /// 表示メッセージ（i18n 済み）
+    pub message: String,
+    /// 「閉じる（Kill）」ボタンのラベル（i18n 済み）
+    pub kill_label: String,
+    /// 「キャンセル」ボタンのラベル（i18n 済み）
+    pub cancel_label: String,
+    /// 現在ハイライト中のボタン（0 = Kill, 1 = Cancel、0xFE = Kill 確定、0xFF = キャンセル確定）
+    pub selected_button: u8,
 }
 
 /// タブドラッグ中の状態（Sprint 5-7 / Phase 2-3）
@@ -228,6 +307,10 @@ impl ClientState {
             animations: crate::animations::AnimationManager::new(),
             // Phase 4-4: WindowListChanged 受信時に focused Window ID を反映する
             focused_server_window_id: 0,
+            // Phase 4-5: Window 閉じ確認ダイアログ用
+            foreground_process_status: None,
+            pending_close_request: None,
+            close_window_dialog: None,
         }
     }
 

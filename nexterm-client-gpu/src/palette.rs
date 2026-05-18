@@ -265,6 +265,15 @@ fn default_actions() -> Vec<PaletteAction> {
             label: fl!("palette-jump-next-prompt"),
             action: "JumpNextPrompt".to_string(),
         },
+        // Sprint 5-8 / Phase 4-5: tab tearing 関連（Wayland 代替 UX 含む）
+        PaletteAction {
+            label: fl!("palette-detach-to-new-window"),
+            action: "DetachToNewWindow".to_string(),
+        },
+        PaletteAction {
+            label: fl!("palette-close-os-window"),
+            action: "CloseOsWindow".to_string(),
+        },
         PaletteAction {
             label: fl!("palette-quit"),
             action: "Quit".to_string(),

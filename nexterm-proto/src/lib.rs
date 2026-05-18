@@ -57,6 +57,10 @@ pub use message::{
 ///   サーバー内で `Window::detach_pane` + `Window::attach_pane` を実行して
 ///   セッションの Window 構成を変更する。v7 クライアントは新メッセージをデコードできない
 ///   ため、サーバーは Hello 時にバージョン不一致で接続を切断する。
+///   - Phase 4-5 で `ClientToServer::QueryForegroundProcess` および
+///     `ServerToClient::ForegroundProcessStatus` を enum 末尾に追加（v8 互換追加）。
+///     旧 v8 クライアント・サーバーは新バリアントを送らない・受け取らないため、
+///     既存 v8 接続の動作には影響しない。
 pub const PROTOCOL_VERSION: u32 = 8;
 
 /// IPC メッセージ 1 件の最大サイズ（バイト数）。

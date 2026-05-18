@@ -452,6 +452,19 @@ pub enum ClientToServer {
         /// クライアントの Cargo バージョン文字列（ログ用）
         client_version: String,
     },
+    /// OS Window 閉じ確認用: 指定 Window 内に前景プロセス（シェル子孫）が動作中か問い合わせる。
+    ///
+    /// クライアントは `window.close_action = "prompt"` 設定時に OS Window 閉じ要求を
+    /// 受けたら本メッセージを送り、`ServerToClient::ForegroundProcessStatus` の応答を
+    /// 受けて確認ダイアログを出すか即時 detach/kill するかを判断する。
+    ///
+    /// PROTOCOL_VERSION 8 互換: enum 末尾追加のため既存バリアントの discriminant に
+    /// 影響しない（旧クライアントは送信しない、旧サーバーは未対応 → サーバーから
+    /// `Error` 応答が返るので Phase 4-3 で bump 済みの v8 互換範囲で扱う）。
+    QueryForegroundProcess {
+        /// 確認対象の Server Window ID
+        window_id: u32,
+    },
 }
 
 /// クライアント種別（IPC ハンドシェイクで識別）
@@ -775,6 +788,19 @@ pub enum ServerToClient {
         proto_version: u32,
         /// サーバーの Cargo バージョン文字列
         server_version: String,
+    },
+    /// `QueryForegroundProcess` への応答（Sprint 5-8 / Phase 4-5）。
+    ///
+    /// 指定 Window 内に前景プロセス（シェル以外の子プロセス）が動作中かを返す。
+    /// クライアントは `has_foreground = true` の場合に確認ダイアログを表示する。
+    ///
+    /// PROTOCOL_VERSION 8 互換: enum 末尾追加。旧クライアントは送信しないため
+    /// 本応答も発火しない。
+    ForegroundProcessStatus {
+        /// 問い合わせ対象の Server Window ID（クライアント側の対応付け用）
+        window_id: u32,
+        /// `true` なら少なくとも 1 ペインで前景プロセスが動作中
+        has_foreground: bool,
     },
 }
 

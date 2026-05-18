@@ -129,6 +129,9 @@ pub(super) async fn dispatch_inner(msg: &ClientToServer, ctx: &mut DispatchConte
             pane_dispatch::handle_move_pane_to_window(ctx, *pane_id, *target_window_id, *insert_at)
                 .await
         }
+        QueryForegroundProcess { window_id } => {
+            window_dispatch::handle_query_foreground_process(ctx, *window_id).await
+        }
         BreakPane => pane_dispatch::handle_break_pane(ctx).await,
         JoinPane { target_window_id } => {
             pane_dispatch::handle_join_pane(ctx, *target_window_id).await

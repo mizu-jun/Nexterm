@@ -66,5 +66,13 @@
   "consent-deny": "[N] 拒否",
   "consent-always-allow": "[A] 常に許可",
   "consent-always-deny": "[D] 常に拒否",
-  "consent-hint": "Y/N: 今回のみ  •  A/D: このセッション中ずっと  •  Esc: 拒否"
+  "consent-hint": "Y/N: 今回のみ  •  A/D: このセッション中ずっと  •  Esc: 拒否",
+  "close_window_confirm_foreground": "前景プロセスが動作中です。このウィンドウを閉じてもよろしいですか？",
+  "close_window_button_kill": "閉じる",
+  "close_window_button_cancel": "キャンセル",
+  "context-menu-detach-to-new-window": "新規ウィンドウに分離",
+  "context-menu-close-this-os-window": "このウィンドウだけ閉じる",
+  "palette-detach-to-new-window": "現在のタブを新規ウィンドウに分離",
+  "palette-close-os-window": "この OS ウィンドウを閉じる",
+  "tab-tearout-button-tooltip": "新規ウィンドウに分離"
 }

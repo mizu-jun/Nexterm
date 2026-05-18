@@ -309,3 +309,31 @@ pub(super) async fn handle_set_layout_mode(ctx: &mut DispatchContext<'_>, mode: 
         }
     }
 }
+
+/// `QueryForegroundProcess` への応答: 指定 Window の前景プロセス検知結果を返す。
+///
+/// 該当セッション・該当 Window が存在しない場合は `has_foreground: false` を返す
+/// （クライアントは即時 detach/kill に進むため）。
+///
+/// `Window::has_foreground_process` は Linux のみ実装済（macOS/Windows は false 固定）。
+/// Phase 4-4 / 4-5 引き継ぎ事項 4 に従い、将来 OS 別実装を強化する予定。
+pub(super) async fn handle_query_foreground_process(ctx: &mut DispatchContext<'_>, window_id: u32) {
+    let has_foreground = if let Some(ref name) = *ctx.current_session {
+        let arc = ctx.manager.sessions();
+        let sessions = arc.lock().await;
+        sessions
+            .get(name)
+            .and_then(|s| s.window(window_id))
+            .map(|w| w.has_foreground_process())
+            .unwrap_or(false)
+    } else {
+        false
+    };
+    let _ = ctx
+        .tx
+        .send(ServerToClient::ForegroundProcessStatus {
+            window_id,
+            has_foreground,
+        })
+        .await;
+}

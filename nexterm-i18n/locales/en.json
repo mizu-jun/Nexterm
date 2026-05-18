@@ -66,5 +66,13 @@
   "consent-deny": "[N] Deny",
   "consent-always-allow": "[A] Always allow",
   "consent-always-deny": "[D] Always deny",
-  "consent-hint": "Y/N: this time only  •  A/D: remember for this session  •  Esc: deny"
+  "consent-hint": "Y/N: this time only  •  A/D: remember for this session  •  Esc: deny",
+  "close_window_confirm_foreground": "A foreground process is running. Close this window anyway?",
+  "close_window_button_kill": "Close",
+  "close_window_button_cancel": "Cancel",
+  "context-menu-detach-to-new-window": "Detach to new window",
+  "context-menu-close-this-os-window": "Close this window only",
+  "palette-detach-to-new-window": "Detach Current Tab to New Window",
+  "palette-close-os-window": "Close This OS Window",
+  "tab-tearout-button-tooltip": "Detach to new window"
 }

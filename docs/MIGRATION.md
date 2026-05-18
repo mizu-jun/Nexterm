@@ -4,6 +4,107 @@
 
 ---
 
+## v1.4.0 → v1.5.0（Sprint 5-8 / 5-9 Phase 4: タブ外ドロップ tab tearing）
+
+`PROTOCOL_VERSION` が `7` から `8` にバンプされ、`SNAPSHOT_VERSION` が `3` から `4` に
+バンプされました。**新サーバーは旧クライアント（PROTOCOL v7）を Hello ハンドシェイク
+で拒否し、旧サーバーは新クライアントを拒否します**。クライアントとサーバーは必ず
+一緒にアップグレードしてください。
+
+### 何が変わるか
+
+#### PROTOCOL_VERSION 8（Phase 4-3: タブ外ドロップ）
+
+`ClientToServer::MovePaneToWindow { pane_id, target_window_id, insert_at }` を新設。
+クライアントがタブを別 OS Window（または新規 OS Window）にドロップした際、サーバー内で
+`Window::detach_pane` + `Window::attach_pane` を実行してセッションの Window 構成を変更します。
+`target_window_id = 0` は「新規 Window を生成して移動」のシグナルです。
+
+Phase 4-5 で **追加** された（v8 互換、enum 末尾追加のため discriminant 影響なし）:
+
+- `ClientToServer::QueryForegroundProcess { window_id }` — Window 閉じ前の前景プロセス検知用
+- `ServerToClient::ForegroundProcessStatus { window_id, has_foreground }` — 上記の応答
+
+旧 v8 クライアント・サーバーは新バリアントを送らない・受け取らないため、Phase 4-3 時点の
+v8 互換接続には影響しません。
+
+#### SNAPSHOT_VERSION 4（Phase 4-5: OS Window 配置永続化）
+
+`ServerSnapshot.client_os_windows: Vec<OsWindowSnapshot>` を追加。tab tearing で複数の
+OS Window に分離された状態を保存します。`#[serde(default)]` 付きのため **v3 JSON は
+空 `Vec` で自動マイグレーション** されます（既存ユーザーは何もする必要なし、初回起動は
+単一 OS Window 構成として復元）。
+
+`OsWindowSnapshot` の構造:
+
+```rust
+pub struct OsWindowSnapshot {
+    pub position: (i32, i32),            // ウィンドウ左上座標
+    pub size: (u32, u32),                // 外形サイズ
+    pub server_window_ids: Vec<u32>,     // 所属する Server Window ID（タブ）
+    pub focused_server_window_id: u32,   // アクティブ Server Window
+}
+```
+
+### 移行手順
+
+1. **クライアントとサーバーを同時にアップグレード**: PROTOCOL_VERSION 7→8 ミスマッチで
+   Hello ハンドシェイクが失敗します（`nexterm-ctl` を含む全バイナリを更新してください）
+2. **既存スナップショット**: 自動マイグレートされるため操作不要。`~/.local/state/nexterm/snapshot.json`
+   を読み込み時にバージョンが 3 → 4 へ更新されます
+3. **設定ファイル変更**: `[window]` セクションに `close_action` キーが追加されました（後述）。
+   省略時は `"prompt"`（推奨デフォルト）
+
+### `window.close_action` 設定
+
+OS Window を閉じる際の挙動を 3 値から選択できます:
+
+```toml
+[window]
+close_action = "prompt"   # prompt（既定）/ detach / kill
+```
+
+| 値 | 挙動 |
+|---|---|
+| `"prompt"` | サーバーに `QueryForegroundProcess` を送り、シェル以外の子プロセス（前景プロセス）が動作中なら確認ダイアログを表示。なければ即時 kill。**安全側のデフォルト**。 |
+| `"detach"` | クライアントだけ切断し、サーバー側 Session は維持。`nexterm-ctl attach` で再アタッチ可能（マルチプロセス構成）。シングルバイナリ構成では内部サーバータスクも abort するため実質 kill と同等。 |
+| `"kill"` | 確認なしで `KillSession` IPC を送り Session を破棄して exit。v1.4.0 までの既定挙動。 |
+
+### Tab tearing UX（Wayland 制限と代替経路）
+
+ドラッグでタブを OS Window 外にドロップすると新規 OS Window が開きます（X11 / macOS / Windows）。
+**Wayland はセキュリティモデル上グローバル座標が取得できない**ためドラッグドロップ判定が動作
+しません。Wayland ユーザーは以下の代替 UX を使ってください:
+
+| 代替経路 | 操作 |
+|---|---|
+| コンテキストメニュー | ペイン上で右クリック → 「新規ウィンドウに分離」 |
+| ホットキー | `Ctrl+B D`（leader + D）で現在のタブを新規 OS Window に分離 |
+| コマンドパレット | `Ctrl+Shift+P` → 「Detach to New Window」 |
+| タブホバー `[↗]` ボタン | **v1.5.0 では未提供（Phase 4-6 持ち越し）**。renderer 側で hover 時の頂点追加とクリック判定が必要なため次フェーズで実装予定 |
+
+OS Window を閉じるホットキー: `Ctrl+B W`（leader + W）。最後の OS Window だった場合のみ
+プロセス全体が `close_action` に従って終了します。
+
+### 確認ダイアログのキーボード操作
+
+`close_action = "prompt"` で前景プロセス検知時に表示される確認ダイアログ:
+
+- `Enter` / `Y` → 閉じる（Kill）
+- `Esc` / `N` → キャンセル
+- `←` / `→` でボタンフォーカス切替
+
+> 注: v1.5.0 ではダイアログのレンダラー描画は最小限実装で、文言は i18n 8 言語対応済み。
+> 視覚的な装飾強化は Phase 4-6 で計画。
+
+### TUI クライアントへの影響
+
+`nexterm-client-tui` は単一プロセス1端末で動作するため tab tearing は無効です。新規
+バリアント `ForegroundProcessStatus` / `MovePaneToWindow` を受け取った場合は no-op で
+受け流します（互換性のために `ServerToClient` を網羅 match している）。
+
+---
+
 ## v1.2.0 → v1.3.0（Sprint 5-7 Phase 2: IPC バリアント追加とスナップショット拡張）
 
 `PROTOCOL_VERSION` が `4` から `7` にバンプされ、`SNAPSHOT_VERSION` が `2` から `3` に

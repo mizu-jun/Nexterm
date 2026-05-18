@@ -18,12 +18,12 @@ use crate::glyph_atlas::GlyphAtlas;
 impl EventHandler {
     /// `WindowEvent::CloseRequested`
     ///
-    /// Sprint 5-8 Phase 4-4: `config.window.close_action` の 3 値分岐を実装する。
+    /// Sprint 5-8 Phase 4-4 で 3 値分岐を導入、Phase 4-5 で `Prompt` を本実装。
     ///
     /// 挙動:
-    /// - **`Prompt`** (デフォルト): foreground プロセスがあれば確認ダイアログ。それ以外は kill。
-    ///   - Phase 4-4 では `QueryForegroundProcess` IPC が未実装のため、`Kill` と同じ挙動に縮退。
-    ///     確認ダイアログ UI 自体は Phase 4-5 で実装予定。
+    /// - **`Prompt`** (デフォルト): `QueryForegroundProcess` IPC を送信して保留。応答（または
+    ///   ダイアログでの選択）に応じて detach / kill を実行する。応答待ち中は `event_loop.exit()`
+    ///   を呼ばずに `pending_close_request` に状態を保持する。
     /// - **`Detach`**: Server Window を保持してクライアントのみ切断（tmux 流 detached session）。
     ///   - シングルバイナリ構成では `server_handle.abort()` で内部サーバータスクも終了するため、
     ///     実質 Kill と差がない。マルチプロセス（`nexterm-ctl attach`）で本来の意味を持つ枠組み。
@@ -36,16 +36,28 @@ impl EventHandler {
 
         match action {
             CloseAction::Prompt => {
-                // Phase 4-5 で `QueryForegroundProcess` IPC + 確認ダイアログ UI を追加予定。
-                // それまでは Kill と同じ挙動。
+                // Phase 4-5: QueryForegroundProcess を送信して応答を待つ。
+                // pending_close_request に記録し、event_loop.exit() を呼ばない（保留）。
+                // 応答は `apply_server_message` で `foreground_process_status` に格納され、
+                // about_to_wait → `poll_pending_close_request` で消費される。
+                let target_window_id = self.app.state.focused_server_window_id;
                 info!(
-                    "CloseRequested: close_action = Prompt。foreground プロセス検知 IPC は Phase 4-5 で追加予定、現状は Kill 扱い"
+                    "CloseRequested: close_action = Prompt。QueryForegroundProcess 送信 window_id={}",
+                    target_window_id
                 );
                 if let Some(conn) = &self.connection {
-                    let _ = conn.send_tx.try_send(ClientToServer::KillSession {
-                        name: session_name.clone(),
-                    });
+                    let _ = conn
+                        .send_tx
+                        .try_send(ClientToServer::QueryForegroundProcess {
+                            window_id: target_window_id,
+                        });
                 }
+                self.app.state.pending_close_request = Some(crate::state::PendingCloseRequest {
+                    server_window_id: target_window_id,
+                    close_action: crate::state::CloseActionKind::Prompt,
+                });
+                // 早期 return: 応答受信後に finalize_close を呼ぶ
+                return;
             }
             CloseAction::Detach => {
                 info!(
@@ -69,6 +81,96 @@ impl EventHandler {
         self.connection = None;
         self.server_handle.abort();
         event_loop.exit();
+    }
+
+    /// `pending_close_request` の応答 / ダイアログ確定を処理する（Sprint 5-8 Phase 4-5）。
+    ///
+    /// `about_to_wait` から毎フレーム呼ばれ、`foreground_process_status` の最新応答が
+    /// `pending_close_request` と一致した場合に以下を行う:
+    /// - 前景プロセスなし → 即時 Kill 経路で exit
+    /// - 前景プロセスあり → `close_window_dialog` をセットしてレンダラーが描画
+    ///
+    /// `close_window_dialog` が `selected_button` 確定状態（外部で `selected_button = u8::MAX` で
+    /// キャンセル / `selected_button = 0` で Kill 確定）になっている場合、それも処理する。
+    pub(super) fn poll_pending_close_request(&mut self, event_loop: &ActiveEventLoop) {
+        // 1. ダイアログが「確定」された場合の処理
+        let dialog_decision: Option<bool> = if let Some(dlg) = &self.app.state.close_window_dialog {
+            // selected_button = 0xFF をキャンセル、0xFE を Kill 確定のシグナルとして使う
+            match dlg.selected_button {
+                0xFE => Some(true),  // Kill 確定
+                0xFF => Some(false), // キャンセル
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some(kill) = dialog_decision {
+            self.app.state.close_window_dialog = None;
+            self.app.state.pending_close_request = None;
+            if kill {
+                if let Some(conn) = &self.connection {
+                    let _ = conn.send_tx.try_send(ClientToServer::KillSession {
+                        name: "main".to_string(),
+                    });
+                }
+                self.windows.clear();
+                self.connection = None;
+                self.server_handle.abort();
+                event_loop.exit();
+            }
+            return;
+        }
+
+        // 2. IPC 応答が来ているかチェック
+        let Some(req) = self.app.state.pending_close_request else {
+            return;
+        };
+        let Some(status) = self.app.state.foreground_process_status else {
+            return;
+        };
+        // window_id 一致を確認
+        if status.window_id != req.server_window_id {
+            // 別 Window の応答 → 無視（クリアはしない）
+            return;
+        }
+        // 応答消費
+        self.app.state.foreground_process_status = None;
+
+        if status.has_foreground {
+            // 確認ダイアログを表示
+            info!(
+                "前景プロセス検知あり: window_id={}、確認ダイアログを表示",
+                req.server_window_id
+            );
+            // i18n キーから文言を取得（キーが無い場合は `t` が key 自体を返すので、
+            // 文言が必ず i18n JSON 側で定義されている前提）
+            let message = nexterm_i18n::fl!("close_window_confirm_foreground");
+            let kill_label = nexterm_i18n::fl!("close_window_button_kill");
+            let cancel_label = nexterm_i18n::fl!("close_window_button_cancel");
+            self.app.state.close_window_dialog = Some(crate::state::CloseWindowDialog {
+                server_window_id: req.server_window_id,
+                message,
+                kill_label,
+                cancel_label,
+                selected_button: 1, // デフォルトはキャンセル側にフォーカス（安全側）
+            });
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+        } else {
+            // 前景プロセスなし → 即時 Kill
+            info!("前景プロセスなし: Prompt → Kill に進む");
+            self.app.state.pending_close_request = None;
+            if let Some(conn) = &self.connection {
+                let _ = conn.send_tx.try_send(ClientToServer::KillSession {
+                    name: "main".to_string(),
+                });
+            }
+            self.windows.clear();
+            self.connection = None;
+            self.server_handle.abort();
+            event_loop.exit();
+        }
     }
 
     /// `WindowEvent::Resized`

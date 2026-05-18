@@ -289,6 +289,17 @@ fn default_keybindings() -> Vec<KeyBinding> {
             key: "ctrl+b !".to_string(),
             action: "BreakPane".to_string(),
         },
+        // Sprint 5-8 / Phase 4-5: tab tearing 関連デフォルトバインド
+        // `<leader> D` = ctrl+b D で現在のタブを新規 OS Window に分離。Wayland 代替 UX #2。
+        KeyBinding {
+            key: "ctrl+b d".to_string(),
+            action: "DetachToNewWindow".to_string(),
+        },
+        // `<leader> w` = ctrl+b w で現在の OS Window だけを閉じる（最後の Window なら exit）。
+        KeyBinding {
+            key: "ctrl+b w".to_string(),
+            action: "CloseOsWindow".to_string(),
+        },
         KeyBinding {
             key: "ctrl+shift+space".to_string(),
             action: "QuickSelect".to_string(),

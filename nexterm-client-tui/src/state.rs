@@ -187,6 +187,9 @@ impl ClientState {
             ServerToClient::WorkspaceList { .. } | ServerToClient::WorkspaceSwitched { .. } => {}
             // Sprint 5-7 / Phase 2-2: TUI には Quake モードがないため無視する
             ServerToClient::QuakeToggleRequest { .. } => {}
+            // Sprint 5-8 / Phase 4-5: TUI には OS Window 閉じ確認ダイアログがないため無視する
+            // （TUI は単一プロセス1端末で動作するため tab tearing 自体が無効）
+            ServerToClient::ForegroundProcessStatus { .. } => {}
         }
     }
 

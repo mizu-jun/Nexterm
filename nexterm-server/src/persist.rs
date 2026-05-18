@@ -168,11 +168,13 @@ pub fn load_snapshot() -> Option<ServerSnapshot> {
                 );
                 return None;
             }
-            // v1 → v2 / v2 → v3 マイグレーション: バージョンを現在値に更新して返す。
+            // v1 → v2 / v2 → v3 / v3 → v4 マイグレーション: バージョンを現在値に更新して返す。
             //
             // v1 → v2: `session_title` フィールド追加（`#[serde(default)]` で `None`）
             // v2 → v3: `SessionSnapshot.workspace_name` および `ServerSnapshot.current_workspace`
             //          追加（`#[serde(default = "default_workspace")]` で `"default"`）
+            // v3 → v4: `ServerSnapshot.client_os_windows` 追加
+            //          （`#[serde(default)]` で空 `Vec`、起動時に単一 OS Window 構成として復元）
             if snap.version < SNAPSHOT_VERSION {
                 info!(
                     "スナップショット v{} → v{} にマイグレーションします",
@@ -221,6 +223,7 @@ mod tests {
             sessions: Vec::new(),
             saved_at: 0,
             current_workspace: "default".to_string(),
+            client_os_windows: Vec::new(),
         };
 
         // 一時ファイルに書き込む

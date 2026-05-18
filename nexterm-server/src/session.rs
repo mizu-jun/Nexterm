@@ -966,6 +966,10 @@ impl SessionManager {
             sessions: sessions.values().map(|s| s.to_snapshot()).collect(),
             saved_at,
             current_workspace,
+            // OS Window 配置はクライアント側状態のため、サーバー側 to_snapshot では
+            // 空 Vec を返す。実際の配置は IPC 経由でクライアントから受信して埋める
+            // （現状は空配列で v4 互換のみ確保。専用 IPC は将来実装）。
+            client_os_windows: Vec::new(),
         }
     }
 

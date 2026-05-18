@@ -66,5 +66,13 @@
   "consent-deny": "[N] Verweigern",
   "consent-always-allow": "[A] Immer erlauben",
   "consent-always-deny": "[D] Immer verweigern",
-  "consent-hint": "Y/N: nur diesmal  •  A/D: für diese Sitzung  •  Esc: verweigern"
+  "consent-hint": "Y/N: nur diesmal  •  A/D: für diese Sitzung  •  Esc: verweigern",
+  "close_window_confirm_foreground": "Ein Vordergrundprozess läuft. Dieses Fenster trotzdem schließen?",
+  "close_window_button_kill": "Schließen",
+  "close_window_button_cancel": "Abbrechen",
+  "context-menu-detach-to-new-window": "In neues Fenster verschieben",
+  "context-menu-close-this-os-window": "Nur dieses Fenster schließen",
+  "palette-detach-to-new-window": "Aktuellen Tab in neues Fenster verschieben",
+  "palette-close-os-window": "Dieses OS-Fenster schließen",
+  "tab-tearout-button-tooltip": "In neues Fenster verschieben"
 }

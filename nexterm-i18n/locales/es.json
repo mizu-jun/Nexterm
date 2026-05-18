@@ -66,5 +66,13 @@
   "consent-deny": "[N] Denegar",
   "consent-always-allow": "[A] Permitir siempre",
   "consent-always-deny": "[D] Denegar siempre",
-  "consent-hint": "Y/N: solo esta vez  •  A/D: para esta sesión  •  Esc: denegar"
+  "consent-hint": "Y/N: solo esta vez  •  A/D: para esta sesión  •  Esc: denegar",
+  "close_window_confirm_foreground": "Hay un proceso en primer plano en ejecución. ¿Cerrar esta ventana de todos modos?",
+  "close_window_button_kill": "Cerrar",
+  "close_window_button_cancel": "Cancelar",
+  "context-menu-detach-to-new-window": "Separar a nueva ventana",
+  "context-menu-close-this-os-window": "Cerrar solo esta ventana",
+  "palette-detach-to-new-window": "Separar la pestaña actual a una nueva ventana",
+  "palette-close-os-window": "Cerrar esta ventana del SO",
+  "tab-tearout-button-tooltip": "Separar a nueva ventana"
 }

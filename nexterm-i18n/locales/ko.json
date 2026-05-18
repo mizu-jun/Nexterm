@@ -66,5 +66,13 @@
   "consent-deny": "[N] 거부",
   "consent-always-allow": "[A] 항상 허용",
   "consent-always-deny": "[D] 항상 거부",
-  "consent-hint": "Y/N: 이번만  •  A/D: 이 세션 동안  •  Esc: 거부"
+  "consent-hint": "Y/N: 이번만  •  A/D: 이 세션 동안  •  Esc: 거부",
+  "close_window_confirm_foreground": "포그라운드 프로세스가 실행 중입니다. 이 창을 닫으시겠습니까?",
+  "close_window_button_kill": "닫기",
+  "close_window_button_cancel": "취소",
+  "context-menu-detach-to-new-window": "새 창으로 분리",
+  "context-menu-close-this-os-window": "이 창만 닫기",
+  "palette-detach-to-new-window": "현재 탭을 새 창으로 분리",
+  "palette-close-os-window": "이 OS 창 닫기",
+  "tab-tearout-button-tooltip": "새 창으로 분리"
 }

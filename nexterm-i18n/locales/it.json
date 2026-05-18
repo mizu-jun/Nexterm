@@ -66,5 +66,13 @@
   "consent-deny": "[N] Nega",
   "consent-always-allow": "[A] Consenti sempre",
   "consent-always-deny": "[D] Nega sempre",
-  "consent-hint": "Y/N: solo questa volta  •  A/D: per questa sessione  •  Esc: nega"
+  "consent-hint": "Y/N: solo questa volta  •  A/D: per questa sessione  •  Esc: nega",
+  "close_window_confirm_foreground": "È in esecuzione un processo in primo piano. Chiudere comunque questa finestra?",
+  "close_window_button_kill": "Chiudi",
+  "close_window_button_cancel": "Annulla",
+  "context-menu-detach-to-new-window": "Stacca in una nuova finestra",
+  "context-menu-close-this-os-window": "Chiudi solo questa finestra",
+  "palette-detach-to-new-window": "Stacca la scheda corrente in una nuova finestra",
+  "palette-close-os-window": "Chiudi questa finestra del SO",
+  "tab-tearout-button-tooltip": "Stacca in una nuova finestra"
 }

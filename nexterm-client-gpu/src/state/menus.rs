@@ -7,6 +7,8 @@
 //!   ラベル付きでハイライトして高速選択する Quick Select モード
 //! - `find_quick_select_matches` — 正規表現でグリッド全体からマッチを抽出（優先度重複制御あり）
 
+use nexterm_i18n::fl;
+
 // ---- コンテキストメニュー ----
 
 /// コンテキストメニューの各項目が実行するアクション
@@ -26,6 +28,10 @@ pub enum ContextMenuAction {
     },
     /// セパレーター（クリック不可）
     Separator,
+    /// 現在のペインを新規 OS Window に分離する（Sprint 5-8 Phase 4-5、Wayland 代替 UX #1）
+    DetachToNewWindow,
+    /// 現在の OS Window だけを閉じる（Sprint 5-8 Phase 4-5、CloseOsWindow 経路 #1）
+    CloseOsWindow,
 }
 
 /// コンテキストメニューの1項目
@@ -124,6 +130,18 @@ impl ContextMenu {
             "設定...",
             "Ctrl+,",
             ContextMenuAction::OpenSettings,
+        ));
+
+        // Sprint 5-8 / Phase 4-5: tab tearing 関連項目（Wayland 代替 UX）
+        // i18n キー経由で 8 言語対応。ヒントなし（キーバインド未割当）。
+        items.push(ContextMenuItem::separator());
+        items.push(ContextMenuItem::new(
+            fl!("context-menu-detach-to-new-window"),
+            ContextMenuAction::DetachToNewWindow,
+        ));
+        items.push(ContextMenuItem::new(
+            fl!("context-menu-close-this-os-window"),
+            ContextMenuAction::CloseOsWindow,
         ));
 
         Self {

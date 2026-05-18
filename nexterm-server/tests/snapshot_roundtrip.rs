@@ -4,8 +4,8 @@
 //! ファイルへの書き込み→読み込みラウンドトリップを検証する。
 
 use nexterm_server::snapshot::{
-    SNAPSHOT_VERSION, SNAPSHOT_VERSION_MIN, ServerSnapshot, SessionSnapshot, SplitDirSnapshot,
-    SplitNodeSnapshot, WindowSnapshot,
+    OsWindowSnapshot, SNAPSHOT_VERSION, SNAPSHOT_VERSION_MIN, ServerSnapshot, SessionSnapshot,
+    SplitDirSnapshot, SplitNodeSnapshot, WindowSnapshot,
 };
 use std::sync::Mutex;
 
@@ -24,6 +24,7 @@ fn minimal_snapshot() -> ServerSnapshot {
         sessions: vec![],
         saved_at: 1_700_000_000,
         current_workspace: "default".to_string(),
+        client_os_windows: vec![],
     }
 }
 
@@ -70,6 +71,7 @@ fn test_session_snapshot_roundtrip() {
         sessions: vec![session],
         saved_at: 42,
         current_workspace: "default".to_string(),
+        client_os_windows: vec![],
     };
 
     let json = serde_json::to_string_pretty(&snap).expect("シリアライズ失敗");
@@ -140,6 +142,12 @@ fn test_persist_save_and_load() {
         sessions: vec![session_with_single_pane()],
         saved_at: 999,
         current_workspace: "default".to_string(),
+        client_os_windows: vec![OsWindowSnapshot {
+            position: (100, 50),
+            size: (1280, 720),
+            server_window_ids: vec![1],
+            focused_server_window_id: 1,
+        }],
     };
 
     nexterm_server::persist::save_snapshot(&snap).expect("保存失敗");
@@ -150,6 +158,16 @@ fn test_persist_save_and_load() {
     assert_eq!(loaded.saved_at, 999);
     assert_eq!(loaded.sessions.len(), 1);
     assert_eq!(loaded.sessions[0].name, "test");
+    // v4: OS Window 配置も往復で保持される
+    assert_eq!(loaded.client_os_windows.len(), 1);
+    assert_eq!(loaded.client_os_windows[0].position, (100, 50));
+    assert_eq!(loaded.client_os_windows[0].size, (1280, 720));
+    assert_eq!(
+        loaded.client_os_windows[0].server_window_ids,
+        vec![1u32],
+        "server_window_ids が保持されない"
+    );
+    assert_eq!(loaded.client_os_windows[0].focused_server_window_id, 1);
 
     // 環境変数を元に戻す
     unsafe {
@@ -208,7 +226,7 @@ fn test_load_snapshot_returns_none_when_missing() {
 #[test]
 fn test_snapshot_version_is_current() {
     assert_eq!(
-        SNAPSHOT_VERSION, 3,
+        SNAPSHOT_VERSION, 4,
         "スキーマバージョンが変更された場合は移行処理を追加すること"
     );
     assert_eq!(SNAPSHOT_VERSION_MIN, 1, "最低サポートバージョンは 1 のまま");
@@ -274,4 +292,84 @@ fn test_session_title_defaults_to_none() {
     }"#;
     let s: SessionSnapshot = serde_json::from_str(json).expect("デシリアライズ失敗");
     assert!(s.session_title.is_none());
+}
+
+// ── v4 (Phase 4-5: OS Window 配置永続化) ────────────────────────────────────
+
+#[test]
+fn test_v3_snapshot_migrates_to_v4() {
+    // v3 形式のスナップショット JSON（client_os_windows を含まない）
+    let v3_json = r#"{
+        "version": 3,
+        "sessions": [],
+        "saved_at": 12345,
+        "current_workspace": "default"
+    }"#;
+
+    let snap: ServerSnapshot = serde_json::from_str(v3_json).expect("v3 デシリアライズ失敗");
+    assert_eq!(snap.version, 3);
+    // v4 で追加された client_os_windows は serde(default) で空 Vec が補完される
+    assert!(
+        snap.client_os_windows.is_empty(),
+        "client_os_windows が空 Vec で補完されるべき"
+    );
+}
+
+#[test]
+fn test_os_window_snapshot_roundtrip() {
+    let os_window = OsWindowSnapshot {
+        position: (320, 240),
+        size: (1920, 1080),
+        server_window_ids: vec![1, 3, 7],
+        focused_server_window_id: 3,
+    };
+    let snap = ServerSnapshot {
+        version: SNAPSHOT_VERSION,
+        sessions: vec![],
+        saved_at: 0,
+        current_workspace: "default".to_string(),
+        client_os_windows: vec![os_window.clone()],
+    };
+
+    let json = serde_json::to_string(&snap).expect("シリアライズ失敗");
+    let restored: ServerSnapshot = serde_json::from_str(&json).expect("デシリアライズ失敗");
+
+    assert_eq!(restored.client_os_windows.len(), 1);
+    let r = &restored.client_os_windows[0];
+    assert_eq!(r.position, (320, 240));
+    assert_eq!(r.size, (1920, 1080));
+    assert_eq!(r.server_window_ids, vec![1u32, 3, 7]);
+    assert_eq!(r.focused_server_window_id, 3);
+}
+
+#[test]
+fn test_v4_multiple_os_windows_roundtrip() {
+    // 複数 OS Window 配置（tab tearing で 2 個のウィンドウを開いた状態）
+    let snap = ServerSnapshot {
+        version: SNAPSHOT_VERSION,
+        sessions: vec![],
+        saved_at: 7,
+        current_workspace: "default".to_string(),
+        client_os_windows: vec![
+            OsWindowSnapshot {
+                position: (0, 0),
+                size: (1280, 720),
+                server_window_ids: vec![1, 2],
+                focused_server_window_id: 2,
+            },
+            OsWindowSnapshot {
+                position: (1300, 0),
+                size: (800, 600),
+                server_window_ids: vec![3],
+                focused_server_window_id: 3,
+            },
+        ],
+    };
+
+    let json = serde_json::to_string(&snap).expect("シリアライズ失敗");
+    let restored: ServerSnapshot = serde_json::from_str(&json).expect("デシリアライズ失敗");
+
+    assert_eq!(restored.client_os_windows.len(), 2);
+    assert_eq!(restored.client_os_windows[1].position, (1300, 0));
+    assert_eq!(restored.client_os_windows[1].server_window_ids, vec![3u32]);
 }

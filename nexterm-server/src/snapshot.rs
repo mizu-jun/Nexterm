@@ -23,6 +23,9 @@
 //! - v3: Sprint 5-7 / Phase 2-1 — `SessionSnapshot.workspace_name` を追加し、
 //!   セッションをワークスペースにグルーピングする。v2 以前は `default` ワークスペース
 //!   に所属するものとして自動マイグレーション可能
+//! - v4: Sprint 5-8 / Phase 4-5 — `ServerSnapshot.client_os_windows` を追加し、
+//!   クライアント側の複数 OS Window 配置（位置・サイズ・所属 Server Window 集合）を
+//!   保存する。v3 以前は空 `Vec` を補完し、起動時に単一 OS Window として復元される
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -31,7 +34,7 @@ use std::path::PathBuf;
 ///
 /// フォーマットを変更した場合はインクリメントする。
 /// 旧バージョンのスナップショットは `persist::load_snapshot` でマイグレーションを試みる。
-pub const SNAPSHOT_VERSION: u32 = 3;
+pub const SNAPSHOT_VERSION: u32 = 4;
 
 /// 旧バージョン（v1）との互換読み込みに使う最低サポートバージョン
 ///
@@ -58,6 +61,28 @@ pub struct ServerSnapshot {
     /// 保存時にアクティブだったワークスペース名（v3 追加。省略時は `default`）
     #[serde(default = "default_workspace")]
     pub current_workspace: String,
+    /// クライアント側 OS Window の配置一覧（v4 追加）
+    ///
+    /// tab tearing で複数の OS Window に分離された状態を保存・復元する。
+    /// 空 `Vec` の場合は単一 OS Window 構成として復元される（v3 以前の互換）。
+    #[serde(default)]
+    pub client_os_windows: Vec<OsWindowSnapshot>,
+}
+
+/// クライアント側 OS Window のスナップショット（v4 追加）
+///
+/// 1 プロセス内で複数開かれた winit ネイティブウィンドウの位置・サイズと、
+/// そのウィンドウが表示している Server Window 集合を記録する。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OsWindowSnapshot {
+    /// ウィンドウ左上のスクリーン座標 (x, y) ピクセル
+    pub position: (i32, i32),
+    /// ウィンドウの外形サイズ (width, height) ピクセル
+    pub size: (u32, u32),
+    /// このウィンドウに所属する Server Window ID（タブとして表示）
+    pub server_window_ids: Vec<u32>,
+    /// このウィンドウでアクティブだった Server Window ID
+    pub focused_server_window_id: u32,
 }
 
 /// セッションのスナップショット
