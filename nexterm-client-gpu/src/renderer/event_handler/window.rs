@@ -18,39 +18,55 @@ use crate::glyph_atlas::GlyphAtlas;
 impl EventHandler {
     /// `WindowEvent::CloseRequested`
     ///
-    /// Sprint 5-8 Phase 4-1 Step 1.4: `config.window.close_action` を参照する経路を整備した。
-    /// 現状は 3 値（`Prompt` / `Detach` / `Kill`）の **分岐ログ出力** のみで、
-    /// 実際の挙動（確認ダイアログ表示・Server Window 保持・破棄）は Phase 4-3 で実装する。
+    /// Sprint 5-8 Phase 4-4: `config.window.close_action` の 3 値分岐を実装する。
     ///
-    /// Phase 4-3 実装予定:
-    /// - `Prompt`: サーバーへ `QueryForegroundProcess` を送り、`true` なら確認ダイアログ
-    /// - `Detach`: クライアント切断のみで Server Window は保持（tmux 流 detached session）
-    /// - `Kill`: Server Window 破棄して exit（既存挙動）
+    /// 挙動:
+    /// - **`Prompt`** (デフォルト): foreground プロセスがあれば確認ダイアログ。それ以外は kill。
+    ///   - Phase 4-4 では `QueryForegroundProcess` IPC が未実装のため、`Kill` と同じ挙動に縮退。
+    ///     確認ダイアログ UI 自体は Phase 4-5 で実装予定。
+    /// - **`Detach`**: Server Window を保持してクライアントのみ切断（tmux 流 detached session）。
+    ///   - シングルバイナリ構成では `server_handle.abort()` で内部サーバータスクも終了するため、
+    ///     実質 Kill と差がない。マルチプロセス（`nexterm-ctl attach`）で本来の意味を持つ枠組み。
+    /// - **`Kill`**: Server Session を `KillSession` IPC で破棄してから exit。
     pub(super) fn on_close_requested(&mut self, event_loop: &ActiveEventLoop) {
         let action = self.app.config.window.close_action;
+        // 現状セッション名は固定（`Attach` 時に "main" でアタッチしている）。
+        // 将来マルチセッション対応時は `EventHandler.current_session` から取得する。
+        let session_name = "main".to_string();
+
         match action {
             CloseAction::Prompt => {
-                // Phase 4-3 でサーバーへ has_foreground_process を問い合わせる。
-                // それまでは「foreground プロセスなし」と仮定して即 exit する。
+                // Phase 4-5 で `QueryForegroundProcess` IPC + 確認ダイアログ UI を追加予定。
+                // それまでは Kill と同じ挙動。
                 info!(
-                    "CloseRequested: close_action = Prompt（Phase 4-3 で確認ダイアログ実装予定、現状は即 exit）"
+                    "CloseRequested: close_action = Prompt。foreground プロセス検知 IPC は Phase 4-5 で追加予定、現状は Kill 扱い"
                 );
+                if let Some(conn) = &self.connection {
+                    let _ = conn.send_tx.try_send(ClientToServer::KillSession {
+                        name: session_name.clone(),
+                    });
+                }
             }
             CloseAction::Detach => {
-                // Phase 4-3 で Server Window を破棄せずクライアントのみ切断する。
                 info!(
-                    "CloseRequested: close_action = Detach（Phase 4-3 で detach 実装予定、現状は通常終了）"
+                    "CloseRequested: close_action = Detach。Server Window を保持してクライアントのみ切断"
                 );
+                // KillSession を送らずクライアント側のみ切断。
+                // シングルバイナリ構成では server_handle.abort() で実質終了。
             }
             CloseAction::Kill => {
-                info!("CloseRequested: close_action = Kill（Server Window を破棄して exit）");
+                info!("CloseRequested: close_action = Kill。Server Session を破棄して exit");
+                if let Some(conn) = &self.connection {
+                    let _ = conn.send_tx.try_send(ClientToServer::KillSession {
+                        name: session_name.clone(),
+                    });
+                }
             }
         }
 
-        // 現状は 3 ケースとも同じ exit ロジック（既存挙動を維持）。
-        // IPC 接続を先にドロップしてチャネルを閉じる（Windows でのハング防止）
+        // 追加 OS Window を破棄 + 接続切断 + サーバータスク abort + exit
+        self.windows.clear();
         self.connection = None;
-        // サーバータスクを abort してからイベントループを終了する
         self.server_handle.abort();
         event_loop.exit();
     }

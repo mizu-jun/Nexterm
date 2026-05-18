@@ -23,6 +23,29 @@ use crate::snapshot::{SplitNodeSnapshot, WindowSnapshot};
 use bsp::SplitNode;
 use tiling::{compute_pane_sizes, compute_tiling_layouts, find_cwd_in_snapshot};
 
+/// `insert_pane_at` の挿入位置決定ロジック（Sprint 5-8 Phase 4-4、テスト容易のため純粋関数として分離）。
+///
+/// 戻り値: `pane_order` への挿入位置インデックス。
+///
+/// - `requested_position` が `Some(p)` の場合: `p.min(current_len)`（範囲外なら末尾追加）
+/// - `requested_position` が `None` の場合: `focused_index + 1`（フォーカスペインの直後）。
+///   ただし `focused_index` が `None` または `focused_index + 1 >= current_len` なら末尾追加。
+///
+/// この挙動は既存 `insert_pane`（末尾追加 + フォーカス直後挿入）と完全に互換。
+pub(crate) fn compute_insert_position(
+    current_len: usize,
+    requested_position: Option<usize>,
+    focused_index: Option<usize>,
+) -> usize {
+    match requested_position {
+        Some(pos) => pos.min(current_len),
+        None => match focused_index {
+            Some(idx) if idx + 1 < current_len => idx + 1,
+            _ => current_len,
+        },
+    }
+}
+
 /// `reorder_panes` のロジック中核（テスト容易のため純粋関数として分離）。
 ///
 /// `current` を基準にした安定な「指定優先 + 補完」並べ替えを行う:
@@ -653,6 +676,26 @@ impl Window {
         Some(pane)
     }
 
+    /// この Window を消費して、残っている唯一の PTY Pane を取り出す（Sprint 5-8 Phase 4-4）。
+    ///
+    /// 「最後の 1 ペインをタブ外ドロップして新規 Window に移す」シナリオで、ソース Window 自体を
+    /// 削除する際に使う。`take_pane_by_id` は `pane_count() <= 1` でブロックするため、最後のペインの
+    /// 場合は `Session::windows.remove(&id)` で Window 自体を取り出してから本 API を呼ぶ。
+    ///
+    /// 戻り値 `None` のケース:
+    /// - PTY Pane が存在しない（panes が空）
+    /// - PTY Pane が 2 個以上残っている（呼び出し順序を間違えている）
+    /// - シリアルペインが含まれている（PTY のみ取り出し対応）
+    pub fn into_single_pane(self) -> Option<Pane> {
+        if !self.serial_panes.is_empty() {
+            return None;
+        }
+        if self.panes.len() != 1 {
+            return None;
+        }
+        self.panes.into_values().next()
+    }
+
     /// 指定 `pane_id` のペインをこのウィンドウから取り出す（Sprint 5-8 Phase 4-3、move-pane-to-window 用）
     ///
     /// `take_focused_pane` の汎用版。任意の `pane_id` を引数で指定する。
@@ -704,20 +747,44 @@ impl Window {
 
     /// 外部から持ち込まれたペインをフォーカスペインの後に追加する（join-pane 用）
     pub fn insert_pane(&mut self, pane: Pane, total_cols: u16, total_rows: u16, dir: SplitDir) {
+        self.insert_pane_at(pane, total_cols, total_rows, dir, None);
+    }
+
+    /// 外部から持ち込まれたペインを指定位置に挿入する（Sprint 5-8 Phase 4-4、tab tearing merge 用）
+    ///
+    /// `position` は `pane_order` 内の挿入インデックス:
+    /// - `None`: 既存 `insert_pane` と同じ挙動（フォーカスペインの直後に挿入）
+    /// - `Some(0)`: 先頭に挿入
+    /// - `Some(n)`: インデックス `n` の位置に挿入（`pane_order.len()` 以上は末尾追加）
+    ///
+    /// BSP ツリーへの挿入位置は常に「フォーカスペインの隣」（既存 `insert_pane` と同じ）。
+    /// `position` は表示用のタブ順序 (`pane_order`) のみに影響する。BSP の物理レイアウトと
+    /// タブの表示順序は独立して管理される（Phase 2-3 の設計どおり）。
+    pub fn insert_pane_at(
+        &mut self,
+        pane: Pane,
+        total_cols: u16,
+        total_rows: u16,
+        dir: SplitDir,
+        position: Option<usize>,
+    ) {
         let new_id = pane.id;
         self.layout.insert_after(self.focused_pane_id, new_id, dir);
         self.panes.insert(new_id, pane);
         self.focused_pane_id = new_id;
         self.zoomed = false;
-        // タブ順序: フォーカスペインの直後に挿入（Sprint 5-7 / Phase 2-3）
-        let pos = self
+
+        // タブ順序: position 指定時はその位置、なければフォーカスペインの直後（純粋関数化）
+        // 注: `pane_order` には new_id を `panes.insert` 前に追加していないため、
+        //     `current_len` は挿入前の長さを使う（compute_insert_position の `Some(p).min` で
+        //     past-the-end を含む `len` まで許容）。
+        let focused_index = self
             .pane_order
             .iter()
             .position(|&id| id == self.focused_pane_id);
-        match pos {
-            Some(p) if p + 1 < self.pane_order.len() => self.pane_order.insert(p + 1, new_id),
-            _ => self.pane_order.push(new_id),
-        }
+        let new_pos = compute_insert_position(self.pane_order.len(), position, focused_index);
+        self.pane_order.insert(new_pos, new_id);
+
         // 全ペインをリサイズする
         let layouts = self.compute_layouts(total_cols, total_rows);
         for rect in &layouts {
@@ -734,21 +801,21 @@ impl Window {
 
     /// このウィンドウのいずれかのペインで foreground プロセス（シェル以外）が動作中かを返す。
     ///
-    /// Sprint 5-8 Phase 4-1 Step 1.4 **スタブ実装**: 現状は常に `false` を返す。
-    /// Phase 4-3 で各 `Pane` の foreground プロセス検知（既存の scrollback コマンド検知
-    /// ロジックを流用予定）を本実装し、`window.close_action = "prompt"` 時の確認ダイアログ
-    /// 表示判定で使用する。
+    /// Sprint 5-8 Phase 4-4 で本実装。各 `Pane::has_foreground_process()`（Linux 実装、
+    /// macOS / Windows は現状 false）を OR で集計する。
+    /// `window.close_action = "prompt"` 時の確認ダイアログ表示判定で使用する。
     ///
     /// 戻り値:
-    /// - `true`: 確認ダイアログ表示が必要（実装後、長時間実行ジョブ・ssh セッション等）
-    /// - `false`: そのまま閉じてよい（シェルプロンプト直下）
+    /// - `true`: 少なくとも 1 つのペインで foreground プロセス（vim・ssh・長時間ジョブ等）が動作中
+    /// - `false`: 全ペインがシェルプロンプト直下、または検出非対応 OS
     ///
-    /// 公開 API として用意するのは、Phase 4-3 で追加予定の
-    /// `ClientToServer::QueryForegroundProcess` IPC ハンドラから呼び出すため。
+    /// シリアルペインはこの集計の対象外（PTY のみ判定）。
+    ///
+    /// 注: Phase 4-4 時点では `QueryForegroundProcess` IPC 未追加のため呼び出し元が存在しない。
+    /// Phase 4-5 で IPC ハンドラを追加して `on_close_requested` の Prompt 分岐から呼ぶ予定。
     #[allow(dead_code)]
     pub fn has_foreground_process(&self) -> bool {
-        // Phase 4-3 で本実装予定。現状は常に「foreground プロセスなし」とみなす。
-        false
+        self.panes.values().any(|p| p.has_foreground_process())
     }
 
     /// フォーカス中のペインに入力データを書き込む（PTY またはシリアルポート）

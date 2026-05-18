@@ -33,6 +33,8 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 use winit::event_loop::EventLoop;
 
+use crate::renderer::UserEvent;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let _log_guard = init_tracing();
@@ -73,12 +75,16 @@ async fn main() -> Result<()> {
     // バックグラウンド更新チェッカーを起動する（5 秒後に GitHub Releases API を確認）
     let update_rx = update_checker::start(env!("CARGO_PKG_VERSION"), config.auto_check_update);
 
-    // winit イベントループを作成する
-    let event_loop = EventLoop::new()?;
+    // winit イベントループを UserEvent 付きで作成する（Sprint 5-8 Phase 4-4）。
+    // `EventLoopProxy<UserEvent>` 経由で、マウスハンドラやネットワーク受信スレッドから
+    // `&ActiveEventLoop` を持たない文脈でも OS Window 操作要求を発火できる。
+    let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
+    let proxy = event_loop.create_proxy();
 
     // GPU アプリケーションを起動する
     let app = renderer::NextermApp::new(config).await?;
     event_loop.run_app(&mut app.into_event_handler(
+        proxy,
         Some(config_rx),
         config_watcher,
         status_eval,

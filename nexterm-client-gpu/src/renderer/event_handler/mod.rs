@@ -16,12 +16,12 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use nexterm_config::{Config, StatusBarEvaluator};
-use tracing::warn;
+use tracing::{info, warn};
 use winit::{
     application::ApplicationHandler,
-    dpi::PhysicalPosition,
+    dpi::{PhysicalPosition, PhysicalSize},
     event::{ElementState, MouseButton, StartCause, WindowEvent},
-    event_loop::ActiveEventLoop,
+    event_loop::{ActiveEventLoop, EventLoopProxy},
     keyboard::ModifiersState,
     window::{Window, WindowId},
 };
@@ -29,7 +29,32 @@ use winit::{
 use crate::connection::Connection;
 use crate::glyph_atlas::GlyphAtlas;
 
-use super::{ClientWindow, NextermApp, WgpuState};
+use super::{ClientWindow, NextermApp, PerWindowViewState, WgpuState};
+
+/// EventLoop に送る非同期ユーザーイベント（Sprint 5-8 Phase 4-4）。
+///
+/// マウスハンドラやネットワーク受信スレッドから `&ActiveEventLoop` を持たない
+/// コンテキストで「OS Window をスポーン/クローズしたい」要求を出すために使う。
+/// `EventLoopProxy::send_event(...)` で発火すると、次回 winit イベントループが
+/// `user_event` ハンドラを呼び、`&ActiveEventLoop` 付きの安全な文脈で処理できる。
+#[derive(Debug, Clone)]
+pub enum UserEvent {
+    /// 新規 OS Window を生成し、サーバー Window ID に紐付ける。
+    ///
+    /// - `server_window_id`: アタッチするサーバー側 Window ID
+    /// - `pos`: 新規 Window の希望位置（`None` なら winit のデフォルト配置）
+    SpawnOsWindow {
+        server_window_id: u32,
+        pos: Option<PhysicalPosition<i32>>,
+    },
+    /// 指定 OS Window を閉じる。最後の 1 個ならアプリ全体を exit する。
+    ///
+    /// Phase 4-4 時点では現状 `on_close_requested` で全 OS Window を一括破棄するため
+    /// 直接の発火経路がない（dead_code 警告抑制）。Phase 4-5 でコンテキストメニュー
+    /// 「この Window だけ閉じる」アクションから発火する予定。
+    #[allow(dead_code)]
+    CloseOsWindow { window_id: WindowId },
+}
 
 // ---- サブモジュール ----
 mod consent;
@@ -83,74 +108,144 @@ pub struct EventHandler {
     /// `windows` に登録した `ClientWindow` を一次データソースとする。
     /// 移行完了までは既存の `window` / `wgpu_state` / `atlas` フィールドが
     /// 一次データソース。
-    #[allow(dead_code)]
     pub(super) windows: HashMap<WindowId, ClientWindow>,
+    /// EventLoopProxy<UserEvent>（Sprint 5-8 Phase 4-4）。
+    /// マウスハンドラやネットワークスレッドから `UserEvent::SpawnOsWindow` 等を発火する。
+    pub(super) proxy: EventLoopProxy<UserEvent>,
+    /// `WindowListChanged` 受信時に「新規 OS Window スポーン要求」を判定するための既知 Window ID 集合
+    /// （Sprint 5-8 Phase 4-4 Step C）。サーバーから通知された Window 集合との差分を取り、
+    /// クライアントが知らない Window があれば `pending_new_window_drop_pos` の位置に OS Window を
+    /// スポーンする。
+    pub(super) known_server_window_ids: std::collections::HashSet<u32>,
+    /// タブ外ドロップで新規 OS Window 生成を要求した際のドロップ位置（Sprint 5-8 Phase 4-4）。
+    /// `WindowListChanged` で新しい Window ID を検出したとき、その位置に OS Window をスポーンする。
+    /// 一度消費したら `None` に戻す。
+    pub(super) pending_new_window_drop_pos: Option<PhysicalPosition<i32>>,
 }
 
 impl EventHandler {
-    /// 新規 OS Window を生成し、`windows` HashMap に登録する。
+    /// 新規 OS Window を生成し、`windows` HashMap に登録する（Sprint 5-8 Phase 4-4 本実装）。
     ///
-    /// Sprint 5-8 Phase 4-1 Step 1.5 **スケルトン実装**: 現状は実 winit Window 生成
-    /// および wgpu 初期化を行わず、主 Window の `WindowId` を返すだけ（Phase 4-2 の
-    /// 「タブ外ドロップで新規 OS Window 生成」フロー実装時に本実装する）。
+    /// `on_resumed` の主 Window 生成フローと同じパターンで:
+    /// 1. winit `Window` を `event_loop.create_window(...)` で生成
+    /// 2. `WgpuState::new` で wgpu パイプラインを初期化（背景画像も同時にロード）
+    /// 3. `PerWindowViewState { focused_server_window_id, .. Default::default() }` を作成
+    /// 4. `ClientWindow` を組み立てて `self.windows.insert(window_id, ...)`
     ///
     /// 引数:
-    /// - `event_loop`: winit `ActiveEventLoop`（Window 生成に使用、Phase 4-2 で活用）
-    /// - `pos`: 新規 Window のスクリーン位置（タブ外ドロップ座標）
-    /// - `server_window_id`: 新規 Window にアタッチするサーバー Window ID
+    /// - `event_loop`: winit `ActiveEventLoop`（Window 生成に必要）
+    /// - `pos`: 新規 Window のスクリーン位置。`None` の場合は winit のデフォルト配置
+    /// - `server_window_id`: 新規 Window が表示するサーバー Window ID（`view_state` に格納）
     ///
-    /// 戻り値: 生成された Window の `WindowId`。主 Window が未初期化の場合は `None`。
+    /// 戻り値: 生成された Window の `WindowId`。Window 作成または wgpu 初期化失敗時は `None`。
     ///
-    /// Phase 4-2 で実装する内容:
-    /// 1. `event_loop.create_window(...)` で新規 winit Window を生成
-    /// 2. `WgpuState::new` で wgpu パイプラインを初期化
-    /// 3. `PerWindowViewState { focused_server_window_id: server_window_id, .. Default::default() }`
-    /// 4. `self.windows.insert(window_id, ClientWindow { window, wgpu, view_state })`
-    /// 5. サーバーへ `Attach { window_id: server_window_id }` を送信
-    #[allow(dead_code)]
+    /// **注意**: グリフアトラス・フォント・サーバー接続は EventHandler レベルで共有しているため、
+    /// 新規 OS Window は既存のサーバー接続（`self.connection`）を介してメッセージを受信する。
+    /// `connection.send_tx` でのアタッチ要求は本関数の呼び出し側（[[project_sprint5_8_phase4_3_progress]] の
+    /// `MovePaneToWindow` 経路）でサーバーが既に行っているため、ここでは送らない。
     pub(super) fn spawn_os_window(
         &mut self,
-        _event_loop: &ActiveEventLoop,
-        _pos: PhysicalPosition<i32>,
-        _server_window_id: u32,
+        event_loop: &ActiveEventLoop,
+        pos: Option<PhysicalPosition<i32>>,
+        server_window_id: u32,
     ) -> Option<WindowId> {
-        warn!("spawn_os_window: Phase 4-2 で本実装予定。現状は主 Window の WindowId を返します");
-        self.window.as_ref().map(|w| w.id())
+        use nexterm_config::WindowDecorations;
+
+        let win_cfg = &self.app.config.window;
+        let transparent = win_cfg.background_opacity < 1.0;
+        let decorations = !matches!(win_cfg.decorations, WindowDecorations::None);
+
+        let mut attrs = Window::default_attributes()
+            .with_title(format!("Nexterm - Window {}", server_window_id))
+            .with_inner_size(PhysicalSize::new(1280u32, 800u32))
+            .with_transparent(transparent)
+            .with_decorations(decorations);
+        if let Some(p) = pos {
+            attrs = attrs.with_position(p);
+        }
+
+        let window = match event_loop.create_window(attrs) {
+            Ok(w) => Arc::new(w),
+            Err(e) => {
+                warn!("新規 OS Window の作成に失敗: {}", e);
+                return None;
+            }
+        };
+        window.set_ime_allowed(true);
+
+        // wgpu を非同期で初期化する（tokio runtime が必要）
+        let mut wgpu_state = match tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current()
+                .block_on(WgpuState::new(Arc::clone(&window), &self.app.config.gpu))
+        }) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("新規 OS Window の wgpu 初期化に失敗: {}", e);
+                return None;
+            }
+        };
+        wgpu_state.load_background(&self.app.config.window);
+
+        let window_id = window.id();
+        let view_state = PerWindowViewState {
+            focused_server_window_id: server_window_id,
+            ..Default::default()
+        };
+
+        self.windows.insert(
+            window_id,
+            ClientWindow {
+                window: Arc::clone(&window),
+                wgpu: wgpu_state,
+                view_state,
+            },
+        );
+
+        info!(
+            "spawn_os_window: 新規 OS Window 生成 (window_id={:?}, server_window_id={}, pos={:?})",
+            window_id, server_window_id, pos
+        );
+
+        // 即時 1 フレーム描画を要求
+        window.request_redraw();
+        Some(window_id)
     }
 
-    /// 指定 `WindowId` の OS Window を破棄する。
+    /// 指定 `WindowId` の OS Window を破棄する（Sprint 5-8 Phase 4-4 本実装）。
     ///
-    /// Sprint 5-8 Phase 4-1 Step 1.5 **スケルトン実装**: 現状は `windows` HashMap から
-    /// エントリを削除し、すべての OS Window が閉じられた場合に既存の exit ロジックを
-    /// 実行する。実 winit Window の `request_close` は Phase 4-2 で本実装する。
+    /// 動作:
+    /// 1. `self.windows` から該当 `ClientWindow` を取り出して drop（wgpu surface / Window 解放）
+    /// 2. 主 Window が閉じられたかを判定
+    /// 3. **すべての OS Window が閉じられた**場合のみ、サーバータスクを abort して `event_loop.exit()`
+    ///    （単一の追加 Window 閉鎖ではアプリ継続）
     ///
     /// 引数:
     /// - `event_loop`: 最後の Window 閉鎖時の `exit()` 呼び出しに使用
     /// - `window_id`: 破棄する Window の ID
-    ///
-    /// 終了判定:
-    /// - `windows` が空 **かつ** 主 Window が閉じられた（または未初期化） → exit
-    /// - それ以外 → HashMap から削除のみで継続
-    ///
-    /// Phase 4-2 で実装する内容:
-    /// 1. `ClientWindow` を `windows` から取り出し、`window.set_visible(false)` 等のクリーンアップ
-    /// 2. 関連リソース（wgpu surface, atlas）を drop
-    /// 3. サーバーへ `Detach { window_id }` を送信
-    /// 4. 終了判定で `on_close_requested` の `close_action` ロジックを再利用
-    #[allow(dead_code)]
     pub(super) fn close_os_window(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId) {
-        self.windows.remove(&window_id);
+        let removed = self.windows.remove(&window_id);
+        if removed.is_some() {
+            info!(
+                "close_os_window: OS Window を破棄 (window_id={:?})",
+                window_id
+            );
+        }
 
-        // 主 Window が閉じられたかを判定（現状は主 Window のみが実利用される）
+        // 主 Window が閉じられたか
         let main_closed = self
             .window
             .as_ref()
             .map(|w| w.id() == window_id)
             .unwrap_or(true);
 
+        // 主 Window が閉じられた場合は主 Window 参照もクリア
+        if main_closed && self.window.as_ref().map(|w| w.id()) == Some(window_id) {
+            self.window = None;
+            self.wgpu_state = None;
+        }
+
         // 全 OS Window が閉じられたら exit
-        if self.windows.is_empty() && main_closed {
-            // `on_close_requested` と同じ exit ロジック（close_action 分岐は Phase 4-3 で統合）
+        if self.windows.is_empty() && self.window.is_none() {
             self.connection = None;
             self.server_handle.abort();
             event_loop.exit();
@@ -158,7 +253,7 @@ impl EventHandler {
     }
 }
 
-impl ApplicationHandler for EventHandler {
+impl ApplicationHandler<UserEvent> for EventHandler {
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
         self.on_new_events(event_loop, cause);
     }
@@ -169,6 +264,24 @@ impl ApplicationHandler for EventHandler {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.on_about_to_wait(event_loop);
+    }
+
+    /// `UserEvent` 経由のリクエストを処理する（Sprint 5-8 Phase 4-4）。
+    ///
+    /// マウスハンドラやネットワーク受信スレッドが `&ActiveEventLoop` を持たない
+    /// 文脈で発火した OS Window 操作要求を、ここで `&ActiveEventLoop` 付きで実行する。
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
+        match event {
+            UserEvent::SpawnOsWindow {
+                server_window_id,
+                pos,
+            } => {
+                let _ = self.spawn_os_window(event_loop, pos, server_window_id);
+            }
+            UserEvent::CloseOsWindow { window_id } => {
+                self.close_os_window(event_loop, window_id);
+            }
+        }
     }
 
     fn window_event(

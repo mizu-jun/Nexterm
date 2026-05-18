@@ -907,6 +907,75 @@ impl Pane {
     fn read_working_dir(&self) -> Option<std::path::PathBuf> {
         None
     }
+
+    /// このペインで foreground プロセス（シェル以外の子プロセス）が動作中かを返す。
+    ///
+    /// Sprint 5-8 Phase 4-4 で本実装。OS Window を閉じる際に `close_action = "prompt"` だった
+    /// 場合の確認ダイアログ表示判定に使う。
+    ///
+    /// 注: Phase 4-4 時点では呼び出し元が `Window::has_foreground_process` 経由のみで、
+    /// その `Window` 側も `QueryForegroundProcess` IPC 追加（Phase 4-5）まで dead_code 状態。
+    #[allow(dead_code)]
+    ///
+    /// **Linux 実装**:
+    /// - `/proc/{pid}/stat` の `tpgid`（foreground process group ID）と `pgrp` を比較
+    /// - `tpgid != pgrp` ならシェル以外のプロセス（例: vim・ssh・長時間ジョブ）が前面で動いている
+    /// - `tpgid <= 0`: controlling terminal なし → `false`
+    ///
+    /// **macOS / Windows 実装**: 現状は `false` 固定（Phase 4-5 以降で対応予定）。
+    /// macOS は `ps` で子プロセスツリーを scan、Windows は `EnumProcesses + Toolhelp` などが候補。
+    ///
+    /// 戻り値:
+    /// - `true`: 確認ダイアログ表示が必要（長時間実行ジョブ・ssh セッション等）
+    /// - `false`: そのまま閉じてよい（シェルプロンプト直下、または検出非対応 OS）
+    pub fn has_foreground_process(&self) -> bool {
+        self.read_has_foreground_process()
+    }
+
+    /// Linux 実装: `/proc/{pid}/stat` の `tpgid` と `pgrp` を比較する
+    #[cfg(target_os = "linux")]
+    fn read_has_foreground_process(&self) -> bool {
+        let Some(pid) = self.pid else {
+            return false;
+        };
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{}/stat", pid)) else {
+            return false;
+        };
+        // stat の形式: "pid (comm) state ppid pgrp session tty_nr tpgid flags ..."
+        // comm にはスペース・括弧・改行を含む可能性があるため、最後の ") " で分割する。
+        let Some((_, after)) = stat.rsplit_once(") ") else {
+            return false;
+        };
+        let fields: Vec<&str> = after.split_whitespace().collect();
+        // after_comm のインデックス:
+        // [0]=state, [1]=ppid, [2]=pgrp, [3]=session, [4]=tty_nr, [5]=tpgid
+        let Some(pgrp) = fields.get(2).and_then(|s| s.parse::<i32>().ok()) else {
+            return false;
+        };
+        let Some(tpgid) = fields.get(5).and_then(|s| s.parse::<i32>().ok()) else {
+            return false;
+        };
+        // tpgid <= 0 は controlling terminal なし or 取得不可
+        tpgid > 0 && tpgid != pgrp
+    }
+
+    /// macOS 実装: 現状は false 固定（Phase 4-5 以降で本実装予定）
+    #[cfg(target_os = "macos")]
+    fn read_has_foreground_process(&self) -> bool {
+        false
+    }
+
+    /// Windows 実装: 現状は false 固定（Phase 4-5 以降で本実装予定）
+    #[cfg(windows)]
+    fn read_has_foreground_process(&self) -> bool {
+        false
+    }
+
+    /// その他の OS: 検出非対応
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    fn read_has_foreground_process(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]

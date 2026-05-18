@@ -139,6 +139,12 @@ pub struct ClientState {
     /// `AnimationsConfig.enabled = false` または `intensity = "off"` の場合、
     /// `scaled_duration_ms` が 0 を返すため進捗は常に 1.0 となり実質無効になる。
     pub animations: crate::animations::AnimationManager,
+    /// 主 OS Window が表示しているサーバー Window ID（Sprint 5-8 Phase 4-4）。
+    ///
+    /// `WindowListChanged` を受信したとき、`is_focused = true` の Window ID を
+    /// このフィールドに反映する。Tab tearing で主 Window のタブバーにドロップされた場合、
+    /// このフィールド経由で `MovePaneToWindow.target_window_id` を解決する。
+    pub focused_server_window_id: u32,
 }
 
 /// タブドラッグ中の状態（Sprint 5-7 / Phase 2-3）
@@ -220,6 +226,8 @@ impl ClientState {
             tab_order: Vec::new(),
             tab_drag: None,
             animations: crate::animations::AnimationManager::new(),
+            // Phase 4-4: WindowListChanged 受信時に focused Window ID を反映する
+            focused_server_window_id: 0,
         }
     }
 

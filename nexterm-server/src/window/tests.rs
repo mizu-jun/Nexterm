@@ -499,3 +499,49 @@ fn reorder_currentにない既知idは末尾に昇順で追加() {
     // 3, 1 → current から漏れていた 5, 2 を昇順で末尾追加
     assert_eq!(next, vec![3, 1, 2, 5]);
 }
+
+// ---- compute_insert_position テスト（Sprint 5-8 Phase 4-4 / Step A-1） ----
+
+#[test]
+fn insert_position_none指定_focused直後() {
+    // フォーカスインデックス 1 → +1 = 2 に挿入
+    assert_eq!(compute_insert_position(5, None, Some(1)), 2);
+}
+
+#[test]
+fn insert_position_none指定_focused末尾() {
+    // フォーカスが末尾（インデックス 2、len=3）→ +1 が len 以上なので末尾追加
+    assert_eq!(compute_insert_position(3, None, Some(2)), 3);
+}
+
+#[test]
+fn insert_position_none指定_focused無し() {
+    // フォーカスが見つからない → 末尾追加
+    assert_eq!(compute_insert_position(3, None, None), 3);
+}
+
+#[test]
+fn insert_position_some0_先頭挿入() {
+    // 位置 0 を指定 → 先頭挿入
+    assert_eq!(compute_insert_position(3, Some(0), Some(1)), 0);
+}
+
+#[test]
+fn insert_position_some中央_指定位置() {
+    // 位置 2 を指定 → そのまま 2
+    assert_eq!(compute_insert_position(5, Some(2), Some(0)), 2);
+}
+
+#[test]
+fn insert_position_some範囲外_末尾クランプ() {
+    // 位置 99 を指定（len=3 を超える）→ len にクランプして末尾追加
+    assert_eq!(compute_insert_position(3, Some(99), None), 3);
+}
+
+#[test]
+fn insert_position_空リスト_末尾追加() {
+    // 空リストへの挿入は常にインデックス 0
+    assert_eq!(compute_insert_position(0, None, None), 0);
+    assert_eq!(compute_insert_position(0, Some(0), None), 0);
+    assert_eq!(compute_insert_position(0, Some(5), None), 0);
+}

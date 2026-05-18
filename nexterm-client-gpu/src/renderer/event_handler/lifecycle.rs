@@ -180,6 +180,41 @@ impl EventHandler {
             }
         }
         for msg in messages {
+            // Sprint 5-8 Phase 4-4 Step C: `WindowListChanged` を検出して、
+            // タブ外ドロップで生まれた新規 Window があれば OS Window をスポーン要求する。
+            // `pending_new_window_drop_pos` が `Some` のときのみ発火する（手動 break_pane や
+            // 他クライアント由来の Window 生成では OS Window スポーンしない設計）。
+            if let ServerToClient::WindowListChanged { ref windows } = msg {
+                let current_ids: std::collections::HashSet<u32> =
+                    windows.iter().map(|w| w.window_id).collect();
+                let new_ids: Vec<u32> = current_ids
+                    .difference(&self.known_server_window_ids)
+                    .copied()
+                    .collect();
+                if !new_ids.is_empty()
+                    && let Some(pos) = self.pending_new_window_drop_pos.take()
+                {
+                    // 最小 ID（= 最も新しい Window）を採用。複数同時生成は想定外
+                    let server_window_id = *new_ids.iter().min().expect("new_ids 非空");
+                    if let Err(e) =
+                        self.proxy
+                            .send_event(crate::renderer::UserEvent::SpawnOsWindow {
+                                server_window_id,
+                                pos: Some(pos),
+                            })
+                    {
+                        tracing::warn!("SpawnOsWindow UserEvent 送信失敗: {}", e);
+                    } else {
+                        tracing::info!(
+                            "新規 OS Window スポーン要求送信 (server_window_id={}, pos={:?})",
+                            server_window_id,
+                            pos
+                        );
+                    }
+                }
+                self.known_server_window_ids = current_ids;
+            }
+
             // 機密操作要求は SecurityConfig ポリシーに従って処理する（Sprint 4-1）
             match msg {
                 ServerToClient::DesktopNotification {

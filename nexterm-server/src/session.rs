@@ -271,7 +271,7 @@ impl Session {
         Ok(new_window_id)
     }
 
-    /// 指定 `pane_id` のペインを別の Window に移動する（Sprint 5-8 Phase 4-3、tab tearing 用）。
+    /// 指定 `pane_id` のペインを別の Window に移動する（Sprint 5-8 Phase 4-3 / 4-4、tab tearing 用）。
     ///
     /// クライアントがタブを別 OS Window または OS Window 外にドロップしたとき、
     /// `ClientToServer::MovePaneToWindow` から呼ばれる。
@@ -279,26 +279,29 @@ impl Session {
     /// 動作:
     /// - `target_window_id == 0`: **新規 Window 生成**。`break_pane` と同じく
     ///   `Window::new_with_pane` で新規 Window を作り、`focused_window_id` を切り替える
-    /// - `target_window_id != 0`: 既存 Window への移動。`take_pane_by_id` で取り出して
-    ///   `insert_pane` で末尾追加する（`insert_at` の位置指定は Phase 4-4 で本実装）
+    /// - `target_window_id != 0`: 既存 Window への移動。
+    ///   - `insert_at` が `Some` の場合は `Window::insert_pane_at` で位置指定挿入
+    ///   - `None` の場合は既存 `insert_pane`（フォーカスペインの直後）
+    /// - **ソース Window のペインが 1 個のみの場合** (Phase 4-4):
+    ///   - Window 自体を `self.windows` から削除（`into_single_pane` で消費）
+    ///   - これによりタブ外ドロップで「最後のペインを移動」しても整合性が保たれる
+    ///   - WindowListChanged で削除済み Window が自動的に消える
     ///
     /// 戻り値: `(source_window_id, new_window_id, moved_pane_id)`
-    /// - `source_window_id`: ソース Window が空になって削除された場合は `None`
+    /// - `source_window_id`: 移動元 Window ID（削除されていても元の値を返す。呼び出し側は
+    ///   `Session::window(src_id)` の `Option` で削除有無を判定できる）
     /// - `new_window_id`: 移動先 Window ID（`target_window_id == 0` の場合は新規生成された ID）
     /// - `moved_pane_id`: 移動したペイン ID（= 引数の `pane_id`）
     ///
     /// エラー条件:
     /// - `pane_id` がどの Window にも見つからない
     /// - `target_window_id != 0` かつ Window が存在しない
-    /// - ソース Window のペインが 1 個のみ（取り出すと空になる、現状は move 不可）
-    ///
-    /// 注: `insert_at` パラメータは現状未使用（末尾追加）。Phase 4-4 で merge UI を
-    /// 実装する際に `Window::insert_pane_at` を追加して位置指定対応する予定。
+    /// - ソース Window の最後の Pane がシリアルペイン（取り出し不可）
     pub fn move_pane(
         &mut self,
         pane_id: u32,
         target_window_id: u32,
-        _insert_at: Option<u32>,
+        insert_at: Option<u32>,
     ) -> Result<(u32, u32, u32)> {
         let cols = self.cols;
         let rows = self.rows;
@@ -320,15 +323,34 @@ impl Session {
             ));
         }
 
-        // ペインを取り出す
-        let pane = {
+        // ソース Window のペイン数を確認（== 1 なら Window 自体を削除）
+        let source_pane_count = self
+            .windows
+            .get(&source_window_id)
+            .map(|w| w.pane_count())
+            .unwrap_or(0);
+
+        // ペインを取り出す（最後の 1 個なら Window ごと消費）
+        let pane = if source_pane_count <= 1 {
+            // 最後の 1 ペイン: Window を削除して中の pane を取り出す
+            let source = self
+                .windows
+                .remove(&source_window_id)
+                .ok_or_else(|| anyhow::anyhow!("ソース Window が見つかりません"))?;
+            source.into_single_pane().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Window {} の最後の Pane を取り出せません（シリアル等の非対応ペイン）",
+                    source_window_id
+                )
+            })?
+        } else {
             let source = self
                 .windows
                 .get_mut(&source_window_id)
                 .ok_or_else(|| anyhow::anyhow!("ソース Window が見つかりません"))?;
             source.take_pane_by_id(pane_id, cols, rows).ok_or_else(|| {
                 anyhow::anyhow!(
-                    "ペイン {} を Window {} から取り出せません（最後のペインまたはシリアル）",
+                    "ペイン {} を Window {} から取り出せません",
                     pane_id,
                     source_window_id
                 )
@@ -348,11 +370,19 @@ impl Session {
                 .windows
                 .get_mut(&target_window_id)
                 .ok_or_else(|| anyhow::anyhow!("Window {} が見つかりません", target_window_id))?;
-            target.insert_pane(pane, cols, rows, crate::window::SplitDir::Vertical);
+            // insert_at が Some なら位置指定挿入、なければ末尾追加（Phase 4-4）
+            let position = insert_at.map(|i| i as usize);
+            target.insert_pane_at(
+                pane,
+                cols,
+                rows,
+                crate::window::SplitDir::Vertical,
+                position,
+            );
             target_window_id
         };
 
-        // フォーカスを移動先に切り替える
+        // フォーカスを移動先に切り替える（ソース Window が削除済みでも安全）
         self.focused_window_id = new_window_id;
 
         Ok((source_window_id, new_window_id, pane_id))

@@ -124,10 +124,48 @@ impl EventHandler {
                 // ペイン領域へのドロップ: 既存仕様と整合（何もしない）
             }
             crate::drop_target::DropTarget::OtherWindowTabBar { window_id } => {
-                tracing::info!(
-                    "タブ外ドロップ: 別 OS Window のタブバー上にドロップ（target={:?}）。Phase 4-4 で MovePaneToWindow 実装予定",
-                    window_id
-                );
+                // Sprint 5-8 Phase 4-4 Step D: 別 OS Window のタブバーにドロップ。
+                //
+                // target の OS Window が表示しているサーバー Window ID (`focused_server_window_id`)
+                // を解決して `MovePaneToWindow { target_window_id }` を送信する。
+                //
+                // 解決順序:
+                // 1. `self.windows` に登録された追加 OS Window → `view_state.focused_server_window_id`
+                // 2. 主 Window（`self.window`）→ `self.app.state.focused_server_window_id`
+                //    （`WindowListChanged` で更新される）
+                let target_server_id = if let Some(cw) = self.windows.get(&window_id) {
+                    Some(cw.view_state.focused_server_window_id)
+                } else if self.window.as_ref().map(|w| w.id()) == Some(window_id) {
+                    let id = self.app.state.focused_server_window_id;
+                    if id == 0 { None } else { Some(id) }
+                } else {
+                    None
+                };
+
+                match target_server_id {
+                    Some(target) => {
+                        tracing::info!(
+                            "タブ外ドロップ: 別 OS Window のタブバーにドロップ (os_window={:?}, target_server_window={})",
+                            window_id,
+                            target
+                        );
+                        if let Some(conn) = &self.connection {
+                            let _ = conn.send_tx.try_send(
+                                nexterm_proto::ClientToServer::MovePaneToWindow {
+                                    pane_id: drag.pane_id,
+                                    target_window_id: target,
+                                    insert_at: None, // Phase 4-5 でホバー位置に応じた挿入位置指定対応
+                                },
+                            );
+                        }
+                    }
+                    None => {
+                        tracing::warn!(
+                            "OtherWindowTabBar 分岐: target OS Window の server_window_id を解決できません (window_id={:?})",
+                            window_id
+                        );
+                    }
+                }
             }
             crate::drop_target::DropTarget::NewWindow => {
                 tracing::info!(
@@ -135,12 +173,16 @@ impl EventHandler {
                     drop_pos,
                     drag.pane_id
                 );
-                // Sprint 5-8 Phase 4-3: サーバーに `MovePaneToWindow { target_window_id: 0 }`
-                // を送り、サーバー側で新規 Server Window を生成してペインを移動する。
-                // クライアント側の新規 **OS Window** スポーン（`spawn_os_window` 本実装）は
-                // Phase 4-4 以降で EventLoopProxy 経由のユーザーイベント機構と合わせて実装する。
-                // 現状はサーバー側のみ移動が反映され、クライアントは既存 OS Window で
-                // 新しい Server Window を `WindowListChanged` 経由で認識する。
+                // Sprint 5-8 Phase 4-3 + 4-4:
+                // 1. サーバーに `MovePaneToWindow { target_window_id: 0 }` を送り、サーバー側で
+                //    新規 Server Window を生成してペインを移動する
+                // 2. クライアント側 OS Window スポーンは「サーバーから WindowListChanged が返って
+                //    新規 Window ID を検出したとき」に `EventLoopProxy<UserEvent::SpawnOsWindow>`
+                //    経由で発火する（Step C で実装）
+                // 3. ドロップ位置を `pending_new_window_drop_pos` に記録しておき、スポーン時の
+                //    Window 位置として使う
+                self.pending_new_window_drop_pos =
+                    Some(winit::dpi::PhysicalPosition::new(drop_pos.0, drop_pos.1));
                 if let Some(conn) = &self.connection {
                     let _ =
                         conn.send_tx

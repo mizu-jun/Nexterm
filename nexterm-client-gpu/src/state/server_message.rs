@@ -89,7 +89,15 @@ impl ClientState {
                 self.pending_bell = true;
             }
             ServerToClient::RecordingStarted { .. } | ServerToClient::RecordingStopped { .. } => {}
-            ServerToClient::WindowListChanged { .. } | ServerToClient::PaneClosed { .. } => {}
+            // Sprint 5-8 Phase 4-4: WindowListChanged で focused Window ID を追跡する。
+            // タブ外ドロップ判定（`handle_tab_drag_drop_outside` の `OtherWindowTabBar` 分岐）で
+            // 主 OS Window がターゲットの場合の `target_window_id` 解決に使用する。
+            ServerToClient::WindowListChanged { windows } => {
+                if let Some(focused) = windows.iter().find(|w| w.is_focused) {
+                    self.focused_server_window_id = focused.window_id;
+                }
+            }
+            ServerToClient::PaneClosed { .. } => {}
             // OSC 0/2 タイトル変更 — ペインのタイトルフィールドを更新する
             ServerToClient::TitleChanged { pane_id, title } => {
                 if let Some(pane) = self.panes.get_mut(&pane_id) {

@@ -5,14 +5,16 @@
 
 use anyhow::Result;
 use nexterm_config::{Config, StatusBarEvaluator};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
+use winit::event_loop::EventLoopProxy;
 use winit::keyboard::ModifiersState;
 
 use crate::font::FontManager;
 use crate::state::ClientState;
 
+use super::event_handler::UserEvent;
 use super::{EventHandler, start_shader_watcher};
 
 // ---- アプリケーション本体 ----
@@ -49,6 +51,7 @@ impl NextermApp {
 
     pub fn into_event_handler(
         self,
+        proxy: EventLoopProxy<UserEvent>,
         config_rx: Option<tokio::sync::mpsc::Receiver<Config>>,
         config_watcher: Option<notify::RecommendedWatcher>,
         status_eval: Option<StatusBarEvaluator>,
@@ -81,9 +84,12 @@ impl NextermApp {
             pixel_scroll_accumulator: 0.0,
             update_rx,
             quake,
-            // Sprint 5-8 Phase 4-1 Step 1.2: 複数 OS Window 対応スケルトン。
-            // Step 1.3 以降で resumed フローを移行する。
+            // Sprint 5-8 Phase 4-1 Step 1.2 〜 Phase 4-4: 複数 OS Window 対応
             windows: HashMap::new(),
+            // Sprint 5-8 Phase 4-4: UserEvent 経由の OS Window スポーン用 proxy
+            proxy,
+            known_server_window_ids: HashSet::new(),
+            pending_new_window_drop_pos: None,
         }
     }
 }

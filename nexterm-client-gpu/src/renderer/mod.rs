@@ -51,7 +51,7 @@ mod shader_reload;
 mod wgpu_init;
 
 pub use app::NextermApp;
-pub use event_handler::EventHandler;
+pub use event_handler::{EventHandler, UserEvent};
 
 use background_pass::BackgroundTexture;
 use image::ImageEntry;
