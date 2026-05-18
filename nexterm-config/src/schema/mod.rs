@@ -27,7 +27,7 @@ pub use security::{ConsentPolicy, SecurityConfig};
 pub use shell::{KeyBinding, MacroConfig, SerialPortConfig, ShellConfig};
 pub use web::{AccessLogConfig, OAuthConfig, TlsConfig, WebAuthConfig, WebConfig};
 pub use window::{
-    BackgroundFit, BackgroundImageConfig, CursorStyle, TabBarConfig, WindowConfig,
+    BackgroundFit, BackgroundImageConfig, CloseAction, CursorStyle, TabBarConfig, WindowConfig,
     WindowDecorations,
 };
 

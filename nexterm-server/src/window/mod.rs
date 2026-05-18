@@ -683,6 +683,25 @@ impl Window {
         self.panes.len() + self.serial_panes.len()
     }
 
+    /// このウィンドウのいずれかのペインで foreground プロセス（シェル以外）が動作中かを返す。
+    ///
+    /// Sprint 5-8 Phase 4-1 Step 1.4 **スタブ実装**: 現状は常に `false` を返す。
+    /// Phase 4-3 で各 `Pane` の foreground プロセス検知（既存の scrollback コマンド検知
+    /// ロジックを流用予定）を本実装し、`window.close_action = "prompt"` 時の確認ダイアログ
+    /// 表示判定で使用する。
+    ///
+    /// 戻り値:
+    /// - `true`: 確認ダイアログ表示が必要（実装後、長時間実行ジョブ・ssh セッション等）
+    /// - `false`: そのまま閉じてよい（シェルプロンプト直下）
+    ///
+    /// 公開 API として用意するのは、Phase 4-3 で追加予定の
+    /// `ClientToServer::QueryForegroundProcess` IPC ハンドラから呼び出すため。
+    #[allow(dead_code)]
+    pub fn has_foreground_process(&self) -> bool {
+        // Phase 4-3 で本実装予定。現状は常に「foreground プロセスなし」とみなす。
+        false
+    }
+
     /// フォーカス中のペインに入力データを書き込む（PTY またはシリアルポート）
     pub fn write_to_focused(&self, data: &[u8]) -> Result<()> {
         if let Some(pane) = self.panes.get(&self.focused_pane_id) {

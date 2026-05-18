@@ -7,8 +7,9 @@
 //! - `on_ime`
 //! - `on_redraw_requested`
 
+use nexterm_config::CloseAction;
 use nexterm_proto::ClientToServer;
-use tracing::warn;
+use tracing::{info, warn};
 use winit::{event::Ime, event_loop::ActiveEventLoop, keyboard::ModifiersState};
 
 use super::EventHandler;
@@ -16,7 +17,37 @@ use crate::glyph_atlas::GlyphAtlas;
 
 impl EventHandler {
     /// `WindowEvent::CloseRequested`
+    ///
+    /// Sprint 5-8 Phase 4-1 Step 1.4: `config.window.close_action` を参照する経路を整備した。
+    /// 現状は 3 値（`Prompt` / `Detach` / `Kill`）の **分岐ログ出力** のみで、
+    /// 実際の挙動（確認ダイアログ表示・Server Window 保持・破棄）は Phase 4-3 で実装する。
+    ///
+    /// Phase 4-3 実装予定:
+    /// - `Prompt`: サーバーへ `QueryForegroundProcess` を送り、`true` なら確認ダイアログ
+    /// - `Detach`: クライアント切断のみで Server Window は保持（tmux 流 detached session）
+    /// - `Kill`: Server Window 破棄して exit（既存挙動）
     pub(super) fn on_close_requested(&mut self, event_loop: &ActiveEventLoop) {
+        let action = self.app.config.window.close_action;
+        match action {
+            CloseAction::Prompt => {
+                // Phase 4-3 でサーバーへ has_foreground_process を問い合わせる。
+                // それまでは「foreground プロセスなし」と仮定して即 exit する。
+                info!(
+                    "CloseRequested: close_action = Prompt（Phase 4-3 で確認ダイアログ実装予定、現状は即 exit）"
+                );
+            }
+            CloseAction::Detach => {
+                // Phase 4-3 で Server Window を破棄せずクライアントのみ切断する。
+                info!(
+                    "CloseRequested: close_action = Detach（Phase 4-3 で detach 実装予定、現状は通常終了）"
+                );
+            }
+            CloseAction::Kill => {
+                info!("CloseRequested: close_action = Kill（Server Window を破棄して exit）");
+            }
+        }
+
+        // 現状は 3 ケースとも同じ exit ロジック（既存挙動を維持）。
         // IPC 接続を先にドロップしてチャネルを閉じる（Windows でのハング防止）
         self.connection = None;
         // サーバータスクを abort してからイベントループを終了する
