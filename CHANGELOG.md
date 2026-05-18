@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0-beta.1] - 2026-05-19
+
+Sprint 5-8 / 5-9 Phase 4「tab tearing（タブ外ドロップ）」の事前リリース（prerelease）。
+**破壊的変更を含む** v1.5.0 正式版の前段階として、IPC / SNAPSHOT 互換性破壊の影響を
+事前検証するために配信する。**本番運用環境への投入は推奨しない**。
+
+### 互換性破壊（CRITICAL — 必読）
+
+- **`PROTOCOL_VERSION` 7 → 8**: `ClientToServer::MovePaneToWindow` の追加に伴い旧クライアント
+  （v1.4.0 まで）と新サーバーは Hello ハンドシェイクで非互換となる。クライアント・サーバーは
+  必ず同時にアップグレードすること
+- **`SNAPSHOT_VERSION` 3 → 4**: `ServerSnapshot.client_os_windows: Vec<OsWindowSnapshot>`
+  追加。v3 → v4 は `#[serde(default)]` で自動マイグレーションされるため既存ユーザーの操作は不要
+- 詳細は [`docs/MIGRATION.md` v1.4.0 → v1.5.0 セクション](docs/MIGRATION.md#v140--v150sprint-5-8--5-9-phase-4-タブ外ドロップ-tab-tearing) を参照
+
+### Added — tab tearing 機能（Sprint 5-8 Phase 4-1〜4-4）
+
+- **タブを別 OS Window にドラッグ&ドロップ**して新規ウィンドウに分離可能（X11 / macOS / Windows）
+  - 1 プロセス内で複数 winit ネイティブウィンドウを保持する設計（`EventLoopProxy` + `UserEvent`）
+  - `Window::insert_pane_at` / `Window::into_single_pane` / `Session::move_pane` 実装
+  - ソース Window が空になった場合は自動削除
+- **別 OS Window への merge** — ドラッグ中のタブを別ウィンドウのタブバーにドロップすると統合
+- **`ClientToServer::MovePaneToWindow { pane_id, target_window_id, insert_at }`** IPC 新設
+- **`window.close_action` 設定追加** — OS Window 閉じ操作を 3 値（`prompt` / `detach` / `kill`）から選択
+
+### Added — Phase 4-5 (本ベータ版で初公開)
+
+- **`QueryForegroundProcess` IPC** + **`ForegroundProcessStatus` 応答**（PROTOCOL v8 互換追加、
+  enum 末尾追加のため discriminant 影響なし）
+- **OS Window 閉じ確認ダイアログ** — `close_action = "prompt"`（既定）時、シェル以外の前景
+  プロセス動作中なら確認ダイアログを表示（現状は状態管理のみ完成、視覚的装飾は Phase 4-6 で強化予定）
+- **Wayland 代替 UX 3 種** — Wayland はセキュリティモデル上グローバル座標が取得できずドラッグ判定が
+  動作しないため、以下の代替経路を提供:
+  - コンテキストメニュー: ペイン上で右クリック →「新規ウィンドウに分離」
+  - ホットキー: `Ctrl+B D`（leader + D）で現在のタブを新規 OS Window に分離
+  - コマンドパレット: `Ctrl+Shift+P` →「Detach to New Window」
+  - **タブホバー `[↗]` ボタンは v1.5.0 では未提供（Phase 4-6 持ち越し）**
+- **`Ctrl+B W`**（leader + W）で現在の OS Window だけを閉じるホットキー
+- **`OsWindowSnapshot`** — 複数 OS Window 配置の永続化（位置・サイズ・所属 Server Window ID 集合）
+- **i18n 8 言語対応** — tab tearing 関連 9 キーを en / ja / zh-CN / ko / de / fr / es / it に追加
+
+### Changed
+
+- `on_close_requested` の `Prompt` 分岐を本実装（Phase 4-4 までは Kill 相当に縮退していた）
+- TUI クライアントは tab tearing 非対応、新 IPC バリアントを no-op で受け流す
+
+### Fixed
+
+なし（本リリースは新機能のみ）
+
+### Known Issues / Phase 4-6 持ち越し項目
+
+- **タブホバー `[↗]` ボタン**: renderer 側 `ui_verts.rs` の hover 時頂点追加が未実装。Wayland
+  ユーザーは上記 3 種の代替経路を使用すること
+- **確認ダイアログのレンダラー描画**: 現状は状態管理のみ完成、視覚的なボタン描画は Phase 4-6 で強化
+- **macOS / Windows の `has_foreground_process` 本実装**: 現状 Linux のみ（`/proc/{pid}/stat`
+  tpgid 比較）。macOS / Windows では false 固定（実害は Kill 経路と同じ）
+
+### 検証
+
+- `cargo test --workspace`: 全 **689 件 pass**（v1.4.0 686 件から snapshot v4 で +3）
+- `cargo clippy --workspace --all-targets -- -D warnings`: green
+- `cargo fmt --check`: clean
+- 3 OS マトリクス CI (Linux / macOS / Windows) は v1.4.0 同等
+
+### CI ワークフロー変更
+
+- `release.yml` のタグパターンに `v[0-9]+.[0-9]+.[0-9]+-*`（prerelease）を追加
+- `prerelease` フラグをタグ名の `-` 含有有無で自動判定
+- Windows MSI ビルド時に `-beta.1` 等の suffix を WiX Version から除去（WiX v3 制約対応）
+
 ## [1.4.0] - 2026-05-17
 
 v1.3.1 の hotfix からの後続マイナーバージョン。**ユーザー影響のある破壊的変更はなし**（`nexterm`

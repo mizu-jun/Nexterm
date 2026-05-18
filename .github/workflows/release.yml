@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'   # prerelease タグ（v1.5.0-beta.1 等）
 
 env:
   CARGO_TERM_COLOR: always
@@ -29,7 +30,8 @@ jobs:
         with:
           generate_release_notes: true
           draft: false
-          prerelease: false
+          # タグ名に `-` が含まれていれば prerelease として扱う（v1.5.0-beta.1 等）
+          prerelease: ${{ contains(github.ref_name, '-') }}
 
   # ── Step 2: 各プラットフォームのバイナリをビルドして添付する ──────
   build:
@@ -259,6 +261,12 @@ jobs:
                          Select-Object -First 1
           $version = $matchResult.Matches[0].Groups[1].Value
           if ([string]::IsNullOrEmpty($version)) { throw "Cannot extract version from Cargo.toml" }
+          # WiX v3 の Product/Version 属性は a.b.c.d 数値形式のみ許容するため、
+          # prerelease suffix（例: "1.5.0-beta.1" → "1.5.0"）を除去する。
+          # GitHub Release のタイトル（${{ github.ref_name }}）には beta.1 が残る。
+          if ($version -match '^([0-9]+\.[0-9]+\.[0-9]+)') {
+              $version = $Matches[1]
+          }
           Write-Host "MSI version: $version"
 
           # candle.exe + light.exe でMSIをビルド（-d フラグでバージョンをプリプロセッサ変数として渡す）
