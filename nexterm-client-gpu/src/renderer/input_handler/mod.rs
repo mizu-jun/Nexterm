@@ -46,6 +46,12 @@ impl EventHandler {
             return self.handle_consent_dialog_key(code);
         }
 
+        // Sprint 5-9 Phase 4-6: Window 閉じ確認ダイアログが開いている間も
+        // すべてのキーをダイアログが消費する。consent ダイアログと同じ優先度。
+        if self.app.state.close_window_dialog.is_some() {
+            return self.handle_close_window_dialog_key(code);
+        }
+
         // Ctrl+Shift+V: クリップボードからペーストする
         if ctrl && shift && code == WKeyCode::KeyV {
             if let Ok(mut clipboard) = arboard::Clipboard::new()

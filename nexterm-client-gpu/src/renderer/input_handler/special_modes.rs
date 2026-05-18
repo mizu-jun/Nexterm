@@ -75,4 +75,49 @@ impl EventHandler {
         }
         true
     }
+
+    /// Window 閉じ確認ダイアログのキーボード処理（Sprint 5-9 Phase 4-6）
+    ///
+    /// キー割当:
+    /// - Enter / Y: 現在の選択を確定（selected_button = 0 なら Kill、1 なら Cancel）
+    /// - Esc / N:   キャンセル（selected_button を 0xFF に書き込んで poll が消費）
+    /// - ←:        Kill ボタンにフォーカス（selected_button = 0）
+    /// - → / Tab:  Cancel ボタンにフォーカス（selected_button = 1）
+    ///
+    /// 確定シグナル値:
+    /// - `0xFE` = Kill 確定（poll_pending_close_request が次フレームで KillSession + exit）
+    /// - `0xFF` = Cancel 確定（poll_pending_close_request が次フレームで pending クリア）
+    pub(super) fn handle_close_window_dialog_key(&mut self, code: WKeyCode) -> bool {
+        let Some(dialog) = self.app.state.close_window_dialog.as_mut() else {
+            return false;
+        };
+        match code {
+            WKeyCode::Enter | WKeyCode::KeyY => {
+                // 現在の選択ボタンに応じて確定 / キャンセル
+                dialog.selected_button = if dialog.selected_button == 0 {
+                    0xFE // Kill 確定
+                } else {
+                    0xFF // Cancel 確定
+                };
+            }
+            WKeyCode::Escape | WKeyCode::KeyN => {
+                // 強制キャンセル（安全側のデフォルト）
+                dialog.selected_button = 0xFF;
+            }
+            WKeyCode::ArrowLeft => {
+                dialog.selected_button = 0; // Kill にフォーカス
+            }
+            WKeyCode::ArrowRight | WKeyCode::Tab => {
+                dialog.selected_button = 1; // Cancel にフォーカス
+            }
+            _ => {
+                // 他のキーは消費するが何もしない（誤入力で意図せず閉じないため）
+            }
+        }
+        // 描画更新
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+        true
+    }
 }

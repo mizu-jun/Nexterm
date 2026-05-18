@@ -497,6 +497,45 @@ impl EventHandler {
                     if let Some(w) = &self.window {
                         w.request_redraw();
                     }
+                } else if let Some(tearout_pane_id) = self
+                    .app
+                    .state
+                    .tab_tearout_hit_rects
+                    .iter()
+                    .find(|&(_, &(x0, x1))| px_f32 >= x0 && px_f32 < x1)
+                    .map(|(&id, _)| id)
+                {
+                    // Sprint 5-9 Phase 4-6: タブホバー `[↗]` ボタンクリックで分離。
+                    // タブクリック判定よりも先に評価することで、タブの範囲内に重なる
+                    // 分離ボタン領域がフォーカス切替を発火させないようにする。
+                    // 経路は `execute_action("DetachToNewWindow")` と同じ
+                    // （BreakPane + pending_new_window_drop_pos セット）。
+                    tracing::info!(
+                        "[↗] tearout ボタンクリック: pane_id={} を新規 OS Window に分離",
+                        tearout_pane_id
+                    );
+                    // pos = (0, 0) で記録（マウス座標非依存、winit が位置決定）
+                    self.pending_new_window_drop_pos =
+                        Some(winit::dpi::PhysicalPosition::new(0, 0));
+                    if let Some(conn) = &self.connection {
+                        // 対象ペインを focused にしてから BreakPane を送る方が安全だが、
+                        // `[↗]` は hover 中タブにしか表示されないため、現状のフォーカス
+                        // 以外でクリックされる可能性は低い。将来必要なら FocusPane を先送り。
+                        // 確実性のため pane_id が focused でない場合は FocusPane を挟む。
+                        if self.app.state.focused_pane_id != Some(tearout_pane_id) {
+                            let _ =
+                                conn.send_tx
+                                    .try_send(nexterm_proto::ClientToServer::FocusPane {
+                                        pane_id: tearout_pane_id,
+                                    });
+                        }
+                        let _ = conn
+                            .send_tx
+                            .try_send(nexterm_proto::ClientToServer::BreakPane);
+                    }
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
                 } else {
                     // タブクリックでペインフォーカスを切り替える
                     let hit_pane = self

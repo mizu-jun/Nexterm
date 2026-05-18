@@ -548,6 +548,25 @@ impl WgpuState {
             );
         }
 
+        // ---- Window 閉じ確認ダイアログ（Sprint 5-9 Phase 4-6）----
+        // close_action = "prompt" で前景プロセス検知時に表示。
+        // 機密操作の同意ダイアログと同じく最前面に重ねる。
+        if state.close_window_dialog.is_some() {
+            self.build_close_window_dialog_verts(
+                state,
+                sw,
+                sh,
+                cell_w,
+                cell_h,
+                font,
+                atlas,
+                &mut bg_verts,
+                &mut bg_idx,
+                &mut text_verts,
+                &mut text_idx,
+            );
+        }
+
         // ---- キーヒントオーバーレイ（Sprint 5-7 / UI-1-4）----
         // Leader 単独押下後 2 秒間、画面下部に prefix 系バインドの一覧を表示
         self.build_key_hint_verts(

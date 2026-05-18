@@ -92,6 +92,13 @@ pub struct ClientState {
     /// タブバーの各タブのクリック範囲（pane_id → (x_start, x_end)）
     /// レンダラーが毎フレーム更新し、マウスハンドラが参照する
     pub tab_hit_rects: HashMap<u32, (f32, f32)>,
+    /// タブホバー時の `[↗]` 分離ボタンのクリック範囲（Sprint 5-9 Phase 4-6）。
+    ///
+    /// `pane_id → (x_start, x_end)`。レンダラーが毎フレーム hover 中タブのみに対して
+    /// 登録し、`event_handler/mouse.rs::on_mouse_left_pressed` がタブ判定より優先して
+    /// 検出する。クリックされた場合は `DetachToNewWindow` 経路を発火し、対象ペインを
+    /// 新規 OS Window に分離する。Wayland 環境でもグローバル座標非依存に動作する。
+    pub tab_tearout_hit_rects: HashMap<u32, (f32, f32)>,
     /// タブバーの設定ボタンのクリック範囲（x_start, x_end）
     pub settings_tab_rect: Option<(f32, f32)>,
     /// 現在マウスがホバーしているタブの pane_id（Sprint 5-7 / UI-1-1）。
@@ -293,6 +300,7 @@ impl ClientState {
             mouse_reporting_mode: 0,
             floating_pane_rects: HashMap::new(),
             tab_hit_rects: HashMap::new(),
+            tab_tearout_hit_rects: HashMap::new(),
             settings_tab_rect: None,
             hovered_tab_id: None,
             key_hint_visible_until: None,

@@ -959,13 +959,49 @@ impl Pane {
         tpgid > 0 && tpgid != pgrp
     }
 
-    /// macOS 実装: 現状は false 固定（Phase 4-5 以降で本実装予定）
+    /// macOS 実装（Sprint 5-9 Phase 4-6）: `ps -A -o pid=,ppid=` で子プロセスを scan する。
+    ///
+    /// シェル PID を親に持つプロセスが 1 つ以上あれば前景プロセスとみなす。
+    /// 完全な POSIX `tcgetpgrp` ベースの判定ではないが、ssh / vim / 長時間ジョブの
+    /// ような「シェル直下で動いている子プロセス」の検出には十分。
+    ///
+    /// 注意:
+    /// - `ps` を毎回 spawn するため数十 ms のオーバーヘッドあり。
+    ///   `QueryForegroundProcess` は Window 閉じ時にしか呼ばれないため許容範囲。
+    /// - シェルがバックグラウンドジョブ（`&` で起動済みの長時間プロセス）を持つ場合、
+    ///   実際はフォアグラウンドが空でも `true` を返す。安全側のフォールバック動作
+    ///   としては妥当（誤検知 = 確認ダイアログが出る = ユーザーが選べる）。
     #[cfg(target_os = "macos")]
     fn read_has_foreground_process(&self) -> bool {
-        false
+        let Some(pid) = self.pid else {
+            return false;
+        };
+        let Ok(output) = std::process::Command::new("ps")
+            .args(["-A", "-o", "pid=,ppid="])
+            .output()
+        else {
+            return false;
+        };
+        if !output.status.success() {
+            return false;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        stdout.lines().any(|line| {
+            // 形式: "  1234   5678" (pid, ppid)
+            let mut parts = line.split_whitespace();
+            let _ = parts.next(); // pid
+            parts.next().and_then(|s| s.parse::<u32>().ok()) == Some(pid)
+        })
     }
 
-    /// Windows 実装: 現状は false 固定（Phase 4-5 以降で本実装予定）
+    /// Windows 実装: 現状は false 固定。
+    ///
+    /// ConPTY 環境で前景プロセスを検出するには `EnumProcesses` + `Toolhelp32Snapshot`
+    /// または NtQueryInformationProcess の使用が必要。`windows-sys` クレート依存
+    /// 追加を伴うため、Phase 4-7 以降で別途対応予定。
+    ///
+    /// 現状の `false` 固定動作: `close_action = "prompt"` でも確認ダイアログは表示されず、
+    /// Phase 4-5 以前と同じく直接 Kill 経路に進む。Windows ユーザーにとっての UX 劣化はない。
     #[cfg(windows)]
     fn read_has_foreground_process(&self) -> bool {
         false

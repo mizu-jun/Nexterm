@@ -176,6 +176,8 @@ impl WgpuState {
 
         // クリック判定テーブルを毎フレーム更新する
         state.tab_hit_rects.clear();
+        // Sprint 5-9 Phase 4-6: タブ分離 `[↗]` ボタンの hit 領域も毎フレームクリア
+        state.tab_tearout_hit_rects.clear();
 
         let mut x_offset = 0.0_f32;
         let text_y = bar_y + (bar_h - cell_h) / 2.0;
@@ -299,6 +301,43 @@ impl WgpuState {
             state
                 .tab_hit_rects
                 .insert(pane_id, (x_offset, x_offset + label_w));
+
+            // Sprint 5-9 Phase 4-6: タブホバー中に `[↗]` 分離ボタンを描画する。
+            // 条件:
+            //   - hover 中である
+            //   - タブドラッグ中でない（ドラッグ中はゴーストタブ描画と競合するため）
+            //   - タブ幅が最低限の表示余地を持つ（cell_w * 4 以上）
+            //
+            // ボタン領域: タブ右端から padding 分内側の正方形（cell_w × cell_w 程度）。
+            // クリックで `DetachToNewWindow` 経路を発火する（mouse.rs で hit 検出）。
+            let tearout_min_width = cell_w * 4.0;
+            if is_hovered && state.tab_drag.is_none() && label_w >= tearout_min_width {
+                let btn_size = cell_w; // 1 セル幅の正方形
+                let btn_x = x_offset + label_w - padding - btn_size;
+                let btn_y = bar_y + (bar_h - cell_h) / 2.0;
+                // ↗ U+2197 NORTH EAST ARROW を描画（フォントによってはフォールバックされる）
+                add_string_verts(
+                    "↗",
+                    btn_x,
+                    btn_y,
+                    fg,
+                    false,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
+                );
+                // hit 領域はボタン中央周辺に少し広めに取る（クリックしやすさ優先）
+                let hit_x0 = btn_x - cell_w * 0.25;
+                let hit_x1 = btn_x + btn_size + cell_w * 0.25;
+                state
+                    .tab_tearout_hit_rects
+                    .insert(pane_id, (hit_x0, hit_x1));
+            }
 
             x_offset += label_w;
 

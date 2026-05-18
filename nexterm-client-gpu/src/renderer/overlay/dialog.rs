@@ -560,4 +560,178 @@ impl WgpuState {
             text_idx,
         );
     }
+
+    /// Window 閉じ確認ダイアログを描画する（Sprint 5-9 Phase 4-6）。
+    ///
+    /// `state.close_window_dialog` が `Some` のときのみ呼び出され、画面中央に
+    /// モーダルダイアログを表示する。`build_consent_dialog_verts` と同じ装飾パターン
+    /// （半透明オーバーレイ + 警告色アクセント + 中央 2 ボタン）を踏襲し、視覚的整合性を保つ。
+    ///
+    /// ボタン構成:
+    /// - 左（selected_button = 0）: 「閉じる（Kill）」赤系背景
+    /// - 右（selected_button = 1）: 「キャンセル」グレー背景
+    ///
+    /// 確定シグナル値（`0xFE` = Kill 確定 / `0xFF` = キャンセル確定）は
+    /// `input_handler` 側で書き込まれ、`poll_pending_close_request` が次フレームで消費する。
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::renderer) fn build_close_window_dialog_verts(
+        &self,
+        state: &ClientState,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
+        font: &mut FontManager,
+        atlas: &mut GlyphAtlas,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
+    ) {
+        let Some(dialog) = &state.close_window_dialog else {
+            return;
+        };
+
+        // 半透明オーバーレイ（画面全体、クリックで誤操作を防ぐ視覚的シールド）
+        add_px_rect(
+            0.0,
+            0.0,
+            sw,
+            sh,
+            [0.0, 0.0, 0.0, 0.55],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
+
+        // ダイアログ寸法（横 56 セル / 縦 10 セル、画面サイズに応じてクランプ）
+        let pw = (56.0 * cell_w).min(sw - cell_w * 4.0);
+        let ph = 10.0 * cell_h;
+        let px = (sw - pw) / 2.0;
+        let py = (sh - ph) / 2.0;
+
+        // ダイアログ背景（濃い紺）
+        add_px_rect(
+            px,
+            py,
+            pw,
+            ph,
+            [0.08, 0.12, 0.20, 0.97],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
+        // 上端アクセント線（赤系 = 警告色、consent ダイアログより強い注意喚起）
+        add_px_rect(
+            px,
+            py,
+            pw,
+            3.0,
+            [0.85, 0.30, 0.30, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
+
+        // タイトル ＝ 確認メッセージ本文を直接描画する（短いので分離不要）。
+        // 横幅オーバー時は wrap_text で 2 行までに折り返す。
+        let content_y = py + cell_h * 1.2;
+        let max_cols = ((pw - cell_w * 2.0) / cell_w).max(20.0) as usize;
+        for (i, line) in wrap_text(&dialog.message, max_cols)
+            .iter()
+            .take(3)
+            .enumerate()
+        {
+            add_string_verts(
+                line,
+                px + cell_w,
+                content_y + i as f32 * cell_h * 1.1,
+                [0.97, 0.97, 0.97, 1.0],
+                false,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
+            );
+        }
+        // content_y はメッセージ本文描画後は不要（ボタン位置は ph 基準で計算）
+
+        // ボタン行: Kill (左、selected_button == 0) + Cancel (右、selected_button == 1)
+        let buttons: [(&str, [f32; 4]); 2] = [
+            (&dialog.kill_label, [0.75, 0.25, 0.25, 1.0]),
+            (&dialog.cancel_label, [0.20, 0.24, 0.34, 1.0]),
+        ];
+        let btn_y = py + ph - cell_h * 2.6;
+        let btn_widths: Vec<f32> = buttons
+            .iter()
+            .map(|(label, _)| visual_width(label) as f32 * cell_w + cell_w * 3.0)
+            .collect();
+        let total_w: f32 = btn_widths.iter().sum::<f32>() + cell_w * 0.8;
+        let mut bx = px + (pw - total_w) / 2.0;
+        for (i, (label, base_bg)) in buttons.iter().enumerate() {
+            let is_selected = dialog.selected_button as usize == i;
+            // 選択中はアクセント色で塗りつぶし、非選択は base 色
+            let bg = if is_selected {
+                if i == 0 {
+                    [0.95, 0.40, 0.40, 1.0] // Kill 選択: 鮮やかな赤
+                } else {
+                    [0.95, 0.85, 0.40, 1.0] // Cancel 選択: 黄色（安全側）
+                }
+            } else {
+                *base_bg
+            };
+            let bw = btn_widths[i];
+            add_px_rect(bx, btn_y, bw, cell_h * 1.4, bg, sw, sh, bg_verts, bg_idx);
+            let fg = if is_selected {
+                [0.10, 0.10, 0.10, 1.0]
+            } else {
+                [0.95, 0.95, 0.95, 1.0]
+            };
+            // ラベル中央寄せ
+            let label_w = visual_width(label) as f32 * cell_w;
+            let label_x = bx + (bw - label_w) / 2.0;
+            add_string_verts(
+                label,
+                label_x,
+                btn_y + cell_h * 0.2,
+                fg,
+                false,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
+            );
+            bx += bw + cell_w * 0.8;
+        }
+
+        // 操作ヒント（最下行）。i18n キーは流用せず簡潔な英語＋記号で表記
+        // （言語間で意味が変わらない記号中心の構成）
+        let hint = "Enter / Y: confirm  •  Esc / N: cancel  •  ← →: switch";
+        add_string_verts(
+            hint,
+            px + cell_w,
+            py + ph - cell_h * 1.0,
+            [0.55, 0.55, 0.65, 1.0],
+            false,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
+        );
+    }
 }
