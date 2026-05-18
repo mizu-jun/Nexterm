@@ -141,7 +141,7 @@ pub struct CopyModeState {
 }
 
 impl CopyModeState {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             is_active: false,
             cursor_col: 0,

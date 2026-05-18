@@ -26,7 +26,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
+use nexterm_proto::PaneLayout;
 use tracing::{info, warn};
+
+use crate::state::{ContextMenu, CopyModeState, SearchState};
 
 // ---- 頂点ビルダーサブモジュール（Sprint 2-1 Phase A）----
 // Sprint 5-4 / A2: overlay_verts.rs (1,958 行) を overlay/ サブディレクトリに再分割
@@ -162,18 +165,45 @@ pub(super) struct WgpuState {
 
 // ---- 複数 OS Window 対応スケルトン（Sprint 5-8 Phase 4-1 Step 1.2）----
 
-/// 各 OS Window 固有の表示状態を集約する型（Sprint 5-8 Phase 4-1 Step 1.3 で詳細化予定）。
+/// 各 OS Window 固有の表示状態を集約する型（Sprint 5-8 Phase 4-1 Step 1.3）。
 ///
-/// 現状は空のマーカー構造体。Step 1.3 で以下を移行する想定:
-/// - `focused_server_window_id: u32`
-/// - `scrollback_view` / `copy_mode` / `search` / `context_menu`
-/// - `hovered_tab_id` 等のホバー状態
+/// 現在 `ClientState` 内に格納されている **per-OS-Window 化候補フィールド** を
+/// 構造体として並行定義する。実機能配線（イベントハンドラの引数化・`ClientState`
+/// からの移行）は Step 1.4 以降で段階的に行うため、本構造体は現状インスタンス化
+/// されてもどこからも参照されない（`dead_code` allow 維持）。
 ///
-/// これらは現在 `ClientState` 内に格納されているが、複数 OS Window 化に伴い
-/// per-OS-Window へ分割される。
+/// 並行定義の理由は計画書（[[project_sprint5_7_phase4_plan]] Sprint 5-8 セクション）
+/// に従い、`ClientState` 責務分割の波及をコンパイル不能期間ゼロで進めるため。
+///
+/// 含まれるフィールド（Step 1.4 以降で `ClientState` から段階移行）:
+/// - `focused_server_window_id`: この OS Window がフォーカス中のサーバー Window ID
+/// - `pane_layouts`: 表示中のペインレイアウト情報（per-window 描画用に複製）
+/// - `copy_mode`: コピーモード（Vim 風テキスト選択）状態
+/// - `search`: インクリメンタル検索状態
+/// - `context_menu`: 右クリックで開いたコンテキストメニュー
+/// - `hovered_tab_id`: タブバーでホバー中のタブ ID
 #[allow(dead_code)]
-#[derive(Default)]
-pub(super) struct PerWindowViewState;
+pub(super) struct PerWindowViewState {
+    pub(super) focused_server_window_id: u32,
+    pub(super) pane_layouts: HashMap<u32, PaneLayout>,
+    pub(super) copy_mode: CopyModeState,
+    pub(super) search: SearchState,
+    pub(super) context_menu: Option<ContextMenu>,
+    pub(super) hovered_tab_id: Option<u32>,
+}
+
+impl Default for PerWindowViewState {
+    fn default() -> Self {
+        Self {
+            focused_server_window_id: 0,
+            pane_layouts: HashMap::new(),
+            copy_mode: CopyModeState::new(),
+            search: SearchState::new(),
+            context_menu: None,
+            hovered_tab_id: None,
+        }
+    }
+}
 
 /// 1 個の OS Window に紐付くペア型（Sprint 5-8 Phase 4-1 Step 1.2 スケルトン）。
 ///
@@ -197,12 +227,15 @@ mod client_window_tests {
     use super::*;
 
     #[test]
-    // Step 1.3 で PerWindowViewState にフィールドを追加した時点で Default::default() が
-    // 非冗長になるため、それまでの暫定として clippy ルールを抑制する。
-    #[allow(clippy::default_constructed_unit_structs)]
     fn per_window_view_state_default() {
-        // PerWindowViewState は Default 実装を持ち、空構造体としてインスタンス化できる。
-        // Step 1.3 でフィールド追加後もこのテストが基底チェックとして機能する。
-        let _ = PerWindowViewState::default();
+        // Step 1.3 で `PerWindowViewState` を unit struct から本構造体に拡張した。
+        // Default 実装が ClientState から per-OS-Window 化する候補フィールドを
+        // 既存ロジックと一致する初期値で生成することを検証する。
+        let view = PerWindowViewState::default();
+        assert_eq!(view.focused_server_window_id, 0);
+        assert!(view.pane_layouts.is_empty());
+        assert!(view.context_menu.is_none());
+        assert!(view.hovered_tab_id.is_none());
+        // `copy_mode` / `search` 自身の初期状態の不変条件は各モジュールのテストで担保。
     }
 }

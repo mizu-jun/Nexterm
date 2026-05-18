@@ -16,7 +16,7 @@ pub struct SearchState {
 }
 
 impl SearchState {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             query: String::new(),
             is_active: false,
