@@ -137,6 +137,11 @@ impl EventHandler {
         self.atlas = Some(atlas);
         self.wgpu_state = Some(wgpu_state);
 
+        // Sprint 5-8 Phase 4-1 Step 1.5: Quake モードの対象 OS Window を **主 Window** に固定する。
+        // Phase 4-2 で複数 OS Window が実装された後も、Quake 表示・隠蔽は常にここで設定した
+        // `target_window_id` 経由でのみ行う（他の Window が誤って Quake トグルされない設計）。
+        self.quake.target_window_id = Some(window.id());
+
         // サーバーに接続してデフォルトセッションにアタッチする
         let conn = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {

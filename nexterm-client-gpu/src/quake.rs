@@ -34,7 +34,7 @@ use nexterm_config::{QuakeEdge, QuakeModeConfig};
 use tracing::{debug, info, warn};
 use winit::{
     dpi::{PhysicalPosition, PhysicalSize},
-    window::Window,
+    window::{Window, WindowId},
 };
 
 /// 通常モード（非 Quake）時のウィンドウ位置・サイズ・装飾状態を保存する
@@ -58,6 +58,17 @@ pub(crate) struct QuakeRuntime {
     pub visible: bool,
     /// 通常モード時のウィンドウ状態（最初に表示する直前にスナップショット）
     pub saved: Option<NormalWindowState>,
+    /// Quake モードの対象 OS Window（Sprint 5-8 Phase 4-1 Step 1.5）。
+    ///
+    /// 複数 OS Window 対応（Phase 4-2 以降）に向けて、Quake モードは
+    /// **主 Window 1 個に固定** する設計とする。`on_resumed` で主 Window が初期化された
+    /// 時点で `Some(window_id)` が設定され、以降の `handle_quake_tick` はこの WindowId
+    /// 経由でのみウィンドウを操作する。
+    ///
+    /// 現状は `None`（`handle_quake_tick` が `self.window` 経由でフォールバック）。
+    /// Phase 4-2 以降は `windows[target_window_id]` を参照する。
+    #[allow(dead_code)]
+    pub target_window_id: Option<WindowId>,
 }
 
 impl QuakeRuntime {
@@ -73,6 +84,7 @@ impl QuakeRuntime {
                 hotkey_id: None,
                 visible: false,
                 saved: None,
+                target_window_id: None,
             };
         }
 
@@ -90,6 +102,7 @@ impl QuakeRuntime {
                     hotkey_id: None,
                     visible: false,
                     saved: None,
+                    target_window_id: None,
                 };
             }
         };
@@ -107,6 +120,7 @@ impl QuakeRuntime {
                     hotkey_id: None,
                     visible: false,
                     saved: None,
+                    target_window_id: None,
                 };
             }
         };
@@ -123,6 +137,7 @@ impl QuakeRuntime {
                 hotkey_id: None,
                 visible: false,
                 saved: None,
+                target_window_id: None,
             };
         }
 
@@ -135,6 +150,7 @@ impl QuakeRuntime {
             hotkey_id: Some(id),
             visible: false,
             saved: None,
+            target_window_id: None,
         }
     }
 

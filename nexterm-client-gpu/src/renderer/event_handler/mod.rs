@@ -16,8 +16,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use nexterm_config::{Config, StatusBarEvaluator};
+use tracing::warn;
 use winit::{
     application::ApplicationHandler,
+    dpi::PhysicalPosition,
     event::{ElementState, MouseButton, StartCause, WindowEvent},
     event_loop::ActiveEventLoop,
     keyboard::ModifiersState,
@@ -83,6 +85,77 @@ pub struct EventHandler {
     /// 一次データソース。
     #[allow(dead_code)]
     pub(super) windows: HashMap<WindowId, ClientWindow>,
+}
+
+impl EventHandler {
+    /// 新規 OS Window を生成し、`windows` HashMap に登録する。
+    ///
+    /// Sprint 5-8 Phase 4-1 Step 1.5 **スケルトン実装**: 現状は実 winit Window 生成
+    /// および wgpu 初期化を行わず、主 Window の `WindowId` を返すだけ（Phase 4-2 の
+    /// 「タブ外ドロップで新規 OS Window 生成」フロー実装時に本実装する）。
+    ///
+    /// 引数:
+    /// - `event_loop`: winit `ActiveEventLoop`（Window 生成に使用、Phase 4-2 で活用）
+    /// - `pos`: 新規 Window のスクリーン位置（タブ外ドロップ座標）
+    /// - `server_window_id`: 新規 Window にアタッチするサーバー Window ID
+    ///
+    /// 戻り値: 生成された Window の `WindowId`。主 Window が未初期化の場合は `None`。
+    ///
+    /// Phase 4-2 で実装する内容:
+    /// 1. `event_loop.create_window(...)` で新規 winit Window を生成
+    /// 2. `WgpuState::new` で wgpu パイプラインを初期化
+    /// 3. `PerWindowViewState { focused_server_window_id: server_window_id, .. Default::default() }`
+    /// 4. `self.windows.insert(window_id, ClientWindow { window, wgpu, view_state })`
+    /// 5. サーバーへ `Attach { window_id: server_window_id }` を送信
+    #[allow(dead_code)]
+    pub(super) fn spawn_os_window(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _pos: PhysicalPosition<i32>,
+        _server_window_id: u32,
+    ) -> Option<WindowId> {
+        warn!("spawn_os_window: Phase 4-2 で本実装予定。現状は主 Window の WindowId を返します");
+        self.window.as_ref().map(|w| w.id())
+    }
+
+    /// 指定 `WindowId` の OS Window を破棄する。
+    ///
+    /// Sprint 5-8 Phase 4-1 Step 1.5 **スケルトン実装**: 現状は `windows` HashMap から
+    /// エントリを削除し、すべての OS Window が閉じられた場合に既存の exit ロジックを
+    /// 実行する。実 winit Window の `request_close` は Phase 4-2 で本実装する。
+    ///
+    /// 引数:
+    /// - `event_loop`: 最後の Window 閉鎖時の `exit()` 呼び出しに使用
+    /// - `window_id`: 破棄する Window の ID
+    ///
+    /// 終了判定:
+    /// - `windows` が空 **かつ** 主 Window が閉じられた（または未初期化） → exit
+    /// - それ以外 → HashMap から削除のみで継続
+    ///
+    /// Phase 4-2 で実装する内容:
+    /// 1. `ClientWindow` を `windows` から取り出し、`window.set_visible(false)` 等のクリーンアップ
+    /// 2. 関連リソース（wgpu surface, atlas）を drop
+    /// 3. サーバーへ `Detach { window_id }` を送信
+    /// 4. 終了判定で `on_close_requested` の `close_action` ロジックを再利用
+    #[allow(dead_code)]
+    pub(super) fn close_os_window(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId) {
+        self.windows.remove(&window_id);
+
+        // 主 Window が閉じられたかを判定（現状は主 Window のみが実利用される）
+        let main_closed = self
+            .window
+            .as_ref()
+            .map(|w| w.id() == window_id)
+            .unwrap_or(true);
+
+        // 全 OS Window が閉じられたら exit
+        if self.windows.is_empty() && main_closed {
+            // `on_close_requested` と同じ exit ロジック（close_action 分岐は Phase 4-3 で統合）
+            self.connection = None;
+            self.server_handle.abort();
+            event_loop.exit();
+        }
+    }
 }
 
 impl ApplicationHandler for EventHandler {
