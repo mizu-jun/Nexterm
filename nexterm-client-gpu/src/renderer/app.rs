@@ -90,6 +90,11 @@ impl NextermApp {
             proxy,
             known_server_window_ids: HashSet::new(),
             pending_new_window_drop_pos: None,
+            // Sprint 5-11-1 / H1 PoC: `on_resumed` で実 Window 作成時に初期化する
+            accesskit_adapter: None,
+            // Sprint 5-11-2 Step 2-5: ライブ更新のスロットリング + ハッシュ比較用
+            last_tree_update_at: None,
+            last_tree_hash: None,
         }
     }
 }

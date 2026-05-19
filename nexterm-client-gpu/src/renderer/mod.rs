@@ -212,6 +212,11 @@ impl Default for PerWindowViewState {
 ///
 /// 移行期間中（Step 1.2〜1.3）は既存の `EventHandler.window` / `EventHandler.wgpu_state`
 /// フィールドと並行して保持され、Step 1.3 以降で段階的に統合していく。
+///
+/// Sprint 5-11-2 Step 2-3: 各 OS Window が独自の AccessKit Adapter を保持する。
+/// プラットフォーム a11y アダプタは Window 単位で管理されるため、追加 Window では
+/// 主 Window と独立したノードツリーが必要になる（現状の Step 2-3 では主 Window 用
+/// `EventHandler::accesskit_adapter` を維持しつつ、追加 Window 用に本フィールドを用意）。
 #[allow(dead_code)]
 pub(super) struct ClientWindow {
     /// winit ネイティブウィンドウ
@@ -220,6 +225,12 @@ pub(super) struct ClientWindow {
     pub(super) wgpu: WgpuState,
     /// per-OS-Window 表示状態（Step 1.3 で詳細フィールド追加予定）
     pub(super) view_state: PerWindowViewState,
+    /// AccessKit プラットフォームアダプタ（Sprint 5-11-2 Step 2-3）。
+    ///
+    /// 各 OS Window ごとに独立した Adapter を保持。スクリーンリーダーは Window ごとに
+    /// 別ツリーを扱えるため、追加 Window でも `InitialTreeRequested` を受信して
+    /// `build_tree_from_state(&self.app.state)` を返す。
+    pub(super) accesskit_adapter: accesskit_winit::Adapter,
 }
 
 #[cfg(test)]

@@ -40,17 +40,44 @@ impl EventHandler {
         let transparent = win_cfg.background_opacity < 1.0;
         let decorations = !matches!(win_cfg.decorations, WindowDecorations::None);
 
+        // Sprint 5-11-1 / H1 PoC: AccessKit Adapter は **Window を可視化する前** に
+        // 作成する必要がある（accesskit_winit::Adapter::new のドキュメント参照）。
+        // そのため `with_visible(false)` で不可視作成 → Adapter 初期化 → `set_visible(true)` の
+        // 順序を守る。可視化前に Adapter を入れないとプラットフォーム側 a11y ツリーが
+        // 正しく初期化されない。
         let attrs = Window::default_attributes()
             .with_title("Nexterm")
             .with_inner_size(PhysicalSize::new(1280u32, 800u32))
             .with_transparent(transparent)
-            .with_decorations(decorations);
+            .with_decorations(decorations)
+            .with_visible(false);
 
         let window = Arc::new(
             event_loop
                 .create_window(attrs)
                 .expect("Failed to create window"),
         );
+
+        // Sprint 5-11-1 / H1 PoC: AccessKit Adapter を初期化（可視化前）。
+        //
+        // `Adapter::with_event_loop_proxy` は内部で activation / action / deactivation の
+        // 3 種ハンドラを `EventLoopProxy<UserEvent>` 経由でイベント送信するよう設定する。
+        // この `proxy` は `From<accesskit_winit::Event> for UserEvent` を経由するため
+        // `user_event` ハンドラが `UserEvent::Accessibility(...)` として受け取る。
+        //
+        // **既定 ON 方針 (Q2=a 自動検出)**: スクリーンリーダーが起動していない場合は
+        // プラットフォーム側で adapter が非アクティブ状態を保つため、CPU/メモリオーバーヘッドは
+        // ほぼゼロ。明示的な opt-in 設定は不要。
+        let accesskit_adapter = accesskit_winit::Adapter::with_event_loop_proxy(
+            event_loop,
+            &window,
+            self.proxy.clone(),
+        );
+        info!("AccessKit Adapter を初期化（スクリーンリーダー接続待ち）");
+        self.accesskit_adapter = Some(accesskit_adapter);
+
+        // Adapter 初期化が完了したので Window を可視化する
+        window.set_visible(true);
 
         // アプリケーションアイコンを設定する
         {
@@ -355,6 +382,11 @@ impl EventHandler {
         // 2) サーバー経由のトグル要求 (`pending_quake_action`) を取り出す
         // 3) 両者を統合して 1 回だけウィンドウ操作する（同フレームで複数発火しても 1 回）
         self.handle_quake_tick();
+
+        // Sprint 5-11-2 Step 2-5: AccessKit ツリーのライブ更新。
+        // 100ms スロットリング + 状態ハッシュ比較を内部で実施するため、毎フレーム呼んで安全。
+        // SR が非接続なら `update_if_active` が no-op になるためオーバーヘッドはほぼゼロ。
+        self.update_accesskit_tree_if_needed();
     }
 
     /// Quake モードのトグル要求を 1 フレームに 1 回処理する

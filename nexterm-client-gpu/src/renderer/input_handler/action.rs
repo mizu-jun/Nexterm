@@ -13,8 +13,15 @@ use crate::state::ContextMenuAction;
 use crate::vertex_util::grid_to_text;
 
 impl EventHandler {
-    /// 設定ファイルのキーバインドや CommandPalette から渡されるアクション文字列を実行する
-    pub(super) fn execute_action(&mut self, action: &str, event_loop: &ActiveEventLoop) {
+    /// 設定ファイルのキーバインドや CommandPalette から渡されるアクション文字列を実行する。
+    ///
+    /// Sprint 5-11-2 Step 2-4: AccessKit ActionRequested から `event_handler` 経由で呼べるよう
+    /// `pub(in crate::renderer)` に可視性を拡大。
+    pub(in crate::renderer) fn execute_action(
+        &mut self,
+        action: &str,
+        event_loop: &ActiveEventLoop,
+    ) {
         match action {
             "Quit" => event_loop.exit(),
             "SearchScrollback" => self.app.state.start_search(),
