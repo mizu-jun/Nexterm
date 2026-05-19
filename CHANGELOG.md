@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-05-19
+
+Sprint 5-10 Phase 4-7 完成。v1.5.0 で「Known Issues」として持ち越されていた
+**Windows の `has_foreground_process` を本実装**した PATCH リリース。
+これにより 3 OS すべて（Linux / macOS / Windows）で `close_action = "prompt"`
+の確認ダイアログが対称的に機能するようになった。
+
+### Added — Sprint 5-10 Phase 4-7
+
+- **Windows の `has_foreground_process` 本実装** — `CreateToolhelp32Snapshot`
+  + `Process32FirstW/NextW` でプロセス一覧を列挙し、シェル PID（`Pane.pid`）を
+  親に持つプロセスが存在すれば前景プロセスありと判定する。これにより Windows
+  でも `close_action = "prompt"` 設定時に ssh / vim / 長時間ジョブ等を検出して
+  確認ダイアログが発火するようになった
+  - `HandleGuard` による `CloseHandle` 自動呼び出しでハンドルリーク防止
+  - `unsafe` 4 箇所すべてに SAFETY コメント付き
+  - 検出ロジックは macOS 実装（`ps -A` ベース）と論理的に等価のため、誤検知
+    パターン（バックグラウンドジョブを抱えたシェルでも `true`）も同じ＝安全側
+
+### 互換性
+
+- **互換性破壊なし**。`PROTOCOL_VERSION` 8 / `SNAPSHOT_VERSION` 4 維持
+- 新規依存: `windows-sys = "0.59"` を `nexterm-server` の Windows ターゲットに
+  追加（既に `nexterm-client-gpu` で同バージョンを使用中のため Cargo.lock に
+  新規パッケージ追加なし、`pkg/flatpak/cargo-sources.json` も差分なし）
+
+### 検証
+
+- `cargo test --workspace`: 全 **689 件 pass + 5 ignored**
+- `cargo clippy --workspace --all-targets -- -D warnings`: green
+- `cargo fmt --check`: clean
+
 ## [1.5.0] - 2026-05-19
 
 Sprint 5-8 / 5-9 Phase 4「tab tearing（タブ外ドロップ）」の正式版リリース。
