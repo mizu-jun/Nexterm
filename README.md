@@ -112,6 +112,7 @@ For full release history, see [CHANGELOG.md](CHANGELOG.md).
 - **Cross-platform** — Linux / macOS / Windows (ConPTY + Named Pipe on Windows)
 - **Localization** — UI in English, French, German, Spanish, Italian, Simplified Chinese, Japanese, Korean
 - **macOS session restore** — CWD preserved on reconnect via `lsof`
+- **Screen reader support (experimental)** — Exposes tabs, panes, command palette, context menu, and dialogs to NVDA / VoiceOver / Orca via [AccessKit](https://accesskit.dev/). Focus / Click / SetValue actions dispatch to internal handlers. Terminal grid content streaming and `[accessibility]` config section are in progress (Sprint 5-11-3 onward).
 
 ### Plugin Runtime (WASM)
 - **WASM plugin host** — wasmi-based sandboxed runtime with fuel + memory limits

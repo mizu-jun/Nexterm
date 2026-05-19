@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Sprint 5-11-1 / 5-11-2 で **スクリーンリーダー対応（H1）** を実装。監査ラウンド 2
+HIGH 残最後の項目を AccessKit 0.24 + accesskit_winit 0.33 で着地させた段階。
+本実装は **実機 SR 検証（NVDA / VoiceOver / Orca）が未実施** のため experimental
+扱いで、リリースバンプは Phase 5-11-3（ターミナル grid 差分通知）まで保留。
+
+### Added — Sprint 5-11-1 / 5-11-2（experimental）
+
+- **AccessKit によるアクセシビリティツリー公開** — `accesskit_winit::Adapter`
+  を主 OS Window + Phase 4 で派生した各 OS Window に統合し、Windows UI Automation
+  / macOS NSAccessibility / Linux AT-SPI 経由でスクリーンリーダーへツリーを公開
+- **動的ツリー生成** — `accessibility::build_tree_from_state(&ClientState)`
+  が `ClientState` から毎フレーム TreeUpdate を再構築（タブ・ペイン・タイトル・
+  cwd を反映）。`tab_order` 順序を尊重しつつ NodeId 体系を確定:
+  - 固定 NodeId 1–15（Root / TabBar / PaneArea / 6 オーバーレイ / Dialog ボタン 4 種）
+  - 動的オフセット: Palette item 100M / Host item 200M / Macro item 300M / Context item 400M
+  - Tab `1_000_000_000 + pane_id` / Pane `10_000_000_000 + pane_id`（衝突なし、ユニットテスト付き）
+- **6 オーバーレイのノード化** — CommandPalette（Dialog + SearchInput + ListBox）/
+  ContextMenu（Menu + MenuItem）/ CloseWindowDialog（AlertDialog + Kill / Cancel ボタン）/
+  HostManager / MacroPicker / SettingsPanel（最小、フィールド展開は Phase 5-11-2 残）。
+  優先順位ベースのモーダル制御（CloseDialog > ContextMenu > Palette > 他）
+- **ツリーのライブ更新（100ms スロットル）** — `compute_tree_state_hash(&ClientState)`
+  でコンテンツハッシュを計算し、`on_about_to_wait` で前回ハッシュと比較。変化があれば
+  100ms スロットルの上で `Adapter::update_if_active` を呼んで SR に差分通知
+- **ActionRequested 応答** — SR が Focus / Click / SetValue を要求すると Nexterm が
+  実際に動作する経路を実装。`decode_node_id(NodeId) -> NodeIdKind`（22 バリアント）で
+  逆引きし、`handle_accesskit_action` でディスパッチ:
+  - Tab / Pane の Focus / Click → `FocusPane` IPC + `state.focused_pane_id` 更新
+  - CloseDialog Kill / Cancel ボタン → 既存の `selected_button` 半オープン契約
+    （0xFE = Kill 確定 / 0xFF = Cancel 確定 / 0・1 = フォーカスのみ）を再利用
+  - ContextMenu / Palette 項目 Click → 既存ハンドラ（`execute_action` /
+    `execute_context_menu_action`）流用
+  - PaletteSearch SetValue → クエリ文字列更新 + `selected = 0`
+
+### 互換性
+
+- **互換性破壊なし**。`PROTOCOL_VERSION` 8 / `SNAPSHOT_VERSION` 4 維持
+- 新規依存: `accesskit = "0.24"` / `accesskit_winit = "0.33"`（workspace dependencies）
+- `UserEvent::Accessibility(accesskit_winit::Event)` バリアントを追加。
+  `accesskit_winit::Event` が `Clone` 不可のため `UserEvent` 全体から `#[derive(Clone)]`
+  を削除（クローン需要は grep 確認済みでなし）
+
+### 既知の制約 / 引き継ぎ事項
+
+- **実機 SR 検証未実施** — Action 経路は実機（NVDA / VoiceOver / Orca）でしか
+  確認できないため、ローカルユニットテストでは検証不可
+- **Phase 5-11-2 残**: QuickSelect ノード化（動的 ID 500M 予約済）、SettingsPanel
+  フィールド展開（TabList + CheckBox / TextInput / ComboBox / Slider / SpinButton /
+  ListBox、動的 ID 600M-700M 予約済）
+- **Phase 5-11-3 未着手**: ターミナル grid 差分通知（H1 本命、100ms スロットル設計
+  流用可能、パスワード等の機密入力フィルタリング検討要）
+- **Phase 5-11-5 未着手**: `[accessibility]` 設定セクション、`docs/accessibility.md`、
+  全 8 言語 i18n キー追加
+
+### 検証
+
+- `cargo test --workspace`: 全 **712 件 pass**
+- `cargo clippy --workspace --tests -- -D warnings`: green
+- `cargo fmt --check`: clean
+
 ## [1.5.1] - 2026-05-19
 
 Sprint 5-10 Phase 4-7 完成。v1.5.0 で「Known Issues」として持ち越されていた
