@@ -922,8 +922,11 @@ impl Pane {
     /// - `tpgid != pgrp` ならシェル以外のプロセス（例: vim・ssh・長時間ジョブ）が前面で動いている
     /// - `tpgid <= 0`: controlling terminal なし → `false`
     ///
-    /// **macOS / Windows 実装**: 現状は `false` 固定（Phase 4-5 以降で対応予定）。
-    /// macOS は `ps` で子プロセスツリーを scan、Windows は `EnumProcesses + Toolhelp` などが候補。
+    /// **macOS 実装** (Phase 4-6): `ps -A -o pid=,ppid=` で子プロセスツリーを scan。
+    ///
+    /// **Windows 実装** (Phase 4-7): `CreateToolhelp32Snapshot` + `Process32FirstW/NextW`
+    /// で全プロセスを列挙し、シェル PID を親に持つプロセスが存在するか判定する。
+    /// `windows-sys` クレートに依存する。
     ///
     /// 戻り値:
     /// - `true`: 確認ダイアログ表示が必要（長時間実行ジョブ・ssh セッション等）
@@ -994,16 +997,69 @@ impl Pane {
         })
     }
 
-    /// Windows 実装: 現状は false 固定。
+    /// Windows 実装 (Sprint 5-10 Phase 4-7): `CreateToolhelp32Snapshot` でプロセス一覧を
+    /// 取得し、シェル PID (`self.pid`) を親に持つプロセスが 1 つ以上あれば前景プロセスとみなす。
     ///
-    /// ConPTY 環境で前景プロセスを検出するには `EnumProcesses` + `Toolhelp32Snapshot`
-    /// または NtQueryInformationProcess の使用が必要。`windows-sys` クレート依存
-    /// 追加を伴うため、Phase 4-7 以降で別途対応予定。
+    /// macOS 実装と同様、完全な ConPTY 前景プロセスグループ判定ではないが、
+    /// ssh / vim / 長時間ジョブのような「シェル直下で動いている子プロセス」検出には十分。
+    /// 誤検知（バックグラウンドジョブを抱えたシェルでも true）は安全側のフォールバック動作。
     ///
-    /// 現状の `false` 固定動作: `close_action = "prompt"` でも確認ダイアログは表示されず、
-    /// Phase 4-5 以前と同じく直接 Kill 経路に進む。Windows ユーザーにとっての UX 劣化はない。
+    /// パフォーマンス: スナップショット取得は数ミリ秒のオーバーヘッド。
+    /// `QueryForegroundProcess` は Window 閉じ時にしか呼ばれないため許容範囲。
     #[cfg(windows)]
     fn read_has_foreground_process(&self) -> bool {
+        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+            TH32CS_SNAPPROCESS,
+        };
+
+        let Some(pid) = self.pid else {
+            return false;
+        };
+
+        // SAFETY: CreateToolhelp32Snapshot は失敗時に INVALID_HANDLE_VALUE を返すため、
+        // 後続の API 呼び出し前に必ず値を検証する。引数は仕様通り
+        // (TH32CS_SNAPPROCESS, 0=システム全体)。
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+        if snapshot == INVALID_HANDLE_VALUE {
+            return false;
+        }
+
+        // ハンドルリーク防止: 早期 return / panic でも Drop で CloseHandle が呼ばれる。
+        struct HandleGuard(HANDLE);
+        impl Drop for HandleGuard {
+            fn drop(&mut self) {
+                // SAFETY: HANDLE は CreateToolhelp32Snapshot 由来の有効なハンドルで、
+                // INVALID_HANDLE_VALUE のケースは guard 生成前に return 済み。
+                unsafe {
+                    CloseHandle(self.0);
+                }
+            }
+        }
+        let _guard = HandleGuard(snapshot);
+
+        // SAFETY: PROCESSENTRY32W は POD（全フィールド数値・固定長配列）のためゼロ初期化可能。
+        let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+
+        // SAFETY: snapshot は有効なハンドル、entry は dwSize 設定済みで API 要件を満たす。
+        // 失敗（0 リターン）時は前景プロセスなしとして false を返す。
+        if unsafe { Process32FirstW(snapshot, &mut entry) } == 0 {
+            return false;
+        }
+
+        loop {
+            if entry.th32ParentProcessID == pid {
+                return true;
+            }
+            // SAFETY: snapshot は有効、entry はループ内で再利用可能。
+            // Process32NextW が 0 を返す（= もうエントリなし）でループ終了。
+            if unsafe { Process32NextW(snapshot, &mut entry) } == 0 {
+                break;
+            }
+        }
+
         false
     }
 

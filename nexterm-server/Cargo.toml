@@ -67,6 +67,13 @@ libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 dirs = "5"
+# Sprint 5-10 Phase 4-7: has_foreground_process の Windows 実装で使用
+# CreateToolhelp32Snapshot + Process32FirstW/NextW で子プロセスを走査する。
+# client-gpu と同じバージョンに揃えて Cargo.lock の重複を避ける。
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_ToolHelp",
+] }
 
 [dev-dependencies]
 tempfile = "3"
