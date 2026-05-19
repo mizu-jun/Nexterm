@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-05-19
+
+Sprint 5-8 / 5-9 Phase 4「tab tearing（タブ外ドロップ）」の正式版リリース。
+v1.5.0-beta.1 で beta 検証した内容に Phase 4-6 持ち越し 3 項目を追加完成した状態。
+
+### 互換性破壊（CRITICAL — 必読）
+
+- **`PROTOCOL_VERSION` 7 → 8**: `ClientToServer::MovePaneToWindow` の追加に伴い旧クライアント
+  （v1.4.0 まで）と新サーバーは Hello ハンドシェイクで非互換となる。クライアント・サーバーは
+  必ず同時にアップグレードすること
+- **`SNAPSHOT_VERSION` 3 → 4**: `ServerSnapshot.client_os_windows: Vec<OsWindowSnapshot>`
+  追加。v3 → v4 は `#[serde(default)]` で自動マイグレーションされるため既存ユーザーの操作は不要
+- 詳細は [`docs/MIGRATION.md` v1.4.0 → v1.5.0 セクション](docs/MIGRATION.md#v140--v150sprint-5-8--5-9-phase-4-タブ外ドロップ-tab-tearing) を参照
+
+### Added — tab tearing 機能（Sprint 5-8 Phase 4-1〜4-4）
+
+- **タブを別 OS Window にドラッグ&ドロップ**して新規ウィンドウに分離可能（X11 / macOS / Windows）
+  - 1 プロセス内で複数 winit ネイティブウィンドウを保持する設計（`EventLoopProxy` + `UserEvent`）
+  - `Window::insert_pane_at` / `Window::into_single_pane` / `Session::move_pane` 実装
+  - ソース Window が空になった場合は自動削除
+- **別 OS Window への merge** — ドラッグ中のタブを別ウィンドウのタブバーにドロップすると統合
+- **`ClientToServer::MovePaneToWindow { pane_id, target_window_id, insert_at }`** IPC 新設
+- **`window.close_action` 設定追加** — OS Window 閉じ操作を 3 値（`prompt` / `detach` / `kill`）から選択
+
+### Added — Sprint 5-9 Phase 4-5
+
+- **`QueryForegroundProcess` IPC** + **`ForegroundProcessStatus` 応答**（PROTOCOL v8 互換追加、
+  enum 末尾追加のため discriminant 影響なし）
+- **OS Window 閉じ確認ダイアログの状態管理** — `close_action = "prompt"`（既定）時、シェル以外の
+  前景プロセス動作中なら確認ダイアログを発火
+- **Wayland 代替 UX 3 種** — Wayland はセキュリティモデル上グローバル座標が取得できずドラッグ判定が
+  動作しないため、以下の代替経路を提供:
+  - コンテキストメニュー: ペイン上で右クリック →「新規ウィンドウに分離」
+  - ホットキー: `Ctrl+B D`（leader + D）で現在のタブを新規 OS Window に分離
+  - コマンドパレット: `Ctrl+Shift+P` →「Detach to New Window」
+- **`Ctrl+B W`**（leader + W）で現在の OS Window だけを閉じるホットキー
+- **`OsWindowSnapshot`** — 複数 OS Window 配置の永続化（位置・サイズ・所属 Server Window ID 集合）
+- **i18n 8 言語対応** — tab tearing 関連 9 キーを en / ja / zh-CN / ko / de / fr / es / it に追加
+
+### Added — Sprint 5-9 Phase 4-6（v1.5.0-beta.1 → v1.5.0 差分）
+
+- **タブホバー `[↗]` ボタン** — タブにマウスホバーすると右端に `↗` アイコンが表示され、クリックで
+  そのタブを新規 OS Window に分離。Wayland ユーザーが GUI 操作のみで tab tearing 可能になった
+  （ui_verts 描画 + hit 判定 + DetachToNewWindow 経路）
+- **確認ダイアログのレンダラー描画 + キーボード操作** — `build_close_window_dialog_verts` で
+  赤系アクセントの警告ダイアログを描画。`Enter` / `Y` で選択ボタン確定、`Esc` / `N` で
+  キャンセル、`←` / `→` / `Tab` でフォーカス切替
+- **macOS の `has_foreground_process` 本実装** — `ps -A -o pid=,ppid=` でシェル PID を親に
+  持つ子プロセスを検出。ssh / vim / 長時間ジョブ等を確実に判定して確認ダイアログ発火
+
+### Changed
+
+- `on_close_requested` の `Prompt` 分岐を本実装（Phase 4-4 までは Kill 相当に縮退していた）
+- TUI クライアントは tab tearing 非対応、新 IPC バリアントを no-op で受け流す
+
+### Known Issues / Phase 4-7 持ち越し項目
+
+- **Windows の `has_foreground_process` 本実装**: 現状 false 固定（実害は Kill 経路と同じ）。
+  `windows-sys` クレート依存追加 + `Toolhelp32Snapshot` で実装予定（v1.5.1 PATCH または v1.6.0）
+
+### 検証
+
+- `cargo test --workspace`: 全 **689 件 pass**
+- `cargo clippy --workspace --all-targets -- -D warnings`: green
+- `cargo fmt --check`: clean
+- 3 OS マトリクス CI (Linux / macOS / Windows) は v1.5.0-beta.1 同等
+
 ## [1.5.0-beta.1] - 2026-05-19
 
 Sprint 5-8 / 5-9 Phase 4「tab tearing（タブ外ドロップ）」の事前リリース（prerelease）。
