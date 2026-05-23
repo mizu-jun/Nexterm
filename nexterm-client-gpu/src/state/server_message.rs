@@ -9,6 +9,7 @@
 
 use nexterm_proto::ServerToClient;
 
+use super::AlertKind;
 use super::ClientState;
 use super::ForegroundProcessStatus;
 use super::pane::{FloatRect, PaneState, PlacedImage};
@@ -85,9 +86,11 @@ impl ClientState {
                     }
                 }
             }
-            ServerToClient::Bell { .. } => {
+            ServerToClient::Bell { pane_id } => {
                 // OS のウィンドウ注目要求をトリガーするためフラグを立てる
                 self.pending_bell = true;
+                // Sprint 5-11-5: SR にも通知するため Role::Alert キューに追加
+                self.add_alert(AlertKind::Bell, pane_id, "ベル".to_string(), String::new());
             }
             ServerToClient::RecordingStarted { .. } | ServerToClient::RecordingStopped { .. } => {}
             // Sprint 5-8 Phase 4-4: WindowListChanged で focused Window ID を追跡する。

@@ -320,10 +320,12 @@ impl EventHandler {
     /// ホットキー処理など毎フレームの状態変化が反映された後に呼ぶ。
     ///
     /// **更新戦略**:
-    /// 1. 前回更新から `TREE_UPDATE_THROTTLE` (100ms) 未満なら早期 return（スロットリング）
-    /// 2. `compute_tree_state_hash(&self.app.state)` で現在の状態フィンガープリントを計算
-    /// 3. 前回ハッシュと一致なら早期 return（状態未変化）
-    /// 4. 変化あり: 主 Window + 全追加 Window の各 Adapter に `update_if_active(|| tree)` を呼ぶ
+    /// 1. **Sprint 5-11-5**: アラート TTL (5 秒) 切れエントリを `expire_alerts(now)` で除去
+    ///    （スロットリング前に実行: 期限切れ即時除去で SR ツリーを正確に保つ）
+    /// 2. 前回更新から `TREE_UPDATE_THROTTLE` (100ms) 未満なら早期 return（スロットリング）
+    /// 3. `compute_tree_state_hash(&self.app.state)` で現在の状態フィンガープリントを計算
+    /// 4. 前回ハッシュと一致なら早期 return（状態未変化）
+    /// 5. 変化あり: 主 Window + 全追加 Window の各 Adapter に `update_if_active(|| tree)` を呼ぶ
     ///    （adapter が非アクティブなら no-op なので毎回安全に呼べる）
     ///
     /// **注意**: ツリー本体は Adapter ごとに別々の `TreeUpdate` を build する。
@@ -334,6 +336,10 @@ impl EventHandler {
     /// 案 (b) 「各イベントで明示的に呼ぶ」は触る箇所が分散するため不採用。
     pub(super) fn update_accesskit_tree_if_needed(&mut self) {
         let now = Instant::now();
+
+        // Sprint 5-11-5: 期限切れアラートを除去（毎フレーム実行、軽量）
+        self.app.state.expire_alerts(now);
+
         if let Some(last) = self.last_tree_update_at
             && now.duration_since(last) < TREE_UPDATE_THROTTLE
         {
@@ -341,7 +347,7 @@ impl EventHandler {
         }
         self.last_tree_update_at = Some(now);
 
-        // 構造変化（タブ・ペイン・オーバーレイ）の検知
+        // 構造変化（タブ・ペイン・オーバーレイ・アラート）の検知
         let current_hash = compute_tree_state_hash(&self.app.state);
         let tree_changed = self.last_tree_hash != Some(current_hash);
         self.last_tree_hash = Some(current_hash);

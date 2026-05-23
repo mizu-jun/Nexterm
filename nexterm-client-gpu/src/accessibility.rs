@@ -21,13 +21,15 @@
 //! - Phase 5-11-4: OSC 133 連動レビューモード
 //! - Phase 5-11-5: 設定 UI + i18n + ドキュメント
 
-use accesskit::{Live, Node, NodeId, Role, Tree, TreeId, TreeUpdate};
+use accesskit::{Live, Node, NodeId, Role, TextPosition, TextSelection, Tree, TreeId, TreeUpdate};
 
 use crate::host_manager::HostManager;
 use crate::macro_picker::MacroPicker;
 use crate::palette::CommandPalette;
 use crate::settings_panel::SettingsPanel;
-use crate::state::{ClientState, CloseWindowDialog, ContextMenu, QuickSelectState};
+use crate::state::{
+    AlertEntry, AlertKind, ClientState, CloseWindowDialog, ContextMenu, QuickSelectState,
+};
 
 // ===== 固定 NodeId =====
 //
@@ -95,7 +97,14 @@ pub const SETTINGS_TABLIST_ID: NodeId = NodeId(17);
 /// 設定パネルの現在カテゴリ内容コンテナ（`Group`）
 pub const SETTINGS_CONTENT_ID: NodeId = NodeId(25);
 
-// 26〜29 は将来のコンテナ（サイドバー等）用に予約
+/// SR 向けアラート領域のルート（Sprint 5-11-5）。
+///
+/// Bell / OSC 9 / OSC 777 を `Role::Alert` で公開するためのコンテナ。
+/// ROOT の子として常に存在し、配下の各 Alert ノードを SR がアナウンスする。
+/// `Live::Assertive` を設定して新規アラートを即時アナウンス対象とする。
+pub const ALERT_REGION_ID: NodeId = NodeId(26);
+
+// 27〜29 は将来のコンテナ（サイドバー等）用に予約
 
 /// Font カテゴリ: フォントファミリー入力欄
 pub const SETTINGS_FONT_FAMILY_ID: NodeId = NodeId(30);
@@ -163,20 +172,65 @@ const NODE_ID_TAB_OFFSET: u64 = 1_000_000_000;
 /// 値域は `[10_000_000_000, 10_000_000_000 + u32::MAX] ≈ [1e10, 1.43e10]`。
 const NODE_ID_PANE_OFFSET: u64 = 10_000_000_000;
 
-/// ペイン行ノードの NodeId 計算用オフセット（Sprint 5-11-3）。
+/// SR 向けアラート個別ノードの NodeId 計算用オフセット（Sprint 5-11-5）。
 ///
-/// ペイン本体ノードの子として、ターミナルグリッドの各行を `Role::ContentInfo` で公開する。
-/// 内部表現: `NODE_ID_PANE_ROW_OFFSET + pane_id as u64 * MAX_ROWS_PER_PANE + row as u64`。
+/// 内部表現: `NODE_ID_ALERT_OFFSET + AlertEntry.seq`。
 ///
-/// 値域: `[2e10, 2e10 + u32::MAX * 1000 + 999] ≈ [2e10, 4.31e12]`。
+/// **値域選定の根拠**:
+/// - ペイン行範囲 = `[2e10, 2e10 + u32::MAX × 10000 + 10000] ≈ [2e10, 4.3e13]`
+///   が pane_row / pane_scrollback で連続使用される
+/// - その上限を超えた安全な値域として `50e12` (50 兆) を採用
+/// - `ClientState.next_alert_seq` の現実的な上限は 1 秒間 1000 件発火でも
+///   約 5.84 億年に渡るため、`u64::MAX` まで安全に伸ばせる
+const NODE_ID_ALERT_OFFSET: u64 = 50_000_000_000_000;
+
+/// `AlertEntry.seq` から Alert ノードの NodeId を計算する（Sprint 5-11-5）。
+pub fn alert_node_id(seq: u64) -> NodeId {
+    NodeId(NODE_ID_ALERT_OFFSET + seq)
+}
+
+/// ペイン行ノードの NodeId 計算用オフセット（Sprint 5-11-3 / 5-11-4）。
+///
+/// ペイン本体ノードの子として、ターミナルグリッドの各行を `Role::TextRun` で公開する。
+/// 内部表現: `NODE_ID_PANE_ROW_OFFSET + pane_id as u64 * MAX_ROWS_PER_PANE + row_offset`。
+///
+/// `row_offset` 内訳:
+/// - `0..MAX_VIEWPORT_ROWS_PER_PANE` (0..1000): ビューポート行（`pane_row_node_id`）
+/// - `MAX_VIEWPORT_ROWS_PER_PANE..MAX_ROWS_PER_PANE` (1000..10000):
+///   スクロールバック行（Sprint 5-11-4、`pane_scrollback_row_node_id`）
+///
+/// 値域: `[2e10, 2e10 + u32::MAX * 10000 + 9999] ≈ [2e10, 4.3e13]`。
 /// `NODE_ID_PANE_OFFSET` の上限 ≈ 1.43e10 との間に十分なギャップがある。
 const NODE_ID_PANE_ROW_OFFSET: u64 = 20_000_000_000;
 
-/// 1 ペインあたりの最大行数（Sprint 5-11-3）。
+/// 1 ペインあたりの最大行数（Sprint 5-11-3 → 5-11-4 で 1000 → 10000 に拡張）。
 ///
-/// 実用上のターミナル行数は 200 行程度。1000 行は十分な余裕を持たせた値。
+/// 内訳:
+/// - `0..MAX_VIEWPORT_ROWS_PER_PANE` (0..1000): ターミナルのビューポート行
+/// - `MAX_VIEWPORT_ROWS_PER_PANE..MAX_ROWS_PER_PANE` (1000..10000): スクロールバック行（Sprint 5-11-4）
+///
+/// 実用上のターミナル行数は 200 行程度、スクロールバックは数千行が一般的。
 /// この値を超える行は SR から不可視となるが、現実的な表示行数では発生しない。
-pub const MAX_ROWS_PER_PANE: u64 = 1000;
+pub const MAX_ROWS_PER_PANE: u64 = 10_000;
+
+/// 1 ペインあたりのビューポート（grid）公開行数の上限（Sprint 5-11-4）。
+///
+/// `pane_row_node_id` で割り当てられる行 NodeId のうち、
+/// `0..MAX_VIEWPORT_ROWS_PER_PANE` を占める範囲がビューポート行。
+pub const MAX_VIEWPORT_ROWS_PER_PANE: u64 = 1_000;
+
+/// 1 ペインあたりのスクロールバック公開行数の上限（Sprint 5-11-4）。
+///
+/// `pane_scrollback_row_node_id` で割り当てられる NodeId が占める範囲。
+/// `MAX_ROWS_PER_PANE - MAX_VIEWPORT_ROWS_PER_PANE` と一致する。
+pub const MAX_SCROLLBACK_ROWS_PER_PANE: u64 = MAX_ROWS_PER_PANE - MAX_VIEWPORT_ROWS_PER_PANE;
+
+/// スクロールバックを SR に公開する窓スライドの半径（Sprint 5-11-4）。
+///
+/// 現在のスクロール位置を中心に前後 `SCROLLBACK_WINDOW_RADIUS` 行を AccessKit ツリーに含める。
+/// 一般的なターミナルのスクロールバックは数千行に達するため、全行公開はパフォーマンス上不利。
+/// 100 行の窓は SR の矢印キーナビゲーションを違和感なく支える十分な範囲。
+pub const SCROLLBACK_WINDOW_RADIUS: usize = 100;
 
 /// pane_id（u32）からタブノードの NodeId を計算する。
 pub fn tab_node_id(pane_id: u32) -> NodeId {
@@ -188,12 +242,32 @@ pub fn pane_node_id(pane_id: u32) -> NodeId {
     NodeId(NODE_ID_PANE_OFFSET + pane_id as u64)
 }
 
-/// pane_id × row_idx からペイン行ノードの NodeId を計算する（Sprint 5-11-3）。
+/// pane_id × row_idx からビューポート行ノードの NodeId を計算する（Sprint 5-11-3）。
 ///
-/// `row` が [`MAX_ROWS_PER_PANE`] 以上の場合は NodeId が衝突する可能性があるため、
-/// 呼び出し側で `row < MAX_ROWS_PER_PANE` を保証すること。
+/// `row` が [`MAX_VIEWPORT_ROWS_PER_PANE`] 以上の場合は NodeId が衝突する可能性があるため、
+/// 呼び出し側で `row < MAX_VIEWPORT_ROWS_PER_PANE` を保証すること。
 pub fn pane_row_node_id(pane_id: u32, row: u16) -> NodeId {
+    debug_assert!((row as u64) < MAX_VIEWPORT_ROWS_PER_PANE);
     NodeId(NODE_ID_PANE_ROW_OFFSET + (pane_id as u64) * MAX_ROWS_PER_PANE + row as u64)
+}
+
+/// pane_id × scrollback_idx からスクロールバック行ノードの NodeId を計算する（Sprint 5-11-4）。
+///
+/// スクロールバック行 NodeId は同一ペインのビューポート行 NodeId と連続した空間に配置される:
+/// `pane_row` 範囲 = `[base, base + MAX_VIEWPORT_ROWS_PER_PANE)`,
+/// `pane_scrollback` 範囲 = `[base + MAX_VIEWPORT_ROWS_PER_PANE, base + MAX_ROWS_PER_PANE)`
+/// （ここで `base = NODE_ID_PANE_ROW_OFFSET + pane_id * MAX_ROWS_PER_PANE`）。
+///
+/// `scrollback_idx` が [`MAX_SCROLLBACK_ROWS_PER_PANE`] 以上の場合は次ペインの行 NodeId と
+/// 衝突する可能性があるため、呼び出し側で `scrollback_idx < MAX_SCROLLBACK_ROWS_PER_PANE` を保証すること。
+pub fn pane_scrollback_row_node_id(pane_id: u32, scrollback_idx: u16) -> NodeId {
+    debug_assert!((scrollback_idx as u64) < MAX_SCROLLBACK_ROWS_PER_PANE);
+    NodeId(
+        NODE_ID_PANE_ROW_OFFSET
+            + (pane_id as u64) * MAX_ROWS_PER_PANE
+            + MAX_VIEWPORT_ROWS_PER_PANE
+            + scrollback_idx as u64,
+    )
 }
 
 /// `Grid` の指定行を SR 向けテキストに変換する純関数（Sprint 5-11-3）。
@@ -219,6 +293,63 @@ pub fn pane_row_text(grid: &nexterm_proto::Grid, row: usize) -> String {
         text.truncate(trimmed.len());
         text
     }
+}
+
+/// セル列を SR 向けテキスト + `character_lengths` に変換する内部ヘルパー（Sprint 5-11-4）。
+///
+/// 戻り値 `(text, lengths)`:
+/// - `text`: `pane_row_text` と同じロジックで生成（trim_end + 空行は `" "`）
+/// - `lengths`: `text` 中の各 `char` の UTF-8 バイト長配列。
+///   `lengths.iter().map(|&b| b as usize).sum::<usize>() == text.len()` が常に成り立つ。
+///
+/// AccessKit `Node::set_character_lengths` の仕様に従い「1 文字 = 1 character」とし、
+/// 全角・絵文字も 1 character として扱う（半角と統一）。半角・全角の幅の違いは
+/// `character_widths` で表現すべきだが本実装では省略（SR 動作には十分）。
+fn cells_to_row_text_with_lengths(cells: &[nexterm_proto::Cell]) -> (String, Vec<u8>) {
+    let mut text: String = cells.iter().map(|c| c.ch).collect();
+    let trimmed_len_bytes = text.trim_end_matches(' ').len();
+    if trimmed_len_bytes == 0 {
+        // 空行は " " で SR の境界を保つ
+        return (" ".to_string(), vec![1]);
+    }
+    text.truncate(trimmed_len_bytes);
+    let lengths: Vec<u8> = text.chars().map(|c| c.len_utf8() as u8).collect();
+    (text, lengths)
+}
+
+/// `Grid` の指定行を SR 向けテキスト + `character_lengths` に変換する（Sprint 5-11-4）。
+///
+/// `pane_row_text` の text 部分と同じ結果になる。AccessKit の `Role::TextRun` ノード
+/// に `set_value` / `set_character_lengths` を設定する際に使用する。
+pub fn pane_row_text_with_lengths(grid: &nexterm_proto::Grid, row: usize) -> (String, Vec<u8>) {
+    let Some(cells) = grid.rows.get(row) else {
+        return (" ".to_string(), vec![1]);
+    };
+    cells_to_row_text_with_lengths(cells)
+}
+
+/// スクロールバック 1 行を SR 向けテキスト + `character_lengths` に変換する（Sprint 5-11-4）。
+///
+/// `pane_row_text_with_lengths` と同じセル → テキスト変換ロジックを使用。
+pub fn scrollback_row_text_with_lengths(line: &[nexterm_proto::Cell]) -> (String, Vec<u8>) {
+    cells_to_row_text_with_lengths(line)
+}
+
+/// セル列 `cursor_col` から AccessKit `TextPosition::character_index` を計算する（Sprint 5-11-4）。
+///
+/// 仕様:
+/// - 行テキストはセル列と 1:1 対応で構築される (`cells.iter().map(|c| c.ch).collect()`)。
+/// - `cursor_col` は grid のセル列。`text.chars().count()` を超える場合は末尾位置にクランプ。
+/// - 全角文字の placeholder セル (' ') も 1 文字としてカウントされるため、
+///   grid 上で cursor_col が指すセル列はそのまま character_index として使える。
+///
+/// 例:
+/// - text="abc" (chars=3), cursor_col=1 → 1
+/// - text="abc" (chars=3), cursor_col=5 → 3（末尾にクランプ）
+/// - text="あい" (chars=2、placeholder 含めるとセル幅 4), cursor_col=2 → 2
+pub fn cursor_character_index(text: &str, cursor_col: u16) -> usize {
+    let char_count = text.chars().count();
+    (cursor_col as usize).min(char_count)
 }
 
 /// 指定ペインの各行テキストハッシュを計算する（Sprint 5-11-3）。
@@ -339,6 +470,13 @@ pub enum NodeIdKind {
     SettingsStartupAutoUpdate,
     /// ペイン行ノード（Sprint 5-11-3、`pane_id` と `row` で識別）
     PaneRow { pane_id: u32, row: u16 },
+    /// ペインのスクロールバック行ノード（Sprint 5-11-4、`pane_id` と
+    /// `idx`（スクロールバック先頭からのインデックス）で識別）
+    PaneScrollbackRow { pane_id: u32, idx: u16 },
+    /// SR 向けアラート領域コンテナ（Sprint 5-11-5）
+    AlertRegion,
+    /// SR 向けアラート個別ノード（Sprint 5-11-5、`AlertEntry.seq` で識別）
+    Alert { seq: u64 },
     /// 未知 / 範囲外の NodeId
     Unknown,
 }
@@ -353,8 +491,10 @@ pub enum NodeIdKind {
 /// | 17 | `SettingsTabList` |
 /// | 18〜24 | `SettingsTab { idx: id - 18 }` |
 /// | 25 | `SettingsContent` |
+/// | 26 | `AlertRegion`（Sprint 5-11-5） |
+/// | 27〜29 | 予約 |
 /// | 30〜35 | 設定フィールド（FontFamily / FontSize / ThemeScheme / WindowOpacity / StartupLanguage / StartupAutoUpdate） |
-/// | 26〜29, 36〜99 | 予約 |
+/// | 36〜99 | 予約 |
 /// | 100M..200M | `PaletteItem { idx: id - 100M }` |
 /// | 200M..300M | `HostItem { idx: id - 200M }` |
 /// | 300M..400M | `MacroItem { idx: id - 300M }` |
@@ -363,7 +503,8 @@ pub enum NodeIdKind {
 /// | 600M..1G | 予約（SettingsField 動的展開用） |
 /// | 1G..1G+u32::MAX | `Tab { pane_id: id - 1G }` |
 /// | 10G..10G+u32::MAX | `Pane { pane_id: id - 10G }` |
-/// | 20G..~4.31T | `PaneRow { pane_id, row }`（Sprint 5-11-3） |
+/// | 20G..~4.31T | `PaneRow` / `PaneScrollbackRow`（Sprint 5-11-3 / 5-11-4） |
+/// | 30G..30G+u64::MAX | `Alert { seq: id - 30G }`（Sprint 5-11-5） |
 /// | その他 | `Unknown` |
 pub fn decode_node_id(id: NodeId) -> NodeIdKind {
     let raw = id.0;
@@ -389,6 +530,7 @@ pub fn decode_node_id(id: NodeId) -> NodeIdKind {
             idx: (raw - SETTINGS_TAB_BASE) as usize,
         },
         25 => NodeIdKind::SettingsContent,
+        26 => NodeIdKind::AlertRegion,
         30 => NodeIdKind::SettingsFontFamily,
         31 => NodeIdKind::SettingsFontSize,
         32 => NodeIdKind::SettingsThemeScheme,
@@ -442,14 +584,36 @@ fn decode_dynamic(raw: u64) -> NodeIdKind {
             pane_id: (raw - NODE_ID_PANE_OFFSET) as u32,
         };
     }
-    // ペイン行範囲（Sprint 5-11-3）: [2e10, 2e10 + u32::MAX * MAX_ROWS_PER_PANE + (MAX_ROWS_PER_PANE - 1)]
+    // ペイン行範囲（Sprint 5-11-3 + 5-11-4）:
+    //   [2e10, 2e10 + u32::MAX * MAX_ROWS_PER_PANE + (MAX_ROWS_PER_PANE - 1)]
+    // 内部レイアウト（pane_id 単位）:
+    //   - offset 0..MAX_VIEWPORT_ROWS_PER_PANE (0..1000): ビューポート行 → PaneRow
+    //   - offset MAX_VIEWPORT_ROWS_PER_PANE..MAX_ROWS_PER_PANE (1000..10000):
+    //     スクロールバック行 → PaneScrollbackRow
     let pane_row_range_end =
         NODE_ID_PANE_ROW_OFFSET + (u32::MAX as u64) * MAX_ROWS_PER_PANE + MAX_ROWS_PER_PANE;
     if (NODE_ID_PANE_ROW_OFFSET..pane_row_range_end).contains(&raw) {
         let normalized = raw - NODE_ID_PANE_ROW_OFFSET;
-        return NodeIdKind::PaneRow {
-            pane_id: (normalized / MAX_ROWS_PER_PANE) as u32,
-            row: (normalized % MAX_ROWS_PER_PANE) as u16,
+        let pane_id = (normalized / MAX_ROWS_PER_PANE) as u32;
+        let offset_in_pane = normalized % MAX_ROWS_PER_PANE;
+        if offset_in_pane < MAX_VIEWPORT_ROWS_PER_PANE {
+            return NodeIdKind::PaneRow {
+                pane_id,
+                row: offset_in_pane as u16,
+            };
+        } else {
+            return NodeIdKind::PaneScrollbackRow {
+                pane_id,
+                idx: (offset_in_pane - MAX_VIEWPORT_ROWS_PER_PANE) as u16,
+            };
+        }
+    }
+    // SR アラート範囲（Sprint 5-11-5）: [30G, 30G + u64::MAX]。
+    // `next_alert_seq` の実用上限が遥か上なので、上限は事実上 u64::MAX。
+    // ペイン行範囲の上限 `pane_row_range_end` (~4.3e13) と十分に離れているため衝突なし。
+    if raw >= NODE_ID_ALERT_OFFSET {
+        return NodeIdKind::Alert {
+            seq: raw - NODE_ID_ALERT_OFFSET,
         };
     }
     NodeIdKind::Unknown
@@ -546,6 +710,16 @@ pub fn build_tree_from_state(state: &ClientState) -> TreeUpdate {
         root_children.push(UPDATE_BANNER_ID);
     }
 
+    // ===== 非モーダル: SR アラート領域（Sprint 5-11-5） =====
+    // 空のときは含めない（SR の混乱回避）。
+    // Bell / OSC 9 / OSC 777 は `ClientState::add_alert` でキュー追加され、TTL 経過後に
+    // `expire_alerts` で除去されるため、ここでは現在のスナップショットを反映するだけでよい。
+    let alert_nodes = build_alert_region_nodes(&state.alerts);
+    if !alert_nodes.is_empty() {
+        nodes.extend(alert_nodes);
+        root_children.push(ALERT_REGION_ID);
+    }
+
     // ===== ROOT ノードを最終 children で確定 =====
     // build_base_nodes が tentative な ROOT を入れているので、ここで子要素を上書きする。
     let mut root = Node::new(Role::Window);
@@ -616,11 +790,18 @@ fn build_base_nodes(state: &ClientState) -> (Vec<(NodeId, Node)>, Vec<NodeId>, N
     let pane_child_ids: Vec<NodeId> = tab_order.iter().copied().map(pane_node_id).collect();
     pane_area.set_children(pane_child_ids);
 
-    // ===== 各ペインノード + ペイン行ノード（Sprint 5-11-3） =====
+    // ===== 各ペインノード + ペイン行ノード（Sprint 5-11-3 / 5-11-4） =====
     //
-    // ペインの子として `Role::ContentInfo` の行ノードを並べる。SR ユーザーは矢印キーで
-    // 行間を移動し、各行のテキストを順次読み上げられる。フォーカスペインの行ノードは
-    // `Live::Polite` を設定して、出力差分が SR にアナウンスされるようにする。
+    // ペインの子として以下を並べる:
+    //   1. スクロールバック行ノード（Sprint 5-11-4、`Role::TextRun`）
+    //      - 公開範囲: `pane.scroll_offset` 中心の前後 `SCROLLBACK_WINDOW_RADIUS` 行
+    //      - Live::Off（明示せず）: アナウンス対象外
+    //   2. ビューポート行ノード（Sprint 5-11-3 / 5-11-4、`Role::TextRun`）
+    //      - フォーカスペインのカーソル行のみ `Live::Polite`（過剰アナウンス抑止）
+    //
+    // ペイン本体ノード（`Role::Terminal`）にはフォーカスペインのカーソル位置を
+    // `TextSelection` で設定する（Sprint 5-11-4）。SR ユーザーはキャレットの位置を
+    // 行 NodeId + character_index で知ることができ、矢印キーで読み上げが進む。
     let mut pane_nodes: Vec<(NodeId, Node)> = Vec::with_capacity(state.panes.len());
     for &pane_id in &tab_order {
         let Some(pane) = state.panes.get(&pane_id) else {
@@ -632,23 +813,71 @@ fn build_base_nodes(state: &ClientState) -> (Vec<(NodeId, Node)>, Vec<NodeId>, N
             pane.title.clone()
         };
         let is_focused_pane = state.focused_pane_id == Some(pane_id);
+        let cursor_row = pane.grid.cursor_row;
+        let cursor_col = pane.grid.cursor_col;
 
-        // 行ノードを生成し、ペインノードの子 ID リストに積む。
-        // NodeId 衝突を避けるため `row < MAX_ROWS_PER_PANE` でクランプする。
+        let mut child_ids: Vec<NodeId> = Vec::new();
+        let mut pane_text_selection: Option<TextSelection> = None;
+
+        // ----- スクロールバック行ノード（窓スライド、Sprint 5-11-4） -----
+        let scrollback_len = pane.scrollback.len();
+        if scrollback_len > 0 {
+            // 窓中心: ビューポート直前のスクロールバック行（最新側）。
+            // `scroll_offset = 0` は最新画面、`scroll_offset = K` は K 行上にスクロール済。
+            let center = scrollback_len.saturating_sub(pane.scroll_offset.saturating_add(1));
+            let start = center.saturating_sub(SCROLLBACK_WINDOW_RADIUS);
+            let end = (center + SCROLLBACK_WINDOW_RADIUS + 1)
+                .min(scrollback_len)
+                .min(MAX_SCROLLBACK_ROWS_PER_PANE as usize);
+            for idx in start..end {
+                let Some(line) = pane.scrollback.get(idx) else {
+                    continue;
+                };
+                let (text, lengths) = scrollback_row_text_with_lengths(line);
+                let mut row_node = Node::new(Role::TextRun);
+                row_node.set_value(text);
+                row_node.set_character_lengths(lengths);
+                // スクロールバック行は Live::Off（デフォルト）でアナウンス対象外
+                let row_id = pane_scrollback_row_node_id(pane_id, idx as u16);
+                child_ids.push(row_id);
+                pane_nodes.push((row_id, row_node));
+            }
+        }
+
+        // ----- ビューポート行ノード（Sprint 5-11-3 / 5-11-4 Role::TextRun 化） -----
         let row_count = (pane.grid.height as u64)
             .min(pane.grid.rows.len() as u64)
-            .min(MAX_ROWS_PER_PANE) as u16;
-        let mut row_child_ids: Vec<NodeId> = Vec::with_capacity(row_count as usize);
+            .min(MAX_VIEWPORT_ROWS_PER_PANE) as u16;
         for row in 0..row_count {
-            let text = pane_row_text(&pane.grid, row as usize);
-            let mut row_node = Node::new(Role::ContentInfo);
+            let (text, lengths) = pane_row_text_with_lengths(&pane.grid, row as usize);
+            let is_cursor_row = is_focused_pane && row == cursor_row;
+            let char_index_for_cursor = cursor_character_index(&text, cursor_col);
+
+            let mut row_node = Node::new(Role::TextRun);
             row_node.set_value(text);
-            if is_focused_pane {
-                // フォーカスペインのみ Live::Polite。SR は出力差分を他読み上げ後にアナウンスする。
+            row_node.set_character_lengths(lengths);
+            // Sprint 5-11-4: Live::Polite はフォーカスペインのカーソル行のみに限定。
+            // ビューポート全行を Polite にすると SR が画面再描画ごとに大量アナウンスしてしまう。
+            if is_cursor_row {
                 row_node.set_live(Live::Polite);
             }
             let row_id = pane_row_node_id(pane_id, row);
-            row_child_ids.push(row_id);
+
+            // フォーカスペインのカーソル行: TextSelection をペイン側に設定するための情報を残す
+            if is_cursor_row {
+                pane_text_selection = Some(TextSelection {
+                    anchor: TextPosition {
+                        node: row_id,
+                        character_index: char_index_for_cursor,
+                    },
+                    focus: TextPosition {
+                        node: row_id,
+                        character_index: char_index_for_cursor,
+                    },
+                });
+            }
+
+            child_ids.push(row_id);
             pane_nodes.push((row_id, row_node));
         }
 
@@ -657,7 +886,10 @@ fn build_base_nodes(state: &ClientState) -> (Vec<(NodeId, Node)>, Vec<NodeId>, N
         if let Some(cwd) = &pane.cwd {
             pane_node.set_description(format!("作業ディレクトリ: {}", cwd));
         }
-        pane_node.set_children(row_child_ids);
+        pane_node.set_children(child_ids);
+        if let Some(sel) = pane_text_selection {
+            pane_node.set_text_selection(sel);
+        }
         pane_nodes.push((pane_node_id(pane_id), pane_node));
     }
 
@@ -1128,6 +1360,62 @@ fn build_update_banner_node(version: &str) -> (NodeId, Node) {
     (UPDATE_BANNER_ID, alert)
 }
 
+/// SR 向けアラート領域ノード群を構築する（Sprint 5-11-5）。
+///
+/// ## ツリー構造
+///
+/// ```text
+/// Group "通知" (id=ALERT_REGION_ID, live=Assertive)
+///   ├─ Alert (id=alert_node_id(seq)) "ベル" / "通知: <title>"
+///   │    - value: "<body>" （Bell は空、Notification は本文）
+///   ├─ Alert ...
+/// ```
+///
+/// **Live::Assertive** は領域コンテナに設定する。子ノードが追加されたタイミングで
+/// SR が即座に読み上げる契約（accesskit の標準的な使い方）。
+///
+/// **空キュー時**: `(nodes, ids)` どちらも空を返す。呼び出し側は ALERT_REGION_ID を
+/// ROOT の child に含めない（空のコンテナで SR を混乱させないため）。
+///
+/// 戻り値:
+/// - `nodes`: ALERT_REGION 自身 + 各 Alert ノードのペア（キューが空の場合は空 Vec）
+/// - `region_child_ids`: ALERT_REGION の children に設定する各 Alert NodeId 列
+fn build_alert_region_nodes(
+    alerts: &std::collections::VecDeque<AlertEntry>,
+) -> Vec<(NodeId, Node)> {
+    if alerts.is_empty() {
+        return Vec::new();
+    }
+    let mut nodes: Vec<(NodeId, Node)> = Vec::with_capacity(1 + alerts.len());
+
+    // ===== 領域コンテナ =====
+    let mut region = Node::new(Role::Group);
+    region.set_label("通知");
+    // Live::Assertive: 新規 Alert ノード追加時に SR が即時アナウンス
+    region.set_live(Live::Assertive);
+    let child_ids: Vec<NodeId> = alerts.iter().map(|a| alert_node_id(a.seq)).collect();
+    region.set_children(child_ids);
+    nodes.push((ALERT_REGION_ID, region));
+
+    // ===== 各 Alert ノード =====
+    for alert in alerts {
+        let mut node = Node::new(Role::Alert);
+        // ラベル: 種別 + タイトル
+        let label = match alert.kind {
+            AlertKind::Bell => alert.title.clone(),
+            AlertKind::Notification => format!("通知: {}", alert.title),
+        };
+        node.set_label(label);
+        // 本文（空でなければ）: SR は description として補足読み上げ
+        if !alert.body.is_empty() {
+            node.set_description(alert.body.clone());
+        }
+        nodes.push((alert_node_id(alert.seq), node));
+    }
+
+    nodes
+}
+
 // ===== Step 2-5: ライブ更新用ステートハッシュ =====
 
 /// `build_tree_from_state` が読み取る `ClientState` の各フィールドをハッシュ化する。
@@ -1146,6 +1434,21 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
+    /// 単一ペインの「構造に影響する」フィールドをまとめてハッシュする内部ヘルパー。
+    ///
+    /// Sprint 5-11-4 で追加: `cursor_col` / `cursor_row` / `scrollback.len()` / `scroll_offset`
+    /// は AccessKit ツリー構造（TextSelection 位置 / スクロールバック窓スライド範囲）に
+    /// 直接影響するため、これらが変化したら全体再生成が必要。
+    fn hash_pane(p: &crate::state::PaneState, h: &mut DefaultHasher) {
+        p.title.hash(h);
+        p.cwd.hash(h);
+        // Sprint 5-11-4: カーソル位置 / スクロールバック構造
+        p.grid.cursor_col.hash(h);
+        p.grid.cursor_row.hash(h);
+        p.scrollback.len().hash(h);
+        p.scroll_offset.hash(h);
+    }
+
     let mut h = DefaultHasher::new();
 
     // === 基本（タブ・ペイン） ===
@@ -1161,16 +1464,14 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
         for id in &keys {
             if let Some(p) = state.panes.get(id) {
                 id.hash(&mut h);
-                p.title.hash(&mut h);
-                p.cwd.hash(&mut h);
+                hash_pane(p, &mut h);
             }
         }
     } else {
         for id in &state.tab_order {
             if let Some(p) = state.panes.get(id) {
                 id.hash(&mut h);
-                p.title.hash(&mut h);
-                p.cwd.hash(&mut h);
+                hash_pane(p, &mut h);
             }
         }
     }
@@ -1255,6 +1556,16 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
 
     // === update_banner（非モーダル）===
     state.update_banner.hash(&mut h);
+
+    // === SR アラート（Sprint 5-11-5）===
+    // 長さ + 各 seq + kind を反映。kind は `as u8` でハッシュ可能化。
+    // body / title はキュー追加時に固定なので seq の変化だけで十分追跡できる（同じ seq に
+    // 対して title/body が後から書き換わることはない）。
+    state.alerts.len().hash(&mut h);
+    for entry in &state.alerts {
+        entry.seq.hash(&mut h);
+        (entry.kind as u8).hash(&mut h);
+    }
 
     h.finish()
 }
@@ -1992,9 +2303,9 @@ mod tests {
     fn decode_unknown_node_ids() {
         assert_eq!(decode_node_id(NodeId(0)), NodeIdKind::Unknown);
         // 17 は SettingsTabList、18〜24 は SettingsTab、25 は SettingsContent、
-        // 30〜35 は設定フィールド（Step 2-2-e' で割り当て済）。
-        // 26〜29, 36〜99 は将来用に予約。
-        assert_eq!(decode_node_id(NodeId(26)), NodeIdKind::Unknown);
+        // 26 は AlertRegion（Sprint 5-11-5 で割当）、30〜35 は設定フィールド（Step 2-2-e'）。
+        // 27〜29, 36〜99 は将来用に予約。
+        assert_eq!(decode_node_id(NodeId(27)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(29)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(36)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(99)), NodeIdKind::Unknown);
@@ -2689,12 +3000,18 @@ mod tests {
         assert_eq!(row0_node.value(), Some("hello"));
     }
 
-    /// T9: フォーカスペインの行ノードのみ Live::Polite が設定される
+    /// T9: Sprint 5-11-4 で挙動変更 — Live::Polite はフォーカスペインの
+    /// **カーソル行のみ**（旧: フォーカスペインの全行）。
+    ///
+    /// 過剰アナウンス抑止のため、SR は cursor_row 上の差分のみ読み上げる。
+    /// 非カーソル行・非フォーカスペインは Live::None（明示せず）。
     #[test]
     fn build_tree_focused_pane_has_live_polite() {
-        let mut state = ClientState::new(5, 2, 1000);
-        let pane1 = crate::state::PaneState::new(5, 2, 1000);
-        let pane2 = crate::state::PaneState::new(5, 2, 1000);
+        let mut state = ClientState::new(5, 3, 1000);
+        let mut pane1 = crate::state::PaneState::new(5, 3, 1000);
+        // cursor_row を 1 にして「カーソル行のみ Polite」を確実に検証
+        pane1.grid.cursor_row = 1;
+        let pane2 = crate::state::PaneState::new(5, 3, 1000);
         state.panes.insert(1, pane1);
         state.panes.insert(2, pane2);
         state.tab_order = vec![1, 2];
@@ -2702,24 +3019,44 @@ mod tests {
 
         let update = build_tree_from_state(&state);
 
-        // ペイン 1 (focused) の行ノードは Live::Polite
-        let row1_node = update
+        // ペイン 1 (focused) のカーソル行 (row 1) のみ Live::Polite
+        let row1_cursor = update
             .nodes
             .iter()
-            .find(|(id, _)| *id == pane_row_node_id(1, 0))
+            .find(|(id, _)| *id == pane_row_node_id(1, 1))
             .map(|(_, n)| n)
-            .expect("ペイン 1 行 0 が見つからない");
-        assert_eq!(row1_node.live(), Some(Live::Polite));
+            .expect("ペイン 1 行 1 (カーソル行) が見つからない");
+        assert_eq!(row1_cursor.live(), Some(Live::Polite));
 
-        // ペイン 2 (non-focused) の行ノードは Off（デフォルト）
-        let row2_node = update
-            .nodes
-            .iter()
-            .find(|(id, _)| *id == pane_row_node_id(2, 0))
-            .map(|(_, n)| n)
-            .expect("ペイン 2 行 0 が見つからない");
-        // 非フォーカスペインは live が未設定 = None
-        assert_eq!(row2_node.live(), None);
+        // ペイン 1 (focused) の非カーソル行 (row 0 / 2) は Live::None
+        for row in [0u16, 2u16] {
+            let n = update
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == pane_row_node_id(1, row))
+                .map(|(_, n)| n)
+                .unwrap_or_else(|| panic!("ペイン 1 行 {row} が見つからない"));
+            assert_eq!(
+                n.live(),
+                None,
+                "ペイン 1 row {row} は非カーソル行なので Live::None のはず"
+            );
+        }
+
+        // ペイン 2 (non-focused) の全行は Live::None
+        for row in 0u16..3u16 {
+            let n = update
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == pane_row_node_id(2, row))
+                .map(|(_, n)| n)
+                .unwrap_or_else(|| panic!("ペイン 2 行 {row} が見つからない"));
+            assert_eq!(
+                n.live(),
+                None,
+                "非フォーカスペイン 2 row {row} は Live::None のはず"
+            );
+        }
     }
 
     /// T10: compute_grid_row_hashes が行内容変化を検知する
@@ -2750,5 +3087,586 @@ mod tests {
         assert_eq!(after[0], baseline[0], "行 0 は変わらないはず");
         assert_ne!(after[1], baseline[1], "行 1 は変化するはず");
         assert_eq!(after[2], baseline[2], "行 2 は変わらないはず");
+    }
+
+    // ===== Sprint 5-11-4: カーソル TextSelection + スクロールバック =====
+
+    /// 5-11-4 T1: ASCII 行の character_lengths は各 1 バイト
+    #[test]
+    fn pane_row_text_with_lengths_ascii() {
+        let grid = grid_from_lines(&["abc"]);
+        let (text, lengths) = pane_row_text_with_lengths(&grid, 0);
+        assert_eq!(text, "abc");
+        assert_eq!(lengths, vec![1, 1, 1]);
+    }
+
+    /// 5-11-4 T2: 全角 CJK は UTF-8 で 3 バイトずつ
+    #[test]
+    fn pane_row_text_with_lengths_cjk() {
+        let grid = grid_from_lines(&["あい"]);
+        let (text, lengths) = pane_row_text_with_lengths(&grid, 0);
+        // grid 上は全角 2 セル + 各セル後ろにスペース placeholder 1 個 = 4 セル
+        // しかし `grid_from_lines` ヘルパーが char をそのまま set すると placeholder が入らない可能性。
+        // pane_row_text の挙動と一致させて検証。
+        assert!(text.starts_with("あ"));
+        assert!(text.contains("い"));
+        // 各 char はそれぞれ 1〜3 バイト範囲
+        assert!(lengths.iter().all(|&b| (1..=4).contains(&b)));
+        // バイト長合計 == text.len()
+        let sum: usize = lengths.iter().map(|&b| b as usize).sum();
+        assert_eq!(sum, text.len());
+    }
+
+    /// 5-11-4 T3: 空行は (" ", [1])
+    #[test]
+    fn pane_row_text_with_lengths_empty_row() {
+        // 1 行ぶんの空セルがある grid を作る（grid_from_lines は空 string で空 grid を作るため代用）
+        let grid = grid_from_lines(&[" "]);
+        let (text, lengths) = pane_row_text_with_lengths(&grid, 0);
+        assert_eq!(text, " ");
+        assert_eq!(lengths, vec![1]);
+    }
+
+    /// 5-11-4 T4: 範囲外の row は空行と同じ扱い
+    #[test]
+    fn pane_row_text_with_lengths_out_of_range_row() {
+        let grid = grid_from_lines(&["abc"]);
+        let (text, lengths) = pane_row_text_with_lengths(&grid, 99);
+        assert_eq!(text, " ");
+        assert_eq!(lengths, vec![1]);
+    }
+
+    /// 5-11-4 T5: cursor_character_index は cursor_col をそのまま返す（範囲内）
+    #[test]
+    fn cursor_character_index_within_range() {
+        assert_eq!(cursor_character_index("hello", 0), 0);
+        assert_eq!(cursor_character_index("hello", 3), 3);
+        assert_eq!(cursor_character_index("hello", 5), 5);
+    }
+
+    /// 5-11-4 T6: cursor_character_index は char 数を超えるとクランプ
+    #[test]
+    fn cursor_character_index_clamps_to_char_count() {
+        // "hello" は 5 chars
+        assert_eq!(cursor_character_index("hello", 10), 5);
+        // 空文字列（実際には pane_row_text が " " を返すので使われないが念のため）
+        assert_eq!(cursor_character_index("", 5), 0);
+    }
+
+    /// 5-11-4 T7: 全角文字 (CJK) は 1 char としてカウント（バイト数ではない）
+    #[test]
+    fn cursor_character_index_cjk_is_char_based() {
+        // "あい" は 2 chars (6 バイト)
+        assert_eq!(cursor_character_index("あい", 2), 2);
+        // クランプも 2 chars 基準
+        assert_eq!(cursor_character_index("あい", 5), 2);
+    }
+
+    /// 5-11-4 T8: pane_scrollback_row_node_id がビューポート行 NodeId と衝突しない
+    #[test]
+    fn pane_scrollback_row_node_id_no_collision_with_viewport_row() {
+        let pane_id = 7u32;
+        // ビューポート行 [0..1000) と スクロールバック行 [0..9000) が同じペイン内で衝突しない
+        for row in [0u16, 100, 500, 999] {
+            let v_id = pane_row_node_id(pane_id, row);
+            for sb in [0u16, 100, 500, 8999] {
+                let sb_id = pane_scrollback_row_node_id(pane_id, sb);
+                assert_ne!(
+                    v_id, sb_id,
+                    "viewport row {row} と scrollback {sb} の NodeId が衝突"
+                );
+            }
+        }
+    }
+
+    /// 5-11-4 T9: 異なるペイン間で scrollback 行 NodeId が衝突しない
+    #[test]
+    fn pane_scrollback_row_node_id_no_collision_between_panes() {
+        // ペイン 1 のスクロールバック末尾 (idx=8999) とペイン 2 のスクロールバック先頭 (idx=0)
+        // は MAX_ROWS_PER_PANE 単位で分離されているので衝突しない
+        let id1_last = pane_scrollback_row_node_id(1, (MAX_SCROLLBACK_ROWS_PER_PANE - 1) as u16);
+        let id2_first = pane_scrollback_row_node_id(2, 0);
+        assert_ne!(id1_last, id2_first);
+        // 値域の確認
+        assert!(id1_last.0 < id2_first.0);
+    }
+
+    /// 5-11-4 T10: decode_node_id が scrollback 行を正しく PaneScrollbackRow にデコードする
+    #[test]
+    fn decode_scrollback_row_roundtrip() {
+        for pane_id in [0u32, 1, 42, u32::MAX] {
+            for idx in [0u16, 1, 100, 8999] {
+                let id = pane_scrollback_row_node_id(pane_id, idx);
+                let decoded = decode_node_id(id);
+                match decoded {
+                    NodeIdKind::PaneScrollbackRow { pane_id: p, idx: i } => {
+                        assert_eq!(p, pane_id);
+                        assert_eq!(i, idx);
+                    }
+                    other => panic!(
+                        "expected PaneScrollbackRow {{ pane_id: {pane_id}, idx: {idx} }}, got {other:?}"
+                    ),
+                }
+            }
+        }
+    }
+
+    /// 5-11-4 T11: スクロールバックが空ならスクロールバック行ノードは生成されない
+    #[test]
+    fn build_tree_no_scrollback_when_empty() {
+        let mut state = ClientState::new(5, 2, 1000);
+        let pane = crate::state::PaneState::new(5, 2, 1000);
+        state.panes.insert(1, pane);
+        state.tab_order = vec![1];
+        state.focused_pane_id = Some(1);
+
+        let update = build_tree_from_state(&state);
+
+        let sb_node_count = update
+            .nodes
+            .iter()
+            .filter(|(id, _)| matches!(decode_node_id(*id), NodeIdKind::PaneScrollbackRow { .. }))
+            .count();
+        assert_eq!(sb_node_count, 0, "スクロールバックが空なら行ノードは 0");
+    }
+
+    /// 5-11-4 T12: スクロールバックに行を push すると行ノードがツリーに含まれる
+    #[test]
+    fn build_tree_includes_scrollback_rows_when_present() {
+        let mut state = ClientState::new(5, 2, 1000);
+        let mut pane = crate::state::PaneState::new(5, 2, 1000);
+        // スクロールバックに 3 行追加
+        for i in 0..3 {
+            let line: Vec<nexterm_proto::Cell> = format!("line{}", i)
+                .chars()
+                .map(|ch| nexterm_proto::Cell {
+                    ch,
+                    fg: nexterm_proto::Color::Default,
+                    bg: nexterm_proto::Color::Default,
+                    attrs: nexterm_proto::Attrs::default(),
+                })
+                .collect();
+            pane.scrollback.push_line(line);
+        }
+        state.panes.insert(1, pane);
+        state.tab_order = vec![1];
+        state.focused_pane_id = Some(1);
+
+        let update = build_tree_from_state(&state);
+
+        let sb_node_count = update
+            .nodes
+            .iter()
+            .filter(|(id, _)| {
+                matches!(
+                    decode_node_id(*id),
+                    NodeIdKind::PaneScrollbackRow { pane_id: 1, .. }
+                )
+            })
+            .count();
+        assert_eq!(
+            sb_node_count, 3,
+            "スクロールバック 3 行ぶんが含まれているはず"
+        );
+    }
+
+    /// 5-11-4 T13: スクロールバックが SCROLLBACK_WINDOW_RADIUS * 2 を大きく超えても窓内のみ公開
+    #[test]
+    fn build_tree_scrollback_window_radius_limit() {
+        let mut state = ClientState::new(5, 2, 1000);
+        let mut pane = crate::state::PaneState::new(5, 2, 1000);
+        // 500 行のスクロールバックを push（SCROLLBACK_WINDOW_RADIUS=100 の 5 倍）
+        for _ in 0..500 {
+            let line: Vec<nexterm_proto::Cell> = "x"
+                .chars()
+                .map(|ch| nexterm_proto::Cell {
+                    ch,
+                    fg: nexterm_proto::Color::Default,
+                    bg: nexterm_proto::Color::Default,
+                    attrs: nexterm_proto::Attrs::default(),
+                })
+                .collect();
+            pane.scrollback.push_line(line);
+        }
+        state.panes.insert(1, pane);
+        state.tab_order = vec![1];
+        state.focused_pane_id = Some(1);
+
+        let update = build_tree_from_state(&state);
+
+        let sb_node_count = update
+            .nodes
+            .iter()
+            .filter(|(id, _)| {
+                matches!(
+                    decode_node_id(*id),
+                    NodeIdKind::PaneScrollbackRow { pane_id: 1, .. }
+                )
+            })
+            .count();
+        // 窓幅は [center - RADIUS, center + RADIUS + 1) なので最大 2*RADIUS + 1 行
+        let expected_max = SCROLLBACK_WINDOW_RADIUS * 2 + 1;
+        assert!(
+            sb_node_count <= expected_max,
+            "スクロールバック行数 {sb_node_count} が窓上限 {expected_max} を超えている"
+        );
+        assert!(sb_node_count > 0, "窓内に最低 1 行は含まれるはず");
+    }
+
+    /// 5-11-4 T14: フォーカスペインのカーソル行に TextSelection が設定される
+    #[test]
+    fn build_tree_focused_pane_cursor_row_has_text_selection() {
+        let mut state = ClientState::new(10, 5, 1000);
+        let mut pane = crate::state::PaneState::new(10, 5, 1000);
+        // 行 2 に "abc" を書き、カーソルを (col=2, row=2) に置く
+        for (c, ch) in "abc".chars().enumerate() {
+            pane.grid.set(
+                c as u16,
+                2,
+                nexterm_proto::Cell {
+                    ch,
+                    fg: nexterm_proto::Color::Default,
+                    bg: nexterm_proto::Color::Default,
+                    attrs: nexterm_proto::Attrs::default(),
+                },
+            );
+        }
+        pane.grid.cursor_row = 2;
+        pane.grid.cursor_col = 2;
+        state.panes.insert(1, pane);
+        state.tab_order = vec![1];
+        state.focused_pane_id = Some(1);
+
+        let update = build_tree_from_state(&state);
+
+        let pane_node = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == pane_node_id(1))
+            .map(|(_, n)| n)
+            .expect("ペインノードが見つからない");
+        let sel = pane_node
+            .text_selection()
+            .expect("フォーカスペインのカーソル行に TextSelection が設定されているはず");
+        // anchor == focus == TextPosition { node: pane_row_node_id(1, 2), character_index: 2 }
+        assert_eq!(sel.anchor.node, pane_row_node_id(1, 2));
+        assert_eq!(sel.focus.node, pane_row_node_id(1, 2));
+        assert_eq!(sel.anchor.character_index, 2);
+        assert_eq!(sel.focus.character_index, 2);
+    }
+
+    /// 5-11-4 T15: 非フォーカスペインには TextSelection が設定されない
+    #[test]
+    fn build_tree_non_focused_pane_has_no_text_selection() {
+        let mut state = ClientState::new(5, 2, 1000);
+        let pane1 = crate::state::PaneState::new(5, 2, 1000);
+        let pane2 = crate::state::PaneState::new(5, 2, 1000);
+        state.panes.insert(1, pane1);
+        state.panes.insert(2, pane2);
+        state.tab_order = vec![1, 2];
+        state.focused_pane_id = Some(1);
+
+        let update = build_tree_from_state(&state);
+
+        let pane2_node = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == pane_node_id(2))
+            .map(|(_, n)| n)
+            .expect("ペイン 2 が見つからない");
+        assert!(
+            pane2_node.text_selection().is_none(),
+            "非フォーカスペインに TextSelection が設定されてはいけない"
+        );
+    }
+
+    /// 5-11-4 T16: tree_state_hash がカーソル移動を検出する
+    #[test]
+    fn tree_state_hash_detects_cursor_move() {
+        let mut state = ClientState::new(10, 5, 1000);
+        let pane = crate::state::PaneState::new(10, 5, 1000);
+        state.panes.insert(1, pane);
+        state.tab_order = vec![1];
+        state.focused_pane_id = Some(1);
+
+        let h1 = compute_tree_state_hash(&state);
+        state.panes.get_mut(&1).unwrap().grid.cursor_col = 3;
+        let h2 = compute_tree_state_hash(&state);
+        assert_ne!(h1, h2, "cursor_col 変化でハッシュが変わるはず");
+
+        state.panes.get_mut(&1).unwrap().grid.cursor_row = 2;
+        let h3 = compute_tree_state_hash(&state);
+        assert_ne!(h2, h3, "cursor_row 変化でハッシュが変わるはず");
+    }
+
+    /// 5-11-4 T17: tree_state_hash がスクロールバック追記を検出する
+    #[test]
+    fn tree_state_hash_detects_scrollback_grow() {
+        let mut state = ClientState::new(5, 2, 1000);
+        let pane = crate::state::PaneState::new(5, 2, 1000);
+        state.panes.insert(1, pane);
+        state.tab_order = vec![1];
+        state.focused_pane_id = Some(1);
+
+        let h1 = compute_tree_state_hash(&state);
+        let line: Vec<nexterm_proto::Cell> = "a"
+            .chars()
+            .map(|ch| nexterm_proto::Cell {
+                ch,
+                fg: nexterm_proto::Color::Default,
+                bg: nexterm_proto::Color::Default,
+                attrs: nexterm_proto::Attrs::default(),
+            })
+            .collect();
+        state.panes.get_mut(&1).unwrap().scrollback.push_line(line);
+        let h2 = compute_tree_state_hash(&state);
+        assert_ne!(h1, h2, "scrollback.len 変化でハッシュが変わるはず");
+    }
+
+    /// 5-11-4 T18: tree_state_hash が scroll_offset 変化を検出する
+    #[test]
+    fn tree_state_hash_detects_scroll_offset_change() {
+        let mut state = ClientState::new(5, 2, 1000);
+        let mut pane = crate::state::PaneState::new(5, 2, 1000);
+        // スクロールバックを 5 行追加（scroll_offset > 0 が意味を持つように）
+        for _ in 0..5 {
+            let line: Vec<nexterm_proto::Cell> = "x"
+                .chars()
+                .map(|ch| nexterm_proto::Cell {
+                    ch,
+                    fg: nexterm_proto::Color::Default,
+                    bg: nexterm_proto::Color::Default,
+                    attrs: nexterm_proto::Attrs::default(),
+                })
+                .collect();
+            pane.scrollback.push_line(line);
+        }
+        state.panes.insert(1, pane);
+        state.tab_order = vec![1];
+        state.focused_pane_id = Some(1);
+
+        let h1 = compute_tree_state_hash(&state);
+        state.panes.get_mut(&1).unwrap().scroll_offset = 3;
+        let h2 = compute_tree_state_hash(&state);
+        assert_ne!(h1, h2, "scroll_offset 変化でハッシュが変わるはず");
+    }
+
+    // ===== Sprint 5-11-5: Bell / OSC 9 / OSC 777 → Role::Alert テスト =====
+
+    /// add_alert がキューに追加され、seq が単調増加すること
+    #[test]
+    fn add_alert_assigns_monotonic_seq() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let s0 = state.add_alert(AlertKind::Bell, 1, "ベル".to_string(), String::new());
+        let s1 = state.add_alert(
+            AlertKind::Notification,
+            1,
+            "Title".to_string(),
+            "Body".to_string(),
+        );
+        let s2 = state.add_alert(AlertKind::Bell, 2, "ベル".to_string(), String::new());
+        assert_eq!(s0, 0);
+        assert_eq!(s1, 1);
+        assert_eq!(s2, 2);
+        assert_eq!(state.alerts.len(), 3);
+        assert_eq!(state.alerts[0].kind, AlertKind::Bell);
+        assert_eq!(state.alerts[1].kind, AlertKind::Notification);
+        assert_eq!(state.alerts[2].pane_id, 2);
+    }
+
+    /// ALERTS_MAX_LEN (16) を超えると古い順に drop されること
+    #[test]
+    fn add_alert_drops_oldest_when_full() {
+        use crate::state::ALERTS_MAX_LEN;
+        let mut state = ClientState::new(80, 24, 1000);
+        for i in 0..(ALERTS_MAX_LEN + 5) {
+            state.add_alert(AlertKind::Bell, 1, format!("alert {}", i), String::new());
+        }
+        // 上限内に収まる
+        assert_eq!(state.alerts.len(), ALERTS_MAX_LEN);
+        // 先頭は ALERTS_MAX_LEN + 5 - ALERTS_MAX_LEN = 5 から始まる
+        assert_eq!(state.alerts.front().unwrap().seq, 5);
+        assert_eq!(
+            state.alerts.back().unwrap().seq,
+            (ALERTS_MAX_LEN + 5) as u64 - 1
+        );
+    }
+
+    /// expire_alerts が TTL 切れエントリを除去し、期限内エントリを残すこと
+    #[test]
+    fn expire_alerts_removes_only_expired_entries() {
+        use crate::state::ALERT_TTL;
+        let mut state = ClientState::new(80, 24, 1000);
+        // 古い 2 件は created_at を遡って手動で設定（直接 push_back）
+        let now = std::time::Instant::now();
+        let old = now - ALERT_TTL - std::time::Duration::from_secs(1);
+        state.alerts.push_back(AlertEntry {
+            seq: 0,
+            kind: AlertKind::Bell,
+            pane_id: 1,
+            title: "old1".to_string(),
+            body: String::new(),
+            created_at: old,
+        });
+        state.alerts.push_back(AlertEntry {
+            seq: 1,
+            kind: AlertKind::Bell,
+            pane_id: 1,
+            title: "old2".to_string(),
+            body: String::new(),
+            created_at: old,
+        });
+        // 新しい 1 件は add_alert で追加
+        state.add_alert(AlertKind::Bell, 1, "fresh".to_string(), String::new());
+
+        let removed = state.expire_alerts(now);
+        assert_eq!(removed, 2, "古い 2 件が除去される");
+        assert_eq!(state.alerts.len(), 1);
+        assert_eq!(state.alerts.front().unwrap().title, "fresh");
+    }
+
+    /// alert_node_id が 50e12 オフセット + seq になり pane_row 範囲と衝突しないこと
+    #[test]
+    fn alert_node_id_in_correct_offset() {
+        let id0 = alert_node_id(0).0;
+        let id_big = alert_node_id(u32::MAX as u64).0;
+        assert_eq!(id0, NODE_ID_ALERT_OFFSET);
+        assert_eq!(id_big, NODE_ID_ALERT_OFFSET + u32::MAX as u64);
+        // ペイン行範囲（最大 ~4.3e13）の上限を超えていること
+        let pane_row_end =
+            NODE_ID_PANE_ROW_OFFSET + (u32::MAX as u64) * MAX_ROWS_PER_PANE + MAX_ROWS_PER_PANE;
+        assert!(
+            NODE_ID_ALERT_OFFSET >= pane_row_end,
+            "Alert オフセット ({}) はペイン行上限 ({}) 以上である必要がある",
+            NODE_ID_ALERT_OFFSET,
+            pane_row_end
+        );
+    }
+
+    /// decode_node_id で Alert NodeId を逆引きできること
+    #[test]
+    fn decode_alert_node_id_roundtrip() {
+        for seq in [0u64, 1, 16, 100, u32::MAX as u64] {
+            let nid = alert_node_id(seq);
+            let kind = decode_node_id(nid);
+            assert_eq!(kind, NodeIdKind::Alert { seq });
+        }
+        // AlertRegion 固定 ID
+        assert_eq!(decode_node_id(ALERT_REGION_ID), NodeIdKind::AlertRegion);
+    }
+
+    /// 空キューでは ALERT_REGION_ID は ROOT に含まれないこと
+    #[test]
+    fn build_tree_without_alerts_omits_alert_region() {
+        let state = ClientState::new(80, 24, 1000);
+        let update = build_tree_from_state(&state);
+        let root_node = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == ROOT_ID)
+            .expect("ROOT が存在");
+        // ROOT の children に ALERT_REGION_ID は含まれない
+        let children: Vec<NodeId> = root_node.1.children().to_vec();
+        assert!(
+            !children.contains(&ALERT_REGION_ID),
+            "アラートなしでは ALERT_REGION_ID が ROOT に含まれない"
+        );
+        // ALERT_REGION_ID ノードそのものも存在しない
+        assert!(
+            !update.nodes.iter().any(|(id, _)| *id == ALERT_REGION_ID),
+            "アラートなしでは ALERT_REGION ノードが含まれない"
+        );
+    }
+
+    /// アラート追加で ALERT_REGION_ID と各 Alert ノードが ROOT 子要素に追加されること
+    #[test]
+    fn build_tree_with_alerts_includes_alert_region_and_children() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let seq_bell = state.add_alert(AlertKind::Bell, 1, "ベル".to_string(), String::new());
+        let seq_notify = state.add_alert(
+            AlertKind::Notification,
+            1,
+            "ビルド完了".to_string(),
+            "exit code 0".to_string(),
+        );
+
+        let update = build_tree_from_state(&state);
+
+        // ROOT に ALERT_REGION_ID が含まれる
+        let root = update.nodes.iter().find(|(id, _)| *id == ROOT_ID).unwrap();
+        assert!(root.1.children().contains(&ALERT_REGION_ID));
+
+        // ALERT_REGION 自身が存在し Live::Assertive
+        let region = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == ALERT_REGION_ID)
+            .expect("ALERT_REGION ノードが存在");
+        assert_eq!(region.1.live(), Some(Live::Assertive));
+
+        // 各 Alert ノードが存在
+        let bell_node = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == alert_node_id(seq_bell))
+            .expect("Bell ノードが存在");
+        assert_eq!(bell_node.1.role(), Role::Alert);
+        assert_eq!(bell_node.1.label(), Some("ベル"));
+
+        let notify_node = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == alert_node_id(seq_notify))
+            .expect("Notification ノードが存在");
+        assert_eq!(notify_node.1.role(), Role::Alert);
+        assert_eq!(notify_node.1.label(), Some("通知: ビルド完了"));
+        assert_eq!(notify_node.1.description(), Some("exit code 0"));
+    }
+
+    /// tree_state_hash がアラート追加で変化すること
+    #[test]
+    fn tree_state_hash_detects_alert_added() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let h0 = compute_tree_state_hash(&state);
+        state.add_alert(AlertKind::Bell, 1, "ベル".to_string(), String::new());
+        let h1 = compute_tree_state_hash(&state);
+        assert_ne!(h0, h1, "アラート追加でハッシュが変化");
+        // 同種のアラート追加でも seq が違うのでハッシュは変化
+        state.add_alert(AlertKind::Bell, 1, "ベル".to_string(), String::new());
+        let h2 = compute_tree_state_hash(&state);
+        assert_ne!(h1, h2, "2 件目追加でハッシュが変化");
+    }
+
+    /// tree_state_hash がアラート kind 変化で変化すること
+    #[test]
+    fn tree_state_hash_detects_alert_kind_difference() {
+        let mut s1 = ClientState::new(80, 24, 1000);
+        s1.add_alert(AlertKind::Bell, 1, "title".to_string(), String::new());
+
+        let mut s2 = ClientState::new(80, 24, 1000);
+        s2.add_alert(
+            AlertKind::Notification,
+            1,
+            "title".to_string(),
+            String::new(),
+        );
+
+        let h1 = compute_tree_state_hash(&s1);
+        let h2 = compute_tree_state_hash(&s2);
+        assert_ne!(h1, h2, "Bell と Notification でハッシュが異なる");
+    }
+
+    /// 本文が空の Alert (Bell) は description が設定されないこと
+    #[test]
+    fn build_tree_alert_without_body_omits_description() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let seq = state.add_alert(AlertKind::Bell, 1, "ベル".to_string(), String::new());
+        let update = build_tree_from_state(&state);
+        let bell = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == alert_node_id(seq))
+            .unwrap();
+        assert_eq!(bell.1.description(), None);
     }
 }

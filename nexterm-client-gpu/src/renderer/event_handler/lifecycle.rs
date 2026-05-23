@@ -249,6 +249,15 @@ impl EventHandler {
                     title,
                     body,
                 } => {
+                    // Sprint 5-11-5: SR には consent 設定に関わらず通知する。
+                    // SR は OS 通知の代替ではなくアクセシビリティ手段のため、
+                    // 同意ポリシーで OS 通知を抑止していても SR には届く必要がある。
+                    self.app.state.add_alert(
+                        crate::state::AlertKind::Notification,
+                        pane_id,
+                        title.clone(),
+                        body.clone(),
+                    );
                     self.handle_notification_request(pane_id, title, body);
                 }
                 ServerToClient::ClipboardWriteRequest { pane_id, text } => {
