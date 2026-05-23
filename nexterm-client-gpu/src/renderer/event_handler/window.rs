@@ -242,6 +242,48 @@ impl EventHandler {
 
     /// `WindowEvent::Ime` — 日本語・中国語などの IME 入力を処理する
     pub(super) fn on_ime(&mut self, ime_event: Ime) {
+        // Phase 5-11-8 Step 8-3 (Sub-phase B): 設定パネルの SSH フィールド編集中は
+        // ターミナルではなく TextInputState に IME 入力を振り分ける。
+        // Sub-phase A で TextInputState.preedit / insert_str を準備済み。
+        let ssh_editing = self.app.state.settings_panel.is_open
+            && self.app.state.settings_panel.ssh_field_editing.is_some();
+
+        if ssh_editing {
+            match ime_event {
+                Ime::Enabled => {
+                    // IME 有効化のみ。preedit は次の Preedit イベントで設定される
+                }
+                Ime::Preedit(text, _cursor_range) => {
+                    if let Some(state) = self.app.state.settings_panel.ssh_field_editing.as_mut() {
+                        state.preedit = if text.is_empty() { None } else { Some(text) };
+                    }
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                }
+                Ime::Commit(text) => {
+                    // 確定テキストを TextInputState.buffer のカーソル位置に挿入し、
+                    // preedit をクリア。Sub-phase A の ssh_field_insert_str を再利用。
+                    self.app.state.settings_panel.ssh_field_insert_str(&text);
+                    if let Some(state) = self.app.state.settings_panel.ssh_field_editing.as_mut() {
+                        state.preedit = None;
+                    }
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                }
+                Ime::Disabled => {
+                    if let Some(state) = self.app.state.settings_panel.ssh_field_editing.as_mut() {
+                        state.preedit = None;
+                    }
+                }
+            }
+            // IME カーソルエリアを SSH フィールド行へ追従させる
+            self.update_ime_cursor_area_for_ssh_field();
+            return;
+        }
+
+        // 通常のターミナル経路（PTY へ転送）
         match ime_event {
             Ime::Enabled => {
                 // IME が有効になった（特別な処理は不要）
@@ -286,6 +328,69 @@ impl EventHandler {
         }
     }
 
+    /// Phase 5-11-8 Step 8-3 (Sub-phase B): SSH フィールド編集中の IME カーソルエリアを
+    /// フィールド行のピクセル位置に追従させる。
+    ///
+    /// 計算式は `overlay/settings.rs` の SSH 編集行レンダラーと同じレイアウトロジックを
+    /// 用いる。変更があれば両者を同期させること。
+    ///
+    /// `input_handler` から `begin_ssh_field_edit` 成功時と矢印キーでのカーソル移動時に
+    /// 呼ばれるため `pub(in crate::renderer)` で公開する。
+    pub(in crate::renderer) fn update_ime_cursor_area_for_ssh_field(&self) {
+        let Some(w) = &self.window else { return };
+        let sp = &self.app.state.settings_panel;
+        if !sp.is_open || sp.ssh_field_editing.is_none() {
+            return;
+        }
+        // TextInput 対象でないフィールド（port=3 / auth_type=5）なら何もしない
+        let row_index = match sp.ssh_field_focus {
+            1 => 0u32, // name
+            2 => 1,    // host
+            4 => 3,    // username
+            _ => return,
+        };
+        let Some(state) = sp.ssh_field_editing.as_ref() else {
+            return;
+        };
+
+        let inner = w.inner_size();
+        let sw = inner.width as f32;
+        let sh = inner.height as f32;
+        let cell_w = self.app.font.cell_width();
+        let cell_h = self.app.font.cell_height();
+
+        // overlay/settings.rs のレイアウト式を再現
+        let panel_w = (sw * 0.72).min(sw - cell_w * 4.0);
+        let panel_h = (sh * 0.75).min(sh - cell_h * 4.0);
+        let px = (sw - panel_w) / 2.0;
+        let py = (sh - panel_h) / 2.0; // IME 位置はアニメーション中も定位置 (eased=1.0 相当) を使う
+        let sidebar_w = cell_w * 18.0;
+        let content_x = px + sidebar_w;
+        let content_inner_x = content_x + cell_w;
+        let title_h = cell_h * 1.4;
+        let content_top = py + title_h + cell_h * 0.5;
+        let host_count = sp.ssh_hosts.len() as f32;
+        let fields_top = content_top + cell_h * (1.5 + host_count * 1.2 + 0.6);
+        let row_y = fields_top + cell_h * (1.3 + row_index as f32 * 1.1);
+
+        // カーソル位置（プレフィックス 14 セル + display_cursor の文字数）
+        const PREFIX_COLS: f32 = 14.0;
+        let cursor_byte = state.display_cursor();
+        let display = state.display_string();
+        let cursor_col = display
+            .get(..cursor_byte.min(display.len()))
+            .map(|s| s.chars().count() as f32)
+            .unwrap_or(0.0);
+        let ime_x = content_inner_x + cell_w * (PREFIX_COLS + cursor_col);
+        // IME 確定パネルは行の下に出るのが自然。row_y + cell_h で行の直下を示す
+        let ime_y = row_y + cell_h;
+
+        w.set_ime_cursor_area(
+            winit::dpi::PhysicalPosition::new(ime_x as i32, ime_y as i32),
+            winit::dpi::PhysicalSize::new(cell_w as u32, cell_h as u32),
+        );
+    }
+
     /// `WindowEvent::RedrawRequested`
     pub(super) fn on_redraw_requested(&mut self) {
         if let (Some(wgpu), Some(atlas)) = (&mut self.wgpu_state, &mut self.atlas)
@@ -315,6 +420,15 @@ impl EventHandler {
                 atlas = atlas.grow(&wgpu.device);
             }
             self.atlas = Some(atlas);
+        }
+
+        // Phase 5-11-8 Step 8-3 (Sub-phase B): SSH フィールド編集中は描画完了後に
+        // IME カーソルエリアを最新のフィールド位置へ追従させる。これにより文字挿入・
+        // カーソル移動・Backspace 等あらゆる編集操作後に IME 候補窓が正しい位置に出る。
+        if self.app.state.settings_panel.is_open
+            && self.app.state.settings_panel.ssh_field_editing.is_some()
+        {
+            self.update_ime_cursor_area_for_ssh_field();
         }
     }
 }

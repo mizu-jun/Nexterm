@@ -355,7 +355,9 @@ impl EventHandler {
                             && matches!(sp.ssh_field_focus, 1 | 2 | 4)
                             && sp.begin_ssh_field_edit()
                         {
-                            // 編集モードに入った
+                            // Phase 5-11-8 Step 8-3 (Sub-phase B): 編集モード開始時に
+                            // IME カーソルエリアを SSH フィールド行へ移動
+                            self.update_ime_cursor_area_for_ssh_field();
                         } else {
                             let _ = sp.save_to_toml();
                             sp.close();

@@ -38,8 +38,6 @@ impl TextInputState {
 
     /// カーソル位置に文字列を挿入し、カーソルをその末尾に進める。
     /// IME `Commit` 経路で複数文字を一括挿入する際にも使う。
-    // Phase 5-11-8 Sub-phase B (IME) で SettingsPanel::ssh_field_insert_str 経由で呼ばれる。
-    #[allow(dead_code)]
     pub fn insert_str(&mut self, s: &str) {
         self.buffer.insert_str(self.cursor, s);
         self.cursor += s.len();
@@ -948,8 +946,6 @@ impl SettingsPanel {
     }
 
     /// 編集中バッファのカーソル位置に文字列を挿入する（IME Commit 経路）。
-    // Phase 5-11-8 Sub-phase B で window.rs の Ime::Commit ハンドラから呼ばれる。
-    #[allow(dead_code)]
     pub fn ssh_field_insert_str(&mut self, s: &str) {
         if let Some(state) = self.ssh_field_editing.as_mut() {
             state.insert_str(s);
