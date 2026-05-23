@@ -134,6 +134,17 @@ pub struct SettingsPanel {
     pub language_index: usize,
     /// 起動時に更新確認を行うか
     pub auto_check_update: bool,
+    /// カーソル形状（Phase 5-11-6 #6）。block / beam / underline。
+    /// 保存時は TOML の top-level `cursor_style` に書き戻す。
+    pub cursor_style: nexterm_config::CursorStyle,
+    /// ウィンドウ内の水平パディング（ピクセル、0〜32）。
+    /// 保存時は TOML の `[window].padding_x` に書き戻す。
+    pub padding_x: u32,
+    /// ウィンドウ内の垂直パディング（ピクセル、0〜32）。
+    pub padding_y: u32,
+    /// GPU プレゼンテーションモード（fifo / mailbox / auto）。
+    /// 保存時は TOML の `[gpu].present_mode` に書き戻す。
+    pub present_mode: nexterm_config::PresentModeConfig,
 }
 
 impl Default for SettingsPanel {
@@ -183,6 +194,11 @@ impl SettingsPanel {
             tab_rename_text: String::new(),
             language_index,
             auto_check_update: config.auto_check_update,
+            cursor_style: config.cursor_style.clone(),
+            // padding_x / padding_y は config では u32 だが UI 上は 0〜32 にクランプ
+            padding_x: config.window.padding_x.min(32),
+            padding_y: config.window.padding_y.min(32),
+            present_mode: config.gpu.present_mode.clone(),
         }
     }
 
@@ -333,6 +349,166 @@ impl SettingsPanel {
         self.dirty = true;
     }
 
+    // ===== Phase 5-11-6 #6: カーソルスタイル =====
+    //
+    // Block / Beam / Underline の 3 値を循環させる。
+    // 保存時は TOML の `cursor_style = "block" | "beam" | "underline"` に書き戻す。
+    //
+    // `#[allow(dead_code)]`: コミット D（キー入力）/ E（AccessKit dispatch）から呼び出される
+    // までは bin ターゲットで使用箇所がないため。後続コミットで除去する。
+
+    #[allow(dead_code)]
+    pub fn next_cursor_style(&mut self) {
+        use nexterm_config::CursorStyle::*;
+        self.cursor_style = match self.cursor_style {
+            Block => Beam,
+            Beam => Underline,
+            Underline => Block,
+        };
+        self.dirty = true;
+    }
+
+    #[allow(dead_code)]
+    pub fn prev_cursor_style(&mut self) {
+        use nexterm_config::CursorStyle::*;
+        self.cursor_style = match self.cursor_style {
+            Block => Underline,
+            Beam => Block,
+            Underline => Beam,
+        };
+        self.dirty = true;
+    }
+
+    /// 列挙順序のインデックス（0=Block, 1=Beam, 2=Underline）。UI 描画と AccessKit
+    /// `Action::SetValue` 経路で使う。
+    #[allow(dead_code)]
+    pub fn cursor_style_index(&self) -> usize {
+        use nexterm_config::CursorStyle::*;
+        match self.cursor_style {
+            Block => 0,
+            Beam => 1,
+            Underline => 2,
+        }
+    }
+
+    /// UI に表示するラベル（日本語 + 英語併記）。
+    #[allow(dead_code)]
+    pub fn cursor_style_label(&self) -> &'static str {
+        use nexterm_config::CursorStyle::*;
+        match self.cursor_style {
+            Block => "ブロック / Block",
+            Beam => "ビーム / Beam",
+            Underline => "アンダーライン / Underline",
+        }
+    }
+
+    /// TOML 書き戻し用の小文字キー（serde の `rename_all = "lowercase"` に揃える）。
+    pub fn cursor_style_toml_key(&self) -> &'static str {
+        use nexterm_config::CursorStyle::*;
+        match self.cursor_style {
+            Block => "block",
+            Beam => "beam",
+            Underline => "underline",
+        }
+    }
+
+    // ===== Phase 5-11-6 #6: ウィンドウパディング =====
+    //
+    // 0〜32 ピクセル。1 px 単位で増減できる。SR の `Action::SetValue(NumericValue)`
+    // 経路は f64 を u32 に丸めて clamp する。
+
+    #[allow(dead_code)]
+    pub fn set_padding_x_value(&mut self, v: f64) {
+        self.padding_x = (v.round().clamp(0.0, 32.0)) as u32;
+        self.dirty = true;
+    }
+
+    #[allow(dead_code)]
+    pub fn increase_padding_x(&mut self) {
+        self.padding_x = (self.padding_x + 1).min(32);
+        self.dirty = true;
+    }
+
+    #[allow(dead_code)]
+    pub fn decrease_padding_x(&mut self) {
+        self.padding_x = self.padding_x.saturating_sub(1);
+        self.dirty = true;
+    }
+
+    #[allow(dead_code)]
+    pub fn set_padding_y_value(&mut self, v: f64) {
+        self.padding_y = (v.round().clamp(0.0, 32.0)) as u32;
+        self.dirty = true;
+    }
+
+    #[allow(dead_code)]
+    pub fn increase_padding_y(&mut self) {
+        self.padding_y = (self.padding_y + 1).min(32);
+        self.dirty = true;
+    }
+
+    #[allow(dead_code)]
+    pub fn decrease_padding_y(&mut self) {
+        self.padding_y = self.padding_y.saturating_sub(1);
+        self.dirty = true;
+    }
+
+    // ===== Phase 5-11-6 #6: プレゼンテーションモード =====
+    //
+    // Fifo / Mailbox / Auto の 3 値を循環させる。
+    // 保存時は TOML の `[gpu].present_mode` に書き戻す。
+
+    #[allow(dead_code)]
+    pub fn next_present_mode(&mut self) {
+        use nexterm_config::PresentModeConfig::*;
+        self.present_mode = match self.present_mode {
+            Fifo => Mailbox,
+            Mailbox => Auto,
+            Auto => Fifo,
+        };
+        self.dirty = true;
+    }
+
+    #[allow(dead_code)]
+    pub fn prev_present_mode(&mut self) {
+        use nexterm_config::PresentModeConfig::*;
+        self.present_mode = match self.present_mode {
+            Fifo => Auto,
+            Mailbox => Fifo,
+            Auto => Mailbox,
+        };
+        self.dirty = true;
+    }
+
+    #[allow(dead_code)]
+    pub fn present_mode_index(&self) -> usize {
+        use nexterm_config::PresentModeConfig::*;
+        match self.present_mode {
+            Fifo => 0,
+            Mailbox => 1,
+            Auto => 2,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn present_mode_label(&self) -> &'static str {
+        use nexterm_config::PresentModeConfig::*;
+        match self.present_mode {
+            Fifo => "Fifo (垂直同期 / 高互換性)",
+            Mailbox => "Mailbox (低遅延 / 推奨)",
+            Auto => "Auto (環境依存)",
+        }
+    }
+
+    pub fn present_mode_toml_key(&self) -> &'static str {
+        use nexterm_config::PresentModeConfig::*;
+        match self.present_mode {
+            Fifo => "fifo",
+            Mailbox => "mailbox",
+            Auto => "auto",
+        }
+    }
+
     /// scheme_index からスキーム名を返す
     pub fn scheme_name(&self) -> &str {
         const SCHEMES: [&str; 9] = [
@@ -422,6 +598,16 @@ impl SettingsPanel {
 
         // [window].background_opacity
         doc["window"]["background_opacity"] = toml_edit::value(self.opacity as f64);
+
+        // [window].padding_x / padding_y（Phase 5-11-6 #6）
+        doc["window"]["padding_x"] = toml_edit::value(self.padding_x as i64);
+        doc["window"]["padding_y"] = toml_edit::value(self.padding_y as i64);
+
+        // [gpu].present_mode（Phase 5-11-6 #6）
+        doc["gpu"]["present_mode"] = toml_edit::value(self.present_mode_toml_key());
+
+        // cursor_style（Phase 5-11-6 #6）
+        doc["cursor_style"] = toml_edit::value(self.cursor_style_toml_key());
 
         // language
         doc["language"] = toml_edit::value(self.language_code());
@@ -554,5 +740,171 @@ mod tests {
         assert_eq!(panel.category, SettingsCategory::Theme);
         panel.prev_category();
         assert_eq!(panel.category, SettingsCategory::Font);
+    }
+
+    // ===== Phase 5-11-6 #6: cursor_style / padding / present_mode =====
+
+    #[test]
+    fn cursor_style_cycle_forward_and_back() {
+        use nexterm_config::CursorStyle::*;
+        let config = Config::default();
+        let mut panel = SettingsPanel::new(&config);
+        // Default は Block
+        assert_eq!(panel.cursor_style, Block);
+        assert_eq!(panel.cursor_style_index(), 0);
+        assert_eq!(panel.cursor_style_toml_key(), "block");
+
+        panel.next_cursor_style();
+        assert_eq!(panel.cursor_style, Beam);
+        assert_eq!(panel.cursor_style_index(), 1);
+        assert_eq!(panel.cursor_style_toml_key(), "beam");
+
+        panel.next_cursor_style();
+        assert_eq!(panel.cursor_style, Underline);
+        assert_eq!(panel.cursor_style_toml_key(), "underline");
+
+        panel.next_cursor_style();
+        assert_eq!(panel.cursor_style, Block, "Underline の次は Block にラップ");
+
+        // 逆方向
+        panel.prev_cursor_style();
+        assert_eq!(panel.cursor_style, Underline, "Block の前は Underline");
+        panel.prev_cursor_style();
+        assert_eq!(panel.cursor_style, Beam);
+        panel.prev_cursor_style();
+        assert_eq!(panel.cursor_style, Block);
+
+        assert!(panel.dirty);
+    }
+
+    #[test]
+    fn cursor_style_labels_are_human_readable() {
+        use nexterm_config::CursorStyle::*;
+        let config = Config::default();
+        let mut panel = SettingsPanel::new(&config);
+        panel.cursor_style = Block;
+        assert!(panel.cursor_style_label().contains("Block"));
+        panel.cursor_style = Beam;
+        assert!(panel.cursor_style_label().contains("Beam"));
+        panel.cursor_style = Underline;
+        assert!(panel.cursor_style_label().contains("Underline"));
+    }
+
+    #[test]
+    fn padding_x_increase_decrease_clamps() {
+        let config = Config::default();
+        let mut panel = SettingsPanel::new(&config);
+        assert_eq!(panel.padding_x, 0, "デフォルトは 0");
+
+        // 上限 32 でクランプ
+        for _ in 0..40 {
+            panel.increase_padding_x();
+        }
+        assert_eq!(panel.padding_x, 32);
+
+        // 下限 0 でクランプ
+        for _ in 0..40 {
+            panel.decrease_padding_x();
+        }
+        assert_eq!(panel.padding_x, 0);
+
+        assert!(panel.dirty);
+    }
+
+    #[test]
+    fn padding_y_increase_decrease_clamps() {
+        let config = Config::default();
+        let mut panel = SettingsPanel::new(&config);
+        for _ in 0..50 {
+            panel.increase_padding_y();
+        }
+        assert_eq!(panel.padding_y, 32, "上限");
+        for _ in 0..50 {
+            panel.decrease_padding_y();
+        }
+        assert_eq!(panel.padding_y, 0, "下限");
+    }
+
+    #[test]
+    fn padding_set_value_clamps_and_rounds() {
+        let config = Config::default();
+        let mut panel = SettingsPanel::new(&config);
+        panel.set_padding_x_value(-5.0);
+        assert_eq!(panel.padding_x, 0, "負値は 0 にクランプ");
+        panel.set_padding_x_value(100.0);
+        assert_eq!(panel.padding_x, 32, "上限超は 32 にクランプ");
+        panel.set_padding_x_value(15.7);
+        assert_eq!(panel.padding_x, 16, "0.5 以上は切り上げ丸め");
+        panel.set_padding_x_value(15.3);
+        assert_eq!(panel.padding_x, 15, "0.5 未満は切り捨て丸め");
+
+        panel.set_padding_y_value(7.5);
+        assert_eq!(
+            panel.padding_y, 8,
+            "0.5 はバンカーズか四捨五入のいずれか（実装依存）"
+        );
+    }
+
+    #[test]
+    fn present_mode_cycle_forward_and_back() {
+        use nexterm_config::PresentModeConfig::*;
+        let config = Config::default();
+        let mut panel = SettingsPanel::new(&config);
+        // Default は Mailbox（Sprint 5-3 / C3 で変更済み）
+        assert_eq!(panel.present_mode, Mailbox);
+        assert_eq!(panel.present_mode_index(), 1);
+        assert_eq!(panel.present_mode_toml_key(), "mailbox");
+
+        panel.next_present_mode();
+        assert_eq!(panel.present_mode, Auto);
+        panel.next_present_mode();
+        assert_eq!(panel.present_mode, Fifo);
+        panel.next_present_mode();
+        assert_eq!(panel.present_mode, Mailbox);
+
+        // 逆方向
+        panel.prev_present_mode();
+        assert_eq!(panel.present_mode, Fifo);
+
+        assert!(panel.dirty);
+    }
+
+    #[test]
+    fn present_mode_labels_are_human_readable() {
+        use nexterm_config::PresentModeConfig::*;
+        let config = Config::default();
+        let mut panel = SettingsPanel::new(&config);
+        panel.present_mode = Fifo;
+        assert!(panel.present_mode_label().contains("Fifo"));
+        panel.present_mode = Mailbox;
+        assert!(panel.present_mode_label().contains("Mailbox"));
+        panel.present_mode = Auto;
+        assert!(panel.present_mode_label().contains("Auto"));
+    }
+
+    #[test]
+    fn new_reads_config_window_padding_and_present_mode() {
+        let mut config = Config::default();
+        config.window.padding_x = 12;
+        config.window.padding_y = 4;
+        config.gpu.present_mode = nexterm_config::PresentModeConfig::Fifo;
+        config.cursor_style = nexterm_config::CursorStyle::Beam;
+
+        let panel = SettingsPanel::new(&config);
+        assert_eq!(panel.padding_x, 12);
+        assert_eq!(panel.padding_y, 4);
+        assert_eq!(panel.present_mode, nexterm_config::PresentModeConfig::Fifo);
+        assert_eq!(panel.cursor_style, nexterm_config::CursorStyle::Beam);
+    }
+
+    #[test]
+    fn new_clamps_oversized_padding_from_config() {
+        let mut config = Config::default();
+        config.window.padding_x = 1000;
+        let panel = SettingsPanel::new(&config);
+        assert_eq!(
+            panel.padding_x, 32,
+            "config 側の異常値は new で 32 にクランプ"
+        );
     }
 }
