@@ -148,6 +148,7 @@ impl EventHandler {
                 | NodeIdKind::SettingsPaddingY
                 | NodeIdKind::SettingsPresentMode
                 | NodeIdKind::SettingsProfileItem { .. }
+                | NodeIdKind::SettingsSshHostItem { .. }
         ) {
             let handled = dispatch_settings_action(
                 &mut self.app.state.settings_panel,

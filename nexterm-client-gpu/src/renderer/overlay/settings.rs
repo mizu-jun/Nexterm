@@ -981,10 +981,116 @@ impl WgpuState {
                     text_idx,
                 );
             }
+            SettingsCategory::Ssh => {
+                // Phase 5-11-8 Step 8-1: SSH ホスト一覧を ListBox 風に描画する（read-only）
+                add_string_verts(
+                    "SSH ホスト一覧:",
+                    content_inner_x,
+                    content_top + cell_h * 0.5,
+                    [0.663, 0.694, 0.839, 1.0],
+                    true,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
+                );
+                if sp.ssh_hosts.is_empty() {
+                    add_string_verts(
+                        "SSH ホストが登録されていません",
+                        content_inner_x,
+                        content_top + cell_h * 1.8,
+                        [0.376, 0.408, 0.518, 1.0],
+                        false,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
+                    );
+                    add_string_verts(
+                        "nexterm.toml の [[hosts]] セクションに追加してください",
+                        content_inner_x,
+                        content_top + cell_h * 2.7,
+                        [0.376, 0.408, 0.518, 1.0],
+                        false,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
+                    );
+                } else {
+                    for (i, host) in sp.ssh_hosts.iter().enumerate() {
+                        let item_y = content_top + cell_h * (1.5 + i as f32 * 1.2);
+                        let is_sel = sp.selected_host_index == i;
+                        if is_sel {
+                            add_px_rect(
+                                content_inner_x - cell_w * 0.3,
+                                item_y - cell_h * 0.1,
+                                content_w - cell_w * 0.7,
+                                cell_h,
+                                [0.149, 0.188, 0.278, 1.0],
+                                sw,
+                                sh,
+                                bg_verts,
+                                bg_idx,
+                            );
+                        }
+                        let label = host.label();
+                        let fg = if is_sel {
+                            [0.753, 0.808, 0.969, 1.0]
+                        } else {
+                            [0.502, 0.533, 0.647, 1.0]
+                        };
+                        add_string_verts(
+                            &label,
+                            content_inner_x,
+                            item_y,
+                            fg,
+                            is_sel,
+                            sw,
+                            sh,
+                            cell_w,
+                            font,
+                            atlas,
+                            &self.queue,
+                            text_verts,
+                            text_idx,
+                        );
+                    }
+                    // 編集に関する注記（Step 8-2 で対話編集を追加する旨）
+                    let note_y =
+                        content_top + cell_h * (1.5 + sp.ssh_hosts.len() as f32 * 1.2 + 0.6);
+                    add_string_verts(
+                        "※ 編集は nexterm.toml の [[hosts]] で行います（Step 8-2 で対話編集予定）",
+                        content_inner_x,
+                        note_y,
+                        [0.376, 0.408, 0.518, 1.0],
+                        false,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
+                    );
+                }
+            }
             _ => {
-                // SSH・キーバインドは近日実装予定
+                // キーバインドは近日実装予定（Step 8-4 以降）
                 let msg = match &sp.category {
-                    SettingsCategory::Ssh => "SSH ホストは nexterm.toml の [[hosts]] で管理します",
                     SettingsCategory::Keybindings => {
                         "キーバインドは nexterm.toml の [[keys]] で管理します"
                     }

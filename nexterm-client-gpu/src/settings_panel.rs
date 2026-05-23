@@ -101,6 +101,47 @@ impl Default for ProfileEntry {
     }
 }
 
+/// SSH ホストエントリ（Phase 5-11-8 Step 8-1: 設定パネル内で表示専用）
+///
+/// `nexterm-config::HostConfig` のうち SR / 設定パネルでの表示に必要な
+/// フィールドだけを抜き出した軽量な構造。
+/// Step 8-2 / 8-3 で編集機能を追加する際にフィールドを増やす予定。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SshHostEntry {
+    /// 表示名（`HostConfig.name`）
+    pub name: String,
+    /// ホスト名または IP アドレス
+    pub host: String,
+    /// SSH ポート
+    pub port: u16,
+    /// ユーザー名
+    pub username: String,
+    /// 認証方式（"password" / "key" / "agent"）
+    pub auth_type: String,
+}
+
+impl SshHostEntry {
+    /// SR / UI で読み上げ / 描画する 1 行ラベルを生成する。
+    /// 例: `"myhost (alice@example.com:2222)"`
+    pub fn label(&self) -> String {
+        let user_part = if self.username.is_empty() {
+            self.host.clone()
+        } else {
+            format!("{}@{}", self.username, self.host)
+        };
+        let endpoint = if self.port == 22 || self.port == 0 {
+            user_part
+        } else {
+            format!("{}:{}", user_part, self.port)
+        };
+        if self.name.is_empty() {
+            endpoint
+        } else {
+            format!("{} ({})", self.name, endpoint)
+        }
+    }
+}
+
 /// 設定パネルの状態
 pub struct SettingsPanel {
     pub is_open: bool,
@@ -127,6 +168,10 @@ pub struct SettingsPanel {
     pub profiles: Vec<ProfileEntry>,
     /// 選択中のプロファイルインデックス
     pub selected_profile: usize,
+    /// SSH ホスト一覧（Phase 5-11-8 Step 8-1: 表示専用、`config.hosts` から生成）
+    pub ssh_hosts: Vec<SshHostEntry>,
+    /// 選択中の SSH ホストインデックス（`ssh_hosts` 内）
+    pub selected_host_index: usize,
     /// 起動時セッション名
     #[allow(dead_code)]
     pub startup_session: String,
@@ -179,6 +224,18 @@ impl SettingsPanel {
                 working_dir: p.working_dir.clone().unwrap_or_default(),
             })
             .collect();
+        // Phase 5-11-8 Step 8-1: config.hosts から SshHostEntry を生成する
+        let ssh_hosts: Vec<SshHostEntry> = config
+            .hosts
+            .iter()
+            .map(|h| SshHostEntry {
+                name: h.name.clone(),
+                host: h.host.clone(),
+                port: h.port,
+                username: h.username.clone(),
+                auth_type: h.auth_type.clone(),
+            })
+            .collect();
         let language_index = LANGUAGE_OPTIONS
             .iter()
             .position(|(_, code)| *code == config.language.as_str())
@@ -196,6 +253,8 @@ impl SettingsPanel {
             font_family_editing: false,
             profiles,
             selected_profile: 0,
+            ssh_hosts,
+            selected_host_index: 0,
             startup_session: "main".to_string(),
             tab_rename_editing: None,
             tab_rename_text: String::new(),

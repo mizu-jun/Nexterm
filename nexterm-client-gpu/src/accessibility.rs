@@ -193,6 +193,15 @@ const NODE_ID_QUICKSELECT_ITEM_OFFSET: u64 = 500_000_000;
 /// 10M 範囲で十分。`NODE_ID_TAB_OFFSET = 1e9` との間に 300M の余裕がある。
 const NODE_ID_SETTINGS_PROFILE_OFFSET: u64 = 600_000_000;
 
+/// SettingsPanel Ssh カテゴリの動的項目（`800_000_000 + idx`、Phase 5-11-8 Step 8-1）。
+///
+/// `SettingsPanel.ssh_hosts` の各 `SshHostEntry` を `Role::ListBoxOption` として
+/// 公開する。`selected_host_index` で選択中の項目を判定する。
+///
+/// 値域は `[800_000_000, 900_000_000)`。`NODE_ID_TAB_OFFSET = 1e9` との間に 100M の
+/// 余裕がある。700M..800M は将来の SettingsField 動的展開用に予約。
+const NODE_ID_SETTINGS_SSH_HOST_OFFSET: u64 = 800_000_000;
+
 /// タブノードの NodeId 計算用オフセット。
 ///
 /// 内部表現: `NODE_ID_TAB_OFFSET + pane_id as u64`。pane_id は u32 のため
@@ -434,6 +443,11 @@ fn settings_profile_item_id(idx: usize) -> NodeId {
     NodeId(NODE_ID_SETTINGS_PROFILE_OFFSET + idx as u64)
 }
 
+/// SettingsPanel Ssh カテゴリ項目 idx から NodeId を計算する（Phase 5-11-8 Step 8-1）。
+fn settings_ssh_host_item_id(idx: usize) -> NodeId {
+    NodeId(NODE_ID_SETTINGS_SSH_HOST_OFFSET + idx as u64)
+}
+
 // ===== NodeId 逆引き（Step 2-4）=====
 
 /// `NodeId` の種別（Action 応答のディスパッチに使用）。
@@ -527,6 +541,9 @@ pub enum NodeIdKind {
     PaneInputBuffer,
     /// Phase 5-11-7: SettingsPanel Profiles カテゴリの動的項目（`idx` は `SettingsPanel.profiles` のインデックス）
     SettingsProfileItem { idx: usize },
+    /// Phase 5-11-8 Step 8-1: SettingsPanel Ssh カテゴリのホスト項目
+    /// （`idx` は `SettingsPanel.ssh_hosts` のインデックス）
+    SettingsSshHostItem { idx: usize },
     /// 未知 / 範囲外の NodeId
     Unknown,
 }
@@ -553,7 +570,9 @@ pub enum NodeIdKind {
 /// | 400M..500M | `ContextItem { idx: id - 400M }` |
 /// | 500M..600M | `QuickSelectItem { idx: id - 500M }` |
 /// | 600M..700M | `SettingsProfileItem { idx: id - 600M }`（Phase 5-11-7） |
-/// | 700M..1G | 予約（将来の SettingsField 動的展開用） |
+/// | 700M..800M | 予約（将来の SettingsField 動的展開用） |
+/// | 800M..900M | `SettingsSshHostItem { idx: id - 800M }`（Phase 5-11-8 Step 8-1） |
+/// | 900M..1G | 予約（Keybindings 動的展開用、Phase 5-11-8 Step 8-4） |
 /// | 1G..1G+u32::MAX | `Tab { pane_id: id - 1G }` |
 /// | 10G..10G+u32::MAX | `Pane { pane_id: id - 10G }` |
 /// | 20G..~4.3T | `PaneRow` / `PaneScrollbackRow`（Sprint 5-11-3 / 5-11-4） |
@@ -637,6 +656,14 @@ fn decode_dynamic(raw: u64) -> NodeIdKind {
     {
         return NodeIdKind::SettingsProfileItem {
             idx: (raw - NODE_ID_SETTINGS_PROFILE_OFFSET) as usize,
+        };
+    }
+    // Phase 5-11-8 Step 8-1: SettingsPanel Ssh ホスト項目範囲: [800M, 900M)
+    if (NODE_ID_SETTINGS_SSH_HOST_OFFSET..NODE_ID_SETTINGS_SSH_HOST_OFFSET + DYN_RANGE)
+        .contains(&raw)
+    {
+        return NodeIdKind::SettingsSshHostItem {
+            idx: (raw - NODE_ID_SETTINGS_SSH_HOST_OFFSET) as usize,
         };
     }
     // タブ範囲: [1e9, 1e9 + u32::MAX] = [1e9, 1e9 + ~4.29e9] ≈ [1e9, 5.3e9]
@@ -1514,13 +1541,40 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
             }
         }
         SettingsCategory::Ssh => {
-            // Phase 5-11-7: SSH ホストは nexterm.toml 経由のため、設定パネル内では
-            // 編集できない。SR には案内文として description で公開する。
-            content_description = Some(
-                "SSH ホストは nexterm.toml の [[hosts]] セクションで管理します。\
-                 設定パネル内では編集できません"
-                    .to_string(),
-            );
+            // Phase 5-11-8 Step 8-1: SSH ホスト一覧を ListBox + ListBoxOption で公開する。
+            // 各 SshHostEntry は `settings_ssh_host_item_id(idx)` で識別し、
+            // Click / Focus で `selected_host_index` を更新する（read-only、編集は Step 8-2 以降）。
+            if panel.ssh_hosts.is_empty() {
+                content_description = Some(
+                    "SSH ホストが登録されていません。\
+                     nexterm.toml の [[hosts]] セクションに追加してください"
+                        .to_string(),
+                );
+            } else {
+                let item_ids: Vec<NodeId> = (0..panel.ssh_hosts.len())
+                    .map(settings_ssh_host_item_id)
+                    .collect();
+                for (idx, host) in panel.ssh_hosts.iter().enumerate() {
+                    let mut item = Node::new(Role::ListBoxOption);
+                    item.set_label(host.label());
+                    // description には認証方式を補足
+                    if !host.auth_type.is_empty() {
+                        item.set_description(format!("認証方式: {}", host.auth_type));
+                    }
+                    if idx == panel.selected_host_index {
+                        item.set_selected(true);
+                    }
+                    nodes.push((settings_ssh_host_item_id(idx), item));
+                }
+                for id in &item_ids {
+                    content_children.push(*id);
+                }
+                content_description = Some(format!(
+                    "SSH ホスト一覧（{} 件）。↑↓ で選択。編集は nexterm.toml の \
+                     [[hosts]] セクションで行います（Step 8-2 で対話編集を追加予定）",
+                    panel.ssh_hosts.len()
+                ));
+            }
         }
         SettingsCategory::Keybindings => {
             // Phase 5-11-7: キーバインドも nexterm.toml 経由のため、設定パネル内では
@@ -1559,6 +1613,9 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
     } else if matches!(panel.category, SettingsCategory::Profiles) && !panel.profiles.is_empty() {
         // Phase 5-11-7: Profiles カテゴリでは selected_profile のノードへフォーカス
         settings_profile_item_id(panel.selected_profile.min(panel.profiles.len() - 1))
+    } else if matches!(panel.category, SettingsCategory::Ssh) && !panel.ssh_hosts.is_empty() {
+        // Phase 5-11-8 Step 8-1: Ssh カテゴリでは selected_host_index のノードへフォーカス
+        settings_ssh_host_item_id(panel.selected_host_index.min(panel.ssh_hosts.len() - 1))
     } else {
         settings_tab_id_at(current_idx)
     };
@@ -1767,6 +1824,17 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
         for prof in &p.profiles {
             prof.name.hash(&mut h);
             prof.icon.hash(&mut h);
+        }
+        // Phase 5-11-8 Step 8-1: Ssh カテゴリ用に selected_host_index + ssh_hosts の要素数 +
+        // 各 SshHostEntry の表示ラベルに影響するフィールドを反映する。
+        p.selected_host_index.hash(&mut h);
+        p.ssh_hosts.len().hash(&mut h);
+        for host in &p.ssh_hosts {
+            host.name.hash(&mut h);
+            host.host.hash(&mut h);
+            host.port.hash(&mut h);
+            host.username.hash(&mut h);
+            host.auth_type.hash(&mut h);
         }
     }
 
@@ -2004,6 +2072,16 @@ pub fn dispatch_settings_action(
             if *idx < panel.profiles.len() =>
         {
             panel.selected_profile = *idx;
+            true
+        }
+
+        // ===== Phase 5-11-8 Step 8-1 - Ssh ホスト項目 (ListBoxOption) =====
+        // read-only。Click / Focus どちらも selected_host_index を更新するのみ。
+        // 編集 / 接続発火は Step 8-2 / 8-3 で追加する。
+        (Action::Click | Action::Focus, NodeIdKind::SettingsSshHostItem { idx })
+            if *idx < panel.ssh_hosts.len() =>
+        {
+            panel.selected_host_index = *idx;
             true
         }
 
@@ -4649,5 +4727,291 @@ mod tests {
         }];
         let h1 = compute_tree_state_hash(&state);
         assert_ne!(h0, h1, "profiles 追加でハッシュが変化");
+    }
+
+    // ===== Phase 5-11-8 Step 8-1: SSH ホスト ListBox =====
+
+    /// SshHostEntry::label の整形ルール
+    #[test]
+    fn ssh_host_entry_label_format() {
+        use crate::settings_panel::SshHostEntry;
+
+        // 通常: name (user@host:port)
+        let h = SshHostEntry {
+            name: "myhost".to_string(),
+            host: "example.com".to_string(),
+            port: 2222,
+            username: "alice".to_string(),
+            auth_type: "key".to_string(),
+        };
+        assert_eq!(h.label(), "myhost (alice@example.com:2222)");
+
+        // port = 22 のときは省略
+        let h22 = SshHostEntry {
+            port: 22,
+            ..h.clone()
+        };
+        assert_eq!(h22.label(), "myhost (alice@example.com)");
+
+        // name 空のときは endpoint のみ
+        let h_noname = SshHostEntry {
+            name: String::new(),
+            ..h.clone()
+        };
+        assert_eq!(h_noname.label(), "alice@example.com:2222");
+
+        // username 空のときは host のみ
+        let h_nouser = SshHostEntry {
+            username: String::new(),
+            ..h.clone()
+        };
+        assert_eq!(h_nouser.label(), "myhost (example.com:2222)");
+    }
+
+    /// SettingsSshHostItem の NodeId roundtrip
+    #[test]
+    fn settings_ssh_host_item_id_roundtrip() {
+        for idx in [0, 1, 50, 99_999] {
+            let id = settings_ssh_host_item_id(idx);
+            let decoded = decode_node_id(id);
+            assert_eq!(
+                decoded,
+                NodeIdKind::SettingsSshHostItem { idx },
+                "settings_ssh_host_item_id({}) の roundtrip",
+                idx
+            );
+        }
+    }
+
+    /// SettingsSshHostItem オフセットが Profiles / Tab 範囲と衝突しないこと
+    #[test]
+    fn settings_ssh_host_offset_does_not_overlap() {
+        const _: () = assert!(
+            NODE_ID_SETTINGS_SSH_HOST_OFFSET > NODE_ID_SETTINGS_PROFILE_OFFSET + 100_000_000,
+            "Ssh ホスト範囲 [800M, 900M) は Profiles 範囲 [600M, 700M) と衝突しない"
+        );
+        const _: () = assert!(
+            NODE_ID_SETTINGS_SSH_HOST_OFFSET + 100_000_000 <= NODE_ID_TAB_OFFSET,
+            "Ssh ホスト範囲 [800M, 900M) は Tab 範囲 [1G, ...) と衝突しない"
+        );
+    }
+
+    /// 700M..800M の予約範囲 / 900M..1G の予約範囲は Unknown のまま
+    #[test]
+    fn settings_ssh_host_offset_reserved_ranges_are_unknown() {
+        assert_eq!(decode_node_id(NodeId(700_000_000)), NodeIdKind::Unknown);
+        assert_eq!(decode_node_id(NodeId(799_999_999)), NodeIdKind::Unknown);
+        assert_eq!(decode_node_id(NodeId(900_000_000)), NodeIdKind::Unknown);
+        assert_eq!(decode_node_id(NodeId(999_999_999)), NodeIdKind::Unknown);
+    }
+
+    /// Ssh カテゴリが空のとき: 「登録されていません」を案内する
+    #[test]
+    fn build_settings_panel_ssh_empty_has_informative_description() {
+        use crate::settings_panel::SettingsCategory;
+        let mut panel = SettingsPanel::default();
+        panel.category = SettingsCategory::Ssh;
+        panel.ssh_hosts = vec![];
+
+        let (nodes, _focus) = build_settings_panel_nodes(&panel);
+        let content = nodes
+            .iter()
+            .find(|(id, _)| *id == SETTINGS_CONTENT_ID)
+            .unwrap();
+        let desc = content.1.description().unwrap_or("");
+        assert!(
+            desc.contains("登録されていません"),
+            "空案内文が含まれる: {}",
+            desc
+        );
+        assert!(desc.contains("[[hosts]]"), "TOML 案内が含まれる: {}", desc);
+    }
+
+    /// Ssh カテゴリにホストがあるとき: ListBoxOption が公開される
+    #[test]
+    fn build_settings_panel_ssh_exposes_listbox_options() {
+        use crate::settings_panel::{SettingsCategory, SshHostEntry};
+        let mut panel = SettingsPanel::default();
+        panel.category = SettingsCategory::Ssh;
+        panel.ssh_hosts = vec![
+            SshHostEntry {
+                name: "prod".to_string(),
+                host: "prod.example.com".to_string(),
+                port: 22,
+                username: "deploy".to_string(),
+                auth_type: "key".to_string(),
+            },
+            SshHostEntry {
+                name: "staging".to_string(),
+                host: "stg.example.com".to_string(),
+                port: 2222,
+                username: "alice".to_string(),
+                auth_type: "agent".to_string(),
+            },
+        ];
+        panel.selected_host_index = 1;
+
+        let (nodes, focus) = build_settings_panel_nodes(&panel);
+
+        // 各 ListBoxOption が公開される
+        let opt0 = nodes
+            .iter()
+            .find(|(id, _)| *id == settings_ssh_host_item_id(0))
+            .unwrap();
+        assert_eq!(opt0.1.role(), Role::ListBoxOption);
+        assert!(opt0.1.label().unwrap_or("").contains("prod"));
+        // description に認証方式が含まれる
+        assert!(
+            opt0.1.description().unwrap_or("").contains("key"),
+            "認証方式が description に含まれる"
+        );
+        assert_eq!(opt0.1.is_selected(), None);
+
+        let opt1 = nodes
+            .iter()
+            .find(|(id, _)| *id == settings_ssh_host_item_id(1))
+            .unwrap();
+        assert_eq!(opt1.1.role(), Role::ListBoxOption);
+        assert!(opt1.1.label().unwrap_or("").contains("staging"));
+        assert!(opt1.1.label().unwrap_or("").contains(":2222"));
+        // selected_host_index = 1 なのでこちらが選択中
+        assert_eq!(opt1.1.is_selected(), Some(true));
+
+        // フォーカスは選択中のホスト項目へ
+        assert_eq!(focus, settings_ssh_host_item_id(1));
+
+        // SETTINGS_CONTENT に件数と TOML 編集案内が含まれる
+        let content = nodes
+            .iter()
+            .find(|(id, _)| *id == SETTINGS_CONTENT_ID)
+            .unwrap();
+        let desc = content.1.description().unwrap_or("");
+        assert!(desc.contains("2 件"), "件数が含まれる: {}", desc);
+        assert!(desc.contains("[[hosts]]"), "TOML 案内が含まれる: {}", desc);
+    }
+
+    /// dispatch_settings_action: SettingsSshHostItem Click で selected_host_index が更新される
+    #[test]
+    fn dispatch_settings_ssh_host_item_click() {
+        use crate::settings_panel::{SettingsCategory, SshHostEntry};
+        let mut panel = SettingsPanel::default();
+        panel.category = SettingsCategory::Ssh;
+        panel.ssh_hosts = vec![
+            SshHostEntry {
+                name: "a".to_string(),
+                host: "a.example.com".to_string(),
+                port: 22,
+                username: "u".to_string(),
+                auth_type: "key".to_string(),
+            },
+            SshHostEntry {
+                name: "b".to_string(),
+                host: "b.example.com".to_string(),
+                port: 22,
+                username: "u".to_string(),
+                auth_type: "key".to_string(),
+            },
+        ];
+        panel.selected_host_index = 0;
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            accesskit::Action::Click,
+            &NodeIdKind::SettingsSshHostItem { idx: 1 },
+            None,
+        );
+        assert!(handled);
+        assert_eq!(panel.selected_host_index, 1);
+    }
+
+    /// dispatch_settings_action: SettingsSshHostItem Focus でも selected_host_index が更新される
+    #[test]
+    fn dispatch_settings_ssh_host_item_focus() {
+        use crate::settings_panel::{SettingsCategory, SshHostEntry};
+        let mut panel = SettingsPanel::default();
+        panel.category = SettingsCategory::Ssh;
+        panel.ssh_hosts = vec![SshHostEntry {
+            name: "x".to_string(),
+            host: "x.example.com".to_string(),
+            port: 22,
+            username: "u".to_string(),
+            auth_type: "agent".to_string(),
+        }];
+        panel.selected_host_index = 0;
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            accesskit::Action::Focus,
+            &NodeIdKind::SettingsSshHostItem { idx: 0 },
+            None,
+        );
+        assert!(handled);
+        assert_eq!(panel.selected_host_index, 0);
+    }
+
+    /// dispatch_settings_action: 範囲外の idx は no-op で false を返す
+    #[test]
+    fn dispatch_settings_ssh_host_item_out_of_range() {
+        let mut panel = SettingsPanel::default();
+        panel.ssh_hosts = vec![];
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            accesskit::Action::Click,
+            &NodeIdKind::SettingsSshHostItem { idx: 5 },
+            None,
+        );
+        assert!(!handled);
+        assert_eq!(panel.selected_host_index, 0);
+    }
+
+    /// tree_state_hash が selected_host_index 変更で変化すること
+    #[test]
+    fn tree_state_hash_detects_selected_host_index_change() {
+        use crate::settings_panel::SshHostEntry;
+        let mut state = ClientState::new(80, 24, 1000);
+        state.settings_panel.is_open = true;
+        state.settings_panel.ssh_hosts = vec![
+            SshHostEntry {
+                name: "a".to_string(),
+                host: "a.example.com".to_string(),
+                port: 22,
+                username: "u".to_string(),
+                auth_type: "key".to_string(),
+            },
+            SshHostEntry {
+                name: "b".to_string(),
+                host: "b.example.com".to_string(),
+                port: 22,
+                username: "u".to_string(),
+                auth_type: "key".to_string(),
+            },
+        ];
+        state.settings_panel.selected_host_index = 0;
+        let h0 = compute_tree_state_hash(&state);
+
+        state.settings_panel.selected_host_index = 1;
+        let h1 = compute_tree_state_hash(&state);
+        assert_ne!(h0, h1, "selected_host_index 変更でハッシュが変化");
+    }
+
+    /// tree_state_hash が ssh_hosts リスト変更で変化すること
+    #[test]
+    fn tree_state_hash_detects_ssh_hosts_change() {
+        use crate::settings_panel::SshHostEntry;
+        let mut state = ClientState::new(80, 24, 1000);
+        state.settings_panel.is_open = true;
+        state.settings_panel.ssh_hosts = vec![];
+        let h0 = compute_tree_state_hash(&state);
+
+        state.settings_panel.ssh_hosts = vec![SshHostEntry {
+            name: "added".to_string(),
+            host: "new.example.com".to_string(),
+            port: 22,
+            username: "u".to_string(),
+            auth_type: "key".to_string(),
+        }];
+        let h1 = compute_tree_state_hash(&state);
+        assert_ne!(h0, h1, "ssh_hosts 追加でハッシュが変化");
     }
 }
