@@ -197,6 +197,10 @@ pub struct SettingsPanel {
     /// Phase 5-11-6 #6: Window カテゴリ内のフォーカス中フィールド。
     /// 0=opacity / 1=cursor_style / 2=padding_x / 3=padding_y / 4=present_mode
     pub window_field_focus: u8,
+    /// Phase 5-11-8 Step 8-2: Ssh カテゴリ内のフォーカス中フィールド。
+    /// 0=ListBox（ホスト選択） / 1=name / 2=host / 3=port / 4=username / 5=auth_type
+    /// 範囲: 0..=5。AccessKit Focus / 上下キーで更新する。
+    pub ssh_field_focus: u8,
 }
 
 impl Default for SettingsPanel {
@@ -255,6 +259,7 @@ impl SettingsPanel {
             selected_profile: 0,
             ssh_hosts,
             selected_host_index: 0,
+            ssh_field_focus: 0,
             startup_session: "main".to_string(),
             tab_rename_editing: None,
             tab_rename_text: String::new(),
@@ -665,6 +670,92 @@ impl SettingsPanel {
         self.dirty = true;
     }
 
+    // ===== Phase 5-11-8 Step 8-2: SSH ホストフィールド編集 =====
+    //
+    // 選択中ホスト（`ssh_hosts[selected_host_index]`）の 5 フィールドを編集する。
+    // AccessKit `Action::SetValue` 経路（TextInput / SpinButton）と `Action::Click`
+    // 経路（ComboBox サイクル）の両方をサポートする。すべての変更は `dirty = true`。
+
+    /// 認証方式の選択肢（auth_type の値）。`HostConfig` の serde 仕様に揃える。
+    pub const SSH_AUTH_TYPES: &'static [&'static str] = &["password", "key", "agent"];
+
+    /// 選択中ホストが存在すれば可変参照を返す。
+    fn selected_ssh_host_mut(&mut self) -> Option<&mut SshHostEntry> {
+        self.ssh_hosts.get_mut(self.selected_host_index)
+    }
+
+    /// name フィールドを更新する（TextInput SetValue 経路）。
+    pub fn set_ssh_host_name(&mut self, text: String) {
+        if let Some(host) = self.selected_ssh_host_mut() {
+            host.name = text;
+            self.dirty = true;
+        }
+    }
+
+    /// host フィールドを更新する（TextInput SetValue 経路）。
+    pub fn set_ssh_host_host(&mut self, text: String) {
+        if let Some(host) = self.selected_ssh_host_mut() {
+            host.host = text;
+            self.dirty = true;
+        }
+    }
+
+    /// username フィールドを更新する（TextInput SetValue 経路）。
+    pub fn set_ssh_host_username(&mut self, text: String) {
+        if let Some(host) = self.selected_ssh_host_mut() {
+            host.username = text;
+            self.dirty = true;
+        }
+    }
+
+    /// port フィールドを更新する（SpinButton SetValue 経路）。
+    /// f64 を u16 にクランプ（1〜65535）。
+    pub fn set_ssh_host_port_value(&mut self, v: f64) {
+        let clamped = v.round().clamp(1.0, 65535.0) as u16;
+        if let Some(host) = self.selected_ssh_host_mut() {
+            host.port = clamped;
+            self.dirty = true;
+        }
+    }
+
+    /// port を +1 する（SpinButton Increment 経路、65535 で上限クランプ）。
+    /// `u16::saturating_add` が 65535 で自動的に飽和するため明示的な `.min()` は不要。
+    pub fn increase_ssh_host_port(&mut self) {
+        if let Some(host) = self.selected_ssh_host_mut() {
+            host.port = host.port.saturating_add(1);
+            self.dirty = true;
+        }
+    }
+
+    /// port を -1 する（SpinButton Decrement 経路、1 で下限クランプ）。
+    pub fn decrease_ssh_host_port(&mut self) {
+        if let Some(host) = self.selected_ssh_host_mut() {
+            host.port = host.port.saturating_sub(1).max(1);
+            self.dirty = true;
+        }
+    }
+
+    /// auth_type を次の値に切り替える（ComboBox Click / Increment 経路）。
+    /// `SSH_AUTH_TYPES` を循環する。未知の値が入っていた場合は先頭にリセット。
+    pub fn next_ssh_auth_type(&mut self) {
+        let types = Self::SSH_AUTH_TYPES;
+        if let Some(host) = self.selected_ssh_host_mut() {
+            let current = types.iter().position(|&t| t == host.auth_type).unwrap_or(0);
+            host.auth_type = types[(current + 1) % types.len()].to_string();
+            self.dirty = true;
+        }
+    }
+
+    /// auth_type を前の値に切り替える（ComboBox Decrement 経路）。
+    pub fn prev_ssh_auth_type(&mut self) {
+        let types = Self::SSH_AUTH_TYPES;
+        if let Some(host) = self.selected_ssh_host_mut() {
+            let current = types.iter().position(|&t| t == host.auth_type).unwrap_or(0);
+            host.auth_type = types[(current + types.len() - 1) % types.len()].to_string();
+            self.dirty = true;
+        }
+    }
+
     /// タブ名変更を開始する
     pub fn begin_tab_rename(&mut self, window_id: u32, current_name: &str) {
         self.tab_rename_editing = Some(window_id);
@@ -734,6 +825,14 @@ impl SettingsPanel {
         // auto_check_update
         doc["auto_check_update"] = toml_edit::value(self.auto_check_update);
 
+        // Phase 5-11-8 Step 8-2: [[hosts]] への in-place 書き戻し。
+        //
+        // 既存の `ArrayOfTables` がある場合はインデックス単位でフィールドだけ更新し、
+        // `key_path` / `forward_local` / `proxy_jump` 等の未管理フィールドを保持する。
+        // 配列長が `self.ssh_hosts` と一致しない（Step 8-3 の Add/Delete 後）場合は
+        // 末尾の差分のみ調整する。
+        write_ssh_hosts_back(&mut doc, &self.ssh_hosts);
+
         // 親ディレクトリを作成する
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -741,6 +840,58 @@ impl SettingsPanel {
 
         std::fs::write(&path, doc.to_string())?;
         Ok(())
+    }
+}
+
+/// `[[hosts]]` 配列を in-place 更新する（Phase 5-11-8 Step 8-2）。
+///
+/// 既存の `ArrayOfTables` を保持し、SettingsPanel が管理する 5 フィールド
+/// (name / host / port / username / auth_type) のみを上書きする。
+/// `key_path` / `forward_local` / `proxy_jump` / `tags` 等の未管理フィールドは
+/// そのままの形を保持する（ユーザーが TOML で手動設定した値を失わない）。
+///
+/// 配列長の調整:
+/// - `ssh_hosts.len() > arr.len()`: 末尾に新規 Table を追加（Step 8-3 で Add から呼ばれる）
+/// - `ssh_hosts.len() < arr.len()`: 末尾の Table を削除（Step 8-3 で Delete から呼ばれる）
+/// - 等しい: in-place 更新のみ
+pub(crate) fn write_ssh_hosts_back(doc: &mut toml_edit::DocumentMut, hosts: &[SshHostEntry]) {
+    // 既存の hosts エントリを ArrayOfTables として取得（なければ作る）。
+    let entry = doc
+        .entry("hosts")
+        .or_insert_with(|| toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()));
+
+    // 既存 Item が ArrayOfTables でない（手動編集で壊れた）場合は再作成。
+    if !entry.is_array_of_tables() {
+        *entry = toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new());
+    }
+
+    let Some(arr) = entry.as_array_of_tables_mut() else {
+        return;
+    };
+
+    // インデックス単位で 5 フィールドを上書き。
+    for (i, host) in hosts.iter().enumerate() {
+        if i < arr.len() {
+            let t = arr.get_mut(i).expect("既に長さチェック済み");
+            t.insert("name", toml_edit::value(host.name.as_str()));
+            t.insert("host", toml_edit::value(host.host.as_str()));
+            t.insert("port", toml_edit::value(host.port as i64));
+            t.insert("username", toml_edit::value(host.username.as_str()));
+            t.insert("auth_type", toml_edit::value(host.auth_type.as_str()));
+        } else {
+            // 新規エントリ追加（Step 8-3 で発火）
+            let mut t = toml_edit::Table::new();
+            t.insert("name", toml_edit::value(host.name.as_str()));
+            t.insert("host", toml_edit::value(host.host.as_str()));
+            t.insert("port", toml_edit::value(host.port as i64));
+            t.insert("username", toml_edit::value(host.username.as_str()));
+            t.insert("auth_type", toml_edit::value(host.auth_type.as_str()));
+            arr.push(t);
+        }
+    }
+    // 余剰エントリを末尾から削除（Step 8-3 の Delete で発火）
+    while arr.len() > hosts.len() {
+        arr.remove(arr.len() - 1);
     }
 }
 

@@ -151,7 +151,22 @@ pub const SETTINGS_PADDING_Y_ID: NodeId = NodeId(38);
 /// Phase 5-11-6 #6 - Window カテゴリ: GPU プレゼンテーションモード（fifo / mailbox / auto）
 pub const SETTINGS_PRESENT_MODE_ID: NodeId = NodeId(39);
 
-// 40〜99 は将来のフィールド（SSH / Keybindings / Profiles など）用に予約
+/// Phase 5-11-8 Step 8-2 - SSH カテゴリ: 選択ホストの name フィールド（TextInput）
+pub const SETTINGS_SSH_FIELD_NAME_ID: NodeId = NodeId(40);
+
+/// Phase 5-11-8 Step 8-2 - SSH カテゴリ: 選択ホストの host フィールド（TextInput）
+pub const SETTINGS_SSH_FIELD_HOST_ID: NodeId = NodeId(41);
+
+/// Phase 5-11-8 Step 8-2 - SSH カテゴリ: 選択ホストの port フィールド（SpinButton 1〜65535）
+pub const SETTINGS_SSH_FIELD_PORT_ID: NodeId = NodeId(42);
+
+/// Phase 5-11-8 Step 8-2 - SSH カテゴリ: 選択ホストの username フィールド（TextInput）
+pub const SETTINGS_SSH_FIELD_USERNAME_ID: NodeId = NodeId(43);
+
+/// Phase 5-11-8 Step 8-2 - SSH カテゴリ: 選択ホストの auth_type フィールド（ComboBox）
+pub const SETTINGS_SSH_FIELD_AUTH_TYPE_ID: NodeId = NodeId(44);
+
+// 45〜99 は将来のフィールド（Keybindings 編集など）用に予約
 
 /// 設定パネルカテゴリタブのベース NodeId。
 ///
@@ -544,6 +559,16 @@ pub enum NodeIdKind {
     /// Phase 5-11-8 Step 8-1: SettingsPanel Ssh カテゴリのホスト項目
     /// （`idx` は `SettingsPanel.ssh_hosts` のインデックス）
     SettingsSshHostItem { idx: usize },
+    /// Phase 5-11-8 Step 8-2: 選択ホストの name フィールド（TextInput）
+    SettingsSshFieldName,
+    /// Phase 5-11-8 Step 8-2: 選択ホストの host フィールド（TextInput）
+    SettingsSshFieldHost,
+    /// Phase 5-11-8 Step 8-2: 選択ホストの port フィールド（SpinButton 1〜65535）
+    SettingsSshFieldPort,
+    /// Phase 5-11-8 Step 8-2: 選択ホストの username フィールド（TextInput）
+    SettingsSshFieldUsername,
+    /// Phase 5-11-8 Step 8-2: 選択ホストの auth_type フィールド（ComboBox password/key/agent）
+    SettingsSshFieldAuthType,
     /// 未知 / 範囲外の NodeId
     Unknown,
 }
@@ -563,7 +588,8 @@ pub enum NodeIdKind {
 /// | 28〜29 | 予約 |
 /// | 30〜35 | 設定フィールド（FontFamily / FontSize / ThemeScheme / WindowOpacity / StartupLanguage / StartupAutoUpdate） |
 /// | 36〜39 | 設定フィールド Phase 5-11-6 #6（CursorStyle / PaddingX / PaddingY / PresentMode） |
-/// | 40〜99 | 予約 |
+/// | 40〜44 | 設定フィールド Phase 5-11-8 Step 8-2（SshFieldName / Host / Port / Username / AuthType） |
+/// | 45〜99 | 予約 |
 /// | 100M..200M | `PaletteItem { idx: id - 100M }` |
 /// | 200M..300M | `HostItem { idx: id - 200M }` |
 /// | 300M..400M | `MacroItem { idx: id - 300M }` |
@@ -616,6 +642,12 @@ pub fn decode_node_id(id: NodeId) -> NodeIdKind {
         37 => NodeIdKind::SettingsPaddingX,
         38 => NodeIdKind::SettingsPaddingY,
         39 => NodeIdKind::SettingsPresentMode,
+        // Phase 5-11-8 Step 8-2: SSH カテゴリのホストフィールド 5 個
+        40 => NodeIdKind::SettingsSshFieldName,
+        41 => NodeIdKind::SettingsSshFieldHost,
+        42 => NodeIdKind::SettingsSshFieldPort,
+        43 => NodeIdKind::SettingsSshFieldUsername,
+        44 => NodeIdKind::SettingsSshFieldAuthType,
         _ => decode_dynamic(raw),
     }
 }
@@ -1542,8 +1574,8 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
         }
         SettingsCategory::Ssh => {
             // Phase 5-11-8 Step 8-1: SSH ホスト一覧を ListBox + ListBoxOption で公開する。
-            // 各 SshHostEntry は `settings_ssh_host_item_id(idx)` で識別し、
-            // Click / Focus で `selected_host_index` を更新する（read-only、編集は Step 8-2 以降）。
+            // Phase 5-11-8 Step 8-2: 選択ホストの 5 フィールド (name / host / port / username
+            // / auth_type) を Role::TextInput / SpinButton / ComboBox で公開する。
             if panel.ssh_hosts.is_empty() {
                 content_description = Some(
                     "SSH ホストが登録されていません。\
@@ -1551,6 +1583,7 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
                         .to_string(),
                 );
             } else {
+                // ===== ホスト一覧 (Step 8-1) =====
                 let item_ids: Vec<NodeId> = (0..panel.ssh_hosts.len())
                     .map(settings_ssh_host_item_id)
                     .collect();
@@ -1569,10 +1602,61 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
                 for id in &item_ids {
                     content_children.push(*id);
                 }
+
+                // ===== 選択ホストのフィールド編集 (Step 8-2) =====
+                // インデックスを clamp（万一範囲外でも panic しない）
+                let sel = panel.selected_host_index.min(panel.ssh_hosts.len() - 1);
+                let host = &panel.ssh_hosts[sel];
+
+                // name (TextInput)
+                let mut name_node = Node::new(Role::TextInput);
+                name_node.set_label("ホスト名 (name)");
+                name_node.set_value(host.name.as_str());
+                name_node.set_description(
+                    "SR の SetValue で編集できます。Enter キーで nexterm.toml に保存",
+                );
+                nodes.push((SETTINGS_SSH_FIELD_NAME_ID, name_node));
+                content_children.push(SETTINGS_SSH_FIELD_NAME_ID);
+
+                // host (TextInput)
+                let mut host_node = Node::new(Role::TextInput);
+                host_node.set_label("接続先ホスト (host)");
+                host_node.set_value(host.host.as_str());
+                host_node.set_description("IP アドレスまたは FQDN。SR の SetValue で編集");
+                nodes.push((SETTINGS_SSH_FIELD_HOST_ID, host_node));
+                content_children.push(SETTINGS_SSH_FIELD_HOST_ID);
+
+                // port (SpinButton)
+                let mut port_node = Node::new(Role::SpinButton);
+                port_node.set_label("ポート (port)");
+                port_node.set_numeric_value(host.port as f64);
+                port_node.set_min_numeric_value(1.0);
+                port_node.set_max_numeric_value(65535.0);
+                port_node.set_numeric_value_step(1.0);
+                port_node.set_description("1〜65535。←/→ で増減");
+                nodes.push((SETTINGS_SSH_FIELD_PORT_ID, port_node));
+                content_children.push(SETTINGS_SSH_FIELD_PORT_ID);
+
+                // username (TextInput)
+                let mut user_node = Node::new(Role::TextInput);
+                user_node.set_label("ユーザー名 (username)");
+                user_node.set_value(host.username.as_str());
+                user_node.set_description("SR の SetValue で編集");
+                nodes.push((SETTINGS_SSH_FIELD_USERNAME_ID, user_node));
+                content_children.push(SETTINGS_SSH_FIELD_USERNAME_ID);
+
+                // auth_type (ComboBox: password / key / agent)
+                let mut auth_node = Node::new(Role::ComboBox);
+                auth_node.set_label("認証方式 (auth_type)");
+                auth_node.set_value(host.auth_type.as_str());
+                auth_node.set_description("←/→ で切替: password / key / agent");
+                nodes.push((SETTINGS_SSH_FIELD_AUTH_TYPE_ID, auth_node));
+                content_children.push(SETTINGS_SSH_FIELD_AUTH_TYPE_ID);
+
                 content_description = Some(format!(
-                    "SSH ホスト一覧（{} 件）。↑↓ で選択。編集は nexterm.toml の \
-                     [[hosts]] セクションで行います（Step 8-2 で対話編集を追加予定）",
-                    panel.ssh_hosts.len()
+                    "SSH ホスト {} 件中 {} 番目を編集中。↑↓ で項目移動、Enter で保存",
+                    panel.ssh_hosts.len(),
+                    sel + 1,
                 ));
             }
         }
@@ -1614,8 +1698,19 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
         // Phase 5-11-7: Profiles カテゴリでは selected_profile のノードへフォーカス
         settings_profile_item_id(panel.selected_profile.min(panel.profiles.len() - 1))
     } else if matches!(panel.category, SettingsCategory::Ssh) && !panel.ssh_hosts.is_empty() {
-        // Phase 5-11-8 Step 8-1: Ssh カテゴリでは selected_host_index のノードへフォーカス
-        settings_ssh_host_item_id(panel.selected_host_index.min(panel.ssh_hosts.len() - 1))
+        // Phase 5-11-8: Ssh カテゴリのフォーカス決定。
+        // ssh_field_focus = 0 → ホストリストの選択中項目
+        // ssh_field_focus = 1..=5 → 各フィールドノード
+        match panel.ssh_field_focus {
+            1 => SETTINGS_SSH_FIELD_NAME_ID,
+            2 => SETTINGS_SSH_FIELD_HOST_ID,
+            3 => SETTINGS_SSH_FIELD_PORT_ID,
+            4 => SETTINGS_SSH_FIELD_USERNAME_ID,
+            5 => SETTINGS_SSH_FIELD_AUTH_TYPE_ID,
+            _ => {
+                settings_ssh_host_item_id(panel.selected_host_index.min(panel.ssh_hosts.len() - 1))
+            }
+        }
     } else {
         settings_tab_id_at(current_idx)
     };
@@ -1825,9 +1920,10 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
             prof.name.hash(&mut h);
             prof.icon.hash(&mut h);
         }
-        // Phase 5-11-8 Step 8-1: Ssh カテゴリ用に selected_host_index + ssh_hosts の要素数 +
-        // 各 SshHostEntry の表示ラベルに影響するフィールドを反映する。
+        // Phase 5-11-8 Step 8-1 / 8-2: Ssh カテゴリ用に selected_host_index + ssh_hosts の
+        // 要素数 + 各 SshHostEntry の表示ラベルに影響するフィールド + ssh_field_focus を反映。
         p.selected_host_index.hash(&mut h);
+        p.ssh_field_focus.hash(&mut h);
         p.ssh_hosts.len().hash(&mut h);
         for host in &p.ssh_hosts {
             host.name.hash(&mut h);
@@ -2076,12 +2172,100 @@ pub fn dispatch_settings_action(
         }
 
         // ===== Phase 5-11-8 Step 8-1 - Ssh ホスト項目 (ListBoxOption) =====
-        // read-only。Click / Focus どちらも selected_host_index を更新するのみ。
-        // 編集 / 接続発火は Step 8-2 / 8-3 で追加する。
+        // Click / Focus どちらも selected_host_index を更新する。
+        // ホスト変更時は ssh_field_focus を 0（リスト）に戻して
+        // フィールドノードの value 表示と整合させる。
         (Action::Click | Action::Focus, NodeIdKind::SettingsSshHostItem { idx })
             if *idx < panel.ssh_hosts.len() =>
         {
             panel.selected_host_index = *idx;
+            panel.ssh_field_focus = 0;
+            true
+        }
+
+        // ===== Phase 5-11-8 Step 8-2 - Ssh フィールド: name (TextInput) =====
+        (Action::Focus, NodeIdKind::SettingsSshFieldName) => {
+            panel.ssh_field_focus = 1;
+            true
+        }
+        (Action::SetValue, NodeIdKind::SettingsSshFieldName) => {
+            if let Some(ActionData::Value(s)) = data {
+                panel.set_ssh_host_name(s.into_string());
+                panel.ssh_field_focus = 1;
+                true
+            } else {
+                false
+            }
+        }
+
+        // ===== Phase 5-11-8 Step 8-2 - Ssh フィールド: host (TextInput) =====
+        (Action::Focus, NodeIdKind::SettingsSshFieldHost) => {
+            panel.ssh_field_focus = 2;
+            true
+        }
+        (Action::SetValue, NodeIdKind::SettingsSshFieldHost) => {
+            if let Some(ActionData::Value(s)) = data {
+                panel.set_ssh_host_host(s.into_string());
+                panel.ssh_field_focus = 2;
+                true
+            } else {
+                false
+            }
+        }
+
+        // ===== Phase 5-11-8 Step 8-2 - Ssh フィールド: port (SpinButton) =====
+        (Action::Focus, NodeIdKind::SettingsSshFieldPort) => {
+            panel.ssh_field_focus = 3;
+            true
+        }
+        (Action::SetValue, NodeIdKind::SettingsSshFieldPort) => {
+            if let Some(ActionData::NumericValue(v)) = data {
+                panel.set_ssh_host_port_value(v);
+                panel.ssh_field_focus = 3;
+                true
+            } else {
+                false
+            }
+        }
+        (Action::Increment, NodeIdKind::SettingsSshFieldPort) => {
+            panel.increase_ssh_host_port();
+            panel.ssh_field_focus = 3;
+            true
+        }
+        (Action::Decrement, NodeIdKind::SettingsSshFieldPort) => {
+            panel.decrease_ssh_host_port();
+            panel.ssh_field_focus = 3;
+            true
+        }
+
+        // ===== Phase 5-11-8 Step 8-2 - Ssh フィールド: username (TextInput) =====
+        (Action::Focus, NodeIdKind::SettingsSshFieldUsername) => {
+            panel.ssh_field_focus = 4;
+            true
+        }
+        (Action::SetValue, NodeIdKind::SettingsSshFieldUsername) => {
+            if let Some(ActionData::Value(s)) = data {
+                panel.set_ssh_host_username(s.into_string());
+                panel.ssh_field_focus = 4;
+                true
+            } else {
+                false
+            }
+        }
+
+        // ===== Phase 5-11-8 Step 8-2 - Ssh フィールド: auth_type (ComboBox) =====
+        (Action::Focus, NodeIdKind::SettingsSshFieldAuthType) => {
+            panel.ssh_field_focus = 5;
+            true
+        }
+        (Action::Click | Action::Increment, NodeIdKind::SettingsSshFieldAuthType) => {
+            panel.next_ssh_auth_type();
+            panel.ssh_field_focus = 5;
+            true
+        }
+        (Action::Decrement, NodeIdKind::SettingsSshFieldAuthType) => {
+            panel.prev_ssh_auth_type();
+            panel.ssh_field_focus = 5;
             true
         }
 
@@ -2703,11 +2887,12 @@ mod tests {
         assert_eq!(decode_node_id(NodeId(0)), NodeIdKind::Unknown);
         // 17 は SettingsTabList、18〜24 は SettingsTab、25 は SettingsContent、
         // 26 は AlertRegion（Sprint 5-11-5 で割当）、27 は PaneInputBuffer（Phase 5-11-7）、
-        // 30〜35 は設定フィールド（Step 2-2-e'）、36〜39 は Phase 5-11-6 #6 の設定フィールド。
-        // 28〜29, 40〜99 は将来用に予約。
+        // 30〜35 は設定フィールド（Step 2-2-e'）、36〜39 は Phase 5-11-6 #6 の設定フィールド、
+        // 40〜44 は Phase 5-11-8 Step 8-2 の SSH ホストフィールド。
+        // 28〜29, 45〜99 は将来用に予約。
         assert_eq!(decode_node_id(NodeId(28)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(29)), NodeIdKind::Unknown);
-        assert_eq!(decode_node_id(NodeId(40)), NodeIdKind::Unknown);
+        assert_eq!(decode_node_id(NodeId(45)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(99)), NodeIdKind::Unknown);
         // 700M〜999M は将来 SettingsField 動的展開で使う予約範囲（600M〜700M は
         // Phase 5-11-7 で SettingsProfileItem に割当済み）。
@@ -4880,14 +5065,16 @@ mod tests {
         // フォーカスは選択中のホスト項目へ
         assert_eq!(focus, settings_ssh_host_item_id(1));
 
-        // SETTINGS_CONTENT に件数と TOML 編集案内が含まれる
+        // SETTINGS_CONTENT に件数の案内が含まれる
+        // （Step 8-2 で説明文を「編集中」モードに変更したため、Step 8-1 時点の
+        //   「nexterm.toml の [[hosts]] セクションで行います」案内は description には載らない。
+        //   代わりに各フィールドノードに編集方法を記載している）
         let content = nodes
             .iter()
             .find(|(id, _)| *id == SETTINGS_CONTENT_ID)
             .unwrap();
         let desc = content.1.description().unwrap_or("");
         assert!(desc.contains("2 件"), "件数が含まれる: {}", desc);
-        assert!(desc.contains("[[hosts]]"), "TOML 案内が含まれる: {}", desc);
     }
 
     /// dispatch_settings_action: SettingsSshHostItem Click で selected_host_index が更新される
@@ -5013,5 +5200,456 @@ mod tests {
         }];
         let h1 = compute_tree_state_hash(&state);
         assert_ne!(h0, h1, "ssh_hosts 追加でハッシュが変化");
+    }
+
+    // ===== Phase 5-11-8 Step 8-2: SSH ホストフィールド編集 =====
+
+    /// テスト用: 2 ホスト入りの SettingsPanel を作る
+    fn make_ssh_panel_with_2_hosts() -> SettingsPanel {
+        use crate::settings_panel::{SettingsCategory, SshHostEntry};
+        let mut panel = SettingsPanel::default();
+        panel.category = SettingsCategory::Ssh;
+        panel.ssh_hosts = vec![
+            SshHostEntry {
+                name: "prod".to_string(),
+                host: "prod.example.com".to_string(),
+                port: 22,
+                username: "deploy".to_string(),
+                auth_type: "key".to_string(),
+            },
+            SshHostEntry {
+                name: "stg".to_string(),
+                host: "stg.example.com".to_string(),
+                port: 2222,
+                username: "alice".to_string(),
+                auth_type: "password".to_string(),
+            },
+        ];
+        panel.selected_host_index = 0;
+        panel.ssh_field_focus = 0;
+        panel
+    }
+
+    /// SettingsSshField* の NodeId decode
+    #[test]
+    fn settings_ssh_field_node_ids_decode() {
+        assert_eq!(
+            decode_node_id(SETTINGS_SSH_FIELD_NAME_ID),
+            NodeIdKind::SettingsSshFieldName
+        );
+        assert_eq!(
+            decode_node_id(SETTINGS_SSH_FIELD_HOST_ID),
+            NodeIdKind::SettingsSshFieldHost
+        );
+        assert_eq!(
+            decode_node_id(SETTINGS_SSH_FIELD_PORT_ID),
+            NodeIdKind::SettingsSshFieldPort
+        );
+        assert_eq!(
+            decode_node_id(SETTINGS_SSH_FIELD_USERNAME_ID),
+            NodeIdKind::SettingsSshFieldUsername
+        );
+        assert_eq!(
+            decode_node_id(SETTINGS_SSH_FIELD_AUTH_TYPE_ID),
+            NodeIdKind::SettingsSshFieldAuthType
+        );
+        // 45 は予約
+        assert_eq!(decode_node_id(NodeId(45)), NodeIdKind::Unknown);
+    }
+
+    /// build_tree が選択ホストの 5 フィールドを公開する
+    #[test]
+    fn build_settings_panel_ssh_exposes_5_field_nodes() {
+        let panel = make_ssh_panel_with_2_hosts();
+        let (nodes, _focus) = build_settings_panel_nodes(&panel);
+
+        let find = |id: NodeId| {
+            nodes
+                .iter()
+                .find(|(node_id, _)| *node_id == id)
+                .map(|(_, n)| n)
+        };
+
+        // name (TextInput)
+        let n = find(SETTINGS_SSH_FIELD_NAME_ID).expect("name ノードがある");
+        assert_eq!(n.role(), Role::TextInput);
+        assert_eq!(n.value().unwrap_or(""), "prod");
+
+        // host (TextInput)
+        let h = find(SETTINGS_SSH_FIELD_HOST_ID).expect("host ノードがある");
+        assert_eq!(h.role(), Role::TextInput);
+        assert_eq!(h.value().unwrap_or(""), "prod.example.com");
+
+        // port (SpinButton)
+        let p = find(SETTINGS_SSH_FIELD_PORT_ID).expect("port ノードがある");
+        assert_eq!(p.role(), Role::SpinButton);
+        assert_eq!(p.numeric_value(), Some(22.0));
+        assert_eq!(p.min_numeric_value(), Some(1.0));
+        assert_eq!(p.max_numeric_value(), Some(65535.0));
+
+        // username (TextInput)
+        let u = find(SETTINGS_SSH_FIELD_USERNAME_ID).expect("username ノードがある");
+        assert_eq!(u.role(), Role::TextInput);
+        assert_eq!(u.value().unwrap_or(""), "deploy");
+
+        // auth_type (ComboBox)
+        let a = find(SETTINGS_SSH_FIELD_AUTH_TYPE_ID).expect("auth_type ノードがある");
+        assert_eq!(a.role(), Role::ComboBox);
+        assert_eq!(a.value().unwrap_or(""), "key");
+    }
+
+    /// 空ホストリストでは 5 フィールドノードが公開されない
+    #[test]
+    fn build_settings_panel_ssh_no_fields_when_empty() {
+        use crate::settings_panel::SettingsCategory;
+        let mut panel = SettingsPanel::default();
+        panel.category = SettingsCategory::Ssh;
+        panel.ssh_hosts = vec![];
+
+        let (nodes, _focus) = build_settings_panel_nodes(&panel);
+        let has_field = nodes.iter().any(|(id, _)| {
+            *id == SETTINGS_SSH_FIELD_NAME_ID
+                || *id == SETTINGS_SSH_FIELD_HOST_ID
+                || *id == SETTINGS_SSH_FIELD_PORT_ID
+        });
+        assert!(!has_field, "空リスト時はフィールドノードを出さない");
+    }
+
+    /// ssh_field_focus が name のときフォーカスが name ノードへ
+    #[test]
+    fn build_settings_panel_ssh_focus_follows_ssh_field_focus() {
+        let mut panel = make_ssh_panel_with_2_hosts();
+        panel.ssh_field_focus = 1; // name
+        let (_nodes, focus) = build_settings_panel_nodes(&panel);
+        assert_eq!(focus, SETTINGS_SSH_FIELD_NAME_ID);
+
+        panel.ssh_field_focus = 3; // port
+        let (_nodes, focus) = build_settings_panel_nodes(&panel);
+        assert_eq!(focus, SETTINGS_SSH_FIELD_PORT_ID);
+
+        panel.ssh_field_focus = 5; // auth_type
+        let (_nodes, focus) = build_settings_panel_nodes(&panel);
+        assert_eq!(focus, SETTINGS_SSH_FIELD_AUTH_TYPE_ID);
+
+        panel.ssh_field_focus = 0; // back to list
+        let (_nodes, focus) = build_settings_panel_nodes(&panel);
+        assert_eq!(focus, settings_ssh_host_item_id(0));
+    }
+
+    /// dispatch SettingsSshFieldName SetValue で name が更新され dirty=true
+    #[test]
+    fn dispatch_ssh_field_name_set_value() {
+        let mut panel = make_ssh_panel_with_2_hosts();
+        panel.dirty = false;
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            accesskit::Action::SetValue,
+            &NodeIdKind::SettingsSshFieldName,
+            Some(accesskit::ActionData::Value("newname".into())),
+        );
+        assert!(handled);
+        assert_eq!(panel.ssh_hosts[0].name, "newname");
+        assert!(panel.dirty);
+        assert_eq!(panel.ssh_field_focus, 1);
+    }
+
+    /// dispatch SettingsSshFieldHost SetValue で host 更新
+    #[test]
+    fn dispatch_ssh_field_host_set_value() {
+        let mut panel = make_ssh_panel_with_2_hosts();
+        let handled = dispatch_settings_action(
+            &mut panel,
+            accesskit::Action::SetValue,
+            &NodeIdKind::SettingsSshFieldHost,
+            Some(accesskit::ActionData::Value("new.example.com".into())),
+        );
+        assert!(handled);
+        assert_eq!(panel.ssh_hosts[0].host, "new.example.com");
+        assert!(panel.dirty);
+    }
+
+    /// dispatch SettingsSshFieldPort SetValue でクランプ動作
+    #[test]
+    fn dispatch_ssh_field_port_set_value_clamps() {
+        let mut panel = make_ssh_panel_with_2_hosts();
+
+        // 範囲内
+        dispatch_settings_action(
+            &mut panel,
+            accesskit::Action::SetValue,
+            &NodeIdKind::SettingsSshFieldPort,
+            Some(accesskit::ActionData::NumericValue(8022.0)),
+        );
+        assert_eq!(panel.ssh_hosts[0].port, 8022);
+
+        // 上限超過
+        dispatch_settings_action(
+            &mut panel,
+            accesskit::Action::SetValue,
+            &NodeIdKind::SettingsSshFieldPort,
+            Some(accesskit::ActionData::NumericValue(70000.0)),
+        );
+        assert_eq!(panel.ssh_hosts[0].port, 65535);
+
+        // 下限以下
+        dispatch_settings_action(
+            &mut panel,
+            accesskit::Action::SetValue,
+            &NodeIdKind::SettingsSshFieldPort,
+            Some(accesskit::ActionData::NumericValue(0.0)),
+        );
+        assert_eq!(panel.ssh_hosts[0].port, 1);
+    }
+
+    /// dispatch SettingsSshFieldPort Increment / Decrement
+    #[test]
+    fn dispatch_ssh_field_port_increment_decrement() {
+        let mut panel = make_ssh_panel_with_2_hosts();
+        let initial = panel.ssh_hosts[0].port;
+
+        dispatch_settings_action(
+            &mut panel,
+            accesskit::Action::Increment,
+            &NodeIdKind::SettingsSshFieldPort,
+            None,
+        );
+        assert_eq!(panel.ssh_hosts[0].port, initial + 1);
+
+        dispatch_settings_action(
+            &mut panel,
+            accesskit::Action::Decrement,
+            &NodeIdKind::SettingsSshFieldPort,
+            None,
+        );
+        assert_eq!(panel.ssh_hosts[0].port, initial);
+    }
+
+    /// dispatch SettingsSshFieldAuthType Click で次の値に切り替わる
+    #[test]
+    fn dispatch_ssh_field_auth_type_click_cycles() {
+        let mut panel = make_ssh_panel_with_2_hosts();
+        // 初期は "key"
+        assert_eq!(panel.ssh_hosts[0].auth_type, "key");
+
+        dispatch_settings_action(
+            &mut panel,
+            accesskit::Action::Click,
+            &NodeIdKind::SettingsSshFieldAuthType,
+            None,
+        );
+        // key → agent
+        assert_eq!(panel.ssh_hosts[0].auth_type, "agent");
+
+        dispatch_settings_action(
+            &mut panel,
+            accesskit::Action::Click,
+            &NodeIdKind::SettingsSshFieldAuthType,
+            None,
+        );
+        // agent → password (循環)
+        assert_eq!(panel.ssh_hosts[0].auth_type, "password");
+
+        dispatch_settings_action(
+            &mut panel,
+            accesskit::Action::Decrement,
+            &NodeIdKind::SettingsSshFieldAuthType,
+            None,
+        );
+        // password → agent (逆方向)
+        assert_eq!(panel.ssh_hosts[0].auth_type, "agent");
+    }
+
+    /// dispatch Focus 経路で ssh_field_focus が更新される
+    #[test]
+    fn dispatch_ssh_field_focus_updates_focus_tracker() {
+        let mut panel = make_ssh_panel_with_2_hosts();
+        for (kind, expected_focus) in [
+            (NodeIdKind::SettingsSshFieldName, 1),
+            (NodeIdKind::SettingsSshFieldHost, 2),
+            (NodeIdKind::SettingsSshFieldPort, 3),
+            (NodeIdKind::SettingsSshFieldUsername, 4),
+            (NodeIdKind::SettingsSshFieldAuthType, 5),
+        ] {
+            panel.ssh_field_focus = 0;
+            let handled =
+                dispatch_settings_action(&mut panel, accesskit::Action::Focus, &kind, None);
+            assert!(handled);
+            assert_eq!(
+                panel.ssh_field_focus, expected_focus,
+                "kind={:?} の Focus で field_focus={}",
+                kind, expected_focus
+            );
+        }
+    }
+
+    /// ホスト切替で ssh_field_focus が 0 にリセットされる
+    #[test]
+    fn dispatch_ssh_host_item_resets_field_focus() {
+        let mut panel = make_ssh_panel_with_2_hosts();
+        panel.ssh_field_focus = 3; // 何かフィールドにフォーカス中
+
+        dispatch_settings_action(
+            &mut panel,
+            accesskit::Action::Click,
+            &NodeIdKind::SettingsSshHostItem { idx: 1 },
+            None,
+        );
+
+        assert_eq!(panel.selected_host_index, 1);
+        assert_eq!(
+            panel.ssh_field_focus, 0,
+            "ホスト切替でフォーカスをリストへ戻す"
+        );
+    }
+
+    /// 範囲外の SshHostEntry に対する SetValue は no-op で false
+    #[test]
+    fn dispatch_ssh_field_no_op_when_no_host() {
+        use crate::settings_panel::SettingsCategory;
+        let mut panel = SettingsPanel::default();
+        panel.category = SettingsCategory::Ssh;
+        panel.ssh_hosts = vec![]; // 空リスト
+        panel.dirty = false;
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            accesskit::Action::SetValue,
+            &NodeIdKind::SettingsSshFieldName,
+            Some(accesskit::ActionData::Value("oops".into())),
+        );
+        // Focus は更新するが、空リストなので set_ssh_host_name は no-op
+        // → handled=true（Focus tracker は更新したため）だが ssh_hosts は変化なし
+        assert!(handled);
+        assert!(panel.ssh_hosts.is_empty());
+        // 空リストなら set_ssh_host_name が dirty=true を呼ばないので false のまま
+        assert!(!panel.dirty);
+    }
+
+    /// SshHostEntry mutation API: set_ssh_host_port_value のクランプ
+    #[test]
+    fn set_ssh_host_port_value_clamps() {
+        let mut panel = make_ssh_panel_with_2_hosts();
+        panel.set_ssh_host_port_value(8080.4);
+        assert_eq!(panel.ssh_hosts[0].port, 8080);
+
+        panel.set_ssh_host_port_value(-100.0);
+        assert_eq!(panel.ssh_hosts[0].port, 1);
+
+        panel.set_ssh_host_port_value(99999.0);
+        assert_eq!(panel.ssh_hosts[0].port, 65535);
+    }
+
+    /// SSH_AUTH_TYPES 循環: 未知の値からも先頭で復帰
+    #[test]
+    fn next_ssh_auth_type_from_unknown() {
+        let mut panel = make_ssh_panel_with_2_hosts();
+        panel.ssh_hosts[0].auth_type = "unknown".to_string();
+        panel.next_ssh_auth_type();
+        // unknown は position=None なので current=0 (=password) → 次は key
+        assert_eq!(panel.ssh_hosts[0].auth_type, "key");
+    }
+
+    /// write_ssh_hosts_back: in-place 更新で未管理フィールドを保持する
+    #[test]
+    fn write_ssh_hosts_back_preserves_unknown_fields() {
+        use crate::settings_panel::{SshHostEntry, write_ssh_hosts_back};
+
+        // 既存 TOML: name + key_path がある
+        let existing = r#"
+[[hosts]]
+name = "old_name"
+host = "old.example.com"
+port = 22
+username = "olduser"
+auth_type = "key"
+key_path = "/home/me/.ssh/id_rsa"
+forward_local = ["8080:localhost:80"]
+"#;
+        let mut doc: toml_edit::DocumentMut = existing.parse().unwrap();
+        let new_hosts = vec![SshHostEntry {
+            name: "new_name".to_string(),
+            host: "new.example.com".to_string(),
+            port: 2222,
+            username: "newuser".to_string(),
+            auth_type: "agent".to_string(),
+        }];
+        write_ssh_hosts_back(&mut doc, &new_hosts);
+
+        let out = doc.to_string();
+        // 管理フィールドが更新されていること
+        assert!(out.contains("name = \"new_name\""), "name 更新");
+        assert!(out.contains("host = \"new.example.com\""), "host 更新");
+        assert!(out.contains("port = 2222"), "port 更新");
+        assert!(out.contains("username = \"newuser\""), "username 更新");
+        assert!(out.contains("auth_type = \"agent\""), "auth_type 更新");
+        // 未管理フィールドが保持されていること
+        assert!(
+            out.contains("key_path = \"/home/me/.ssh/id_rsa\""),
+            "key_path 保持: {}",
+            out
+        );
+        assert!(out.contains("forward_local"), "forward_local 保持: {}", out);
+    }
+
+    /// write_ssh_hosts_back: [[hosts]] がない既存 TOML でも作成できる
+    #[test]
+    fn write_ssh_hosts_back_creates_new_array() {
+        use crate::settings_panel::{SshHostEntry, write_ssh_hosts_back};
+        let mut doc: toml_edit::DocumentMut = "".parse().unwrap();
+        let hosts = vec![SshHostEntry {
+            name: "first".to_string(),
+            host: "h.example.com".to_string(),
+            port: 22,
+            username: "u".to_string(),
+            auth_type: "key".to_string(),
+        }];
+        write_ssh_hosts_back(&mut doc, &hosts);
+
+        let out = doc.to_string();
+        assert!(out.contains("name = \"first\""), "新規追加: {}", out);
+    }
+
+    /// write_ssh_hosts_back: hosts が空でも既存配列を空にできる（Step 8-3 用）
+    #[test]
+    fn write_ssh_hosts_back_truncates_existing() {
+        use crate::settings_panel::write_ssh_hosts_back;
+        let existing = r#"
+[[hosts]]
+name = "a"
+host = "a"
+port = 22
+username = "u"
+auth_type = "key"
+
+[[hosts]]
+name = "b"
+host = "b"
+port = 22
+username = "u"
+auth_type = "key"
+"#;
+        let mut doc: toml_edit::DocumentMut = existing.parse().unwrap();
+        write_ssh_hosts_back(&mut doc, &[]);
+        // 配列が空になる
+        let arr = doc
+            .get("hosts")
+            .and_then(|i| i.as_array_of_tables())
+            .expect("hosts 配列が残っている");
+        assert_eq!(arr.len(), 0);
+    }
+
+    /// compute_tree_state_hash が ssh_field_focus 変更を検知する
+    #[test]
+    fn tree_state_hash_detects_ssh_field_focus_change() {
+        let mut state = ClientState::new(80, 24, 1000);
+        state.settings_panel = make_ssh_panel_with_2_hosts();
+        state.settings_panel.is_open = true;
+        state.settings_panel.ssh_field_focus = 0;
+        let h0 = compute_tree_state_hash(&state);
+
+        state.settings_panel.ssh_field_focus = 3;
+        let h1 = compute_tree_state_hash(&state);
+        assert_ne!(h0, h1, "ssh_field_focus 変更でハッシュが変化");
     }
 }

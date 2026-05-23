@@ -149,6 +149,11 @@ impl EventHandler {
                 | NodeIdKind::SettingsPresentMode
                 | NodeIdKind::SettingsProfileItem { .. }
                 | NodeIdKind::SettingsSshHostItem { .. }
+                | NodeIdKind::SettingsSshFieldName
+                | NodeIdKind::SettingsSshFieldHost
+                | NodeIdKind::SettingsSshFieldPort
+                | NodeIdKind::SettingsSshFieldUsername
+                | NodeIdKind::SettingsSshFieldAuthType
         ) {
             let handled = dispatch_settings_action(
                 &mut self.app.state.settings_panel,

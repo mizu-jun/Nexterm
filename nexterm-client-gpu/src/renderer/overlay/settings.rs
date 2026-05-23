@@ -1068,11 +1068,83 @@ impl WgpuState {
                             text_idx,
                         );
                     }
-                    // 編集に関する注記（Step 8-2 で対話編集を追加する旨）
-                    let note_y =
+                    // ===== Phase 5-11-8 Step 8-2: 選択ホストのフィールド編集 UI =====
+                    let sel = sp.selected_host_index.min(sp.ssh_hosts.len() - 1);
+                    let host = &sp.ssh_hosts[sel];
+                    let fields_top =
                         content_top + cell_h * (1.5 + sp.ssh_hosts.len() as f32 * 1.2 + 0.6);
+
+                    // セクションタイトル
                     add_string_verts(
-                        "※ 編集は nexterm.toml の [[hosts]] で行います（Step 8-2 で対話編集予定）",
+                        "選択ホストの編集（SR からは SetValue で入力可）:",
+                        content_inner_x,
+                        fields_top,
+                        [0.663, 0.694, 0.839, 1.0],
+                        true,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
+                    );
+
+                    // 5 フィールドのラベル + 現在値
+                    let field_labels: [(&str, String); 5] = [
+                        ("name      :", host.name.clone()),
+                        ("host      :", host.host.clone()),
+                        ("port      :", host.port.to_string()),
+                        ("username  :", host.username.clone()),
+                        ("auth_type :", host.auth_type.clone()),
+                    ];
+                    for (i, (label, value)) in field_labels.iter().enumerate() {
+                        let row_y = fields_top + cell_h * (1.3 + i as f32 * 1.1);
+                        let is_focused = sp.ssh_field_focus == (i + 1) as u8;
+
+                        // フォーカス中行のハイライト
+                        if is_focused {
+                            add_px_rect(
+                                content_inner_x - cell_w * 0.3,
+                                row_y - cell_h * 0.1,
+                                content_w - cell_w * 0.7,
+                                cell_h,
+                                [0.149, 0.188, 0.278, 1.0],
+                                sw,
+                                sh,
+                                bg_verts,
+                                bg_idx,
+                            );
+                        }
+
+                        let fg = if is_focused {
+                            [0.753, 0.808, 0.969, 1.0]
+                        } else {
+                            [0.502, 0.533, 0.647, 1.0]
+                        };
+                        let line = format!("  {} {}", label, value);
+                        add_string_verts(
+                            &line,
+                            content_inner_x,
+                            row_y,
+                            fg,
+                            is_focused,
+                            sw,
+                            sh,
+                            cell_w,
+                            font,
+                            atlas,
+                            &self.queue,
+                            text_verts,
+                            text_idx,
+                        );
+                    }
+
+                    // 注記
+                    let note_y = fields_top + cell_h * (1.3 + 5.0 * 1.1 + 0.4);
+                    add_string_verts(
+                        "※ GUI 編集 (TextInput / Enter 保存 / Add・Delete) は Step 8-3 で追加予定",
                         content_inner_x,
                         note_y,
                         [0.376, 0.408, 0.518, 1.0],
