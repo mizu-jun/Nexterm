@@ -145,6 +145,13 @@ pub struct SettingsPanel {
     /// GPU プレゼンテーションモード（fifo / mailbox / auto）。
     /// 保存時は TOML の `[gpu].present_mode` に書き戻す。
     pub present_mode: nexterm_config::PresentModeConfig,
+    /// Phase 5-11-6 #6: Window カテゴリ内のフォーカス中フィールド。
+    /// 0=opacity / 1=cursor_style / 2=padding_x / 3=padding_y / 4=present_mode
+    ///
+    /// コミット D/E で input_handler と AccessKit ディスパッチから参照されるため、
+    /// 描画フェーズのみで参照される間は dead_code 警告を抑止する。
+    #[allow(dead_code)]
+    pub window_field_focus: u8,
 }
 
 impl Default for SettingsPanel {
@@ -199,6 +206,7 @@ impl SettingsPanel {
             padding_x: config.window.padding_x.min(32),
             padding_y: config.window.padding_y.min(32),
             present_mode: config.gpu.present_mode.clone(),
+            window_field_focus: 0,
         }
     }
 
@@ -506,6 +514,64 @@ impl SettingsPanel {
             Fifo => "fifo",
             Mailbox => "mailbox",
             Auto => "auto",
+        }
+    }
+
+    // ===== Phase 5-11-6 #6: Window カテゴリ内フィールドフォーカス =====
+    //
+    // 0=opacity / 1=cursor_style / 2=padding_x / 3=padding_y / 4=present_mode
+    // ↑/↓ でフィールド間移動、←/→ でフォーカス中フィールドの値を変更する。
+
+    /// Window カテゴリ内のフィールド総数
+    #[allow(dead_code)]
+    pub const WINDOW_FIELD_COUNT: u8 = 5;
+
+    /// 次のフィールドにフォーカスを移す（最後で停止）。
+    /// 戻り値: 移動できたら true、すでに最後なら false（カテゴリ移動の判断に使う）。
+    #[allow(dead_code)]
+    pub fn next_window_field(&mut self) -> bool {
+        if self.window_field_focus + 1 < Self::WINDOW_FIELD_COUNT {
+            self.window_field_focus += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// 前のフィールドにフォーカスを移す（先頭で停止）。
+    #[allow(dead_code)]
+    pub fn prev_window_field(&mut self) -> bool {
+        if self.window_field_focus > 0 {
+            self.window_field_focus -= 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// フォーカス中フィールドの値を増加させる（←/→ の右、または ↑ の Window カテゴリ補助）。
+    #[allow(dead_code)]
+    pub fn window_field_increase(&mut self) {
+        match self.window_field_focus {
+            0 => self.increase_opacity(),
+            1 => self.next_cursor_style(),
+            2 => self.increase_padding_x(),
+            3 => self.increase_padding_y(),
+            4 => self.next_present_mode(),
+            _ => {}
+        }
+    }
+
+    /// フォーカス中フィールドの値を減少させる。
+    #[allow(dead_code)]
+    pub fn window_field_decrease(&mut self) {
+        match self.window_field_focus {
+            0 => self.decrease_opacity(),
+            1 => self.prev_cursor_style(),
+            2 => self.decrease_padding_x(),
+            3 => self.decrease_padding_y(),
+            4 => self.prev_present_mode(),
+            _ => {}
         }
     }
 

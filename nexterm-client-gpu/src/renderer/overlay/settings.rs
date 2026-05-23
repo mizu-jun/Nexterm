@@ -460,13 +460,25 @@ impl WgpuState {
                 }
             }
             SettingsCategory::Window => {
-                // 不透明度
-                let opacity_line = format!("不透明度:  {:.0}%  (↑/↓)", sp.opacity * 100.0);
+                // Phase 5-11-6 #6: Window カテゴリは 5 フィールド構成
+                //   行0=opacity / 行1=cursor_style / 行2=padding_x / 行3=padding_y / 行4=present_mode
+                // フォーカス中フィールドはハイライト矩形 + 値ラベルを明るく描画する。
+                // 操作:
+                //   ↑/↓ = フィールド間移動 (input_handler)
+                //   ←/→ = 値変更 (input_handler)
+
+                let focus = sp.window_field_focus;
+                let bar_w = content_w - cell_w * 3.0;
+                // 各行の縦位置（ラベルとコントロールでセットでオフセットする）
+                let row_h = cell_h * 3.2; // 行 1 つ分の高さ（ラベル + コントロール）
+                let labels_top = content_top + cell_h * 0.6;
+
+                // ===== ヘルプテキスト（最上部） =====
                 add_string_verts(
-                    &opacity_line,
+                    "↑/↓ でフィールド選択, ←/→ で値変更",
                     content_inner_x,
-                    content_top + cell_h * 1.0,
-                    [0.9, 0.95, 1.0, 1.0],
+                    content_top,
+                    [0.45, 0.50, 0.62, 1.0],
                     false,
                     sw,
                     sh,
@@ -477,8 +489,44 @@ impl WgpuState {
                     text_verts,
                     text_idx,
                 );
-                let bar_w = content_w - cell_w * 3.0;
-                let bar_y = content_top + cell_h * 2.4;
+
+                // ===== 行 0: 不透明度（スライダー） =====
+                let row0_y = labels_top + row_h * 0.0;
+                if focus == 0 {
+                    add_px_rect(
+                        content_inner_x - cell_w * 0.3,
+                        row0_y - cell_h * 0.1,
+                        content_w - cell_w * 0.7,
+                        cell_h * 3.0,
+                        [0.149, 0.188, 0.278, 1.0],
+                        sw,
+                        sh,
+                        bg_verts,
+                        bg_idx,
+                    );
+                }
+                let opacity_color = if focus == 0 {
+                    [0.95, 0.96, 1.0, 1.0]
+                } else {
+                    [0.663, 0.694, 0.839, 1.0]
+                };
+                let opacity_line = format!("不透明度:  {:.0}%", sp.opacity * 100.0);
+                add_string_verts(
+                    &opacity_line,
+                    content_inner_x,
+                    row0_y,
+                    opacity_color,
+                    focus == 0,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
+                );
+                let bar_y = row0_y + cell_h * 1.4;
                 add_px_rect(
                     content_inner_x,
                     bar_y,
@@ -500,6 +548,231 @@ impl WgpuState {
                     sh,
                     bg_verts,
                     bg_idx,
+                );
+
+                // ===== 行 1: カーソル形状（cycle） =====
+                let row1_y = labels_top + row_h * 1.0;
+                if focus == 1 {
+                    add_px_rect(
+                        content_inner_x - cell_w * 0.3,
+                        row1_y - cell_h * 0.1,
+                        content_w - cell_w * 0.7,
+                        cell_h * 3.0,
+                        [0.149, 0.188, 0.278, 1.0],
+                        sw,
+                        sh,
+                        bg_verts,
+                        bg_idx,
+                    );
+                }
+                let cs_label_color = if focus == 1 {
+                    [0.95, 0.96, 1.0, 1.0]
+                } else {
+                    [0.663, 0.694, 0.839, 1.0]
+                };
+                add_string_verts(
+                    "カーソル形状:",
+                    content_inner_x,
+                    row1_y,
+                    cs_label_color,
+                    focus == 1,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
+                );
+                let cs_value = format!("< {} >", sp.cursor_style_label());
+                add_string_verts(
+                    &cs_value,
+                    content_inner_x + cell_w * 16.0,
+                    row1_y,
+                    cs_label_color,
+                    focus == 1,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
+                );
+
+                // ===== 行 2: 横パディング =====
+                let row2_y = labels_top + row_h * 2.0;
+                if focus == 2 {
+                    add_px_rect(
+                        content_inner_x - cell_w * 0.3,
+                        row2_y - cell_h * 0.1,
+                        content_w - cell_w * 0.7,
+                        cell_h * 3.0,
+                        [0.149, 0.188, 0.278, 1.0],
+                        sw,
+                        sh,
+                        bg_verts,
+                        bg_idx,
+                    );
+                }
+                let px_color = if focus == 2 {
+                    [0.95, 0.96, 1.0, 1.0]
+                } else {
+                    [0.663, 0.694, 0.839, 1.0]
+                };
+                add_string_verts(
+                    &format!("横パディング:  {} px", sp.padding_x),
+                    content_inner_x,
+                    row2_y,
+                    px_color,
+                    focus == 2,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
+                );
+                // ミニスライダー（0〜32）
+                let px_bar_y = row2_y + cell_h * 1.4;
+                let px_bar_w = bar_w * 0.6;
+                add_px_rect(
+                    content_inner_x,
+                    px_bar_y,
+                    px_bar_w,
+                    cell_h * 0.25,
+                    [0.176, 0.192, 0.286, 1.0],
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
+                add_px_rect(
+                    content_inner_x,
+                    px_bar_y,
+                    px_bar_w * (sp.padding_x as f32 / 32.0),
+                    cell_h * 0.25,
+                    [0.478, 0.635, 0.969, 1.0],
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
+
+                // ===== 行 3: 縦パディング =====
+                let row3_y = labels_top + row_h * 3.0;
+                if focus == 3 {
+                    add_px_rect(
+                        content_inner_x - cell_w * 0.3,
+                        row3_y - cell_h * 0.1,
+                        content_w - cell_w * 0.7,
+                        cell_h * 3.0,
+                        [0.149, 0.188, 0.278, 1.0],
+                        sw,
+                        sh,
+                        bg_verts,
+                        bg_idx,
+                    );
+                }
+                let py_color = if focus == 3 {
+                    [0.95, 0.96, 1.0, 1.0]
+                } else {
+                    [0.663, 0.694, 0.839, 1.0]
+                };
+                add_string_verts(
+                    &format!("縦パディング:  {} px", sp.padding_y),
+                    content_inner_x,
+                    row3_y,
+                    py_color,
+                    focus == 3,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
+                );
+                let py_bar_y = row3_y + cell_h * 1.4;
+                let py_bar_w = bar_w * 0.6;
+                add_px_rect(
+                    content_inner_x,
+                    py_bar_y,
+                    py_bar_w,
+                    cell_h * 0.25,
+                    [0.176, 0.192, 0.286, 1.0],
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
+                add_px_rect(
+                    content_inner_x,
+                    py_bar_y,
+                    py_bar_w * (sp.padding_y as f32 / 32.0),
+                    cell_h * 0.25,
+                    [0.478, 0.635, 0.969, 1.0],
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
+
+                // ===== 行 4: 描画モード（cycle） =====
+                let row4_y = labels_top + row_h * 4.0;
+                if focus == 4 {
+                    add_px_rect(
+                        content_inner_x - cell_w * 0.3,
+                        row4_y - cell_h * 0.1,
+                        content_w - cell_w * 0.7,
+                        cell_h * 3.0,
+                        [0.149, 0.188, 0.278, 1.0],
+                        sw,
+                        sh,
+                        bg_verts,
+                        bg_idx,
+                    );
+                }
+                let pm_color = if focus == 4 {
+                    [0.95, 0.96, 1.0, 1.0]
+                } else {
+                    [0.663, 0.694, 0.839, 1.0]
+                };
+                add_string_verts(
+                    "描画モード:",
+                    content_inner_x,
+                    row4_y,
+                    pm_color,
+                    focus == 4,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
+                );
+                let pm_value = format!("< {} >", sp.present_mode_label());
+                add_string_verts(
+                    &pm_value,
+                    content_inner_x + cell_w * 16.0,
+                    row4_y,
+                    pm_color,
+                    focus == 4,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
                 );
             }
             SettingsCategory::Profiles => {
