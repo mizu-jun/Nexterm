@@ -2466,10 +2466,11 @@ mod tests {
         assert_eq!(decode_node_id(NodeId(0)), NodeIdKind::Unknown);
         // 17 は SettingsTabList、18〜24 は SettingsTab、25 は SettingsContent、
         // 26 は AlertRegion（Sprint 5-11-5 で割当）、30〜35 は設定フィールド（Step 2-2-e'）。
-        // 27〜29, 36〜99 は将来用に予約。
+        // 36〜39 は Phase 5-11-6 #6 の設定フィールド（Cursor/Padding/PresentMode）。
+        // 27〜29, 40〜99 は将来用に予約。
         assert_eq!(decode_node_id(NodeId(27)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(29)), NodeIdKind::Unknown);
-        assert_eq!(decode_node_id(NodeId(36)), NodeIdKind::Unknown);
+        assert_eq!(decode_node_id(NodeId(40)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(99)), NodeIdKind::Unknown);
         // 600M〜999M は将来 SettingsField 動的展開で使う予約範囲
         assert_eq!(decode_node_id(NodeId(600_000_000)), NodeIdKind::Unknown);
@@ -2994,6 +2995,270 @@ mod tests {
             "Focus は handled=false（CheckBox は Focus でトグルしない）"
         );
         assert_eq!(panel.auto_check_update, before);
+    }
+
+    // ===== Phase 5-11-6 #6: Window カテゴリ 4 新フィールドのテスト =====
+
+    #[test]
+    fn decode_node_id_returns_settings_cursor_style() {
+        assert_eq!(
+            decode_node_id(SETTINGS_CURSOR_STYLE_ID),
+            NodeIdKind::SettingsCursorStyle
+        );
+    }
+
+    #[test]
+    fn decode_node_id_returns_settings_padding_x() {
+        assert_eq!(
+            decode_node_id(SETTINGS_PADDING_X_ID),
+            NodeIdKind::SettingsPaddingX
+        );
+    }
+
+    #[test]
+    fn decode_node_id_returns_settings_padding_y() {
+        assert_eq!(
+            decode_node_id(SETTINGS_PADDING_Y_ID),
+            NodeIdKind::SettingsPaddingY
+        );
+    }
+
+    #[test]
+    fn decode_node_id_returns_settings_present_mode() {
+        assert_eq!(
+            decode_node_id(SETTINGS_PRESENT_MODE_ID),
+            NodeIdKind::SettingsPresentMode
+        );
+    }
+
+    /// CursorStyle: Click は次にサイクル、フォーカスも 1 に
+    #[test]
+    fn dispatch_cursor_style_click_cycles_and_focuses() {
+        let mut panel = SettingsPanel::default();
+        assert_eq!(panel.cursor_style, nexterm_config::CursorStyle::Block);
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &NodeIdKind::SettingsCursorStyle,
+            None,
+        );
+        assert!(handled);
+        assert_eq!(panel.cursor_style, nexterm_config::CursorStyle::Beam);
+        assert_eq!(panel.window_field_focus, 1);
+    }
+
+    /// CursorStyle: Decrement は前にサイクル
+    #[test]
+    fn dispatch_cursor_style_decrement_goes_back() {
+        let mut panel = SettingsPanel::default();
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Decrement,
+            &NodeIdKind::SettingsCursorStyle,
+            None,
+        );
+        assert!(handled);
+        assert_eq!(panel.cursor_style, nexterm_config::CursorStyle::Underline);
+    }
+
+    /// CursorStyle: Focus はフォーカスのみ移動（値変更しない）
+    #[test]
+    fn dispatch_cursor_style_focus_only_moves_focus() {
+        let mut panel = SettingsPanel::default();
+        let before = panel.cursor_style.clone();
+        panel.window_field_focus = 0;
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Focus,
+            &NodeIdKind::SettingsCursorStyle,
+            None,
+        );
+        assert!(handled);
+        assert_eq!(panel.cursor_style, before, "Focus では値を変えない");
+        assert_eq!(panel.window_field_focus, 1);
+    }
+
+    /// PaddingX: SetValue で四捨五入 + clamp
+    #[test]
+    fn dispatch_padding_x_set_value_rounds_and_clamps() {
+        let mut panel = SettingsPanel::default();
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::SetValue,
+            &NodeIdKind::SettingsPaddingX,
+            Some(ActionData::NumericValue(15.7)),
+        );
+        assert!(handled);
+        assert_eq!(panel.padding_x, 16, "15.7 → 16 に丸める");
+        assert_eq!(panel.window_field_focus, 2);
+
+        // 上限 clamp
+        let _ = dispatch_settings_action(
+            &mut panel,
+            Action::SetValue,
+            &NodeIdKind::SettingsPaddingX,
+            Some(ActionData::NumericValue(100.0)),
+        );
+        assert_eq!(panel.padding_x, 32, "上限 32 にクランプ");
+    }
+
+    /// PaddingX: Increment / Decrement
+    #[test]
+    fn dispatch_padding_x_increment_decrement() {
+        let mut panel = SettingsPanel::default();
+        assert_eq!(panel.padding_x, 0);
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Increment,
+            &NodeIdKind::SettingsPaddingX,
+            None,
+        );
+        assert!(handled);
+        assert_eq!(panel.padding_x, 1);
+
+        let _ = dispatch_settings_action(
+            &mut panel,
+            Action::Decrement,
+            &NodeIdKind::SettingsPaddingX,
+            None,
+        );
+        assert_eq!(panel.padding_x, 0);
+    }
+
+    /// PaddingY: SetValue + Increment / Decrement の確認
+    #[test]
+    fn dispatch_padding_y_actions() {
+        let mut panel = SettingsPanel::default();
+
+        let _ = dispatch_settings_action(
+            &mut panel,
+            Action::SetValue,
+            &NodeIdKind::SettingsPaddingY,
+            Some(ActionData::NumericValue(8.0)),
+        );
+        assert_eq!(panel.padding_y, 8);
+        assert_eq!(panel.window_field_focus, 3);
+
+        let _ = dispatch_settings_action(
+            &mut panel,
+            Action::Increment,
+            &NodeIdKind::SettingsPaddingY,
+            None,
+        );
+        assert_eq!(panel.padding_y, 9);
+
+        let _ = dispatch_settings_action(
+            &mut panel,
+            Action::Decrement,
+            &NodeIdKind::SettingsPaddingY,
+            None,
+        );
+        assert_eq!(panel.padding_y, 8);
+    }
+
+    /// PresentMode: Click はサイクル、Decrement は逆方向
+    #[test]
+    fn dispatch_present_mode_click_and_decrement() {
+        let mut panel = SettingsPanel::default();
+        assert_eq!(
+            panel.present_mode,
+            nexterm_config::PresentModeConfig::Mailbox
+        );
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &NodeIdKind::SettingsPresentMode,
+            None,
+        );
+        assert!(handled);
+        assert_eq!(panel.present_mode, nexterm_config::PresentModeConfig::Auto);
+        assert_eq!(panel.window_field_focus, 4);
+
+        let _ = dispatch_settings_action(
+            &mut panel,
+            Action::Decrement,
+            &NodeIdKind::SettingsPresentMode,
+            None,
+        );
+        assert_eq!(
+            panel.present_mode,
+            nexterm_config::PresentModeConfig::Mailbox
+        );
+    }
+
+    /// build_settings_panel_nodes: Window カテゴリで 5 ノードが公開されること
+    #[test]
+    fn build_settings_panel_nodes_window_exposes_five_fields() {
+        let mut panel = SettingsPanel::default();
+        panel.category = crate::settings_panel::SettingsCategory::Window;
+        let (nodes, _focus) = build_settings_panel_nodes(&panel);
+        let ids: Vec<u64> = nodes.iter().map(|(id, _)| id.0).collect();
+        assert!(ids.contains(&SETTINGS_WINDOW_OPACITY_ID.0));
+        assert!(ids.contains(&SETTINGS_CURSOR_STYLE_ID.0));
+        assert!(ids.contains(&SETTINGS_PADDING_X_ID.0));
+        assert!(ids.contains(&SETTINGS_PADDING_Y_ID.0));
+        assert!(ids.contains(&SETTINGS_PRESENT_MODE_ID.0));
+    }
+
+    /// build_settings_panel_nodes: window_field_focus に応じてフォーカスが正しく移動する
+    #[test]
+    fn build_settings_panel_nodes_window_focus_follows_field() {
+        let cases = [
+            (0_u8, SETTINGS_WINDOW_OPACITY_ID),
+            (1, SETTINGS_CURSOR_STYLE_ID),
+            (2, SETTINGS_PADDING_X_ID),
+            (3, SETTINGS_PADDING_Y_ID),
+            (4, SETTINGS_PRESENT_MODE_ID),
+        ];
+        for (focus_idx, expected_node) in cases {
+            let mut panel = SettingsPanel::default();
+            panel.category = crate::settings_panel::SettingsCategory::Window;
+            panel.window_field_focus = focus_idx;
+            let (_nodes, focus) = build_settings_panel_nodes(&panel);
+            assert_eq!(
+                focus, expected_node,
+                "window_field_focus={} ではフォーカスが {:?} を指すべき",
+                focus_idx, expected_node
+            );
+        }
+    }
+
+    /// compute_tree_state_hash: window_field_focus / cursor_style / padding / present_mode の
+    /// 変化を検出する
+    #[test]
+    fn tree_hash_detects_window_field_changes() {
+        let mut state = ClientState::new(80, 24, 1000);
+        state.settings_panel.is_open = true;
+        state.settings_panel.category = crate::settings_panel::SettingsCategory::Window;
+        let h0 = compute_tree_state_hash(&state);
+
+        // フォーカス変化
+        state.settings_panel.window_field_focus = 1;
+        let h1 = compute_tree_state_hash(&state);
+        assert_ne!(h0, h1, "window_field_focus 変化はハッシュに反映される");
+
+        // cursor_style 変化
+        state.settings_panel.cursor_style = nexterm_config::CursorStyle::Beam;
+        let h2 = compute_tree_state_hash(&state);
+        assert_ne!(h1, h2, "cursor_style 変化はハッシュに反映される");
+
+        // padding_x 変化
+        state.settings_panel.padding_x = 8;
+        let h3 = compute_tree_state_hash(&state);
+        assert_ne!(h2, h3, "padding_x 変化はハッシュに反映される");
+
+        // padding_y 変化
+        state.settings_panel.padding_y = 12;
+        let h4 = compute_tree_state_hash(&state);
+        assert_ne!(h3, h4, "padding_y 変化はハッシュに反映される");
+
+        // present_mode 変化
+        state.settings_panel.present_mode = nexterm_config::PresentModeConfig::Fifo;
+        let h5 = compute_tree_state_hash(&state);
+        assert_ne!(h4, h5, "present_mode 変化はハッシュに反映される");
     }
 
     /// 設定パネル系以外の NodeIdKind では handled=false で何もしない
