@@ -354,7 +354,20 @@ impl EventHandler {
                     }
                 }
                 WKeyCode::Tab | WKeyCode::ArrowDown if !editing => {
-                    self.app.state.settings_panel.next_category();
+                    use crate::settings_panel::SettingsCategory;
+                    // Phase 5-11-6 #6: Window カテゴリでは ↓ をフィールド移動に再解釈する。
+                    // 最後のフィールドまで来たら次カテゴリへフォールバックする。
+                    if self.app.state.settings_panel.category == SettingsCategory::Window
+                        && code == WKeyCode::ArrowDown
+                    {
+                        if !self.app.state.settings_panel.next_window_field() {
+                            self.app.state.settings_panel.next_category();
+                            self.app.state.settings_panel.window_field_focus = 0;
+                        }
+                    } else {
+                        self.app.state.settings_panel.next_category();
+                        self.app.state.settings_panel.window_field_focus = 0;
+                    }
                 }
                 WKeyCode::ArrowUp if !editing => {
                     use crate::settings_panel::SettingsCategory;
@@ -363,7 +376,11 @@ impl EventHandler {
                             self.app.state.settings_panel.increase_font_size()
                         }
                         SettingsCategory::Window => {
-                            self.app.state.settings_panel.increase_opacity()
+                            // Phase 5-11-6 #6: ↑ はフィールド間移動。先頭で前カテゴリへフォールバック。
+                            if !self.app.state.settings_panel.prev_window_field() {
+                                self.app.state.settings_panel.prev_category();
+                                self.app.state.settings_panel.window_field_focus = 0;
+                            }
                         }
                         _ => self.app.state.settings_panel.prev_category(),
                     }
@@ -373,6 +390,10 @@ impl EventHandler {
                     match &self.app.state.settings_panel.category {
                         SettingsCategory::Theme => self.app.state.settings_panel.next_scheme(),
                         SettingsCategory::Startup => self.app.state.settings_panel.next_language(),
+                        // Phase 5-11-6 #6: Window カテゴリでフォーカス中フィールドの値を増加
+                        SettingsCategory::Window => {
+                            self.app.state.settings_panel.window_field_increase()
+                        }
                         _ => {}
                     }
                 }
@@ -381,6 +402,10 @@ impl EventHandler {
                     match &self.app.state.settings_panel.category {
                         SettingsCategory::Theme => self.app.state.settings_panel.prev_scheme(),
                         SettingsCategory::Startup => self.app.state.settings_panel.prev_language(),
+                        // Phase 5-11-6 #6: Window カテゴリでフォーカス中フィールドの値を減少
+                        SettingsCategory::Window => {
+                            self.app.state.settings_panel.window_field_decrease()
+                        }
                         _ => {}
                     }
                 }

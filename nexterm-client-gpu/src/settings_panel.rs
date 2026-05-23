@@ -8,6 +8,10 @@ use nexterm_config::toml_path;
 pub enum SliderType {
     FontSize,
     WindowOpacity,
+    /// Phase 5-11-6 #6: ウィンドウ内水平パディング (0〜32 px)
+    WindowPaddingX,
+    /// Phase 5-11-6 #6: ウィンドウ内垂直パディング (0〜32 px)
+    WindowPaddingY,
 }
 
 /// マウスドラッグ中のスライダー状態
@@ -240,6 +244,20 @@ impl SettingsPanel {
         // 不透明度範囲: 0.1〜1.0 (5% 単位に丸める)
         let raw = 0.1 + ratio * 0.9;
         self.opacity = (raw * 20.0).round() / 20.0;
+        self.dirty = true;
+    }
+
+    /// Phase 5-11-6 #6: スライダー X 座標から padding_x (0〜32 px) を設定する
+    pub fn set_padding_x_from_slider(&mut self, cursor_x: f32, track_x: f32, track_w: f32) {
+        let ratio = ((cursor_x - track_x) / track_w).clamp(0.0, 1.0);
+        self.padding_x = (ratio * 32.0).round() as u32;
+        self.dirty = true;
+    }
+
+    /// Phase 5-11-6 #6: スライダー X 座標から padding_y (0〜32 px) を設定する
+    pub fn set_padding_y_from_slider(&mut self, cursor_x: f32, track_x: f32, track_w: f32) {
+        let ratio = ((cursor_x - track_x) / track_w).clamp(0.0, 1.0);
+        self.padding_y = (ratio * 32.0).round() as u32;
         self.dirty = true;
     }
 
