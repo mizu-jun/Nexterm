@@ -3525,6 +3525,34 @@ mod tests {
         assert_eq!(state.alerts.front().unwrap().title, "fresh");
     }
 
+    /// Phase 5-11-6 #4: `dismiss_alert(seq)` で指定 seq のみ除去できること
+    #[test]
+    fn dismiss_alert_removes_matching_seq_only() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let seq_a = state.add_alert(AlertKind::Bell, 1, "a".to_string(), String::new());
+        let seq_b = state.add_alert(AlertKind::Bell, 1, "b".to_string(), String::new());
+        let seq_c = state.add_alert(AlertKind::Bell, 1, "c".to_string(), String::new());
+        assert_eq!(state.alerts.len(), 3);
+
+        // 真ん中の B のみ除去
+        let dismissed = state.dismiss_alert(seq_b);
+        assert!(dismissed, "存在する seq の dismiss は true");
+        assert_eq!(state.alerts.len(), 2);
+        let remaining: Vec<u64> = state.alerts.iter().map(|a| a.seq).collect();
+        assert_eq!(remaining, vec![seq_a, seq_c], "A と C のみ残る");
+    }
+
+    /// Phase 5-11-6 #4: 存在しない seq への `dismiss_alert` は false 返却で副作用なし
+    #[test]
+    fn dismiss_alert_returns_false_for_unknown_seq() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let seq = state.add_alert(AlertKind::Bell, 1, "only".to_string(), String::new());
+        // 別の seq を指定
+        let dismissed = state.dismiss_alert(seq.wrapping_add(99));
+        assert!(!dismissed, "存在しない seq の dismiss は false");
+        assert_eq!(state.alerts.len(), 1, "副作用なし");
+    }
+
     /// alert_node_id が 50e12 オフセット + seq になり pane_row 範囲と衝突しないこと
     #[test]
     fn alert_node_id_in_correct_offset() {

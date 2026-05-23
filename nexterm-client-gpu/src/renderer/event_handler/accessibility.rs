@@ -295,6 +295,122 @@ impl EventHandler {
                 }
             }
 
+            // ===== Host Manager（Phase 5-11-6 #2）=====
+            //
+            // SR からの Click は既存の Enter キー経路（`input_handler/mod.rs` の
+            // `host_manager.is_open` 分岐）と同等の挙動:
+            // - `auth_type == "password"` → `PasswordModal` を開く（パスワード入力自体の
+            //   SR 対応は Phase 5-11-7 候補）
+            // - その他 → `record_connection` + `connect_ssh_host_new_tab`
+            // Focus は `host_manager.selected` を更新するだけの非破壊操作。
+            (Action::Click, NodeIdKind::HostItem { idx }) => {
+                let host = self
+                    .app
+                    .state
+                    .host_manager
+                    .filtered()
+                    .get(idx)
+                    .map(|h| (*h).clone());
+                if let Some(host) = host {
+                    info!("AccessKit: Host 項目 {} を確定: {}", idx, host.name);
+                    self.app.state.host_manager.close();
+                    if host.auth_type == "password" {
+                        self.app.state.host_manager.password_modal =
+                            Some(crate::host_manager::PasswordModal::new(host));
+                    } else {
+                        self.app.state.host_manager.record_connection(&host);
+                        self.connect_ssh_host_new_tab(&host);
+                    }
+                    self.request_redraw_if_window();
+                } else {
+                    debug!(
+                        "AccessKit: Host 項目 idx={} が範囲外（host_manager は閉じている可能性）",
+                        idx
+                    );
+                }
+            }
+            (Action::Focus, NodeIdKind::HostItem { idx }) => {
+                if self.app.state.host_manager.is_open
+                    && idx < self.app.state.host_manager.filtered().len()
+                {
+                    self.app.state.host_manager.selected = idx;
+                    self.request_redraw_if_window();
+                }
+            }
+
+            // ===== Macro Picker（Phase 5-11-6 #3）=====
+            //
+            // SR からの Click は既存の Enter キー経路（`input_handler/mod.rs` の
+            // `macro_picker.is_open` 分岐）と同等の挙動: `selected = idx` →
+            // `selected_macro()` で MacroConfig 取得 → `close()` → IPC `RunMacro` 送信。
+            // Focus は `macro_picker.selected` を更新するだけ。
+            (Action::Click, NodeIdKind::MacroItem { idx }) => {
+                self.app.state.macro_picker.selected = idx;
+                let mac = self
+                    .app
+                    .state
+                    .macro_picker
+                    .selected_macro()
+                    .map(|m| (m.lua_fn.clone(), m.name.clone()));
+                if let Some((fn_name, display_name)) = mac {
+                    info!("AccessKit: Macro 項目 {} を実行: {}", idx, display_name);
+                    self.app.state.macro_picker.close();
+                    if let Some(conn) = &self.connection {
+                        let _ = conn.send_tx.try_send(ClientToServer::RunMacro {
+                            macro_fn: fn_name,
+                            display_name,
+                        });
+                    }
+                    self.request_redraw_if_window();
+                } else {
+                    debug!(
+                        "AccessKit: Macro 項目 idx={} が範囲外（macro_picker は閉じている可能性）",
+                        idx
+                    );
+                }
+            }
+            (Action::Focus, NodeIdKind::MacroItem { idx }) => {
+                if self.app.state.macro_picker.is_open {
+                    self.app.state.macro_picker.selected = idx;
+                    self.request_redraw_if_window();
+                }
+            }
+
+            // ===== Alert Dismiss（Phase 5-11-6 #4）=====
+            //
+            // SR からの Click でアラートを TTL（5 秒）を待たず即時 dismiss する。
+            // `Action::Default` は accesskit 0.24 に存在しないため `Click` のみで対応。
+            (Action::Click, NodeIdKind::Alert { seq }) => {
+                if self.app.state.dismiss_alert(seq) {
+                    info!("AccessKit: Alert seq={} を即時 dismiss", seq);
+                    self.request_redraw_if_window();
+                } else {
+                    debug!(
+                        "AccessKit: Alert seq={} が見つからない（既に TTL 切れの可能性）",
+                        seq
+                    );
+                }
+            }
+
+            // ===== Scroll（Phase 5-11-6 #5）=====
+            //
+            // PaneArea に対する SR の Scroll 要求 → `state.scroll_up/down(rows/2)` を呼ぶ。
+            // 既存の PageUp/PageDown キー経路と同じ半画面単位。
+            //
+            // 設計（state API の方向に揃える）:
+            // - `Action::ScrollUp` = 過去側を見せる = `state.scroll_up`（offset を増やす）
+            // - `Action::ScrollDown` = 最新側に戻る = `state.scroll_down`（offset を減らす）
+            (Action::ScrollUp, NodeIdKind::PaneArea) => {
+                let lines = (self.app.state.rows as usize / 2).max(1);
+                self.app.state.scroll_up(lines);
+                self.request_redraw_if_window();
+            }
+            (Action::ScrollDown, NodeIdKind::PaneArea) => {
+                let lines = (self.app.state.rows as usize / 2).max(1);
+                self.app.state.scroll_down(lines);
+                self.request_redraw_if_window();
+            }
+
             // ===== その他 =====
             (action, kind) => {
                 debug!(

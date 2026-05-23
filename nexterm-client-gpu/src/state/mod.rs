@@ -435,6 +435,18 @@ impl ClientState {
         removed
     }
 
+    /// 指定 `seq` のアラートを即時 dismiss する（Phase 5-11-6 #4）。
+    ///
+    /// SR の `Action::Click` 経路で TTL（5 秒）を待たずアラートを除去するために使う。
+    /// 該当 seq が存在しない場合（既に `expire_alerts` で除去済み等）は副作用なし。
+    ///
+    /// 戻り値: 該当 seq を除去したら `true`、見つからなければ `false`。
+    pub fn dismiss_alert(&mut self, seq: u64) -> bool {
+        let before = self.alerts.len();
+        self.alerts.retain(|a| a.seq != seq);
+        before != self.alerts.len()
+    }
+
     /// フォーカスペインを切り替え、アクティビティフラグをクリアする。
     ///
     /// Sprint 5-7 / Phase 3-2: 切替時にタブ切替アニメーションも記録する
