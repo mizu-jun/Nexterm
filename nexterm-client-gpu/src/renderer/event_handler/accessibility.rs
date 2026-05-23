@@ -19,7 +19,8 @@ use tracing::{debug, info};
 use winit::event_loop::ActiveEventLoop;
 
 use crate::accessibility::{
-    NodeIdKind, build_tree_from_state, compute_tree_state_hash, decode_node_id,
+    NodeIdKind, build_tree_from_state, compute_grid_row_hashes, compute_tree_state_hash,
+    decode_node_id, dispatch_settings_action,
 };
 
 use super::EventHandler;
@@ -96,6 +97,19 @@ impl EventHandler {
     /// | `ContextItem { idx }` | `Click` | 既存 `execute_context_menu_action` 流用 + メニューを閉じる |
     /// | `PaletteItem { idx }` | `Click` | 既存 `execute_action` 流用 + パレットを閉じる |
     /// | `PaletteSearch` | `SetValue(s)` | `palette.query = s` + selection リセット |
+    /// | `QuickSelectItem { idx }` | `Click` | `matches[idx].text` をクリップボードコピー + `quick_select.exit()` |
+    /// | `SettingsTab { idx }` | `Focus` / `Click` | カテゴリ切替 + `font_family_editing = false` |
+    /// | `SettingsFontFamily` | `Click` | 編集モード ON |
+    /// | `SettingsFontFamily` | `SetValue(s)` | `font_family = s`, `dirty = true` |
+    /// | `SettingsFontSize` | `SetValue(v)` | 0.5 単位丸め + clamp 8.0〜32.0 |
+    /// | `SettingsFontSize` | `Increment` / `Decrement` | `increase_font_size` / `decrease_font_size` |
+    /// | `SettingsThemeScheme` | `Click` / `Increment` | `next_scheme` |
+    /// | `SettingsThemeScheme` | `Decrement` | `prev_scheme` |
+    /// | `SettingsWindowOpacity` | `SetValue(v)` | 0.05 単位丸め + clamp 0.1〜1.0 |
+    /// | `SettingsWindowOpacity` | `Increment` / `Decrement` | `increase_opacity` / `decrease_opacity` |
+    /// | `SettingsStartupLanguage` | `Click` / `Increment` | `next_language` |
+    /// | `SettingsStartupLanguage` | `Decrement` | `prev_language` |
+    /// | `SettingsStartupAutoUpdate` | `Click` | トグル + `dirty = true` |
     /// | その他 | — | `debug!` ログのみ |
     ///
     /// **設計メモ**:
@@ -113,6 +127,39 @@ impl EventHandler {
             "AccessKit: アクション受信 action={:?}, target={:?} ({:?})",
             request.action, request.target_node, kind
         );
+
+        // 設定パネル系のアクションは純関数 `dispatch_settings_action` に委譲する。
+        // 該当した場合は再描画を要求して早期 return。
+        if matches!(
+            kind,
+            NodeIdKind::SettingsTab { .. }
+                | NodeIdKind::SettingsFontFamily
+                | NodeIdKind::SettingsFontSize
+                | NodeIdKind::SettingsThemeScheme
+                | NodeIdKind::SettingsWindowOpacity
+                | NodeIdKind::SettingsStartupLanguage
+                | NodeIdKind::SettingsStartupAutoUpdate
+        ) {
+            let handled = dispatch_settings_action(
+                &mut self.app.state.settings_panel,
+                request.action,
+                &kind,
+                request.data,
+            );
+            if handled {
+                info!(
+                    "AccessKit: 設定パネル アクション処理 action={:?}, kind={:?}",
+                    request.action, kind
+                );
+                self.request_redraw_if_window();
+            } else {
+                debug!(
+                    "AccessKit: 設定パネル 未対応 action={:?}, kind={:?}",
+                    request.action, kind
+                );
+            }
+            return;
+        }
 
         match (request.action, kind) {
             // ===== タブ / ペインのフォーカス・クリック =====
@@ -220,6 +267,34 @@ impl EventHandler {
                 }
             }
 
+            // ===== Quick Select（Step 2-2-h）=====
+            //
+            // SR からの Click は「ラベルキー入力でマッチが確定したとき」と同じ挙動にする
+            // （既存の `handle_quick_select_key` の `accept` 経路を踏襲）。
+            // Focus は描画状態を変えるだけの非破壊操作なので debug ログだけにしておく。
+            (Action::Click, NodeIdKind::QuickSelectItem { idx }) => {
+                let text = self
+                    .app
+                    .state
+                    .quick_select
+                    .matches
+                    .get(idx)
+                    .map(|m| m.text.clone());
+                if let Some(text) = text {
+                    info!("AccessKit: Quick Select 項目 {} を確定: {}", idx, text);
+                    if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                        let _ = clipboard.set_text(text);
+                    }
+                    self.app.state.quick_select.exit();
+                    self.request_redraw_if_window();
+                } else {
+                    debug!(
+                        "AccessKit: Quick Select 項目 idx={} が範囲外（既に exit() 済の可能性）",
+                        idx
+                    );
+                }
+            }
+
             // ===== その他 =====
             (action, kind) => {
                 debug!(
@@ -266,11 +341,19 @@ impl EventHandler {
         }
         self.last_tree_update_at = Some(now);
 
+        // 構造変化（タブ・ペイン・オーバーレイ）の検知
         let current_hash = compute_tree_state_hash(&self.app.state);
-        if self.last_tree_hash == Some(current_hash) {
-            return; // 状態変化なし
-        }
+        let tree_changed = self.last_tree_hash != Some(current_hash);
         self.last_tree_hash = Some(current_hash);
+
+        // Sprint 5-11-3: ターミナル本文（grid 行内容）の差分検知。
+        // 構造変化がないターミナル出力（cargo build / log streaming 等）でも
+        // フォーカスペインに `Live::Polite` を設定したノードを送り直すことで SR にアナウンスさせる。
+        let grid_changed = self.detect_grid_row_changes();
+
+        if !tree_changed && !grid_changed {
+            return; // 構造・内容ともに変化なし
+        }
 
         // 主 Window 用 Adapter
         if let Some(adapter) = self.accesskit_adapter.as_mut() {
@@ -282,5 +365,36 @@ impl EventHandler {
             let update = build_tree_from_state(&self.app.state);
             cw.accesskit_adapter.update_if_active(|| update);
         }
+    }
+
+    /// Sprint 5-11-3: 各ペインのグリッド行ハッシュを再計算し、変化を検知する。
+    ///
+    /// 戻り値: いずれかのペインの行ハッシュ列に変化があれば `true`。
+    /// 副作用として `last_grid_row_hashes` を最新値に置き換える。
+    ///
+    /// ペイン削除・追加（HashMap キーの増減）も `true` として返す（構造変化は通常
+    /// `compute_tree_state_hash` が拾うが、このフィールドの整合性を保つために二重判定する）。
+    fn detect_grid_row_changes(&mut self) -> bool {
+        use std::collections::HashMap;
+
+        let panes = &self.app.state.panes;
+        let mut new_hashes: HashMap<u32, Vec<u64>> = HashMap::with_capacity(panes.len());
+        let mut changed = false;
+
+        for (&pane_id, pane) in panes {
+            let hashes = compute_grid_row_hashes(&pane.grid);
+            if self.last_grid_row_hashes.get(&pane_id) != Some(&hashes) {
+                changed = true;
+            }
+            new_hashes.insert(pane_id, hashes);
+        }
+
+        // ペイン削除も差分として検知（new_hashes の長さが減った場合）
+        if new_hashes.len() != self.last_grid_row_hashes.len() {
+            changed = true;
+        }
+
+        self.last_grid_row_hashes = new_hashes;
+        changed
     }
 }

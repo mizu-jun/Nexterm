@@ -95,6 +95,8 @@ impl NextermApp {
             // Sprint 5-11-2 Step 2-5: ライブ更新のスロットリング + ハッシュ比較用
             last_tree_update_at: None,
             last_tree_hash: None,
+            // Sprint 5-11-3: 各ペインのグリッド行ハッシュキャッシュ
+            last_grid_row_hashes: HashMap::new(),
         }
     }
 }

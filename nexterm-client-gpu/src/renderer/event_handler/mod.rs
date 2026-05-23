@@ -159,6 +159,12 @@ pub struct EventHandler {
     /// `compute_tree_state_hash(&state)` の結果と比較し、変化があったときのみ
     /// `update_if_active` を呼ぶ。`None` の場合は初回送出を強制する。
     pub(super) last_tree_hash: Option<u64>,
+    /// Sprint 5-11-3: 各ペインのグリッド行ハッシュキャッシュ。
+    ///
+    /// `compute_tree_state_hash` は構造変化（タブ・ペイン・オーバーレイ）のみ追跡するため、
+    /// ターミナル本文の出力差分は本フィールドで別途検知する。`update_accesskit_tree_if_needed`
+    /// 内で毎スロットルごとに `compute_grid_row_hashes` を計算して比較する。
+    pub(super) last_grid_row_hashes: std::collections::HashMap<u32, Vec<u64>>,
 }
 
 impl EventHandler {

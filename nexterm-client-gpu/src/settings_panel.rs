@@ -308,6 +308,31 @@ impl SettingsPanel {
         self.dirty = true;
     }
 
+    /// SR の `Action::SetValue(NumericValue)` 経路用: f64 値を 0.5 単位に丸めて
+    /// 8.0〜32.0 にクランプしてフォントサイズに設定する。
+    ///
+    /// マウスドラッグ経路（`set_font_size_from_slider`）とは入力（ピクセル座標 vs 直接値）が
+    /// 異なるが、丸めと clamp の幅は共通。
+    pub fn set_font_size_value(&mut self, v: f64) {
+        let raw = (v as f32).clamp(8.0, 32.0);
+        self.font_size = (raw * 2.0).round() / 2.0;
+        self.dirty = true;
+    }
+
+    /// SR の `Action::SetValue(NumericValue)` 経路用: f64 値を 0.05 単位に丸めて
+    /// 0.1〜1.0 にクランプして不透明度に設定する。
+    pub fn set_opacity_value(&mut self, v: f64) {
+        let raw = (v as f32).clamp(0.1, 1.0);
+        self.opacity = (raw * 20.0).round() / 20.0;
+        self.dirty = true;
+    }
+
+    /// SR の `Action::Click` 経路用: 自動更新確認チェックボックスをトグル。
+    pub fn toggle_auto_check_update(&mut self) {
+        self.auto_check_update = !self.auto_check_update;
+        self.dirty = true;
+    }
+
     /// scheme_index からスキーム名を返す
     pub fn scheme_name(&self) -> &str {
         const SCHEMES: [&str; 9] = [
