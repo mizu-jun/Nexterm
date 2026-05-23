@@ -66,6 +66,33 @@ impl EventHandler {
             return;
         }
 
+        // Phase 5-11-8 Step 8-3 (Sub-phase A): SSH フィールド編集中の文字入力
+        // Backspace / Delete / 矢印 / Enter / Esc は handle_key で処理済みのため、
+        // ここでは printable char のみを TextInputState に挿入する。
+        if !consumed
+            && self.app.state.settings_panel.is_open
+            && self.app.state.settings_panel.ssh_field_editing.is_some()
+        {
+            if let Some(ref t) = text
+                && !self.modifiers.control_key()
+                && !self.modifiers.alt_key()
+            {
+                // 制御文字 (Backspace=\x08, Tab=\x09 など) を除外し、
+                // 印字可能文字のみを挿入する。
+                for ch in t.chars() {
+                    if !ch.is_control() {
+                        self.app.state.settings_panel.ssh_field_insert_char(ch);
+                    }
+                }
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+                return;
+            }
+            // 矢印キー等のテキストなしイベントもサーバーへは転送しない
+            return;
+        }
+
         // ローカルで消費されなかった場合はサーバーへ転送する
         if !consumed {
             self.forward_key_to_server(physical_key, text.as_deref());

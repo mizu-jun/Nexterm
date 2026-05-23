@@ -1603,17 +1603,29 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
                     content_children.push(*id);
                 }
 
-                // ===== 選択ホストのフィールド編集 (Step 8-2) =====
+                // ===== 選択ホストのフィールド編集 (Step 8-2 + 8-3 Sub-phase A) =====
                 // インデックスを clamp（万一範囲外でも panic しない）
                 let sel = panel.selected_host_index.min(panel.ssh_hosts.len() - 1);
                 let host = &panel.ssh_hosts[sel];
 
+                // Phase 5-11-8 Step 8-3 (Sub-phase A): GUI 編集中はバッファ値を公開する
+                // ことで SR にも GUI 編集の進捗をリアルタイムに伝える。編集対象でない
+                // フィールド（ssh_field_focus != 1/2/4）はホストの現在値を公開する。
+                let editing_value = |target: u8| -> Option<String> {
+                    if panel.ssh_field_focus == target {
+                        panel.ssh_field_editing.as_ref().map(|s| s.display_string())
+                    } else {
+                        None
+                    }
+                };
+
                 // name (TextInput)
                 let mut name_node = Node::new(Role::TextInput);
                 name_node.set_label("ホスト名 (name)");
-                name_node.set_value(host.name.as_str());
+                let name_val = editing_value(1).unwrap_or_else(|| host.name.clone());
+                name_node.set_value(name_val.as_str());
                 name_node.set_description(
-                    "SR の SetValue で編集できます。Enter キーで nexterm.toml に保存",
+                    "SR の SetValue または Enter キーで GUI 編集を開始できます。Enter で確定 / Esc で取消",
                 );
                 nodes.push((SETTINGS_SSH_FIELD_NAME_ID, name_node));
                 content_children.push(SETTINGS_SSH_FIELD_NAME_ID);
@@ -1621,8 +1633,11 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
                 // host (TextInput)
                 let mut host_node = Node::new(Role::TextInput);
                 host_node.set_label("接続先ホスト (host)");
-                host_node.set_value(host.host.as_str());
-                host_node.set_description("IP アドレスまたは FQDN。SR の SetValue で編集");
+                let host_val = editing_value(2).unwrap_or_else(|| host.host.clone());
+                host_node.set_value(host_val.as_str());
+                host_node.set_description(
+                    "IP アドレスまたは FQDN。SR の SetValue または Enter で GUI 編集",
+                );
                 nodes.push((SETTINGS_SSH_FIELD_HOST_ID, host_node));
                 content_children.push(SETTINGS_SSH_FIELD_HOST_ID);
 
@@ -1640,8 +1655,9 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
                 // username (TextInput)
                 let mut user_node = Node::new(Role::TextInput);
                 user_node.set_label("ユーザー名 (username)");
-                user_node.set_value(host.username.as_str());
-                user_node.set_description("SR の SetValue で編集");
+                let user_val = editing_value(4).unwrap_or_else(|| host.username.clone());
+                user_node.set_value(user_val.as_str());
+                user_node.set_description("SR の SetValue または Enter で GUI 編集");
                 nodes.push((SETTINGS_SSH_FIELD_USERNAME_ID, user_node));
                 content_children.push(SETTINGS_SSH_FIELD_USERNAME_ID);
 
@@ -1931,6 +1947,16 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
             host.port.hash(&mut h);
             host.username.hash(&mut h);
             host.auth_type.hash(&mut h);
+        }
+        // Phase 5-11-8 Step 8-3 (Sub-phase A): GUI 編集中バッファの変化を SR ツリーに
+        // ライブ反映するため、編集中なら buffer / cursor / preedit をハッシュへ。
+        if let Some(state) = &p.ssh_field_editing {
+            state.buffer.hash(&mut h);
+            state.cursor.hash(&mut h);
+            state.preedit.hash(&mut h);
+        } else {
+            // 編集モード OFF → 0 をハッシュ（ON/OFF 変化も検出するため）
+            0u8.hash(&mut h);
         }
     }
 

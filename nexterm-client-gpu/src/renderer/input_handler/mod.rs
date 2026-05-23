@@ -324,27 +324,58 @@ impl EventHandler {
 
         // 設定パネルが開いているときのナビゲーション（全キーを消費）
         if self.app.state.settings_panel.is_open {
-            let editing = self.app.state.settings_panel.font_family_editing;
+            let font_editing = self.app.state.settings_panel.font_family_editing;
+            // Phase 5-11-8 Step 8-3 (Sub-phase A): SSH フィールド編集モード
+            let ssh_editing = self.app.state.settings_panel.ssh_field_editing.is_some();
+            let editing = font_editing || ssh_editing;
             match code {
                 WKeyCode::Escape => {
-                    if editing {
+                    if font_editing {
                         // 編集モードを終了する（変更を破棄せず入力モードだけ終了）
                         self.app.state.settings_panel.font_family_editing = false;
+                    } else if ssh_editing {
+                        // Sub-phase A: SSH フィールド編集をキャンセル（バッファ破棄）
+                        self.app.state.settings_panel.cancel_ssh_field_edit();
                     } else {
                         self.app.state.settings_panel.close();
                     }
                 }
                 WKeyCode::Enter => {
-                    if editing {
+                    if font_editing {
                         // 編集モードを確定する
                         self.app.state.settings_panel.font_family_editing = false;
+                    } else if ssh_editing {
+                        // Sub-phase A: SSH フィールド編集を確定（バッファを host へ書き戻し）
+                        self.app.state.settings_panel.commit_ssh_field_edit();
                     } else {
-                        let _ = self.app.state.settings_panel.save_to_toml();
-                        self.app.state.settings_panel.close();
+                        // Sub-phase A: SSH カテゴリでフィールド (1/2/4) フォーカス時は編集モードへ
+                        use crate::settings_panel::SettingsCategory;
+                        let sp = &mut self.app.state.settings_panel;
+                        if sp.category == SettingsCategory::Ssh
+                            && matches!(sp.ssh_field_focus, 1 | 2 | 4)
+                            && sp.begin_ssh_field_edit()
+                        {
+                            // 編集モードに入った
+                        } else {
+                            let _ = sp.save_to_toml();
+                            sp.close();
+                        }
                     }
                 }
-                WKeyCode::Backspace if editing => {
+                WKeyCode::Backspace if font_editing => {
                     self.app.state.settings_panel.pop_font_family_char();
+                }
+                WKeyCode::Backspace if ssh_editing => {
+                    self.app.state.settings_panel.ssh_field_backspace();
+                }
+                WKeyCode::Delete if ssh_editing => {
+                    self.app.state.settings_panel.ssh_field_delete();
+                }
+                WKeyCode::Home if ssh_editing => {
+                    self.app.state.settings_panel.ssh_field_move_home();
+                }
+                WKeyCode::End if ssh_editing => {
+                    self.app.state.settings_panel.ssh_field_move_end();
                 }
                 // F キーで Font カテゴリのフォントファミリー編集モードをトグルする
                 WKeyCode::KeyF if !editing => {
@@ -357,33 +388,53 @@ impl EventHandler {
                     use crate::settings_panel::SettingsCategory;
                     // Phase 5-11-6 #6: Window カテゴリでは ↓ をフィールド移動に再解釈する。
                     // 最後のフィールドまで来たら次カテゴリへフォールバックする。
-                    if self.app.state.settings_panel.category == SettingsCategory::Window
-                        && code == WKeyCode::ArrowDown
-                    {
-                        if !self.app.state.settings_panel.next_window_field() {
-                            self.app.state.settings_panel.next_category();
-                            self.app.state.settings_panel.window_field_focus = 0;
+                    // Phase 5-11-8 Step 8-3 (Sub-phase A): Ssh カテゴリも同様に ↓ を
+                    // `ssh_field_focus` 0→1→2→3→4→5 移動として再解釈する。
+                    let sp = &mut self.app.state.settings_panel;
+                    if sp.category == SettingsCategory::Window && code == WKeyCode::ArrowDown {
+                        if !sp.next_window_field() {
+                            sp.next_category();
+                            sp.window_field_focus = 0;
+                        }
+                    } else if sp.category == SettingsCategory::Ssh && code == WKeyCode::ArrowDown {
+                        if sp.ssh_field_focus < 5 {
+                            sp.ssh_field_focus += 1;
+                        } else {
+                            sp.next_category();
+                            sp.ssh_field_focus = 0;
                         }
                     } else {
-                        self.app.state.settings_panel.next_category();
-                        self.app.state.settings_panel.window_field_focus = 0;
+                        sp.next_category();
+                        sp.window_field_focus = 0;
+                        sp.ssh_field_focus = 0;
                     }
                 }
                 WKeyCode::ArrowUp if !editing => {
                     use crate::settings_panel::SettingsCategory;
-                    match &self.app.state.settings_panel.category {
-                        SettingsCategory::Font => {
-                            self.app.state.settings_panel.increase_font_size()
-                        }
+                    let sp = &mut self.app.state.settings_panel;
+                    match &sp.category {
+                        SettingsCategory::Font => sp.increase_font_size(),
                         SettingsCategory::Window => {
                             // Phase 5-11-6 #6: ↑ はフィールド間移動。先頭で前カテゴリへフォールバック。
-                            if !self.app.state.settings_panel.prev_window_field() {
-                                self.app.state.settings_panel.prev_category();
-                                self.app.state.settings_panel.window_field_focus = 0;
+                            if !sp.prev_window_field() {
+                                sp.prev_category();
+                                sp.window_field_focus = 0;
                             }
                         }
-                        _ => self.app.state.settings_panel.prev_category(),
+                        SettingsCategory::Ssh => {
+                            // Phase 5-11-8 Step 8-3 (Sub-phase A): ↑ で ssh_field_focus を 1 つ戻す
+                            if sp.ssh_field_focus > 0 {
+                                sp.ssh_field_focus -= 1;
+                            } else {
+                                sp.prev_category();
+                                sp.ssh_field_focus = 0;
+                            }
+                        }
+                        _ => sp.prev_category(),
                     }
+                }
+                WKeyCode::ArrowRight if ssh_editing => {
+                    self.app.state.settings_panel.ssh_field_move_right();
                 }
                 WKeyCode::ArrowRight if !editing => {
                     use crate::settings_panel::SettingsCategory;
@@ -396,6 +447,9 @@ impl EventHandler {
                         }
                         _ => {}
                     }
+                }
+                WKeyCode::ArrowLeft if ssh_editing => {
+                    self.app.state.settings_panel.ssh_field_move_left();
                 }
                 WKeyCode::ArrowLeft if !editing => {
                     use crate::settings_panel::SettingsCategory;

@@ -1092,25 +1092,36 @@ impl WgpuState {
                     );
 
                     // 5 フィールドのラベル + 現在値
-                    let field_labels: [(&str, String); 5] = [
-                        ("name      :", host.name.clone()),
-                        ("host      :", host.host.clone()),
-                        ("port      :", host.port.to_string()),
-                        ("username  :", host.username.clone()),
-                        ("auth_type :", host.auth_type.clone()),
+                    // Phase 5-11-8 Step 8-3 (Sub-phase A): name/host/username 編集中は
+                    // バッファ内容を表示し、カーソルバーを重畳する。port/auth_type は
+                    // Sub-phase C で別 UI に置き換える予定（現状は読み取り表示のまま）。
+                    let editing_focus = sp.ssh_field_editing.as_ref().map(|_| sp.ssh_field_focus);
+                    let field_labels: [(&str, String, u8); 5] = [
+                        ("name      :", host.name.clone(), 1),
+                        ("host      :", host.host.clone(), 2),
+                        ("port      :", host.port.to_string(), 3),
+                        ("username  :", host.username.clone(), 4),
+                        ("auth_type :", host.auth_type.clone(), 5),
                     ];
-                    for (i, (label, value)) in field_labels.iter().enumerate() {
+                    for (i, (label, raw_value, field_id)) in field_labels.iter().enumerate() {
                         let row_y = fields_top + cell_h * (1.3 + i as f32 * 1.1);
-                        let is_focused = sp.ssh_field_focus == (i + 1) as u8;
+                        let is_focused = sp.ssh_field_focus == *field_id;
+                        let is_editing = editing_focus == Some(*field_id);
 
-                        // フォーカス中行のハイライト
+                        // フォーカス中行のハイライト（編集中は色味を変えて区別）
                         if is_focused {
+                            let bg_color = if is_editing {
+                                // 編集中: 青みがかった濃いハイライト
+                                [0.176, 0.235, 0.357, 1.0]
+                            } else {
+                                [0.149, 0.188, 0.278, 1.0]
+                            };
                             add_px_rect(
                                 content_inner_x - cell_w * 0.3,
                                 row_y - cell_h * 0.1,
                                 content_w - cell_w * 0.7,
                                 cell_h,
-                                [0.149, 0.188, 0.278, 1.0],
+                                bg_color,
                                 sw,
                                 sh,
                                 bg_verts,
@@ -1123,7 +1134,18 @@ impl WgpuState {
                         } else {
                             [0.502, 0.533, 0.647, 1.0]
                         };
-                        let line = format!("  {} {}", label, value);
+
+                        // 編集中はバッファ + IME preedit を表示、それ以外はホストの現在値
+                        let display_value = if is_editing {
+                            sp.ssh_field_editing
+                                .as_ref()
+                                .map(|s| s.display_string())
+                                .unwrap_or_else(|| raw_value.clone())
+                        } else {
+                            raw_value.clone()
+                        };
+
+                        let line = format!("  {} {}", label, display_value);
                         add_string_verts(
                             &line,
                             content_inner_x,
@@ -1139,12 +1161,43 @@ impl WgpuState {
                             text_verts,
                             text_idx,
                         );
+
+                        // 編集中はカーソルバーを重畳する。
+                        // プレフィックス: "  " (2) + label (11) + " " (1) = 14 文字幅
+                        // カーソル位置: display_cursor() を文字数で換算（CJK は将来 unicode-width で改善）
+                        if is_editing && let Some(state) = sp.ssh_field_editing.as_ref() {
+                            const PREFIX_COLS: f32 = 14.0;
+                            let cursor_byte = state.display_cursor();
+                            let display = state.display_string();
+                            let cursor_col = display
+                                .get(..cursor_byte.min(display.len()))
+                                .map(|s| s.chars().count() as f32)
+                                .unwrap_or(0.0);
+                            let cursor_x = content_inner_x + cell_w * (PREFIX_COLS + cursor_col);
+                            // 細い縦バー（2px 幅）
+                            add_px_rect(
+                                cursor_x,
+                                row_y - cell_h * 0.05,
+                                2.0,
+                                cell_h * 1.1,
+                                [0.949, 0.969, 0.984, 1.0],
+                                sw,
+                                sh,
+                                bg_verts,
+                                bg_idx,
+                            );
+                        }
                     }
 
                     // 注記
                     let note_y = fields_top + cell_h * (1.3 + 5.0 * 1.1 + 0.4);
+                    let note_text = if sp.ssh_field_editing.is_some() {
+                        "編集中: Enter で確定 / Esc でキャンセル / ← → でカーソル移動"
+                    } else {
+                        "Enter で編集開始（name/host/username） / port/auth_type は別 UI 予定"
+                    };
                     add_string_verts(
-                        "※ GUI 編集 (TextInput / Enter 保存 / Add・Delete) は Step 8-3 で追加予定",
+                        note_text,
                         content_inner_x,
                         note_y,
                         [0.376, 0.408, 0.518, 1.0],

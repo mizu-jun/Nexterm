@@ -3,6 +3,132 @@
 use anyhow::Result;
 use nexterm_config::toml_path;
 
+/// Phase 5-11-8 Step 8-3 (Sub-phase A): インラインテキスト入力状態
+///
+/// 設定パネル内の TextInput フィールドの編集中状態を保持する。
+/// SSH ホストの name / host / username フィールド編集に使用する。
+/// IME preedit（Sub-phase B）は `preedit` フィールドで保持する。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TextInputState {
+    /// 編集中バッファ
+    pub buffer: String,
+    /// カーソル位置（`buffer` 内のバイトインデックス）
+    /// 不変条件: `buffer.is_char_boundary(cursor) == true`
+    pub cursor: usize,
+    /// IME 変換中テキスト（Sub-phase B で使用）。`None` は変換中でないことを示す。
+    pub preedit: Option<String>,
+}
+
+impl TextInputState {
+    /// 初期文字列で TextInputState を作る。カーソルは末尾。
+    pub fn new(initial: String) -> Self {
+        let cursor = initial.len();
+        Self {
+            buffer: initial,
+            cursor,
+            preedit: None,
+        }
+    }
+
+    /// カーソル位置に文字を 1 つ挿入し、カーソルをその文字の直後に進める。
+    pub fn insert_char(&mut self, ch: char) {
+        self.buffer.insert(self.cursor, ch);
+        self.cursor += ch.len_utf8();
+    }
+
+    /// カーソル位置に文字列を挿入し、カーソルをその末尾に進める。
+    /// IME `Commit` 経路で複数文字を一括挿入する際にも使う。
+    // Phase 5-11-8 Sub-phase B (IME) で SettingsPanel::ssh_field_insert_str 経由で呼ばれる。
+    #[allow(dead_code)]
+    pub fn insert_str(&mut self, s: &str) {
+        self.buffer.insert_str(self.cursor, s);
+        self.cursor += s.len();
+    }
+
+    /// カーソル直前の 1 文字を削除する（Backspace）。
+    /// マルチバイト境界を尊重するため `floor_char_boundary` 相当の手動探索を行う。
+    pub fn backspace(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        // カーソル直前の文字境界を探す
+        let mut prev = self.cursor - 1;
+        while prev > 0 && !self.buffer.is_char_boundary(prev) {
+            prev -= 1;
+        }
+        self.buffer.replace_range(prev..self.cursor, "");
+        self.cursor = prev;
+    }
+
+    /// カーソル直後の 1 文字を削除する（Delete）。
+    pub fn delete_forward(&mut self) {
+        if self.cursor >= self.buffer.len() {
+            return;
+        }
+        let mut next = self.cursor + 1;
+        while next < self.buffer.len() && !self.buffer.is_char_boundary(next) {
+            next += 1;
+        }
+        self.buffer.replace_range(self.cursor..next, "");
+    }
+
+    /// カーソルを 1 文字左へ移動する。
+    pub fn move_left(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let mut prev = self.cursor - 1;
+        while prev > 0 && !self.buffer.is_char_boundary(prev) {
+            prev -= 1;
+        }
+        self.cursor = prev;
+    }
+
+    /// カーソルを 1 文字右へ移動する。
+    pub fn move_right(&mut self) {
+        if self.cursor >= self.buffer.len() {
+            return;
+        }
+        let mut next = self.cursor + 1;
+        while next < self.buffer.len() && !self.buffer.is_char_boundary(next) {
+            next += 1;
+        }
+        self.cursor = next;
+    }
+
+    /// カーソルを先頭へ移動する。
+    pub fn move_home(&mut self) {
+        self.cursor = 0;
+    }
+
+    /// カーソルを末尾へ移動する。
+    pub fn move_end(&mut self) {
+        self.cursor = self.buffer.len();
+    }
+
+    /// 表示用文字列を返す。preedit が None なら buffer をそのまま、
+    /// Some(pe) ならカーソル位置に挿入された文字列を返す。
+    pub fn display_string(&self) -> String {
+        match &self.preedit {
+            None => self.buffer.clone(),
+            Some(pe) => {
+                let mut s = self.buffer.clone();
+                s.insert_str(self.cursor, pe);
+                s
+            }
+        }
+    }
+
+    /// 表示用文字列上のカーソル位置（バイト単位）を返す。
+    /// preedit がある場合は preedit の末尾を指す（IME 確定前の見た目に合わせる）。
+    pub fn display_cursor(&self) -> usize {
+        match &self.preedit {
+            None => self.cursor,
+            Some(pe) => self.cursor + pe.len(),
+        }
+    }
+}
+
 /// スライダーの種別
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SliderType {
@@ -201,6 +327,12 @@ pub struct SettingsPanel {
     /// 0=ListBox（ホスト選択） / 1=name / 2=host / 3=port / 4=username / 5=auth_type
     /// 範囲: 0..=5。AccessKit Focus / 上下キーで更新する。
     pub ssh_field_focus: u8,
+    /// Phase 5-11-8 Step 8-3 (Sub-phase A): SSH ホストフィールドの編集中状態。
+    /// `Some(state)` で編集モード ON、`None` で OFF。`ssh_field_focus` が 1/2/4
+    /// （name/host/username）のフィールドに対応する。Enter で開始、Enter で確定、
+    /// Esc でキャンセル。port / auth_type は Sub-phase C で別の UI（SpinButton /
+    /// ComboBox）を使うため Option には入らない。
+    pub ssh_field_editing: Option<TextInputState>,
 }
 
 impl Default for SettingsPanel {
@@ -260,6 +392,7 @@ impl SettingsPanel {
             ssh_hosts,
             selected_host_index: 0,
             ssh_field_focus: 0,
+            ssh_field_editing: None,
             startup_session: "main".to_string(),
             tab_rename_editing: None,
             tab_rename_text: String::new(),
@@ -287,6 +420,8 @@ impl SettingsPanel {
         self.dirty = false;
         self.font_family_editing = false;
         self.tab_rename_editing = None;
+        // Phase 5-11-8 Step 8-3 (Sub-phase A): SSH フィールド編集モードも解除
+        self.ssh_field_editing = None;
     }
 
     /// スライダー X 座標からフォントサイズを設定する（マウスクリック/ドラッグ用）
@@ -753,6 +888,113 @@ impl SettingsPanel {
             let current = types.iter().position(|&t| t == host.auth_type).unwrap_or(0);
             host.auth_type = types[(current + types.len() - 1) % types.len()].to_string();
             self.dirty = true;
+        }
+    }
+
+    // ===== Phase 5-11-8 Step 8-3 (Sub-phase A): SSH フィールド インライン編集 =====
+    //
+    // `ssh_field_focus` が 1 (name) / 2 (host) / 4 (username) のときに Enter キーで
+    // 編集モードを開始し、`ssh_field_editing = Some(TextInputState::new(current))` で
+    // バッファを初期化する。再度 Enter で `set_ssh_host_*` 経由でホストに書き戻す。
+
+    /// 現在の `ssh_field_focus` に対応する TextInput 編集モードを開始する。
+    ///
+    /// 戻り値: 編集モード開始に成功したら `true`、対応するフィールドが TextInput
+    /// でない（port/auth_type/ListBox）か、選択ホストが存在しない場合は `false`。
+    pub fn begin_ssh_field_edit(&mut self) -> bool {
+        let initial = {
+            let Some(host) = self.ssh_hosts.get(self.selected_host_index) else {
+                return false;
+            };
+            match self.ssh_field_focus {
+                1 => host.name.clone(),
+                2 => host.host.clone(),
+                4 => host.username.clone(),
+                _ => return false,
+            }
+        };
+        self.ssh_field_editing = Some(TextInputState::new(initial));
+        true
+    }
+
+    /// 編集中のバッファをホストフィールドに書き戻し、編集モードを終了する。
+    /// 戻り値: 書き戻しが行われたら `true`。
+    pub fn commit_ssh_field_edit(&mut self) -> bool {
+        let Some(state) = self.ssh_field_editing.take() else {
+            return false;
+        };
+        let text = state.buffer;
+        match self.ssh_field_focus {
+            1 => self.set_ssh_host_name(text),
+            2 => self.set_ssh_host_host(text),
+            4 => self.set_ssh_host_username(text),
+            _ => return false,
+        }
+        true
+    }
+
+    /// 編集中のバッファを破棄して編集モードを終了する。
+    /// 戻り値: 編集モードが有効だったら `true`。
+    pub fn cancel_ssh_field_edit(&mut self) -> bool {
+        self.ssh_field_editing.take().is_some()
+    }
+
+    /// 編集中バッファのカーソル位置に文字を 1 つ挿入する。
+    /// 編集モードでない場合は何もしない。
+    pub fn ssh_field_insert_char(&mut self, ch: char) {
+        if let Some(state) = self.ssh_field_editing.as_mut() {
+            state.insert_char(ch);
+        }
+    }
+
+    /// 編集中バッファのカーソル位置に文字列を挿入する（IME Commit 経路）。
+    // Phase 5-11-8 Sub-phase B で window.rs の Ime::Commit ハンドラから呼ばれる。
+    #[allow(dead_code)]
+    pub fn ssh_field_insert_str(&mut self, s: &str) {
+        if let Some(state) = self.ssh_field_editing.as_mut() {
+            state.insert_str(s);
+        }
+    }
+
+    /// 編集中バッファのカーソル直前の 1 文字を削除する（Backspace）。
+    pub fn ssh_field_backspace(&mut self) {
+        if let Some(state) = self.ssh_field_editing.as_mut() {
+            state.backspace();
+        }
+    }
+
+    /// 編集中バッファのカーソル直後の 1 文字を削除する（Delete）。
+    pub fn ssh_field_delete(&mut self) {
+        if let Some(state) = self.ssh_field_editing.as_mut() {
+            state.delete_forward();
+        }
+    }
+
+    /// 編集中バッファのカーソルを 1 文字左へ動かす。
+    pub fn ssh_field_move_left(&mut self) {
+        if let Some(state) = self.ssh_field_editing.as_mut() {
+            state.move_left();
+        }
+    }
+
+    /// 編集中バッファのカーソルを 1 文字右へ動かす。
+    pub fn ssh_field_move_right(&mut self) {
+        if let Some(state) = self.ssh_field_editing.as_mut() {
+            state.move_right();
+        }
+    }
+
+    /// 編集中バッファのカーソルを先頭へ動かす。
+    pub fn ssh_field_move_home(&mut self) {
+        if let Some(state) = self.ssh_field_editing.as_mut() {
+            state.move_home();
+        }
+    }
+
+    /// 編集中バッファのカーソルを末尾へ動かす。
+    pub fn ssh_field_move_end(&mut self) {
+        if let Some(state) = self.ssh_field_editing.as_mut() {
+            state.move_end();
         }
     }
 
