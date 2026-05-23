@@ -130,6 +130,10 @@ impl EventHandler {
 
         // 設定パネル系のアクションは純関数 `dispatch_settings_action` に委譲する。
         // 該当した場合は再描画を要求して早期 return。
+        //
+        // Phase 5-11-7: Phase 5-11-6 #6 で追加された 4 フィールド（CursorStyle / PaddingX /
+        // PaddingY / PresentMode）と、新規 Profiles 項目（SettingsProfileItem）も
+        // 同じ委譲先で処理できるよう route に追加。
         if matches!(
             kind,
             NodeIdKind::SettingsTab { .. }
@@ -139,6 +143,11 @@ impl EventHandler {
                 | NodeIdKind::SettingsWindowOpacity
                 | NodeIdKind::SettingsStartupLanguage
                 | NodeIdKind::SettingsStartupAutoUpdate
+                | NodeIdKind::SettingsCursorStyle
+                | NodeIdKind::SettingsPaddingX
+                | NodeIdKind::SettingsPaddingY
+                | NodeIdKind::SettingsPresentMode
+                | NodeIdKind::SettingsProfileItem { .. }
         ) {
             let handled = dispatch_settings_action(
                 &mut self.app.state.settings_panel,
@@ -409,6 +418,36 @@ impl EventHandler {
                 let lines = (self.app.state.rows as usize / 2).max(1);
                 self.app.state.scroll_down(lines);
                 self.request_redraw_if_window();
+            }
+
+            // ===== Phase 5-11-7: ターミナル入力バッファ =====
+            //
+            // SR ユーザーが `SetValue` で書き込んだ文字列を、フォーカスペインに対して
+            // `PasteText` IPC で送信する。書き込み後、AccessKit ツリー側の `value` は
+            // 次の `update_accesskit_tree_if_needed` で空文字列に戻る（`build_base_nodes`
+            // が毎回 `set_value("")` で構築するため）。
+            //
+            // Focus アクションは副作用なし（仮想カーソル通過で書き込みが発生しないように）。
+            (Action::SetValue, NodeIdKind::PaneInputBuffer) => {
+                if let Some(ActionData::Value(s)) = request.data {
+                    let text = s.into_string();
+                    if text.is_empty() {
+                        debug!("AccessKit: PaneInputBuffer 空文字列 SetValue 無視");
+                    } else if let Some(conn) = &self.connection {
+                        info!(
+                            "AccessKit: PaneInputBuffer SetValue {} 文字を PTY へ転送",
+                            text.chars().count()
+                        );
+                        let _ = conn.send_tx.try_send(ClientToServer::PasteText { text });
+                        self.request_redraw_if_window();
+                    }
+                } else {
+                    debug!("AccessKit: PaneInputBuffer SetValue で ActionData::Value 以外を受信");
+                }
+            }
+            (Action::Focus | Action::Click, NodeIdKind::PaneInputBuffer) => {
+                // 副作用なし。SR の仮想カーソル通過時に値変更が起きないようにする。
+                debug!("AccessKit: PaneInputBuffer Focus/Click（副作用なし）");
             }
 
             // ===== その他 =====

@@ -104,7 +104,22 @@ pub const SETTINGS_CONTENT_ID: NodeId = NodeId(25);
 /// `Live::Assertive` を設定して新規アラートを即時アナウンス対象とする。
 pub const ALERT_REGION_ID: NodeId = NodeId(26);
 
-// 27〜29 は将来のコンテナ（サイドバー等）用に予約
+/// ターミナル入力バッファ（Sprint 5-11-7、Phase 5-11-7）。
+///
+/// `PANE_AREA_ID` の末尾の子として常に存在する単一の `Role::TextInput` ノード。
+/// SR ユーザーがここに `SetValue` で文字列を書き込むと、フォーカスペインに対して
+/// `PasteText` IPC を送信して PTY へ転送する。書き込み完了後は `value` を空文字列に
+/// 戻して再入力可能にする。
+///
+/// 設計理由（Q2 (b) 採用）:
+/// - 表示用の TextRun 行（`PaneRow` / `PaneScrollbackRow`）と入力用の TextInput を
+///   セマンティクス的に分離し、AccessKit ツリーの責務を明確化
+/// - `Role::Terminal` の SetValue 動作は AccessKit 0.24 で標準化されていないため、
+///   汎用 `Role::TextInput` で代替
+/// - 改行を含む複数行入力も `\n` をそのまま PTY へ転送可能
+pub const PANE_INPUT_BUFFER_ID: NodeId = NodeId(27);
+
+// 28〜29 は将来のコンテナ（サイドバー等）用に予約
 
 /// Font カテゴリ: フォントファミリー入力欄
 pub const SETTINGS_FONT_FAMILY_ID: NodeId = NodeId(30);
@@ -167,10 +182,16 @@ const NODE_ID_MACRO_ITEM_OFFSET: u64 = 300_000_000;
 const NODE_ID_CONTEXT_ITEM_OFFSET: u64 = 400_000_000;
 
 /// Quick Select マッチ項目（`500_000_000 + idx`、Step 2-2-h）。
-///
-/// 600M〜999M は将来 SettingsField 動的展開（プロファイル一覧 / キーバインド一覧）用に予約済み。
-/// Step 2-2-e' の現状実装は固定 NodeId のみで完結し動的範囲は使わない。
 const NODE_ID_QUICKSELECT_ITEM_OFFSET: u64 = 500_000_000;
+
+/// SettingsPanel Profiles カテゴリの動的項目（`600_000_000 + idx`、Phase 5-11-7）。
+///
+/// `SettingsPanel.profiles` の各 `ProfileEntry` を `Role::ListBoxOption` として
+/// 公開する。`selected_profile` で選択中の項目を判定する。
+///
+/// 値域は `[600_000_000, 700_000_000)`。プロファイル数の現実的上限を考えると
+/// 10M 範囲で十分。`NODE_ID_TAB_OFFSET = 1e9` との間に 300M の余裕がある。
+const NODE_ID_SETTINGS_PROFILE_OFFSET: u64 = 600_000_000;
 
 /// タブノードの NodeId 計算用オフセット。
 ///
@@ -408,6 +429,11 @@ fn quickselect_item_id(idx: usize) -> NodeId {
     NodeId(NODE_ID_QUICKSELECT_ITEM_OFFSET + idx as u64)
 }
 
+/// SettingsPanel Profiles カテゴリ項目 idx から NodeId を計算する（Phase 5-11-7）。
+fn settings_profile_item_id(idx: usize) -> NodeId {
+    NodeId(NODE_ID_SETTINGS_PROFILE_OFFSET + idx as u64)
+}
+
 // ===== NodeId 逆引き（Step 2-4）=====
 
 /// `NodeId` の種別（Action 応答のディスパッチに使用）。
@@ -497,6 +523,10 @@ pub enum NodeIdKind {
     AlertRegion,
     /// SR 向けアラート個別ノード（Sprint 5-11-5、`AlertEntry.seq` で識別）
     Alert { seq: u64 },
+    /// Phase 5-11-7: ターミナル入力バッファ（フォーカスペインへの PTY 書き込み用）
+    PaneInputBuffer,
+    /// Phase 5-11-7: SettingsPanel Profiles カテゴリの動的項目（`idx` は `SettingsPanel.profiles` のインデックス）
+    SettingsProfileItem { idx: usize },
     /// 未知 / 範囲外の NodeId
     Unknown,
 }
@@ -512,7 +542,8 @@ pub enum NodeIdKind {
 /// | 18〜24 | `SettingsTab { idx: id - 18 }` |
 /// | 25 | `SettingsContent` |
 /// | 26 | `AlertRegion`（Sprint 5-11-5） |
-/// | 27〜29 | 予約 |
+/// | 27 | `PaneInputBuffer`（Phase 5-11-7） |
+/// | 28〜29 | 予約 |
 /// | 30〜35 | 設定フィールド（FontFamily / FontSize / ThemeScheme / WindowOpacity / StartupLanguage / StartupAutoUpdate） |
 /// | 36〜39 | 設定フィールド Phase 5-11-6 #6（CursorStyle / PaddingX / PaddingY / PresentMode） |
 /// | 40〜99 | 予約 |
@@ -521,11 +552,12 @@ pub enum NodeIdKind {
 /// | 300M..400M | `MacroItem { idx: id - 300M }` |
 /// | 400M..500M | `ContextItem { idx: id - 400M }` |
 /// | 500M..600M | `QuickSelectItem { idx: id - 500M }` |
-/// | 600M..1G | 予約（SettingsField 動的展開用） |
+/// | 600M..700M | `SettingsProfileItem { idx: id - 600M }`（Phase 5-11-7） |
+/// | 700M..1G | 予約（将来の SettingsField 動的展開用） |
 /// | 1G..1G+u32::MAX | `Tab { pane_id: id - 1G }` |
 /// | 10G..10G+u32::MAX | `Pane { pane_id: id - 10G }` |
-/// | 20G..~4.31T | `PaneRow` / `PaneScrollbackRow`（Sprint 5-11-3 / 5-11-4） |
-/// | 30G..30G+u64::MAX | `Alert { seq: id - 30G }`（Sprint 5-11-5） |
+/// | 20G..~4.3T | `PaneRow` / `PaneScrollbackRow`（Sprint 5-11-3 / 5-11-4） |
+/// | 50T..u64::MAX | `Alert { seq: id - 50T }`（Sprint 5-11-5） |
 /// | その他 | `Unknown` |
 pub fn decode_node_id(id: NodeId) -> NodeIdKind {
     let raw = id.0;
@@ -552,6 +584,8 @@ pub fn decode_node_id(id: NodeId) -> NodeIdKind {
         },
         25 => NodeIdKind::SettingsContent,
         26 => NodeIdKind::AlertRegion,
+        // Phase 5-11-7: ターミナル入力バッファ
+        27 => NodeIdKind::PaneInputBuffer,
         30 => NodeIdKind::SettingsFontFamily,
         31 => NodeIdKind::SettingsFontSize,
         32 => NodeIdKind::SettingsThemeScheme,
@@ -598,6 +632,13 @@ fn decode_dynamic(raw: u64) -> NodeIdKind {
             idx: (raw - NODE_ID_QUICKSELECT_ITEM_OFFSET) as usize,
         };
     }
+    // Phase 5-11-7: SettingsPanel Profiles 項目範囲: [600M, 700M)
+    if (NODE_ID_SETTINGS_PROFILE_OFFSET..NODE_ID_SETTINGS_PROFILE_OFFSET + DYN_RANGE).contains(&raw)
+    {
+        return NodeIdKind::SettingsProfileItem {
+            idx: (raw - NODE_ID_SETTINGS_PROFILE_OFFSET) as usize,
+        };
+    }
     // タブ範囲: [1e9, 1e9 + u32::MAX] = [1e9, 1e9 + ~4.29e9] ≈ [1e9, 5.3e9]
     if (NODE_ID_TAB_OFFSET..NODE_ID_TAB_OFFSET + (u32::MAX as u64) + 1).contains(&raw) {
         return NodeIdKind::Tab {
@@ -634,7 +675,7 @@ fn decode_dynamic(raw: u64) -> NodeIdKind {
             };
         }
     }
-    // SR アラート範囲（Sprint 5-11-5）: [30G, 30G + u64::MAX]。
+    // SR アラート範囲（Sprint 5-11-5）: [50T, u64::MAX]。
     // `next_alert_seq` の実用上限が遥か上なので、上限は事実上 u64::MAX。
     // ペイン行範囲の上限 `pane_row_range_end` (~4.3e13) と十分に離れているため衝突なし。
     if raw >= NODE_ID_ALERT_OFFSET {
@@ -811,9 +852,13 @@ fn build_base_nodes(state: &ClientState) -> (Vec<(NodeId, Node)>, Vec<NodeId>, N
     }
 
     // ===== PANE_AREA ノード =====
+    //
+    // Phase 5-11-7: ペイン本体に加えて末尾に PANE_INPUT_BUFFER_ID を追加し、
+    // SR ユーザーが SetValue で PTY へ書き込めるようにする。
     let mut pane_area = Node::new(Role::Group);
     pane_area.set_label("ペイン");
-    let pane_child_ids: Vec<NodeId> = tab_order.iter().copied().map(pane_node_id).collect();
+    let mut pane_child_ids: Vec<NodeId> = tab_order.iter().copied().map(pane_node_id).collect();
+    pane_child_ids.push(PANE_INPUT_BUFFER_ID);
     pane_area.set_children(pane_child_ids);
 
     // ===== 各ペインノード + ペイン行ノード（Sprint 5-11-3 / 5-11-4） =====
@@ -921,12 +966,36 @@ fn build_base_nodes(state: &ClientState) -> (Vec<(NodeId, Node)>, Vec<NodeId>, N
 
     let default_focus = state.focused_pane_id.map_or(ROOT_ID, pane_node_id);
 
-    let mut nodes: Vec<(NodeId, Node)> = Vec::with_capacity(3 + tab_nodes.len() + pane_nodes.len());
+    // ===== ターミナル入力バッファ（Phase 5-11-7） =====
+    //
+    // フォーカスペインの情報を description に含め、SR ユーザーにどのペインに対する
+    // 入力かを示す。SetValue 受信時に `PasteText` IPC でフォーカスペインへ転送する。
+    let mut input_buffer = Node::new(Role::TextInput);
+    input_buffer.set_label("ターミナル入力バッファ");
+    input_buffer.set_value("");
+    let pane_hint = state
+        .focused_pane_id
+        .and_then(|pid| state.panes.get(&pid))
+        .map(|p| {
+            if p.title.is_empty() {
+                format!("Pane {}", state.focused_pane_id.unwrap_or(0))
+            } else {
+                p.title.clone()
+            }
+        })
+        .unwrap_or_else(|| "フォーカスペインなし".to_string());
+    input_buffer.set_description(format!(
+        "現在のペイン: {} — 入力した文字列を確定すると PTY へ送信されます（改行は \\n で送信可能）",
+        pane_hint
+    ));
+
+    let mut nodes: Vec<(NodeId, Node)> = Vec::with_capacity(4 + tab_nodes.len() + pane_nodes.len());
     nodes.push((ROOT_ID, root));
     nodes.push((TAB_BAR_ID, tab_bar));
     nodes.push((PANE_AREA_ID, pane_area));
     nodes.extend(tab_nodes);
     nodes.extend(pane_nodes);
+    nodes.push((PANE_INPUT_BUFFER_ID, input_buffer));
 
     (nodes, vec![TAB_BAR_ID, PANE_AREA_ID], default_focus)
 }
@@ -1252,13 +1321,15 @@ fn build_macro_picker_nodes(picker: &MacroPicker) -> (Vec<(NodeId, Node)>, NodeI
 ///        ├─ ComboBox "カラースキーム" (Theme カテゴリのみ)
 ///        ├─ Slider "不透明度" (Window カテゴリのみ)
 ///        ├─ ComboBox "言語" (Startup カテゴリのみ)
-///        └─ CheckBox "起動時に更新確認" (Startup カテゴリのみ)
+///        ├─ CheckBox "起動時に更新確認" (Startup カテゴリのみ)
+///        ├─ ListBox "プロファイル一覧" (Profiles カテゴリのみ、Phase 5-11-7)
+///        │    └─ ListBoxOption × N
+///        ├─ (Ssh カテゴリのみ、Phase 5-11-7): 案内文を description で公開（フィールドなし）
+///        └─ (Keybindings カテゴリのみ、Phase 5-11-7): 案内文を description で公開（フィールドなし）
 /// ```
 ///
-/// SSH / Keybindings / Profiles カテゴリは現状 Group の description のみ
-/// （詳細フィールドは将来 600M〜オフセットで動的展開予定）。
-///
-/// フォーカス: font_family_editing 中はそのフィールド、それ以外は現在カテゴリのタブ。
+/// フォーカス: font_family_editing 中はそのフィールド、Window カテゴリは
+/// `window_field_focus` に応じて、それ以外は現在カテゴリのタブ。
 fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, NodeId) {
     use crate::settings_panel::SettingsCategory;
 
@@ -1297,6 +1368,9 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
 
     // ===== Content Group (現在カテゴリのフィールド) =====
     let mut content_children: Vec<NodeId> = Vec::new();
+    // SSH / Keybindings 等のフィールドなしカテゴリ向けに、コンテンツ Group の
+    // description に案内文を入れる。デフォルトは None（変更がなければそのまま）。
+    let mut content_description: Option<String> = None;
 
     match panel.category {
         SettingsCategory::Font => {
@@ -1392,14 +1466,78 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
             nodes.push((SETTINGS_STARTUP_AUTO_UPDATE_ID, auto_update));
             content_children.push(SETTINGS_STARTUP_AUTO_UPDATE_ID);
         }
-        SettingsCategory::Ssh | SettingsCategory::Keybindings | SettingsCategory::Profiles => {
-            // 詳細フィールドは将来実装（600M〜オフセット動的展開予定）
+        SettingsCategory::Profiles => {
+            // Phase 5-11-7: プロファイル一覧を ListBox + ListBoxOption で公開する。
+            // 各 ProfileEntry は `settings_profile_item_id(idx)` で識別し、
+            // Click / Focus で `selected_profile` を更新する。
+            if panel.profiles.is_empty() {
+                content_description = Some(
+                    "プロファイルがありません。nexterm.toml に [[profiles]] を追加してください"
+                        .to_string(),
+                );
+            } else {
+                let item_ids: Vec<NodeId> = (0..panel.profiles.len())
+                    .map(settings_profile_item_id)
+                    .collect();
+                for (idx, prof) in panel.profiles.iter().enumerate() {
+                    let mut item = Node::new(Role::ListBoxOption);
+                    let label = if prof.icon.is_empty() {
+                        prof.name.clone()
+                    } else {
+                        format!("{} {}", prof.icon, prof.name)
+                    };
+                    item.set_label(label);
+                    if idx == panel.selected_profile {
+                        item.set_selected(true);
+                    }
+                    nodes.push((settings_profile_item_id(idx), item));
+                    // ListBoxOption は item_ids 経由で ListBox の子として配置するが、
+                    // content_children へは ListBox 1 個のみを追加する（下記）。
+                    let _ = idx; // 名前空間整理: 上の `nodes.push` で利用済
+                }
+                // ListBox 親ノード。`content_children` には ListBox を 1 個だけ含める。
+                // ListBox 自体は固定 NodeId を使わず、便宜上 `SETTINGS_CONTENT_ID` の
+                // 子として直接 ListBoxOption 群を並べる代わりに、Group の説明を簡略化する。
+                //
+                // Q: なぜ ListBox 専用の固定 NodeId を割り当てないか？
+                // A: SETTINGS_CONTENT_ID 自体を Group → ListBox に Role 変更したいが、
+                //    現在 Group は他カテゴリでも使うため不可。代わりに各 ListBoxOption を
+                //    SETTINGS_CONTENT_ID の直接の子として並べる（NVDA / Orca 等の SR は
+                //    Group の子の ListBoxOption も適切に読み上げる）。
+                for id in &item_ids {
+                    content_children.push(*id);
+                }
+                content_description = Some(format!(
+                    "プロファイル一覧（{} 件）。↑↓ で選択、Enter で適用",
+                    panel.profiles.len()
+                ));
+            }
+        }
+        SettingsCategory::Ssh => {
+            // Phase 5-11-7: SSH ホストは nexterm.toml 経由のため、設定パネル内では
+            // 編集できない。SR には案内文として description で公開する。
+            content_description = Some(
+                "SSH ホストは nexterm.toml の [[hosts]] セクションで管理します。\
+                 設定パネル内では編集できません"
+                    .to_string(),
+            );
+        }
+        SettingsCategory::Keybindings => {
+            // Phase 5-11-7: キーバインドも nexterm.toml 経由のため、設定パネル内では
+            // 編集できない。SR には案内文として description で公開する。
+            content_description = Some(
+                "キーバインドは nexterm.toml の [[keys]] セクションで管理します。\
+                 設定パネル内では編集できません"
+                    .to_string(),
+            );
         }
     }
 
     let mut content = Node::new(Role::Group);
     content.set_label(panel.category.label());
-    if content_children.is_empty() {
+    if let Some(desc) = content_description {
+        content.set_description(desc);
+    } else if content_children.is_empty() {
         content.set_description("このカテゴリの詳細はまだ実装されていません");
     }
     content.set_children(content_children);
@@ -1418,6 +1556,9 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
             4 => SETTINGS_PRESENT_MODE_ID,
             _ => settings_tab_id_at(current_idx),
         }
+    } else if matches!(panel.category, SettingsCategory::Profiles) && !panel.profiles.is_empty() {
+        // Phase 5-11-7: Profiles カテゴリでは selected_profile のノードへフォーカス
+        settings_profile_item_id(panel.selected_profile.min(panel.profiles.len() - 1))
     } else {
         settings_tab_id_at(current_idx)
     };
@@ -1619,6 +1760,14 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
         p.present_mode_toml_key().hash(&mut h);
         p.padding_x.hash(&mut h);
         p.padding_y.hash(&mut h);
+        // Phase 5-11-7: Profiles カテゴリ用に selected_profile + profiles の要素数 +
+        // 各 ProfileEntry の name / icon を反映する。
+        p.selected_profile.hash(&mut h);
+        p.profiles.len().hash(&mut h);
+        for prof in &p.profiles {
+            prof.name.hash(&mut h);
+            prof.icon.hash(&mut h);
+        }
     }
 
     // === Quick Select（Step 2-2-h）===
@@ -1849,6 +1998,15 @@ pub fn dispatch_settings_action(
             true
         }
 
+        // ===== Phase 5-11-7 - Profiles 項目 (ListBoxOption) =====
+        // Click / Focus いずれも仮想カーソル移動 = 制御遷移として扱い、selected_profile を更新する。
+        (Action::Click | Action::Focus, NodeIdKind::SettingsProfileItem { idx })
+            if *idx < panel.profiles.len() =>
+        {
+            panel.selected_profile = *idx;
+            true
+        }
+
         _ => false,
     }
 }
@@ -1902,8 +2060,8 @@ mod tests {
         let state = ClientState::new(80, 24, 1000);
         let update = build_tree_from_state(&state);
 
-        // ROOT / TAB_BAR / PANE_AREA の 3 ノードのみ
-        assert_eq!(update.nodes.len(), 3);
+        // ROOT / TAB_BAR / PANE_AREA + PaneInputBuffer (Phase 5-11-7) = 4 ノード
+        assert_eq!(update.nodes.len(), 4);
         assert_eq!(update.focus, ROOT_ID);
         assert!(update.tree.is_some());
     }
@@ -1920,13 +2078,14 @@ mod tests {
 
         let update = build_tree_from_state(&state);
 
-        // ROOT + TAB_BAR + PANE_AREA + Tab + Pane + 24 PaneRow = 29
-        assert_eq!(update.nodes.len(), 29);
+        // ROOT + TAB_BAR + PANE_AREA + Tab + Pane + 24 PaneRow + PaneInputBuffer = 30
+        assert_eq!(update.nodes.len(), 30);
         assert_eq!(update.focus, pane_node_id(42));
 
         let ids: Vec<u64> = update.nodes.iter().map(|(id, _)| id.0).collect();
         assert!(ids.contains(&tab_node_id(42).0));
         assert!(ids.contains(&pane_node_id(42).0));
+        assert!(ids.contains(&PANE_INPUT_BUFFER_ID.0));
     }
 
     /// 複数ペイン構成: タブ順序が tab_order に従うこと
@@ -1943,8 +2102,8 @@ mod tests {
 
         let update = build_tree_from_state(&state);
 
-        // ROOT + TAB_BAR + PANE_AREA + 3 Tab + 3 Pane + 3 * 24 PaneRow = 81
-        assert_eq!(update.nodes.len(), 81);
+        // ROOT + TAB_BAR + PANE_AREA + 3 Tab + 3 Pane + 3 * 24 PaneRow + PaneInputBuffer = 82
+        assert_eq!(update.nodes.len(), 82);
         assert_eq!(update.focus, pane_node_id(10));
     }
 
@@ -1960,8 +2119,8 @@ mod tests {
 
         let update = build_tree_from_state(&state);
 
-        // ROOT + TAB_BAR + PANE_AREA + Tab + Pane + 24 PaneRow = 29
-        assert_eq!(update.nodes.len(), 29);
+        // ROOT + TAB_BAR + PANE_AREA + Tab + Pane + 24 PaneRow + PaneInputBuffer = 30
+        assert_eq!(update.nodes.len(), 30);
     }
 
     /// CommandPalette 表示時にダイアログ + 検索 + 候補リストが含まれること
@@ -2465,15 +2624,16 @@ mod tests {
     fn decode_unknown_node_ids() {
         assert_eq!(decode_node_id(NodeId(0)), NodeIdKind::Unknown);
         // 17 は SettingsTabList、18〜24 は SettingsTab、25 は SettingsContent、
-        // 26 は AlertRegion（Sprint 5-11-5 で割当）、30〜35 は設定フィールド（Step 2-2-e'）。
-        // 36〜39 は Phase 5-11-6 #6 の設定フィールド（Cursor/Padding/PresentMode）。
-        // 27〜29, 40〜99 は将来用に予約。
-        assert_eq!(decode_node_id(NodeId(27)), NodeIdKind::Unknown);
+        // 26 は AlertRegion（Sprint 5-11-5 で割当）、27 は PaneInputBuffer（Phase 5-11-7）、
+        // 30〜35 は設定フィールド（Step 2-2-e'）、36〜39 は Phase 5-11-6 #6 の設定フィールド。
+        // 28〜29, 40〜99 は将来用に予約。
+        assert_eq!(decode_node_id(NodeId(28)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(29)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(40)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(99)), NodeIdKind::Unknown);
-        // 600M〜999M は将来 SettingsField 動的展開で使う予約範囲
-        assert_eq!(decode_node_id(NodeId(600_000_000)), NodeIdKind::Unknown);
+        // 700M〜999M は将来 SettingsField 動的展開で使う予約範囲（600M〜700M は
+        // Phase 5-11-7 で SettingsProfileItem に割当済み）。
+        assert_eq!(decode_node_id(NodeId(700_000_000)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(999_999_999)), NodeIdKind::Unknown);
         // タブとペインの間の隙間（5.3e9〜1e10）も Unknown
         assert_eq!(decode_node_id(NodeId(7_000_000_000)), NodeIdKind::Unknown);
@@ -4123,5 +4283,371 @@ mod tests {
             .find(|(id, _)| *id == alert_node_id(seq))
             .unwrap();
         assert_eq!(bell.1.description(), None);
+    }
+
+    // ===== Phase 5-11-7: PTY 入力バッファ =====
+
+    /// PaneInputBuffer の NodeId(27) が `NodeIdKind::PaneInputBuffer` に decode されること
+    #[test]
+    fn decode_pane_input_buffer() {
+        assert_eq!(
+            decode_node_id(PANE_INPUT_BUFFER_ID),
+            NodeIdKind::PaneInputBuffer
+        );
+        assert_eq!(decode_node_id(NodeId(27)), NodeIdKind::PaneInputBuffer);
+    }
+
+    /// PaneInputBuffer は PaneArea の子として常に存在し、Role::TextInput であること
+    #[test]
+    fn build_tree_includes_pane_input_buffer() {
+        let state = ClientState::new(80, 24, 1000);
+        let update = build_tree_from_state(&state);
+
+        let input_buffer = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == PANE_INPUT_BUFFER_ID)
+            .expect("PaneInputBuffer ノードが存在");
+        assert_eq!(input_buffer.1.role(), Role::TextInput);
+        assert_eq!(input_buffer.1.label(), Some("ターミナル入力バッファ"));
+        assert_eq!(input_buffer.1.value(), Some(""));
+    }
+
+    /// PaneInputBuffer の description はフォーカスペインのタイトルを含むこと
+    #[test]
+    fn pane_input_buffer_description_includes_focused_pane_title() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let mut pane = crate::state::PaneState::new(80, 24, 1000);
+        pane.title = "vim main.rs".to_string();
+        state.panes.insert(1, pane);
+        state.tab_order = vec![1];
+        state.focused_pane_id = Some(1);
+
+        let update = build_tree_from_state(&state);
+        let input_buffer = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == PANE_INPUT_BUFFER_ID)
+            .unwrap();
+        let desc = input_buffer.1.description().unwrap_or("");
+        assert!(
+            desc.contains("vim main.rs"),
+            "description にペインタイトルが含まれる: {}",
+            desc
+        );
+    }
+
+    /// フォーカスペインが存在しない場合は「フォーカスペインなし」と表示されること
+    #[test]
+    fn pane_input_buffer_description_when_no_focus() {
+        let state = ClientState::new(80, 24, 1000);
+        let update = build_tree_from_state(&state);
+        let input_buffer = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == PANE_INPUT_BUFFER_ID)
+            .unwrap();
+        let desc = input_buffer.1.description().unwrap_or("");
+        assert!(
+            desc.contains("フォーカスペインなし"),
+            "フォーカスなしのメッセージが含まれる: {}",
+            desc
+        );
+    }
+
+    /// PaneArea の子に PaneInputBuffer が末尾追加されていること
+    #[test]
+    fn pane_area_children_include_input_buffer_as_last() {
+        let mut state = ClientState::new(80, 24, 1000);
+        state
+            .panes
+            .insert(1, crate::state::PaneState::new(80, 24, 1000));
+        state.tab_order = vec![1];
+
+        let update = build_tree_from_state(&state);
+        let pane_area = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == PANE_AREA_ID)
+            .unwrap();
+        let children: Vec<NodeId> = pane_area.1.children().to_vec();
+        assert_eq!(
+            *children.last().unwrap(),
+            PANE_INPUT_BUFFER_ID,
+            "PaneArea の最後の子が PaneInputBuffer"
+        );
+        // ペイン本体 + PaneInputBuffer = 2 子
+        assert_eq!(children.len(), 2);
+    }
+
+    /// フォーカスペインが変わると tree hash も変わること（入力バッファ description 反映）
+    #[test]
+    fn tree_state_hash_detects_focused_pane_title_change() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let mut pane = crate::state::PaneState::new(80, 24, 1000);
+        pane.title = "old title".to_string();
+        state.panes.insert(1, pane);
+        state.tab_order = vec![1];
+        state.focused_pane_id = Some(1);
+        let h0 = compute_tree_state_hash(&state);
+
+        state.panes.get_mut(&1).unwrap().title = "new title".to_string();
+        let h1 = compute_tree_state_hash(&state);
+        assert_ne!(h0, h1, "フォーカスペインのタイトル変更でハッシュが変化");
+    }
+
+    // ===== Phase 5-11-7: SettingsPanel Profiles + Ssh/Keybindings description =====
+
+    /// SettingsProfileItem の NodeId roundtrip
+    #[test]
+    fn settings_profile_item_id_roundtrip() {
+        for idx in [0, 1, 50, 99_999] {
+            let id = settings_profile_item_id(idx);
+            let decoded = decode_node_id(id);
+            assert_eq!(
+                decoded,
+                NodeIdKind::SettingsProfileItem { idx },
+                "settings_profile_item_id({}) の roundtrip",
+                idx
+            );
+        }
+    }
+
+    /// SettingsProfileItem オフセットが QuickSelect / Tab 範囲と衝突しないこと
+    #[test]
+    fn settings_profile_offset_does_not_overlap() {
+        const _: () = assert!(NODE_ID_SETTINGS_PROFILE_OFFSET > NODE_ID_QUICKSELECT_ITEM_OFFSET);
+        const _: () = assert!(
+            NODE_ID_SETTINGS_PROFILE_OFFSET + 100_000_000 <= NODE_ID_TAB_OFFSET,
+            "Profiles 範囲 [600M, 700M) は Tab 範囲 [1G, ...) と衝突しない"
+        );
+    }
+
+    /// Profiles カテゴリが空のとき: 「プロファイルがありません」を案内する
+    #[test]
+    fn build_settings_panel_profiles_empty() {
+        use crate::settings_panel::SettingsCategory;
+        let mut panel = SettingsPanel::default();
+        panel.category = SettingsCategory::Profiles;
+        panel.profiles = vec![];
+
+        let (nodes, _focus) = build_settings_panel_nodes(&panel);
+        let content = nodes
+            .iter()
+            .find(|(id, _)| *id == SETTINGS_CONTENT_ID)
+            .unwrap();
+        let desc = content.1.description().unwrap_or("");
+        assert!(
+            desc.contains("プロファイルがありません"),
+            "空案内文が含まれる: {}",
+            desc
+        );
+    }
+
+    /// Profiles カテゴリにプロファイルがあるとき: ListBoxOption が公開される
+    #[test]
+    fn build_settings_panel_profiles_exposes_listbox_options() {
+        use crate::settings_panel::{ProfileEntry, SettingsCategory};
+        let mut panel = SettingsPanel::default();
+        panel.category = SettingsCategory::Profiles;
+        panel.profiles = vec![
+            ProfileEntry {
+                name: "bash".to_string(),
+                icon: "🐧".to_string(),
+                shell_program: "/bin/bash".to_string(),
+                working_dir: String::new(),
+            },
+            ProfileEntry {
+                name: "powershell".to_string(),
+                icon: "💠".to_string(),
+                shell_program: "pwsh".to_string(),
+                working_dir: String::new(),
+            },
+        ];
+        panel.selected_profile = 1;
+
+        let (nodes, focus) = build_settings_panel_nodes(&panel);
+
+        // 各 ListBoxOption が公開される
+        let opt0 = nodes
+            .iter()
+            .find(|(id, _)| *id == settings_profile_item_id(0))
+            .unwrap();
+        assert_eq!(opt0.1.role(), Role::ListBoxOption);
+        assert!(opt0.1.label().unwrap_or("").contains("bash"));
+        assert_eq!(opt0.1.is_selected(), None); // 未選択 (set_selected されない)
+
+        let opt1 = nodes
+            .iter()
+            .find(|(id, _)| *id == settings_profile_item_id(1))
+            .unwrap();
+        assert_eq!(opt1.1.role(), Role::ListBoxOption);
+        assert!(opt1.1.label().unwrap_or("").contains("powershell"));
+        // selected_profile = 1 なのでこちらが選択中
+        assert_eq!(opt1.1.is_selected(), Some(true));
+
+        // フォーカスは選択中のプロファイル項目へ
+        assert_eq!(focus, settings_profile_item_id(1));
+    }
+
+    /// dispatch_settings_action: SettingsProfileItem Click で selected_profile が更新される
+    #[test]
+    fn dispatch_settings_profile_item_click() {
+        use crate::settings_panel::{ProfileEntry, SettingsCategory};
+        let mut panel = SettingsPanel::default();
+        panel.category = SettingsCategory::Profiles;
+        panel.profiles = vec![
+            ProfileEntry {
+                name: "a".to_string(),
+                icon: String::new(),
+                shell_program: String::new(),
+                working_dir: String::new(),
+            },
+            ProfileEntry {
+                name: "b".to_string(),
+                icon: String::new(),
+                shell_program: String::new(),
+                working_dir: String::new(),
+            },
+        ];
+        panel.selected_profile = 0;
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            accesskit::Action::Click,
+            &NodeIdKind::SettingsProfileItem { idx: 1 },
+            None,
+        );
+        assert!(handled);
+        assert_eq!(panel.selected_profile, 1);
+    }
+
+    /// dispatch_settings_action: SettingsProfileItem Focus でも selected_profile が更新される
+    #[test]
+    fn dispatch_settings_profile_item_focus() {
+        use crate::settings_panel::{ProfileEntry, SettingsCategory};
+        let mut panel = SettingsPanel::default();
+        panel.category = SettingsCategory::Profiles;
+        panel.profiles = vec![ProfileEntry {
+            name: "x".to_string(),
+            icon: String::new(),
+            shell_program: String::new(),
+            working_dir: String::new(),
+        }];
+        panel.selected_profile = 0;
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            accesskit::Action::Focus,
+            &NodeIdKind::SettingsProfileItem { idx: 0 },
+            None,
+        );
+        assert!(handled);
+        assert_eq!(panel.selected_profile, 0);
+    }
+
+    /// dispatch_settings_action: 範囲外の idx は no-op で false を返す
+    #[test]
+    fn dispatch_settings_profile_item_out_of_range() {
+        let mut panel = SettingsPanel::default();
+        panel.profiles = vec![];
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            accesskit::Action::Click,
+            &NodeIdKind::SettingsProfileItem { idx: 5 },
+            None,
+        );
+        assert!(!handled);
+        assert_eq!(panel.selected_profile, 0);
+    }
+
+    /// SSH カテゴリは TOML 編集の案内 description を持つこと
+    #[test]
+    fn build_settings_panel_ssh_has_informative_description() {
+        use crate::settings_panel::SettingsCategory;
+        let mut panel = SettingsPanel::default();
+        panel.category = SettingsCategory::Ssh;
+
+        let (nodes, _focus) = build_settings_panel_nodes(&panel);
+        let content = nodes
+            .iter()
+            .find(|(id, _)| *id == SETTINGS_CONTENT_ID)
+            .unwrap();
+        let desc = content.1.description().unwrap_or("");
+        assert!(desc.contains("nexterm.toml"), "案内文: {}", desc);
+        assert!(desc.contains("[[hosts]]"), "案内文: {}", desc);
+        assert!(
+            !desc.contains("まだ実装されていません"),
+            "「未実装」表記が消えている"
+        );
+    }
+
+    /// Keybindings カテゴリも TOML 編集の案内 description を持つこと
+    #[test]
+    fn build_settings_panel_keybindings_has_informative_description() {
+        use crate::settings_panel::SettingsCategory;
+        let mut panel = SettingsPanel::default();
+        panel.category = SettingsCategory::Keybindings;
+
+        let (nodes, _focus) = build_settings_panel_nodes(&panel);
+        let content = nodes
+            .iter()
+            .find(|(id, _)| *id == SETTINGS_CONTENT_ID)
+            .unwrap();
+        let desc = content.1.description().unwrap_or("");
+        assert!(desc.contains("nexterm.toml"), "案内文: {}", desc);
+        assert!(desc.contains("[[keys]]"), "案内文: {}", desc);
+        assert!(
+            !desc.contains("まだ実装されていません"),
+            "「未実装」表記が消えている"
+        );
+    }
+
+    /// tree_state_hash が selected_profile 変更で変化すること
+    #[test]
+    fn tree_state_hash_detects_selected_profile_change() {
+        use crate::settings_panel::ProfileEntry;
+        let mut state = ClientState::new(80, 24, 1000);
+        state.settings_panel.is_open = true;
+        state.settings_panel.profiles = vec![
+            ProfileEntry {
+                name: "a".to_string(),
+                icon: String::new(),
+                shell_program: String::new(),
+                working_dir: String::new(),
+            },
+            ProfileEntry {
+                name: "b".to_string(),
+                icon: String::new(),
+                shell_program: String::new(),
+                working_dir: String::new(),
+            },
+        ];
+        state.settings_panel.selected_profile = 0;
+        let h0 = compute_tree_state_hash(&state);
+
+        state.settings_panel.selected_profile = 1;
+        let h1 = compute_tree_state_hash(&state);
+        assert_ne!(h0, h1, "selected_profile 変更でハッシュが変化");
+    }
+
+    /// tree_state_hash が profiles リスト変更で変化すること
+    #[test]
+    fn tree_state_hash_detects_profiles_change() {
+        use crate::settings_panel::ProfileEntry;
+        let mut state = ClientState::new(80, 24, 1000);
+        state.settings_panel.is_open = true;
+        state.settings_panel.profiles = vec![];
+        let h0 = compute_tree_state_hash(&state);
+
+        state.settings_panel.profiles = vec![ProfileEntry {
+            name: "added".to_string(),
+            icon: String::new(),
+            shell_program: String::new(),
+            working_dir: String::new(),
+        }];
+        let h1 = compute_tree_state_hash(&state);
+        assert_ne!(h0, h1, "profiles 追加でハッシュが変化");
     }
 }
