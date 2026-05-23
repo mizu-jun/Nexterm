@@ -151,10 +151,6 @@ pub struct SettingsPanel {
     pub present_mode: nexterm_config::PresentModeConfig,
     /// Phase 5-11-6 #6: Window カテゴリ内のフォーカス中フィールド。
     /// 0=opacity / 1=cursor_style / 2=padding_x / 3=padding_y / 4=present_mode
-    ///
-    /// コミット D/E で input_handler と AccessKit ディスパッチから参照されるため、
-    /// 描画フェーズのみで参照される間は dead_code 警告を抑止する。
-    #[allow(dead_code)]
     pub window_field_focus: u8,
 }
 
@@ -380,10 +376,6 @@ impl SettingsPanel {
     // Block / Beam / Underline の 3 値を循環させる。
     // 保存時は TOML の `cursor_style = "block" | "beam" | "underline"` に書き戻す。
     //
-    // `#[allow(dead_code)]`: コミット D（キー入力）/ E（AccessKit dispatch）から呼び出される
-    // までは bin ターゲットで使用箇所がないため。後続コミットで除去する。
-
-    #[allow(dead_code)]
     pub fn next_cursor_style(&mut self) {
         use nexterm_config::CursorStyle::*;
         self.cursor_style = match self.cursor_style {
@@ -394,7 +386,6 @@ impl SettingsPanel {
         self.dirty = true;
     }
 
-    #[allow(dead_code)]
     pub fn prev_cursor_style(&mut self) {
         use nexterm_config::CursorStyle::*;
         self.cursor_style = match self.cursor_style {
@@ -406,7 +397,7 @@ impl SettingsPanel {
     }
 
     /// 列挙順序のインデックス（0=Block, 1=Beam, 2=Underline）。UI 描画と AccessKit
-    /// `Action::SetValue` 経路で使う。
+    /// `Action::SetValue` 経路で使う（現状はテスト経由のみ）。
     #[allow(dead_code)]
     pub fn cursor_style_index(&self) -> usize {
         use nexterm_config::CursorStyle::*;
@@ -418,7 +409,6 @@ impl SettingsPanel {
     }
 
     /// UI に表示するラベル（日本語 + 英語併記）。
-    #[allow(dead_code)]
     pub fn cursor_style_label(&self) -> &'static str {
         use nexterm_config::CursorStyle::*;
         match self.cursor_style {
@@ -443,37 +433,31 @@ impl SettingsPanel {
     // 0〜32 ピクセル。1 px 単位で増減できる。SR の `Action::SetValue(NumericValue)`
     // 経路は f64 を u32 に丸めて clamp する。
 
-    #[allow(dead_code)]
     pub fn set_padding_x_value(&mut self, v: f64) {
         self.padding_x = (v.round().clamp(0.0, 32.0)) as u32;
         self.dirty = true;
     }
 
-    #[allow(dead_code)]
     pub fn increase_padding_x(&mut self) {
         self.padding_x = (self.padding_x + 1).min(32);
         self.dirty = true;
     }
 
-    #[allow(dead_code)]
     pub fn decrease_padding_x(&mut self) {
         self.padding_x = self.padding_x.saturating_sub(1);
         self.dirty = true;
     }
 
-    #[allow(dead_code)]
     pub fn set_padding_y_value(&mut self, v: f64) {
         self.padding_y = (v.round().clamp(0.0, 32.0)) as u32;
         self.dirty = true;
     }
 
-    #[allow(dead_code)]
     pub fn increase_padding_y(&mut self) {
         self.padding_y = (self.padding_y + 1).min(32);
         self.dirty = true;
     }
 
-    #[allow(dead_code)]
     pub fn decrease_padding_y(&mut self) {
         self.padding_y = self.padding_y.saturating_sub(1);
         self.dirty = true;
@@ -484,7 +468,6 @@ impl SettingsPanel {
     // Fifo / Mailbox / Auto の 3 値を循環させる。
     // 保存時は TOML の `[gpu].present_mode` に書き戻す。
 
-    #[allow(dead_code)]
     pub fn next_present_mode(&mut self) {
         use nexterm_config::PresentModeConfig::*;
         self.present_mode = match self.present_mode {
@@ -495,7 +478,6 @@ impl SettingsPanel {
         self.dirty = true;
     }
 
-    #[allow(dead_code)]
     pub fn prev_present_mode(&mut self) {
         use nexterm_config::PresentModeConfig::*;
         self.present_mode = match self.present_mode {
@@ -516,7 +498,6 @@ impl SettingsPanel {
         }
     }
 
-    #[allow(dead_code)]
     pub fn present_mode_label(&self) -> &'static str {
         use nexterm_config::PresentModeConfig::*;
         match self.present_mode {
@@ -541,12 +522,10 @@ impl SettingsPanel {
     // ↑/↓ でフィールド間移動、←/→ でフォーカス中フィールドの値を変更する。
 
     /// Window カテゴリ内のフィールド総数
-    #[allow(dead_code)]
     pub const WINDOW_FIELD_COUNT: u8 = 5;
 
     /// 次のフィールドにフォーカスを移す（最後で停止）。
     /// 戻り値: 移動できたら true、すでに最後なら false（カテゴリ移動の判断に使う）。
-    #[allow(dead_code)]
     pub fn next_window_field(&mut self) -> bool {
         if self.window_field_focus + 1 < Self::WINDOW_FIELD_COUNT {
             self.window_field_focus += 1;
@@ -557,7 +536,6 @@ impl SettingsPanel {
     }
 
     /// 前のフィールドにフォーカスを移す（先頭で停止）。
-    #[allow(dead_code)]
     pub fn prev_window_field(&mut self) -> bool {
         if self.window_field_focus > 0 {
             self.window_field_focus -= 1;
@@ -568,7 +546,6 @@ impl SettingsPanel {
     }
 
     /// フォーカス中フィールドの値を増加させる（←/→ の右、または ↑ の Window カテゴリ補助）。
-    #[allow(dead_code)]
     pub fn window_field_increase(&mut self) {
         match self.window_field_focus {
             0 => self.increase_opacity(),
@@ -581,7 +558,6 @@ impl SettingsPanel {
     }
 
     /// フォーカス中フィールドの値を減少させる。
-    #[allow(dead_code)]
     pub fn window_field_decrease(&mut self) {
         match self.window_field_focus {
             0 => self.decrease_opacity(),

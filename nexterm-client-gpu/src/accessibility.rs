@@ -124,7 +124,19 @@ pub const SETTINGS_STARTUP_LANGUAGE_ID: NodeId = NodeId(34);
 /// Startup カテゴリ: 起動時更新確認 CheckBox
 pub const SETTINGS_STARTUP_AUTO_UPDATE_ID: NodeId = NodeId(35);
 
-// 36〜99 は将来のフィールド（SSH / Keybindings / Profiles など）用に予約
+/// Phase 5-11-6 #6 - Window カテゴリ: カーソル形状（block / beam / underline）
+pub const SETTINGS_CURSOR_STYLE_ID: NodeId = NodeId(36);
+
+/// Phase 5-11-6 #6 - Window カテゴリ: 水平パディング (0〜32 px)
+pub const SETTINGS_PADDING_X_ID: NodeId = NodeId(37);
+
+/// Phase 5-11-6 #6 - Window カテゴリ: 垂直パディング (0〜32 px)
+pub const SETTINGS_PADDING_Y_ID: NodeId = NodeId(38);
+
+/// Phase 5-11-6 #6 - Window カテゴリ: GPU プレゼンテーションモード（fifo / mailbox / auto）
+pub const SETTINGS_PRESENT_MODE_ID: NodeId = NodeId(39);
+
+// 40〜99 は将来のフィールド（SSH / Keybindings / Profiles など）用に予約
 
 /// 設定パネルカテゴリタブのベース NodeId。
 ///
@@ -468,6 +480,14 @@ pub enum NodeIdKind {
     SettingsStartupLanguage,
     /// 設定パネル: 起動時更新確認 CheckBox
     SettingsStartupAutoUpdate,
+    /// Phase 5-11-6 #6: 設定パネル: カーソル形状（block / beam / underline）
+    SettingsCursorStyle,
+    /// Phase 5-11-6 #6: 設定パネル: 水平パディング (0〜32 px) スライダー
+    SettingsPaddingX,
+    /// Phase 5-11-6 #6: 設定パネル: 垂直パディング (0〜32 px) スライダー
+    SettingsPaddingY,
+    /// Phase 5-11-6 #6: 設定パネル: GPU プレゼンテーションモード（fifo / mailbox / auto）
+    SettingsPresentMode,
     /// ペイン行ノード（Sprint 5-11-3、`pane_id` と `row` で識別）
     PaneRow { pane_id: u32, row: u16 },
     /// ペインのスクロールバック行ノード（Sprint 5-11-4、`pane_id` と
@@ -494,7 +514,8 @@ pub enum NodeIdKind {
 /// | 26 | `AlertRegion`（Sprint 5-11-5） |
 /// | 27〜29 | 予約 |
 /// | 30〜35 | 設定フィールド（FontFamily / FontSize / ThemeScheme / WindowOpacity / StartupLanguage / StartupAutoUpdate） |
-/// | 36〜99 | 予約 |
+/// | 36〜39 | 設定フィールド Phase 5-11-6 #6（CursorStyle / PaddingX / PaddingY / PresentMode） |
+/// | 40〜99 | 予約 |
 /// | 100M..200M | `PaletteItem { idx: id - 100M }` |
 /// | 200M..300M | `HostItem { idx: id - 200M }` |
 /// | 300M..400M | `MacroItem { idx: id - 300M }` |
@@ -537,6 +558,11 @@ pub fn decode_node_id(id: NodeId) -> NodeIdKind {
         33 => NodeIdKind::SettingsWindowOpacity,
         34 => NodeIdKind::SettingsStartupLanguage,
         35 => NodeIdKind::SettingsStartupAutoUpdate,
+        // Phase 5-11-6 #6: Window カテゴリの 4 新フィールド
+        36 => NodeIdKind::SettingsCursorStyle,
+        37 => NodeIdKind::SettingsPaddingX,
+        38 => NodeIdKind::SettingsPaddingY,
+        39 => NodeIdKind::SettingsPresentMode,
         _ => decode_dynamic(raw),
     }
 }
@@ -1302,6 +1328,8 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
             content_children.push(SETTINGS_THEME_SCHEME_ID);
         }
         SettingsCategory::Window => {
+            // Phase 5-11-6 #6: 5 フィールド構成
+            //   0=opacity / 1=cursor_style / 2=padding_x / 3=padding_y / 4=present_mode
             let mut opacity = Node::new(Role::Slider);
             opacity.set_label("背景不透明度");
             opacity.set_value(format!("{:.0}%", panel.opacity * 100.0));
@@ -1311,6 +1339,40 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
             opacity.set_numeric_value_step(0.05);
             nodes.push((SETTINGS_WINDOW_OPACITY_ID, opacity));
             content_children.push(SETTINGS_WINDOW_OPACITY_ID);
+
+            let mut cs = Node::new(Role::ComboBox);
+            cs.set_label("カーソル形状");
+            cs.set_value(panel.cursor_style_label());
+            cs.set_description("←/→ で切り替え");
+            nodes.push((SETTINGS_CURSOR_STYLE_ID, cs));
+            content_children.push(SETTINGS_CURSOR_STYLE_ID);
+
+            let mut px = Node::new(Role::Slider);
+            px.set_label("水平パディング");
+            px.set_value(format!("{} px", panel.padding_x));
+            px.set_numeric_value(panel.padding_x as f64);
+            px.set_min_numeric_value(0.0);
+            px.set_max_numeric_value(32.0);
+            px.set_numeric_value_step(1.0);
+            nodes.push((SETTINGS_PADDING_X_ID, px));
+            content_children.push(SETTINGS_PADDING_X_ID);
+
+            let mut py = Node::new(Role::Slider);
+            py.set_label("垂直パディング");
+            py.set_value(format!("{} px", panel.padding_y));
+            py.set_numeric_value(panel.padding_y as f64);
+            py.set_min_numeric_value(0.0);
+            py.set_max_numeric_value(32.0);
+            py.set_numeric_value_step(1.0);
+            nodes.push((SETTINGS_PADDING_Y_ID, py));
+            content_children.push(SETTINGS_PADDING_Y_ID);
+
+            let mut pm = Node::new(Role::ComboBox);
+            pm.set_label("描画モード");
+            pm.set_value(panel.present_mode_label());
+            pm.set_description("←/→ で切り替え");
+            nodes.push((SETTINGS_PRESENT_MODE_ID, pm));
+            content_children.push(SETTINGS_PRESENT_MODE_ID);
         }
         SettingsCategory::Startup => {
             let mut lang = Node::new(Role::ComboBox);
@@ -1346,6 +1408,16 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
     // ===== フォーカス決定 =====
     let focus = if matches!(panel.category, SettingsCategory::Font) && panel.font_family_editing {
         SETTINGS_FONT_FAMILY_ID
+    } else if matches!(panel.category, SettingsCategory::Window) {
+        // Phase 5-11-6 #6: Window カテゴリは window_field_focus に応じてフィールドに焦点を当てる。
+        match panel.window_field_focus {
+            0 => SETTINGS_WINDOW_OPACITY_ID,
+            1 => SETTINGS_CURSOR_STYLE_ID,
+            2 => SETTINGS_PADDING_X_ID,
+            3 => SETTINGS_PADDING_Y_ID,
+            4 => SETTINGS_PRESENT_MODE_ID,
+            _ => settings_tab_id_at(current_idx),
+        }
     } else {
         settings_tab_id_at(current_idx)
     };
@@ -1539,6 +1611,14 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
         p.scheme_index.hash(&mut h);
         p.language_index.hash(&mut h);
         p.auto_check_update.hash(&mut h);
+        // Phase 5-11-6 #6: Window カテゴリの 4 新フィールド + フィールドフォーカス
+        // window_field_focus はフォーカス変化のみ生じても tree update が必要
+        p.window_field_focus.hash(&mut h);
+        // CursorStyle / PresentModeConfig は Hash 未実装なので toml_key 文字列で代用
+        p.cursor_style_toml_key().hash(&mut h);
+        p.present_mode_toml_key().hash(&mut h);
+        p.padding_x.hash(&mut h);
+        p.padding_y.hash(&mut h);
     }
 
     // === Quick Select（Step 2-2-h）===
@@ -1684,6 +1764,88 @@ pub fn dispatch_settings_action(
         // Focus でトグルすると SR の仮想カーソル通過で値が変わるため Click のみで反応する。
         (Action::Click, NodeIdKind::SettingsStartupAutoUpdate) => {
             panel.toggle_auto_check_update();
+            true
+        }
+
+        // ===== Phase 5-11-6 #6 - カーソル形状 (ComboBox) =====
+        (Action::Click | Action::Increment, NodeIdKind::SettingsCursorStyle) => {
+            panel.next_cursor_style();
+            panel.window_field_focus = 1;
+            true
+        }
+        (Action::Decrement, NodeIdKind::SettingsCursorStyle) => {
+            panel.prev_cursor_style();
+            panel.window_field_focus = 1;
+            true
+        }
+        (Action::Focus, NodeIdKind::SettingsCursorStyle) => {
+            panel.window_field_focus = 1;
+            true
+        }
+
+        // ===== Phase 5-11-6 #6 - 水平パディング (Slider) =====
+        (Action::SetValue, NodeIdKind::SettingsPaddingX) => {
+            if let Some(ActionData::NumericValue(v)) = data {
+                panel.set_padding_x_value(v);
+                panel.window_field_focus = 2;
+                true
+            } else {
+                false
+            }
+        }
+        (Action::Increment, NodeIdKind::SettingsPaddingX) => {
+            panel.increase_padding_x();
+            panel.window_field_focus = 2;
+            true
+        }
+        (Action::Decrement, NodeIdKind::SettingsPaddingX) => {
+            panel.decrease_padding_x();
+            panel.window_field_focus = 2;
+            true
+        }
+        (Action::Focus, NodeIdKind::SettingsPaddingX) => {
+            panel.window_field_focus = 2;
+            true
+        }
+
+        // ===== Phase 5-11-6 #6 - 垂直パディング (Slider) =====
+        (Action::SetValue, NodeIdKind::SettingsPaddingY) => {
+            if let Some(ActionData::NumericValue(v)) = data {
+                panel.set_padding_y_value(v);
+                panel.window_field_focus = 3;
+                true
+            } else {
+                false
+            }
+        }
+        (Action::Increment, NodeIdKind::SettingsPaddingY) => {
+            panel.increase_padding_y();
+            panel.window_field_focus = 3;
+            true
+        }
+        (Action::Decrement, NodeIdKind::SettingsPaddingY) => {
+            panel.decrease_padding_y();
+            panel.window_field_focus = 3;
+            true
+        }
+        (Action::Focus, NodeIdKind::SettingsPaddingY) => {
+            panel.window_field_focus = 3;
+            true
+        }
+
+        // ===== Phase 5-11-6 #6 - GPU プレゼンテーションモード (ComboBox) =====
+        (Action::Click | Action::Increment, NodeIdKind::SettingsPresentMode) => {
+            panel.next_present_mode();
+            panel.window_field_focus = 4;
+            true
+        }
+        (Action::Decrement, NodeIdKind::SettingsPresentMode) => {
+            panel.prev_present_mode();
+            panel.window_field_focus = 4;
+            true
+        }
+        (Action::Focus, NodeIdKind::SettingsPresentMode) => {
+            panel.window_field_focus = 4;
             true
         }
 
