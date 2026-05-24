@@ -447,6 +447,16 @@ impl EventHandler {
                         SettingsCategory::Window => {
                             self.app.state.settings_panel.window_field_increase()
                         }
+                        // Phase 5-11-8 Step 8-3 (Sub-phase C): SSH の port (SpinButton)
+                        // と auth_type (ComboBox) を →/← で増減/サイクル可能にする
+                        SettingsCategory::Ssh => {
+                            let sp = &mut self.app.state.settings_panel;
+                            match sp.ssh_field_focus {
+                                3 => sp.increase_ssh_host_port(),
+                                5 => sp.next_ssh_auth_type(),
+                                _ => {}
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -461,6 +471,16 @@ impl EventHandler {
                         // Phase 5-11-6 #6: Window カテゴリでフォーカス中フィールドの値を減少
                         SettingsCategory::Window => {
                             self.app.state.settings_panel.window_field_decrease()
+                        }
+                        // Phase 5-11-8 Step 8-3 (Sub-phase C): SSH の port (SpinButton)
+                        // と auth_type (ComboBox) を ← で減少/逆サイクルさせる
+                        SettingsCategory::Ssh => {
+                            let sp = &mut self.app.state.settings_panel;
+                            match sp.ssh_field_focus {
+                                3 => sp.decrease_ssh_host_port(),
+                                5 => sp.prev_ssh_auth_type(),
+                                _ => {}
+                            }
                         }
                         _ => {}
                     }

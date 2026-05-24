@@ -1093,8 +1093,10 @@ impl WgpuState {
 
                     // 5 フィールドのラベル + 現在値
                     // Phase 5-11-8 Step 8-3 (Sub-phase A): name/host/username 編集中は
-                    // バッファ内容を表示し、カーソルバーを重畳する。port/auth_type は
-                    // Sub-phase C で別 UI に置き換える予定（現状は読み取り表示のまま）。
+                    // バッファ内容を表示し、カーソルバーを重畳する。
+                    // Phase 5-11-8 Step 8-3 (Sub-phase C): port は SpinButton 風
+                    // `< {value} >` 表示、auth_type は ComboBox 風 `< {value} >` 表示
+                    // で常時値変更可能（編集モード不要、←/→ で増減/サイクル）。
                     let editing_focus = sp.ssh_field_editing.as_ref().map(|_| sp.ssh_field_focus);
                     let field_labels: [(&str, String, u8); 5] = [
                         ("name      :", host.name.clone(), 1),
@@ -1107,6 +1109,8 @@ impl WgpuState {
                         let row_y = fields_top + cell_h * (1.3 + i as f32 * 1.1);
                         let is_focused = sp.ssh_field_focus == *field_id;
                         let is_editing = editing_focus == Some(*field_id);
+                        // Sub-phase C: port (3) / auth_type (5) は SpinButton / ComboBox
+                        let is_spin_or_combo = matches!(*field_id, 3 | 5);
 
                         // フォーカス中行のハイライト（編集中は色味を変えて区別）
                         if is_focused {
@@ -1135,12 +1139,16 @@ impl WgpuState {
                             [0.502, 0.533, 0.647, 1.0]
                         };
 
-                        // 編集中はバッファ + IME preedit を表示、それ以外はホストの現在値
+                        // 編集中はバッファ + IME preedit を表示。
+                        // port/auth_type は SpinButton/ComboBox 風に `< value >` 表示。
+                        // それ以外はホストの現在値をそのまま表示。
                         let display_value = if is_editing {
                             sp.ssh_field_editing
                                 .as_ref()
                                 .map(|s| s.display_string())
                                 .unwrap_or_else(|| raw_value.clone())
+                        } else if is_spin_or_combo {
+                            format!("< {} >", raw_value)
                         } else {
                             raw_value.clone()
                         };
@@ -1194,7 +1202,7 @@ impl WgpuState {
                     let note_text = if sp.ssh_field_editing.is_some() {
                         "編集中: Enter で確定 / Esc でキャンセル / ← → でカーソル移動"
                     } else {
-                        "Enter で編集開始（name/host/username） / port/auth_type は別 UI 予定"
+                        "Enter で編集（name/host/username） / ← → で port を ±1 / auth_type を切替"
                     };
                     add_string_verts(
                         note_text,
