@@ -166,7 +166,22 @@ pub const SETTINGS_SSH_FIELD_USERNAME_ID: NodeId = NodeId(43);
 /// Phase 5-11-8 Step 8-2 - SSH カテゴリ: 選択ホストの auth_type フィールド（ComboBox）
 pub const SETTINGS_SSH_FIELD_AUTH_TYPE_ID: NodeId = NodeId(44);
 
-// 45〜99 は将来のフィールド（Keybindings 編集など）用に予約
+/// Phase 5-11-8 Step 8-3 Sub-phase D - SSH カテゴリ: 新規ホスト追加ボタン
+pub const SETTINGS_SSH_ADD_BTN_ID: NodeId = NodeId(45);
+
+/// Phase 5-11-8 Step 8-3 Sub-phase D - SSH カテゴリ: 選択ホスト削除ボタン
+pub const SETTINGS_SSH_DELETE_BTN_ID: NodeId = NodeId(46);
+
+/// Phase 5-11-8 Step 8-3 Sub-phase D - SSH 削除確認ダイアログ本体（Role::AlertDialog）
+pub const SETTINGS_SSH_DELETE_DIALOG_ID: NodeId = NodeId(47);
+
+/// Phase 5-11-8 Step 8-3 Sub-phase D - SSH 削除確認ダイアログの「削除」確定ボタン
+pub const SETTINGS_SSH_DELETE_CONFIRM_BTN_ID: NodeId = NodeId(48);
+
+/// Phase 5-11-8 Step 8-3 Sub-phase D - SSH 削除確認ダイアログの「キャンセル」ボタン
+pub const SETTINGS_SSH_DELETE_CANCEL_BTN_ID: NodeId = NodeId(49);
+
+// 50〜99 は将来のフィールド（Keybindings 編集など）用に予約
 
 /// 設定パネルカテゴリタブのベース NodeId。
 ///
@@ -569,6 +584,16 @@ pub enum NodeIdKind {
     SettingsSshFieldUsername,
     /// Phase 5-11-8 Step 8-2: 選択ホストの auth_type フィールド（ComboBox password/key/agent）
     SettingsSshFieldAuthType,
+    /// Phase 5-11-8 Step 8-3 Sub-phase D: SSH カテゴリの新規ホスト追加ボタン
+    SettingsSshAddBtn,
+    /// Phase 5-11-8 Step 8-3 Sub-phase D: SSH カテゴリの選択ホスト削除ボタン
+    SettingsSshDeleteBtn,
+    /// Phase 5-11-8 Step 8-3 Sub-phase D: SSH 削除確認ダイアログ本体（Role::AlertDialog）
+    SettingsSshDeleteDialog,
+    /// Phase 5-11-8 Step 8-3 Sub-phase D: SSH 削除確認ダイアログの「削除」確定ボタン
+    SettingsSshDeleteConfirmBtn,
+    /// Phase 5-11-8 Step 8-3 Sub-phase D: SSH 削除確認ダイアログの「キャンセル」ボタン
+    SettingsSshDeleteCancelBtn,
     /// 未知 / 範囲外の NodeId
     Unknown,
 }
@@ -648,6 +673,12 @@ pub fn decode_node_id(id: NodeId) -> NodeIdKind {
         42 => NodeIdKind::SettingsSshFieldPort,
         43 => NodeIdKind::SettingsSshFieldUsername,
         44 => NodeIdKind::SettingsSshFieldAuthType,
+        // Phase 5-11-8 Step 8-3 Sub-phase D: Add/Delete + 削除確認ダイアログ
+        45 => NodeIdKind::SettingsSshAddBtn,
+        46 => NodeIdKind::SettingsSshDeleteBtn,
+        47 => NodeIdKind::SettingsSshDeleteDialog,
+        48 => NodeIdKind::SettingsSshDeleteConfirmBtn,
+        49 => NodeIdKind::SettingsSshDeleteCancelBtn,
         _ => decode_dynamic(raw),
     }
 }
@@ -1404,7 +1435,16 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
     dialog.set_label("設定");
     dialog.set_modal();
     dialog.set_description(format!("カテゴリ: {}", panel.category.label()));
-    dialog.set_children(vec![SETTINGS_TABLIST_ID, SETTINGS_CONTENT_ID]);
+    // Phase 5-11-8 Step 8-3 (Sub-phase D): SSH 削除確認ダイアログを動的に追加する。
+    // SR からは SettingsPanel のモーダル子として認識される。
+    let mut panel_children = vec![SETTINGS_TABLIST_ID, SETTINGS_CONTENT_ID];
+    if panel.ssh_delete_dialog_open
+        && matches!(panel.category, SettingsCategory::Ssh)
+        && !panel.ssh_hosts.is_empty()
+    {
+        panel_children.push(SETTINGS_SSH_DELETE_DIALOG_ID);
+    }
+    dialog.set_children(panel_children);
     nodes.push((SETTINGS_PANEL_ID, dialog));
 
     // ===== TabList (カテゴリタブ) =====
@@ -1576,10 +1616,12 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
             // Phase 5-11-8 Step 8-1: SSH ホスト一覧を ListBox + ListBoxOption で公開する。
             // Phase 5-11-8 Step 8-2: 選択ホストの 5 フィールド (name / host / port / username
             // / auth_type) を Role::TextInput / SpinButton / ComboBox で公開する。
+            // Phase 5-11-8 Step 8-3 (Sub-phase D): Add / Delete ボタンを末尾に追加し、
+            // 削除確認ダイアログ (NodeId 47-49) を ssh_delete_dialog_open=true 時に公開する。
             if panel.ssh_hosts.is_empty() {
                 content_description = Some(
                     "SSH ホストが登録されていません。\
-                     nexterm.toml の [[hosts]] セクションに追加してください"
+                     新規ホストを追加ボタン (Tab で末尾へ移動) を押してください"
                         .to_string(),
                 );
             } else {
@@ -1675,6 +1717,39 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
                     sel + 1,
                 ));
             }
+
+            // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): Add / Delete ボタン =====
+            // 常時公開（is_empty 時も Add は active、Delete は label と description で
+            // 無効を明示）。SR ユーザーは ↑/↓ で 0..=7 を機械的に走査し、Add (6) /
+            // Delete (7) ボタンに到達できる。
+            let mut add_btn = Node::new(Role::Button);
+            add_btn.set_label("新規ホストを追加");
+            add_btn.set_description(
+                "Enter または Click で新規 SSH ホストを末尾に追加し、名前 (name) の編集を即時開始します",
+            );
+            if panel.ssh_field_focus == 6 {
+                add_btn.set_selected(true);
+            }
+            nodes.push((SETTINGS_SSH_ADD_BTN_ID, add_btn));
+            content_children.push(SETTINGS_SSH_ADD_BTN_ID);
+
+            let mut delete_btn = Node::new(Role::Button);
+            if panel.ssh_hosts.is_empty() {
+                delete_btn.set_label("選択ホストを削除 (無効)");
+                delete_btn.set_description(
+                    "削除対象のホストがありません。先に「新規ホストを追加」してください",
+                );
+            } else {
+                delete_btn.set_label("選択ホストを削除");
+                delete_btn.set_description(
+                    "Enter または Click で削除確認ダイアログを開きます。Esc または「キャンセル」で取消可能",
+                );
+                if panel.ssh_field_focus == 7 {
+                    delete_btn.set_selected(true);
+                }
+            }
+            nodes.push((SETTINGS_SSH_DELETE_BTN_ID, delete_btn));
+            content_children.push(SETTINGS_SSH_DELETE_BTN_ID);
         }
         SettingsCategory::Keybindings => {
             // Phase 5-11-7: キーバインドも nexterm.toml 経由のため、設定パネル内では
@@ -1713,6 +1788,26 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
     } else if matches!(panel.category, SettingsCategory::Profiles) && !panel.profiles.is_empty() {
         // Phase 5-11-7: Profiles カテゴリでは selected_profile のノードへフォーカス
         settings_profile_item_id(panel.selected_profile.min(panel.profiles.len() - 1))
+    } else if matches!(panel.category, SettingsCategory::Ssh)
+        && panel.ssh_delete_dialog_open
+        && !panel.ssh_hosts.is_empty()
+    {
+        // Phase 5-11-8 Step 8-3 (Sub-phase D): 削除確認ダイアログ表示中は、
+        // フォーカスをダイアログ内のアクティブボタン (Confirm/Cancel) に移す。
+        if panel.ssh_delete_dialog_confirm_focused {
+            SETTINGS_SSH_DELETE_CONFIRM_BTN_ID
+        } else {
+            SETTINGS_SSH_DELETE_CANCEL_BTN_ID
+        }
+    } else if matches!(panel.category, SettingsCategory::Ssh) && panel.ssh_field_focus == 6 {
+        // Phase 5-11-8 Step 8-3 (Sub-phase D): Add ボタンは ssh_hosts.is_empty() でも有効
+        SETTINGS_SSH_ADD_BTN_ID
+    } else if matches!(panel.category, SettingsCategory::Ssh)
+        && panel.ssh_field_focus == 7
+        && !panel.ssh_hosts.is_empty()
+    {
+        // Phase 5-11-8 Step 8-3 (Sub-phase D): Delete ボタンは非空時のみフォーカス可能
+        SETTINGS_SSH_DELETE_BTN_ID
     } else if matches!(panel.category, SettingsCategory::Ssh) && !panel.ssh_hosts.is_empty() {
         // Phase 5-11-8: Ssh カテゴリのフォーカス決定。
         // ssh_field_focus = 0 → ホストリストの選択中項目
@@ -1730,6 +1825,53 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
     } else {
         settings_tab_id_at(current_idx)
     };
+
+    // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): 削除確認ダイアログのノード追加 =====
+    // panel_children に SETTINGS_SSH_DELETE_DIALOG_ID は既に push 済み。ここでは
+    // AlertDialog + Confirm/Cancel 2 ボタン本体を構築する。空リスト時は
+    // 「削除対象なし」のため、`build_settings_panel_nodes` の冒頭で panel_children
+    // に追加しない設計（dialog_open=false 扱い）になっている。
+    if panel.ssh_delete_dialog_open
+        && matches!(panel.category, SettingsCategory::Ssh)
+        && !panel.ssh_hosts.is_empty()
+    {
+        let sel = panel.selected_host_index.min(panel.ssh_hosts.len() - 1);
+        let target = &panel.ssh_hosts[sel];
+        let target_name = if target.name.is_empty() {
+            target.host.clone()
+        } else {
+            target.name.clone()
+        };
+
+        let mut alert = Node::new(Role::AlertDialog);
+        alert.set_label("ホストを削除しますか？");
+        alert.set_description(format!(
+            "「{}」を削除します。この操作は取り消せません。",
+            target_name
+        ));
+        alert.set_modal();
+        alert.set_children(vec![
+            SETTINGS_SSH_DELETE_CANCEL_BTN_ID,
+            SETTINGS_SSH_DELETE_CONFIRM_BTN_ID,
+        ]);
+        nodes.push((SETTINGS_SSH_DELETE_DIALOG_ID, alert));
+
+        let mut cancel_btn = Node::new(Role::Button);
+        cancel_btn.set_label("キャンセル");
+        cancel_btn.set_description("Esc または ← → / Tab でフォーカスを切り替え、Enter で確定");
+        if !panel.ssh_delete_dialog_confirm_focused {
+            cancel_btn.set_selected(true);
+        }
+        nodes.push((SETTINGS_SSH_DELETE_CANCEL_BTN_ID, cancel_btn));
+
+        let mut confirm_btn = Node::new(Role::Button);
+        confirm_btn.set_label("削除する");
+        confirm_btn.set_description("選択中のホストを完全に削除します");
+        if panel.ssh_delete_dialog_confirm_focused {
+            confirm_btn.set_selected(true);
+        }
+        nodes.push((SETTINGS_SSH_DELETE_CONFIRM_BTN_ID, confirm_btn));
+    }
 
     (nodes, focus)
 }
@@ -1958,6 +2100,12 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
             // 編集モード OFF → 0 をハッシュ（ON/OFF 変化も検出するため）
             0u8.hash(&mut h);
         }
+        // Phase 5-11-8 Step 8-3 (Sub-phase D): 削除確認ダイアログの開閉とボタン
+        // フォーカス変化を SR ツリーへ伝播。Add/Delete ボタンのフォーカス変化は
+        // 既存の `ssh_field_focus` で、ssh_hosts 追加/削除は既存の `ssh_hosts.len()`
+        // と各 host フィールドハッシュで既に反映済み。
+        p.ssh_delete_dialog_open.hash(&mut h);
+        p.ssh_delete_dialog_confirm_focused.hash(&mut h);
     }
 
     // === Quick Select（Step 2-2-h）===
@@ -2292,6 +2440,48 @@ pub fn dispatch_settings_action(
         (Action::Decrement, NodeIdKind::SettingsSshFieldAuthType) => {
             panel.prev_ssh_auth_type();
             panel.ssh_field_focus = 5;
+            true
+        }
+
+        // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): Add / Delete ボタン =====
+        (Action::Focus, NodeIdKind::SettingsSshAddBtn) => {
+            panel.ssh_field_focus = 6;
+            true
+        }
+        (Action::Click, NodeIdKind::SettingsSshAddBtn) => {
+            // SR の Click イベントで新規ホストを追加 + name 編集モード自動開始
+            panel.add_ssh_host();
+            true
+        }
+        (Action::Focus, NodeIdKind::SettingsSshDeleteBtn) => {
+            // 空リスト時もフォーカスは受け入れる（SR ナビゲーション安定化のため）
+            // ただし `description` で「無効」を明示しているので SR は誤動作しない
+            panel.ssh_field_focus = 7;
+            true
+        }
+        (Action::Click, NodeIdKind::SettingsSshDeleteBtn) => {
+            // 空リスト時は何もしない（open_ssh_delete_dialog 内で is_empty チェック済み）
+            panel.open_ssh_delete_dialog();
+            true
+        }
+
+        // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): 削除確認ダイアログ =====
+        // ダイアログ本体への Action は受け取らない（モーダル管理は SR 側に任せる）
+        // Cancel ボタン / Confirm ボタンへの Action のみ処理する
+        (Action::Focus, NodeIdKind::SettingsSshDeleteCancelBtn) => {
+            panel.ssh_delete_dialog_confirm_focused = false;
+            true
+        }
+        (Action::Click, NodeIdKind::SettingsSshDeleteCancelBtn) => {
+            panel.cancel_ssh_delete_dialog();
+            true
+        }
+        (Action::Focus, NodeIdKind::SettingsSshDeleteConfirmBtn) => {
+            panel.ssh_delete_dialog_confirm_focused = true;
+            true
+        }
+        (Action::Click, NodeIdKind::SettingsSshDeleteConfirmBtn) => {
+            panel.confirm_ssh_delete_dialog();
             true
         }
 
@@ -2914,11 +3104,12 @@ mod tests {
         // 17 は SettingsTabList、18〜24 は SettingsTab、25 は SettingsContent、
         // 26 は AlertRegion（Sprint 5-11-5 で割当）、27 は PaneInputBuffer（Phase 5-11-7）、
         // 30〜35 は設定フィールド（Step 2-2-e'）、36〜39 は Phase 5-11-6 #6 の設定フィールド、
-        // 40〜44 は Phase 5-11-8 Step 8-2 の SSH ホストフィールド。
-        // 28〜29, 45〜99 は将来用に予約。
+        // 40〜44 は Phase 5-11-8 Step 8-2 の SSH ホストフィールド、
+        // 45〜49 は Phase 5-11-8 Step 8-3 Sub-phase D の Add/Delete + 削除確認ダイアログ。
+        // 28〜29, 50〜99 は将来用に予約。
         assert_eq!(decode_node_id(NodeId(28)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(29)), NodeIdKind::Unknown);
-        assert_eq!(decode_node_id(NodeId(45)), NodeIdKind::Unknown);
+        assert_eq!(decode_node_id(NodeId(50)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(99)), NodeIdKind::Unknown);
         // 700M〜999M は将来 SettingsField 動的展開で使う予約範囲（600M〜700M は
         // Phase 5-11-7 で SettingsProfileItem に割当済み）。
@@ -4851,7 +5042,8 @@ mod tests {
         assert_eq!(panel.selected_profile, 0);
     }
 
-    /// SSH カテゴリは TOML 編集の案内 description を持つこと
+    /// SSH カテゴリ（空リスト時）は GUI で新規追加を促す案内 description を持つこと。
+    /// Phase 5-11-8 Step 8-3 Sub-phase D で TOML 編集案内から GUI 案内に変わった。
     #[test]
     fn build_settings_panel_ssh_has_informative_description() {
         use crate::settings_panel::SettingsCategory;
@@ -4864,8 +5056,12 @@ mod tests {
             .find(|(id, _)| *id == SETTINGS_CONTENT_ID)
             .unwrap();
         let desc = content.1.description().unwrap_or("");
-        assert!(desc.contains("nexterm.toml"), "案内文: {}", desc);
-        assert!(desc.contains("[[hosts]]"), "案内文: {}", desc);
+        // Sub-phase D 以降: GUI Add ボタン経由での追加を案内する
+        assert!(
+            desc.contains("追加") || desc.contains("新規"),
+            "案内文: {}",
+            desc
+        );
         assert!(
             !desc.contains("まだ実装されていません"),
             "「未実装」表記が消えている"
@@ -5016,7 +5212,8 @@ mod tests {
         assert_eq!(decode_node_id(NodeId(999_999_999)), NodeIdKind::Unknown);
     }
 
-    /// Ssh カテゴリが空のとき: 「登録されていません」を案内する
+    /// Ssh カテゴリが空のとき: 「登録されていません」と GUI 追加案内を含む。
+    /// Phase 5-11-8 Step 8-3 Sub-phase D で TOML 編集案内から GUI 案内に変わった。
     #[test]
     fn build_settings_panel_ssh_empty_has_informative_description() {
         use crate::settings_panel::SettingsCategory;
@@ -5035,7 +5232,12 @@ mod tests {
             "空案内文が含まれる: {}",
             desc
         );
-        assert!(desc.contains("[[hosts]]"), "TOML 案内が含まれる: {}", desc);
+        // Sub-phase D 以降: GUI Add ボタン経由での追加を案内
+        assert!(
+            desc.contains("追加") || desc.contains("新規"),
+            "GUI 案内が含まれる: {}",
+            desc
+        );
     }
 
     /// Ssh カテゴリにホストがあるとき: ListBoxOption が公開される
@@ -5279,8 +5481,29 @@ mod tests {
             decode_node_id(SETTINGS_SSH_FIELD_AUTH_TYPE_ID),
             NodeIdKind::SettingsSshFieldAuthType
         );
-        // 45 は予約
-        assert_eq!(decode_node_id(NodeId(45)), NodeIdKind::Unknown);
+        // Phase 5-11-8 Step 8-3 Sub-phase D: 45-49 は Add/Delete ボタン + 削除確認ダイアログ
+        assert_eq!(
+            decode_node_id(SETTINGS_SSH_ADD_BTN_ID),
+            NodeIdKind::SettingsSshAddBtn
+        );
+        assert_eq!(
+            decode_node_id(SETTINGS_SSH_DELETE_BTN_ID),
+            NodeIdKind::SettingsSshDeleteBtn
+        );
+        assert_eq!(
+            decode_node_id(SETTINGS_SSH_DELETE_DIALOG_ID),
+            NodeIdKind::SettingsSshDeleteDialog
+        );
+        assert_eq!(
+            decode_node_id(SETTINGS_SSH_DELETE_CONFIRM_BTN_ID),
+            NodeIdKind::SettingsSshDeleteConfirmBtn
+        );
+        assert_eq!(
+            decode_node_id(SETTINGS_SSH_DELETE_CANCEL_BTN_ID),
+            NodeIdKind::SettingsSshDeleteCancelBtn
+        );
+        // 50 は予約
+        assert_eq!(decode_node_id(NodeId(50)), NodeIdKind::Unknown);
     }
 
     /// build_tree が選択ホストの 5 フィールドを公開する
@@ -5677,5 +5900,192 @@ auth_type = "key"
         state.settings_panel.ssh_field_focus = 3;
         let h1 = compute_tree_state_hash(&state);
         assert_ne!(h0, h1, "ssh_field_focus 変更でハッシュが変化");
+    }
+
+    // ============================================================
+    // Sprint 5-11-8 Step 8-3 Sub-phase E: Add / Delete + ダイアログ dispatch テスト
+    // ============================================================
+
+    /// SettingsSshAddBtn Click で新規ホストが追加され編集モードに入る
+    #[test]
+    fn dispatch_settings_ssh_add_btn_click_adds_host() {
+        let mut panel = make_ssh_panel_with_2_hosts();
+        assert_eq!(panel.ssh_hosts.len(), 2);
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &NodeIdKind::SettingsSshAddBtn,
+            None,
+        );
+
+        assert!(handled);
+        assert_eq!(panel.ssh_hosts.len(), 3, "ホストが 1 つ追加されている");
+        assert_eq!(panel.selected_host_index, 2, "末尾の新規ホストを選択");
+        assert_eq!(panel.ssh_field_focus, 1, "name フィールドにフォーカス");
+        assert!(
+            panel.ssh_field_editing.is_some(),
+            "name 編集モードが即時開始"
+        );
+        assert!(panel.dirty);
+    }
+
+    /// SettingsSshAddBtn Focus は ssh_field_focus = 6 のみセット（追加しない）
+    #[test]
+    fn dispatch_settings_ssh_add_btn_focus_only_sets_focus() {
+        let mut panel = make_ssh_panel_with_2_hosts();
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Focus,
+            &NodeIdKind::SettingsSshAddBtn,
+            None,
+        );
+
+        assert!(handled);
+        assert_eq!(panel.ssh_field_focus, 6);
+        assert_eq!(
+            panel.ssh_hosts.len(),
+            2,
+            "Focus だけではホストは追加されない"
+        );
+    }
+
+    /// SettingsSshDeleteBtn Click で削除確認ダイアログが開く
+    #[test]
+    fn dispatch_settings_ssh_delete_btn_click_opens_dialog() {
+        let mut panel = make_ssh_panel_with_2_hosts();
+        assert!(!panel.ssh_delete_dialog_open);
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &NodeIdKind::SettingsSshDeleteBtn,
+            None,
+        );
+
+        assert!(handled);
+        assert!(panel.ssh_delete_dialog_open, "ダイアログが開いている");
+        assert!(
+            !panel.ssh_delete_dialog_confirm_focused,
+            "Cancel がデフォルトフォーカス"
+        );
+        assert_eq!(panel.ssh_hosts.len(), 2, "まだ削除はされていない");
+    }
+
+    /// SettingsSshDeleteBtn Click は空リスト時に no-op（ダイアログ開かない）
+    #[test]
+    fn dispatch_settings_ssh_delete_btn_click_noop_when_empty() {
+        let mut panel = make_ssh_panel_with_2_hosts();
+        panel.ssh_hosts.clear();
+        panel.selected_host_index = 0;
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &NodeIdKind::SettingsSshDeleteBtn,
+            None,
+        );
+
+        // dispatch ハンドラ自体は handled=true を返す（呼び出し記録）が、
+        // open_ssh_delete_dialog の内部チェックでダイアログは開かない。
+        assert!(handled);
+        assert!(
+            !panel.ssh_delete_dialog_open,
+            "空リスト時はダイアログを開かない"
+        );
+    }
+
+    /// SettingsSshDeleteConfirmBtn Click で削除が実行されダイアログが閉じる
+    #[test]
+    fn dispatch_settings_ssh_delete_confirm_btn_click_deletes_host() {
+        let mut panel = make_ssh_panel_with_2_hosts();
+        panel.open_ssh_delete_dialog();
+        assert!(panel.ssh_delete_dialog_open);
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &NodeIdKind::SettingsSshDeleteConfirmBtn,
+            None,
+        );
+
+        assert!(handled);
+        assert_eq!(panel.ssh_hosts.len(), 1, "ホストが 1 つ削除された");
+        assert!(!panel.ssh_delete_dialog_open, "ダイアログが閉じている");
+        assert!(panel.dirty);
+    }
+
+    /// SettingsSshDeleteCancelBtn Click でダイアログが閉じ、削除は行われない
+    #[test]
+    fn dispatch_settings_ssh_delete_cancel_btn_click_closes_dialog() {
+        let mut panel = make_ssh_panel_with_2_hosts();
+        panel.open_ssh_delete_dialog();
+        panel.ssh_delete_dialog_confirm_focused = true; // どちらでもよい
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &NodeIdKind::SettingsSshDeleteCancelBtn,
+            None,
+        );
+
+        assert!(handled);
+        assert!(!panel.ssh_delete_dialog_open);
+        assert!(!panel.ssh_delete_dialog_confirm_focused);
+        assert_eq!(panel.ssh_hosts.len(), 2, "削除はされない");
+    }
+
+    /// Confirm / Cancel ボタンの Focus はフォーカスフラグのみ更新（削除実行なし）
+    #[test]
+    fn dispatch_settings_ssh_delete_dialog_focus_toggles_flag() {
+        let mut panel = make_ssh_panel_with_2_hosts();
+        panel.open_ssh_delete_dialog();
+        // 初期状態: Cancel フォーカス
+        assert!(!panel.ssh_delete_dialog_confirm_focused);
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Focus,
+            &NodeIdKind::SettingsSshDeleteConfirmBtn,
+            None,
+        );
+        assert!(handled);
+        assert!(
+            panel.ssh_delete_dialog_confirm_focused,
+            "Confirm Focus でフラグが立つ"
+        );
+        assert!(panel.ssh_delete_dialog_open, "ダイアログは開いたまま");
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Focus,
+            &NodeIdKind::SettingsSshDeleteCancelBtn,
+            None,
+        );
+        assert!(handled);
+        assert!(
+            !panel.ssh_delete_dialog_confirm_focused,
+            "Cancel Focus でフラグが解除"
+        );
+    }
+
+    /// compute_tree_state_hash が ssh_delete_dialog_open / confirm_focused 変更を検知する
+    #[test]
+    fn tree_state_hash_detects_ssh_delete_dialog_changes() {
+        let mut state = ClientState::new(80, 24, 1000);
+        state.settings_panel = make_ssh_panel_with_2_hosts();
+        state.settings_panel.is_open = true;
+        let h0 = compute_tree_state_hash(&state);
+
+        // ダイアログを開く
+        state.settings_panel.open_ssh_delete_dialog();
+        let h1 = compute_tree_state_hash(&state);
+        assert_ne!(h0, h1, "ダイアログ open でハッシュが変化");
+
+        // Confirm にフォーカス移動
+        state.settings_panel.ssh_delete_dialog_confirm_focused = true;
+        let h2 = compute_tree_state_hash(&state);
+        assert_ne!(h1, h2, "confirm_focused 変更でハッシュが変化");
     }
 }

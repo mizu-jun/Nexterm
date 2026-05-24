@@ -331,6 +331,14 @@ pub struct SettingsPanel {
     /// Esc でキャンセル。port / auth_type は Sub-phase C で別の UI（SpinButton /
     /// ComboBox）を使うため Option には入らない。
     pub ssh_field_editing: Option<TextInputState>,
+    /// Phase 5-11-8 Step 8-3 (Sub-phase D): SSH 削除確認ダイアログが開いているか。
+    /// `true` のとき `Role::AlertDialog` のモーダル（NodeId 47）を表示し、
+    /// Confirm（48） / Cancel（49）ボタンで操作する。Esc キーは Cancel に等しい。
+    pub ssh_delete_dialog_open: bool,
+    /// Phase 5-11-8 Step 8-3 (Sub-phase D): 削除確認ダイアログでフォーカスされて
+    /// いるボタン。`false` = Cancel（49、デフォルト・誤削除防止）、`true` = Confirm（48）。
+    /// ←/→ で切り替え、Enter で実行。
+    pub ssh_delete_dialog_confirm_focused: bool,
 }
 
 impl Default for SettingsPanel {
@@ -391,6 +399,8 @@ impl SettingsPanel {
             selected_host_index: 0,
             ssh_field_focus: 0,
             ssh_field_editing: None,
+            ssh_delete_dialog_open: false,
+            ssh_delete_dialog_confirm_focused: false,
             startup_session: "main".to_string(),
             tab_rename_editing: None,
             tab_rename_text: String::new(),
@@ -420,6 +430,9 @@ impl SettingsPanel {
         self.tab_rename_editing = None;
         // Phase 5-11-8 Step 8-3 (Sub-phase A): SSH フィールド編集モードも解除
         self.ssh_field_editing = None;
+        // Phase 5-11-8 Step 8-3 (Sub-phase D): 削除確認ダイアログも閉じる
+        self.ssh_delete_dialog_open = false;
+        self.ssh_delete_dialog_confirm_focused = false;
     }
 
     /// スライダー X 座標からフォントサイズを設定する（マウスクリック/ドラッグ用）
@@ -887,6 +900,87 @@ impl SettingsPanel {
             host.auth_type = types[(current + types.len() - 1) % types.len()].to_string();
             self.dirty = true;
         }
+    }
+
+    // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): Add / Delete + 削除確認ダイアログ =====
+    //
+    // - `add_ssh_host`: 全空 + port=22 + auth_type="password" の新規ホストを末尾に追加し、
+    //   選択を新規ホストへ移動、name フィールド（field_id=1）の編集モードを即時開始する。
+    // - `open_ssh_delete_dialog`: 削除確認ダイアログを開く。デフォルトのフォーカスは
+    //   Cancel ボタン（誤削除防止）。
+    // - `cancel_ssh_delete_dialog`: ダイアログを閉じる（削除実行なし）。
+    // - `confirm_ssh_delete_dialog`: 選択中ホストを削除し、ダイアログを閉じる。
+    //   削除後の選択行は n クランプ（リストが詰まる、末尾なら n-1）。
+
+    /// 新規 SSH ホストを末尾に追加し、編集を開始する（Add ボタン経路）。
+    ///
+    /// デフォルト値: `name=""`, `host=""`, `port=22`, `username=""`, `auth_type="password"`。
+    /// 追加直後は `selected_host_index = ssh_hosts.len() - 1` で新規ホストを選択、
+    /// `ssh_field_focus = 1`（name）に移動し、`begin_ssh_field_edit()` で即時編集モード
+    /// 開始する。これにより SR ユーザーは Add 押下直後から名前入力を始められる。
+    pub fn add_ssh_host(&mut self) {
+        let new_host = SshHostEntry {
+            name: String::new(),
+            host: String::new(),
+            port: 22,
+            username: String::new(),
+            auth_type: "password".to_string(),
+        };
+        self.ssh_hosts.push(new_host);
+        self.selected_host_index = self.ssh_hosts.len() - 1;
+        self.ssh_field_focus = 1;
+        // 即時編集モード開始（name フィールド）
+        self.ssh_field_editing = Some(TextInputState::new(String::new()));
+        self.dirty = true;
+    }
+
+    /// 削除確認ダイアログを開く（Delete ボタン経路）。
+    ///
+    /// 空リスト時は何もしない（disabled 扱い）。デフォルトフォーカスは
+    /// Cancel ボタンで、誤削除を防ぐ標準的な UX。
+    pub fn open_ssh_delete_dialog(&mut self) {
+        if self.ssh_hosts.is_empty() {
+            return;
+        }
+        self.ssh_delete_dialog_open = true;
+        self.ssh_delete_dialog_confirm_focused = false;
+    }
+
+    /// 削除確認ダイアログを閉じる（Cancel ボタン or Esc キー経路）。
+    /// ホストには変更を加えない。
+    pub fn cancel_ssh_delete_dialog(&mut self) {
+        self.ssh_delete_dialog_open = false;
+        self.ssh_delete_dialog_confirm_focused = false;
+    }
+
+    /// 削除確認ダイアログで「削除」を確定する（Confirm ボタン or Enter キー経路）。
+    ///
+    /// 選択中ホストを削除し、ダイアログを閉じる。削除後の選択行は n クランプ:
+    /// - 削除前 selected_host_index=n、ssh_hosts.len()=L とすると
+    /// - 削除後の有効インデックス上限は L-1 → 0 にクランプ
+    /// - n が末尾だった場合は n-1 が新しい選択行
+    /// - リストが空になった場合は selected_host_index=0 に戻し、ssh_field_focus=0
+    pub fn confirm_ssh_delete_dialog(&mut self) {
+        if self.selected_host_index < self.ssh_hosts.len() {
+            self.ssh_hosts.remove(self.selected_host_index);
+            // n クランプ: 末尾を削除した場合は n-1 にする
+            if !self.ssh_hosts.is_empty() && self.selected_host_index >= self.ssh_hosts.len() {
+                self.selected_host_index = self.ssh_hosts.len() - 1;
+            }
+            // 空になった場合は ListBox にフォーカスを戻す
+            if self.ssh_hosts.is_empty() {
+                self.selected_host_index = 0;
+                self.ssh_field_focus = 0;
+            }
+            self.dirty = true;
+        }
+        self.ssh_delete_dialog_open = false;
+        self.ssh_delete_dialog_confirm_focused = false;
+    }
+
+    /// 削除確認ダイアログの ←/→ キーでフォーカスを切り替える（Confirm ↔ Cancel）。
+    pub fn toggle_ssh_delete_dialog_focus(&mut self) {
+        self.ssh_delete_dialog_confirm_focused = !self.ssh_delete_dialog_confirm_focused;
     }
 
     // ===== Phase 5-11-8 Step 8-3 (Sub-phase A): SSH フィールド インライン編集 =====
@@ -1414,5 +1508,309 @@ mod tests {
             panel.padding_x, 32,
             "config 側の異常値は new で 32 にクランプ"
         );
+    }
+
+    // ============================================================
+    // Sprint 5-11-8 Step 8-3 Sub-phase E: TextInputState 単体テスト
+    // ============================================================
+
+    #[test]
+    fn text_input_state_new_cursor_at_end() {
+        let s = TextInputState::new("hello".to_string());
+        assert_eq!(s.buffer, "hello");
+        assert_eq!(s.cursor, 5);
+        assert!(s.preedit.is_none());
+
+        let empty = TextInputState::new(String::new());
+        assert_eq!(empty.cursor, 0);
+    }
+
+    #[test]
+    fn text_input_state_insert_char_advances_cursor_ascii() {
+        let mut s = TextInputState::new(String::new());
+        s.insert_char('a');
+        s.insert_char('b');
+        s.insert_char('c');
+        assert_eq!(s.buffer, "abc");
+        assert_eq!(s.cursor, 3);
+    }
+
+    #[test]
+    fn text_input_state_insert_char_advances_cursor_cjk() {
+        // 日本語 1 文字 = UTF-8 3 バイト。カーソルもバイト単位で進むこと。
+        let mut s = TextInputState::new(String::new());
+        s.insert_char('あ');
+        assert_eq!(s.buffer, "あ");
+        assert_eq!(s.cursor, 3);
+        s.insert_char('い');
+        assert_eq!(s.buffer, "あい");
+        assert_eq!(s.cursor, 6);
+    }
+
+    #[test]
+    fn text_input_state_backspace_respects_utf8_boundary() {
+        // "あい" のバックスペースで "あ" になり、カーソルは 3 バイト目（境界）に置かれる。
+        let mut s = TextInputState::new("あい".to_string());
+        assert_eq!(s.cursor, 6);
+        s.backspace();
+        assert_eq!(s.buffer, "あ");
+        assert_eq!(s.cursor, 3);
+        s.backspace();
+        assert_eq!(s.buffer, "");
+        assert_eq!(s.cursor, 0);
+        // 空文字でのバックスペースは no-op
+        s.backspace();
+        assert_eq!(s.cursor, 0);
+    }
+
+    #[test]
+    fn text_input_state_move_left_right_clamps_and_respects_boundary() {
+        let mut s = TextInputState::new("aあb".to_string());
+        // 末尾 (5 = 1 + 3 + 1)
+        assert_eq!(s.cursor, 5);
+        s.move_left();
+        assert_eq!(s.cursor, 4, "b の手前へ");
+        s.move_left();
+        assert_eq!(s.cursor, 1, "あ の手前（UTF-8 境界を尊重）");
+        s.move_left();
+        assert_eq!(s.cursor, 0);
+        // 先頭でのさらなる左移動は no-op
+        s.move_left();
+        assert_eq!(s.cursor, 0);
+
+        s.move_right();
+        assert_eq!(s.cursor, 1);
+        s.move_right();
+        assert_eq!(s.cursor, 4, "あ を跨ぐ");
+        s.move_right();
+        assert_eq!(s.cursor, 5);
+        // 末尾でのさらなる右移動は no-op
+        s.move_right();
+        assert_eq!(s.cursor, 5);
+    }
+
+    #[test]
+    fn text_input_state_display_string_with_preedit() {
+        let mut s = TextInputState::new("ab".to_string());
+        s.move_left(); // カーソルを 1 へ
+        assert_eq!(s.cursor, 1);
+        s.preedit = Some("X".to_string());
+
+        // 表示文字列はカーソル位置に preedit が挿入される
+        assert_eq!(s.display_string(), "aXb");
+        assert_eq!(s.display_cursor(), 2, "preedit の末尾を指す");
+
+        // preedit クリアで元に戻る
+        s.preedit = None;
+        assert_eq!(s.display_string(), "ab");
+        assert_eq!(s.display_cursor(), 1);
+    }
+
+    // ============================================================
+    // Sprint 5-11-8 Step 8-3 Sub-phase E: SSH フィールド編集ライフサイクル
+    // ============================================================
+
+    fn panel_with_one_host() -> SettingsPanel {
+        let mut panel = SettingsPanel::new(&Config::default());
+        panel.ssh_hosts.push(SshHostEntry {
+            name: "myhost".to_string(),
+            host: "example.com".to_string(),
+            port: 22,
+            username: "alice".to_string(),
+            auth_type: "password".to_string(),
+        });
+        panel.selected_host_index = 0;
+        panel
+    }
+
+    #[test]
+    fn ssh_field_edit_begin_commit_lifecycle() {
+        let mut panel = panel_with_one_host();
+        panel.ssh_field_focus = 1; // name
+
+        assert!(panel.begin_ssh_field_edit());
+        assert!(panel.ssh_field_editing.is_some());
+        let state = panel.ssh_field_editing.as_ref().unwrap();
+        assert_eq!(state.buffer, "myhost");
+
+        // 文字を編集
+        panel.ssh_field_insert_char('!');
+        assert_eq!(panel.ssh_field_editing.as_ref().unwrap().buffer, "myhost!");
+
+        // コミットでホストに反映
+        assert!(panel.commit_ssh_field_edit());
+        assert!(panel.ssh_field_editing.is_none());
+        assert_eq!(panel.ssh_hosts[0].name, "myhost!");
+        assert!(panel.dirty);
+    }
+
+    #[test]
+    fn ssh_field_edit_cancel_discards_changes() {
+        let mut panel = panel_with_one_host();
+        panel.ssh_field_focus = 2; // host
+        panel.begin_ssh_field_edit();
+        panel.ssh_field_insert_char('X');
+
+        assert!(panel.cancel_ssh_field_edit());
+        assert!(panel.ssh_field_editing.is_none());
+        // ホストは変わらない
+        assert_eq!(panel.ssh_hosts[0].host, "example.com");
+    }
+
+    #[test]
+    fn ssh_field_edit_begin_returns_false_for_non_text_fields() {
+        let mut panel = panel_with_one_host();
+        // port (3) / auth_type (5) / ListBox (0) は TextInput でないため false
+        for focus in [0u8, 3, 5, 6, 7] {
+            panel.ssh_field_focus = focus;
+            assert!(
+                !panel.begin_ssh_field_edit(),
+                "focus={focus} は TextInput でないため begin_ssh_field_edit は false を返すべき"
+            );
+            assert!(panel.ssh_field_editing.is_none());
+        }
+    }
+
+    // ============================================================
+    // Sprint 5-11-8 Step 8-3 Sub-phase E: Add / Delete + 確認ダイアログ
+    // ============================================================
+
+    #[test]
+    fn add_ssh_host_appends_with_defaults_and_enters_edit_mode() {
+        let mut panel = SettingsPanel::new(&Config::default());
+        assert!(panel.ssh_hosts.is_empty());
+
+        panel.add_ssh_host();
+        assert_eq!(panel.ssh_hosts.len(), 1);
+        let new_host = &panel.ssh_hosts[0];
+        assert_eq!(new_host.name, "");
+        assert_eq!(new_host.host, "");
+        assert_eq!(new_host.port, 22);
+        assert_eq!(new_host.username, "");
+        assert_eq!(new_host.auth_type, "password");
+
+        assert_eq!(panel.selected_host_index, 0);
+        assert_eq!(panel.ssh_field_focus, 1, "name フィールドにフォーカス");
+        assert!(
+            panel.ssh_field_editing.is_some(),
+            "name 編集モードが即時開始されているべき"
+        );
+        assert_eq!(
+            panel.ssh_field_editing.as_ref().unwrap().buffer,
+            "",
+            "新規ホストの name は空文字で初期化"
+        );
+        assert!(panel.dirty);
+    }
+
+    #[test]
+    fn add_ssh_host_extends_existing_list() {
+        let mut panel = panel_with_one_host();
+        panel.add_ssh_host();
+        assert_eq!(panel.ssh_hosts.len(), 2);
+        assert_eq!(
+            panel.selected_host_index, 1,
+            "末尾の新規ホストが選択されている"
+        );
+    }
+
+    #[test]
+    fn open_ssh_delete_dialog_noop_when_empty() {
+        let mut panel = SettingsPanel::new(&Config::default());
+        assert!(panel.ssh_hosts.is_empty());
+        panel.open_ssh_delete_dialog();
+        assert!(
+            !panel.ssh_delete_dialog_open,
+            "空リスト時はダイアログは開かない"
+        );
+    }
+
+    #[test]
+    fn open_ssh_delete_dialog_defaults_to_cancel_focus() {
+        let mut panel = panel_with_one_host();
+        panel.open_ssh_delete_dialog();
+        assert!(panel.ssh_delete_dialog_open);
+        assert!(
+            !panel.ssh_delete_dialog_confirm_focused,
+            "誤削除防止: Cancel ボタンがデフォルトフォーカス"
+        );
+    }
+
+    #[test]
+    fn cancel_ssh_delete_dialog_clears_state_and_keeps_host() {
+        let mut panel = panel_with_one_host();
+        panel.open_ssh_delete_dialog();
+        panel.ssh_delete_dialog_confirm_focused = true;
+        panel.cancel_ssh_delete_dialog();
+
+        assert!(!panel.ssh_delete_dialog_open);
+        assert!(!panel.ssh_delete_dialog_confirm_focused);
+        assert_eq!(panel.ssh_hosts.len(), 1, "削除されないこと");
+    }
+
+    #[test]
+    fn confirm_ssh_delete_dialog_removes_at_end_clamps_to_prev() {
+        let mut panel = panel_with_one_host();
+        // 2 ホスト用意して末尾を削除
+        panel.add_ssh_host();
+        assert_eq!(panel.ssh_hosts.len(), 2);
+        assert_eq!(panel.selected_host_index, 1);
+
+        panel.open_ssh_delete_dialog();
+        panel.confirm_ssh_delete_dialog();
+
+        assert_eq!(panel.ssh_hosts.len(), 1);
+        assert_eq!(
+            panel.selected_host_index, 0,
+            "末尾を削除したので n クランプで n-1=0 へ"
+        );
+        assert!(!panel.ssh_delete_dialog_open);
+        assert!(panel.dirty);
+    }
+
+    #[test]
+    fn confirm_ssh_delete_dialog_middle_index_keeps_position() {
+        let mut panel = panel_with_one_host();
+        panel.add_ssh_host();
+        panel.add_ssh_host(); // 計 3 ホスト
+        panel.selected_host_index = 1; // 中央を選択
+
+        panel.open_ssh_delete_dialog();
+        panel.confirm_ssh_delete_dialog();
+
+        assert_eq!(panel.ssh_hosts.len(), 2);
+        assert_eq!(
+            panel.selected_host_index, 1,
+            "中央を削除したので末尾が詰まって index=1 のまま"
+        );
+    }
+
+    #[test]
+    fn confirm_ssh_delete_dialog_empty_after_resets_focus() {
+        let mut panel = panel_with_one_host();
+        panel.ssh_field_focus = 3; // 何でもよい非ゼロ値
+
+        panel.open_ssh_delete_dialog();
+        panel.confirm_ssh_delete_dialog();
+
+        assert!(panel.ssh_hosts.is_empty());
+        assert_eq!(panel.selected_host_index, 0);
+        assert_eq!(
+            panel.ssh_field_focus, 0,
+            "空になったら ListBox にフォーカスを戻す"
+        );
+    }
+
+    #[test]
+    fn toggle_ssh_delete_dialog_focus_alternates() {
+        let mut panel = panel_with_one_host();
+        panel.open_ssh_delete_dialog();
+        assert!(!panel.ssh_delete_dialog_confirm_focused);
+
+        panel.toggle_ssh_delete_dialog_focus();
+        assert!(panel.ssh_delete_dialog_confirm_focused);
+
+        panel.toggle_ssh_delete_dialog_focus();
+        assert!(!panel.ssh_delete_dialog_confirm_focused);
     }
 }

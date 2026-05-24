@@ -327,8 +327,30 @@ impl EventHandler {
             let font_editing = self.app.state.settings_panel.font_family_editing;
             // Phase 5-11-8 Step 8-3 (Sub-phase A): SSH フィールド編集モード
             let ssh_editing = self.app.state.settings_panel.ssh_field_editing.is_some();
-            let editing = font_editing || ssh_editing;
+            // Phase 5-11-8 Step 8-3 (Sub-phase D): SSH 削除確認ダイアログ表示中
+            //   ダイアログ中はすべてのキーを吸収しダイアログ操作に専念する。
+            //   editing よりも上位の優先度で扱う（編集中にダイアログは開けない設計）。
+            let dialog_open = self.app.state.settings_panel.ssh_delete_dialog_open;
+            let editing = font_editing || ssh_editing || dialog_open;
             match code {
+                // ===== Sub-phase D: 削除確認ダイアログ中の専用処理（最優先） =====
+                WKeyCode::Escape if dialog_open => {
+                    self.app.state.settings_panel.cancel_ssh_delete_dialog();
+                }
+                WKeyCode::Enter if dialog_open => {
+                    let sp = &mut self.app.state.settings_panel;
+                    if sp.ssh_delete_dialog_confirm_focused {
+                        sp.confirm_ssh_delete_dialog();
+                    } else {
+                        sp.cancel_ssh_delete_dialog();
+                    }
+                }
+                WKeyCode::ArrowLeft | WKeyCode::ArrowRight | WKeyCode::Tab if dialog_open => {
+                    self.app
+                        .state
+                        .settings_panel
+                        .toggle_ssh_delete_dialog_focus();
+                }
                 WKeyCode::Escape => {
                     if font_editing {
                         // 編集モードを終了する（変更を破棄せず入力モードだけ終了）
@@ -349,6 +371,8 @@ impl EventHandler {
                         self.app.state.settings_panel.commit_ssh_field_edit();
                     } else {
                         // Sub-phase A: SSH カテゴリでフィールド (1/2/4) フォーカス時は編集モードへ
+                        // Sub-phase D: focus=6 (Add) は add_ssh_host (内部で edit 自動開始)
+                        // Sub-phase D: focus=7 (Delete) は削除確認ダイアログを開く
                         use crate::settings_panel::SettingsCategory;
                         let sp = &mut self.app.state.settings_panel;
                         if sp.category == SettingsCategory::Ssh
@@ -358,6 +382,17 @@ impl EventHandler {
                             // Phase 5-11-8 Step 8-3 (Sub-phase B): 編集モード開始時に
                             // IME カーソルエリアを SSH フィールド行へ移動
                             self.update_ime_cursor_area_for_ssh_field();
+                        } else if sp.category == SettingsCategory::Ssh && sp.ssh_field_focus == 6 {
+                            // Sub-phase D: Add ボタン → 新規ホスト追加 + name 編集モード自動開始
+                            sp.add_ssh_host();
+                            self.update_ime_cursor_area_for_ssh_field();
+                        } else if sp.category == SettingsCategory::Ssh
+                            && sp.ssh_field_focus == 7
+                            && !sp.ssh_hosts.is_empty()
+                        {
+                            // Sub-phase D: Delete ボタン → 削除確認ダイアログを開く
+                            //   空リスト時は disabled 扱いで何もしない（誤操作防止）
+                            sp.open_ssh_delete_dialog();
                         } else {
                             let _ = sp.save_to_toml();
                             sp.close();
@@ -399,7 +434,11 @@ impl EventHandler {
                             sp.window_field_focus = 0;
                         }
                     } else if sp.category == SettingsCategory::Ssh && code == WKeyCode::ArrowDown {
-                        if sp.ssh_field_focus < 5 {
+                        // Phase 5-11-8 Step 8-3 (Sub-phase D): 0..=7 に拡張
+                        //   6=Add, 7=Delete。空リスト時は Delete (7) を disabled としてスキップし、
+                        //   6 (Add) で打ち止め（次は次カテゴリへ）。
+                        let max_focus = if sp.ssh_hosts.is_empty() { 6 } else { 7 };
+                        if sp.ssh_field_focus < max_focus {
                             sp.ssh_field_focus += 1;
                         } else {
                             sp.next_category();

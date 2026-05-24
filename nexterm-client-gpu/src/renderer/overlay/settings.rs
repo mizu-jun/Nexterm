@@ -1220,6 +1220,302 @@ impl WgpuState {
                         text_idx,
                     );
                 }
+
+                // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): Add / Delete ボタン =====
+                // 空リスト時は content_top + 4.0 行下、非空時は note_y + 1.5 行下
+                let buttons_y = if sp.ssh_hosts.is_empty() {
+                    content_top + cell_h * 4.0
+                } else {
+                    let sel = sp.selected_host_index.min(sp.ssh_hosts.len() - 1);
+                    let _ = sel; // 実際の計算は fields_top と同じ
+                    let fields_top =
+                        content_top + cell_h * (1.5 + sp.ssh_hosts.len() as f32 * 1.2 + 0.6);
+                    let note_y = fields_top + cell_h * (1.3 + 5.0 * 1.1 + 0.4);
+                    note_y + cell_h * 1.5
+                };
+                let add_focused = sp.ssh_field_focus == 6;
+                let delete_focused = sp.ssh_field_focus == 7;
+                let delete_disabled = sp.ssh_hosts.is_empty();
+                let btn_w = cell_w * 24.0;
+                let btn_h = cell_h * 1.4;
+                let btn_gap = cell_w * 2.0;
+
+                // Add ボタン
+                let add_x = content_inner_x;
+                if add_focused {
+                    add_px_rect(
+                        add_x - cell_w * 0.3,
+                        buttons_y - cell_h * 0.15,
+                        btn_w,
+                        btn_h,
+                        [0.149, 0.235, 0.357, 1.0],
+                        sw,
+                        sh,
+                        bg_verts,
+                        bg_idx,
+                    );
+                } else {
+                    add_px_rect(
+                        add_x - cell_w * 0.3,
+                        buttons_y - cell_h * 0.15,
+                        btn_w,
+                        btn_h,
+                        [0.106, 0.133, 0.184, 1.0],
+                        sw,
+                        sh,
+                        bg_verts,
+                        bg_idx,
+                    );
+                }
+                let add_fg = if add_focused {
+                    [0.949, 0.969, 0.984, 1.0]
+                } else {
+                    [0.663, 0.694, 0.839, 1.0]
+                };
+                add_string_verts(
+                    "[ + ] 新規ホストを追加",
+                    add_x,
+                    buttons_y,
+                    add_fg,
+                    add_focused,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
+                );
+
+                // Delete ボタン（空リスト時は disabled）
+                let del_x = add_x + btn_w + btn_gap;
+                if delete_focused && !delete_disabled {
+                    add_px_rect(
+                        del_x - cell_w * 0.3,
+                        buttons_y - cell_h * 0.15,
+                        btn_w,
+                        btn_h,
+                        [0.298, 0.149, 0.149, 1.0],
+                        sw,
+                        sh,
+                        bg_verts,
+                        bg_idx,
+                    );
+                } else {
+                    add_px_rect(
+                        del_x - cell_w * 0.3,
+                        buttons_y - cell_h * 0.15,
+                        btn_w,
+                        btn_h,
+                        [0.106, 0.133, 0.184, 1.0],
+                        sw,
+                        sh,
+                        bg_verts,
+                        bg_idx,
+                    );
+                }
+                let del_fg = if delete_disabled {
+                    // disabled: 薄いグレー
+                    [0.314, 0.341, 0.408, 1.0]
+                } else if delete_focused {
+                    [0.984, 0.808, 0.808, 1.0]
+                } else {
+                    [0.776, 0.553, 0.553, 1.0]
+                };
+                let del_label = if delete_disabled {
+                    "[ × ] 選択ホストを削除 (無効)"
+                } else {
+                    "[ × ] 選択ホストを削除"
+                };
+                add_string_verts(
+                    del_label,
+                    del_x,
+                    buttons_y,
+                    del_fg,
+                    delete_focused && !delete_disabled,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
+                );
+
+                // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): 削除確認ダイアログ =====
+                // ssh_delete_dialog_open=true のときに、パネル中央にモーダルダイアログを
+                // 描画する。レンダラー優先順位: パネル本体 → Add/Delete ボタン → ダイアログ
+                // → フェードオーバーレイ（settings_panel 末尾）の順で z-order が確保される。
+                if sp.ssh_delete_dialog_open && !sp.ssh_hosts.is_empty() {
+                    let sel = sp.selected_host_index.min(sp.ssh_hosts.len() - 1);
+                    let target_name = if sp.ssh_hosts[sel].name.is_empty() {
+                        sp.ssh_hosts[sel].host.clone()
+                    } else {
+                        sp.ssh_hosts[sel].name.clone()
+                    };
+
+                    // 半透明オーバーレイ（パネル全体を覆う）
+                    add_px_rect(
+                        px,
+                        py,
+                        panel_w,
+                        panel_h,
+                        [0.0, 0.0, 0.0, 0.55],
+                        sw,
+                        sh,
+                        bg_verts,
+                        bg_idx,
+                    );
+
+                    // ダイアログ本体（パネル中央）
+                    let dialog_w = panel_w * 0.55;
+                    let dialog_h = cell_h * 8.5;
+                    let dialog_x = px + (panel_w - dialog_w) / 2.0;
+                    let dialog_y = py + (panel_h - dialog_h) / 2.0;
+
+                    // ダイアログ背景（不透明、警告色アクセント）
+                    add_px_rect(
+                        dialog_x - 2.0,
+                        dialog_y - 2.0,
+                        dialog_w + 4.0,
+                        dialog_h + 4.0,
+                        [0.776, 0.345, 0.345, 0.80],
+                        sw,
+                        sh,
+                        bg_verts,
+                        bg_idx,
+                    );
+                    add_px_rect(
+                        dialog_x,
+                        dialog_y,
+                        dialog_w,
+                        dialog_h,
+                        [0.118, 0.125, 0.188, 1.0],
+                        sw,
+                        sh,
+                        bg_verts,
+                        bg_idx,
+                    );
+
+                    // タイトル
+                    add_string_verts(
+                        " ⚠ ホストを削除しますか？",
+                        dialog_x + cell_w * 1.0,
+                        dialog_y + cell_h * 0.6,
+                        [0.984, 0.808, 0.808, 1.0],
+                        true,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
+                    );
+
+                    // メッセージ
+                    let msg = format!(
+                        "「{}」を削除します。この操作は取り消せません。",
+                        target_name
+                    );
+                    add_string_verts(
+                        &msg,
+                        dialog_x + cell_w * 1.0,
+                        dialog_y + cell_h * 2.2,
+                        [0.753, 0.808, 0.969, 1.0],
+                        false,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
+                    );
+
+                    // Cancel / Confirm ボタン（横並び、Cancel が左でデフォルトフォーカス）
+                    let dlg_btn_w = cell_w * 14.0;
+                    let dlg_btn_h = cell_h * 1.4;
+                    let dlg_btn_gap = cell_w * 2.0;
+                    let dlg_btns_total_w = dlg_btn_w * 2.0 + dlg_btn_gap;
+                    let dlg_btns_x = dialog_x + (dialog_w - dlg_btns_total_w) / 2.0;
+                    let dlg_btns_y = dialog_y + dialog_h - cell_h * 2.5;
+                    let confirm_focused = sp.ssh_delete_dialog_confirm_focused;
+
+                    // Cancel ボタン
+                    let cancel_bg = if !confirm_focused {
+                        [0.176, 0.235, 0.357, 1.0]
+                    } else {
+                        [0.106, 0.133, 0.184, 1.0]
+                    };
+                    add_px_rect(
+                        dlg_btns_x, dlg_btns_y, dlg_btn_w, dlg_btn_h, cancel_bg, sw, sh, bg_verts,
+                        bg_idx,
+                    );
+                    add_string_verts(
+                        "  キャンセル (Esc)",
+                        dlg_btns_x + cell_w * 0.5,
+                        dlg_btns_y + cell_h * 0.2,
+                        [0.949, 0.969, 0.984, 1.0],
+                        !confirm_focused,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
+                    );
+
+                    // Confirm ボタン
+                    let confirm_bg = if confirm_focused {
+                        [0.498, 0.196, 0.196, 1.0]
+                    } else {
+                        [0.235, 0.118, 0.118, 1.0]
+                    };
+                    let confirm_x = dlg_btns_x + dlg_btn_w + dlg_btn_gap;
+                    add_px_rect(
+                        confirm_x, dlg_btns_y, dlg_btn_w, dlg_btn_h, confirm_bg, sw, sh, bg_verts,
+                        bg_idx,
+                    );
+                    add_string_verts(
+                        "  削除する",
+                        confirm_x + cell_w * 0.5,
+                        dlg_btns_y + cell_h * 0.2,
+                        [0.984, 0.808, 0.808, 1.0],
+                        confirm_focused,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
+                    );
+
+                    // 操作ヒント
+                    add_string_verts(
+                        "  ← → / Tab でボタン切替 / Enter で決定 / Esc でキャンセル",
+                        dialog_x + cell_w * 1.0,
+                        dialog_y + dialog_h - cell_h * 0.9,
+                        [0.502, 0.533, 0.647, 1.0],
+                        false,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
+                    );
+                }
             }
             _ => {
                 // キーバインドは近日実装予定（Step 8-4 以降）
