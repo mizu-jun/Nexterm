@@ -7,6 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Sprint 5-12 着手。Windows 環境で `config.toml` に PowerShell を指定したのに
+シェルが起動しない／GUI は出るがペインが空白になる不具合の根本対応と再発防止策を
+4 フェーズに分けて投入。互換性破壊なし。
+
+### Added
+
+- **サーバーエラーバナー UI（Sprint 5-12 Phase 1）** — `ServerToClient::Error`
+  をログ出力するだけだった旧挙動を改め、`ClientState.error_banner: Option<String>`
+  に格納してレンダラーが画面上部に赤いバナー（深紅背景 + 明るい赤アクセント）として
+  描画するよう変更。PTY 起動失敗（PowerShell が見つからない等）・ペイン分割失敗・
+  設定ロードエラー等が画面に直接表示され、ユーザーが `NEXTERM_LOG=debug` でログを
+  見なくても原因を把握できるようになった。`Esc` で閉じる（`update_banner` より
+  優先的に処理される）。`update_banner` と独立で縦に並列表示可能。
+- **i18n キー `error-banner-prefix`** — 全 8 言語（en/ja/zh-CN/ko/de/fr/es/it）に
+  「エラー:」相当のプレフィックス文字列を追加。
+- **起動時警告キューイング機構（Sprint 5-12 Phase 4）** — `SessionManager` に
+  `startup_warnings: Arc<Mutex<Vec<String>>>` と `set_startup_warnings` /
+  `take_startup_warnings` メソッドを追加。`run_server` が `ConfigLoader::load()`
+  に失敗した場合、サイレントにデフォルトを使うのではなく警告メッセージをキューに
+  積み、初回 attach 時に `ServerToClient::Error`（";" 区切り結合）として送信。
+  Phase 1 のエラーバナー機構と連動して可視化される。
+- **Lua `shell.args` マージサポート（Sprint 5-12 Phase 3）** — `apply_lua_table_to_config`
+  で `shell.args` を Lua テーブル経由で上書きできるよう拡張。例:
+  `shell = { program = "pwsh.exe", args = {"-NoLogo", "-NonInteractive"} }`。
+  `shell.args` を省略した場合は既存値（TOML 由来または `ShellConfig::default()`）
+  を維持し、空テーブル指定でも既存値を保持（誤って全 args を消す事故を防ぐ）。
+
+### Fixed
+
+- **Windows 版で PowerShell 10 が検出されないバージョン比較バグ
+  （Sprint 5-12 Phase 2）** — `ShellConfig::default()` の Windows 実装で
+  `%ProgramFiles%\PowerShell\*` ディレクトリを動的スキャンする際、`PathBuf` の
+  `>` 演算子で比較していたため辞書順で `"7" > "10"` と判定され、PowerShell 10 が
+  インストールされていても 7 が選ばれていた。新規ヘルパー `pwsh_version_number()`
+  でディレクトリ名を `u32` としてパースしてから数値比較するよう修正。プレビュー版
+  ディレクトリ（`7-preview` 等）はパース失敗で 0 にフォールバックし、数値バージョン
+  が必ず優先される。
+- **Lua 設定の `shell.args` がサイレントに無視されていたバグ
+  （Sprint 5-12 Phase 3）** — 旧 `apply_lua_table_to_config` 実装は
+  `shell.program` のみ上書きし `shell.args` を読み捨てていた。Lua で
+  `shell = { program = "...", args = {...} }` と書いてもデフォルト args
+  （PowerShell の場合 `["-NoLogo"]`）が維持され、ユーザーの意図と乖離していた。
+- **設定ファイルロード失敗がサイレントに飲み込まれていた問題
+  （Sprint 5-12 Phase 4）** — `nexterm_config::ConfigLoader::load().unwrap_or_default()`
+  が `Err` を完全に隠していたため、`nexterm.toml` が破損していてもユーザーに通知
+  されずデフォルト設定で起動していた。`match` でエラーを捕捉し、`tracing::error!`
+  + 起動時警告キューへの追加 + クライアントへのバナー通知の 3 段で可視化。
+
+### Changed
+
+- `nexterm-client-gpu/src/state/server_message.rs::ServerToClient::Error` ハンドラを
+  「ログ出力のみ」から「ログ出力 + `state.error_banner` セット」に変更。
+- `nexterm-client-gpu/src/renderer/render_frame.rs` でエラーバナー描画を
+  `update_banner` 描画ブロックの直後に追加。両バナーは縦に並ぶ。
+- `nexterm-client-gpu/src/renderer/input_handler/mod.rs::on_key` で
+  `error_banner.is_some()` 時の `Esc` 早期 return を `update_banner` 処理より
+  前に挿入。重なって表示中に最新（エラー）から閉じる動作にした。
+
+### テスト追加
+
+- `nexterm-config/src/schema/shell.rs` に `#[cfg(all(test, windows))] mod tests` 新設、
+  バージョン比較バグ回帰テスト 4 件（v7 < v10 / プレビュー版は 0 / 親無しは 0 /
+  数値は非数値より優先）を追加。
+- `nexterm-config/src/loader.rs` に Lua `shell.args` マージのテスト 3 件追加
+  （上書き成功 / 省略時保持 / 空テーブル時保持）。
+
+### 互換性
+
+- 機能的な互換性破壊なし（PROTOCOL_VERSION 8 / SNAPSHOT_VERSION 4 維持）。
+- `SessionManager::new` のシグネチャ維持（既存テスト 12 件の呼び出しに影響なし）。
+- 設定スキーマ変更なし（`[shell]` セクションは既存と完全互換）。
+- `ServerToClient` IPC 型に変更なし（既存 `Error` バリアントの受信側 UI を追加した
+  のみで、サーバー側の送信規約は変わらない）。
+- 既存のサーバーバイナリと新クライアントは相互運用可能（旧サーバーは `startup_warnings`
+  を持たないがクライアント側のエラーバナーは依然として PTY spawn 失敗等で動作する）。
+
+### 確認方法（Windows 実機）
+
+```powershell
+# 1. デバッグログを有効化して起動
+$env:NEXTERM_LOG = "debug"
+nexterm 2> $env:USERPROFILE\nexterm-debug.log
+
+# 2. PowerShell 10 が検出されているかログで確認
+Select-String -Path $env:USERPROFILE\nexterm-debug.log -Pattern "pwsh|powershell"
+
+# 3. PTY 起動失敗時は画面上部に赤いバナーが表示されることを確認
+```
+
 ## [1.6.1] - 2026-05-24
 
 Flatpak 配布のホットフィックスリリース。v1.6.0 時点で Sprint 5-11-1（AccessKit PoC）

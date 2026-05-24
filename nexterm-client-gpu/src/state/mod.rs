@@ -235,6 +235,12 @@ pub struct ClientState {
     /// 単調増加カウンタ。クライアント 1 起動につき u64 を使い切ることは現実的に不可能
     /// （1 秒間 1000 件発火で約 5.84 億年）。NodeId 衝突回避の根拠。
     pub next_alert_seq: u64,
+    /// サーバーから受信した致命的でないエラーをユーザーに見せるためのバナー（Sprint 5-12 Phase 1）。
+    ///
+    /// `ServerToClient::Error` を受信した時点でメッセージを格納し、レンダラーが画面下部に
+    /// 赤いバナーとして描画する。`Esc` キーで `None` に戻る。最新のエラーで上書きされる
+    /// 単一スロット（同時に複数件積まれることはない）。`update_banner` と独立に共存可能。
+    pub error_banner: Option<String>,
 }
 
 /// `QueryForegroundProcess` への応答情報（Sprint 5-8 Phase 4-5）
@@ -388,6 +394,8 @@ impl ClientState {
             // Sprint 5-11-5: AccessKit Role::Alert 通知キュー
             alerts: std::collections::VecDeque::new(),
             next_alert_seq: 0,
+            // Sprint 5-12 Phase 1: サーバーエラー表示用バナー
+            error_banner: None,
         }
     }
 

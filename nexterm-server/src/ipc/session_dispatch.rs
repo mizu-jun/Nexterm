@@ -68,6 +68,18 @@ pub(super) async fn handle_attach(ctx: &mut DispatchContext<'_>, session_name: &
                 .send(ServerToClient::SessionList { sessions: list })
                 .await;
 
+            // Sprint 5-12 Phase 4: 起動時警告（config ロード失敗など）を消化して送信。
+            // クライアント側で `error_banner` として可視化される。
+            // 複数件ある場合は ";" 区切りで結合（バナーは単一スロットのため最新で上書きされる）。
+            let warnings = manager.take_startup_warnings();
+            if !warnings.is_empty() {
+                let _ = tx
+                    .send(ServerToClient::Error {
+                        message: warnings.join("; "),
+                    })
+                    .await;
+            }
+
             // on_attach フック
             crate::hooks::on_attach(ctx.hooks, &ctx.lua, session_name);
 

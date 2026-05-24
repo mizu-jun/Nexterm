@@ -893,6 +893,107 @@ impl WgpuState {
         );
     }
 
+    /// サーバーエラーバナー頂点を構築する（画面上部 1 行バー、`update_banner` の直下）。
+    ///
+    /// Sprint 5-12 Phase 1: PTY 起動失敗（PowerShell が見つからない等）・設定ロードエラー・
+    /// ペイン分割失敗などの `ServerToClient::Error` をユーザーが即座に把握できるよう
+    /// 赤いバーで通知する。`Esc` キーで閉じる。
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn build_error_banner_verts(
+        &self,
+        state: &ClientState,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
+        font: &mut FontManager,
+        atlas: &mut GlyphAtlas,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
+    ) {
+        let Some(ref message) = state.error_banner else {
+            return;
+        };
+
+        // バナーは画面幅全体・1 行分の高さ。update_banner がある場合はその下に積む。
+        let bar_h = cell_h * 1.4;
+        let bar_y = if state.update_banner.is_some() {
+            bar_h
+        } else {
+            0.0
+        };
+
+        // 背景（深紅）
+        add_px_rect(
+            0.0,
+            bar_y,
+            sw,
+            bar_h,
+            [0.40, 0.08, 0.08, 0.97],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
+        // 左端アクセントライン（明るい赤）
+        add_px_rect(
+            0.0,
+            bar_y,
+            4.0,
+            bar_h,
+            [0.95, 0.30, 0.30, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
+
+        // 「エラー: {message}」を表示（i18n キー "error-banner-prefix"）
+        let prefix = nexterm_i18n::fl!("error-banner-prefix");
+        let full = format!("{} {}", prefix, message);
+        // 画面幅に収まる範囲で切り詰める（右側 [Esc] ヒント分は余白として確保）
+        let hint = "  [Esc]";
+        let max_chars = ((sw / cell_w) as usize)
+            .saturating_sub(hint.chars().count() + 4)
+            .max(8);
+        let msg_display: String = full.chars().take(max_chars).collect();
+        add_string_verts(
+            &msg_display,
+            cell_w * 1.2,
+            bar_y + (bar_h - cell_h) * 0.5,
+            [1.0, 0.92, 0.92, 1.0],
+            false,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
+        );
+
+        // 右側ヒント（Esc で閉じる）
+        let hint_x = sw - hint.len() as f32 * cell_w - cell_w;
+        add_string_verts(
+            hint,
+            hint_x,
+            bar_y + (bar_h - cell_h) * 0.5,
+            [0.95, 0.70, 0.70, 1.0],
+            false,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
+        );
+    }
+
     /// Quick Select オーバーレイ頂点を構築する
     ///
     /// 各マッチ位置にラベル（a, b, ..., aa, ...）を黄色背景で描画する。

@@ -58,6 +58,7 @@
   "update-available": "Update available: v{version}  — press Enter to open releases",
   "update-dismiss": "Dismiss update notification",
   "update-open-releases": "Open release notes",
+  "error-banner-prefix": "Error:",
   "consent-title-open-url": "Open external URL?",
   "consent-title-clipboard-write": "Write to clipboard?",
   "consent-title-notification": "Show desktop notification?",

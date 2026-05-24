@@ -59,6 +59,10 @@ impl ClientState {
             }
             ServerToClient::Error { message } => {
                 tracing::error!("サーバーエラー: {}", message);
+                // Sprint 5-12 Phase 1: UI バナーへ反映してユーザーに可視化する。
+                // 例: PTY spawn 失敗（PowerShell 起動失敗等）、設定ロードエラー、
+                // ペイン分割失敗。バナーは Esc キーで閉じられる。
+                self.error_banner = Some(message);
             }
             ServerToClient::SessionList { .. } => {}
             ServerToClient::ImagePlaced {

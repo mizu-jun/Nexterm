@@ -530,6 +530,25 @@ impl WgpuState {
             );
         }
 
+        // ---- サーバーエラーバナー（Sprint 5-12 Phase 1） ----
+        // PTY 起動失敗（PowerShell が見つからない等）・設定ロードエラーを画面上部に通知。
+        // update_banner と縦に並ぶ。Esc キーで閉じる。
+        if state.error_banner.is_some() {
+            self.build_error_banner_verts(
+                state,
+                sw,
+                sh,
+                cell_w,
+                cell_h,
+                font,
+                atlas,
+                &mut bg_verts,
+                &mut bg_idx,
+                &mut text_verts,
+                &mut text_idx,
+            );
+        }
+
         // ---- 同意ダイアログ（Sprint 4-1: 機密操作確認モーダル）----
         // 最前面表示するため最後に追加する
         if state.pending_consent.is_some() {

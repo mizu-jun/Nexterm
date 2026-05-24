@@ -58,6 +58,7 @@
   "update-available": "アップデートあり: v{version}  — Enter で詳細を開く",
   "update-dismiss": "更新通知を閉じる",
   "update-open-releases": "リリースノートを開く",
+  "error-banner-prefix": "エラー:",
   "consent-title-open-url": "外部 URL を開きますか?",
   "consent-title-clipboard-write": "クリップボードに書き込みますか?",
   "consent-title-notification": "デスクトップ通知を表示しますか?",

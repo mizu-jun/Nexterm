@@ -255,10 +255,27 @@ pub fn apply_lua_table_to_config(config: &mut Config, tbl: &LuaTable) -> Result<
     }
 
     // shell
-    if let Ok(LuaValue::Table(shell)) = tbl.get("shell")
-        && let Ok(program) = shell.get::<String>("program")
-    {
-        config.shell.program = program;
+    // Sprint 5-12 Phase 3: `shell.args` を Lua からマージできるように拡張した。
+    // 例: `shell = { program = "pwsh.exe", args = {"-NoLogo", "-NonInteractive"} }`
+    // 旧実装では `args` を無視していたため、`program` のみ上書きされて args は
+    // TOML 由来の値（または `ShellConfig::default()` の値）が維持されていた。
+    if let Ok(LuaValue::Table(shell)) = tbl.get("shell") {
+        if let Ok(program) = shell.get::<String>("program") {
+            config.shell.program = program;
+        }
+        if let Ok(LuaValue::Table(args_tbl)) = shell.get("args") {
+            let mut args: Vec<String> = Vec::new();
+            // Lua のテーブルは 1-indexed
+            for i in 1.. {
+                match args_tbl.get::<String>(i) {
+                    Ok(arg) => args.push(arg),
+                    Err(_) => break,
+                }
+            }
+            if !args.is_empty() {
+                config.shell.args = args;
+            }
+        }
     }
 
     // scrollback_lines
@@ -558,6 +575,72 @@ ansi = ["#000000", "#ff0000", "#00ff00", "#ffff00",
         apply_lua_table_to_config(&mut config, &tbl).unwrap();
         assert_eq!(config.font.size, 20.0);
         assert_eq!(config.font.family, "Hack");
+    }
+
+    /// Sprint 5-12 Phase 3: Lua の `shell.args` がマージされず無視されていたバグの回帰テスト。
+    /// 旧実装では `shell.program` のみ上書きされ、`shell.args` は読み捨てられていた。
+    #[test]
+    fn luaで_shell_args_を上書きできる() {
+        let lua = crate::lua_sandbox::sandboxed_lua().unwrap();
+        let mut config = Config::default();
+
+        let tbl = config_to_lua_table(&lua, &config).unwrap();
+
+        // shell.program と shell.args の両方を Lua 側で更新する
+        let shell: LuaTable = tbl.get("shell").unwrap();
+        shell.set("program", "pwsh.exe").unwrap();
+        let args = lua.create_table().unwrap();
+        args.set(1, "-NoLogo").unwrap();
+        args.set(2, "-NonInteractive").unwrap();
+        args.set(3, "-Command").unwrap();
+        shell.set("args", args).unwrap();
+
+        apply_lua_table_to_config(&mut config, &tbl).unwrap();
+        assert_eq!(config.shell.program, "pwsh.exe");
+        assert_eq!(
+            config.shell.args,
+            vec![
+                "-NoLogo".to_string(),
+                "-NonInteractive".to_string(),
+                "-Command".to_string(),
+            ]
+        );
+    }
+
+    /// Lua で `shell.program` だけ指定し `shell.args` を省略した場合、既存の args が維持される。
+    #[test]
+    fn luaで_shell_args_省略時は既存の値が維持される() {
+        let lua = crate::lua_sandbox::sandboxed_lua().unwrap();
+        let mut config = Config::default();
+        config.shell.args = vec!["--existing".to_string(), "--flag".to_string()];
+
+        let tbl = config_to_lua_table(&lua, &config).unwrap();
+        let shell: LuaTable = tbl.get("shell").unwrap();
+        shell.set("program", "/bin/bash").unwrap();
+        // args は意図的にセットしない
+
+        apply_lua_table_to_config(&mut config, &tbl).unwrap();
+        assert_eq!(config.shell.program, "/bin/bash");
+        assert_eq!(
+            config.shell.args,
+            vec!["--existing".to_string(), "--flag".to_string()]
+        );
+    }
+
+    /// Lua で `shell.args` を空テーブルにした場合、既存の値を保持する。
+    /// （空配列で全引数を消したい場合は別 API を用意するべきだが、現状は安全側に倒す）
+    #[test]
+    fn luaで_shell_args_空テーブルなら既存値を保持する() {
+        let lua = crate::lua_sandbox::sandboxed_lua().unwrap();
+        let mut config = Config::default();
+        config.shell.args = vec!["--existing".to_string()];
+
+        let tbl = config_to_lua_table(&lua, &config).unwrap();
+        let shell: LuaTable = tbl.get("shell").unwrap();
+        shell.set("args", lua.create_table().unwrap()).unwrap();
+
+        apply_lua_table_to_config(&mut config, &tbl).unwrap();
+        assert_eq!(config.shell.args, vec!["--existing".to_string()]);
     }
 
     #[test]

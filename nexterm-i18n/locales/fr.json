@@ -58,6 +58,7 @@
   "update-available": "Mise à jour disponible: v{version}  — Appuyer sur Entrée pour les détails",
   "update-dismiss": "Fermer la notification de mise à jour",
   "update-open-releases": "Ouvrir les notes de version",
+  "error-banner-prefix": "Erreur :",
   "consent-title-open-url": "Ouvrir l'URL externe ?",
   "consent-title-clipboard-write": "Écrire dans le presse-papiers ?",
   "consent-title-notification": "Afficher la notification du bureau ?",

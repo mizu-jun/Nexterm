@@ -58,6 +58,7 @@
   "update-available": "有新版本可用: v{version}  — 按 Enter 查看详情",
   "update-dismiss": "关闭更新通知",
   "update-open-releases": "打开发行说明",
+  "error-banner-prefix": "错误:",
   "consent-title-open-url": "打开外部 URL？",
   "consent-title-clipboard-write": "写入剪贴板？",
   "consent-title-notification": "显示桌面通知？",

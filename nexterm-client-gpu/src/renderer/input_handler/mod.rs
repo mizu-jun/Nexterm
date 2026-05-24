@@ -568,6 +568,15 @@ impl EventHandler {
             return true;
         }
 
+        // サーバーエラーバナーが表示中のとき: Esc で閉じる（Sprint 5-12 Phase 1）
+        // update_banner より優先して処理する（重なって表示されているとき先に消えるべき）
+        if self.app.state.error_banner.is_some()
+            && let WKeyCode::Escape = code
+        {
+            self.app.state.error_banner = None;
+            return true;
+        }
+
         // 更新通知バナーが表示中のとき: Esc で閉じる、Enter でブラウザを開く
         if self.app.state.update_banner.is_some() {
             match code {

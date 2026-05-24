@@ -559,6 +559,13 @@ pub struct SessionManager {
     ///
     /// 既知のワークスペース集合（`default` を必ず含む）と、現在アクティブな名前を保持する。
     workspace_state: Arc<Mutex<WorkspaceState>>,
+    /// 起動時に発生した警告メッセージのキュー（Sprint 5-12 Phase 4）。
+    ///
+    /// `run_server` が config ロード等で軽微なエラーを検出したとき、ここに積んでおく。
+    /// クライアントの初回 Attach 時に `take_startup_warnings()` で取り出して
+    /// `ServerToClient::Error` で送信する。同期 Mutex を使うのは Tokio タスクの外側
+    /// （`run_server` の早い段階）からセットされ得るため。
+    startup_warnings: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 /// SessionManager 内部のワークスペース状態
@@ -585,6 +592,7 @@ impl SessionManager {
             shell_config,
             plugin_manager: Arc::new(std::sync::Mutex::new(None)),
             workspace_state: Arc::new(Mutex::new(WorkspaceState::new())),
+            startup_warnings: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -592,6 +600,28 @@ impl SessionManager {
     pub fn set_plugin_manager(&self, mgr: nexterm_plugin::PluginManager) {
         let mut lock = self.plugin_manager.lock().expect("plugin_manager poisoned");
         *lock = Some(mgr);
+    }
+
+    /// 起動時警告メッセージを置き換える（Sprint 5-12 Phase 4）。
+    ///
+    /// `run_server` が config ロードに失敗した場合などに呼び出す。
+    /// 通常は `take_startup_warnings()` で初回 attach 時に消化される。
+    pub fn set_startup_warnings(&self, warnings: Vec<String>) {
+        if let Ok(mut guard) = self.startup_warnings.lock() {
+            *guard = warnings;
+        }
+    }
+
+    /// 蓄積された起動時警告を取り出してキューを空にする（Sprint 5-12 Phase 4）。
+    ///
+    /// クライアント側に `ServerToClient::Error` として通知するため、初回 attach の
+    /// IPC ハンドラから呼ぶ。複数クライアントが同時 attach した場合は最初の
+    /// クライアントだけが受け取る（メッセージの永続表示はせず一過性で扱う）。
+    pub fn take_startup_warnings(&self) -> Vec<String> {
+        self.startup_warnings
+            .lock()
+            .map(|mut g| std::mem::take(&mut *g))
+            .unwrap_or_default()
     }
 
     /// セッションへの Arc を返す（IPC ハンドラで使用）

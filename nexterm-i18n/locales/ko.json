@@ -58,6 +58,7 @@
   "update-available": "업데이트 있음: v{version}  — Enter 키로 자세히 보기",
   "update-dismiss": "업데이트 알림 닫기",
   "update-open-releases": "릴리스 노트 열기",
+  "error-banner-prefix": "오류:",
   "consent-title-open-url": "외부 URL을 열까요?",
   "consent-title-clipboard-write": "클립보드에 쓸까요?",
   "consent-title-notification": "데스크톱 알림을 표시할까요?",

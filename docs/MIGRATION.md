@@ -4,6 +4,62 @@
 
 ---
 
+## v1.6.1 → Unreleased（Sprint 5-12: シェル起動不具合の可視化と修正）
+
+**互換性破壊なし**。`PROTOCOL_VERSION = 8` / `SNAPSHOT_VERSION = 4` を維持します。
+設定スキーマ（`nexterm.toml` / `config.lua`）にも破壊的変更はありません。既存ユーザーは
+何もせずアップグレード可能です。
+
+### 何が変わったか
+
+Windows 環境で `config.toml` に PowerShell を指定したのにシェルが起動しない／
+ペインが空白のまま表示される不具合の根本対応と再発防止策を 4 フェーズで実装しました。
+
+1. **エラーバナー UI**: サーバーから送られる `ServerToClient::Error` をログだけでなく
+   画面上部の赤いバナーとして可視化します（`Esc` で閉じる）。PTY 起動失敗の原因が
+   即座にわかるようになります。
+2. **PowerShell バージョン比較バグの修正**: `%ProgramFiles%\PowerShell\` 配下を
+   スキャンする際、辞書順比較で `"7" > "10"` と判定して PowerShell 10 を見逃して
+   いたバグを数値比較に修正しました。
+3. **Lua `shell.args` マージサポート**: `config.lua` で
+   `shell = { program = "pwsh.exe", args = {"-NoLogo", "-NonInteractive"} }` のように
+   args を上書きできるようになりました（旧実装は args を読み捨てていた）。
+4. **設定ロードエラーのクライアント通知**: `nexterm.toml` の構文エラー等が
+   サイレントに飲み込まれないよう、起動時警告として蓄積し初回 attach 時に
+   バナーで通知します。
+
+### 既存ユーザーへの影響
+
+- **アップグレード手順は不要**。設定ファイルの書き換えも不要です。
+- 既に PowerShell 7 を使用していたユーザーは引き続き 7 が選択されます（10 を
+  追加インストールした場合のみ自動的に 10 へ切り替わります）。
+- Lua で `shell.args` を意図せず設定していた場合、これまで無視されていた値が
+  **次回起動時から実際に反映される** 点だけ注意してください。
+
+### 確認方法（Windows 実機）
+
+```powershell
+# 1. デバッグログを有効化して起動
+$env:NEXTERM_LOG = "debug"
+nexterm 2> $env:USERPROFILE\nexterm-debug.log
+
+# 2. PowerShell 10 が検出されているかログで確認
+Select-String -Path $env:USERPROFILE\nexterm-debug.log -Pattern "pwsh|powershell"
+
+# 3. PTY 起動失敗時は画面上部に赤いバナーが表示されることを確認
+#    （表示中は Esc キーで閉じられる）
+```
+
+### 旧バージョンとの相互運用
+
+- 既存のサーバーバイナリと新クライアントは相互運用可能です。旧サーバーは
+  `startup_warnings` の取得 API を持ちませんが、クライアント側のエラーバナーは
+  既存の `ServerToClient::Error`（PTY spawn 失敗等）で正常に動作します。
+- 新サーバー + 旧クライアントの組み合わせでは、起動時警告は送信されますが
+  旧クライアントはバナー表示せずログにのみ出力します（影響なし）。
+
+---
+
 ## v1.6.0 → v1.6.1（Flatpak ビルドのホットフィックス）
 
 **互換性破壊なし**。機能面は v1.6.0 と完全同一です。v1.6.0 で `Flatpak` ワークフローが

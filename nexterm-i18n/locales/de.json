@@ -58,6 +58,7 @@
   "update-available": "Update verfügbar: v{version}  — Enter drücken für Details",
   "update-dismiss": "Update-Benachrichtigung schließen",
   "update-open-releases": "Versionshinweise öffnen",
+  "error-banner-prefix": "Fehler:",
   "consent-title-open-url": "Externe URL öffnen?",
   "consent-title-clipboard-write": "In die Zwischenablage schreiben?",
   "consent-title-notification": "Desktop-Benachrichtigung anzeigen?",

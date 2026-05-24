@@ -29,9 +29,20 @@ use session::SessionManager;
 pub async fn run_server() -> Result<()> {
     info!("nexterm-server 起動中...");
 
-    let shell_config = nexterm_config::ConfigLoader::load()
-        .unwrap_or_default()
-        .shell;
+    // Sprint 5-12 Phase 4: 設定ロードに失敗した場合、サイレントにデフォルトを使うのではなく
+    // 警告メッセージを SessionManager に積んでおく。初回 attach 時にクライアントへ
+    // `ServerToClient::Error` で送信され、エラーバナーとして可視化される。
+    let mut startup_warnings: Vec<String> = Vec::new();
+    let shell_config = match nexterm_config::ConfigLoader::load() {
+        Ok(cfg) => cfg.shell,
+        Err(e) => {
+            tracing::error!("設定ファイルのロードに失敗しました: {e}");
+            startup_warnings.push(format!(
+                "設定ファイルのロードに失敗しました（デフォルト設定で起動）: {e}"
+            ));
+            nexterm_config::Config::default().shell
+        }
+    };
     let manager = Arc::new(SessionManager::new(shell_config));
 
     // スナップショットが存在すれば前回のセッションを復元する
@@ -51,7 +62,17 @@ pub async fn run_server() -> Result<()> {
 
     // 設定を読み込んでフック設定・ログ設定・ホスト設定を抽出する
     let (runtime_cfg, lua_runner, web_config) = {
-        let cfg = nexterm_config::ConfigLoader::load().unwrap_or_default();
+        // Sprint 5-12 Phase 4: 2 回目の load も失敗時は警告キューに積む。
+        let cfg = match nexterm_config::ConfigLoader::load() {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                tracing::error!("設定ファイルの再ロードに失敗しました: {e}");
+                startup_warnings.push(format!(
+                    "フック・Web 設定のロードに失敗しました（デフォルトで起動）: {e}"
+                ));
+                nexterm_config::Config::default()
+            }
+        };
         let lua_script = nexterm_config::lua_path();
         let runner = nexterm_config::LuaHookRunner::new(Some(lua_script));
 
@@ -79,6 +100,12 @@ pub async fn run_server() -> Result<()> {
             cfg.web,
         )
     };
+
+    // Sprint 5-12 Phase 4: 起動時の警告（config ロード失敗など）をクライアントへ
+    // 通知できるよう SessionManager に登録。初回 attach 時に取り出される。
+    if !startup_warnings.is_empty() {
+        manager.set_startup_warnings(startup_warnings);
+    }
 
     // config.toml の変更を監視してランタイム設定をホットリロードする
     // _watcher は drop されると監視を停止するため run_server スコープで保持する
