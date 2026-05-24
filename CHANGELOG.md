@@ -7,12 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Sprint 5-11-1 / 5-11-2 で **スクリーンリーダー対応（H1）** を実装。監査ラウンド 2
-HIGH 残最後の項目を AccessKit 0.24 + accesskit_winit 0.33 で着地させた段階。
-本実装は **実機 SR 検証（NVDA / VoiceOver / Orca）が未実施** のため experimental
-扱いで、リリースバンプは Phase 5-11-3（ターミナル grid 差分通知）まで保留。
+## [1.6.0] - 2026-05-24
 
-### Added — Sprint 5-11-1 / 5-11-2（experimental）
+Sprint 5-11 全フェーズ（5-11-1 〜 5-11-8）完成。監査ラウンド 2 HIGH 残最後の
+**スクリーンリーダー対応（H1）** を AccessKit 0.24 + accesskit_winit 0.33 で
+完全実装し、ターミナル grid 差分通知・カーソル TextSelection・Bell / OSC 通知の
+Role::Alert・ActionRequest 書き込み応答・SSH ホスト GUI 編集まで一括着地。
+
+### Added — Sprint 5-11-1 / 5-11-2（基盤 + ツリー構築）
 
 - **AccessKit によるアクセシビリティツリー公開** — `accesskit_winit::Adapter`
   を主 OS Window + Phase 4 で派生した各 OS Window に統合し、Windows UI Automation
@@ -25,14 +27,14 @@ HIGH 残最後の項目を AccessKit 0.24 + accesskit_winit 0.33 で着地させ
   - Tab `1_000_000_000 + pane_id` / Pane `10_000_000_000 + pane_id`（衝突なし、ユニットテスト付き）
 - **6 オーバーレイのノード化** — CommandPalette（Dialog + SearchInput + ListBox）/
   ContextMenu（Menu + MenuItem）/ CloseWindowDialog（AlertDialog + Kill / Cancel ボタン）/
-  HostManager / MacroPicker / SettingsPanel（最小、フィールド展開は Phase 5-11-2 残）。
+  HostManager / MacroPicker / SettingsPanel（最小、フィールド展開は Phase 5-11-6 で完成）。
   優先順位ベースのモーダル制御（CloseDialog > ContextMenu > Palette > 他）
 - **ツリーのライブ更新（100ms スロットル）** — `compute_tree_state_hash(&ClientState)`
   でコンテンツハッシュを計算し、`on_about_to_wait` で前回ハッシュと比較。変化があれば
   100ms スロットルの上で `Adapter::update_if_active` を呼んで SR に差分通知
-- **ActionRequested 応答** — SR が Focus / Click / SetValue を要求すると Nexterm が
-  実際に動作する経路を実装。`decode_node_id(NodeId) -> NodeIdKind`（22 バリアント）で
-  逆引きし、`handle_accesskit_action` でディスパッチ:
+- **ActionRequested 応答（読み取り操作）** — SR が Focus / Click / SetValue を
+  要求すると Nexterm が実際に動作する経路を実装。`decode_node_id(NodeId) -> NodeIdKind`
+  で逆引きし、`handle_accesskit_action` でディスパッチ:
   - Tab / Pane の Focus / Click → `FocusPane` IPC + `state.focused_pane_id` 更新
   - CloseDialog Kill / Cancel ボタン → 既存の `selected_button` 半オープン契約
     （0xFE = Kill 確定 / 0xFF = Cancel 確定 / 0・1 = フォーカスのみ）を再利用
@@ -40,30 +42,119 @@ HIGH 残最後の項目を AccessKit 0.24 + accesskit_winit 0.33 で着地させ
     `execute_context_menu_action`）流用
   - PaletteSearch SetValue → クエリ文字列更新 + `selected = 0`
 
+### Added — Sprint 5-11-3（ターミナル grid 差分通知、H1 本命）
+
+- **ターミナル本体の SR 対応** — グリッド各行を `accesskit::Role::TextRun` ノードとして
+  公開。NodeId 体系拡張: PaneRow = `20G + pane_id*1000 + row`（ペイン分離、衝突なし）
+- **行テキスト取得 API**: `pane_row_text(grid, row)` で SGR エスケープを剥がし、
+  末尾空白を `trim_end_matches(' ')`、完全空行は `" "` で SR 境界保持
+- **フォーカスペインのみ Live::Polite** — 他ペイン・スクロールバックは `Live::Off` に
+  抑えて過剰アナウンスを防止
+- **行ハッシュ差分検出** — `compute_grid_row_hashes` で行単位 `DefaultHasher` を計算し、
+  `update_accesskit_tree_if_needed` を「tree 構造変化 OR grid 変化」の独立検出に拡張
+
+### Added — Sprint 5-11-4（カーソル TextSelection + スクロールバック）
+
+- **行ノードを Role::TextRun + `set_character_lengths`** — UTF-8 バイト長配列で
+  CJK セルも正しく境界が伝わる
+- **TextSelection 統合** — フォーカスペインのカーソル行 NodeId に
+  `TextPosition { node, character_index = cursor_col }`（anchor=focus 同一）でキャレット表現
+- **Live::Polite 縮小** — ビューポート全行 → カーソル行のみへ集中
+- **スクロールバック公開** — `scroll_offset` 中心の前後 `SCROLLBACK_WINDOW_RADIUS = 100`
+  行を窓スライドで公開（Live::Off）。NodeId は `pane_scrollback_row_node_id` で
+  ビューポート (0-999) / スクロールバック (1000-9999) の連続 ID 化
+- **新規純関数**: `pane_row_text_with_lengths` / `scrollback_row_text_with_lengths` /
+  `cursor_character_index`
+
+### Added — Sprint 5-11-5（Bell / OSC 通知 → Role::Alert）
+
+- **`ClientState.alerts: VecDeque<AlertEntry>`** — TTL 5 秒 + 最大 16 件キュー、
+  `add_alert` / `expire_alerts` で管理
+- **Live::Assertive 領域コンテナ** — `ALERT_REGION_ID = NodeId(26)` 配下に各
+  `Role::Alert` を配置（pane_row 範囲と分離するため `NODE_ID_ALERT_OFFSET = 50T`）
+- **Bell (`\x07`) と OSC 9 / OSC 777 通知** — `AlertKind::Bell` /
+  `AlertKind::Notification` の 2 種で SR が即時アナウンス可能。consent 設定に
+  関わらず先に SR 領域には追加（誤抑止防止）
+
+### Added — Sprint 5-11-6（ActionRequest 書き込み応答 + Window カテゴリ完成）
+
+- **コア書き込み応答 4 種**:
+  - HostItem Click → `connect_ssh_host_new_tab`（新規タブで SSH 接続）
+  - MacroItem Click → `RunMacro` IPC（マクロ即時実行）
+  - Alert Click → `dismiss_alert(seq)`（TTL バイパスで即時消去）
+  - PaneArea ScrollUp / ScrollDown → `scroll_up/down_focused_pane`
+- **SettingsPanel Window カテゴリ 4 フィールド完成**: `cursor_style` / `padding_x` /
+  `padding_y` / `present_mode` を `[window]` / `[gpu]` / top-level に `toml_edit` で
+  書き戻し。NodeId 36-39 を `SettingsCursorStyle/PaddingX/PaddingY/PresentMode` に
+  割当（SpinButton / ComboBox / Slider の SR Action 全対応）
+- **Window カテゴリの UI 拡張** — 5 行構成のインライン編集（↑/↓ でフィールド選択、
+  ←/→ で値変更、ハイライト矩形 + ミニスライダー）
+
+### Added — Sprint 5-11-7（PTY 入力バッファ + Profiles ListBox）
+
+- **PTY 入力バッファ（NodeId 27 固定）** — `PANE_AREA_ID` 配下に単一 `Role::TextInput`
+  ノード公開、`Action::SetValue` で `ClientToServer::PasteText` IPC 経由で PTY 書き込み。
+  AccessKit 0.24 が `Role::Terminal` の SetValue を標準化していないための代替策で、
+  改行（`\n`）もそのまま転送可能
+- **Profiles カテゴリ** — `SettingsPanel.profiles` を `Role::ListBoxOption` で公開、
+  Click / Focus で `selected_profile` 更新。NodeId offset `600_000_000`
+- **Ssh / Keybindings カテゴリ description 改善** — 「未実装」表記から
+  TOML 直接編集案内（`[[hosts]]` / `[[keys]]`）に変更
+
+### Added — Sprint 5-11-8 Step 8-1 / 8-2 / 8-3（SSH ホスト GUI 編集 + a11y）
+
+- **Step 8-1（read-only ListBox）** — 設定パネル → SSH カテゴリで `[[hosts]]` を
+  ListBox として公開、`SshHostEntry.label()` で人間が読める 1 行ラベル生成
+- **Step 8-2（フィールド SR 編集）** — name / host / port / username / auth_type を
+  `Role::TextInput` / `Role::SpinButton` / `Role::ComboBox` として公開、
+  `set_value` で SR から直接編集
+- **Step 8-3 Sub-phase A（インライン GUI 編集）** — `TextInputState` 構造体
+  （cursor + UTF-8 境界尊重 + preedit 対応）で name / host / username を
+  Enter キーで編集モードに入る。キーバインド: 文字入力 / Backspace / ←→ /
+  Home / End / Delete
+- **Step 8-3 Sub-phase B（IME preedit 振り分け）** — CJK IME の変換中テキストを
+  SSH フィールドへ正しく振り分け。`set_ime_cursor_area` で IME ウィンドウ位置も追従
+- **Step 8-3 Sub-phase C（SpinButton / ComboBox 視覚編集）**:
+  - port: `←` / `→` で 1 ずつ増減（1-65535 でクランプ）
+  - auth_type: `←` / `→` で `password` / `key` / `agent` を循環
+- **Step 8-3 Sub-phase D（Add / Delete + 削除確認ダイアログ）**:
+  - NodeId 45 = SettingsSshAddBtn / 46 = SettingsSshDeleteBtn
+  - NodeId 47 = SettingsSshDeleteDialog（`Role::AlertDialog`, modal）
+  - NodeId 48 = SettingsSshDeleteConfirmBtn / 49 = SettingsSshDeleteCancelBtn
+    （誤削除防止のため Cancel デフォルトフォーカス）
+  - 削除後の選択行は **n クランプ**（末尾→n-1 / 中央→同 index / 空→focus=0）
+  - `ssh_field_focus` を 0..=7 に拡張、ダイアログ open 時は Enter/Esc/←→/Tab を
+    最優先処理（input_handler 修正）
+- **Step 8-3 Sub-phase E** — ユニットテスト 25 件追加（TextInputState UTF-8 境界
+  6 件 + ssh_field_edit ライフサイクル 3 件 + Add/Delete/ダイアログ 7 件 +
+  dispatch 6 件 + tree_state_hash 検知 1 件 + Sub-phase C smoke）
+
+### Changed
+
+- **README.md の `Screen reader support` を "experimental" から本実装表記に格上げ**
+
 ### 互換性
 
-- **互換性破壊なし**。`PROTOCOL_VERSION` 8 / `SNAPSHOT_VERSION` 4 維持
+- **互換性破壊なし**。`PROTOCOL_VERSION` 8 / `SNAPSHOT_VERSION` 4 維持。
+  既存設定ファイル・スナップショットはそのまま動作する
 - 新規依存: `accesskit = "0.24"` / `accesskit_winit = "0.33"`（workspace dependencies）
 - `UserEvent::Accessibility(accesskit_winit::Event)` バリアントを追加。
   `accesskit_winit::Event` が `Clone` 不可のため `UserEvent` 全体から `#[derive(Clone)]`
   を削除（クローン需要は grep 確認済みでなし）
+- AccessKit 0.24 が `Action::Default` を提供しないため、書き込み応答系はすべて
+  `Action::Click` のみで実装
 
-### 既知の制約 / 引き継ぎ事項
+### 既知の制約
 
-- **実機 SR 検証未実施** — Action 経路は実機（NVDA / VoiceOver / Orca）でしか
-  確認できないため、ローカルユニットテストでは検証不可
-- **Phase 5-11-2 残**: QuickSelect ノード化（動的 ID 500M 予約済）、SettingsPanel
-  フィールド展開（TabList + CheckBox / TextInput / ComboBox / Slider / SpinButton /
-  ListBox、動的 ID 600M-700M 予約済）
-- **Phase 5-11-3 未着手**: ターミナル grid 差分通知（H1 本命、100ms スロットル設計
-  流用可能、パスワード等の機密入力フィルタリング検討要）
-- **Phase 5-11-5 未着手**: `[accessibility]` 設定セクション、`docs/accessibility.md`、
-  全 8 言語 i18n キー追加
+- **実機 SR 検証**: NVDA / VoiceOver / Orca での実機検証は今後実施予定。
+  Action 経路はローカルユニットテストでは検証不可
+- **TUI クライアントは GUI 編集機能・SR 対応の対象外** — `nexterm-client-tui` は
+  従来通り `[[hosts]]` を `config.toml` で直接編集する運用
 
 ### 検証
 
-- `cargo test --workspace`: 全 **712 件 pass**
-- `cargo clippy --workspace --tests -- -D warnings`: green
+- `cargo test --workspace`: 全 **880+ 件 pass**（bin nexterm 339 件 + workspace 全体）
+- `cargo clippy --workspace --all-targets -- -D warnings`: green
 - `cargo fmt --check`: clean
 
 ## [1.5.1] - 2026-05-19
