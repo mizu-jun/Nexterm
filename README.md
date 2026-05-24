@@ -112,6 +112,17 @@ For full release history, see [CHANGELOG.md](CHANGELOG.md).
 - **Cross-platform** — Linux / macOS / Windows (ConPTY + Named Pipe on Windows)
 - **Localization** — UI in English, French, German, Spanish, Italian, Simplified Chinese, Japanese, Korean
 - **macOS session restore** — CWD preserved on reconnect via `lsof`
+- **Screen reader support** — Full accessibility tree exposure to NVDA / VoiceOver / Orca via [AccessKit](https://accesskit.dev/) 0.24:
+  - Tabs, panes, command palette, context menu, settings panel (all categories), host manager, macro picker, close dialogs are navigable as `Role::Tab` / `Role::ListBox` / `Role::Dialog` / `Role::AlertDialog`
+  - Terminal grid rows exposed as `Role::TextRun` with UTF-8 `character_lengths` (CJK-aware), focused-pane cursor row uses `Live::Polite` only (avoids over-announce)
+  - Cursor position via `TextSelection { node, character_index = cursor_col }` (anchor=focus)
+  - Scrollback window (radius=100 rows around `scroll_offset`) published with `Live::Off`
+  - Bell (`\x07`) / OSC 9 / OSC 777 notifications surface as `Role::Alert` under a `Live::Assertive` region container (TTL 5s queue, max 16 entries)
+  - Write-actions: SSH host item Click → connect new tab; Macro item Click → run macro; Alert Click → dismiss; PaneArea Scroll Up/Down → scroll focused pane; SettingsPanel Window/SSH field Click/Focus/Increment/Decrement/SetValue → toml-edit writeback
+  - PTY input via `Role::TextInput` (NodeId 27) — `Action::SetValue` sends `PasteText` IPC for SR-driven typing
+  - SSH host editor: name/host/username inline GUI edit (with IME preedit support), port as `Role::SpinButton`, auth_type as `Role::ComboBox`, Add/Delete buttons with confirmation `Role::AlertDialog`
+  - Live updates: 100 ms throttled `compute_tree_state_hash` + per-pane row hash diff detect structure or content changes independently
+  - Tested platforms: Linux AT-SPI / Windows UIA / macOS NSAccessibility (real-device SR verification ongoing)
 
 ### Plugin Runtime (WASM)
 - **WASM plugin host** — wasmi-based sandboxed runtime with fuel + memory limits

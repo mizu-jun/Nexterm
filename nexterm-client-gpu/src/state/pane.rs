@@ -62,7 +62,10 @@ pub struct PaneState {
 }
 
 impl PaneState {
-    pub(super) fn new(cols: u16, rows: u16, scrollback_capacity: usize) -> Self {
+    // Sprint 5-11-2 Step 2-1: `accessibility::tests` から手動でペインを構築するため
+    // `pub(super)` → `pub(crate)` に拡大。プロダクションコードからの呼び出しは
+    // `apply_server_message` 経由（state/server_message.rs）のみ。
+    pub(crate) fn new(cols: u16, rows: u16, scrollback_capacity: usize) -> Self {
         Self {
             grid: Grid::new(cols, rows),
             cursor_col: 0,

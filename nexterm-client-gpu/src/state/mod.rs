@@ -42,6 +42,61 @@ pub use search::SearchState;
 #[allow(unused_imports)]
 pub use selection::{CopyModeState, DetectedUrl, MouseSelection, detect_urls_in_row};
 
+/// SR 向けアラートエントリ（Sprint 5-11-5 / Phase 5-11-5）。
+///
+/// `Bell`（VT BEL `0x07`）/ `OSC 9`（iTerm2 互換通知）/ `OSC 777`（urxvt 互換通知）を
+/// AccessKit `Role::Alert` ノードとして公開するためのデータホルダー。
+///
+/// **ライフサイクル**:
+/// - サーバーから `ServerToClient::Bell` / `ServerToClient::DesktopNotification` を
+///   受信した時点で `ClientState::add_alert` が `alerts` キューに追加する
+/// - `update_accesskit_tree_if_needed` の冒頭で `expire_alerts` を呼び TTL 切れを除去
+/// - キュー長が `ALERTS_MAX_LEN` を超えた場合、古い順に drop
+///
+/// **NodeId**: `accessibility::alert_node_id(seq) = NODE_ID_ALERT_OFFSET + seq`。
+/// `seq` はクライアント起動以来の単調増加カウンター（`u64`）で衝突しない。
+#[derive(Debug, Clone)]
+pub struct AlertEntry {
+    /// 単調増加シーケンス番号（NodeId 計算用）
+    pub seq: u64,
+    /// アラート種別
+    pub kind: AlertKind,
+    /// 発火元ペイン ID（将来の「ペイン X からの通知」表記やソース絞り込み用に保持）
+    #[allow(dead_code)]
+    pub pane_id: u32,
+    /// 表題（OSC 9 はサーバーから "Nexterm" として届く、OSC 777 はサーバーで与えられたタイトル、Bell はローカライズ済み）
+    pub title: String,
+    /// 本文（Bell は空文字列、Notification は VT パーサで決定された本文）
+    pub body: String,
+    /// 追加時刻（TTL 判定用）
+    pub created_at: std::time::Instant,
+}
+
+/// アラート種別（Sprint 5-11-5）。
+///
+/// OSC 9 / OSC 777 はサーバー側 `ServerToClient::DesktopNotification` に統合されているため
+/// クライアント層では区別できない（両者とも VT パーサで `set_pending_notification` に集約）。
+/// SR 観点でも「通知」として 1 種に扱って差し支えないため `Notification` の単一バリアントにする。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlertKind {
+    /// VT BEL `0x07` 受信
+    Bell,
+    /// OSC 9（iTerm2 互換）/ OSC 777（urxvt 互換）デスクトップ通知
+    Notification,
+}
+
+/// アラートキューの最大長（Sprint 5-11-5）。
+///
+/// 超過時は最も古いエントリから順に drop される。SR は新しいアラートのみを
+/// アナウンスするため、過去のものを保持する価値は低い。
+pub const ALERTS_MAX_LEN: usize = 16;
+
+/// アラートの TTL（Sprint 5-11-5）。
+///
+/// SR が読み上げた後にツリーから自動削除して肥大化を防ぐ。5 秒は典型的な
+/// SR アナウンス時間と人間が認知する時間の双方を考慮した値。
+pub const ALERT_TTL: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// GPU クライアント全体の状態
 pub struct ClientState {
     pub panes: HashMap<u32, PaneState>,
@@ -169,6 +224,17 @@ pub struct ClientState {
     /// `Some` の間はレンダラーがモーダルダイアログを描画する。`Enter` で確定、
     /// `Esc` でキャンセル。Wayland 環境では `[↗]` 経路でも同じダイアログを再利用する。
     pub close_window_dialog: Option<CloseWindowDialog>,
+    /// SR 向けアラート キュー（Sprint 5-11-5）。
+    ///
+    /// Bell / OSC 9 / OSC 777 を `Role::Alert` ノードとして公開するための FIFO。
+    /// 長さは `ALERTS_MAX_LEN` 以下に抑えられ、TTL (`ALERT_TTL`) を超えたものは
+    /// `update_accesskit_tree_if_needed` 冒頭の `expire_alerts` で自動除去される。
+    pub alerts: std::collections::VecDeque<AlertEntry>,
+    /// 次に発行する `AlertEntry.seq` 値（Sprint 5-11-5）。
+    ///
+    /// 単調増加カウンタ。クライアント 1 起動につき u64 を使い切ることは現実的に不可能
+    /// （1 秒間 1000 件発火で約 5.84 億年）。NodeId 衝突回避の根拠。
+    pub next_alert_seq: u64,
 }
 
 /// `QueryForegroundProcess` への応答情報（Sprint 5-8 Phase 4-5）
@@ -319,7 +385,66 @@ impl ClientState {
             foreground_process_status: None,
             pending_close_request: None,
             close_window_dialog: None,
+            // Sprint 5-11-5: AccessKit Role::Alert 通知キュー
+            alerts: std::collections::VecDeque::new(),
+            next_alert_seq: 0,
         }
+    }
+
+    /// SR 向けアラートをキューに追加する（Sprint 5-11-5）。
+    ///
+    /// `seq` は自動採番。キュー長が `ALERTS_MAX_LEN` を超えた場合は古い順に drop する
+    /// （`pop_front`）。本メソッドはタイトル / 本文を所有権ごと受け取って所有する。
+    ///
+    /// 戻り値: 採番された `seq`。呼び出し側でログ等に使う想定。
+    pub fn add_alert(&mut self, kind: AlertKind, pane_id: u32, title: String, body: String) -> u64 {
+        let seq = self.next_alert_seq;
+        self.next_alert_seq = self.next_alert_seq.wrapping_add(1);
+        self.alerts.push_back(AlertEntry {
+            seq,
+            kind,
+            pane_id,
+            title,
+            body,
+            created_at: std::time::Instant::now(),
+        });
+        // 上限を超えたら古いものから drop
+        while self.alerts.len() > ALERTS_MAX_LEN {
+            self.alerts.pop_front();
+        }
+        seq
+    }
+
+    /// TTL を超えたアラートをキューから除去する（Sprint 5-11-5）。
+    ///
+    /// `now` は呼び出し側で `Instant::now()` を計算して渡す（テスタビリティのため）。
+    /// `created_at + ALERT_TTL < now` のエントリを `pop_front` で順次除去する。
+    /// アラートは時刻順に追加されるため、先頭から見て期限内のエントリが現れた時点で停止する。
+    ///
+    /// 戻り値: 除去したエントリ数。
+    pub fn expire_alerts(&mut self, now: std::time::Instant) -> usize {
+        let mut removed = 0;
+        while let Some(front) = self.alerts.front() {
+            if now.duration_since(front.created_at) >= ALERT_TTL {
+                self.alerts.pop_front();
+                removed += 1;
+            } else {
+                break;
+            }
+        }
+        removed
+    }
+
+    /// 指定 `seq` のアラートを即時 dismiss する（Phase 5-11-6 #4）。
+    ///
+    /// SR の `Action::Click` 経路で TTL（5 秒）を待たずアラートを除去するために使う。
+    /// 該当 seq が存在しない場合（既に `expire_alerts` で除去済み等）は副作用なし。
+    ///
+    /// 戻り値: 該当 seq を除去したら `true`、見つからなければ `false`。
+    pub fn dismiss_alert(&mut self, seq: u64) -> bool {
+        let before = self.alerts.len();
+        self.alerts.retain(|a| a.seq != seq);
+        before != self.alerts.len()
     }
 
     /// フォーカスペインを切り替え、アクティビティフラグをクリアする。

@@ -20,7 +20,7 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-version = "1.5.1"
+version = "1.6.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = []
@@ -79,6 +79,13 @@ winit = "0.30"
 wgpu = "22"
 cosmic-text = "0.18"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+# Sprint 5-11-1 / H1 PoC: スクリーンリーダー対応（AccessKit クロスプラットフォーム a11y）
+# - accesskit: ノードツリー定義（Windows UI Automation / macOS NSAccessibility / Linux AT-SPI2）
+# - accesskit_winit: winit 0.30 統合アダプター。`EventLoopProxy<T: From<accesskit_winit::Event>>` 経由で
+#   初期ツリー要求・アクション要求・非アクティブ化通知を受け取る
+accesskit = "0.24"
+accesskit_winit = "0.33"
 
 # Phase 2: スクロールバック検索
 regex = "1"

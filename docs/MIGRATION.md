@@ -4,6 +4,87 @@
 
 ---
 
+## v1.5.1 → v1.6.0（Sprint 5-11 全フェーズ: スクリーンリーダー対応 + SSH ホスト GUI 編集）
+
+**互換性破壊なし**。`PROTOCOL_VERSION = 8` / `SNAPSHOT_VERSION = 4` のまま、
+**監査ラウンド 2 HIGH 残最後の H1 (スクリーンリーダー対応)** を AccessKit 0.24 +
+accesskit_winit 0.33 で完全実装し、合わせて設定パネルの SSH カテゴリに GUI 編集機能を
+追加しました。既存ユーザーは何もせずアップグレード可能です。
+
+### 概要
+
+Sprint 5-11-1 〜 5-11-8 を一括して v1.6.0 にまとめてリリースしました。詳細な
+変更履歴は [CHANGELOG.md](../CHANGELOG.md) を参照してください。本セクションでは
+SSH ホスト GUI 編集機能（Step 8-3）に焦点を当てます。
+
+### 追加された機能
+
+#### Sub-phase A: SSH フィールドのインライン GUI 編集
+
+設定パネル → SSH カテゴリでホスト一覧のフィールド（name / host / username）を Enter キーで
+編集モードに入れるようになりました。編集中は文字入力 / Backspace / ←→ / Home / End /
+Delete が利用できます。**TUI クライアントには影響しません**（GPU クライアントのみ）。
+
+#### Sub-phase B: IME preedit を SSH フィールドへ振り分け
+
+CJK IME（日本語 / 中国語 / 韓国語）の変換中テキスト（preedit）が SSH フィールド編集中も
+正しく動作します。変換確定前の文字はカーソル位置に挿入表示され、`set_ime_cursor_area` で
+IME ウィンドウ位置も追従します。
+
+#### Sub-phase C: port (SpinButton) / auth_type (ComboBox) 視覚編集
+
+- **port**: `←` / `→` で 1 ずつ増減（1〜65535 でクランプ）、SR からは `Role::SpinButton`
+  として `Increment` / `Decrement` / `SetValue` Action に応答
+- **auth_type**: `←` / `→` で `password` / `key` / `agent` を循環、SR からは
+  `Role::ComboBox` として `Increment` / `Decrement` / `Click` Action に応答
+
+#### Sub-phase D: Add / Delete ボタン + 削除確認ダイアログ
+
+ホスト一覧の末尾に「新規ホストを追加」「選択ホストを削除」ボタンが配置されました。
+キーボード操作:
+
+| 操作 | キー |
+|---|---|
+| Add ボタン / Delete ボタンへフォーカス | `↑` / `↓`（focus 6 / 7） |
+| Add 押下 | Enter（新規ホスト追加 + name 編集モード自動開始） |
+| Delete 押下 | Enter（削除確認ダイアログを開く） |
+| ダイアログ内で確定 | Enter |
+| ダイアログ内でキャンセル | Esc または `N` |
+| Cancel ↔ Confirm 切替 | `←` / `→` または Tab |
+
+Delete ボタンは空リスト時は disabled 表示。確認ダイアログは初期フォーカスが Cancel で、
+誤削除を防ぐ標準 GUI 動作に従っています。削除後の選択行は **n クランプ**:
+末尾削除時は n-1 へ、中央削除時は同じ index（リストが詰まる）、空になった場合は
+ListBox にフォーカスを戻します。
+
+#### AccessKit NodeId 拡張（互換性破壊なし）
+
+NodeId 45〜49 を SSH カテゴリの追加 UI 要素に割り当てました:
+
+| NodeId | 用途 | Role |
+|---|---|---|
+| 45 | Add ボタン | `Role::Button` |
+| 46 | Delete ボタン | `Role::Button`（空リスト時は description で「無効」を明示） |
+| 47 | 削除確認ダイアログ本体 | `Role::AlertDialog`（modal） |
+| 48 | Confirm（削除実行）ボタン | `Role::Button` |
+| 49 | Cancel ボタン | `Role::Button` |
+
+`compute_tree_state_hash` は `ssh_delete_dialog_open` / `ssh_delete_dialog_confirm_focused`
+の変化を 100ms スロットル内でハッシュ計算に含めるため、ダイアログ開閉とフォーカス変更が
+SR に正しく反映されます。
+
+### 設定変更不要
+
+新機能は `config.toml` の変更を必要としません。既存の `[[hosts]]` セクションはそのまま
+読み込まれ、GUI からも編集可能になります。
+
+### TUI クライアントへの影響
+
+`nexterm-client-tui` は GUI 編集機能・SR 対応の対象外です（従来通り `[[hosts]]` を
+`config.toml` で直接編集する運用）。
+
+---
+
 ## v1.4.0 → v1.5.0（Sprint 5-8 / 5-9 Phase 4: タブ外ドロップ tab tearing）
 
 `PROTOCOL_VERSION` が `7` から `8` にバンプされ、`SNAPSHOT_VERSION` が `3` から `4` に

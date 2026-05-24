@@ -4,6 +4,8 @@
 //! nexterm-server のロジックを Tokio タスクとして内部起動し、
 //! 単一プロセスで全機能を提供する。
 
+// Sprint 5-11-1 / H1 PoC: スクリーンリーダー対応の足場（accesskit ノードツリー生成）
+mod accessibility;
 mod animations;
 mod color_util;
 mod connection;

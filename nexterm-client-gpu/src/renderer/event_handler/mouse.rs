@@ -322,6 +322,12 @@ impl EventHandler {
                     SliderType::WindowOpacity => {
                         sp.set_opacity_from_slider(fx, drag.track_x, drag.track_w);
                     }
+                    SliderType::WindowPaddingX => {
+                        sp.set_padding_x_from_slider(fx, drag.track_x, drag.track_w);
+                    }
+                    SliderType::WindowPaddingY => {
+                        sp.set_padding_y_from_slider(fx, drag.track_x, drag.track_w);
+                    }
                 }
                 if let Some(w) = &self.window {
                     w.request_redraw();
@@ -435,34 +441,52 @@ impl EventHandler {
                         // スライダーをクリック → 即時値を反映してドラッグ状態を開始する
                         let fx = px as f32;
                         let sp = &mut self.app.state.settings_panel;
+                        // Phase 5-11-6 #6: Window カテゴリのスライダークリックでフォーカスを揃える
                         match slider_type {
                             SliderType::FontSize => {
                                 sp.set_font_size_from_slider(fx, track_x, track_w)
                             }
                             SliderType::WindowOpacity => {
-                                sp.set_opacity_from_slider(fx, track_x, track_w)
+                                sp.window_field_focus = 0;
+                                sp.set_opacity_from_slider(fx, track_x, track_w);
+                            }
+                            SliderType::WindowPaddingX => {
+                                sp.window_field_focus = 2;
+                                sp.set_padding_x_from_slider(fx, track_x, track_w);
+                            }
+                            SliderType::WindowPaddingY => {
+                                sp.window_field_focus = 3;
+                                sp.set_padding_y_from_slider(fx, track_x, track_w);
                             }
                         }
+                        let (min_val, max_val) = match slider_type {
+                            SliderType::FontSize => (8.0, 32.0),
+                            SliderType::WindowOpacity => (0.1, 1.0),
+                            SliderType::WindowPaddingX | SliderType::WindowPaddingY => (0.0, 32.0),
+                        };
                         sp.drag_slider = Some(crate::settings_panel::SliderDrag {
                             slider_type,
                             track_x,
                             track_w,
-                            min_val: if matches!(slider_type, SliderType::FontSize) {
-                                8.0
-                            } else {
-                                0.1
-                            },
-                            max_val: if matches!(slider_type, SliderType::FontSize) {
-                                32.0
-                            } else {
-                                1.0
-                            },
+                            min_val,
+                            max_val,
                         });
                     }
                     SettingsPanelHit::ThemeColor(idx) => {
                         // テーマカラードットをクリック → スキーム切り替え
                         self.app.state.settings_panel.scheme_index = idx;
                         self.app.state.settings_panel.dirty = true;
+                    }
+                    SettingsPanelHit::WindowRow(row) => {
+                        // Phase 5-11-6 #6: Window カテゴリ内の行クリック
+                        // フォーカス変更 + 行 1/4 はラベルクリックで値サイクル動作を伴う
+                        let sp = &mut self.app.state.settings_panel;
+                        sp.window_field_focus = row;
+                        match row {
+                            1 => sp.next_cursor_style(),
+                            4 => sp.next_present_mode(),
+                            _ => {}
+                        }
                     }
                     SettingsPanelHit::TitleBar | SettingsPanelHit::PanelBackground => {
                         // その他のパネル内クリック → 何もしない

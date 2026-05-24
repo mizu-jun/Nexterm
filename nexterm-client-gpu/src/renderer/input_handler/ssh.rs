@@ -29,7 +29,10 @@ impl EventHandler {
     }
 
     /// HostConfig から新しいタブを開いて ConnectSsh メッセージを送信する
-    pub(super) fn connect_ssh_host_new_tab(&self, host: &nexterm_config::HostConfig) {
+    ///
+    /// Phase 5-11-6 #2: `event_handler::accessibility` の HostItem Click 経路からも
+    /// 呼び出すため `pub(in crate::renderer)` に拡大している。
+    pub(in crate::renderer) fn connect_ssh_host_new_tab(&self, host: &nexterm_config::HostConfig) {
         let Some(conn) = &self.connection else { return };
         // 先に新しいウィンドウ（タブ）を作成してから SSH 接続を要求する
         let _ = conn.send_tx.try_send(ClientToServer::NewWindow);

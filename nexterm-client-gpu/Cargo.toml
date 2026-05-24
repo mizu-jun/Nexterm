@@ -27,6 +27,11 @@ winit = { workspace = true }
 wgpu = { workspace = true }
 cosmic-text = { workspace = true }
 image = { workspace = true }
+# Sprint 5-11-1 / H1 PoC: AccessKit によるクロスプラットフォーム a11y。
+# accesskit_winit::Adapter を winit Window に紐付け、`UserEvent::Accessibility`
+# 経由で初期ツリー要求・アクション要求・非アクティブ化通知を受け取る。
+accesskit = { workspace = true }
+accesskit_winit = { workspace = true }
 regex = { workspace = true }
 fuzzy-matcher = { workspace = true }
 bytemuck = { version = "1", features = ["derive"] }

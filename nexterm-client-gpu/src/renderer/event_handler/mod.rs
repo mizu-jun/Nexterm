@@ -31,13 +31,20 @@ use crate::glyph_atlas::GlyphAtlas;
 
 use super::{ClientWindow, NextermApp, PerWindowViewState, WgpuState};
 
-/// EventLoop に送る非同期ユーザーイベント（Sprint 5-8 Phase 4-4）。
+/// EventLoop に送る非同期ユーザーイベント（Sprint 5-8 Phase 4-4 / Sprint 5-11-1）。
 ///
 /// マウスハンドラやネットワーク受信スレッドから `&ActiveEventLoop` を持たない
 /// コンテキストで「OS Window をスポーン/クローズしたい」要求を出すために使う。
 /// `EventLoopProxy::send_event(...)` で発火すると、次回 winit イベントループが
 /// `user_event` ハンドラを呼び、`&ActiveEventLoop` 付きの安全な文脈で処理できる。
-#[derive(Debug, Clone)]
+///
+/// Sprint 5-11-1 で `Accessibility` バリアントを追加。`accesskit_winit::Adapter::new`
+/// は `EventLoopProxy<T: From<accesskit_winit::Event>>` を要求するため、`From` impl
+/// を提供する（後述）。`InitialTreeRequested` / `ActionRequested` / `AccessibilityDeactivated`
+/// の 3 種が `accesskit_winit::WindowEvent` に格納されて届く。
+///
+/// `Clone` は派生しない（`accesskit_winit::Event` がクローン不能で、UserEvent のクローン需要も無い）。
+#[derive(Debug)]
 pub enum UserEvent {
     /// 新規 OS Window を生成し、サーバー Window ID に紐付ける。
     ///
@@ -54,9 +61,24 @@ pub enum UserEvent {
     /// 「この Window だけ閉じる」アクションから発火する予定。
     #[allow(dead_code)]
     CloseOsWindow { window_id: WindowId },
+    /// Sprint 5-11-1 / H1 PoC: AccessKit プラットフォームアダプタからのイベント。
+    ///
+    /// スクリーンリーダーが接続したとき（`InitialTreeRequested`）や、ユーザーが
+    /// スクリーンリーダー側で操作したとき（`ActionRequested`）、または接続が
+    /// 切れたとき（`AccessibilityDeactivated`）に届く。
+    Accessibility(accesskit_winit::Event),
+}
+
+/// `accesskit_winit::Adapter::new` の型境界 `T: From<accesskit_winit::Event>` を満たすための impl。
+/// Sprint 5-11-1 で追加。
+impl From<accesskit_winit::Event> for UserEvent {
+    fn from(event: accesskit_winit::Event) -> Self {
+        UserEvent::Accessibility(event)
+    }
 }
 
 // ---- サブモジュール ----
+mod accessibility;
 mod consent;
 mod keyboard;
 mod lifecycle;
@@ -121,6 +143,28 @@ pub struct EventHandler {
     /// `WindowListChanged` で新しい Window ID を検出したとき、その位置に OS Window をスポーンする。
     /// 一度消費したら `None` に戻す。
     pub(super) pending_new_window_drop_pos: Option<PhysicalPosition<i32>>,
+    /// Sprint 5-11-1 / H1 PoC: AccessKit プラットフォームアダプタ（主 Window 用）。
+    ///
+    /// `on_resumed` で主 Window 作成時に初期化する。スクリーンリーダーが接続すると
+    /// `InitialTreeRequested` イベントが `user_event` 経由で届き、`update_if_active` で
+    /// ノードツリーを返す。Phase 5-11-2 以降で全 OS Window 対応に拡張する。
+    pub(super) accesskit_adapter: Option<accesskit_winit::Adapter>,
+    /// Sprint 5-11-2 Step 2-5: AccessKit ツリーの最終更新時刻（100ms スロットリング用）。
+    ///
+    /// `on_about_to_wait` 末尾の `update_accesskit_tree_if_needed` で参照・更新する。
+    /// `None` の場合は次回の `about_to_wait` で必ず更新を試行する。
+    pub(super) last_tree_update_at: Option<Instant>,
+    /// Sprint 5-11-2 Step 2-5: 直近送出した `ClientState` のステートハッシュ。
+    ///
+    /// `compute_tree_state_hash(&state)` の結果と比較し、変化があったときのみ
+    /// `update_if_active` を呼ぶ。`None` の場合は初回送出を強制する。
+    pub(super) last_tree_hash: Option<u64>,
+    /// Sprint 5-11-3: 各ペインのグリッド行ハッシュキャッシュ。
+    ///
+    /// `compute_tree_state_hash` は構造変化（タブ・ペイン・オーバーレイ）のみ追跡するため、
+    /// ターミナル本文の出力差分は本フィールドで別途検知する。`update_accesskit_tree_if_needed`
+    /// 内で毎スロットルごとに `compute_grid_row_hashes` を計算して比較する。
+    pub(super) last_grid_row_hashes: std::collections::HashMap<u32, Vec<u64>>,
 }
 
 impl EventHandler {
@@ -155,11 +199,14 @@ impl EventHandler {
         let transparent = win_cfg.background_opacity < 1.0;
         let decorations = !matches!(win_cfg.decorations, WindowDecorations::None);
 
+        // Sprint 5-11-2 Step 2-3: AccessKit Adapter は Window を可視化する **前** に作成する。
+        // `on_resumed` と同じ `with_visible(false)` → Adapter 初期化 → `set_visible(true)` シーケンス。
         let mut attrs = Window::default_attributes()
             .with_title(format!("Nexterm - Window {}", server_window_id))
             .with_inner_size(PhysicalSize::new(1280u32, 800u32))
             .with_transparent(transparent)
-            .with_decorations(decorations);
+            .with_decorations(decorations)
+            .with_visible(false);
         if let Some(p) = pos {
             attrs = attrs.with_position(p);
         }
@@ -172,6 +219,17 @@ impl EventHandler {
             }
         };
         window.set_ime_allowed(true);
+
+        // Sprint 5-11-2 Step 2-3: 新規 OS Window 用の AccessKit Adapter を初期化（可視化前）。
+        let accesskit_adapter = accesskit_winit::Adapter::with_event_loop_proxy(
+            event_loop,
+            &window,
+            self.proxy.clone(),
+        );
+        info!(
+            "新規 OS Window 用 AccessKit Adapter を初期化 (window_id={:?})",
+            window.id()
+        );
 
         // wgpu を非同期で初期化する（tokio runtime が必要）
         let mut wgpu_state = match tokio::task::block_in_place(|| {
@@ -186,6 +244,9 @@ impl EventHandler {
         };
         wgpu_state.load_background(&self.app.config.window);
 
+        // Adapter 初期化が完了したので Window を可視化する
+        window.set_visible(true);
+
         let window_id = window.id();
         let view_state = PerWindowViewState {
             focused_server_window_id: server_window_id,
@@ -198,6 +259,7 @@ impl EventHandler {
                 window: Arc::clone(&window),
                 wgpu: wgpu_state,
                 view_state,
+                accesskit_adapter,
             },
         );
 
@@ -281,15 +343,40 @@ impl ApplicationHandler<UserEvent> for EventHandler {
             UserEvent::CloseOsWindow { window_id } => {
                 self.close_os_window(event_loop, window_id);
             }
+            // Sprint 5-11-1 / H1 PoC: AccessKit イベント
+            // Sprint 5-11-2 Step 2-4: ActionRequested ディスパッチのため event_loop を渡す
+            UserEvent::Accessibility(ak_event) => {
+                self.on_accesskit_event(ak_event, event_loop);
+            }
         }
     }
 
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
+        window_id: WindowId,
         event: WindowEvent,
     ) {
+        // Sprint 5-11-1 / H1 PoC + Step 2-3: AccessKit Adapter にウィンドウイベントを転送する。
+        // フォーカス変更・カーソル移動などはアダプタ側でハンドリングされ、
+        // 必要に応じてプラットフォーム a11y イベントとして発火される。
+        // 描画イベントなど accesskit が無視するイベントもあるが、`process_event`
+        // 内で振り分けられるため毎イベントに対して安全に呼び出してよい。
+        //
+        // Step 2-3 で複数 OS Window 対応: window_id から該当 Adapter を引く。
+        // - 主 Window: `self.window` の ID と一致 → `self.accesskit_adapter`
+        // - 追加 Window: `self.windows[window_id].accesskit_adapter`
+        let is_main = self.window.as_ref().map(|w| w.id()) == Some(window_id);
+        if is_main {
+            if let (Some(adapter), Some(window)) =
+                (self.accesskit_adapter.as_mut(), self.window.as_ref())
+            {
+                adapter.process_event(window, &event);
+            }
+        } else if let Some(cw) = self.windows.get_mut(&window_id) {
+            cw.accesskit_adapter.process_event(&cw.window, &event);
+        }
+
         match event {
             WindowEvent::CloseRequested => {
                 self.on_close_requested(event_loop);
