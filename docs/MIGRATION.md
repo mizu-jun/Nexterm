@@ -4,6 +4,28 @@
 
 ---
 
+## v1.6.0 → v1.6.1（Flatpak ビルドのホットフィックス）
+
+**互換性破壊なし**。機能面は v1.6.0 と完全同一です。v1.6.0 で `Flatpak` ワークフローが
+`pkg/flatpak/cargo-sources.json` と `Cargo.lock` の整合性チェックで失敗し、Flatpak
+バンドルが配布できていなかった問題を修正しました。
+
+### 影響
+
+- macOS / Linux / Windows バイナリを v1.6.0 で入手済みのユーザーは **更新不要**。
+- Flatpak 経由でインストール予定のユーザーのみ v1.6.1 のアセットを使用すること。
+
+### 原因と修正
+
+Sprint 5-11-1（AccessKit PoC）で `accesskit = "0.24"` / `accesskit_winit = "0.33"` を
+`Cargo.toml` に追加した際、Cargo.lock に新規 vendor 依存（`accesskit-0.24.0` /
+`accesskit_atspi_common-0.18.1` / `accesskit_consumer-0.36.0` /
+`accesskit_ios-0.1.0` / `accesskit_macos-0.26.1` 他）が追加されましたが、
+`scripts/regenerate-flatpak-sources.sh` の再実行を失念していました。v1.6.1 で再生成し
+234 行を追加して整合させました。
+
+---
+
 ## v1.5.1 → v1.6.0（Sprint 5-11 全フェーズ: スクリーンリーダー対応 + SSH ホスト GUI 編集）
 
 **互換性破壊なし**。`PROTOCOL_VERSION = 8` / `SNAPSHOT_VERSION = 4` のまま、
