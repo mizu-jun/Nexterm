@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-05-24
+
+Flatpak 配布のホットフィックスリリース。v1.6.0 時点で Sprint 5-11-1（AccessKit PoC）
+で追加された `accesskit` / `accesskit_winit` 系の新規依存が `pkg/flatpak/cargo-sources.json`
+へ反映されておらず、`Flatpak` ワークフローが Cargo.lock との整合性チェックで早期失敗
+していた（17 秒）。v1.6.1 では cargo-sources.json を再生成して 234 行追加し、Flatpak
+配布を含む全アセットを揃える。
+
+### Fixed
+
+- **Flatpak ビルド失敗を解消**: `pkg/flatpak/cargo-sources.json` を `Cargo.lock` と
+  再整合させ、AccessKit 系依存（`accesskit-0.24.0` / `accesskit_atspi_common-0.18.1`
+  / `accesskit_consumer-0.36.0` / `accesskit_ios-0.1.0` / `accesskit_macos-0.26.1`
+  他多数）を vendor ソース定義に追加。CI の整合性チェック（diff against generator
+  output）が再び pass し、Flatpak バンドルが配布できるようになった。
+
+### Changed
+
+- バージョンを `1.6.0` → `1.6.1` に更新（workspace.package.version）。
+
+### 互換性
+
+- 機能的な互換性破壊なし（PROTOCOL_VERSION 8 / SNAPSHOT_VERSION 4 維持）。
+- macOS / Linux / Windows のバイナリ配布は v1.6.0 と同等。Flatpak のみ後追いで揃う。
+
+### 既知の制約
+
+- 機能面は v1.6.0 と完全同一。v1.6.0 ですでに macOS / Linux / Windows バイナリを
+  入手済みのユーザーは更新不要。Flatpak 経由でインストール予定のユーザーのみ v1.6.1
+  を選択すること。
+
 ## [1.6.0] - 2026-05-24
 
 Sprint 5-11 全フェーズ（5-11-1 〜 5-11-8）完成。監査ラウンド 2 HIGH 残最後の
