@@ -1,334 +1,258 @@
 # Migration Guide
 
-このドキュメントは Nexterm の互換性破壊を含むバージョンへ移行する際の手順をまとめます。
+This document gathers the steps required when upgrading to a Nexterm version that contains breaking changes.
 
 ---
 
-## v1.6.1 → Unreleased（Sprint 5-12: シェル起動不具合の可視化と修正）
+## v1.6.1 → Unreleased (Sprint 5-12: visibility and fix for shell-launch failures)
 
-**互換性破壊なし**。`PROTOCOL_VERSION = 8` / `SNAPSHOT_VERSION = 4` を維持します。
-設定スキーマ（`nexterm.toml` / `config.lua`）にも破壊的変更はありません。既存ユーザーは
-何もせずアップグレード可能です。
+**No breaking changes.** `PROTOCOL_VERSION = 8` and `SNAPSHOT_VERSION = 4` are unchanged. The configuration schema (`nexterm.toml` / `config.lua`) does not change either. Existing users can upgrade without any action.
 
-### 何が変わったか
+### What changed
 
-Windows 環境で `config.toml` に PowerShell を指定したのにシェルが起動しない／
-ペインが空白のまま表示される不具合の根本対応と再発防止策を 4 フェーズで実装しました。
+A four-phase fix and regression-prevention pass for a bug on Windows where, despite specifying PowerShell in `config.toml`, the shell would fail to start or the pane would remain blank.
 
-1. **エラーバナー UI**: サーバーから送られる `ServerToClient::Error` をログだけでなく
-   画面上部の赤いバナーとして可視化します（`Esc` で閉じる）。PTY 起動失敗の原因が
-   即座にわかるようになります。
-2. **PowerShell バージョン比較バグの修正**: `%ProgramFiles%\PowerShell\` 配下を
-   スキャンする際、辞書順比較で `"7" > "10"` と判定して PowerShell 10 を見逃して
-   いたバグを数値比較に修正しました。
-3. **Lua `shell.args` マージサポート**: `config.lua` で
-   `shell = { program = "pwsh.exe", args = {"-NoLogo", "-NonInteractive"} }` のように
-   args を上書きできるようになりました（旧実装は args を読み捨てていた）。
-4. **設定ロードエラーのクライアント通知**: `nexterm.toml` の構文エラー等が
-   サイレントに飲み込まれないよう、起動時警告として蓄積し初回 attach 時に
-   バナーで通知します。
+1. **Error-banner UI**: `ServerToClient::Error` is now visualised as a red banner at the top of the screen (closable with `Esc`) instead of being logged only. The root cause of PTY startup failures is immediately visible.
+2. **PowerShell version-comparison bug fixed**: when scanning `%ProgramFiles%\PowerShell\`, lexicographic comparison treated `"7" > "10"` and skipped PowerShell 10. The comparison was switched to numeric.
+3. **`shell.args` merge support in Lua**: `config.lua` can now override args, for example `shell = { program = "pwsh.exe", args = {"-NoLogo", "-NonInteractive"} }`. The previous implementation silently discarded `args`.
+4. **Client notification for config-load errors**: syntax errors in `nexterm.toml` and similar are now accumulated as startup warnings and surfaced through the banner on the first attach, instead of being silently swallowed.
 
-### 既存ユーザーへの影響
+### Impact on existing users
 
-- **アップグレード手順は不要**。設定ファイルの書き換えも不要です。
-- 既に PowerShell 7 を使用していたユーザーは引き続き 7 が選択されます（10 を
-  追加インストールした場合のみ自動的に 10 へ切り替わります）。
-- Lua で `shell.args` を意図せず設定していた場合、これまで無視されていた値が
-  **次回起動時から実際に反映される** 点だけ注意してください。
+- **No upgrade procedure needed.** No config edits required.
+- Users already on PowerShell 7 keep selecting 7 (only an additional PowerShell 10 installation will cause the auto-switch to 10).
+- If you had accidentally configured `shell.args` from Lua, the previously-ignored values **will now actually take effect from the next launch onwards**. That is the one thing to watch for.
 
-### 確認方法（Windows 実機）
+### How to verify (real Windows machine)
 
 ```powershell
-# 1. デバッグログを有効化して起動
+# 1. Enable debug logging and launch
 $env:NEXTERM_LOG = "debug"
 nexterm 2> $env:USERPROFILE\nexterm-debug.log
 
-# 2. PowerShell 10 が検出されているかログで確認
+# 2. Confirm PowerShell 10 is detected in the log
 Select-String -Path $env:USERPROFILE\nexterm-debug.log -Pattern "pwsh|powershell"
 
-# 3. PTY 起動失敗時は画面上部に赤いバナーが表示されることを確認
-#    （表示中は Esc キーで閉じられる）
+# 3. When PTY startup fails, confirm that a red banner appears at the top of the screen
+#    (closable with Esc while visible)
 ```
 
-### 旧バージョンとの相互運用
+### Interoperability with older versions
 
-- 既存のサーバーバイナリと新クライアントは相互運用可能です。旧サーバーは
-  `startup_warnings` の取得 API を持ちませんが、クライアント側のエラーバナーは
-  既存の `ServerToClient::Error`（PTY spawn 失敗等）で正常に動作します。
-- 新サーバー + 旧クライアントの組み合わせでは、起動時警告は送信されますが
-  旧クライアントはバナー表示せずログにのみ出力します（影響なし）。
+- An existing server binary remains interoperable with the new client. Old servers do not have the `startup_warnings` retrieval API, but the client-side error banner still works correctly for existing `ServerToClient::Error` events (PTY spawn failures, etc.).
+- With a new server + old client, startup warnings are emitted but the old client only logs them — no banner is shown (no impact).
 
 ---
 
-## v1.6.0 → v1.6.1（Flatpak ビルドのホットフィックス）
+## v1.6.0 → v1.6.1 (Flatpak build hotfix)
 
-**互換性破壊なし**。機能面は v1.6.0 と完全同一です。v1.6.0 で `Flatpak` ワークフローが
-`pkg/flatpak/cargo-sources.json` と `Cargo.lock` の整合性チェックで失敗し、Flatpak
-バンドルが配布できていなかった問題を修正しました。
+**No breaking changes.** Functionally identical to v1.6.0. v1.6.0's `Flatpak` workflow failed the integrity check between `pkg/flatpak/cargo-sources.json` and `Cargo.lock`, so the Flatpak bundle was not being distributed; v1.6.1 fixes that.
 
-### 影響
+### Impact
 
-- macOS / Linux / Windows バイナリを v1.6.0 で入手済みのユーザーは **更新不要**。
-- Flatpak 経由でインストール予定のユーザーのみ v1.6.1 のアセットを使用すること。
+- Users who already obtained the macOS / Linux / Windows binaries for v1.6.0 **do not need to update**.
+- Users planning to install via Flatpak should use the v1.6.1 assets.
 
-### 原因と修正
+### Cause and fix
 
-Sprint 5-11-1（AccessKit PoC）で `accesskit = "0.24"` / `accesskit_winit = "0.33"` を
-`Cargo.toml` に追加した際、Cargo.lock に新規 vendor 依存（`accesskit-0.24.0` /
-`accesskit_atspi_common-0.18.1` / `accesskit_consumer-0.36.0` /
-`accesskit_ios-0.1.0` / `accesskit_macos-0.26.1` 他）が追加されましたが、
-`scripts/regenerate-flatpak-sources.sh` の再実行を失念していました。v1.6.1 で再生成し
-234 行を追加して整合させました。
+When Sprint 5-11-1 (AccessKit PoC) added `accesskit = "0.24"` / `accesskit_winit = "0.33"` to `Cargo.toml`, new vendor dependencies were added to `Cargo.lock` (`accesskit-0.24.0`, `accesskit_atspi_common-0.18.1`, `accesskit_consumer-0.36.0`, `accesskit_ios-0.1.0`, `accesskit_macos-0.26.1`, and others), but `scripts/regenerate-flatpak-sources.sh` was not re-run. v1.6.1 regenerates it (a 234-line addition) to restore consistency.
 
 ---
 
-## v1.5.1 → v1.6.0（Sprint 5-11 全フェーズ: スクリーンリーダー対応 + SSH ホスト GUI 編集）
+## v1.5.1 → v1.6.0 (Sprint 5-11 in full: screen-reader support + SSH host GUI editing)
 
-**互換性破壊なし**。`PROTOCOL_VERSION = 8` / `SNAPSHOT_VERSION = 4` のまま、
-**監査ラウンド 2 HIGH 残最後の H1 (スクリーンリーダー対応)** を AccessKit 0.24 +
-accesskit_winit 0.33 で完全実装し、合わせて設定パネルの SSH カテゴリに GUI 編集機能を
-追加しました。既存ユーザーは何もせずアップグレード可能です。
+**No breaking changes.** `PROTOCOL_VERSION = 8` and `SNAPSHOT_VERSION = 4` are unchanged. The **last remaining HIGH item from audit round 2, H1 (screen-reader support)**, is now fully implemented on top of AccessKit 0.24 + accesskit_winit 0.33, and the settings panel's SSH category gains GUI editing. Existing users can upgrade without any action.
 
-### 概要
+### Summary
 
-Sprint 5-11-1 〜 5-11-8 を一括して v1.6.0 にまとめてリリースしました。詳細な
-変更履歴は [CHANGELOG.md](../CHANGELOG.md) を参照してください。本セクションでは
-SSH ホスト GUI 編集機能（Step 8-3）に焦点を当てます。
+Sprints 5-11-1 through 5-11-8 are released together as v1.6.0. See [CHANGELOG.md](../CHANGELOG.md) for the full changelog. This section focuses on the SSH-host GUI editing feature (Step 8-3).
 
-### 追加された機能
+### New features
 
-#### Sub-phase A: SSH フィールドのインライン GUI 編集
+#### Sub-phase A: inline GUI editing of SSH fields
 
-設定パネル → SSH カテゴリでホスト一覧のフィールド（name / host / username）を Enter キーで
-編集モードに入れるようになりました。編集中は文字入力 / Backspace / ←→ / Home / End /
-Delete が利用できます。**TUI クライアントには影響しません**（GPU クライアントのみ）。
+In the settings panel → SSH category, pressing Enter on a host-list field (name / host / username) now enters edit mode. While editing, characters / Backspace / ← → / Home / End / Delete are available. **The TUI client is unaffected** (GPU client only).
 
-#### Sub-phase B: IME preedit を SSH フィールドへ振り分け
+#### Sub-phase B: route IME preedit into SSH fields
 
-CJK IME（日本語 / 中国語 / 韓国語）の変換中テキスト（preedit）が SSH フィールド編集中も
-正しく動作します。変換確定前の文字はカーソル位置に挿入表示され、`set_ime_cursor_area` で
-IME ウィンドウ位置も追従します。
+CJK IME (Japanese / Chinese / Korean) preedit text behaves correctly while editing SSH fields. Pre-commit characters are inserted at the caret, and the IME window follows the caret via `set_ime_cursor_area`.
 
-#### Sub-phase C: port (SpinButton) / auth_type (ComboBox) 視覚編集
+#### Sub-phase C: visual editing of port (SpinButton) / auth_type (ComboBox)
 
-- **port**: `←` / `→` で 1 ずつ増減（1〜65535 でクランプ）、SR からは `Role::SpinButton`
-  として `Increment` / `Decrement` / `SetValue` Action に応答
-- **auth_type**: `←` / `→` で `password` / `key` / `agent` を循環、SR からは
-  `Role::ComboBox` として `Increment` / `Decrement` / `Click` Action に応答
+- **port**: `←` / `→` increment or decrement by 1 (clamped 1–65535). For screen readers, exposed as `Role::SpinButton` responding to `Increment` / `Decrement` / `SetValue`.
+- **auth_type**: `←` / `→` cycle through `password` / `key` / `agent`. For screen readers, exposed as `Role::ComboBox` responding to `Increment` / `Decrement` / `Click`.
 
-#### Sub-phase D: Add / Delete ボタン + 削除確認ダイアログ
+#### Sub-phase D: Add / Delete buttons + delete-confirmation dialog
 
-ホスト一覧の末尾に「新規ホストを追加」「選択ホストを削除」ボタンが配置されました。
-キーボード操作:
+The end of the host list now has "Add new host" and "Delete selected host" buttons. Keyboard:
 
-| 操作 | キー |
-|---|---|
-| Add ボタン / Delete ボタンへフォーカス | `↑` / `↓`（focus 6 / 7） |
-| Add 押下 | Enter（新規ホスト追加 + name 編集モード自動開始） |
-| Delete 押下 | Enter（削除確認ダイアログを開く） |
-| ダイアログ内で確定 | Enter |
-| ダイアログ内でキャンセル | Esc または `N` |
-| Cancel ↔ Confirm 切替 | `←` / `→` または Tab |
+| Action | Key |
+|--------|-----|
+| Focus the Add / Delete button | `↑` / `↓` (focus 6 / 7) |
+| Press Add | Enter (creates a new host and immediately enters name edit mode) |
+| Press Delete | Enter (opens the delete-confirmation dialog) |
+| Confirm in dialog | Enter |
+| Cancel in dialog | Esc or `N` |
+| Toggle Cancel ↔ Confirm | `←` / `→` or Tab |
 
-Delete ボタンは空リスト時は disabled 表示。確認ダイアログは初期フォーカスが Cancel で、
-誤削除を防ぐ標準 GUI 動作に従っています。削除後の選択行は **n クランプ**:
-末尾削除時は n-1 へ、中央削除時は同じ index（リストが詰まる）、空になった場合は
-ListBox にフォーカスを戻します。
+The Delete button is shown as disabled when the list is empty. The confirmation dialog defaults focus to Cancel, following standard GUI conventions to prevent accidental deletion. The selection after deletion is **clamped to n**: deleting the last item moves focus to n-1, deleting from the middle keeps the same index (the list shifts up), and emptying the list returns focus to the ListBox.
 
-#### AccessKit NodeId 拡張（互換性破壊なし）
+#### AccessKit NodeId additions (no breaking changes)
 
-NodeId 45〜49 を SSH カテゴリの追加 UI 要素に割り当てました:
+NodeIds 45–49 are reserved for the new SSH-category UI elements:
 
-| NodeId | 用途 | Role |
-|---|---|---|
-| 45 | Add ボタン | `Role::Button` |
-| 46 | Delete ボタン | `Role::Button`（空リスト時は description で「無効」を明示） |
-| 47 | 削除確認ダイアログ本体 | `Role::AlertDialog`（modal） |
-| 48 | Confirm（削除実行）ボタン | `Role::Button` |
-| 49 | Cancel ボタン | `Role::Button` |
+| NodeId | Purpose | Role |
+|--------|---------|------|
+| 45 | Add button | `Role::Button` |
+| 46 | Delete button | `Role::Button` (empty-list "disabled" surfaced via description) |
+| 47 | Delete-confirmation dialog itself | `Role::AlertDialog` (modal) |
+| 48 | Confirm (delete) button | `Role::Button` |
+| 49 | Cancel button | `Role::Button` |
 
-`compute_tree_state_hash` は `ssh_delete_dialog_open` / `ssh_delete_dialog_confirm_focused`
-の変化を 100ms スロットル内でハッシュ計算に含めるため、ダイアログ開閉とフォーカス変更が
-SR に正しく反映されます。
+`compute_tree_state_hash` includes the changes to `ssh_delete_dialog_open` / `ssh_delete_dialog_confirm_focused` in the 100 ms throttle window, so dialog open/close and focus changes are reflected to the screen reader correctly.
 
-### 設定変更不要
+### No configuration changes required
 
-新機能は `config.toml` の変更を必要としません。既存の `[[hosts]]` セクションはそのまま
-読み込まれ、GUI からも編集可能になります。
+The new features do not require any `config.toml` change. Existing `[[hosts]]` sections continue to load as-is and can additionally be edited from the GUI.
 
-### TUI クライアントへの影響
+### Impact on the TUI client
 
-`nexterm-client-tui` は GUI 編集機能・SR 対応の対象外です（従来通り `[[hosts]]` を
-`config.toml` で直接編集する運用）。
+`nexterm-client-tui` is out of scope for both GUI editing and screen-reader support. Continue editing `[[hosts]]` in `config.toml` directly as before.
 
 ---
 
-## v1.4.0 → v1.5.0（Sprint 5-8 / 5-9 Phase 4: タブ外ドロップ tab tearing）
+## v1.4.0 → v1.5.0 (Sprint 5-8 / 5-9 Phase 4: tab tearing — drop-out-of-tab)
 
-`PROTOCOL_VERSION` が `7` から `8` にバンプされ、`SNAPSHOT_VERSION` が `3` から `4` に
-バンプされました。**新サーバーは旧クライアント（PROTOCOL v7）を Hello ハンドシェイク
-で拒否し、旧サーバーは新クライアントを拒否します**。クライアントとサーバーは必ず
-一緒にアップグレードしてください。
+`PROTOCOL_VERSION` bumps from `7` to `8` and `SNAPSHOT_VERSION` bumps from `3` to `4`. **New servers reject old clients (PROTOCOL v7) during the Hello handshake, and old servers reject new clients.** Upgrade clients and servers together.
 
-### 何が変わるか
+### What changes
 
-#### PROTOCOL_VERSION 8（Phase 4-3: タブ外ドロップ）
+#### PROTOCOL_VERSION 8 (Phase 4-3: drop-out-of-tab)
 
-`ClientToServer::MovePaneToWindow { pane_id, target_window_id, insert_at }` を新設。
-クライアントがタブを別 OS Window（または新規 OS Window）にドロップした際、サーバー内で
-`Window::detach_pane` + `Window::attach_pane` を実行してセッションの Window 構成を変更します。
-`target_window_id = 0` は「新規 Window を生成して移動」のシグナルです。
+`ClientToServer::MovePaneToWindow { pane_id, target_window_id, insert_at }` is new. When a client drops a tab onto a different OS window (or onto a brand-new OS window), the server runs `Window::detach_pane` + `Window::attach_pane` to restructure the session's Window layout. `target_window_id = 0` is the signal for "create a new Window and move the tab there".
 
-Phase 4-5 で **追加** された（v8 互換、enum 末尾追加のため discriminant 影響なし）:
+Phase 4-5 **added** (v8 compatible — appended to the end of the enum, so discriminants are unaffected):
 
-- `ClientToServer::QueryForegroundProcess { window_id }` — Window 閉じ前の前景プロセス検知用
-- `ServerToClient::ForegroundProcessStatus { window_id, has_foreground }` — 上記の応答
+- `ClientToServer::QueryForegroundProcess { window_id }` — used to detect a foreground process before closing a Window
+- `ServerToClient::ForegroundProcessStatus { window_id, has_foreground }` — the response
 
-旧 v8 クライアント・サーバーは新バリアントを送らない・受け取らないため、Phase 4-3 時点の
-v8 互換接続には影響しません。
+Old v8 clients and servers neither send nor receive the new variants, so v8-compatible connections from Phase 4-3 are unaffected.
 
-#### SNAPSHOT_VERSION 4（Phase 4-5: OS Window 配置永続化）
+#### SNAPSHOT_VERSION 4 (Phase 4-5: persisting OS Window layout)
 
-`ServerSnapshot.client_os_windows: Vec<OsWindowSnapshot>` を追加。tab tearing で複数の
-OS Window に分離された状態を保存します。`#[serde(default)]` 付きのため **v3 JSON は
-空 `Vec` で自動マイグレーション** されます（既存ユーザーは何もする必要なし、初回起動は
-単一 OS Window 構成として復元）。
+`ServerSnapshot.client_os_windows: Vec<OsWindowSnapshot>` is new. It captures the multiple OS windows that tab tearing has produced. It is annotated with `#[serde(default)]`, so **v3 JSON auto-migrates with an empty `Vec`** (existing users do not need to act; the first launch restores into a single-OS-window layout).
 
-`OsWindowSnapshot` の構造:
+`OsWindowSnapshot` structure:
 
 ```rust
 pub struct OsWindowSnapshot {
-    pub position: (i32, i32),            // ウィンドウ左上座標
-    pub size: (u32, u32),                // 外形サイズ
-    pub server_window_ids: Vec<u32>,     // 所属する Server Window ID（タブ）
-    pub focused_server_window_id: u32,   // アクティブ Server Window
+    pub position: (i32, i32),            // top-left of the window
+    pub size: (u32, u32),                // outer dimensions
+    pub server_window_ids: Vec<u32>,     // server Window IDs (tabs) inside this OS window
+    pub focused_server_window_id: u32,   // active server Window
 }
 ```
 
-### 移行手順
+### Migration steps
 
-1. **クライアントとサーバーを同時にアップグレード**: PROTOCOL_VERSION 7→8 ミスマッチで
-   Hello ハンドシェイクが失敗します（`nexterm-ctl` を含む全バイナリを更新してください）
-2. **既存スナップショット**: 自動マイグレートされるため操作不要。`~/.local/state/nexterm/snapshot.json`
-   を読み込み時にバージョンが 3 → 4 へ更新されます
-3. **設定ファイル変更**: `[window]` セクションに `close_action` キーが追加されました（後述）。
-   省略時は `"prompt"`（推奨デフォルト）
+1. **Upgrade clients and servers together**: a PROTOCOL_VERSION 7 → 8 mismatch will fail the Hello handshake. Update every binary, including `nexterm-ctl`.
+2. **Existing snapshots**: no action — they auto-migrate. When `~/.local/state/nexterm/snapshot.json` is loaded, its version is bumped from 3 to 4.
+3. **Config changes**: a `close_action` key was added to the `[window]` section (see below). The default when omitted is `"prompt"` (the recommended default).
 
-### `window.close_action` 設定
+### The `window.close_action` setting
 
-OS Window を閉じる際の挙動を 3 値から選択できます:
+Choose between three behaviours when closing an OS window:
 
 ```toml
 [window]
-close_action = "prompt"   # prompt（既定）/ detach / kill
+close_action = "prompt"   # prompt (default) / detach / kill
 ```
 
-| 値 | 挙動 |
-|---|---|
-| `"prompt"` | サーバーに `QueryForegroundProcess` を送り、シェル以外の子プロセス（前景プロセス）が動作中なら確認ダイアログを表示。なければ即時 kill。**安全側のデフォルト**。 |
-| `"detach"` | クライアントだけ切断し、サーバー側 Session は維持。`nexterm-ctl attach` で再アタッチ可能（マルチプロセス構成）。シングルバイナリ構成では内部サーバータスクも abort するため実質 kill と同等。 |
-| `"kill"` | 確認なしで `KillSession` IPC を送り Session を破棄して exit。v1.4.0 までの既定挙動。 |
+| Value | Behaviour |
+|-------|-----------|
+| `"prompt"` | Send `QueryForegroundProcess` to the server. If a non-shell child (foreground process) is running, show a confirmation dialog; otherwise kill immediately. **This is the safe default.** |
+| `"detach"` | Disconnect the client only and keep the server-side Session alive. `nexterm-ctl attach` can re-attach (multi-process layout). In single-binary mode, the embedded server task is also aborted, so this is effectively equivalent to kill. |
+| `"kill"` | Send `KillSession` IPC immediately, destroy the Session, and exit. This was the default through v1.4.0. |
 
-### Tab tearing UX（Wayland 制限と代替経路）
+### Tab tearing UX (Wayland limits and alternatives)
 
-ドラッグでタブを OS Window 外にドロップすると新規 OS Window が開きます（X11 / macOS / Windows）。
-**Wayland はセキュリティモデル上グローバル座標が取得できない**ためドラッグドロップ判定が動作
-しません。Wayland ユーザーは以下の代替 UX を使ってください:
+Dragging a tab outside an OS window opens a new OS window (X11 / macOS / Windows). **Wayland's security model does not allow global coordinates to be read**, so drag-and-drop detection does not work there. Wayland users should use the following alternatives:
 
-| 代替経路 | 操作 |
-|---|---|
-| コンテキストメニュー | ペイン上で右クリック → 「新規ウィンドウに分離」 |
-| ホットキー | `Ctrl+B D`（leader + D）で現在のタブを新規 OS Window に分離 |
-| コマンドパレット | `Ctrl+Shift+P` → 「Detach to New Window」 |
-| タブホバー `[↗]` ボタン | **v1.5.0 では未提供（Phase 4-6 持ち越し）**。renderer 側で hover 時の頂点追加とクリック判定が必要なため次フェーズで実装予定 |
+| Alternative | Action |
+|-------------|--------|
+| Context menu | Right-click on a pane → "Detach to new window" |
+| Hotkey | `Ctrl+B D` (leader + D) detaches the current tab into a new OS window |
+| Command palette | `Ctrl+Shift+P` → "Detach to New Window" |
+| `[↗]` button on hover | **Not provided in v1.5.0 (deferred to Phase 4-6).** Implementing this requires hover-time vertex insertion and hit testing in the renderer; planned for the next phase. |
 
-OS Window を閉じるホットキー: `Ctrl+B W`（leader + W）。最後の OS Window だった場合のみ
-プロセス全体が `close_action` に従って終了します。
+Hotkey to close an OS window: `Ctrl+B W` (leader + W). The entire process exits according to `close_action` only when it was the last OS window.
 
-### 確認ダイアログのキーボード操作
+### Keyboard operation of the confirmation dialog
 
-`close_action = "prompt"` で前景プロセス検知時に表示される確認ダイアログ:
+When `close_action = "prompt"` and a foreground process is detected:
 
-- `Enter` / `Y` → 閉じる（Kill）
-- `Esc` / `N` → キャンセル
-- `←` / `→` でボタンフォーカス切替
+- `Enter` / `Y` → close (kill)
+- `Esc` / `N` → cancel
+- `←` / `→` to switch button focus
 
-> 注: v1.5.0 ではダイアログのレンダラー描画は最小限実装で、文言は i18n 8 言語対応済み。
-> 視覚的な装飾強化は Phase 4-6 で計画。
+> Note: in v1.5.0 the dialog renderer is a minimum implementation. Strings are already i18n-ready in 8 languages. Visual polish is planned for Phase 4-6.
 
-### TUI クライアントへの影響
+### Impact on the TUI client
 
-`nexterm-client-tui` は単一プロセス1端末で動作するため tab tearing は無効です。新規
-バリアント `ForegroundProcessStatus` / `MovePaneToWindow` を受け取った場合は no-op で
-受け流します（互換性のために `ServerToClient` を網羅 match している）。
+`nexterm-client-tui` runs one process per single terminal, so tab tearing is disabled. The new `ForegroundProcessStatus` / `MovePaneToWindow` variants, when received, are no-ops (we match the full `ServerToClient` enum for compatibility).
 
 ---
 
-## v1.2.0 → v1.3.0（Sprint 5-7 Phase 2: IPC バリアント追加とスナップショット拡張）
+## v1.2.0 → v1.3.0 (Sprint 5-7 Phase 2: IPC variants and snapshot extensions)
 
-`PROTOCOL_VERSION` が `4` から `7` にバンプされ、`SNAPSHOT_VERSION` が `2` から `3` に
-バンプされました。**新サーバーは旧クライアントを Hello ハンドシェイクで拒否し、
-旧サーバーは新クライアントを拒否します**。クライアントとサーバーは必ず一緒にアップグレードしてください。
+`PROTOCOL_VERSION` bumps from `4` to `7` and `SNAPSHOT_VERSION` bumps from `2` to `3`. **New servers reject old clients during the Hello handshake, and old servers reject new clients.** Upgrade clients and servers together.
 
-### 何が変わるか
+### What changes
 
-#### PROTOCOL_VERSION 5（Sprint 5-7 / Phase 2-1: ワークスペース機能）
+#### PROTOCOL_VERSION 5 (Sprint 5-7 / Phase 2-1: workspaces)
 
-`ClientToServer` に 5 バリアント、`ServerToClient` に 2 バリアントを追加:
+Five new `ClientToServer` variants and two new `ServerToClient` variants:
 
-- `ListWorkspaces` / `CreateWorkspace { name }` / `SwitchWorkspace { name }` /
-  `RenameWorkspace { from, to }` / `DeleteWorkspace { name, force }`
+- `ListWorkspaces` / `CreateWorkspace { name }` / `SwitchWorkspace { name }` / `RenameWorkspace { from, to }` / `DeleteWorkspace { name, force }`
 - `WorkspaceList { workspaces, current }` / `WorkspaceSwitched { name }`
 
-postcard は enum バリアント追加に対して**前方互換性を持たない**ため、旧クライアント
-（PROTOCOL_VERSION 4）は新サーバーから送られる `WorkspaceList` をデコードできません。
+postcard does **not** provide forward compatibility on enum-variant additions, so old clients (PROTOCOL_VERSION 4) cannot decode `WorkspaceList` from a new server.
 
-#### PROTOCOL_VERSION 6（Sprint 5-7 / Phase 2-2: Quake モード）
+#### PROTOCOL_VERSION 6 (Sprint 5-7 / Phase 2-2: Quake mode)
 
-`ClientToServer::QuakeToggle { action }` と `ServerToClient::QuakeToggleRequest { action }`
-を追加。`action` は `"toggle"` / `"show"` / `"hide"` のいずれか。
+Adds `ClientToServer::QuakeToggle { action }` and `ServerToClient::QuakeToggleRequest { action }`. `action` is one of `"toggle"` / `"show"` / `"hide"`.
 
-#### PROTOCOL_VERSION 7（Sprint 5-7 / Phase 2-3: タブ並べ替え）
+#### PROTOCOL_VERSION 7 (Sprint 5-7 / Phase 2-3: tab reordering)
 
-`ClientToServer::ReorderPanes { pane_ids: Vec<u32> }` を追加。サーバーは指定された
-順序でタブを並べ替え、変更があった場合のみ `LayoutChanged` を送り返します。
-`LayoutChanged.panes` 配列の順序の意味が「BSP DFS 順」から「論理タブ表示順」に
-変わりますが、旧クライアントは順序に依存していなかったため動作には影響しません。
+Adds `ClientToServer::ReorderPanes { pane_ids: Vec<u32> }`. The server reorders the tabs accordingly and sends `LayoutChanged` only if the order actually changed. The meaning of the order in `LayoutChanged.panes` changes from "BSP DFS order" to "logical tab display order", but old clients did not rely on the order, so behaviour is unaffected.
 
-#### SNAPSHOT_VERSION 3（Sprint 5-7 / Phase 2-1）
+#### SNAPSHOT_VERSION 3 (Sprint 5-7 / Phase 2-1)
 
-`SessionSnapshot.workspace_name: String` と `ServerSnapshot.current_workspace: String`
-を追加。**v2 JSON は `serde(default = "default_workspace")` で自動マイグレーションされる**
-ため、既存スナップショットを手動で書き換える必要はありません。マイグレーション後、
-全セッションは `"default"` ワークスペースに所属します。
+Adds `SessionSnapshot.workspace_name: String` and `ServerSnapshot.current_workspace: String`. **v2 JSON auto-migrates** via `serde(default = "default_workspace")`, so existing snapshots do not need to be edited by hand. After migration, all sessions belong to the `"default"` workspace.
 
-### 移行手順
+### Migration steps
 
-1. **クライアントとサーバーを同時にアップグレード**: PROTOCOL_VERSION ミスマッチで
-   ハンドシェイクが失敗します
-2. **既存スナップショット**: 自動マイグレートされるため操作不要。`~/.local/state/nexterm/snapshot.json`
-   を読み込み時にバージョンが 2 → 3 へ更新される
-3. **設定ファイル変更不要**: 新機能はすべてオプションで、既存の `config.toml` をそのまま使えます
+1. **Upgrade clients and servers together**: a PROTOCOL_VERSION mismatch will fail the handshake.
+2. **Existing snapshots**: no action — they auto-migrate. When `~/.local/state/nexterm/snapshot.json` is loaded, its version is bumped from 2 to 3.
+3. **No config changes required**: all new features are optional; existing `config.toml` files still work as-is.
 
-### Quake モード（Wayland 制限）
+### Quake mode (Wayland limits)
 
-`global-hotkey` 0.8 crate は Wayland のセキュリティモデル上、グローバルホットキーを
-登録できません。Wayland 環境では `nexterm-ctl quake toggle/show/hide` を compositor の
-キーバインド（Sway の `bindsym` / Hyprland の `bind` 等）から呼び出してください:
+The `global-hotkey` 0.8 crate cannot register global hotkeys under the Wayland security model. On Wayland, call `nexterm-ctl quake toggle/show/hide` from compositor keybindings (Sway's `bindsym` / Hyprland's `bind`, etc.):
 
 ```
-# Sway 例
+# Sway
 bindsym Mod4+grave exec nexterm-ctl quake toggle
 
-# Hyprland 例
+# Hyprland
 bind = SUPER, grave, exec, nexterm-ctl quake toggle
 ```
 
-X11 環境では `config.toml` の `[quake_mode] hotkey = "ctrl+\`"` でホットキーを直接登録できます。
+On X11, hotkeys can be registered directly via `config.toml`'s `[quake_mode] hotkey = "ctrl+\`"`.
 
-### 背景画像（Phase 3-1）
+### Background image (Phase 3-1)
 
-背景画像は起動時のみロードされます。`config.toml` を変更した場合は再起動が必要です。
+The background image is loaded only at startup. Changes to `config.toml` require a restart.
 
 ```toml
 [window.background_image]
@@ -337,95 +261,73 @@ opacity = 0.3
 fit = "cover"  # cover / contain / stretch / center / tile
 ```
 
-### アニメーション（Phase 3-2）
+### Animations (Phase 3-2)
 
-新規ペイン追加・タブ切替時に ease-out アニメーションが既定で有効になります。
-アクセシビリティ（reduced motion）の観点で動きを抑えたい場合は以下を設定してください:
+Ease-out animations on new-pane insertion and tab switching are enabled by default. If you want reduced motion for accessibility reasons, set one of:
 
 ```toml
 [animations]
-enabled = false                # 全アニメーション無効
-# または
+enabled = false                # disable all animations
+# or
 intensity = "off"              # off / subtle / normal / energetic
 ```
 
 ---
 
-## v1.1.0 → Unreleased（Sprint 5-1 / G3: IPC ワイヤフォーマットを postcard へ移行）
+## v1.1.0 → Unreleased (Sprint 5-1 / G3: IPC wire format migrates to postcard)
 
-`PROTOCOL_VERSION` が `2` から `3` にバンプされました。**新サーバーは旧クライアント
-を Hello ハンドシェイクで拒否し、旧サーバーは新クライアントを拒否します**。
-クライアントとサーバーは必ず一緒にアップグレードしてください。
+`PROTOCOL_VERSION` bumps from `2` to `3`. **New servers reject old clients during the Hello handshake, and old servers reject new clients.** Upgrade clients and servers together.
 
-### 何が変わるか
+### What changes
 
-IPC のシリアライズフォーマットが `bincode` 1.x から `postcard` 1.x に変更されました。
-両者はバイト列レベルで非互換です（postcard は varint エンコード、bincode は固定長）。
+The IPC serialization format changes from `bincode` 1.x to `postcard` 1.x. The two are not byte-compatible (postcard uses varint encoding; bincode is fixed-width).
 
-理由: `RUSTSEC-2025-0141` (bincode 1.x のメンテナンス終了) を解消し、
-中長期のサプライチェーン健全性を確保するためです。
+Rationale: address `RUSTSEC-2025-0141` (bincode 1.x is no longer maintained) and improve mid- to long-term supply-chain health.
 
-### ユーザー影響
+### User impact
 
-- バイナリを揃えてアップグレードする以外、ユーザー側で必要な作業はありません。
-- `nexterm-ctl` からも IPC 接続するため、CLI バイナリも同時更新が必要です。
+- Beyond upgrading binaries together, no user action is required.
+- `nexterm-ctl` also connects over IPC, so the CLI binary must be updated at the same time.
 
-### 副次的効果
+### Side effects
 
-- IPC メッセージが平均的に 10〜20% 程度小さくなる可能性があります（varint）。
-- `bincode = "1"` を直接利用する third-party プラグインがある場合、
-  そちらも `postcard` へ移行する必要があります（プラグイン API は WASM 経由
-  なので通常は影響なし）。
+- IPC messages tend to shrink by 10–20% on average (varint encoding).
+- Third-party plugins that directly depend on `bincode = "1"` need to migrate to `postcard` as well. The plugin API runs through WASM, so this normally has no effect.
 
 ---
 
-## v1.1.0 → Unreleased（Sprint 5-1 / G1: SSH パスワード keyring 化）
+## v1.1.0 → Unreleased (Sprint 5-1 / G1: SSH passwords move into the keyring)
 
-`PROTOCOL_VERSION` が `1` から `2` にバンプされました。**新サーバーは旧クライアント
-を Hello ハンドシェイクで拒否し、旧サーバーは新クライアントを拒否します**。
-クライアントとサーバーは必ず一緒にアップグレードしてください。
+`PROTOCOL_VERSION` bumps from `1` to `2`. **New servers reject old clients during the Hello handshake, and old servers reject new clients.** Upgrade clients and servers together.
 
-### 何が変わるか
+### What changes
 
-`ClientToServer::ConnectSsh` メッセージから `password: Option<String>`
-フィールドが削除され、以下の 2 フィールドに置換されました:
+The `password: Option<String>` field is removed from `ClientToServer::ConnectSsh` and is replaced by two new fields:
 
-- `password_keyring_account: Option<String>` — `<username>@<host_name>` 形式の
-  キーリングアカウント識別子
-- `ephemeral_password: bool` — `true` の場合、サーバーは認証完了後に
-  keyring エントリを削除する
+- `password_keyring_account: Option<String>` — keyring account identifier of the form `<username>@<host_name>`
+- `ephemeral_password: bool` — when `true`, the server removes the keyring entry after authentication completes
 
-これにより、IPC 経路（Unix Domain Socket / Named Pipe）でパスワード平文が
-流れなくなりました。クライアントが OS のキーリング（Service=`"nexterm-ssh"`）に
-保存し、サーバーが同じユーザーの権限で取得します。
+This ensures that passwords no longer travel as plaintext over the IPC channel (Unix domain socket / named pipe). The client stores them in the OS keyring (Service=`"nexterm-ssh"`) and the server retrieves them with the same user's permissions.
 
-### 影響
+### Impact
 
-- 旧 `nexterm-ctl` バイナリと新サーバーの混在は不可（IPC 互換性破壊）。
-- パスワード認証の SSH ホストを利用する場合、サーバーホストとクライアントホストが
-  **同じ OS ユーザー**で動作している必要があります（OS キーリングはユーザー単位
-  でアクセス制御されるため）。
-- OS キーリングサービスが利用できない環境（headless Linux で
-  Secret Service 未起動など）ではパスワード認証 SSH 接続ができなくなります。
-  鍵認証または `secret-tool`/`gnome-keyring`/`KWallet` 等のセットアップを推奨します。
+- Mixing an old `nexterm-ctl` binary with a new server is unsupported (IPC compatibility break).
+- When using password-authenticated SSH hosts, the server host and the client host must run as the **same OS user** (the OS keyring is access-controlled per user).
+- Environments where the OS keyring service is unavailable (for example a headless Linux without Secret Service) cannot use password-authenticated SSH. Use key authentication or set up `secret-tool` / `gnome-keyring` / `KWallet`.
 
-### 移行手順
+### Migration steps
 
-クライアント/サーバーバイナリを同時に v1.2.0+ へアップグレードするだけです。
-追加設定は不要。`HostManager` のパスワードモーダルは「保存する/しない」UI を
-継続利用できます。
+Upgrade the client and server binaries simultaneously to v1.2.0+. No extra configuration is required. The "Save / Don't save" UI on `HostManager`'s password modal continues to work.
 
 ---
 
-## v1.0.2 → Unreleased（Sprint 4-2 プラグイン API v2）
+## v1.0.2 → Unreleased (Sprint 4-2 plugin API v2)
 
-`PLUGIN_API_VERSION` が `1` から `2` にバンプされました。**v1 プラグインは
-引き続き動作しますが**、ロード時に deprecation 警告がログに出ます。
-将来的に v1 サポートは削除予定（具体的な削除タイミングは未定）。
+`PLUGIN_API_VERSION` bumps from `1` to `2`. **v1 plugins continue to work**, but they log a deprecation warning at load time. Support for v1 will be removed in the future (no specific timing decided yet).
 
-### v1 → v2 プラグイン移行手順
+### Migrating a plugin from v1 to v2
 
-1. **`nexterm_api_version` エクスポートを `2` を返すように更新**:
+1. **Update `nexterm_api_version` to return `2`**:
 
    ```rust
    #[unsafe(no_mangle)]
@@ -434,196 +336,192 @@ IPC のシリアライズフォーマットが `bincode` 1.x から `postcard` 1
    }
    ```
 
-2. **入力データの扱いを見直す**: v2 ではホスト側で ESC・OSC/CSI/DCS/APC・
-   C0 制御文字（`\t\r\n` 除く）が事前除去されたサニタイズ済みバイト列が渡される。
-   独自にエスケープシーケンスを観測・解析していたプラグインは挙動が変わる。
+2. **Reconsider how input data is handled**: in v2 the host pre-strips ESC, OSC/CSI/DCS/APC, and C0 control characters (other than `\t\r\n`) before handing the bytes to the plugin. Plugins that observed or parsed escape sequences themselves will see different behaviour.
 
-3. **`write_pane` の宛先 PaneId を制限**:
-   - `nexterm_on_output(pane_id, ...)` 中: 渡された `pane_id` のみ書き込み可
-   - `nexterm_on_command(...)` 中: どの pane にも書き込めない
-   - 拒否されると warn ログが出るが、エラーにはならず処理は継続する
+3. **`write_pane` is now restricted by destination PaneId**:
+   - Inside `nexterm_on_output(pane_id, ...)`: writes are allowed only to the `pane_id` that was passed in.
+   - Inside `nexterm_on_command(...)`: writes are not allowed to any pane.
+   - Rejections log a warning but are not fatal; processing continues.
 
-### v1 のまま運用する場合
+### Staying on v1
 
-`nexterm_api_version` を未エクスポート、または `1` を返すままにすれば動作します。
-ただし以下の deprecation 警告が起動時にログに記録されます:
+If `nexterm_api_version` is not exported, or it still returns `1`, the plugin continues to work. The following deprecation warning is recorded at startup:
 
 ```
-プラグインが API v1 で動作中（現行 v2）: <path> — サニタイズ・PaneId 検証なしの旧挙動で動作します。
-将来のバージョンで v1 サポートは削除予定です。
+Plugin running with API v1 (current: v2): <path> — behaves with the legacy path: no sanitization, no PaneId verification.
+v1 support is scheduled for removal in a future version.
 ```
 
 ---
 
-## v1.0.2 → Unreleased（Sprint 1〜3 セキュリティ強化）
+## v1.0.2 → Unreleased (Sprint 1 – 3 security hardening)
 
-セキュリティ監査により、互換性破壊を含む 4 つの大きな変更があります。
+A security audit produced four large changes, some of them breaking.
 
-### 1. プロトコル Hello メッセージ必須化（必ず影響）
+### 1. Hello message becomes mandatory (always affects you)
 
-**何が変わるか**
+**What changes**
 
-クライアント・サーバー間の IPC プロトコルにハンドシェイクメッセージが追加されました。
-クライアントは接続後に `ClientToServer::Hello { proto_version, client_kind, client_version }` を最初に送信する必要があります。
+The IPC protocol between client and server gains a handshake message. After connecting, the client must first send `ClientToServer::Hello { proto_version, client_kind, client_version }`.
 
-**影響**
+**Impact**
 
-- 旧バージョン（v1.0.2 以前）のクライアントが新サーバーに接続すると、最初のメッセージが `Hello` ではないため**サーバーが接続を切断**します。
-- 旧バージョンのサーバーに新クライアントを繋ぐと、サーバーが `Hello` を未知メッセージとして扱う可能性があります。
+- Connecting an old client (v1.0.2 or earlier) to a new server **causes the server to drop the connection**, because the first message is not `Hello`.
+- Connecting a new client to an old server may cause the server to treat `Hello` as an unknown message.
 
-**対応**
+**What to do**
 
-- クライアントとサーバーを **同一バージョンで揃える**ことを必須とします。
-- インストール時は GPU クライアント・TUI クライアント・`nexterm-ctl`・サーバーを一括更新してください。
+- Treat the client and server as needing the **same version**.
+- When installing, update GPU client, TUI client, `nexterm-ctl`, and server all at once.
 
 ```bash
-# Cargo build による開発時のクリーン更新
+# Clean rebuild while developing with cargo
 cargo clean
 cargo build --release --workspace
 
-# パッケージマネージャ経由の場合
-# Windows: msiexec で v1.0.2 をアンインストール → 新版をインストール
+# When installed via a package manager
+# Windows: uninstall v1.0.2 via msiexec, then install the new version
 # Linux (Flatpak): flatpak update
 ```
 
-`PROTOCOL_VERSION` は将来 `nexterm-proto/src/lib.rs` で管理されます。
+`PROTOCOL_VERSION` will be managed in `nexterm-proto/src/lib.rs` going forward.
 
 ---
 
-### 2. Lua サンドボックスによる API 制限（既存 `config.lua` に影響）
+### 2. Lua API restricted by sandboxing (affects existing `config.lua`)
 
-**何が変わるか**
+**What changes**
 
-`config.lua` / Lua フック / マクロが実行する Lua インスタンスはサンドボックス化され、以下が**無効化**されました:
+The Lua instance used by `config.lua`, Lua hooks, and macros is now sandboxed. The following are **disabled**:
 
-| 削除されたグローバル | 代替 |
-|---|---|
-| `os.execute` / `os.remove` / `os.rename` / `os.tmpname` 等の `os.*` | （現時点では代替なし、将来 `nexterm.*` 名前空間で限定的 API 提供予定） |
-| `io.open` / `io.read` / `io.lines` 等の `io.*` | （現時点では代替なし） |
-| `require` / `dofile` / `loadfile` / `load` / `loadstring` | 全 Lua コードは `~/.config/nexterm/nexterm.lua` 内にインライン記述 |
-| `debug.*` | 削除 |
-| `package.*` | 削除 |
-| `collectgarbage` / `rawset` / `rawget` / `setfenv` / `getfenv` | 削除 |
+| Removed global | Replacement |
+|----------------|-------------|
+| `os.execute` / `os.remove` / `os.rename` / `os.tmpname` and other `os.*` | None today (a restricted `nexterm.*` namespace is planned) |
+| `io.open` / `io.read` / `io.lines` and other `io.*` | None today |
+| `require` / `dofile` / `loadfile` / `load` / `loadstring` | All Lua code must be inlined inside `~/.config/nexterm/nexterm.lua` |
+| `debug.*` | Removed |
+| `package.*` | Removed |
+| `collectgarbage` / `rawset` / `rawget` / `setfenv` / `getfenv` | Removed |
 
-利用可能なライブラリ: `string` / `table` / `math` / `coroutine`。
+Allowed libraries: `string` / `table` / `math` / `coroutine`.
 
-**影響**
+**Impact**
 
-旧 `config.lua` で以下のような記述があった場合、**ロード時にエラー**になります:
+If your old `config.lua` had patterns like the following, **loading fails with an error**:
 
 ```lua
--- 旧: NG（os.execute はサンドボックスで無効）
+-- Old: NG (os.execute is disabled in the sandbox)
 hooks.on_pane_open = function(session, pane_id)
     os.execute("notify-send 'New pane opened'")
 end
 
--- 旧: NG（io.write はサンドボックスで無効）
+-- Old: NG (io.write is disabled in the sandbox)
 print("loaded at " .. os.date())
 ```
 
-**対応**
+**What to do**
 
-1. **シェルコマンド呼び出し** はターミナルフック（`config.toml` の `[hooks] on_pane_open = "/path/to/script"`）を使用する。
-2. **ファイル読み書き** は Lua 内で実行せず、外部スクリプト + ターミナルフック経由で行う。
-3. **タイムスタンプ** は将来 `nexterm.now()` API が追加予定。それまでは UI 側のステータスバー `time` ウィジェット等を使用する。
+1. **Shell commands** should be invoked through terminal hooks (`config.toml`'s `[hooks] on_pane_open = "/path/to/script"`).
+2. **File I/O** should not run inside Lua; use an external script invoked through a terminal hook.
+3. **Timestamps** will eventually be available as `nexterm.now()`. Until then, use the UI's status bar `time` widget.
 
-`config.lua` を変更したくない場合の応急処置はありません。サンドボックスは無効化できない設計です（CRITICAL #4 対応のため）。
+There is no escape hatch for keeping the old `config.lua` as-is. The sandbox cannot be disabled by design (to address CRITICAL #4).
 
 ---
 
-### 3. TLS フォールバック既定禁止（HTTPS 設定済みユーザーに影響）
+### 3. TLS fallback disabled by default (affects users who configured HTTPS)
 
-**何が変わるか**
+**What changes**
 
-`[web] tls.enabled = true` を設定していて、証明書ファイルの読み込みに失敗した場合の挙動が変わりました。
+With `[web] tls.enabled = true`, the behaviour when certificate files fail to load is changing.
 
-| 旧（v1.0.2 以前） | 新（Unreleased） |
+| Old (v1.0.2 and earlier) | New (Unreleased) |
 |---|---|
-| 警告ログを出して **HTTP に自動降格** | **Web サーバー起動を中止** |
+| Emit a warning and **automatically downgrade to HTTP** | **Abort web-server startup** |
 
-**影響**
+**Impact**
 
-証明書ファイルが存在しない / パーミッションエラー / フォーマット不正の場合、Web ターミナルが起動しなくなります（IPC は通常通り動作）。
+If the certificate file is missing, has wrong permissions, or has an invalid format, the web terminal will not start (IPC continues to work normally).
 
-**対応 (推奨)**
+**What to do (recommended)**
 
-証明書ファイルパスを正しく設定するか、自己署名証明書の自動生成パスを使用する:
+Set certificate paths correctly, or use the auto-generated self-signed certificate path:
 
 ```toml
 [web]
 enabled = true
 [web.tls]
 enabled = true
-# cert_file / key_file を省略 → ~/.config/nexterm/tls/ に自動生成
+# Omit cert_file / key_file → auto-generated into ~/.config/nexterm/tls/
 ```
 
-**対応 (テスト・開発のみ、推奨されない)**
+**What to do (test/dev only — not recommended)**
 
-明示的にオプトインで HTTP フォールバックを許可:
+Explicitly opt in to HTTP fallback:
 
 ```toml
 [web]
 enabled = true
-allow_http_fallback = true   # 警告: 平文でセッショントークンが流れる
+allow_http_fallback = true   # WARNING: session tokens travel in plaintext
 [web.tls]
 enabled = true
-cert_file = "/path/to/cert.pem"   # 失敗しても起動を継続
+cert_file = "/path/to/cert.pem"   # Continue startup even if loading fails
 ```
 
 ---
 
-### 4. OAuth Org メンバーシップ検証が**実際に**機能するように修正
+### 4. OAuth org membership verification now **actually** works
 
-**何が変わるか**
+**What changes**
 
-旧実装は `allowed_orgs` 設定を**実際には検証していませんでした**（`get_current_token()` のバグで Org チェックが絶対実行されない）。
-新実装で正しく GitHub API でメンバーシップを検証するようになりました。
+The old implementation did not actually validate `allowed_orgs` (a bug in `get_current_token()` made it impossible for the org check to ever run). The new implementation correctly verifies membership against the GitHub API.
 
-**影響**
+**Impact**
 
-| 旧実装の挙動 | 新実装の挙動 |
+| Old behaviour | New behaviour |
 |---|---|
-| `allowed_orgs` のみ設定 → **誰もログイン不可**（機能不全） | `allowed_orgs` のみ設定 → メンバーは許可、非メンバーは拒否（仕様通り） |
-| `allowed_emails` + `allowed_orgs` 併用 → メール一致のみで通過、Org チェック完全スキップ | メール一致 OR Org メンバーシップで許可 |
+| Setting `allowed_orgs` only → **nobody can log in** (effectively broken) | Setting `allowed_orgs` only → members allowed, non-members denied (as specified) |
+| Setting both `allowed_emails` and `allowed_orgs` → only an email match passed; the org check was skipped entirely | Allowed when the email matches OR org membership matches |
 
-旧実装に依存して「Org メンバーシップで二重防御」と思っていた管理者は、その前提が誤りだったことになります。**設定を見直してください**。
+Administrators who believed they had "double protection via org membership" had been mistaken. **Please review your configuration.**
 
 ---
 
-### 5. WASM プラグイン: fuel / メモリ制限導入（プラグイン作者に影響）
+### 5. WASM plugins: fuel and memory limits (affects plugin authors)
 
-**何が変わるか**
+**What changes**
 
-- 各 `nexterm_on_output` / `nexterm_on_command` 呼び出し前に `10,000,000` 命令分の fuel が供給されます。fuel 枯渇でトラップ。
-- プラグインの線形メモリは初期 `256 ページ (16 MiB)` を超えるとロード時に拒否されます。
-- プラグインに `nexterm_api_version()` をエクスポートしている場合、ホストの `PLUGIN_API_VERSION` (= 1) と一致しないとロード拒否されます。
+- Each `nexterm_on_output` / `nexterm_on_command` call is provisioned with `10,000,000` units of fuel before execution. Exhausting fuel traps the call.
+- A plugin's linear memory is rejected at load time if it requests more than `256 pages (16 MiB)` initially.
+- If a plugin exports `nexterm_api_version()`, the value must match the host's `PLUGIN_API_VERSION` (= 1) or the plugin is rejected.
 
-**影響**
+**Impact**
 
-通常のプラグインは影響を受けません。ただし以下に注意:
-- 1 呼び出しで 1,000 万命令を超える重い処理を行うプラグインはトラップされる → 処理を分割するか、ホストへ要望
-- 16 MiB を超える初期メモリを要求するプラグインはロード不能 → メモリ動的拡張に変更
+Normal plugins are unaffected. Watch out for:
+
+- Plugins that need more than 10 million instructions per call will trap → split work into multiple calls, or file a request with the host.
+- Plugins that request more than 16 MiB initial memory will fail to load → switch to dynamic memory growth.
 
 ---
 
-### 6. 設定ファイル `config.toml` のキー名変更（旧テンプレート使用者に影響）
+### 6. `config.toml` key renaming (affects users of the old template)
 
-**何が変わるか**
+**What changes**
 
-初回起動時に生成されていた `DEFAULT_CONFIG_TOML` テンプレートが、実際には**実装と一致しないキー名**を使っていたため修正されました。
+The `DEFAULT_CONFIG_TOML` template generated on first launch used **key names that did not match the implementation**, so it was updated.
 
-| 旧テンプレート（実装と不一致） | 新テンプレート（実装と一致） |
+| Old template (didn't match the implementation) | New template (matches) |
 |---|---|
-| `[color_scheme] builtin = "tokyonight"` | `colors = "tokyonight"` または `[colors] scheme = "tokyonight"` |
+| `[color_scheme] builtin = "tokyonight"` | `colors = "tokyonight"` or `[colors] scheme = "tokyonight"` |
 | `[tab_bar] show = true / position = "top"` | `[tab_bar] enabled = true / height = 28` |
 | `[status_bar] show = true / position = "bottom"` | `[status_bar] enabled = true` |
 
-**影響**
+**Impact**
 
-- 旧テンプレートの設定は元から効いていなかったため、**ユーザー体験には変化なし**（むしろ正しく効くようになる）
-- カスタマイズ済みの `config.toml` は手動で新しいキー名に変更してください
+- The old template never actually took effect, so **the user experience does not change** (in fact, settings now genuinely take effect).
+- If you customised `config.toml`, update it to the new key names by hand.
 
-**新たに設定可能になったセクション** （旧 `TomlConfig` で無視されていたもの）
+**Newly configurable sections** (ignored by the previous `TomlConfig`)
 
 ```toml
 [window]
@@ -656,26 +554,26 @@ language = "auto"             # "auto" / "ja" / "en" / "fr" / "de" / "es" / "it"
 
 ---
 
-## トラブルシューティング
+## Troubleshooting
 
-### サーバーに接続できない（"プロトコルバージョン不一致"）
+### Cannot connect to the server ("protocol version mismatch")
 
-クライアントとサーバーのバージョンが揃っていません。両方を最新版にアップデートしてください。
+Client and server versions do not match. Update both to the latest version.
 
-### Lua スクリプトのロードに失敗
+### Lua scripts fail to load
 
-`os.execute` / `io.open` / `require` を使用していないか確認してください。サンドボックスで無効化されています（[項目 2](#2-lua-サンドボックスによる-api-制限既存-configlua-に影響)）。
+Check that you are not using `os.execute` / `io.open` / `require`. They are disabled in the sandbox (see [item 2](#2-lua-api-restricted-by-sandboxing-affects-existing-configlua)).
 
-### Web ターミナルが起動しない
+### The web terminal does not start
 
-TLS 設定失敗時のフォールバックが既定禁止になりました（[項目 3](#3-tls-フォールバック既定禁止https-設定済みユーザーに影響)）。証明書設定を見直すか `allow_http_fallback = true` を設定してください。
+Falling back from a failed TLS configuration is no longer the default (see [item 3](#3-tls-fallback-disabled-by-default-affects-users-who-configured-https)). Fix your certificate configuration, or set `allow_http_fallback = true`.
 
-### OAuth で突然ログインできなくなった
+### Suddenly cannot log in via OAuth
 
-`allowed_orgs` 単独設定ユーザー: 旧実装では誰もログインできない状態だったため、これまで使えていない可能性があります。改めて Org メンバーシップ設定を確認してください（[項目 4](#4-oauth-org-メンバーシップ検証が実際に機能するように修正)）。
+If you only set `allowed_orgs`: under the old implementation nobody could log in, so you may simply have been unable to use it. Re-check your org-membership configuration (see [item 4](#4-oauth-org-membership-verification-now-actually-works)).
 
 ---
 
-## サポート
+## Support
 
-問題があれば https://github.com/mizu-jun/Nexterm/issues に報告してください。
+If you run into problems, please report them at https://github.com/mizu-jun/Nexterm/issues.
