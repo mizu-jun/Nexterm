@@ -8,36 +8,36 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 
 ## What's New in v1.1.0
 
-**Sprint 1〜4 全完了 — セキュリティ強化・サプライチェーン整備・拡張性向上の総まとめリリース**
+**Sprints 1–4 complete — a rollup release focused on security hardening, supply-chain readiness, and extensibility.**
 
 ### Security & Sandboxing
-- **Web auth hardening**: OAuth Org 検証バイパス修正、TOTP リプレイ攻撃対策・IP レート制限、TLS フォールバック既定禁止、OIDC SSRF 対策。
-- **IPC OOM 防止**: `MAX_MSG_LEN = 64 MiB` で postcard メッセージ上限を強制。プロトコル Hello + バージョニング (`PROTOCOL_VERSION = 7`、最新値は `nexterm-proto/src/lib.rs` 参照) を必須化。
-- **VT パーサ DoS 対策**: APC 4 MiB / DCS Sixel 16 MiB / Kitty 64 MiB の上限。画像デコード u32 オーバーフロー修正 (`MAX_IMAGE_BYTES = 256 MiB`)。
-- **Lua / WASM サンドボックス**: Lua の `os` / `io` / `package` / `require` / `dofile` / `debug` を無効化。WASM は `consume_fuel(true)` + `MAX_MEMORY_PAGES = 256` で制限。
-- **機密操作の同意ダイアログ**: クリップボード書き込み・URL オープン・通知に `prompt`/`allow`/`deny` ポリシーを実装（Wezterm/iTerm2 流の UX）。
-- **シークレット zeroize + keyring 統合**: パスワード入力を `Zeroizing<String>` でドロップ時クリア、OS keychain に保存可能。
+- **Web auth hardening**: fixed OAuth org-validation bypass; TOTP replay protection and per-IP rate limiting; TLS fallback disabled by default; OIDC SSRF mitigations.
+- **IPC OOM protection**: `MAX_MSG_LEN = 64 MiB` enforced on postcard messages; mandatory protocol Hello + versioning (`PROTOCOL_VERSION = 7`; see `nexterm-proto/src/lib.rs` for the current value).
+- **VT parser DoS hardening**: APC 4 MiB / DCS Sixel 16 MiB / Kitty 64 MiB caps. Image-decode u32 overflow fixed (`MAX_IMAGE_BYTES = 256 MiB`).
+- **Lua / WASM sandboxing**: Lua `os` / `io` / `package` / `require` / `dofile` / `debug` disabled. WASM constrained by `consume_fuel(true)` + `MAX_MEMORY_PAGES = 256`.
+- **Consent prompts for sensitive operations**: `prompt` / `allow` / `deny` policies for clipboard writes, URL launches, and notifications (Wezterm/iTerm2-style UX).
+- **Secret zeroize + keyring integration**: password inputs use `Zeroizing<String>` so they are cleared on drop, and can be stored in the OS keychain.
 
 ### Plugin Runtime
-- **WASM プラグイン (wasmi)**: `nexterm-ctl plugin {list,load,unload,reload}` でランタイム管理。フック: `nexterm_init` / `nexterm_meta` / `nexterm_on_output` / `nexterm_on_command`。
-- **Plugin API v2**: 入力サニタイズ（ESC/CSI/OSC/DCS/APC + C0 制御文字を除去）+ `write_pane` の PaneId 許可リスト。`MIN_SUPPORTED_API_VERSION = 1` で v1 プラグインも graceful 降格で動作（deprecation 警告付き）。
+- **WASM plugins (wasmi)**: managed at runtime through `nexterm-ctl plugin {list,load,unload,reload}`. Hooks: `nexterm_init` / `nexterm_meta` / `nexterm_on_output` / `nexterm_on_command`.
+- **Plugin API v2**: input sanitization (strips ESC/CSI/OSC/DCS/APC and C0 control characters) + a PaneId allow-list for `write_pane`. `MIN_SUPPORTED_API_VERSION = 1` lets v1 plugins keep running under graceful degradation (with a deprecation warning).
 
 ### Supply Chain & Quality
-- **`cargo-deny` 統合**: ライセンス allow リスト + RustSec advisory 照合 + 不審ソース禁止を CI で強制。
-- **SBOM 自動生成**: タグ push 時に CycloneDX JSON を全 12 ワークスペース crate から生成し、リリース成果物に添付。
-- **STRIDE 脅威モデル**: 9 信頼境界 × STRIDE 6 カテゴリで残存リスクと既存対策を文書化 (`docs/THREAT_MODEL.md`)。
-- **minisign 署名 + SLSA Provenance**: アップデートチェッカーで `.minisig` を検証、リリースワークフローで attestation 生成。
-- **proptest 整備**: Sixel/Kitty パーサ・BSP/タイリングレイアウトの不変条件を property test で検証（約 3,500 ランダム入力）。
-- **cargo-fuzz 基盤**: `nexterm-vt` に 4 ターゲット（VtParser / Sixel / Kitty / OSC URL）の fuzzing 基盤を導入、毎日 CI で 60 秒 × 4 並列実行。
+- **`cargo-deny` integration**: license allow-list + RustSec advisory checks + forbidden-source enforcement, all in CI.
+- **Automated SBOM**: tag pushes emit CycloneDX JSON for all 12 workspace crates and attach them to release assets.
+- **STRIDE threat model**: 9 trust boundaries × 6 STRIDE categories, documenting residual risks and existing mitigations (`docs/THREAT_MODEL.md`).
+- **minisign signatures + SLSA provenance**: the update checker verifies `.minisig`, and the release workflow generates attestations.
+- **proptest coverage**: invariants of the Sixel/Kitty parsers and the BSP / tiling layout are validated with property tests (~3,500 random inputs).
+- **cargo-fuzz infrastructure**: 4 targets in `nexterm-vt` (VtParser / Sixel / Kitty / OSC URL) run for 60 s × 4 in parallel every day in CI.
 
 ### Architecture
-- **巨大ファイル分割**: `renderer.rs` (6,947 行) → 8 ファイル / `dispatch.rs` (1,327 行) → 6 ファイル / `schema.rs` (1,417 行) → 9 ファイル。
-- **共有 IPC コア**: `nexterm-client-core` クレートを新設し、GPU / TUI / ctl で IPC 接続ロジックを共通化。
-- **Config ホットリロード**: `arc-swap::ArcSwap<RuntimeConfig>` で hooks / log_config / hosts を lock-free に更新。
+- **Large-file split**: `renderer.rs` (6,947 lines) → 8 files / `dispatch.rs` (1,327 lines) → 6 files / `schema.rs` (1,417 lines) → 9 files.
+- **Shared IPC core**: a new `nexterm-client-core` crate unifies IPC connection logic across the GPU, TUI, and `ctl` clients.
+- **Config hot reload**: `arc-swap::ArcSwap<RuntimeConfig>` updates hooks / log_config / hosts lock-free.
 
 ### Docs & Migration
-- **互換性破壊あり**: プロトコル Hello メッセージ・Lua サンドボックス・TLS フォールバック既定禁止・Plugin API v2。詳細は [docs/MIGRATION.md](docs/MIGRATION.md) を参照。
-- **新規ドキュメント**: [docs/SBOM.md](docs/SBOM.md) / [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) / [docs/plugin-api.md](docs/plugin-api.md) を追加。
+- **Breaking changes**: protocol Hello message, Lua sandbox, TLS fallback default-off, Plugin API v2. See [docs/MIGRATION.md](docs/MIGRATION.md) for details.
+- **New documents**: [docs/SBOM.md](docs/SBOM.md), [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md), and [docs/plugin-api.md](docs/plugin-api.md) added.
 
 ---
 
@@ -735,7 +735,7 @@ For details, see the documentation:
 | [docs/DESIGN.md](docs/DESIGN.md) | Design document and ADRs |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Full TOML / Lua configuration reference |
 | [docs/benchmarks.md](docs/benchmarks.md) | VT layer throughput / keystroke latency benchmarks (Sprint 5-3) |
-| [docs/adr/](docs/adr/README.md) | Architecture Decision Records (PROTOCOL_VERSION / Plugin API / BSP / postcard 等の意思決定の遡及記録) |
+| [docs/adr/](docs/adr/README.md) | Architecture Decision Records (historical record of choices around PROTOCOL_VERSION, Plugin API, BSP, postcard, etc.) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Build instructions, coding conventions, PR guidelines |
 
 ## License

@@ -2,6 +2,17 @@
 
 > **日本語:** [CONTRIBUTING.ja.md](CONTRIBUTING.ja.md)
 
+## Documentation Language
+
+Nexterm is open source and distributed worldwide, so **English is the canonical language** for everything in this repository.
+
+- Source code comments (`//`, `///`, doc-comments, `expect("...")` messages) must be written in English.
+- Repository documentation (`README.md`, files under `docs/`, `CHANGELOG.md`, ADRs, etc.) is authored in English. A Japanese translation, when useful, sits alongside the English file as `*.ja.md` (e.g. `README.md` + `README.ja.md`). The English file is authoritative; the Japanese companion is a best-effort translation.
+- User-facing strings in the application are managed by `nexterm-i18n`. Add new strings to all 8 locale files under `nexterm-i18n/locales/` and reference them through the `fl!` macro — do not hard-code natural language in the renderer.
+- Commit messages, PR titles, and GitHub Release notes should be in English. Japanese supplements are welcome but should not be the only version.
+
+When you add a new document, default to English. Create a `*.ja.md` companion only when Japanese readability matters for that specific document; treat it as a translation that may lag behind the English source.
+
 ## Prerequisites
 
 | Tool | Version | Purpose |
