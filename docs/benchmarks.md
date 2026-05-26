@@ -1,112 +1,123 @@
-# Nexterm ベンチマーク
+# Nexterm Benchmarks
 
-> Sprint 5-3 / C1 / C5 / J4: VT パーサ層のスループットおよびキーストロークレイテンシ計測。
+> Sprint 5-3 / C1 / C5 / J4: throughput and keystroke-latency measurements at the VT-parser layer.
 
-## 1. 計測の目的と注意点
+## 1. Goals and caveats
 
-このドキュメントは Nexterm の **VT 層単独** のスループットを計測したものです。
-ターミナルエミュレータ全体のレイテンシ（キー入力 → ピクセル更新までのエンドツーエンド）
-は GPU / winit / ウィンドウシステム / ディスプレイのリフレッシュレートにも左右されるため、
-他社の公表値（Alacritty 3 ms / kitty 3 ms / Ghostty 2 ms 等）と直接の数値比較はできません。
+This document measures the throughput of Nexterm's **VT layer in isolation**.
+End-to-end terminal latency (keypress → pixels on screen) is also influenced by the
+GPU, winit, the windowing system, and the display refresh rate, so the numbers here
+cannot be compared directly with the figures published by other terminals
+(Alacritty 3 ms, kitty 3 ms, Ghostty 2 ms, etc.).
 
-本計測は次の問いに答えるものです:
+These benchmarks answer the following questions:
 
-- VT 層がボトルネックになっていないこと（典型ワークロードで GPU 描画の前に詰まらない）。
-- 将来の回帰検出ベースライン（同じシナリオで遅くなったら気付ける）。
+- Confirm that the VT layer is not a bottleneck (the typical workload does not stall
+  before GPU rendering).
+- Provide a regression baseline so we notice if the same scenario gets slower in the
+  future.
 
-エンドツーエンドのレイテンシ計測（typometer 等の外部ツールによる実機計測）は今後の課題です。
+End-to-end latency measurement (via external tools such as typometer, on real
+hardware) remains future work.
 
-## 2. 計測環境（リファレンス）
+## 2. Reference environment
 
-| 項目 | 値 |
-|------|------|
-| CPU | x86_64 モバイル / ノート PC クラス |
-| OS | Windows 11（64-bit） |
-| Rust | rustc stable（Cargo.toml で edition 2024 = 1.85+） |
-| ビルド | `cargo bench --release` プロファイル（criterion デフォルト） |
-| コミット | master 2026-05-11 時点 |
+| Item | Value |
+|------|-------|
+| CPU | x86_64 mobile-class laptop |
+| OS | Windows 11 (64-bit) |
+| Rust | rustc stable (edition 2024 in `Cargo.toml` → 1.85+) |
+| Build | `cargo bench --release` profile (criterion defaults) |
+| Commit | master as of 2026-05-11 |
 
-具体的なハードウェア構成は計測者の端末に依存します。再現性を上げたい場合は、
-将来 GitHub Actions の `ubuntu-latest` ランナー上で同じベンチを走らせた数値を
-本ドキュメントに併記することを検討してください（環境固定の方が再現性が高い）。
+The exact hardware depends on the operator. To improve reproducibility, consider
+also running the same benches on the GitHub Actions `ubuntu-latest` runner and
+recording those numbers alongside the local results (a fixed environment is more
+reproducible).
 
-実行手順:
+Run the benches with:
 
 ```sh
 cargo bench -p nexterm-vt --bench vt_throughput
 ```
 
-すべてのシナリオは `nexterm-vt/benches/vt_throughput.rs` に実装されています。
+All scenarios live in `nexterm-vt/benches/vt_throughput.rs`.
 
-## 3. VT スループット（`vt_advance`）
+## 3. VT throughput (`vt_advance`)
 
-各シナリオは **256 KiB のバイト列** を `VtParser::new(80, 24).advance()` に流したときの
-ピーク値を `criterion --quick` で計測したものです。
-シナリオは [alacritty/vtebench](https://github.com/alacritty/vtebench) を参考にしています。
+Each scenario feeds a **256 KiB byte stream** into `VtParser::new(80, 24).advance()`
+and reports the peak value with `criterion --quick`.
+The scenarios are inspired by
+[alacritty/vtebench](https://github.com/alacritty/vtebench).
 
-| シナリオ | 時間 (ms) | スループット (MiB/s) | 説明 |
+| Scenario | Time (ms) | Throughput (MiB/s) | Description |
 |---|---:|---:|---|
-| `light_cells` | 6.16 | 40.6 | ASCII テキストのみ。CRLF 区切り |
-| `medium_cells` | 6.78 | 36.9 | ANSI 8 色 SGR を多数含む（`ls --color` 風） |
-| `dense_cells` | 1.83 | 136.3 | 24-bit RGB 前景背景フル装飾、改行少なめ |
-| `cursor_motion` | 2.19 | 114.0 | CSI H で大量カーソル移動（vim/htop 風） |
-| `scrolling` | 7.50 | 33.3 | 改行多数で連続スクロール（`tail -f` 風） |
-| `alt_screen_random` | 2.31 | 108.2 | 代替画面 + 決定論的ランダム位置描画 |
-| `sync_output` | 9.38 | 26.7 | DEC ?2026 同期出力で TUI 全画面再描画相当 |
+| `light_cells` | 6.16 | 40.6 | ASCII text only, CRLF-delimited |
+| `medium_cells` | 6.78 | 36.9 | Lots of ANSI 8-colour SGR (like `ls --color`) |
+| `dense_cells` | 1.83 | 136.3 | 24-bit RGB foreground/background, heavily decorated, few newlines |
+| `cursor_motion` | 2.19 | 114.0 | Heavy CSI H cursor moves (vim/htop-style) |
+| `scrolling` | 7.50 | 33.3 | Continuous scroll via many newlines (`tail -f`-style) |
+| `alt_screen_random` | 2.31 | 108.2 | Alt screen + deterministic random-position draws |
+| `sync_output` | 9.38 | 26.7 | DEC ?2026 synchronized output — equivalent to a full TUI redraw |
 
-中央値ベース。詳細な信頼区間は `cargo bench` 実行時に criterion が表示します。
+Median values. Confidence intervals are reported by criterion when you run
+`cargo bench`.
 
-## 4. キーストロークレイテンシ（`vt_keystroke_latency`）
+## 4. Keystroke latency (`vt_keystroke_latency`)
 
-1 文字相当のバイト列を `advance` → `take_dirty_rows` まで流したときの所要時間。
-VT 層のレイテンシ上限を確認する目的の合成ベンチです。
+Time taken to push the byte sequence for a single keypress through
+`advance` → `take_dirty_rows`. This is a synthetic micro-benchmark that gives
+us an upper bound on the VT layer's latency.
 
-| シナリオ | 時間 | 説明 |
+| Scenario | Time | Description |
 |---|---:|---|
-| `single_ascii` | 133 ns | 単一 ASCII 文字 1 字を打鍵相当 |
-| `enter_newline` | 3.15 μs | CR LF 改行（バッファ末端でスクロール発生） |
-| `backspace` | 114 ns | BS + Space + BS の典型 erase |
-| `cursor_up` | 57 ns | CSI A の 1 行上移動 |
-| `colored_char` | 326 ns | SGR カラー設定 + 1 文字 + リセット |
+| `single_ascii` | 133 ns | A single ASCII character |
+| `enter_newline` | 3.15 μs | CR LF (scroll triggered at the bottom of the buffer) |
+| `backspace` | 114 ns | Typical erase sequence: BS + space + BS |
+| `cursor_up` | 57 ns | One-row CSI A cursor up |
+| `colored_char` | 326 ns | SGR colour + character + reset |
 
-これらの数値はすべて **マイクロ秒未満**で、Nexterm のエンドツーエンドレイテンシの
-ボトルネックは VT 層ではないことを示しています（GPU / コンポジタ / モニタが支配的）。
+All values are **sub-microsecond**, which shows that the VT layer is not the
+bottleneck in Nexterm's end-to-end latency (the GPU, the compositor, and the
+monitor dominate).
 
-## 5. 競合との比較（公表値）
+## 5. Comparison with other terminals (published values)
 
-参考値です。計測手法と環境がそろわないため厳密な順位付けではありません。
+These are reference values only. Methodology and environments differ, so this is
+not a strict ranking.
 
-| ターミナル | エンドツーエンドレイテンシ（公表値） | 出典 |
+| Terminal | End-to-end latency (published) | Source |
 |---|---:|---|
-| Ghostty | 約 2 ms | プロジェクト README |
-| Alacritty | 約 3 ms | プロジェクト wiki |
-| kitty | 約 3 ms | プロジェクト wiki |
-| Nexterm（VT 層単独） | < 1 μs | このドキュメント |
-| Nexterm（エンドツーエンド） | 未計測 | 今後の課題 |
+| Ghostty | ~2 ms | Project README |
+| Alacritty | ~3 ms | Project wiki |
+| kitty | ~3 ms | Project wiki |
+| Nexterm (VT layer only) | < 1 μs | This document |
+| Nexterm (end-to-end) | not measured | Future work |
 
-## 6. 既知の限界
+## 6. Known limitations
 
-- **PTY 層のオーバーヘッドは未計測**: `nexterm-server::Pane` の PTY リーダースレッドや
-  IPC（postcard シリアライズ）の所要時間は別途計測が必要。
-- **GPU 描画パスのベンチが未整備**: `nexterm-client-gpu` の 3 パス（背景／テキスト／画像）
-  に GPU 側マイクロベンチがありません。Sprint 5-4 以降の課題。
-- **`session_manager` テストは PTY を fork するため、カバレッジから除外**しています
-  （CI でハングしやすい既知の重テスト）。
+- **PTY-layer overhead is unmeasured**: the PTY reader thread inside
+  `nexterm-server::Pane` and the IPC serialization (postcard) cost needs to be
+  measured separately.
+- **No GPU benches yet**: the `nexterm-client-gpu` three-pass renderer (background,
+  text, image) has no GPU-side micro-bench. Tracked for Sprint 5-4 and later.
+- **`session_manager` tests are excluded from coverage** because they fork a real
+  PTY and tend to hang on CI (known heavy tests).
 
-## 7. 回帰検出の運用
+## 7. Regression-detection workflow
 
-ベンチマークは現状 CI では走らせていません（時間がかかるため）。
-リリース前にローカルで以下を実行し、過去結果（`target/criterion/` 配下）と比較してください:
+We do not run benches in CI today (they take too long). Before a release, run
+locally and compare with previous results stored under `target/criterion/`:
 
 ```sh
 cargo bench -p nexterm-vt --bench vt_throughput
 ```
 
-`criterion` は自動で前回比較を行い、`No change in performance detected` / `improved` /
-`regressed` を判定します。
+`criterion` automatically diffs the new run against the previous one and reports
+`No change in performance detected`, `improved`, or `regressed`.
 
-## 8. 関連
+## 8. Related material
 
-- 監査ラウンド 2: `memory/project_audit_round2.md` の C1 / C5 / J4
-- ADR-0001: wgpu アップグレード方針 (`docs/adr/0001-wgpu-upgrade.md`)
-- Sprint 5-3 進捗（memory `project_sprint5_3_progress.md`）
+- Audit round 2: items C1 / C5 / J4 in `memory/project_audit_round2.md`
+- ADR-0001: wgpu upgrade plan (`docs/adr/0001-wgpu-upgrade.md`)
+- Sprint 5-3 progress notes (memory `project_sprint5_3_progress.md`)
