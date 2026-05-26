@@ -1,87 +1,84 @@
-# ADR-0006: IPC シリアライザ: bincode 1.x → postcard 移行
+# ADR-0006: IPC serializer — migrate from bincode 1.x to postcard
 
-## ステータス
+## Status
 
-採用 (2026-05-12、Sprint 5-1 / G3 の決定を遡及記録)
+Accepted (2026-05-12; records the Sprint 5-1 / G3 decision retroactively)
 
-## コンテキスト
+## Context
 
-Nexterm の IPC（クライアント↔サーバー間 Unix ソケット / Windows 名前付きパイプ）は
-`ClientToServer` / `ServerToClient` メッセージを serde 経由で送受信する。
+Nexterm's IPC (Unix socket on Linux/macOS, named pipe on Windows, between client and server) sends `ClientToServer` / `ServerToClient` messages through serde.
 
-### 初期実装
+### Initial implementation
 
-`bincode 1.x` を採用。Rust エコシステムで広く使われ、serde 互換で簡潔。
+We started with `bincode 1.x`. It is widely used in the Rust ecosystem, serde-compatible, and concise.
 
-### 問題発生（2025）
+### What went wrong (2025)
 
-- **RUSTSEC-2025-0141**: bincode 1.x にメンテナンス停止リスクのアドバイザリが出た
-- `cargo audit` で `.cargo/audit.toml` / `deny.toml` に ignore を入れる対応をしていたが、
-  根本的解決ではない（依存上の脆弱性が将来 CVE 化する可能性）
+- **RUSTSEC-2025-0141**: an advisory was published noting that bincode 1.x is at risk of becoming unmaintained.
+- We worked around it by adding ignores to `.cargo/audit.toml` / `deny.toml` for `cargo audit`, but that is not a fundamental fix — a dependency-side advisory could still become a CVE in the future.
 
-### 代替候補
+### Candidates
 
-- **bincode 2.x**: API が再設計されており、移行コストはあるが同系統
-- **postcard**: no_std 対応・embedded 向け設計だが Nexterm でも適合する。サイズが小さく、
-  メンテナンスが活発。RUSTSEC アドバイザリ無し
-- **rmp-serde (MessagePack)**: 互換性高いが、サイズと速度で postcard に劣る
+- **bincode 2.x**: the API is redesigned, so there is a migration cost, but it is in the same family.
+- **postcard**: designed for no_std / embedded but a good fit for Nexterm. Smaller payloads, actively maintained, no RUSTSEC advisories.
+- **rmp-serde (MessagePack)**: highly compatible, but loses to postcard on both size and speed.
 
-### 監査ラウンド 2 タスク G3
+### Audit round 2, item G3
 
-CRITICAL 優先度で「bincode 1.x → postcard 移行」が挙がっていた（Sprint 5+ の最優先課題の 1 つ）。
+The audit flagged "migrate from bincode 1.x to postcard" at CRITICAL priority — one of the top items for Sprint 5+.
 
-## 決定
+## Decision
 
-**postcard 1.x に移行する。**
+**Migrate to postcard 1.x.**
 
-### Sprint 5-1 で実施した変更
+### Changes made in Sprint 5-1
 
-1. **`nexterm-proto/Cargo.toml`** — bincode を依存から外し、postcard を追加
-2. **IPC エンドポイントすべてのシリアライザを postcard に書き換え**:
+1. **`nexterm-proto/Cargo.toml`** — drop the bincode dependency and add postcard.
+2. **Rewrite serialization at every IPC endpoint to postcard**:
    - `nexterm-server/src/ipc/`
    - `nexterm-client-gpu/src/connection.rs`
    - `nexterm-client-tui/`
    - `nexterm-ctl/src/ipc.rs`
-   - `nexterm-launcher/`（v1.4.0 で削除済み）
-3. **`PROTOCOL_VERSION` 1 → 2 → 3 に bump**（移行段階を識別するため）
+   - `nexterm-launcher/` (removed in v1.4.0)
+3. **Bump `PROTOCOL_VERSION` 1 → 2 → 3** to mark the migration stages.
    - v1: bincode
-   - v2: postcard + 旧フィールドレイアウト
-   - v3: postcard + Sprint 5-1 で整理したメッセージレイアウト
-4. **postcard ラウンドトリップテストを追加**（nexterm-ctl/src/main.rs の `#[cfg(test)]` mod）
-5. **`cargo audit` の bincode ignore を削除**
+   - v2: postcard with the old field layout
+   - v3: postcard with the message layout cleaned up in Sprint 5-1
+4. **Add postcard round-trip tests** (`#[cfg(test)]` module in `nexterm-ctl/src/main.rs`).
+5. **Remove the bincode ignore from `cargo audit`.**
 
-### 移行のポイント
+### Migration notes
 
-- メッセージ長プレフィックス（4 バイト LE）は維持
-- バイト数は若干減（postcard の方が varint 圧縮で効率的）
-- ベンチマーク（Sprint 5-3 で計測）: パース速度は同等またはわずかに高速
+- The message-length prefix (4-byte LE) is unchanged.
+- Byte counts are slightly smaller (postcard's varint encoding is more efficient).
+- Benches (measured in Sprint 5-3): parse speed is on par or slightly faster.
 
-## 影響
+## Consequences
 
-### ポジティブ
+### Positive
 
-- RUSTSEC アドバイザリの解消
-- `cargo audit` の ignore リストから 1 件削除
-- バイナリサイズが若干小さい（postcard の varint）
-- メンテナンスが活発なライブラリへの依存
+- Resolves the RUSTSEC advisory.
+- One entry removed from the `cargo audit` ignore list.
+- Binaries are slightly smaller (postcard varints).
+- Depends on an actively maintained library.
 
-### ネガティブ
+### Negative
 
-- 移行作業の工数 L（多数のクレートに散らばっていたため）
-- postcard の API は bincode と微妙に違う（学習コスト）
-- 旧 v1 クライアントとの非互換（クライアント・サーバーを同時更新する必要）
+- Migration was an L-sized effort (spread across many crates).
+- postcard's API is subtly different from bincode (some learning cost).
+- Old v1 clients are no longer compatible — clients and servers must update together.
 
-## 代替案
+## Alternatives
 
-- **代替案 A: bincode 1.x のまま ignore で運用**: 将来の CVE 化リスクを抱え続ける
-- **代替案 B: bincode 2.x へ更新**: API 再設計で移行コストは同等、しかし将来も似た問題が再発する可能性
-- **代替案 C: rmp-serde (MessagePack)**: サイズ・速度で postcard に劣る
-- **代替案 D: 独自フォーマット**: 過剰な複雑さ
+- **Alternative A: stay on bincode 1.x with ignores** — carries the future-CVE risk forever.
+- **Alternative B: upgrade to bincode 2.x** — comparable migration cost (the API was redesigned), and similar problems could recur later.
+- **Alternative C: rmp-serde (MessagePack)** — loses on size and speed compared to postcard.
+- **Alternative D: a custom format** — needlessly complex.
 
-## 参照
+## References
 
-- Sprint 5-1 進捗: `memory/project_sprint5_1_progress.md`
-- 監査ラウンド 2 タスク G3
+- Sprint 5-1 progress: `memory/project_sprint5_1_progress.md`
+- Audit round 2, item G3
 - RUSTSEC-2025-0141: bincode 1.x advisory
-- postcard 公式: https://github.com/jamesmunns/postcard
-- Sprint 5-3 ベンチマーク: `docs/benchmarks.md`（VT 層のパース速度に postcard の影響は無視できるレベル）
+- postcard upstream: https://github.com/jamesmunns/postcard
+- Sprint 5-3 benchmarks: `docs/benchmarks.md` (postcard's impact on VT-layer parse speed is negligible)

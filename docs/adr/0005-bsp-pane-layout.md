@@ -1,88 +1,88 @@
-# ADR-0005: BSP ツリーによる pane 分割設計
+# ADR-0005: BSP-tree pane layout
 
-## ステータス
+## Status
 
-採用 (2026-05-12、Sprint 1 の決定を遡及記録)
+Accepted (2026-05-12; records the Sprint 1 decision retroactively)
 
-## コンテキスト
+## Context
 
-ターミナルエミュレータの pane 分割（複数ターミナル並列表示）には複数の設計流派がある:
+Different terminal emulators take different approaches to pane splitting:
 
-- **均等タイリング**: GridLayout で N×M に分割。シンプルだが任意の比率指定が難しい
-- **BSP (Binary Space Partitioning)**: 各分割を 2 分木として表現。tmux / i3wm / Zellij 等が採用
-- **フローティング**: 各 pane が自由位置・サイズを持つ。Windows Terminal が部分対応
+- **Uniform tiling**: split into an N×M grid via a GridLayout. Simple, but specifying an arbitrary ratio is hard.
+- **BSP (Binary Space Partitioning)**: each split is a node in a binary tree. tmux, i3wm, Zellij, and others use this.
+- **Floating**: each pane has a free position and size. Windows Terminal supports this partially.
 
-### Nexterm の要件
+### Requirements for Nexterm
 
-- tmux 互換のキーバインドで pane 分割（`Ctrl+B "` 等）
-- 任意の split direction (horizontal / vertical) の入れ子
-- ペインのリサイズが直感的（隣接 pane が連動）
-- セッションの永続化・テンプレート保存が可能（構造をシリアライズできる）
+- tmux-compatible keybindings for splitting panes (`Ctrl+B "`, etc.)
+- Arbitrary nesting in either split direction (horizontal / vertical).
+- Intuitive resize (adjacent panes move together).
+- Sessions and templates must be persistable (the structure must be serialisable).
 
-## 決定
+## Decision
 
-**BSP（Binary Space Partitioning）ツリーを採用** する。
+**Adopt a BSP (Binary Space Partitioning) tree.**
 
-### データ構造
+### Data structure
 
 ```rust
 enum SplitNode {
-    Pane(u32),  // pane_id（リーフ）
+    Pane(u32),  // pane_id (leaf)
     Split {
         dir: SplitDir,    // Horizontal / Vertical
-        ratio: f32,       // 0.0 〜 1.0
+        ratio: f32,       // 0.0 to 1.0
         left: Box<SplitNode>,
         right: Box<SplitNode>,
     },
 }
 ```
 
-各 `Window` が 1 つの `SplitNode` ルートを持ち、再帰的に分割を表現する。
+Each `Window` holds a single `SplitNode` root and expresses splits recursively.
 
-### 主要操作
+### Core operations
 
-- **分割**: 既存リーフを `Split { left: 旧, right: 新 }` に置き換える
-- **削除**: pane を含むリーフを取り、親 `Split` を兄弟リーフに昇格
-- **リサイズ**: 該当 `Split.ratio` を変更し、再帰的に再計算
-- **シリアライズ**: ツリー全体を JSON / postcard でラウンドトリップ
+- **Split**: replace an existing leaf with `Split { left: old, right: new }`.
+- **Delete**: remove the leaf containing the pane and promote the sibling leaf up to where the parent `Split` was.
+- **Resize**: change `Split.ratio` of the relevant node and recompute recursively.
+- **Serialize**: round-trip the entire tree through JSON / postcard.
 
-### Pane 追加の順序（重要）
+### The order of operations when adding a pane (important)
 
-「chicken-and-egg 問題」を避けるため、Pane 追加は以下の順:
+To avoid the chicken-and-egg problem, add panes in this order:
 
-1. **pane_id を事前確保**（`SessionManager` で連番採番）
-2. **ツリーに挿入**（まだ PTY なし）
-3. **全 pane サイズを再計算**（全リーフに対応する `PaneRect` 計算）
-4. **PTY をスポーン**（このとき正しい cols/rows で起動）
-5. **既存 pane をリサイズ**（PTY に SIGWINCH 相当の通知）
+1. **Reserve the pane_id up front** (sequentially allocated by `SessionManager`).
+2. **Insert into the tree** (no PTY yet).
+3. **Recompute every pane's size** (compute the `PaneRect` of every leaf).
+4. **Spawn the PTY** (now we can launch it with the correct cols/rows).
+5. **Resize existing panes** (notify each PTY with the equivalent of `SIGWINCH`).
 
-順序を間違えると PTY が誤ったサイズで起動し、その後のリサイズが効かない。
+Getting this order wrong launches PTYs at the wrong size and later resizes fail to take effect.
 
-## 影響
+## Consequences
 
-### ポジティブ
+### Positive
 
-- tmux と同じメンタルモデル（既存ユーザーが習熟済み）
-- 任意の入れ子分割が表現可能（split 内に split を入れられる）
-- ツリーをそのまま JSON 永続化できる（テンプレート機能）
-- リサイズの局所性が高い（変更が必要な領域だけ再計算）
+- Same mental model as tmux (existing users already know it).
+- Arbitrary nested splits work naturally (a split can contain another split).
+- The tree persists directly to JSON (basis for the template feature).
+- Resize is local: only the affected region is recomputed.
 
-### ネガティブ
+### Negative
 
-- データ構造が再帰的で、フラットな配列より読みにくい
-- 「pane を別 window に移動」のような操作はツリー再構築が必要
-- フローティング pane との混在は別途 `FloatRect` で管理（2 つの表現方式が並列）
+- The recursive data structure is harder to read than a flat array.
+- Operations like "move a pane to a different window" require rebuilding the tree.
+- Mixing with floating panes is handled separately by `FloatRect` (two representations in parallel).
 
-## 代替案
+## Alternatives
 
-- **代替案 A: グリッドレイアウト (N×M)**: シンプルだが、任意比率の分割や入れ子が困難
-- **代替案 B: タイリング配列 (Zellij 流)**: フラット表現は読みやすいが、リサイズロジックが複雑
-- **代替案 C: フローティングのみ**: 自由度高いが、tmux 互換性が失われる
+- **Alternative A: grid layout (N×M)** — simple, but arbitrary ratios and nesting are hard.
+- **Alternative B: tiling array (Zellij-style)** — the flat representation is readable, but resize logic gets complex.
+- **Alternative C: floating only** — maximum freedom, but loses tmux compatibility.
 
-## 参照
+## References
 
-- `nexterm-server/src/window/bsp.rs` — BSP 分割アルゴリズム（`PaneRect` / `SplitDir`）
-- `nexterm-server/src/window/tiling.rs` — タイリングレイアウトロジック
-- `nexterm-server/src/window/floating.rs` — フローティング `FloatRect`
-- `nexterm-server/src/window/tests.rs` — `bsp_split` レイアウトユニットテスト
-- tmux 比較: https://github.com/tmux/tmux/wiki
+- `nexterm-server/src/window/bsp.rs` — the BSP split algorithm (`PaneRect` / `SplitDir`)
+- `nexterm-server/src/window/tiling.rs` — tiling layout logic
+- `nexterm-server/src/window/floating.rs` — floating `FloatRect`
+- `nexterm-server/src/window/tests.rs` — `bsp_split` layout unit tests
+- tmux comparison: https://github.com/tmux/tmux/wiki

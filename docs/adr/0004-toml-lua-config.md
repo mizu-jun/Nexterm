@@ -1,76 +1,73 @@
-# ADR-0004: TOML + Lua のハイブリッド設定方式
+# ADR-0004: Hybrid configuration with TOML + Lua
 
-## ステータス
+## Status
 
-採用 (2026-05-12、Sprint 1〜2 の決定を遡及記録)
+Accepted (2026-05-12; records the Sprint 1–2 decision retroactively)
 
-## コンテキスト
+## Context
 
-ターミナルエミュレータの設定形式は競合各社で大きく分かれている:
+Terminal emulators differ widely in how they configure themselves:
 
-- **静的**: Alacritty (TOML), Windows Terminal (JSON)
-- **動的**: WezTerm (Lua), kitty (独自 KSL)
-- **混合**: Ghostty (テキスト + 環境変数)
+- **Static**: Alacritty (TOML), Windows Terminal (JSON)
+- **Dynamic**: WezTerm (Lua), kitty (its own KSL)
+- **Hybrid**: Ghostty (text + environment variables)
 
-Nexterm が設定形式を選ぶにあたり、以下のトレードオフがあった:
+The trade-offs we faced:
 
-- **静的のみ**: シンプル・型チェック容易・ホットリロード簡単。ただし条件分岐や動的計算ができない。
-  ステータスバーのカスタマイズ等で柔軟性が足りない
-- **動的のみ**: フルプログラマブル・ステータスバー等の動的評価が容易。ただし設定が長くなりがち、
-  初心者参入障壁が高い、エラーがランタイムに出る
-- **混合**: 静的部分は TOML、動的部分（ステータスバー・フック）は Lua にする
+- **Static only**: simple, easy type-checking, easy hot-reload — but no conditionals or computed values. Insufficient flexibility for things like the status bar.
+- **Dynamic only**: fully programmable, dynamic evaluation (e.g. status bar) is easy — but configs become long, the barrier for newcomers is high, and errors surface only at runtime.
+- **Hybrid**: static parts in TOML, dynamic parts (status bar, hooks) in Lua.
 
-## 決定
+## Decision
 
-**ハイブリッド形式を採用**:
+**Adopt the hybrid form.**
 
-1. `~/.config/nexterm/config.toml` — 静的設定（フォント・色・キーバインド等）
-2. `~/.config/nexterm/config.lua` — オプション。Lua 関数で動的計算（ステータスバー左右の式、フック）
-3. ロード順序:
-   1. ビルトインデフォルト値
-   2. config.toml をマージ
-   3. config.lua があれば実行・結果をマージ
-4. ファイル変更監視 → ホットリロード対応
+1. `~/.config/nexterm/config.toml` — static settings (fonts, colours, keybindings, …)
+2. `~/.config/nexterm/config.lua` — optional; Lua functions for dynamic computation (status-bar left/right expressions, hooks)
+3. Load order:
+   1. Built-in defaults
+   2. Merge in `config.toml`
+   3. If `config.lua` exists, run it and merge the result
+4. Watch the files for changes → hot reload
 
-### Lua の利用範囲
+### Where Lua is used
 
-- ステータスバー左右の評価式（毎秒評価、`StatusBarEvaluator` でキャッシュ）
-- フック（OSC 133 セマンティックゾーンに反応する `HookEvent`）
-- 設定値の動的生成（環境変数・時刻に応じた切り替え等）
+- Status-bar left/right expressions (evaluated every second, cached in `StatusBarEvaluator`).
+- Hooks (`HookEvent` reacting to OSC 133 semantic zones).
+- Dynamic generation of configuration values (switch based on environment variables or time).
 
-### Lua の制約
+### Constraints on Lua
 
-- `mlua::Lua` インスタンスは専用 OS スレッド (`nexterm-lua-worker`) に閉じ込めて
-  メインスレッドとはチャネル通信（Send/Sync 制約への対処）
-- サンドボックス化（`os.execute` 等の危険な API を制限。`nexterm-config/src/lua_sandbox.rs`）
+- The `mlua::Lua` instance is confined to a dedicated OS thread (`nexterm-lua-worker`) and communicates with the main thread over channels (working around Send/Sync limitations).
+- Lua is sandboxed (`os.execute` and other risky APIs are restricted in `nexterm-config/src/lua_sandbox.rs`).
 
-## 影響
+## Consequences
 
-### ポジティブ
+### Positive
 
-- 初心者は TOML だけで完結する。Lua は不要な人は触らなくてよい
-- パワーユーザーは Lua でステータスバー・フックを自由に書ける
-- TOML の型チェック（serde）でほとんどの設定エラーを起動時に検出できる
-- WezTerm 流の柔軟性と Alacritty 流のシンプルさを両立
+- Newcomers can stay in TOML alone. Users who do not want Lua never have to touch it.
+- Power users can write the status bar and hooks freely in Lua.
+- TOML's type checking (via serde) catches most configuration errors at startup.
+- Combines WezTerm-class flexibility with Alacritty-class simplicity.
 
-### ネガティブ
+### Negative
 
-- 2 つの形式を覚える必要がある（ただし Lua は任意）
-- Lua スレッド管理・サンドボックスの実装コスト
-- Lua エラーがランタイムに発生する（TOML より遅い検出）
-- ドキュメンテーション量が増える
+- Users must learn two formats (although Lua is optional).
+- Implementation cost for Lua-thread management and sandboxing.
+- Lua errors surface at runtime, which is later than TOML.
+- More documentation to maintain.
 
-## 代替案
+## Alternatives
 
-- **代替案 A: TOML のみ**: シンプルだが、ステータスバー等の動的計算が貧弱になる
-- **代替案 B: Lua のみ (WezTerm 流)**: フル柔軟だが、初心者参入障壁が高い
-- **代替案 C: JSON + JS (VSCode 流)**: Node ランタイム同梱が重い・セキュリティ面でも複雑
-- **代替案 D: 独自 DSL**: kitty が KSL でやっているが、新規言語の学習コストが発生
+- **Alternative A: TOML only** — simple, but dynamic things like the status bar become weak.
+- **Alternative B: Lua only (WezTerm-style)** — fully flexible but raises the barrier for newcomers.
+- **Alternative C: JSON + JS (VS Code-style)** — bundling a Node runtime is heavy and complicates security.
+- **Alternative D: a custom DSL** — kitty does this with KSL, but a new language adds learning cost.
 
-## 参照
+## References
 
-- `nexterm-config/src/loader.rs` — TOML + Lua ロード順
-- `nexterm-config/src/lua_worker.rs` — Lua 専用スレッド
-- `nexterm-config/src/lua_sandbox.rs` — Lua サンドボックス
-- `nexterm-config/src/status_bar.rs` — Lua によるステータスバー評価
-- WezTerm 比較: https://wezfurlong.org/wezterm/config/files.html
+- `nexterm-config/src/loader.rs` — the TOML + Lua load order
+- `nexterm-config/src/lua_worker.rs` — the Lua-dedicated thread
+- `nexterm-config/src/lua_sandbox.rs` — Lua sandbox
+- `nexterm-config/src/status_bar.rs` — Lua-driven status-bar evaluation
+- WezTerm comparison: https://wezfurlong.org/wezterm/config/files.html
