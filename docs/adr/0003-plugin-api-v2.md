@@ -1,68 +1,66 @@
-# ADR-0003: Plugin API v1 → v2 移行と削除タイミング
+# ADR-0003: Plugin API migration from v1 to v2 and removal timeline
 
-## ステータス
+## Status
 
-採用 (2026-05-12、Sprint 4-2 の決定を遡及記録 + Sprint 5-4 で削除タイミング明示)
+Accepted (2026-05-12; records the Sprint 4-2 decision retroactively and adds an explicit removal timeline from Sprint 5-4)
 
-## コンテキスト
+## Context
 
-Nexterm の WASM プラグイン API は v1 で start し、ホスト側のセキュリティ強化のために v2 を導入した。
+The Nexterm WASM plugin API started at v1. We then introduced v2 to tighten host-side security.
 
-### v1 の問題
+### Problems with v1
 
-- `nexterm_on_output` の `pane_id` 引数がサニタイズされておらず、不正な値が渡る可能性
-- `write_pane` が任意の pane に書き込めるため、悪意あるプラグインによる干渉リスク
-- クリップボード書き込み (OSC 52) や通知発行が自動許可
+- The `pane_id` argument to `nexterm_on_output` was not sanitized, so invalid values could be passed in.
+- `write_pane` could write to any pane, so a malicious plugin could interfere with other panes.
+- Clipboard writes (OSC 52) and notifications were silently allowed.
 
-### v2 の改善
+### Improvements in v2
 
-- `pane_id` 引数のサニタイズ
-- `write_pane` は `allowed_panes` リストに登録された pane のみ許可
-- クリップボード書き込み・通知発行はホスト側で許可リスト検証
+- The `pane_id` argument is sanitized.
+- `write_pane` is restricted to panes listed in `allowed_panes`.
+- Clipboard writes and notifications are validated against a host-side allow list.
 
-### 監査ラウンド 2 タスク A8
+### Audit round 2, item A8
 
-「Plugin v1 削除タイミングを明示すべき」と指摘されていた（`nexterm-plugin/src/lib.rs:28` に
-「削除タイミング未定」と記載）。Sprint 5-4 / F1 と組み合わせて本 ADR で確定する。
+The audit flagged "the removal timeline for plugin v1 must be made explicit" (`nexterm-plugin/src/lib.rs:28` says "removal timing TBD"). This ADR finalises the policy, combined with Sprint 5-4 / F1.
 
-## 決定
+## Decision
 
-1. **Plugin API v2 を標準とする**: 新規プラグインは v2 で作成すること
-2. **v1 サポートは v2.0.0 リリース時に削除予定**
-3. **v1 プラグインのロード時に deprecation 警告をログ出力する**（Sprint 4-2 で実装済み）
-4. **`PLUGIN_API_VERSION` 定数 = 2**（`nexterm-plugin/src/lib.rs` で公開）
-5. **examples/plugins/ の 4 サンプルは v2 化済み** (Sprint 5-4 / F1)
+1. **Plugin API v2 is the standard.** New plugins are written against v2.
+2. **v1 support will be removed at the v2.0.0 release.**
+3. **Loading a v1 plugin logs a deprecation warning.** (Implemented in Sprint 4-2.)
+4. **`PLUGIN_API_VERSION = 2`** (exported from `nexterm-plugin/src/lib.rs`).
+5. **All four samples under `examples/plugins/` are already migrated to v2** (Sprint 5-4 / F1).
 
-### 削除タイミングの根拠
+### Rationale for the removal timeline
 
-- v2.0.0 = メジャーバージョン bump 時に破壊的変更を集約する慣例
-- それまでに v1 プラグインを書いたユーザーへ移行ガイドを提供する期間を確保
-  （現状 v1.x の間は両対応）
-- v2.0.0 リリース時期は別途決定
+- v2.0.0 is the major-version bump where we conventionally collect breaking changes.
+- Until then, we keep both code paths so that users who wrote v1 plugins have time to migrate (we maintain dual-support throughout the v1.x line).
+- The exact release date of v2.0.0 is decided separately.
 
-## 影響
+## Consequences
 
-### ポジティブ
+### Positive
 
-- セキュリティ強化（任意 pane への書き込み・自動クリップボードアクセスを防止）
-- 削除タイミングが明確（v2.0.0）になり、ユーザーは計画的に移行できる
-- examples/plugins/README.md に v1→v2 移行ガイドあり
+- Stronger security (no arbitrary-pane writes; no automatic clipboard access).
+- The removal timing is clear (v2.0.0), so users can plan their migration.
+- `examples/plugins/README.md` ships a v1 → v2 migration guide.
 
-### ネガティブ
+### Negative
 
-- v2.0.0 リリースまで両対応コードを保守する必要がある
-- 古いプラグインを愛用するユーザーは v2.0.0 で動作しなくなる
-- 移行作業の手間（最小: `nexterm_api_version()` エクスポートを 1 つ追加するだけ）
+- We must maintain dual-support code until v2.0.0 ships.
+- Users attached to old plugins will lose them at v2.0.0.
+- Migration effort, although minimal: in the simplest case, just add a single `nexterm_api_version()` export.
 
-## 代替案
+## Alternatives
 
-- **代替案 A: v1 サポート無期限**: コードの複雑さが増し続ける
-- **代替案 B: 即時 v1 削除**: 既存プラグインユーザーへの影響が大きい
-- **代替案 C: ABI バージョンを設定で明示**: v2 のセキュリティ強化を opt-in にすると意味が薄れる
+- **Alternative A: support v1 indefinitely** — code complexity keeps growing.
+- **Alternative B: remove v1 immediately** — too disruptive for existing plugin users.
+- **Alternative C: expose the ABI version via configuration** — making v2's hardening opt-in undermines its purpose.
 
-## 参照
+## References
 
-- `nexterm-plugin/src/lib.rs` の `PLUGIN_API_VERSION` 定義
-- `examples/plugins/README.md` の v1→v2 移行ガイドセクション
-- 監査ラウンド 2 タスク A8（削除タイミング明示）
-- Sprint 5-4 / F1 commit（examples plugins v2 化）
+- The `PLUGIN_API_VERSION` definition in `nexterm-plugin/src/lib.rs`
+- The v1 → v2 migration guide section in `examples/plugins/README.md`
+- Audit round 2, item A8 (explicit removal timing)
+- Sprint 5-4 / F1 commit (migrating the example plugins to v2)
