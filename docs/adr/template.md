@@ -1,45 +1,45 @@
-# ADR-NNNN: タイトル
+# ADR-NNNN: Title
 
-## ステータス
+## Status
 
-提案中 / 採用 (YYYY-MM-DD) / 廃止 / 代替済み (ADR-XXXX で置換)
+Proposed / Accepted (YYYY-MM-DD) / Deprecated / Superseded (replaced by ADR-XXXX)
 
-## コンテキスト
+## Context
 
-この決定が必要になった背景・状況・問題を記述する。
-読み手は当時の制約と動機を理解できる必要がある。
+Describe the background, situation, and problem that drove this decision.
+The reader should be able to understand the constraints and motivations at the time the decision was made.
 
-例:
-- 何の課題に直面したか
-- 誰がこの決定に影響を受けるか
-- どんな制約があったか（時間・互換性・依存関係 等）
+For example:
+- What problem were we facing?
+- Who is affected by this decision?
+- What constraints applied (time, compatibility, dependencies, etc.)?
 
-## 決定
+## Decision
 
-何を選んだか、簡潔に。
+State the choice, concisely.
 
-`「我々は X を採用する」` のような能動形で書くと明快。
+Phrase it in the active voice: "We will adopt X."
 
-## 影響
+## Consequences
 
-### ポジティブ
-- この決定により得られる利点
-- 解決される問題
+### Positive
+- Benefits gained from this decision
+- Problems it resolves
 
-### ネガティブ
-- トレードオフ・追加コスト
-- 将来的に再検討が必要になる可能性のあるポイント
+### Negative
+- Trade-offs and additional costs
+- Items that may need to be revisited in the future
 
-## 代替案
+## Alternatives
 
-検討したが採用しなかった選択肢を簡潔に列挙する。
-「なぜ採用しなかったか」を 1 行ずつ。
+List the options that were considered but not chosen, briefly.
+One line each for "why it wasn't chosen".
 
-- **代替案 A**: 採用しなかった理由
-- **代替案 B**: 採用しなかった理由
+- **Alternative A**: reason it was not chosen
+- **Alternative B**: reason it was not chosen
 
-## 参照
+## References
 
-- 関連 commit / PR
-- 関連 Jira / GitHub Issue
-- 外部資料（RFC・ブログ記事等）
+- Related commits / PRs
+- Related Jira / GitHub issues
+- External material (RFCs, blog posts, etc.)

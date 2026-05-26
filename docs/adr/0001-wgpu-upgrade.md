@@ -1,105 +1,94 @@
-# ADR-0001: wgpu アップグレード戦略
+# ADR-0001: wgpu upgrade strategy
 
-## ステータス
+## Status
 
-調査済み（2026-05-11、Sprint 5-3 / C2）。実コード変更は将来 Sprint に分離。
+Investigated (2026-05-11, Sprint 5-3 / C2). Actual code changes are deferred to a future sprint.
 
-## コンテキスト
+## Context
 
-Nexterm v1.1.0 時点で `wgpu = "22"` (workspace dep) を使用。
-監査ラウンド 2 の C2 タスクで、より新しい wgpu への移行可否を評価した。
+At Nexterm v1.1.0 we use `wgpu = "22"` (as a workspace dependency).
+Audit round 2 item C2 asked us to evaluate whether to move to a newer wgpu.
 
-主な動機は次のとおり:
+Main motivations:
 
-1. **RUSTSEC-2024-0436 (paste) の解消**: 当初 wgpu 22 → 23 で解消する見込みだったが、
-   `cargo tree -p nexterm-client-gpu -i paste` で確認したところ依存元は
-   `wasmi 0.38 → wasmi_core → paste 1.0.15` であり、wgpu アップグレードでは解消しない。
-   この目的なら wasmi のメジャー版を上げるか paste を置き換える別タスクが必要。
-2. wgpu 自体の脆弱性・パフォーマンス改善・最新 GPU API の追従。
-3. cosmic-text / winit との将来的整合（cosmic-text 0.18 はまだ wgpu 22 系を許容）。
+1. **Resolve RUSTSEC-2024-0436 (paste)**: we initially hoped that going from wgpu 22 → 23 would clear it, but `cargo tree -p nexterm-client-gpu -i paste` shows the chain is `wasmi 0.38 → wasmi_core → paste 1.0.15`. Upgrading wgpu does not resolve it. Fixing this advisory requires bumping the wasmi major version or replacing paste in a separate task.
+2. wgpu's own security fixes, performance improvements, and tracking newer GPU APIs.
+3. Future alignment with cosmic-text / winit (cosmic-text 0.18 still tolerates the wgpu 22 line).
 
-## 検討した選択肢
+## Options considered
 
-### A. wgpu 22 のまま据え置く
+### A. Stay on wgpu 22
 
-- 利点: 工数 0、即座のリスク 0、cosmic-text 0.18 と完全互換。
-- 欠点: 数バージョン遅れている。中長期で追従コストが増える。
+- Pros: zero effort, zero immediate risk, fully compatible with cosmic-text 0.18.
+- Cons: we are several versions behind. Catch-up cost grows over the mid-to-long term.
 
-### B. wgpu 23 へ最小限のアップグレード
+### B. Minimal upgrade to wgpu 23
 
-- 利点: `Instance::new` のシグネチャは 22 と概ね互換。
-  本コードベースで使用する API のうち、ほぼ変更が要らない見込み。
-- 欠点: 23 はすでに 24/25/26 が出ている過渡期版。再度近い将来に上げ直し。
+- Pros: `Instance::new`'s signature is roughly compatible with 22. Most of the APIs we use should require little or no change.
+- Cons: 23 is a transitional release — 24/25/26 are already out. We would have to upgrade again soon.
 
-### C. wgpu 26（現在の安定最新）へ一気にアップグレード
+### C. Jump straight to wgpu 26 (the current stable)
 
-- 利点: 最新の改善（バリデーション・PollType・MemoryHints の選択肢）を取得。
-- 欠点: 複数の breaking change を一度に対応する必要がある。
+- Pros: get the latest improvements (validation, PollType, the MemoryHints choices).
+- Cons: several breaking changes must be handled at once.
 
-## wgpu 22 → 26 の breaking change（本コードベースに関連するもの）
+## Breaking changes from wgpu 22 → 26 that affect this codebase
 
-`context7` で確認した範囲。バージョン別の正確な分岐は CHANGELOG 参照。
+Verified via `context7`. See the wgpu CHANGELOG for the exact version-by-version diff.
 
-| 影響 | 22 | 26 | 本コード内の該当 |
-|------|----|----|------------------|
-| `wgpu::ImageCopyTexture` | あり | **削除** → `TexelCopyTextureInfo` | `renderer/mod.rs:1227`, `glyph_atlas.rs:215, 287` |
-| `wgpu::ImageDataLayout` | あり | **削除** → `TexelCopyBufferLayout` | `renderer/mod.rs:1234`, `glyph_atlas.rs:226, 298` |
-| `wgpu::ImageCopyBuffer` | あり | **削除** → `TexelCopyBufferInfo` | 未使用 |
-| `Instance::new(desc)` | `Instance` を直接返す | 互換シグネチャは維持しつつ `new_with_display_handle` / `new_without_display_handle` が標準化 | `renderer/mod.rs:146` |
-| `request_device(&desc, trace_path)` | 第 2 引数 `Option<&Path>` | 第 2 引数廃止。`DeviceDescriptor::trace: wgpu::Trace` に統合。`experimental_features` / 新しい `memory_hints` 形式も追加 | `renderer/mod.rs:163-173` |
-| `device.poll(Maintain)` | `Maintain` 列挙 | **`PollType`** に rename | 本コードで未使用（要再確認） |
-| `PresentMode::AutoVsync` | 既存 | 既存（変更なし見込み） | `renderer/mod.rs:186` |
+| Impact | 22 | 26 | Location in our code |
+|--------|----|----|----------------------|
+| `wgpu::ImageCopyTexture` | exists | **removed** → `TexelCopyTextureInfo` | `renderer/mod.rs:1227`, `glyph_atlas.rs:215, 287` |
+| `wgpu::ImageDataLayout` | exists | **removed** → `TexelCopyBufferLayout` | `renderer/mod.rs:1234`, `glyph_atlas.rs:226, 298` |
+| `wgpu::ImageCopyBuffer` | exists | **removed** → `TexelCopyBufferInfo` | unused |
+| `Instance::new(desc)` | returns `Instance` directly | the compatible signature stays, but `new_with_display_handle` / `new_without_display_handle` become the standard | `renderer/mod.rs:146` |
+| `request_device(&desc, trace_path)` | second arg `Option<&Path>` | second arg removed; merged into `DeviceDescriptor::trace: wgpu::Trace`. `experimental_features` and a new `memory_hints` shape are also added | `renderer/mod.rs:163-173` |
+| `device.poll(Maintain)` | `Maintain` enum | renamed to **`PollType`** | not currently used in our code (needs another check) |
+| `PresentMode::AutoVsync` | exists | unchanged (expected) | `renderer/mod.rs:186` |
 
-### 影響箇所サマリ
+### Summary of affected sites
 
-- `nexterm-client-gpu/src/renderer/mod.rs`: 5 〜 7 箇所
-- `nexterm-client-gpu/src/glyph_atlas.rs`: 4 箇所
-- 合計 **約 10 箇所**の機械的置換 + `request_device` のフィールド調整
+- `nexterm-client-gpu/src/renderer/mod.rs`: 5–7 sites
+- `nexterm-client-gpu/src/glyph_atlas.rs`: 4 sites
+- Total of **~10 mechanical renames** plus field adjustments inside `request_device`.
 
-加えて Cargo.toml の `wgpu = "22"` → `wgpu = "26"` の更新、Cargo.lock の再生成、
-依存クレート（特に cosmic-text、winit）との互換確認が必要。
+Also: bump `wgpu = "22"` → `wgpu = "26"` in `Cargo.toml`, regenerate `Cargo.lock`, and re-check compatibility with the rest of the dependency graph (cosmic-text and winit in particular).
 
-## 結論
+## Decision
 
-**Option B を後送り、現時点では Option A（据え置き）を維持する。**
+**Postpone Option B; keep Option A (stay on 22) for now.**
 
-理由:
+Reasons:
 
-1. RUSTSEC-2024-0436 の解消が wgpu アップグレードで達成できないことが判明した
-   （別タスクで wasmi/paste 経路の対処が必要）。
-   wgpu アップグレード自体の優先度は低下した。
-2. cosmic-text 0.18 → 0.x（wgpu 26 対応版）との同時アップグレードが必要になる可能性が高く、
-   API 影響範囲が広がる。Sprint 5-3 のスコープ（性能・ベンチマーク）外。
-3. 本作業は **Sprint 5-4 以降**、cosmic-text アップグレードと併せて実施するのが効率的。
+1. We learned that the wgpu upgrade does not resolve RUSTSEC-2024-0436 (the wasmi/paste path needs a separate task). The standalone priority of the wgpu upgrade therefore drops.
+2. It is highly likely we will need to upgrade cosmic-text 0.18 → 0.x (the wgpu-26-compatible release) at the same time, which broadens the API impact. That is outside Sprint 5-3's scope (performance and benchmarks).
+3. This work is more efficient to do in **Sprint 5-4 or later**, paired with the cosmic-text upgrade.
 
-## 将来 Sprint で実施する手順（メモ）
+## Notes for the future-sprint procedure
 
-1. **準備**:
-   - `cosmic-text` の最新版を確認、wgpu 互換性表を参照。
-   - `winit 0.30.x` の最新リリースノートを確認（ApplicationHandler 周りに breaking change がないこと）。
-2. **依存更新**: workspace `Cargo.toml` の `wgpu = "26"` / `cosmic-text = "<対応版>"` を更新。
-3. **rename 対応**（機械的）:
+1. **Preparation**:
+   - Check the latest cosmic-text release and look up its wgpu compatibility matrix.
+   - Read the latest `winit 0.30.x` release notes (verify there are no breaking changes around `ApplicationHandler`).
+2. **Bump dependencies**: update the workspace `Cargo.toml` to `wgpu = "26"` / `cosmic-text = "<compatible version>"`.
+3. **Rename pass** (mechanical):
    ```bash
-   # 本コードベース内のリネーム対象
+   # Renames within this codebase
    grep -rln "ImageCopyTexture" nexterm-client-gpu/src/ \
      | xargs sed -i 's/ImageCopyTexture/TexelCopyTextureInfo/g'
    grep -rln "ImageDataLayout" nexterm-client-gpu/src/ \
      | xargs sed -i 's/ImageDataLayout/TexelCopyBufferLayout/g'
    ```
-4. **`request_device` 更新**: `DeviceDescriptor` に `experimental_features` / `trace`
-   を追加、第 2 引数 `None` を削除。
-5. **動作確認**:
+4. **Update `request_device`**: add `experimental_features` / `trace` to `DeviceDescriptor`, and drop the second `None` argument.
+5. **Smoke testing**:
    - `cargo build -p nexterm-client-gpu`
    - `cargo clippy -p nexterm-client-gpu -- -D warnings`
-   - GUI 起動して描画崩れ・パフォーマンス低下がないこと
-6. **ベンチマーク回帰確認**: Sprint 5-3 で導入した `vt_throughput` は VT 層のみで
-   wgpu に依存しないが、参考までに前後比較。
-   GPU 系のマイクロベンチがあればそちらも比較（現状未整備）。
+   - Launch the GUI and confirm no rendering breakage and no perf regression
+6. **Bench regression**: the `vt_throughput` suite added in Sprint 5-3 covers the VT layer only and does not depend on wgpu, but compare before/after for reference. If GPU micro-benches exist later, compare those too (none today).
 
-## 関連
+## Related
 
-- 監査ラウンド 2: `memory/project_audit_round2.md` C2
-- Sprint 5-3 進捗（本 ADR の出処）
-- 関連タスク（別件として残す）:
-  - wasmi 0.38 → 最新 + paste 経路解消（RUSTSEC-2024-0436）
-  - cosmic-text 0.18 → 最新（C7）
+- Audit round 2: `memory/project_audit_round2.md`, item C2
+- Sprint 5-3 progress notes (the origin of this ADR)
+- Related tasks (tracked separately):
+  - wasmi 0.38 → latest + remove paste dependency (RUSTSEC-2024-0436)
+  - cosmic-text 0.18 → latest (C7)

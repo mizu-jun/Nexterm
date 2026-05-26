@@ -1,63 +1,56 @@
-# ADR-0002: PROTOCOL_VERSION の u32 採用と minor バンプ方針
+# ADR-0002: `PROTOCOL_VERSION` stays a `u32` with monotonic bumps
 
-## ステータス
+## Status
 
-採用 (2026-05-12、Sprint 5-1〜5-2 の決定を遡及記録)
+Accepted (2026-05-12; recorded retroactively from the decisions made during Sprints 5-1 and 5-2)
 
-## コンテキスト
+## Context
 
-Nexterm の IPC（クライアント↔サーバー間 Unix ソケット / 名前付きパイプ）は `Hello` ハンドシェイクで
-プロトコルバージョンを交換する。バージョンの粒度・型・bump 方針が初期は曖昧だった。
+Nexterm's IPC (Unix socket / named pipe between client and server) exchanges a protocol version during the `Hello` handshake. The granularity, type, and bump policy of that version were vague early on.
 
-監査ラウンド 2（2026-05-10）の A7 で「`PROTOCOL_VERSION` を u32 → (major, minor) タプル化 + ADR 化」が
-MEDIUM 優先で挙がっていたが、Sprint 5-1〜5-2 で実装した現状を踏まえて改めて方針を整理する。
+Audit round 2 (2026-05-10) raised item A7 — "convert `PROTOCOL_VERSION` from `u32` to a `(major, minor)` tuple and write an ADR" — at MEDIUM priority. Given what was actually implemented in Sprints 5-1 and 5-2, this ADR restates the policy.
 
-### Sprint 5-1〜5-2 で起きたこと
+### What happened during Sprints 5-1 and 5-2
 
-- **Sprint 5-1 (commit 35b9c5b)**: bincode → postcard 移行に伴い `PROTOCOL_VERSION` を 1 → 2 → 3 にバンプ
-- **Sprint 5-2 (commit 829d55b)**: OSC 7 (CwdChanged) 追加で `PROTOCOL_VERSION` を 3 → 4 にバンプ
-- 旧クライアントが新サーバーに接続した場合（または逆）は `HelloAck` 時点で拒否する
+- **Sprint 5-1 (commit 35b9c5b)**: bumped `PROTOCOL_VERSION` from 1 → 2 → 3 as part of the bincode → postcard migration
+- **Sprint 5-2 (commit 829d55b)**: bumped `PROTOCOL_VERSION` from 3 → 4 to add OSC 7 (CwdChanged)
+- When an old client connects to a new server (or vice versa), the peer is rejected at `HelloAck` time
 
-### 制約
+### Constraints
 
-- 設計時に「セマンティックバージョニング（major.minor）」と単純な u32 で迷ったが、
-  実装の簡潔さを優先して u32 で始めた
-- 既に v4 まで進んでおり、(major, minor) タプル化は破壊的変更
+- During design we hesitated between semantic versioning (major.minor) and a simple `u32`, and chose `u32` for implementation simplicity.
+- We are already at v4; switching to a `(major, minor)` tuple would itself be a breaking change.
 
-## 決定
+## Decision
 
-`PROTOCOL_VERSION: u32` を維持し、**任意の互換性破壊を伴う変更で +1 する**。
+Keep `PROTOCOL_VERSION: u32` and **bump it by +1 on any change that breaks compatibility**.
 
-minor / major の区別は導入しない。代わりに、サーバー側で「最低互換バージョン」（最低受理する
-バージョン）を保持し、クライアント側もハンドシェイクで `HelloAck.server_proto_version` を読んで
-互換性をチェックする。
+We do not introduce a minor / major split. Instead, the server keeps a "minimum acceptable version" and the client also reads `HelloAck.server_proto_version` during the handshake to confirm compatibility.
 
-## 影響
+## Consequences
 
-### ポジティブ
+### Positive
 
-- 実装が単純（フィールド 1 個・ロジック分岐少）
-- 既存コードベースをそのまま使える（v1〜v4 まで導入済み）
-- バージョン番号が大きくなることに対する許容（u32 = 約 42 億まで）
+- The implementation is simple (one field, very little branching logic).
+- Existing code continues to work as-is (v1 through v4 are already in place).
+- The version number can grow as large as needed (`u32` = ~4.2 billion).
 
-### ネガティブ
+### Negative
 
-- 「minor bump で後方互換」のような細やかなマイグレーション戦略は使えない
-- すべての破壊的変更が一様に「+1」になるため、変更の規模が見えにくい
-- 互換性チェックの粒度が「完全一致」となり、後方互換のフィールド追加でも bump が必要
+- A fine-grained migration strategy such as "minor bumps preserve backwards compatibility" is not available.
+- Every breaking change becomes a uniform "+1", so the magnitude of a change is not visible from the number.
+- The compatibility check is exact-match, so even a backwards-compatible field addition still requires a bump.
 
-## 代替案
+## Alternatives
 
-- **代替案 A: (major, minor) タプル化**: より柔軟だが、既に v4 まで進んでおり破壊的。
-  実装時のメンテナンスコスト増 vs 得られる柔軟性の比は低いと判断。
-- **代替案 B: SemVer 文字列 ("1.4.0" 等)**: 過剰な抽象化。ハンドシェイク時のパースが必要。
-- **代替案 C: 各メッセージごとに version フィールド**: 過剰な複雑さ。1 セッション内で
-  バージョンが変わることは想定しない。
+- **Alternative A: `(major, minor)` tuple**: more flexible, but we are already at v4 and the switch itself would be breaking. The ratio of added maintenance cost to gained flexibility is low.
+- **Alternative B: SemVer string (e.g. `"1.4.0"`)**: over-abstracted. Requires parsing during the handshake.
+- **Alternative C: per-message `version` field**: over-complicated. We do not expect the version to change within a single session.
 
-## 参照
+## References
 
-- Sprint 5-1 進捗: `memory/project_sprint5_1_progress.md`（PROTOCOL_VERSION 3 への bump 経緯）
-- Sprint 5-2 進捗: `memory/project_sprint5_2_progress.md`（PROTOCOL_VERSION 4 への bump）
+- Sprint 5-1 progress: `memory/project_sprint5_1_progress.md` (history of the bump to PROTOCOL_VERSION 3)
+- Sprint 5-2 progress: `memory/project_sprint5_2_progress.md` (bump to PROTOCOL_VERSION 4)
 - commit 35b9c5b: bincode → postcard + PROTOCOL_VERSION 3
 - commit 829d55b: OSC 7 CwdChanged + PROTOCOL_VERSION 4
-- 監査ラウンド 2 タスク A7（再評価により u32 維持）
+- Audit round 2, item A7 (re-evaluated; we keep `u32`)
