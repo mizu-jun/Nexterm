@@ -307,12 +307,14 @@ Connects to the specified host via SSH and opens a PTY channel in a new pane.
         port: u16,
         username: String,
         auth_type: String,   // "password" | "key" | "agent"
-        // Sprint 5-1 / G1: 旧 `password: Option<String>` を廃止。
-        // クライアントが OS keyring (Service="nexterm-ssh") に
-        // Account=`<username>@<host_name>` で保存し、サーバーがそれを取得する。
+        // Sprint 5-1 / G1: the legacy `password: Option<String>` was removed.
+        // The client stores credentials in the OS keyring
+        // (Service="nexterm-ssh", Account=`<username>@<host_name>`)
+        // and the server retrieves them from there.
         password_keyring_account: Option<String>,
-        // true の場合、サーバーは認証完了 (成功・失敗のいずれも) 後に
-        // keyring エントリを削除する (PasswordModal.remember=false 用)。
+        // When true, the server removes the keyring entry after the
+        // authentication completes (success or failure). Used for
+        // PasswordModal.remember = false.
         ephemeral_password: bool,
         key_path: Option<String>,
         remote_forwards: Vec<String>,
@@ -324,8 +326,8 @@ Connects to the specified host via SSH and opens a PTY channel in a new pane.
 
 **Response**: `FullRefresh` → `LayoutChanged` or `Error`
 
-**互換性**: PROTOCOL_VERSION 2 で導入された非互換変更。v1 クライアントは
-Hello ハンドシェイク段階で拒否される。
+**Compatibility**: a breaking change introduced in PROTOCOL_VERSION 2.
+v1 clients are rejected during the Hello handshake.
 
 ---
 

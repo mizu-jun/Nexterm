@@ -1,38 +1,38 @@
-# SBOM (Software Bill of Materials) 運用ガイド
+# SBOM (Software Bill of Materials) Operations Guide
 
-> Sprint 4-3 で導入。CycloneDX 形式の SBOM をリリースごとに生成し、GitHub Release に添付する。
+> Introduced in Sprint 4-3. Nexterm generates a CycloneDX SBOM for every release and attaches it to the GitHub Release.
 
-## 目的
+## Goals
 
-- サプライチェーン透明性: ユーザーが nexterm に組み込まれている全依存パッケージとそのバージョン・ライセンスを機械処理可能な形式で取得できる
-- 脆弱性追跡: 後日新たな CVE が公開された場合、SBOM をスキャンして影響範囲を特定可能
-- コンプライアンス: ISO 27001 / SLSA L2 相当の依存関係台帳要件を満たす
-- 監査: 第三者が公開された SBOM と実バイナリを比較できる
+- **Supply-chain transparency**: users can obtain a machine-readable list of every dependency, version, and license shipped inside nexterm.
+- **Vulnerability tracking**: when a new CVE is published later, the SBOM can be scanned to determine whether nexterm is affected.
+- **Compliance**: satisfies the dependency-inventory requirements of ISO 27001 and SLSA L2-equivalent processes.
+- **Auditability**: third parties can compare the published SBOM against the released binaries.
 
-## 形式
+## Format
 
-[CycloneDX](https://cyclonedx.org/) JSON v1.5 を採用する。理由:
+We use [CycloneDX](https://cyclonedx.org/) JSON v1.5 because:
 
-- Rust エコシステム標準（`cargo-cyclonedx` が公式メンテナンス）
-- セキュリティツール（OSV Scanner / Trivy / Dependency-Track 等）の対応が広い
-- SBOM 全文が JSON で表現され、機械処理しやすい
+- It is the de-facto standard in the Rust ecosystem (`cargo-cyclonedx` is officially maintained).
+- It has wide tooling support (OSV Scanner, Trivy, Dependency-Track, …).
+- The full document is plain JSON, which is easy to process programmatically.
 
-SPDX 形式が必要な場合は `cyclonedx-cli` で相互変換可能。
+If you need SPDX format, `cyclonedx-cli` can convert between the two.
 
-## 生成タイミング
+## Generation triggers
 
-| トリガー | 動作 |
-|---------|------|
-| `v[0-9]+.[0-9]+.[0-9]+` タグ push | `.github/workflows/sbom.yml` が起動。SBOM 生成 → SLSA Provenance 付与 → GitHub Release に `.tar.gz` を添付 |
-| `workflow_dispatch` 手動実行 | SBOM 生成のみ（artifact として 90 日保持、Release への添付なし） |
+| Trigger | Behaviour |
+|---------|-----------|
+| `v[0-9]+.[0-9]+.[0-9]+` tag push | `.github/workflows/sbom.yml` runs: generate SBOM → attach SLSA Provenance → attach the `.tar.gz` to the GitHub Release |
+| `workflow_dispatch` (manual) | Generate SBOM only — retained as an artifact for 90 days, not attached to a Release |
 
-## 添付ファイル
+## Release attachment
 
-リリースには `nexterm-sbom-vX.Y.Z.tar.gz` という単一アーカイブを添付する。展開すると workspace 内 11 クレートそれぞれの SBOM が並ぶ（v1.3.1 までは 12 クレート、v1.4.0 で `nexterm-launcher` を削除して 11 クレートに整理）:
+Each release ships a single archive named `nexterm-sbom-vX.Y.Z.tar.gz`. Extracting it yields the SBOM for each of the 11 workspace crates (12 crates up to v1.3.1; `nexterm-launcher` was removed in v1.4.0):
 
 ```
 nexterm-sbom-v1.4.0/
-  nexterm-client-gpu.cdx.json          # バイナリ名 nexterm（シングルバイナリ）
+  nexterm-client-gpu.cdx.json          # binary name: nexterm (single binary)
   nexterm-server.cdx.json
   nexterm-client-tui.cdx.json
   nexterm-client-core.cdx.json
@@ -45,100 +45,100 @@ nexterm-sbom-v1.4.0/
   nexterm-plugin.cdx.json
 ```
 
-## ローカル生成手順
+## Local generation
 
 ```bash
-# 初回のみ
+# One-time setup
 cargo install cargo-cyclonedx --locked
 
-# 全クレートの SBOM を JSON で生成
+# Generate SBOMs for every workspace crate (JSON)
 cargo cyclonedx --all --format json
 
-# 各クレートディレクトリ直下に <crate-name>.cdx.json が出力される
+# Each crate directory will contain <crate-name>.cdx.json
 find . -name '*.cdx.json' -not -path './target/*'
 ```
 
-## 検証手順
+## Verification
 
-### 1. ファイル整合性
+### 1. File integrity
 
-リリースアーカイブには SLSA Provenance が付与されている。`gh` CLI で検証:
+The release archive ships with SLSA Provenance attached. Verify it with the `gh` CLI:
 
 ```bash
 gh attestation verify nexterm-sbom-v1.0.2.tar.gz -R mizu-jun/Nexterm
 ```
 
-minisign 公開鍵でも署名されている場合（運用後）:
+If the release also ships a minisign signature (once that flow is enabled in operations):
 
 ```bash
 minisign -V -p nexterm.pub -m nexterm-sbom-v1.0.2.tar.gz -x nexterm-sbom-v1.0.2.tar.gz.minisig
 ```
 
-### 2. SBOM 内容確認
+### 2. Inspecting SBOM contents
 
-CycloneDX JSON を任意のツールで解析できる:
+CycloneDX JSON can be parsed with any standard tooling:
 
 ```bash
-# jq で全コンポーネント名を抽出
+# List every component's purl with jq
 jq -r '.components[].purl' nexterm-server.cdx.json
 
-# 特定 crate のバージョン確認
+# Check the version of a specific crate
 jq '.components[] | select(.name == "ring")' nexterm-server.cdx.json
 ```
 
-### 3. 既知脆弱性スキャン
+### 3. Known-vulnerability scanning
 
-[OSV Scanner](https://github.com/google/osv-scanner) で SBOM を直接スキャン:
+Scan the SBOM directly with [OSV Scanner](https://github.com/google/osv-scanner):
 
 ```bash
 osv-scanner --sbom=nexterm-server.cdx.json
 ```
 
-[Trivy](https://github.com/aquasecurity/trivy) でも可:
+[Trivy](https://github.com/aquasecurity/trivy) works as well:
 
 ```bash
 trivy sbom nexterm-server.cdx.json
 ```
 
-### 4. ライセンスサマリ
+### 4. License summary
 
 ```bash
 jq -r '.components[] | "\(.name)\t\(.version)\t\(.licenses[]?.license.id // .licenses[]?.license.name // "Unknown")"' nexterm-server.cdx.json | sort -u
 ```
 
-## CI ガードレール
+## CI guardrails
 
-リリース以外の PR でも依存ポリシーは `cargo-deny` で常時チェックされている（`deny.toml` 参照）。SBOM はリリース時の証跡として機能し、`cargo-deny` は変更時の事前検出として機能する 2 段構えの設計。
+Even for PRs that are not releases, dependency policy is enforced continuously through `cargo-deny` (see `deny.toml`). SBOMs serve as the artefact of record for releases, while `cargo-deny` provides up-front detection on every change — a two-layered design.
 
-| ツール | タイミング | 役割 |
-|--------|----------|------|
-| `cargo-deny` (`.github/workflows/ci.yml` の `deny` ジョブ) | PR / push ごと | ライセンス違反・既知脆弱性・不審ソースを事前ブロック |
-| `cargo-audit` (同 `security` ジョブ) | PR / push ごと | RustSec Advisory DB との照合 |
-| `cargo-cyclonedx` (`.github/workflows/sbom.yml`) | リリースタグ時 | SBOM 生成 + リリース添付 |
-| SLSA Provenance | リリースタグ時 | ビルド出所の改ざん検出 |
-| `minisign` | リリースタグ時（鍵設定時のみ） | アーカイブの完全性検証 |
+| Tool | When it runs | Role |
+|------|--------------|------|
+| `cargo-deny` (the `deny` job in `.github/workflows/ci.yml`) | Every PR / push | Block license violations, known vulnerabilities, and disallowed sources up front |
+| `cargo-audit` (the `security` job, same workflow) | Every PR / push | Cross-check against the RustSec Advisory DB |
+| `cargo-cyclonedx` (`.github/workflows/sbom.yml`) | On release tag | Generate the SBOM and attach it to the release |
+| SLSA Provenance | On release tag | Detect tampering of the build origin |
+| `minisign` | On release tag (only when keys are configured) | Verify archive integrity |
 
-## トラブルシューティング
+## Troubleshooting
 
-### `cargo cyclonedx` が依存解決に失敗する
+### `cargo cyclonedx` fails dependency resolution
 
-ネイティブライブラリ（X11 / ALSA / libudev 等）が解決できないため。CI と同じ Linux 開発依存をインストール:
+This is caused by missing native libraries (X11, ALSA, libudev, etc.). Install the same Linux build dependencies that CI uses:
 
 ```bash
 sudo apt-get install -y libx11-dev libxkbcommon-dev libwayland-dev libasound2-dev libpulse-dev libudev-dev
 ```
 
-### SBOM のサイズが大きい
+### The SBOM is large
 
-workspace 全クレートで 12 ファイル × 数百 KB 程度。圧縮済みの `.tar.gz` は 100〜300 KB に収まる。明らかに肥大化した場合は重複バージョン（`cargo deny check bans` で検出）が増えていないか確認すること。
+The full workspace produces 12 files × a few hundred KB each. The compressed `.tar.gz` is typically 100–300 KB. If size grows unexpectedly, check for duplicate versions (detectable via `cargo deny check bans`).
 
-### `cargo cyclonedx` のバージョン互換性
+### `cargo-cyclonedx` version compatibility
 
-CycloneDX 仕様 v1.5 出力は `cargo-cyclonedx` 0.5.0 以降が対応。CI では `cargo install --locked` でロック済みバージョンを取得するため、`Cargo.lock` を介して再現性を担保している。
+CycloneDX spec v1.5 output requires `cargo-cyclonedx` 0.5.0 or newer. CI uses `cargo install --locked` so the version is pinned via `Cargo.lock`, which gives us reproducibility.
 
-## 参考資料
+## References
 
-- [CycloneDX 仕様](https://cyclonedx.org/specification/overview/)
+- [CycloneDX specification](https://cyclonedx.org/specification/overview/)
 - [SLSA Build Provenance](https://slsa.dev/spec/v1.0/provenance)
-- [OSV Scanner ドキュメント](https://google.github.io/osv-scanner/)
+- [OSV Scanner documentation](https://google.github.io/osv-scanner/)
 - [RustSec Advisory Database](https://rustsec.org/)
