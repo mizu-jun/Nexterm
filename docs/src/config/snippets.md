@@ -89,7 +89,7 @@ host      = "10.0.0.50"
 port      = 22
 username  = "ubuntu"
 auth_type = "password"
-# パスワードは OS キーリングに保存される（平文では保存しない）
+# The password is stored in the OS keyring (never in plain text)
 ```
 
 ### Key Authentication
