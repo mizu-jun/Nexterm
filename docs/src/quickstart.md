@@ -44,8 +44,8 @@ On first launch you will see an empty terminal with a status bar at the bottom.
 To start the server and client separately:
 
 ```sh
-nexterm-server &          # バックグラウンドでサーバーを起動
-nexterm-client-gpu        # GPU クライアントを接続
+nexterm-server &          # Start the server in the background
+nexterm-client-gpu        # Connect the GPU client
 ```
 
 ---

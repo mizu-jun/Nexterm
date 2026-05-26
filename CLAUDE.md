@@ -4,17 +4,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 > **日本語版:** [CLAUDE.ja.md](CLAUDE.ja.md)
 
-## Documentation Language Policy
+## Language Policy
 
-Nexterm is an open-source project distributed worldwide. To maximize reach and contributor accessibility, **English is the canonical language** for all source comments and documentation.
+Nexterm is an open-source project distributed worldwide, but the primary maintainer works in Japanese. The split is therefore:
 
-- **Source code comments** (`//`, `///`, doc-comments, `expect("...")` messages): English only.
-- **Repository documentation** (`README.md`, `docs/**`, `CHANGELOG.md`, ADRs, etc.): English as the primary file. A Japanese translation, when provided, lives next to the English file as `*.ja.md` (e.g. `README.md` + `README.ja.md`).
-- **User-facing strings in the application**: managed by `nexterm-i18n` (Fluent + JSON locales). Add new strings to **all 8 locale files** under `nexterm-i18n/locales/`. Do not hard-code natural language in the renderer.
-- **Commit messages and PR descriptions**: English preferred; Japanese acceptable for internal-only branches. Tags, release notes published to GitHub Releases should be English (a Japanese supplement is welcome).
+**Japanese (interactive surface — what the maintainer reads in real time):**
+- **Claude Code CLI conversation**: all chat replies, status updates, end-of-turn summaries, option blocks, and clarifying questions are in Japanese. This overrides the global "respond in Japanese" rule only in the sense of making it explicit for this repo — there is no English-conversation mode.
+- **Local commit messages on personal branches**: Japanese is acceptable while iterating.
+
+**English (artefacts that ship to the world — what external contributors read):**
+- **Source code comments** (`//`, `///`, doc-comments, `expect("...")` messages, `panic!` messages, `log::*!` strings, `anyhow!`/`bail!` literals): English only.
+- **Repository documentation** (`README.md`, `docs/**`, `CHANGELOG.md`, ADRs, `examples/**/README.md`, `nexterm-vt/fuzz/README.md`, etc.): English as the canonical/primary file. A Japanese translation, when provided, lives next to the English file as `*.ja.md` (e.g. `README.md` + `README.ja.md`). Currently only the top-level `README` is kept bilingual.
+- **Commit messages on PRs that target `master`** and **PR descriptions / titles**: English.
+- **Git tags and GitHub Release notes**: English (a Japanese supplement is welcome but not the primary text).
 - **Claude Code instruction files** (this `CLAUDE.md`): English. The companion `CLAUDE.ja.md` is a translation kept for local reference and is **not** authoritative — when the two disagree, this file wins.
 
+**Application-facing strings (separate concern):**
+- **User-facing strings in the running app**: managed by `nexterm-i18n` (Fluent + JSON locales). Add new strings to **all 8 locale files** under `nexterm-i18n/locales/`. Do not hard-code natural language in the renderer.
+
 When adding a new document, default to English and only create a `*.ja.md` companion if Japanese readability is required for that specific document.
+
+**Rule of thumb:** if a human will read it inside a terminal session with Claude, write Japanese; if it will land in the repo or on GitHub for the world to see, write English.
 
 ## Build Commands
 

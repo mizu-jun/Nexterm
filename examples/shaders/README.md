@@ -1,48 +1,48 @@
-# Nexterm シェーダーギャラリー
+# Nexterm Shader Gallery
 
-Nexterm の GPU レンダラーは WGSL（WebGPU Shading Language）によるカスタムシェーダーをサポートしています。
-背景（セル色）とテキスト（グリフ）の 2 種類のシェーダーを個別にカスタマイズできます。
+Nexterm's GPU renderer supports custom shaders written in WGSL (WebGPU Shading Language).
+You can customise two shader stages independently: the background (cell colours) and the text (glyphs).
 
-## 設定方法
+## Configuration
 
-`~/.config/nexterm/config.toml` に以下を追加します:
+Add the following to `~/.config/nexterm/config.toml`:
 
 ```toml
 [gpu]
-# 背景（セル色）シェーダーのパス（省略時はビルトインを使用）
+# Path to the background (cell colour) shader (built-in is used if omitted)
 custom_bg_shader = "~/.config/nexterm/shaders/crt.wgsl"
 
-# テキスト（グリフ）シェーダーのパス（省略時はビルトインを使用）
+# Path to the text (glyph) shader (built-in is used if omitted)
 custom_text_shader = "~/.config/nexterm/shaders/amber_text.wgsl"
 ```
 
-シェーダーファイルを保存すると自動的に再読み込みされます（ホットリロード対応）。
+Shader files are reloaded automatically when saved (hot-reload supported).
 
-## 収録シェーダー
+## Included shaders
 
-### 背景シェーダー
+### Background shaders
 
-| ファイル | 効果 |
-|---------|------|
-| `crt.wgsl` | スキャンライン + ビネット効果。レトロ CRT モニター風 |
-| `matrix.wgsl` | 全体をグリーンフォスフォレッセンスに染める Matrix 風 |
-| `glow.wgsl` | 明るいセルにソフトな発光エフェクトを追加 |
+| File | Effect |
+|------|--------|
+| `crt.wgsl` | Scanlines + vignette. Retro CRT monitor look |
+| `matrix.wgsl` | Tints the whole screen with green phosphor — Matrix-style |
+| `glow.wgsl` | Adds a soft bloom to bright cells |
 
-### テキストシェーダー
+### Text shaders
 
-| ファイル | 効果 |
-|---------|------|
-| `grayscale_text.wgsl` | 白黒変換。モノクロームのクラシックな外観 |
-| `amber_text.wgsl` | 琥珀色変換。1980年代 CRT モニター風のアンバー色 |
+| File | Effect |
+|------|--------|
+| `grayscale_text.wgsl` | Black-and-white conversion. Classic monochrome look |
+| `amber_text.wgsl` | Amber conversion. 1980s CRT-style amber tint |
 
-## カスタムシェーダーの書き方
+## Writing a custom shader
 
-### 背景シェーダーのインターフェース
+### Background shader interface
 
 ```wgsl
 struct VertexInput {
-    @location(0) position: vec2<f32>,  // NDC座標 [-1, 1]
-    @location(1) color: vec4<f32>,     // セルの背景色 RGBA [0, 1]
+    @location(0) position: vec2<f32>,  // NDC coordinates [-1, 1]
+    @location(1) color: vec4<f32>,     // Cell background colour, RGBA [0, 1]
 }
 
 struct VertexOutput {
@@ -57,22 +57,22 @@ fn vs_main(in: VertexInput) -> VertexOutput { ... }
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> { ... }
 ```
 
-### テキストシェーダーのインターフェース
+### Text shader interface
 
 ```wgsl
 struct VertexInput {
-    @location(0) position: vec2<f32>,  // NDC座標
-    @location(1) uv: vec2<f32>,        // グリフアトラス UV
-    @location(2) color: vec4<f32>,     // 前景色 RGBA
+    @location(0) position: vec2<f32>,  // NDC coordinates
+    @location(1) uv: vec2<f32>,        // Glyph atlas UV
+    @location(2) color: vec4<f32>,     // Foreground colour RGBA
 }
 
-// グリフアトラステクスチャ（アルファチャンネルにグリフマスク）
+// Glyph atlas texture (glyph mask in the alpha channel)
 @group(0) @binding(0) var glyph_texture: texture_2d<f32>;
 @group(0) @binding(1) var glyph_sampler: sampler;
 ```
 
-## 制約事項
+## Constraints
 
-- エントリポイントは `vs_main`（頂点）と `fs_main`（フラグメント）に固定
-- 現時点では uniform バッファ（時刻・解像度）は渡されない
-- シェーダーに構文エラーがある場合はビルトインシェーダーにフォールバックする
+- Entry points are fixed: `vs_main` (vertex) and `fs_main` (fragment).
+- No uniform buffers (time, resolution) are passed at present.
+- If the shader has a syntax error, the renderer falls back to the built-in shader.

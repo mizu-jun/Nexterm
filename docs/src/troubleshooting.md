@@ -32,7 +32,7 @@ See `CLAUDE.md` for the canonical build invocation.
 
 ## Runtime
 
-### Server does not start / `nexterm` exits with `IPC ソケットの作成に失敗`
+### Server does not start / `nexterm` exits with `Failed to create IPC socket`
 
 Check whether another `nexterm-server` instance owns the socket:
 
@@ -87,7 +87,7 @@ nexterm-ctl wsl import-profiles --dry-run
 
 ## SSH
 
-### `known_hosts: ホスト鍵が変更されています` blocks connection
+### `known_hosts: host key has changed` blocks connection
 
 This indicates a host key mismatch — possibly a MITM attack or a legitimate server rotation.
 If you trust the new key, remove the offending line from `~/.ssh/known_hosts` and reconnect.
