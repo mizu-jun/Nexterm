@@ -1,5 +1,5 @@
 #![warn(missing_docs)]
-//! SSH クライアント統合 — russh を使った SSH 接続管理
+//! SSH client integration — manages SSH connections via russh.
 
 use anyhow::{Context, Result, bail};
 use russh::ChannelMsg;
@@ -11,51 +11,51 @@ use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, instrument, warn};
 use zeroize::Zeroizing;
 
-/// SSH 接続設定
+/// SSH connection configuration.
 #[derive(Debug, Clone)]
 pub struct SshConfig {
-    /// 接続先ホスト名または IP アドレス
+    /// Target host name or IP address.
     pub host: String,
-    /// 接続先ポート番号
+    /// Target port number.
     pub port: u16,
-    /// SSH ログインユーザー名
+    /// SSH login user name.
     pub username: String,
-    /// 認証方式
+    /// Authentication method.
     pub auth: SshAuth,
-    /// ProxyJump ホスト (フォーマット: "user@host:port")
+    /// ProxyJump host (format: `user@host:port`).
     pub proxy_jump: Option<String>,
-    /// SOCKS5 プロキシ (フォーマット: "socks5://host:port")
+    /// SOCKS5 proxy (format: `socks5://host:port`).
     pub proxy_socks5: Option<String>,
 }
 
-/// SSH 認証方式
+/// SSH authentication methods.
 #[derive(Debug, Clone)]
 pub enum SshAuth {
-    /// パスワード認証
+    /// Password authentication.
     Password(Zeroizing<String>),
-    /// 公開鍵認証（秘密鍵ファイルパス）
+    /// Public-key authentication (path to the private key file).
     PrivateKey {
-        /// 秘密鍵ファイルのパス
+        /// Path to the private-key file.
         key_path: std::path::PathBuf,
-        /// 秘密鍵のパスフレーズ（省略可）
+        /// Optional passphrase for the private key.
         passphrase: Option<Zeroizing<String>>,
     },
-    /// SSH エージェント認証
+    /// SSH agent authentication.
     Agent,
 }
 
 // ---------------------------------------------------------------------------
-// 実装1: known_hosts によるホスト鍵検証
+// Implementation 1: host key verification via known_hosts.
 // ---------------------------------------------------------------------------
 
-/// リモートポートフォワーディングのマッピング: remote_port → (local_host, local_port)
+/// Remote port forwarding map: `remote_port → (local_host, local_port)`.
 type ForwardMap = Arc<std::sync::Mutex<std::collections::HashMap<u32, (String, u16)>>>;
 
-/// ~/.ssh/known_hosts によるホスト鍵検証とリモートフォワーディング処理
+/// Host key verification (via `~/.ssh/known_hosts`) plus remote-forwarding callback handling.
 struct SshHandler {
     host: String,
     port: u16,
-    /// リモートフォワーディング: サーバー側ポート → (ローカルホスト, ローカルポート)
+    /// Remote forwarding: server-side port → (local host, local port).
     forward_map: ForwardMap,
 }
 
@@ -71,34 +71,34 @@ impl client::Handler for SshHandler {
         match check_known_hosts(&self.host, self.port, server_public_key) {
             Ok(true) => {
                 debug!(
-                    "known_hosts: ホスト鍵が一致しました ({}:{})",
+                    "known_hosts: host key matched ({}:{})",
                     self.host, self.port
                 );
                 Ok(true)
             }
             Ok(false) => {
-                // エントリが存在しない → 初回接続として自動追加
+                // No entry present — treat as first connection and learn the key.
                 warn!(
-                    "known_hosts にエントリがありません。ホスト鍵を自動追加します: {}:{}",
+                    "known_hosts has no entry; auto-adding host key: {}:{}",
                     self.host, self.port
                 );
                 if let Err(e) = learn_known_hosts(&self.host, self.port, server_public_key) {
-                    warn!("known_hosts への書き込みに失敗しました: {}", e);
+                    warn!("failed to write to known_hosts: {}", e);
                 }
                 Ok(true)
             }
             Err(russh::keys::Error::KeyChanged { line }) => {
-                // 鍵が変わっている → 中間者攻撃の可能性
+                // Host key changed — possible MITM, reject the connection.
                 warn!(
-                    "known_hosts: ホスト鍵が変更されています ({}:{}, line {}) — 接続を拒否します",
+                    "known_hosts: host key has changed ({}:{}, line {}) — rejecting connection",
                     self.host, self.port, line
                 );
                 Err(russh::Error::WrongServerSig)
             }
             Err(e) => {
-                // その他のエラーは警告して続行
+                // Any other error: log a warning and proceed.
                 warn!(
-                    "known_hosts の検証中にエラーが発生しました: {} — 検証をスキップします",
+                    "error while verifying known_hosts: {} — skipping verification",
                     e
                 );
                 Ok(true)
@@ -106,7 +106,7 @@ impl client::Handler for SshHandler {
         }
     }
 
-    /// SSH サーバーがリモートフォワーディングの接続を通知してきた際に呼び出される
+    /// Called when the SSH server notifies us of an incoming remote-forwarding connection.
     async fn server_channel_open_forwarded_tcpip(
         &mut self,
         channel: russh::Channel<russh::client::Msg>,
@@ -116,7 +116,7 @@ impl client::Handler for SshHandler {
         _originator_port: u32,
         _session: &mut russh::client::Session,
     ) -> Result<(), Self::Error> {
-        // forward_map からローカル転送先を取得する
+        // Look up the local forwarding destination in forward_map.
         let dest = {
             let map = self.forward_map.lock().expect("forward_map mutex poisoned");
             map.get(&connected_port).cloned()
@@ -124,14 +124,14 @@ impl client::Handler for SshHandler {
 
         let Some((local_host, local_port)) = dest else {
             warn!(
-                "リモートフォワーディング: ポート {} のマッピングが見つかりません",
+                "remote forwarding: no mapping found for port {}",
                 connected_port
             );
             return Ok(());
         };
 
         debug!(
-            "リモートフォワーディング: {}:{} → {}:{}",
+            "remote forwarding: {}:{} → {}:{}",
             connected_address, connected_port, local_host, local_port
         );
 
@@ -141,7 +141,7 @@ impl client::Handler for SshHandler {
                     Ok(s) => s,
                     Err(e) => {
                         warn!(
-                            "リモートフォワーディング: ローカル接続失敗 ({}:{}): {}",
+                            "remote forwarding: local connection failed ({}:{}): {}",
                             local_host, local_port, e
                         );
                         return;
@@ -150,10 +150,10 @@ impl client::Handler for SshHandler {
             let mut ssh_stream = channel.into_stream();
             match tokio::io::copy_bidirectional(&mut local_stream, &mut ssh_stream).await {
                 Ok((sent, recv)) => {
-                    debug!("リモートフォワーディング終了: sent={} recv={}", sent, recv);
+                    debug!("remote forwarding finished: sent={} recv={}", sent, recv);
                 }
                 Err(e) => {
-                    debug!("リモートフォワーディング I/O エラー: {}", e);
+                    debug!("remote forwarding I/O error: {}", e);
                 }
             }
         });
@@ -163,24 +163,24 @@ impl client::Handler for SshHandler {
 }
 
 // ---------------------------------------------------------------------------
-// SSH セッションハンドル
+// SSH session handle.
 // ---------------------------------------------------------------------------
 
-/// SSH セッションハンドル
+/// SSH session handle.
 ///
-/// `Handle` は `Clone` を実装していないため、ポートフォワーディングなど
-/// バックグラウンドタスクからもアクセスできるよう `Arc<Mutex<...>>` で保持する。
+/// `Handle` does not implement `Clone`, so it is kept inside `Arc<Mutex<...>>`
+/// so that background tasks (port forwarding, etc.) can also access it.
 pub struct SshSession {
     handle: Arc<Mutex<Handle<SshHandler>>>,
-    /// リモートポートフォワーディングのポートマッピング（ハンドラと共有）
+    /// Remote port forwarding mapping (shared with the handler).
     forward_map: ForwardMap,
 }
 
 impl SshSession {
-    /// SSH サーバーに接続する
+    /// Connect to the SSH server.
     ///
-    /// `config.proxy_jump` が設定されている場合は ProxyJump 経由で接続する。
-    /// `config.proxy_socks5` が設定されている場合は SOCKS5 プロキシ経由で接続する。
+    /// When `config.proxy_jump` is set, the connection is established through ProxyJump.
+    /// When `config.proxy_socks5` is set, it is established through a SOCKS5 proxy.
     #[instrument(
         name = "ssh_connect",
         skip(config),
@@ -205,7 +205,7 @@ impl SshSession {
             forward_map: Arc::clone(&forward_map),
         };
 
-        // SOCKS5 プロキシ経由接続
+        // Connect via SOCKS5 proxy.
         if let Some(socks5_url) = &config.proxy_socks5 {
             let handle = connect_via_socks5(ssh_config, socks5_url, config, handler).await?;
             return Ok(Self {
@@ -214,7 +214,7 @@ impl SshSession {
             });
         }
 
-        // ProxyJump 経由接続
+        // Connect via ProxyJump.
         if let Some(jump_spec) = &config.proxy_jump {
             let handle = connect_via_jump(ssh_config, jump_spec, config, handler).await?;
             return Ok(Self {
@@ -223,7 +223,7 @@ impl SshSession {
             });
         }
 
-        // 直接接続
+        // Direct connection.
         let addr = (config.host.as_str(), config.port);
         let handle = client::connect(ssh_config, addr, handler).await?;
         Ok(Self {
@@ -232,7 +232,7 @@ impl SshSession {
         })
     }
 
-    /// 認証を実行する
+    /// Run authentication.
     #[instrument(
         name = "ssh_authenticate",
         skip(self, config),
@@ -266,49 +266,49 @@ impl SshSession {
                         .await?
                 }
                 SshAuth::Agent => {
-                    drop(handle); // ロックを解放してエージェント認証へ
+                    drop(handle); // Release the lock before performing agent authentication.
                     return self.authenticate_agent(username).await;
                 }
             }
         };
 
         if !authenticated.success() {
-            bail!("SSH 認証に失敗しました: ユーザー名またはパスワードが正しくありません");
+            bail!("SSH authentication failed: incorrect username or password");
         }
         Ok(())
     }
 
     // ---------------------------------------------------------------------------
-    // 実装2: SSH エージェント認証
+    // Implementation 2: SSH agent authentication.
     // ---------------------------------------------------------------------------
 
-    /// SSH エージェント認証を実行する
+    /// Perform SSH agent authentication.
     async fn authenticate_agent(&mut self, username: String) -> Result<()> {
         #[cfg(unix)]
         {
             use russh::keys::agent::client::AgentClient;
 
-            // エージェントに接続（SSH_AUTH_SOCK を使用）
-            let mut agent = AgentClient::connect_env().await.context(
-                "SSH エージェントへの接続に失敗しました (SSH_AUTH_SOCK を確認してください)",
-            )?;
+            // Connect to the agent (uses SSH_AUTH_SOCK).
+            let mut agent = AgentClient::connect_env()
+                .await
+                .context("failed to connect to the SSH agent (check SSH_AUTH_SOCK)")?;
 
-            // エージェントから公開鍵一覧を取得
+            // Fetch the list of public keys from the agent.
             let identities = agent
                 .request_identities()
                 .await
-                .context("SSH エージェントから公開鍵一覧を取得できませんでした")?;
+                .context("failed to obtain the public-key list from the SSH agent")?;
 
             if identities.is_empty() {
-                bail!("SSH エージェントに登録されている鍵がありません");
+                bail!("the SSH agent has no registered keys");
             }
 
-            // 各鍵で認証を試みる
+            // Try each key in turn.
             for identity in &identities {
                 let comment = identity.comment().to_string();
-                debug!("SSH エージェント認証を試みます: {}", comment);
+                debug!("trying SSH agent authentication: {}", comment);
 
-                // russh 0.59: authenticate_publickey_with の第2引数は ssh_key::PublicKey
+                // russh 0.59: the second argument to authenticate_publickey_with is ssh_key::PublicKey.
                 let pub_key = identity.public_key().into_owned();
 
                 let mut handle = self.handle.lock().await;
@@ -320,31 +320,31 @@ impl SshSession {
                 match result {
                     Ok(auth_res) if auth_res.success() => return Ok(()),
                     Ok(_) => {
-                        debug!("鍵 '{}' での認証は受け入れられませんでした", comment);
+                        debug!("key '{}' was not accepted for authentication", comment);
                     }
                     Err(e) => {
-                        warn!("鍵 '{}' での認証中にエラーが発生しました: {}", comment, e);
+                        warn!("error while authenticating with key '{}': {}", comment, e);
                     }
                 }
             }
 
-            bail!("SSH エージェントのすべての鍵で認証に失敗しました");
+            bail!("authentication failed for every key in the SSH agent");
         }
 
         #[cfg(not(unix))]
         {
             let _ = username;
-            bail!("SSH エージェント認証は Windows では未実装です");
+            bail!("SSH agent authentication is not implemented on Windows");
         }
     }
 
-    /// PTY チャネルを開いて I/O ループを起動する
+    /// Open a PTY channel and spawn the I/O loop.
     ///
-    /// `output_tx`: サーバーからのデータ（PTY 出力）を送信するチャネル
-    /// `input_rx`: クライアントからのデータ（キー入力）を受信するチャネル
-    /// `cols`, `rows`: 初期端末サイズ
-    /// `x11_forward`: X11 フォワーディングを有効にするか（ssh -X 相当）
-    /// `x11_trusted`: 信頼された X11 フォワーディング（ssh -Y 相当）
+    /// `output_tx`: channel for sending data from the server (PTY output).
+    /// `input_rx`: channel for receiving data from the client (key input).
+    /// `cols`, `rows`: initial terminal size.
+    /// `x11_forward`: enable X11 forwarding (equivalent to `ssh -X`).
+    /// `x11_trusted`: trusted X11 forwarding (equivalent to `ssh -Y`).
     #[instrument(
         name = "ssh_open_shell",
         skip(self, output_tx, input_rx),
@@ -367,14 +367,14 @@ impl SshSession {
             .request_pty(false, "xterm-256color", cols as u32, rows as u32, 0, 0, &[])
             .await?;
 
-        // X11 フォワーディングのリクエスト（PTY リクエスト後、シェル起動前に行う）
+        // Request X11 forwarding (after the PTY request, before the shell is started).
         if x11_forward {
-            // want_reply: false（応答を待たない）
-            // single_connection: 信頼された転送 (-Y) では false、非信頼 (-X) では true
+            // want_reply: false (do not wait for a reply).
+            // single_connection: false for trusted forwarding (-Y), true for untrusted (-X).
             let want_reply = false;
             let single_connection = !x11_trusted;
             let auth_protocol = "MIT-MAGIC-COOKIE-1";
-            // ダミークッキー（実際の X11 認証は将来の実装で行う）
+            // Dummy cookie (actual X11 authentication will be implemented later).
             let auth_cookie = "00000000000000000000000000000000";
             let screen_number = 0u32;
             if let Err(e) = channel
@@ -387,17 +387,17 @@ impl SshSession {
                 )
                 .await
             {
-                warn!("X11 フォワーディングのリクエストに失敗しました: {}", e);
+                warn!("X11 forwarding request failed: {}", e);
             }
         }
 
         channel.request_shell(false).await?;
 
-        // I/O ループを起動する
+        // Spawn the I/O loop.
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    // SSH チャネルからの出力を受信する
+                    // Receive output from the SSH channel.
                     msg = channel.wait() => {
                         match msg {
                             Some(ChannelMsg::Data { data })
@@ -409,7 +409,7 @@ impl SshSession {
                             _ => {}
                         }
                     }
-                    // クライアントからの入力を SSH チャネルに送信する
+                    // Forward client input to the SSH channel.
                     Some(data) = input_rx.recv() => {
                         if channel.data(data.as_ref()).await.is_err() {
                             break;
@@ -423,25 +423,25 @@ impl SshSession {
     }
 
     // ---------------------------------------------------------------------------
-    // 実装3: ローカルポートフォワーディング
+    // Implementation 3: local port forwarding.
     // ---------------------------------------------------------------------------
 
-    /// リモートポートフォワーディングを開始する (-R)
+    /// Start a remote port forwarding (-R).
     ///
-    /// `spec` フォーマット: "remote_port:local_host:local_port"
+    /// `spec` format: `remote_port:local_host:local_port`.
     ///
-    /// SSH サーバーの `remote_port` への接続を
-    /// ローカルの `local_host:local_port` に転送する。
+    /// Connections arriving at `remote_port` on the SSH server are forwarded
+    /// to `local_host:local_port` on the local side.
     pub async fn start_remote_forward(&self, spec: &str) -> Result<()> {
         let (remote_port, local_host, local_port) = parse_forward_spec(spec)?;
 
-        // forward_map にマッピングを登録する（ハンドラのコールバックで参照される）
+        // Register the mapping in forward_map (referenced from the handler callback).
         {
             let mut map = self.forward_map.lock().expect("forward_map mutex poisoned");
             map.insert(remote_port as u32, (local_host.clone(), local_port));
         }
 
-        // SSH サーバーにリモートポートの待ち受けをリクエストする
+        // Ask the SSH server to listen on the remote port.
         {
             let guard = self.handle.lock().await;
             guard
@@ -449,31 +449,31 @@ impl SshSession {
                 .await
                 .with_context(|| {
                     format!(
-                        "リモートポートフォワーディング: SSH サーバーへのリモートポート {} のバインドに失敗しました",
+                        "remote port forwarding: failed to bind remote port {} on the SSH server",
                         remote_port
                     )
                 })?;
         }
 
         debug!(
-            "リモートポートフォワーディング開始: remote:{} → {}:{}",
+            "remote port forwarding started: remote:{} → {}:{}",
             remote_port, local_host, local_port
         );
 
-        // 実際の接続処理は SshHandler::server_channel_open_forwarded_tcpip で行われる
+        // The actual connection handling happens in SshHandler::server_channel_open_forwarded_tcpip.
 
         Ok(())
     }
 
-    /// ローカルポートフォワーディングを開始する
+    /// Start a local port forwarding.
     ///
-    /// `spec` フォーマット: "local_port:remote_host:remote_port"
+    /// `spec` format: `local_port:remote_host:remote_port`.
     pub async fn start_local_forward(&self, spec: &str) -> Result<()> {
         let (local_port, remote_host, remote_port) = parse_forward_spec(spec)?;
 
         let listener = TcpListener::bind(("127.0.0.1", local_port))
             .await
-            .with_context(|| format!("ローカルポート {} のリッスンに失敗しました", local_port))?;
+            .with_context(|| format!("failed to listen on local port {}", local_port))?;
 
         let handle = self.handle.clone();
 
@@ -482,7 +482,7 @@ impl SshSession {
                 let (mut local_stream, local_addr) = match listener.accept().await {
                     Ok(v) => v,
                     Err(e) => {
-                        warn!("ローカルポートフォワーディング: accept エラー: {}", e);
+                        warn!("local port forwarding: accept error: {}", e);
                         break;
                     }
                 };
@@ -491,7 +491,7 @@ impl SshSession {
                 let h = handle.clone();
 
                 tokio::spawn(async move {
-                    // SSH direct-tcpip チャネルを開く
+                    // Open a direct-tcpip channel over SSH.
                     let channel = {
                         let guard = h.lock().await;
                         guard
@@ -507,24 +507,24 @@ impl SshSession {
                     let channel = match channel {
                         Ok(c) => c,
                         Err(e) => {
-                            warn!("direct-tcpip チャネルのオープンに失敗しました: {}", e);
+                            warn!("failed to open direct-tcpip channel: {}", e);
                             return;
                         }
                     };
 
-                    // チャネルを AsyncRead/AsyncWrite ストリームに変換
+                    // Convert the channel into an AsyncRead/AsyncWrite stream.
                     let mut ssh_stream = channel.into_stream();
 
-                    // 双方向プロキシ
+                    // Bidirectional proxy.
                     match tokio::io::copy_bidirectional(&mut local_stream, &mut ssh_stream).await {
                         Ok((sent, recv)) => {
                             debug!(
-                                "ポートフォワーディング終了: {}:{} sent={} recv={}",
+                                "port forwarding finished: {}:{} sent={} recv={}",
                                 rh, remote_port, sent, recv
                             );
                         }
                         Err(e) => {
-                            debug!("ポートフォワーディング I/O エラー: {}", e);
+                            debug!("port forwarding I/O error: {}", e);
                         }
                     }
                 });
@@ -535,14 +535,14 @@ impl SshSession {
     }
 
     // ---------------------------------------------------------------------------
-    // 実装4: SFTP ファイル転送
+    // Implementation 4: SFTP file transfer.
     // ---------------------------------------------------------------------------
 
-    /// ローカルファイルをリモートにアップロードする（SFTP）
+    /// Upload a local file to the remote host over SFTP.
     ///
-    /// `local_path`: アップロードするローカルファイルのパス
-    /// `remote_path`: サーバー上の保存先パス（例: "/home/user/file.txt"）
-    /// `progress_tx`: (transferred_bytes, total_bytes) を報告するチャネル（None = 報告なし）
+    /// `local_path`: local file path to upload.
+    /// `remote_path`: destination path on the server (e.g. `/home/user/file.txt`).
+    /// `progress_tx`: channel that reports `(transferred_bytes, total_bytes)` (None = no reporting).
     pub async fn upload_file(
         &self,
         local_path: &std::path::Path,
@@ -552,7 +552,7 @@ impl SshSession {
         use russh_sftp::client::SftpSession;
         use tokio::io::AsyncReadExt;
 
-        // SFTP サブシステムチャネルを開く
+        // Open an SFTP subsystem channel.
         let channel = {
             let handle = self.handle.lock().await;
             handle.channel_open_session().await?
@@ -560,24 +560,21 @@ impl SshSession {
 
         let sftp = SftpSession::new(channel.into_stream())
             .await
-            .context("SFTP セッションの開始に失敗しました")?;
+            .context("failed to start the SFTP session")?;
 
-        // ローカルファイルを開く
-        let mut local_file = tokio::fs::File::open(local_path).await.with_context(|| {
-            format!(
-                "ローカルファイルのオープンに失敗しました: {}",
-                local_path.display()
-            )
-        })?;
+        // Open the local file.
+        let mut local_file = tokio::fs::File::open(local_path)
+            .await
+            .with_context(|| format!("failed to open the local file: {}", local_path.display()))?;
         let total = local_file.metadata().await.map(|m| m.len()).unwrap_or(0);
 
-        // リモートファイルを作成して書き込む
+        // Create and write to the remote file.
         let mut remote_file = sftp
             .create(remote_path)
             .await
-            .with_context(|| format!("リモートファイルの作成に失敗しました: {}", remote_path))?;
+            .with_context(|| format!("failed to create the remote file: {}", remote_path))?;
 
-        let mut buf = vec![0u8; 32 * 1024]; // 32KB チャンク
+        let mut buf = vec![0u8; 32 * 1024]; // 32 KiB chunks.
         let mut transferred: u64 = 0;
 
         loop {
@@ -594,7 +591,7 @@ impl SshSession {
         }
 
         debug!(
-            "SFTP アップロード完了: {} → {} ({} bytes)",
+            "SFTP upload finished: {} → {} ({} bytes)",
             local_path.display(),
             remote_path,
             transferred
@@ -602,11 +599,11 @@ impl SshSession {
         Ok(())
     }
 
-    /// リモートファイルをローカルにダウンロードする（SFTP）
+    /// Download a remote file to the local filesystem over SFTP.
     ///
-    /// `remote_path`: ダウンロードするサーバー上のファイルパス
-    /// `local_path`: ローカル保存先パス
-    /// `progress_tx`: (transferred_bytes, total_bytes) を報告するチャネル（None = 報告なし）
+    /// `remote_path`: remote file path to download.
+    /// `local_path`: local destination path.
+    /// `progress_tx`: channel that reports `(transferred_bytes, total_bytes)` (None = no reporting).
     pub async fn download_file(
         &self,
         remote_path: &str,
@@ -616,7 +613,7 @@ impl SshSession {
         use russh_sftp::client::SftpSession;
         use tokio::io::AsyncReadExt;
 
-        // SFTP サブシステムチャネルを開く
+        // Open an SFTP subsystem channel.
         let channel = {
             let handle = self.handle.lock().await;
             handle.channel_open_session().await?
@@ -624,29 +621,27 @@ impl SshSession {
 
         let sftp = SftpSession::new(channel.into_stream())
             .await
-            .context("SFTP セッションの開始に失敗しました")?;
+            .context("failed to start the SFTP session")?;
 
-        // リモートファイルのメタデータを取得してサイズを得る
+        // Fetch the remote file metadata to obtain its size.
         let total = sftp
             .metadata(remote_path)
             .await
             .map(|m| m.size.unwrap_or(0))
             .unwrap_or(0);
 
-        // リモートファイルを開く
-        let mut remote_file = sftp.open(remote_path).await.with_context(|| {
-            format!("リモートファイルのオープンに失敗しました: {}", remote_path)
-        })?;
+        // Open the remote file.
+        let mut remote_file = sftp
+            .open(remote_path)
+            .await
+            .with_context(|| format!("failed to open the remote file: {}", remote_path))?;
 
-        // ローカルファイルに書き込む
+        // Write to the local file.
         let mut local_file = tokio::fs::File::create(local_path).await.with_context(|| {
-            format!(
-                "ローカルファイルの作成に失敗しました: {}",
-                local_path.display()
-            )
+            format!("failed to create the local file: {}", local_path.display())
         })?;
 
-        let mut buf = vec![0u8; 32 * 1024]; // 32KB チャンク
+        let mut buf = vec![0u8; 32 * 1024]; // 32 KiB chunks.
         let mut transferred: u64 = 0;
 
         loop {
@@ -663,7 +658,7 @@ impl SshSession {
         }
 
         debug!(
-            "SFTP ダウンロード完了: {} → {} ({} bytes)",
+            "SFTP download finished: {} → {} ({} bytes)",
             remote_path,
             local_path.display(),
             transferred
@@ -673,18 +668,18 @@ impl SshSession {
 }
 
 // ---------------------------------------------------------------------------
-// ヘルパー関数
+// Helper functions.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// ProxyJump / SOCKS5 ヘルパー
+// ProxyJump / SOCKS5 helpers.
 // ---------------------------------------------------------------------------
 
-/// "user@host:port" 形式の ProxyJump 仕様をパースする
+/// Parse a `user@host:port` ProxyJump specification.
 ///
-/// ユーザー名を省略した場合は現在の OS ユーザーにフォールバックする。
+/// When the user name is omitted, fall back to the current OS user.
 fn parse_jump_spec(spec: &str) -> Result<(String, String, u16)> {
-    // user@host:port または host:port
+    // user@host:port  or  host:port.
     let (user, host_port) = if let Some(at) = spec.rfind('@') {
         (spec[..at].to_string(), &spec[at + 1..])
     } else {
@@ -697,7 +692,7 @@ fn parse_jump_spec(spec: &str) -> Result<(String, String, u16)> {
     let (host, port) = if let Some(colon) = host_port.rfind(':') {
         let port: u16 = host_port[colon + 1..]
             .parse()
-            .with_context(|| format!("ProxyJump のポート番号が不正です: {}", spec))?;
+            .with_context(|| format!("invalid ProxyJump port number: {}", spec))?;
         (host_port[..colon].to_string(), port)
     } else {
         (host_port.to_string(), 22u16)
@@ -706,11 +701,11 @@ fn parse_jump_spec(spec: &str) -> Result<(String, String, u16)> {
     Ok((user, host, port))
 }
 
-/// ProxyJump 経由で SSH 接続を確立する
+/// Establish an SSH connection through ProxyJump.
 ///
-/// 1. ジャンプホストに接続・認証する
-/// 2. ジャンプホスト上で `channel_open_direct_tcpip` を使って実ホストへのトンネルを開く
-/// 3. そのチャネルストリームを transport として実ホストに接続する
+/// 1. Connect and authenticate to the jump host.
+/// 2. Open a tunnel to the real host via `channel_open_direct_tcpip` on the jump host.
+/// 3. Use that channel stream as the transport to connect to the real host.
 async fn connect_via_jump(
     ssh_config: Arc<client::Config>,
     jump_spec: &str,
@@ -724,7 +719,7 @@ async fn connect_via_jump(
         jump_user, jump_host, jump_port, target.host, target.port
     );
 
-    // ジャンプホストへの接続（フォワーディングは対象ホスト側のみ、ジャンプホストには不要）
+    // Connect to the jump host (only the target host needs the forwarding map).
     let jump_verifier = SshHandler {
         host: jump_host.clone(),
         port: jump_port,
@@ -733,7 +728,7 @@ async fn connect_via_jump(
     let jump_addr = (jump_host.as_str(), jump_port);
     let mut jump_handle = client::connect(ssh_config.clone(), jump_addr, jump_verifier).await?;
 
-    // ジャンプホストの認証（対象ホストと同じ認証情報を使用）
+    // Authenticate to the jump host (reuse the same credentials as the target host).
     let jump_auth_result = {
         let username = jump_user.clone();
         match &target.auth {
@@ -758,41 +753,41 @@ async fn connect_via_jump(
                     .await?
             }
             SshAuth::Agent => {
-                // エージェント認証は SshSession::authenticate_agent で処理するため、
-                // ここでは鍵なし認証にフォールバックしてエラーを返す
-                bail!("ProxyJump でのエージェント認証は現在未対応です");
+                // Agent authentication is handled by SshSession::authenticate_agent;
+                // we cannot reuse it here, so bail out.
+                bail!("agent authentication via ProxyJump is not yet supported");
             }
         }
     };
 
     if !jump_auth_result.success() {
         bail!(
-            "ProxyJump ホストへの認証に失敗しました: {}@{}:{}",
+            "authentication to the ProxyJump host failed: {}@{}:{}",
             jump_user,
             jump_host,
             jump_port
         );
     }
 
-    // ジャンプホスト上でターゲットホストへの direct-tcpip チャネルを開く
+    // Open a direct-tcpip channel to the target host on the jump host.
     let channel = jump_handle
         .channel_open_direct_tcpip(target.host.clone(), target.port as u32, "127.0.0.1", 0u32)
         .await
-        .context("ProxyJump: direct-tcpip チャネルのオープンに失敗しました")?;
+        .context("ProxyJump: failed to open the direct-tcpip channel")?;
 
-    // チャネルを AsyncRead/AsyncWrite ストリームに変換して実ホストに接続する
+    // Convert the channel to an AsyncRead/AsyncWrite stream and connect to the real host.
     let channel_stream = channel.into_stream();
     let handle = client::connect_stream(ssh_config, channel_stream, target_verifier).await?;
 
     Ok(handle)
 }
 
-/// SOCKS5 プロキシ経由で SSH 接続を確立する
+/// Establish an SSH connection through a SOCKS5 proxy.
 ///
-/// `socks5_url` のフォーマット: "socks5://host:port"
+/// `socks5_url` format: `socks5://host:port`.
 ///
-/// SOCKS5 ハンドシェイクを手動で行い、生 TCP ストリームをターゲットホストへの
-/// トンネルとして使用する。
+/// The SOCKS5 handshake is performed manually; the raw TCP stream is then used as
+/// a tunnel to the target host.
 async fn connect_via_socks5(
     ssh_config: Arc<client::Config>,
     socks5_url: &str,
@@ -801,10 +796,10 @@ async fn connect_via_socks5(
 ) -> Result<client::Handle<SshHandler>> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    // "socks5://[user:pass@]host:port" をパースする
+    // Parse `socks5://[user:pass@]host:port`.
     let without_scheme = socks5_url.strip_prefix("socks5://").unwrap_or(socks5_url);
 
-    // "@" がある場合は認証情報を除去してホスト部だけ取り出す
+    // If a `@` is present, strip the credentials and keep only the host portion.
     let host_part = if let Some(at_pos) = without_scheme.find('@') {
         &without_scheme[at_pos + 1..]
     } else {
@@ -814,7 +809,7 @@ async fn connect_via_socks5(
     let (socks_host, socks_port) = if let Some(colon) = host_part.rfind(':') {
         let port: u16 = host_part[colon + 1..]
             .parse()
-            .with_context(|| format!("SOCKS5 プロキシのポート番号が不正です: {}", socks5_url))?;
+            .with_context(|| format!("invalid SOCKS5 proxy port number: {}", socks5_url))?;
         (host_part[..colon].to_string(), port)
     } else {
         (host_part.to_string(), 1080u16)
@@ -825,20 +820,20 @@ async fn connect_via_socks5(
         socks_host, socks_port, target.host, target.port
     );
 
-    // SOCKS5 プロキシに TCP 接続する
+    // Open a TCP connection to the SOCKS5 proxy.
     let mut stream = tokio::net::TcpStream::connect((socks_host.as_str(), socks_port))
         .await
         .with_context(|| {
             format!(
-                "SOCKS5 プロキシへの接続に失敗しました: {}:{}",
+                "failed to connect to the SOCKS5 proxy: {}:{}",
                 socks_host, socks_port
             )
         })?;
 
-    // socks5_url から認証情報を抽出する（"socks5://user:pass@host:port"）
+    // Extract credentials from the SOCKS5 URL (`socks5://user:pass@host:port`).
     let (socks_user, socks_pass) = parse_socks5_credentials(socks5_url);
 
-    // SOCKS5 ネゴシエーション: 認証なし(0x00) + ユーザー名/パスワード(0x02) の両方を提案
+    // SOCKS5 negotiation: offer both no-auth (0x00) and username/password (0x02).
     // +----+----------+----------+
     // |VER | NMETHODS | METHODS  |
     // +----+----------+----------+
@@ -847,34 +842,34 @@ async fn connect_via_socks5(
     let methods: &[u8] = if socks_user.is_some() {
         &[0x05, 0x02, 0x00, 0x02] // no-auth + user/pass
     } else {
-        &[0x05, 0x01, 0x00] // no-auth のみ
+        &[0x05, 0x01, 0x00] // no-auth only
     };
     stream.write_all(methods).await?;
 
     let mut resp = [0u8; 2];
     stream.read_exact(&mut resp).await?;
     if resp[0] != 0x05 {
-        bail!("SOCKS5: バージョンが不正です (応答: {:?})", resp);
+        bail!("SOCKS5: invalid version (response: {:?})", resp);
     }
 
     match resp[1] {
         0x00 => {
-            // 認証不要 — そのまま続行
-            debug!("SOCKS5: 認証なしで接続します");
+            // No authentication — proceed.
+            debug!("SOCKS5: connecting without authentication");
         }
         0x02 => {
-            // RFC 1929 ユーザー名/パスワード認証
+            // RFC 1929 username/password authentication.
             let user = socks_user.as_deref().unwrap_or("");
             let pass = socks_pass.as_deref().unwrap_or("");
             debug!(
-                "SOCKS5: ユーザー名/パスワード認証を実行します (user={})",
+                "SOCKS5: performing username/password authentication (user={})",
                 user
             );
 
             let user_bytes = user.as_bytes();
             let pass_bytes = pass.as_bytes();
             if user_bytes.len() > 255 || pass_bytes.len() > 255 {
-                bail!("SOCKS5: ユーザー名またはパスワードが長すぎます (最大255バイト)");
+                bail!("SOCKS5: username or password too long (max 255 bytes)");
             }
 
             let mut auth_req = vec![0x01u8]; // VER=1 (sub-negotiation version)
@@ -888,25 +883,25 @@ async fn connect_via_socks5(
             stream.read_exact(&mut auth_resp).await?;
             if auth_resp[1] != 0x00 {
                 bail!(
-                    "SOCKS5: 認証に失敗しました (user={}, status=0x{:02x})",
+                    "SOCKS5: authentication failed (user={}, status=0x{:02x})",
                     user,
                     auth_resp[1]
                 );
             }
-            debug!("SOCKS5: 認証成功");
+            debug!("SOCKS5: authentication succeeded");
         }
         0xFF => {
-            bail!("SOCKS5: サーバーが利用可能な認証方式を拒否しました");
+            bail!("SOCKS5: server rejected all offered authentication methods");
         }
         other => {
             bail!(
-                "SOCKS5: 認証ネゴシエーションに失敗しました (選択された方式: 0x{:02x})",
+                "SOCKS5: authentication negotiation failed (selected method: 0x{:02x})",
                 other
             );
         }
     }
 
-    // SOCKS5 CONNECT リクエスト
+    // SOCKS5 CONNECT request.
     // +----+-----+-------+------+----------+----------+
     // |VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
     // +----+-----+-------+------+----------+----------+
@@ -924,17 +919,17 @@ async fn connect_via_socks5(
     connect_req.push((target.port & 0xFF) as u8);
     stream.write_all(&connect_req).await?;
 
-    // SOCKS5 CONNECT レスポンス
+    // SOCKS5 CONNECT response.
     let mut header = [0u8; 4];
     stream.read_exact(&mut header).await?;
     if header[0] != 0x05 || header[1] != 0x00 {
         bail!(
-            "SOCKS5: CONNECT に失敗しました (VER={}, REP={})",
+            "SOCKS5: CONNECT failed (VER={}, REP={})",
             header[0],
             header[1]
         );
     }
-    // バインドアドレスを読み捨てる
+    // Discard the bound address.
     let bound_addr_len = match header[3] {
         0x01 => 4usize, // IPv4
         0x03 => {
@@ -943,25 +938,25 @@ async fn connect_via_socks5(
             l[0] as usize
         }
         0x04 => 16usize, // IPv6
-        _ => bail!("SOCKS5: 不明なアドレスタイプ: {}", header[3]),
+        _ => bail!("SOCKS5: unknown address type: {}", header[3]),
     };
     let mut discard = vec![0u8; bound_addr_len + 2]; // addr + port
     stream.read_exact(&mut discard).await?;
 
-    // トンネルが確立されたので SSH 接続を行う
+    // The tunnel is established — perform the SSH connection over it.
     let handle = client::connect_stream(ssh_config, stream, target_verifier).await?;
     Ok(handle)
 }
 
-/// SOCKS5 URL から認証情報を抽出する
+/// Extract credentials from a SOCKS5 URL.
 ///
-/// "socks5://user:pass@host:port" → (Some("user"), Some("pass"))
-/// "socks5://host:port"           → (None, None)
+/// `socks5://user:pass@host:port` → `(Some("user"), Some("pass"))`.
+/// `socks5://host:port`           → `(None, None)`.
 fn parse_socks5_credentials(url: &str) -> (Option<String>, Option<String>) {
-    // "socks5://" を除去する
+    // Strip the `socks5://` scheme.
     let rest = url.strip_prefix("socks5://").unwrap_or(url);
 
-    // "@" が含まれる場合は "user:pass@host:port" 形式
+    // If a `@` is present, the format is `user:pass@host:port`.
     if let Some(at_pos) = rest.find('@') {
         let userinfo = &rest[..at_pos];
         if let Some(colon_pos) = userinfo.find(':') {
@@ -969,41 +964,43 @@ fn parse_socks5_credentials(url: &str) -> (Option<String>, Option<String>) {
             let pass = &userinfo[colon_pos + 1..];
             return (Some(user.to_string()), Some(pass.to_string()));
         }
-        // コロンなし → ユーザー名のみ
+        // No colon → user name only.
         return (Some(userinfo.to_string()), None);
     }
 
     (None, None)
 }
 
-/// "local_port:remote_host:remote_port" 形式のフォワーディング仕様をパースする
+/// Parse a `local_port:remote_host:remote_port` forwarding specification.
 fn parse_forward_spec(spec: &str) -> Result<(u16, String, u16)> {
     let parts: Vec<&str> = spec.splitn(3, ':').collect();
     if parts.len() != 3 {
         bail!(
-            "不正なポートフォワーディング仕様です (期待形式: local_port:remote_host:remote_port): {}",
+            "invalid port forwarding spec (expected `local_port:remote_host:remote_port`): {}",
             spec
         );
     }
     let local_port: u16 = parts[0]
         .parse()
-        .with_context(|| format!("ローカルポートの解析に失敗しました: {}", parts[0]))?;
+        .with_context(|| format!("failed to parse local port: {}", parts[0]))?;
     let remote_host = parts[1].to_string();
     let remote_port: u16 = parts[2]
         .parse()
-        .with_context(|| format!("リモートポートの解析に失敗しました: {}", parts[2]))?;
+        .with_context(|| format!("failed to parse remote port: {}", parts[2]))?;
     Ok((local_port, remote_host, remote_port))
 }
 
 // ---------------------------------------------------------------------------
-// ユニットテスト
+// Unit tests.
 //
-// nexterm-ssh は外部 SSH サーバーへの I/O が中心で完全な統合テストは
-// モック SSH サーバーが必要になる（Sprint 5-5 以降の課題）。
-// ここでは純粋ロジック（仕様文字列パーサ・SshConfig 構築・到達不能ホストの即時失敗）に
-// 限定して単体テストを置く。
+// nexterm-ssh is centered on I/O against an external SSH server, so a fully
+// integrated test suite would require a mock SSH server (planned for
+// Sprint 5-5 and later). Here we restrict ourselves to unit tests over pure
+// logic (spec-string parsers, SshConfig construction, and the fast-fail path
+// for unreachable hosts).
 //
-// 監査ラウンド 2 タスク I1 (nexterm-ssh のテスト 0 解消) の最初の対応。
+// This is the first response to audit-round-2 task I1 (eliminate the zero
+// tests in nexterm-ssh).
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -1014,7 +1011,8 @@ mod tests {
 
     #[test]
     fn parse_jump_spec_user_host_port() {
-        let (user, host, port) = parse_jump_spec("alice@bastion.example.com:2222").expect("正常系");
+        let (user, host, port) =
+            parse_jump_spec("alice@bastion.example.com:2222").expect("expected success");
         assert_eq!(user, "alice");
         assert_eq!(host, "bastion.example.com");
         assert_eq!(port, 2222);
@@ -1022,28 +1020,30 @@ mod tests {
 
     #[test]
     fn parse_jump_spec_user_host_default_port() {
-        let (user, host, port) = parse_jump_spec("alice@bastion.example.com").expect("正常系");
+        let (user, host, port) =
+            parse_jump_spec("alice@bastion.example.com").expect("expected success");
         assert_eq!(user, "alice");
         assert_eq!(host, "bastion.example.com");
-        assert_eq!(port, 22, "ポート省略時は 22 にフォールバックすること");
+        assert_eq!(port, 22, "omitted port should fall back to 22");
     }
 
     #[test]
     fn parse_jump_spec_host_only_uses_env_user() {
-        // USER / USERNAME が無くても "root" にフォールバックするロジックの確認
-        let (_user, host, port) = parse_jump_spec("bastion.example.com:22").expect("正常系");
+        // Even when USER / USERNAME is unset, the parser must fall back to `root`.
+        let (_user, host, port) =
+            parse_jump_spec("bastion.example.com:22").expect("expected success");
         assert_eq!(host, "bastion.example.com");
         assert_eq!(port, 22);
-        // user は env 依存のため値の検証はしない（空文字でないことだけ確認）
+        // User value depends on the environment, so we do not assert its content.
     }
 
     #[test]
     fn parse_jump_spec_invalid_port_fails() {
-        let err = parse_jump_spec("alice@host:not-a-port").expect_err("不正ポートはエラー");
+        let err = parse_jump_spec("alice@host:not-a-port").expect_err("invalid port must fail");
         let msg = format!("{:#}", err);
         assert!(
-            msg.contains("ポート番号"),
-            "エラーメッセージにポートの旨を含むこと: {}",
+            msg.contains("port number"),
+            "error message should mention the port: {}",
             msg
         );
     }
@@ -1073,7 +1073,7 @@ mod tests {
 
     #[test]
     fn parse_socks5_credentials_missing_scheme_still_parses() {
-        // "socks5://" がなくても認証情報パートは抽出できる
+        // Even without `socks5://`, the credential portion is still extractable.
         let (u, p) = parse_socks5_credentials("alice:secret@proxy:1080");
         assert_eq!(u.as_deref(), Some("alice"));
         assert_eq!(p.as_deref(), Some("secret"));
@@ -1084,7 +1084,7 @@ mod tests {
     #[test]
     fn parse_forward_spec_valid() {
         let (local, host, remote) =
-            parse_forward_spec("8080:internal.example.com:80").expect("正常系");
+            parse_forward_spec("8080:internal.example.com:80").expect("expected success");
         assert_eq!(local, 8080);
         assert_eq!(host, "internal.example.com");
         assert_eq!(remote, 80);
@@ -1092,41 +1092,41 @@ mod tests {
 
     #[test]
     fn parse_forward_spec_too_few_parts() {
-        let err = parse_forward_spec("8080:internal.example.com").expect_err("不正形式");
+        let err = parse_forward_spec("8080:internal.example.com").expect_err("malformed spec");
         let msg = format!("{:#}", err);
-        assert!(msg.contains("ポートフォワーディング仕様"));
+        assert!(msg.contains("port forwarding spec"));
     }
 
     #[test]
     fn parse_forward_spec_bad_local_port() {
-        let err = parse_forward_spec("abc:host:80").expect_err("ローカルポート不正");
+        let err = parse_forward_spec("abc:host:80").expect_err("bad local port");
         let msg = format!("{:#}", err);
         assert!(
-            msg.contains("ローカルポート"),
-            "エラーメッセージが具体的であること: {}",
+            msg.contains("local port"),
+            "error message should be specific: {}",
             msg
         );
     }
 
     #[test]
     fn parse_forward_spec_bad_remote_port() {
-        let err = parse_forward_spec("8080:host:abc").expect_err("リモートポート不正");
+        let err = parse_forward_spec("8080:host:abc").expect_err("bad remote port");
         let msg = format!("{:#}", err);
-        assert!(msg.contains("リモートポート"));
+        assert!(msg.contains("remote port"));
     }
 
     // ---- SshConfig / SshAuth ----------------------------------------------
 
     #[test]
     fn ssh_auth_password_zeroizes_on_drop() {
-        // Zeroizing<String> がドロップ時に内部バッファをゼロ化することは
-        // 直接観測できないが、API として Password バリアントが Clone 可能で
-        // 期待通り構築できることを確認する。
+        // We cannot directly observe `Zeroizing<String>` clearing its buffer on drop,
+        // but we can at least verify that the `Password` variant is constructible
+        // and clonable as expected.
         let auth = SshAuth::Password(Zeroizing::new("hunter2".to_string()));
         let cloned = auth.clone();
         match cloned {
             SshAuth::Password(p) => assert_eq!(p.as_str(), "hunter2"),
-            _ => panic!("Password バリアントが保持されること"),
+            _ => panic!("Password variant should be preserved"),
         }
     }
 
@@ -1140,7 +1140,7 @@ mod tests {
             proxy_jump: None,
             proxy_socks5: None,
         };
-        // Clone 可能
+        // Clone is supported.
         let cloned = config.clone();
         assert_eq!(cloned.host, "example.com");
         assert_eq!(cloned.port, 22);
@@ -1149,19 +1149,18 @@ mod tests {
         assert!(cloned.proxy_socks5.is_none());
     }
 
-    // ---- 接続失敗の即時返却 -----------------------------------------------
+    // ---- Fast-fail for connection errors ----------------------------------
 
-    /// 到達不能なホストへの接続が現実的な時間でエラーを返すこと
+    /// A connection attempt to an unreachable host should fail within a reasonable time.
     ///
-    /// `127.0.0.1:1` (Reserved port) は通常 LISTEN されておらず
-    /// `connect` は即座に "Connection refused" を返す。
-    /// このテストはネットワークスタックに依存するが、
-    /// OS のローカル loopback だけを使うので CI でも安定する。
+    /// `127.0.0.1:1` (a reserved port) is normally not listening, so `connect`
+    /// returns "Connection refused" immediately. The test relies on the network
+    /// stack, but uses only the local loopback interface so it is stable in CI.
     #[tokio::test]
     async fn connect_to_unreachable_port_fails_fast() {
         let config = SshConfig {
             host: "127.0.0.1".to_string(),
-            port: 1, // LISTEN されていないポート
+            port: 1, // a port that is not listening
             username: "test".to_string(),
             auth: SshAuth::Password(Zeroizing::new("pw".to_string())),
             proxy_jump: None,
@@ -1178,16 +1177,16 @@ mod tests {
 
         match result {
             Ok(Err(_)) => {
-                // 接続エラーは想定通り
+                // Connection error is the expected outcome.
                 assert!(
                     elapsed < std::time::Duration::from_secs(5),
-                    "5 秒以内に失敗を返すこと: {:?}",
+                    "should fail within 5 seconds: {:?}",
                     elapsed
                 );
             }
-            Ok(Ok(_)) => panic!("到達不能なポートへの接続が成功してはならない"),
+            Ok(Ok(_)) => panic!("a connection to an unreachable port must not succeed"),
             Err(_) => panic!(
-                "5 秒以内に応答すべき (Connection refused は通常 1ms 以内): {:?}",
+                "must respond within 5 seconds (Connection refused is usually <1ms): {:?}",
                 elapsed
             ),
         }
