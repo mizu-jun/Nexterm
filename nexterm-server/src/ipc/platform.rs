@@ -1,7 +1,7 @@
-//! プラットフォーム別 IPC リスナー実装
+//! Platform-specific IPC listener implementations.
 //!
-//! - Unix: Unix Domain Socket (`$XDG_RUNTIME_DIR/nexterm.sock`, 0600)
-//! - Windows: Named Pipe (`\\.\pipe\nexterm-<USERNAME>`)
+//! - Unix: Unix Domain Socket (`$XDG_RUNTIME_DIR/nexterm.sock`, mode 0600).
+//! - Windows: Named Pipe (`\\.\pipe\nexterm-<USERNAME>`).
 
 use anyhow::Result;
 #[cfg(unix)]
@@ -11,7 +11,7 @@ use tracing::{error, info};
 use crate::runtime_config::SharedRuntimeConfig;
 use crate::session::SessionManager;
 
-// ---- Unix Domain Socket 実装 ----
+// ---- Unix Domain Socket implementation ----
 
 #[cfg(unix)]
 pub(super) async fn serve_unix(
@@ -28,19 +28,19 @@ pub(super) async fn serve_unix(
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))?;
 
-    // サーバー自身の UID を取得する（接続元 UID の検証基準）
-    // SAFETY: getuid() は常に成功し、安全である
+    // Take the server's own UID (the baseline for peer UID validation).
+    // SAFETY: getuid() always succeeds and is safe.
     let server_uid = unsafe { libc::getuid() };
 
-    info!("Unix ソケットでリッスン中: {}", socket_path);
+    info!("listening on Unix socket: {}", socket_path);
 
     loop {
         match listener.accept().await {
             Ok((stream, _addr)) => {
-                // 接続元の UID がサーバー UID と一致しない場合は拒否する
+                // Reject connections whose peer UID does not match the server's UID.
                 if !verify_peer_uid(&stream, server_uid) {
                     warn!(
-                        "UID 不一致の接続を拒否しました（サーバー UID={}）",
+                        "rejected connection with mismatched UID (server UID={})",
                         server_uid
                     );
                     continue;
@@ -52,28 +52,28 @@ pub(super) async fn serve_unix(
                     if let Err(e) =
                         super::handler::handle_client(stream, manager, runtime_cfg, lua).await
                     {
-                        error!("クライアント処理エラー: {}", e);
+                        error!("client handling error: {}", e);
                     }
                 });
             }
-            Err(e) => error!("接続受け付けエラー: {}", e),
+            Err(e) => error!("accept error: {}", e),
         }
     }
 }
 
-/// Unix ドメインソケットの接続元 UID を検証する
+/// Validate the peer UID on a Unix domain socket connection.
 ///
-/// 取得に成功した場合: `peer_uid == expected_uid` を返す。
-/// 取得に失敗した場合（非対応 OS 等）: `true` を返し、0600 パーミッションに依存する。
+/// On success: returns `peer_uid == expected_uid`.
+/// On failure (unsupported OS, etc.): returns `true` and relies on the 0600 permission.
 #[cfg(unix)]
 fn verify_peer_uid(stream: &tokio::net::UnixStream, expected_uid: libc::uid_t) -> bool {
     match peer_uid_impl(stream) {
         Some(uid) => uid == expected_uid,
-        None => true, // 取得不可の環境ではパーミッション 0600 に依存する
+        None => true, // On environments without peer UID support, rely on permission 0600.
     }
 }
 
-/// Linux: SO_PEERCRED で接続元の UID を取得する
+/// Linux: obtain the peer UID via SO_PEERCRED.
 #[cfg(target_os = "linux")]
 fn peer_uid_impl(stream: &tokio::net::UnixStream) -> Option<libc::uid_t> {
     use std::os::unix::io::AsRawFd;
@@ -84,7 +84,7 @@ fn peer_uid_impl(stream: &tokio::net::UnixStream) -> Option<libc::uid_t> {
         gid: 0,
     };
     let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-    // SAFETY: fd は有効な Unix ドメインソケット。cred のサイズは SO_PEERCRED に適合。
+    // SAFETY: fd is a valid Unix domain socket; the size of cred matches SO_PEERCRED.
     let ret = unsafe {
         libc::getsockopt(
             fd,
@@ -97,15 +97,15 @@ fn peer_uid_impl(stream: &tokio::net::UnixStream) -> Option<libc::uid_t> {
     if ret == 0 {
         Some(cred.uid)
     } else {
-        // SAFETY: __errno_location() はスレッドローカルな errno ポインタを返す。逆参照は常に安全。
-        warn!("SO_PEERCRED の取得に失敗しました (errno={})", unsafe {
+        // SAFETY: __errno_location() returns a thread-local errno pointer; dereferencing is always safe.
+        warn!("failed to get SO_PEERCRED (errno={})", unsafe {
             *libc::__errno_location()
         });
         None
     }
 }
 
-/// macOS / FreeBSD / NetBSD / OpenBSD: getpeereid() で接続元の UID を取得する
+/// macOS / FreeBSD / NetBSD / OpenBSD: obtain the peer UID via getpeereid().
 #[cfg(any(
     target_os = "macos",
     target_os = "freebsd",
@@ -117,17 +117,17 @@ fn peer_uid_impl(stream: &tokio::net::UnixStream) -> Option<libc::uid_t> {
     let fd = stream.as_raw_fd();
     let mut uid: libc::uid_t = 0;
     let mut gid: libc::gid_t = 0;
-    // SAFETY: fd は有効な Unix ドメインソケット。
+    // SAFETY: fd is a valid Unix domain socket.
     let ret = unsafe { libc::getpeereid(fd, &mut uid, &mut gid) };
     if ret == 0 {
         Some(uid)
     } else {
-        warn!("getpeereid の取得に失敗しました");
+        warn!("getpeereid failed");
         None
     }
 }
 
-/// 上記以外の Unix 環境: UID 取得は非対応（パーミッション 0600 に依存）
+/// Other Unix environments: peer UID is unsupported (we rely on permission 0600).
 #[cfg(all(
     unix,
     not(target_os = "linux"),
@@ -142,14 +142,14 @@ fn peer_uid_impl(_stream: &tokio::net::UnixStream) -> Option<libc::uid_t> {
 
 #[cfg(unix)]
 pub(super) fn unix_socket_path() -> String {
-    // SAFETY: getuid() は常に成功し、副作用なし。
+    // SAFETY: getuid() always succeeds and is side-effect free.
     let uid = unsafe { libc::getuid() };
     let runtime_dir =
         std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/run/user/{}", uid));
     format!("{}/nexterm.sock", runtime_dir)
 }
 
-// ---- Windows Named Pipe 実装 ----
+// ---- Windows Named Pipe implementation ----
 
 #[cfg(windows)]
 pub(super) async fn serve_named_pipe(
@@ -160,12 +160,12 @@ pub(super) async fn serve_named_pipe(
     use tokio::net::windows::named_pipe::ServerOptions;
 
     let pipe_name = named_pipe_name();
-    info!("Named Pipe でリッスン中: {}", pipe_name);
+    info!("listening on named pipe: {}", pipe_name);
 
     loop {
         let server = ServerOptions::new()
             .first_pipe_instance(false)
-            // リモートクライアントを明示的に拒否する（同一マシンのみ許可）
+            // Explicitly reject remote clients (allow same-machine only).
             .reject_remote_clients(true)
             .create(&pipe_name)?;
 
@@ -176,7 +176,7 @@ pub(super) async fn serve_named_pipe(
         let lua = std::sync::Arc::clone(&lua);
         tokio::spawn(async move {
             if let Err(e) = super::handler::handle_client(server, manager, runtime_cfg, lua).await {
-                error!("クライアント処理エラー: {}", e);
+                error!("client handling error: {}", e);
             }
         });
     }
@@ -190,7 +190,7 @@ pub(super) fn named_pipe_name() -> String {
 
 #[cfg(test)]
 mod tests {
-    // platform-specific tests
+    // Platform-specific tests.
 
     #[cfg(unix)]
     mod unix_tests {
@@ -211,14 +211,14 @@ mod tests {
         #[test]
         fn unix_socket_path_is_absolute() {
             let path = unix_socket_path();
-            // Unixパスは / で始まる
+            // Unix paths start with '/'.
             assert!(path.starts_with('/'));
         }
 
         #[test]
         fn unix_socket_path_includes_run_or_tmp() {
             let path = unix_socket_path();
-            // XDG_RUNTIME_DIRまたは /run/user/<uid> または /tmp
+            // Either XDG_RUNTIME_DIR or /run/user/<uid> or /tmp.
             assert!(path.contains("run") || path.contains("tmp"));
         }
     }
@@ -236,7 +236,7 @@ mod tests {
         #[test]
         fn named_pipe_includes_username() {
             let name = named_pipe_name();
-            // プレフィックスの後にユーザー名がある
+            // After the prefix there should be a username.
             let prefix = "\\\\.\\pipe\\nexterm-";
             assert!(name.len() > prefix.len());
         }
@@ -244,15 +244,15 @@ mod tests {
         #[test]
         fn named_pipe_does_not_end_with_hyphen() {
             let name = named_pipe_name();
-            // ユーザー名が取得できない場合でも "nexterm" がフォールバック
+            // Even when no username is available, "nexterm" is used as fallback.
             assert!(!name.ends_with('-'));
         }
     }
 
-    // クロスプラットフォームテスト
+    // Cross-platform test.
     #[test]
     fn platform_detection_works() {
-        // コンパイル時に適切なプラットフォームが検出されている
+        // The appropriate platform must be detected at compile time.
         let platform = if cfg!(unix) {
             "unix"
         } else if cfg!(windows) {

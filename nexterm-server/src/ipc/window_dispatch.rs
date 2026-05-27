@@ -1,5 +1,5 @@
-//! ウィンドウ関連の IPC ハンドラ — Resize/SplitVertical/SplitHorizontal/ResizeSplit/
-//! NewWindow/CloseWindow/FocusWindow/RenameWindow/SetLayoutMode
+//! Window-related IPC handlers — Resize/SplitVertical/SplitHorizontal/ResizeSplit/
+//! NewWindow/CloseWindow/FocusWindow/RenameWindow/SetLayoutMode.
 
 use nexterm_proto::ServerToClient;
 use tracing::error;
@@ -14,7 +14,7 @@ pub(super) async fn handle_resize(ctx: &mut DispatchContext<'_>, cols: u16, rows
             let mut sessions = arc.lock().await;
             if let Some(s) = sessions.get_mut(name) {
                 if let Err(e) = s.resize_focused(cols, rows) {
-                    error!("リサイズエラー: {}", e);
+                    error!("resize error: {}", e);
                 }
                 s.focused_window().map(|w| w.layout_changed_msg(cols, rows))
             } else {
@@ -55,7 +55,11 @@ pub(super) async fn handle_split(ctx: &mut DispatchContext<'_>, dir: SplitDir) {
                         .start_recording_with_log_config(&session_name, log_dir, ctx.log_config)
                         .await
                 {
-                    tracing::warn!("auto_log 録音開始失敗 (pane={}): {}", pane_id, e);
+                    tracing::warn!(
+                        "auto_log: failed to start recording (pane={}): {}",
+                        pane_id,
+                        e
+                    );
                 }
                 let msgs = {
                     let arc = ctx.manager.sessions();
@@ -310,13 +314,14 @@ pub(super) async fn handle_set_layout_mode(ctx: &mut DispatchContext<'_>, mode: 
     }
 }
 
-/// `QueryForegroundProcess` への応答: 指定 Window の前景プロセス検知結果を返す。
+/// Reply to `QueryForegroundProcess`: return the foreground-process detection result for the
+/// specified window.
 ///
-/// 該当セッション・該当 Window が存在しない場合は `has_foreground: false` を返す
-/// （クライアントは即時 detach/kill に進むため）。
+/// When the session or window is not found, `has_foreground: false` is returned (the client
+/// proceeds with detach/kill immediately).
 ///
-/// `Window::has_foreground_process` は Linux のみ実装済（macOS/Windows は false 固定）。
-/// Phase 4-4 / 4-5 引き継ぎ事項 4 に従い、将来 OS 別実装を強化する予定。
+/// `Window::has_foreground_process` is implemented only on Linux (macOS/Windows return `false`).
+/// As outlined in the Phase 4-4 / 4-5 follow-up items, per-OS implementations will be added later.
 pub(super) async fn handle_query_foreground_process(ctx: &mut DispatchContext<'_>, window_id: u32) {
     let has_foreground = if let Some(ref name) = *ctx.current_session {
         let arc = ctx.manager.sessions();

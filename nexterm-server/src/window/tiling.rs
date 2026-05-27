@@ -1,12 +1,12 @@
-//! タイリングレイアウト計算
+//! Tiling layout computation.
 
 use super::bsp::PaneRect;
 use crate::snapshot::{SplitDirSnapshot, SplitNodeSnapshot};
 
-/// タイリングレイアウトを計算する（ペインを均等グリッドに自動配置）
+/// Compute a tiling layout (auto-arrange panes into an even grid).
 ///
-/// N ペインを ceil(sqrt(N)) 列に均等分配し、各列内でも均等な行高さを割り当てる。
-/// 境界線は設けず全スペースをペインに割り当てる。
+/// `N` panes are distributed evenly across `ceil(sqrt(N))` columns, with even row heights
+/// inside each column. No separators are reserved; all space is given to panes.
 pub(crate) fn compute_tiling_layouts(
     pane_ids: &[u32],
     total_cols: u16,
@@ -26,9 +26,9 @@ pub(crate) fn compute_tiling_layouts(
         }];
     }
 
-    // 列数: ceil(sqrt(n))
+    // Number of columns: ceil(sqrt(n)).
     let ncols = ((n as f64).sqrt().ceil() as usize).max(1).min(n);
-    // 各列のペイン数: 最初の (n % ncols) 列に 1 つ多く割り当てる
+    // Pane count per column: the first (n % ncols) columns get one extra pane.
     let base = n / ncols;
     let extra = n % ncols;
 
@@ -41,12 +41,12 @@ pub(crate) fn compute_tiling_layouts(
             continue;
         }
 
-        // 列の X 範囲（整数除算で均等に分配）
+        // X range for this column (distributed evenly with integer division).
         let col_off = (col_idx * total_cols as usize / ncols) as u16;
         let next_col_off = ((col_idx + 1) * total_cols as usize / ncols) as u16;
         let col_width = next_col_off.saturating_sub(col_off).max(1);
 
-        // 列内の各行の Y 範囲
+        // Y range for each row inside the column.
         for row_idx in 0..count_in_col {
             let row_off = (row_idx * total_rows as usize / count_in_col) as u16;
             let next_row_off = ((row_idx + 1) * total_rows as usize / count_in_col) as u16;
@@ -69,7 +69,7 @@ pub(crate) fn compute_tiling_layouts(
     result
 }
 
-/// BSP スナップショットから各ペインのサイズを計算する
+/// Compute each pane's size from a BSP snapshot.
 pub(super) fn compute_pane_sizes(
     node: &SplitNodeSnapshot,
     cols: u16,
@@ -106,7 +106,7 @@ pub(super) fn compute_pane_sizes(
     }
 }
 
-/// BSP スナップショット内の指定ペインの作業ディレクトリを返す
+/// Return the working directory of the specified pane in a BSP snapshot.
 pub(super) fn find_cwd_in_snapshot(
     node: &SplitNodeSnapshot,
     target_id: u32,

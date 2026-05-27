@@ -1,4 +1,4 @@
-//! 共通クライアントハンドラ — 接続済みストリームの読み書きを処理する
+//! Common client handler — drives read/write on a connected stream.
 
 use anyhow::Result;
 use nexterm_proto::{ClientToServer, ServerToClient};
@@ -9,7 +9,7 @@ use tracing::{error, info};
 use crate::runtime_config::SharedRuntimeConfig;
 use crate::session::SessionManager;
 
-/// 接続済みクライアントの読み書きを処理する
+/// Handle reads and writes on a connected client.
 pub(super) async fn handle_client<S>(
     stream: S,
     manager: std::sync::Arc<SessionManager>,
@@ -22,7 +22,7 @@ where
     let (tx, mut rx) = mpsc::channel::<ServerToClient>(256);
     let (mut read_half, mut write_half) = tokio::io::split(stream);
 
-    // サーバー → クライアント 送信タスク
+    // Server -> client send task.
     tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             match postcard::to_stdvec(&msg) {
@@ -35,31 +35,31 @@ where
                         break;
                     }
                 }
-                Err(e) => error!("シリアライズエラー: {}", e),
+                Err(e) => error!("serialization error: {}", e),
             }
         }
     });
 
-    // 接続中のセッション名（Attach で設定される）
+    // Currently attached session name (set by Attach).
     let mut current_session: Option<String> = None;
 
-    // broadcast forwarder タスクのハンドル（Attach 時に設定、切断時に abort）
+    // Handle for the broadcast forwarder task (set on Attach, aborted on disconnect).
     let mut bcast_forwarder: Option<tokio::task::AbortHandle> = None;
 
-    // ハンドシェイク状態
+    // Handshake state.
     let mut hello_received = false;
 
-    // クライアント → サーバー 受信ループ
+    // Client -> server receive loop.
     loop {
         let mut len_buf = [0u8; 4];
         if read_half.read_exact(&mut len_buf).await.is_err() {
-            info!("クライアントが切断しました");
+            info!("client disconnected");
             break;
         }
         let msg_len = u32::from_le_bytes(len_buf) as usize;
-        // 巨大な長さプレフィックスによる OOM 攻撃を防ぐ
+        // Defend against OOM attacks using a huge length prefix.
         if let Err(e) = nexterm_proto::validate_msg_len(msg_len) {
-            error!("{} — 接続を切断します", e);
+            error!("{} — closing connection", e);
             break;
         }
         let mut payload = vec![0u8; msg_len];
@@ -69,12 +69,12 @@ where
         let msg: ClientToServer = match postcard::from_bytes(&payload) {
             Ok(m) => m,
             Err(e) => {
-                error!("デシリアライズエラー: {}", e);
+                error!("deserialization error: {}", e);
                 continue;
             }
         };
 
-        // ハンドシェイク: 最初のメッセージは Hello でなければならない
+        // Handshake: the first message must be Hello.
         if !hello_received {
             match &msg {
                 ClientToServer::Hello {
@@ -84,15 +84,15 @@ where
                 } => {
                     if *proto_version != nexterm_proto::PROTOCOL_VERSION {
                         error!(
-                            "プロトコルバージョン不一致: クライアント={}, サーバー={}。接続を切断します。",
+                            "protocol version mismatch: client={}, server={}; closing connection",
                             proto_version,
                             nexterm_proto::PROTOCOL_VERSION
                         );
                         let _ = tx
                             .send(ServerToClient::Error {
                                 message: format!(
-                                    "プロトコルバージョン不一致 (client={}, server={})。\
-                                     クライアントを更新してください。",
+                                    "protocol version mismatch (client={}, server={}). \
+                                     please update the client.",
                                     proto_version,
                                     nexterm_proto::PROTOCOL_VERSION
                                 ),
@@ -101,10 +101,10 @@ where
                         break;
                     }
                     info!(
-                        "クライアント Hello 受信: kind={:?}, version={}, proto={}",
+                        "received client Hello: kind={:?}, version={}, proto={}",
                         client_kind, client_version, proto_version
                     );
-                    // HelloAck で応答
+                    // Reply with HelloAck.
                     let _ = tx
                         .send(ServerToClient::HelloAck {
                             proto_version: nexterm_proto::PROTOCOL_VERSION,
@@ -115,11 +115,10 @@ where
                     continue;
                 }
                 _ => {
-                    error!("ハンドシェイク前に非 Hello メッセージを受信。接続を切断します。");
+                    error!("received non-Hello message before handshake; closing connection");
                     let _ = tx
                         .send(ServerToClient::Error {
-                            message: "ハンドシェイクが必要です。Hello メッセージを最初に送信してください。"
-                                .to_string(),
+                            message: "handshake required: send a Hello message first.".to_string(),
                         })
                         .await;
                     break;
@@ -127,8 +126,8 @@ where
             }
         }
 
-        // 各メッセージ処理ごとに最新のランタイム設定スナップショットを取得する
-        // （config watcher が ArcSwap を差し替えても次のメッセージから即座に反映される）
+        // Fetch the latest runtime config snapshot per message.
+        // (When the config watcher swaps the `ArcSwap`, the next message picks it up immediately.)
         let snapshot = runtime_cfg.load_full();
         super::dispatch::dispatch(
             &msg,
@@ -144,7 +143,7 @@ where
         .await;
     }
 
-    // クリーンアップ: broadcast forwarder を停止する
+    // Cleanup: stop the broadcast forwarder.
     if let Some(h) = bcast_forwarder.take() {
         h.abort();
     }
@@ -153,9 +152,9 @@ where
         let mut sessions = arc.lock().await;
         if let Some(session) = sessions.get_mut(name) {
             session.detach_one(&tx);
-            info!("切断によりセッション '{}' からデタッチしました", name);
+            info!("detached from session '{}' on disconnect", name);
         }
-        // on_detach フック（切断時、最新スナップショットの hooks を使用）
+        // on_detach hook (on disconnect, using the latest snapshot's hooks).
         let snapshot = runtime_cfg.load_full();
         crate::hooks::on_detach(&snapshot.hooks, &lua, name);
     }

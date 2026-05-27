@@ -1,13 +1,13 @@
-//! キーコード → VT100/xterm エスケープシーケンス変換
+//! Key code -> VT100/xterm escape sequence conversion.
 
 use nexterm_proto::{KeyCode, Modifiers};
 
-/// キーコードと修飾キーを VT100/xterm エスケープシーケンスに変換する
+/// Convert a key code with modifiers into a VT100/xterm escape sequence.
 pub(super) fn key_to_bytes(code: &KeyCode, mods: Modifiers) -> Vec<u8> {
     match code {
         KeyCode::Char(ch) => {
             if mods.is_ctrl() {
-                // Ctrl+文字 → ASCII コントロールコード (1–26)
+                // Ctrl+letter -> ASCII control code (1-26).
                 let c = (*ch as u8) & 0x1f;
                 if c > 0 {
                     return vec![c];

@@ -4,10 +4,10 @@ use crate::snapshot::*;
 
 use proptest::prelude::*;
 
-// ---- BSP レイアウト テスト ----
+// ---- BSP layout tests ----
 
 #[test]
-fn bsp_垂直分割のレイアウト計算() {
+fn bsp_vertical_split_layout() {
     let mut tree = bsp::SplitNode::Pane { pane_id: 1 };
     tree.insert_after(1, 2, SplitDir::Vertical);
     let mut out = Vec::new();
@@ -20,7 +20,7 @@ fn bsp_垂直分割のレイアウト計算() {
 }
 
 #[test]
-fn bsp_水平分割のレイアウト計算() {
+fn bsp_horizontal_split_layout() {
     let mut tree = bsp::SplitNode::Pane { pane_id: 1 };
     tree.insert_after(1, 2, SplitDir::Horizontal);
     let mut out = Vec::new();
@@ -32,7 +32,7 @@ fn bsp_水平分割のレイアウト計算() {
 }
 
 #[test]
-fn bsp_3分割のレイアウト計算() {
+fn bsp_three_pane_layout() {
     let mut tree = bsp::SplitNode::Pane { pane_id: 1 };
     tree.insert_after(1, 2, SplitDir::Vertical);
     tree.insert_after(2, 3, SplitDir::Horizontal);
@@ -42,7 +42,7 @@ fn bsp_3分割のレイアウト計算() {
 }
 
 #[test]
-fn フォーカス移動の境界値() {
+fn focus_navigation_boundary() {
     let ids = [10u32, 20, 30];
     let pos = ids.iter().position(|&id| id == 30).unwrap();
     let next = ids[(pos + 1) % ids.len()];
@@ -53,7 +53,7 @@ fn フォーカス移動の境界値() {
 }
 
 #[test]
-fn bsp_4分割のレイアウト計算() {
+fn bsp_four_pane_layout() {
     let mut tree = bsp::SplitNode::Pane { pane_id: 1 };
     tree.insert_after(1, 2, SplitDir::Vertical);
     tree.insert_after(1, 3, SplitDir::Horizontal);
@@ -70,7 +70,7 @@ fn bsp_4分割のレイアウト計算() {
 }
 
 #[test]
-fn スナップショット変換の往復整合性() {
+fn snapshot_conversion_roundtrip() {
     let snap_before = SplitNodeSnapshot::Split {
         dir: SplitDirSnapshot::Vertical,
         ratio: 0.5,
@@ -92,10 +92,10 @@ fn スナップショット変換の往復整合性() {
     assert_eq!(sizes_before, sizes_after);
 }
 
-// ---- タイリングレイアウト テスト ----
+// ---- Tiling layout tests ----
 
 #[test]
-fn tiling_1ペインは全画面() {
+fn tiling_single_pane_full_screen() {
     let rects = compute_tiling_layouts(&[1], 80, 24);
     assert_eq!(rects.len(), 1);
     assert_eq!(rects[0].cols, 80);
@@ -105,7 +105,7 @@ fn tiling_1ペインは全画面() {
 }
 
 #[test]
-fn tiling_2ペインは横2分割() {
+fn tiling_two_panes_split_horizontally() {
     let rects = compute_tiling_layouts(&[1, 2], 80, 24);
     assert_eq!(rects.len(), 2);
     assert_eq!(rects[0].col_off, 0);
@@ -115,7 +115,7 @@ fn tiling_2ペインは横2分割() {
 }
 
 #[test]
-fn tiling_4ペインは2x2グリッド() {
+fn tiling_four_panes_2x2_grid() {
     let rects = compute_tiling_layouts(&[1, 2, 3, 4], 80, 24);
     assert_eq!(rects.len(), 4);
     for r in &rects {
@@ -130,7 +130,7 @@ fn tiling_4ペインは2x2グリッド() {
 }
 
 #[test]
-fn tiling_5ペインは3列グリッド() {
+fn tiling_five_panes_three_columns() {
     let rects = compute_tiling_layouts(&[1, 2, 3, 4, 5], 80, 24);
     assert_eq!(rects.len(), 5);
     for r in &rects {
@@ -140,12 +140,12 @@ fn tiling_5ペインは3列グリッド() {
 }
 
 #[test]
-fn tiling_空リストは空を返す() {
+fn tiling_empty_list_returns_empty() {
     let rects = compute_tiling_layouts(&[], 80, 24);
     assert!(rects.is_empty());
 }
 
-// ---- LayoutMode テスト ----
+// ---- LayoutMode tests ----
 
 #[test]
 fn layout_mode_from_str() {
@@ -166,21 +166,21 @@ fn layout_mode_as_str() {
     assert_eq!(LayoutMode::Tiling.as_str(), "tiling");
 }
 
-// ---- BSP / Tiling プロパティテスト（Sprint 4-4） ----
+// ---- BSP / Tiling property tests (Sprint 4-4) ----
 
-/// BSP 操作シーケンスを生成するための擬似 Op
+/// Pseudo-op for generating BSP operation sequences.
 #[derive(Clone, Debug)]
 enum BspOp {
-    /// 既存ペインを選択して新ペインで分割
+    /// Select an existing pane and split it by inserting a new pane.
     Insert {
-        /// 現在のペインリストへのインデックス（剰余で正規化）
+        /// Index into the current pane list (normalized by modulo).
         target_idx: usize,
-        /// 分割方向
+        /// Split direction.
         vertical: bool,
     },
-    /// 既存ペインを削除（最後の 1 つは削除しない）
+    /// Remove an existing pane (the last remaining pane is preserved).
     Remove {
-        /// 現在のペインリストへのインデックス
+        /// Index into the current pane list.
         target_idx: usize,
     },
 }
@@ -195,7 +195,7 @@ fn arb_bsp_op() -> impl Strategy<Value = BspOp> {
     ]
 }
 
-/// 操作シーケンスを実行して (BSP ツリー, 全ペイン ID) を返す
+/// Execute an operation sequence and return (BSP tree, list of all pane IDs).
 fn run_bsp_ops(ops: &[BspOp]) -> (bsp::SplitNode, Vec<u32>) {
     let mut tree = bsp::SplitNode::Pane { pane_id: 1 };
     let mut active_ids: Vec<u32> = vec![1];
@@ -222,13 +222,13 @@ fn run_bsp_ops(ops: &[BspOp]) -> (bsp::SplitNode, Vec<u32>) {
                 }
             }
             BspOp::Remove { target_idx } => {
-                // 最後の 1 ペインは削除しない（BSP ツリーが空にならない不変）
+                // Preserve the last remaining pane (invariant: BSP tree never becomes empty).
                 if active_ids.len() <= 1 {
                     continue;
                 }
                 let idx = *target_idx % active_ids.len();
                 let target = active_ids[idx];
-                // ルート単独で RemoveSelf になるケースは active_ids.len() <= 1 ガードで弾けている
+                // The "root alone -> RemoveSelf" case is guarded by `active_ids.len() <= 1`.
                 if matches!(tree.remove(target), bsp::RemoveResult::Removed) {
                     active_ids.remove(idx);
                 }
@@ -238,7 +238,7 @@ fn run_bsp_ops(ops: &[BspOp]) -> (bsp::SplitNode, Vec<u32>) {
     (tree, active_ids)
 }
 
-/// 矩形 a と b が重なっているかを判定する
+/// Decide whether rectangles `a` and `b` overlap.
 fn rects_overlap(a: &PaneRect, b: &PaneRect) -> bool {
     let a_right = a.col_off + a.cols;
     let a_bottom = a.row_off + a.rows;
@@ -257,12 +257,12 @@ proptest! {
         ..ProptestConfig::default()
     })]
 
-    /// 任意の BSP 操作シーケンスで `compute()` がパニックしないこと
-    /// （ウィンドウサイズが極端に小さくゼロ寸法矩形が生まれても OK）
+    /// `compute()` must never panic for any BSP operation sequence
+    /// (even when the window is so small that zero-sized rectangles appear).
     ///
-    /// 実装メモ: 現行 BSP は `rows < ペイン数` のような極小ウィンドウで
-    /// `rows = 0` の矩形を生成する。レンダリング側は最小サイズを保証するが、
-    /// パニックを起こさないことだけは厳格に検証する。
+    /// Implementation note: the current BSP can produce a rectangle with `rows = 0`
+    /// when the window is extremely small (e.g. `rows < pane count`). The renderer
+    /// enforces a minimum size; here we only verify that no panic occurs.
     #[test]
     fn bsp_compute_never_panics(
         ops in proptest::collection::vec(arb_bsp_op(), 0..40),
@@ -271,28 +271,27 @@ proptest! {
     ) {
         let (tree, _) = run_bsp_ops(&ops);
         let mut layout = Vec::new();
-        // パニックなく完了すること
+        // Must complete without panicking.
         tree.compute(0, 0, cols, rows, &mut layout);
     }
 
-    /// 十分な領域がある場合、BSP の意味的不変条件が保たれること
-    /// - 計算された pane_id 集合が active_ids と一致
-    /// - 各矩形が画面内に収まる
-    /// - cols > 0 && rows > 0
-    /// - pane_id が一意
+    /// When the area is sufficient, BSP semantic invariants must hold:
+    /// - The computed set of pane_ids matches active_ids.
+    /// - Every rectangle fits inside the screen.
+    /// - cols > 0 && rows > 0.
+    /// - pane_id is unique.
     ///
-    /// ## ウィンドウサイズの選定根拠
+    /// ## Rationale for the chosen window size
     ///
-    /// 現行 BSP は分割比 0.5 で再帰的に半分ずつにするため、深さ `d` の
-    /// 右偏りツリーは各方向に `2^d` 以上のセル数を要求する。
-    /// `target_idx=0` が常に root を指す proptest 入力（shrinking 後の
-    /// 縮約形）は深さ `ops.len()` の右偏りを生むため、`2^ops.len()` 以上の
-    /// サイズを確保する必要がある。
+    /// The current BSP halves space recursively at ratio 0.5, so a right-leaning tree of depth
+    /// `d` demands at least `2^d` cells in each direction. The proptest input `target_idx=0`
+    /// (its shrunken form) always points at the root and produces a right-leaning tree of depth
+    /// `ops.len()`, which requires at least `2^ops.len()` cells.
     ///
-    /// 操作上限を 6 に絞れば 2^6 = 64 セル、+ 安全マージン込みで 1024 を採用する。
-    /// これで現行実装の契約内で property を検証できる。
-    /// （実装側が「最小サイズ保証」を入れれば、この上限は緩められる。
-    ///   proptest 側は実装契約の境界を pin する役割を担う。）
+    /// Capping operations at 6 gives `2^6 = 64` cells, and we use 1024 with a safety margin.
+    /// This validates the property within the current implementation contract.
+    /// (If the implementation gains a "minimum size guarantee" later, this bound can be relaxed.
+    /// proptest's role here is to pin the contract boundary.)
     #[test]
     fn bsp_invariants_with_sufficient_space(
         ops in proptest::collection::vec(arb_bsp_op(), 0..=6),
@@ -304,38 +303,38 @@ proptest! {
         let mut layout = Vec::new();
         tree.compute(0, 0, cols, rows, &mut layout);
 
-        // ペイン数の整合性
+        // Pane count must match.
         prop_assert_eq!(layout.len(), active_ids.len(),
-            "compute() のペイン数 {} != active_ids 数 {}",
+            "compute() pane count {} != active_ids count {}",
             layout.len(), active_ids.len());
 
-        // 各矩形が有効
+        // Every rectangle must be valid.
         for r in &layout {
-            prop_assert!(r.cols > 0, "cols = 0 は不正: {:?}", r);
-            prop_assert!(r.rows > 0, "rows = 0 は不正: {:?}", r);
+            prop_assert!(r.cols > 0, "cols = 0 is invalid: {:?}", r);
+            prop_assert!(r.rows > 0, "rows = 0 is invalid: {:?}", r);
             prop_assert!(r.col_off + r.cols <= cols,
-                "矩形が右端を超える: col_off={} + cols={} > {}",
+                "rectangle exceeds right edge: col_off={} + cols={} > {}",
                 r.col_off, r.cols, cols);
             prop_assert!(r.row_off + r.rows <= rows,
-                "矩形が下端を超える: row_off={} + rows={} > {}",
+                "rectangle exceeds bottom edge: row_off={} + rows={} > {}",
                 r.row_off, r.rows, rows);
         }
 
-        // pane_id の一意性
+        // pane_id uniqueness.
         let mut ids: Vec<u32> = layout.iter().map(|r| r.pane_id).collect();
         ids.sort();
         let dup_count = ids.windows(2).filter(|w| w[0] == w[1]).count();
-        prop_assert_eq!(dup_count, 0, "重複した pane_id: {:?}", ids);
+        prop_assert_eq!(dup_count, 0, "duplicate pane_id: {:?}", ids);
 
-        // active_ids と layout の ID 集合が一致
+        // The pane_id sets of active_ids and layout must match.
         let mut expected = active_ids.clone();
         expected.sort();
         prop_assert_eq!(ids, expected);
     }
 
-    /// 十分な領域がある場合、BSP 矩形は互いに重ならないこと
-    /// （Separator 行/列で常に離れている）
-    /// ウィンドウサイズの選定根拠は `bsp_invariants_with_sufficient_space` を参照。
+    /// When the area is sufficient, BSP rectangles must not overlap each other
+    /// (a separator row/column keeps them apart).
+    /// See `bsp_invariants_with_sufficient_space` for the window-size rationale.
     #[test]
     fn bsp_rects_do_not_overlap(
         ops in proptest::collection::vec(arb_bsp_op(), 0..=6),
@@ -350,13 +349,13 @@ proptest! {
         for i in 0..layout.len() {
             for j in (i + 1)..layout.len() {
                 prop_assert!(!rects_overlap(&layout[i], &layout[j]),
-                    "矩形 {:?} と {:?} が重なっている", layout[i], layout[j]);
+                    "rectangles {:?} and {:?} overlap", layout[i], layout[j]);
             }
         }
     }
 
-    /// BSP ツリーのスナップショット往復が pane ID と矩形を保存すること
-    /// ウィンドウサイズの選定根拠は `bsp_invariants_with_sufficient_space` を参照。
+    /// A BSP tree snapshot round-trip must preserve pane IDs and rectangles.
+    /// See `bsp_invariants_with_sufficient_space` for the window-size rationale.
     #[test]
     fn bsp_snapshot_roundtrip(
         ops in proptest::collection::vec(arb_bsp_op(), 0..=6),
@@ -373,7 +372,7 @@ proptest! {
         rebuilt.compute(0, 0, cols, rows, &mut layout_b);
 
         prop_assert_eq!(layout_a.len(), layout_b.len());
-        // pane_id でソートして比較（順序差は許容）
+        // Compare after sorting by pane_id (order differences are allowed).
         let mut a: Vec<(u32, u16, u16, u16, u16)> = layout_a.iter()
             .map(|r| (r.pane_id, r.col_off, r.row_off, r.cols, r.rows)).collect();
         let mut b: Vec<(u32, u16, u16, u16, u16)> = layout_b.iter()
@@ -383,23 +382,23 @@ proptest! {
         prop_assert_eq!(a, b);
     }
 
-    /// タイリングレイアウトの不変条件
-    /// - ペイン数 = 入力 ID 数
-    /// - 全矩形が画面内
-    /// - 各矩形の cols > 0, rows > 0（十分な領域がある場合）
-    /// - pane_id が入力と一致
+    /// Tiling layout invariants:
+    /// - pane count equals the number of input IDs;
+    /// - every rectangle fits inside the screen;
+    /// - cols > 0 and rows > 0 for every rectangle (given sufficient area);
+    /// - pane_ids match the input.
     #[test]
     fn tiling_invariants_hold(
         ids in proptest::collection::vec(1u32..=u32::MAX, 1..12),
     ) {
-        // 入力 ID から重複を除く（compute_tiling_layouts は ID 重複を想定しない）
+        // Deduplicate input IDs (compute_tiling_layouts does not expect duplicates).
         let mut unique_ids = ids.clone();
         unique_ids.sort();
         unique_ids.dedup();
 
         let n = unique_ids.len() as u16;
-        // タイリングは sqrt(N) × sqrt(N) のグリッド配置のため、
-        // 各方向に最小 sqrt(N) * 2 の領域が必要
+        // Tiling arranges panes in a sqrt(N) x sqrt(N) grid, so each direction needs at least
+        // sqrt(N) * 2 cells.
         let cols = (n * 4).max(20);
         let rows = (n * 4).max(20);
 
@@ -407,21 +406,21 @@ proptest! {
         prop_assert_eq!(layout.len(), unique_ids.len());
 
         for r in &layout {
-            prop_assert!(r.cols > 0, "cols = 0 は不正: {:?}", r);
-            prop_assert!(r.rows > 0, "rows = 0 は不正: {:?}", r);
+            prop_assert!(r.cols > 0, "cols = 0 is invalid: {:?}", r);
+            prop_assert!(r.rows > 0, "rows = 0 is invalid: {:?}", r);
             prop_assert!(r.col_off + r.cols <= cols,
-                "tiling 右端超過: {:?} window={}", r, cols);
+                "tiling exceeds right edge: {:?} window={}", r, cols);
             prop_assert!(r.row_off + r.rows <= rows,
-                "tiling 下端超過: {:?} window={}", r, rows);
+                "tiling exceeds bottom edge: {:?} window={}", r, rows);
         }
 
-        // 入力 ID 集合と一致
+        // The set of pane_ids must equal the input.
         let mut layout_ids: Vec<u32> = layout.iter().map(|r| r.pane_id).collect();
         layout_ids.sort();
         prop_assert_eq!(layout_ids, unique_ids);
     }
 
-    /// `compute_tiling_layouts` がパニックしないこと（任意の cols/rows でも）
+    /// `compute_tiling_layouts` must never panic (for any cols/rows).
     #[test]
     fn tiling_compute_never_panics(
         ids in proptest::collection::vec(1u32..=u32::MAX, 0..16),
@@ -432,7 +431,7 @@ proptest! {
     }
 }
 
-// ---- compute_reordered（Sprint 5-7 / Phase 2-3）テスト ----
+// ---- compute_reordered (Sprint 5-7 / Phase 2-3) tests ----
 
 use super::compute_reordered;
 use std::collections::HashSet;
@@ -442,7 +441,7 @@ fn known_set(ids: &[u32]) -> HashSet<u32> {
 }
 
 #[test]
-fn reorder_完全な順列を反映する() {
+fn reorder_full_permutation_applied() {
     let current = vec![1, 2, 3, 4];
     let known = known_set(&current);
     let requested = vec![3, 1, 4, 2];
@@ -451,27 +450,27 @@ fn reorder_完全な順列を反映する() {
 }
 
 #[test]
-fn reorder_未指定idは元の相対順で末尾補完される() {
+fn reorder_unspecified_ids_kept_in_original_order_at_end() {
     let current = vec![10, 20, 30, 40];
     let known = known_set(&current);
-    // 30 と 10 だけ指定。残り 20, 40 は元の相対順で末尾に
+    // Only 30 and 10 are specified; the remaining 20 and 40 retain their relative order at the end.
     let requested = vec![30, 10];
     let next = compute_reordered(&current, &requested, &known);
     assert_eq!(next, vec![30, 10, 20, 40]);
 }
 
 #[test]
-fn reorder_未知idは無視される() {
+fn reorder_unknown_ids_are_ignored() {
     let current = vec![1, 2, 3];
     let known = known_set(&current);
-    // 99 は未知 → 無視。1, 3 だけ採用、2 が末尾補完
+    // 99 is unknown -> ignored. Only 1 and 3 are picked, with 2 appended.
     let requested = vec![99, 3, 99, 1];
     let next = compute_reordered(&current, &requested, &known);
     assert_eq!(next, vec![3, 1, 2]);
 }
 
 #[test]
-fn reorder_重複指定は最初の出現のみ採用() {
+fn reorder_duplicates_take_first_occurrence() {
     let current = vec![1, 2, 3];
     let known = known_set(&current);
     let requested = vec![2, 2, 1, 3, 1];
@@ -480,7 +479,7 @@ fn reorder_重複指定は最初の出現のみ採用() {
 }
 
 #[test]
-fn reorder_空指定は元の順序を保つ() {
+fn reorder_empty_request_preserves_original_order() {
     let current = vec![5, 6, 7];
     let known = known_set(&current);
     let next = compute_reordered(&current, &[], &known);
@@ -488,59 +487,59 @@ fn reorder_空指定は元の順序を保つ() {
 }
 
 #[test]
-fn reorder_currentにない既知idは末尾に昇順で追加() {
-    // 何らかのバグで pane_order に登録漏れの既知ペインがあったケース
+fn reorder_known_ids_missing_from_current_appended_in_ascending_order() {
+    // Defensive case: known panes might be missing from `pane_order` due to a bug.
     let current = vec![1, 3];
     let mut known = known_set(&current);
     known.insert(5);
     known.insert(2);
     let requested = vec![3, 1];
     let next = compute_reordered(&current, &requested, &known);
-    // 3, 1 → current から漏れていた 5, 2 を昇順で末尾追加
+    // 3, 1 -> append 5, 2 (missing from current) in ascending order at the end.
     assert_eq!(next, vec![3, 1, 2, 5]);
 }
 
-// ---- compute_insert_position テスト（Sprint 5-8 Phase 4-4 / Step A-1） ----
+// ---- compute_insert_position tests (Sprint 5-8 Phase 4-4 / Step A-1) ----
 
 #[test]
-fn insert_position_none指定_focused直後() {
-    // フォーカスインデックス 1 → +1 = 2 に挿入
+fn insert_position_none_inserts_after_focused() {
+    // Focused index 1 -> insert at +1 = 2.
     assert_eq!(compute_insert_position(5, None, Some(1)), 2);
 }
 
 #[test]
-fn insert_position_none指定_focused末尾() {
-    // フォーカスが末尾（インデックス 2、len=3）→ +1 が len 以上なので末尾追加
+fn insert_position_none_with_focused_at_end_appends() {
+    // Focused at the end (index 2, len=3) -> +1 reaches len, so append.
     assert_eq!(compute_insert_position(3, None, Some(2)), 3);
 }
 
 #[test]
-fn insert_position_none指定_focused無し() {
-    // フォーカスが見つからない → 末尾追加
+fn insert_position_none_without_focused_appends() {
+    // No focused index found -> append.
     assert_eq!(compute_insert_position(3, None, None), 3);
 }
 
 #[test]
-fn insert_position_some0_先頭挿入() {
-    // 位置 0 を指定 → 先頭挿入
+fn insert_position_some_zero_inserts_at_head() {
+    // Position 0 -> insert at head.
     assert_eq!(compute_insert_position(3, Some(0), Some(1)), 0);
 }
 
 #[test]
-fn insert_position_some中央_指定位置() {
-    // 位置 2 を指定 → そのまま 2
+fn insert_position_some_middle_uses_specified_position() {
+    // Position 2 -> use as-is.
     assert_eq!(compute_insert_position(5, Some(2), Some(0)), 2);
 }
 
 #[test]
-fn insert_position_some範囲外_末尾クランプ() {
-    // 位置 99 を指定（len=3 を超える）→ len にクランプして末尾追加
+fn insert_position_some_out_of_range_clamps_to_end() {
+    // Position 99 (len=3) -> clamped to len, i.e. append.
     assert_eq!(compute_insert_position(3, Some(99), None), 3);
 }
 
 #[test]
-fn insert_position_空リスト_末尾追加() {
-    // 空リストへの挿入は常にインデックス 0
+fn insert_position_empty_list_always_zero() {
+    // Inserting into an empty list always returns index 0.
     assert_eq!(compute_insert_position(0, None, None), 0);
     assert_eq!(compute_insert_position(0, Some(0), None), 0);
     assert_eq!(compute_insert_position(0, Some(5), None), 0);

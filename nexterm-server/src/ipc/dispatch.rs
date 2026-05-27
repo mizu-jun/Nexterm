@@ -1,13 +1,13 @@
-//! IPC メッセージディスパッチ — ClientToServer メッセージを各機能モジュールへルーティングする
+//! IPC message dispatch — routes `ClientToServer` messages to feature modules.
 //!
-//! 実際のハンドラは以下のモジュールに分散している:
-//! - `session_dispatch` — セッション管理 (Attach/Detach/ListSessions/...)
-//! - `pane_dispatch`    — ペイン操作 (KeyEvent/Focus*/フローティング系)
-//! - `window_dispatch`  — ウィンドウ操作 (Resize/Split/NewWindow/...)
-//! - `file_dispatch`    — テンプレート / SSH / SFTP / Macro / Serial
-//! - `plugin_dispatch`  — プラグイン管理
+//! Actual handlers are split across the following modules:
+//! - `session_dispatch` — session management (Attach/Detach/ListSessions/...).
+//! - `pane_dispatch`    — pane operations (KeyEvent/Focus*/floating, ...).
+//! - `window_dispatch`  — window operations (Resize/Split/NewWindow/...).
+//! - `file_dispatch`    — templates / SSH / SFTP / macros / serial ports.
+//! - `plugin_dispatch`  — plugin management.
 //!
-//! 各ハンドラは `&mut DispatchContext<'_>` を受け取り、必要な依存にアクセスする。
+//! Every handler takes `&mut DispatchContext<'_>` to access the required dependencies.
 
 use nexterm_proto::{ClientToServer, ServerToClient};
 use tokio::sync::mpsc;
@@ -17,11 +17,11 @@ use super::{file_dispatch, pane_dispatch, session_dispatch, window_dispatch};
 use crate::session::SessionManager;
 use crate::window::SplitDir;
 
-/// ディスパッチ層全体で共有する文脈情報
+/// Context shared across the dispatch layer.
 ///
-/// 9 個の引数を 1 構造体に集約してシグネチャを簡潔にする。
-/// `current_session` と `bcast_forwarder` は接続単位の可変状態。
-/// その他は接続をまたいで共有される設定スナップショット。
+/// Bundles nine arguments into one struct to keep handler signatures concise.
+/// `current_session` and `bcast_forwarder` are per-connection mutable state.
+/// The rest are configuration snapshots shared across connections.
 pub(super) struct DispatchContext<'a> {
     pub manager: &'a SessionManager,
     pub tx: mpsc::Sender<ServerToClient>,
@@ -33,7 +33,7 @@ pub(super) struct DispatchContext<'a> {
     pub bcast_forwarder: &'a mut Option<tokio::task::AbortHandle>,
 }
 
-/// クライアントからのメッセージをディスパッチする
+/// Dispatch a message from the client.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn dispatch(
     msg: &ClientToServer,
@@ -59,10 +59,10 @@ pub(super) async fn dispatch(
     dispatch_inner(msg, &mut ctx).await;
 }
 
-/// `DispatchContext` を引数とする内部ディスパッチャ — 各機能モジュールから直接呼び出せる
+/// Internal dispatcher that takes `DispatchContext` — callable directly from feature modules.
 ///
-/// `msg` のペイロードはパスワード等の機密を含み得るため `skip_all` で span に乗せない。
-/// バリアント識別は個別ハンドラ側のログ出力に委ねる。
+/// The `msg` payload may contain secrets (passwords etc.), so `skip_all` keeps it out of the span.
+/// Variant identification is delegated to per-handler logging.
 #[instrument(name = "ipc_dispatch", skip_all)]
 pub(super) async fn dispatch_inner(msg: &ClientToServer, ctx: &mut DispatchContext<'_>) {
     use ClientToServer::*;
@@ -221,7 +221,7 @@ pub(super) async fn dispatch_inner(msg: &ClientToServer, ctx: &mut DispatchConte
             .await
         }
 
-        // ----- plugin_dispatch (既存) -----
+        // ----- plugin_dispatch (existing) -----
         ListPlugins => super::plugin_dispatch::handle_list_plugins(ctx.manager, &ctx.tx).await,
         LoadPlugin { path } => {
             super::plugin_dispatch::handle_load_plugin(ctx.manager, &ctx.tx, path).await

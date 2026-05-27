@@ -1,7 +1,7 @@
-//! ウィンドウ — ペインの集合（タブ相当）
+//! Window — a collection of panes (tab equivalent).
 //!
-//! BSP（Binary Space Partition）ツリーでペインの分割レイアウトを管理する。
-//! 各ペインの (col_offset, row_offset, cols, rows) はツリーの再帰計算で決まる。
+//! Pane split layout is managed with a BSP (Binary Space Partition) tree.
+//! Each pane's (col_offset, row_offset, cols, rows) is derived by recursive computation on the tree.
 
 mod bsp;
 mod floating;
@@ -23,15 +23,17 @@ use crate::snapshot::{SplitNodeSnapshot, WindowSnapshot};
 use bsp::SplitNode;
 use tiling::{compute_pane_sizes, compute_tiling_layouts, find_cwd_in_snapshot};
 
-/// `insert_pane_at` の挿入位置決定ロジック（Sprint 5-8 Phase 4-4、テスト容易のため純粋関数として分離）。
+/// Insertion-position decision logic for `insert_pane_at` (Sprint 5-8 Phase 4-4, split out as a
+/// pure function for testability).
 ///
-/// 戻り値: `pane_order` への挿入位置インデックス。
+/// Returns the insertion index into `pane_order`.
 ///
-/// - `requested_position` が `Some(p)` の場合: `p.min(current_len)`（範囲外なら末尾追加）
-/// - `requested_position` が `None` の場合: `focused_index + 1`（フォーカスペインの直後）。
-///   ただし `focused_index` が `None` または `focused_index + 1 >= current_len` なら末尾追加。
+/// - If `requested_position` is `Some(p)`: `p.min(current_len)` (out-of-range values append to the end).
+/// - If `requested_position` is `None`: `focused_index + 1` (immediately after the focused pane).
+///   When `focused_index` is `None` or `focused_index + 1 >= current_len`, it falls back to appending.
 ///
-/// この挙動は既存 `insert_pane`（末尾追加 + フォーカス直後挿入）と完全に互換。
+/// This behavior is fully compatible with the existing `insert_pane` (which appends and inserts
+/// right after the focused pane).
 pub(crate) fn compute_insert_position(
     current_len: usize,
     requested_position: Option<usize>,
@@ -46,12 +48,13 @@ pub(crate) fn compute_insert_position(
     }
 }
 
-/// `reorder_panes` のロジック中核（テスト容易のため純粋関数として分離）。
+/// Core logic of `reorder_panes` (split out as a pure function for testability).
 ///
-/// `current` を基準にした安定な「指定優先 + 補完」並べ替えを行う:
-/// 1. `requested` を順番に走査し、`known` に含まれる ID を重複なく採用
-/// 2. その後 `current` を走査し、未採用の既知 ID を末尾に追加（元の相対順を保つ）
-/// 3. それでも漏れる既知 ID（current にも無い）があれば昇順で末尾に追加
+/// Performs a stable "requested-first + fill the rest" reordering based on `current`:
+/// 1. Walk `requested` in order and pick up every ID present in `known` (deduplicated).
+/// 2. Then walk `current` and append any remaining known IDs that were not picked yet (preserving
+///    their original relative order).
+/// 3. Any known IDs that are still missing (also absent from `current`) are appended in ascending order.
 pub(crate) fn compute_reordered(
     current: &[u32],
     requested: &[u32],
@@ -80,15 +83,15 @@ pub(crate) fn compute_reordered(
     next
 }
 
-// ---- レイアウトモード ----
+// ---- Layout mode ----
 
-/// ウィンドウのレイアウトモード
+/// Window layout mode.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum LayoutMode {
-    /// BSP（バイナリ空間分割）— 手動分割・比率保持（デフォルト）
+    /// BSP (binary space partitioning) — manual splits with preserved ratios (default).
     #[default]
     Bsp,
-    /// タイリング — ペインを均等グリッドに自動配置
+    /// Tiling — automatically arrange panes into an even grid.
     Tiling,
 }
 
@@ -109,39 +112,39 @@ impl LayoutMode {
     }
 }
 
-// ---- ウィンドウ ----
+// ---- Window ----
 
-/// ウィンドウ（ペインのコンテナ）
+/// Window (container for panes).
 pub struct Window {
     pub id: u32,
     pub name: String,
-    /// PTY ペインの Map（ID → Pane）
+    /// Map of PTY panes (ID -> Pane).
     panes: HashMap<u32, Pane>,
-    /// シリアルポートペインの Map（ID → SerialPane）
+    /// Map of serial port panes (ID -> SerialPane).
     serial_panes: HashMap<u32, SerialPane>,
-    /// 現在フォーカス中のペイン ID
+    /// Currently focused pane ID.
     focused_pane_id: u32,
-    /// BSP 分割ツリー
+    /// BSP split tree.
     layout: SplitNode,
-    /// ズーム中か（フォーカスペインがウィンドウ全体を占有する）
+    /// Whether zoom mode is active (the focused pane fills the entire window).
     zoomed: bool,
-    /// レイアウトモード（Bsp / Tiling）
+    /// Layout mode (Bsp / Tiling).
     pub layout_mode: LayoutMode,
-    /// フローティングペイン（通常レイアウトの前面に重なるペイン）
+    /// Floating panes (panes overlaid on top of the regular layout).
     floating_panes: HashMap<u32, (Pane, FloatRect)>,
-    /// タブ表示順序（Sprint 5-7 / Phase 2-3）。
+    /// Tab display order (Sprint 5-7 / Phase 2-3).
     ///
-    /// `panes`/`serial_panes` は HashMap でキー順序が定まらないため、タブバーに
-    /// 表示する論理順序を別途 `Vec<u32>` で保持する。新規ペイン追加時は末尾に
-    /// push、削除時は `retain`、ユーザーのドラッグ&ドロップによる並べ替えは
-    /// [`Window::reorder_panes`] で置換する。
+    /// `panes`/`serial_panes` are `HashMap`s without a stable key order, so the logical order
+    /// shown in the tab bar is tracked separately in a `Vec<u32>`. New panes are pushed to the
+    /// end, deletion uses `retain`, and user-initiated drag-and-drop reorder is applied via
+    /// [`Window::reorder_panes`].
     ///
-    /// LayoutChanged メッセージの panes 配列順序はこの順序に従ってソートされる。
+    /// The `panes` array order in `LayoutChanged` messages is sorted according to this order.
     pane_order: Vec<u32>,
 }
 
 impl Window {
-    /// 最初のペインを持つウィンドウを生成する
+    /// Construct a window with a single initial pane.
     pub fn new(
         id: u32,
         name: String,
@@ -173,7 +176,7 @@ impl Window {
         })
     }
 
-    /// 既存のペインを持つウィンドウを生成する（break-pane 用）
+    /// Construct a window from an existing pane (used by break-pane).
     pub fn new_with_pane(id: u32, name: String, pane: Pane) -> Result<Self> {
         let focused_pane_id = pane.id;
         let layout = SplitNode::Pane {
@@ -195,22 +198,22 @@ impl Window {
         })
     }
 
-    /// フォーカス中のペイン ID を返す
+    /// Return the focused pane ID.
     pub fn focused_pane_id(&self) -> u32 {
         self.focused_pane_id
     }
 
-    /// ペイン一覧の ID を返す（PTY + シリアル）
+    /// Return the list of pane IDs (PTY + serial).
     pub fn pane_ids(&self) -> Vec<u32> {
         let mut ids: Vec<u32> = self.panes.keys().copied().collect();
         ids.extend(self.serial_panes.keys().copied());
         ids
     }
 
-    /// 新しいペインを BSP ツリーで分割して追加する
+    /// Add a new pane by splitting the BSP tree.
     ///
-    /// `total_cols`/`total_rows` はウィンドウ全体のサイズ。
-    /// 分割後の各ペインサイズを計算してから spawn する。
+    /// `total_cols`/`total_rows` represent the full window size. Computes the per-pane size from the
+    /// new layout before spawning the pane.
     pub fn add_pane(
         &mut self,
         total_cols: u16,
@@ -220,11 +223,11 @@ impl Window {
         args: &[String],
         dir: SplitDir,
     ) -> Result<u32> {
-        // 1. 新 ID を事前発行してツリーに挿入する
+        // 1. Reserve a new ID up front and insert it into the tree.
         let new_id = crate::pane::new_pane_id();
         self.layout.insert_after(self.focused_pane_id, new_id, dir);
 
-        // 2. 新レイアウトを計算して新ペインのサイズを取得する
+        // 2. Recompute the layout and look up the new pane's size.
         let layouts = self.compute_layouts(total_cols, total_rows);
         let new_rect = layouts
             .iter()
@@ -238,8 +241,8 @@ impl Window {
                 rows: total_rows,
             });
 
-        // 3. 計算済みサイズで新ペインを spawn する
-        // Sprint 5-2 / B2: 親ペインの CWD（OSC 7 由来、なければ /proc/{pid}/cwd 由来）を継承する
+        // 3. Spawn the new pane with the computed size.
+        // Sprint 5-2 / B2: inherit the parent pane's CWD (OSC 7 first, fall back to /proc/{pid}/cwd).
         let parent_cwd = self
             .panes
             .get(&self.focused_pane_id)
@@ -252,10 +255,10 @@ impl Window {
         };
         self.panes.insert(new_id, pane);
         self.focused_pane_id = new_id;
-        // タブ順序: 末尾に追加（既存タブの右側に表示）
+        // Tab order: append at the end (new tab appears to the right of existing tabs).
         self.pane_order.push(new_id);
 
-        // 4. 既存ペインを新しいサイズにリサイズする
+        // 4. Resize the existing panes to their new sizes.
         for rect in &layouts {
             if rect.pane_id != new_id
                 && let Some(p) = self.panes.get_mut(&rect.pane_id)
@@ -267,7 +270,7 @@ impl Window {
         Ok(new_id)
     }
 
-    /// 全ペインのレイアウトを計算する
+    /// Compute layouts for all panes.
     pub fn compute_layouts(&self, cols: u16, rows: u16) -> Vec<PaneRect> {
         match self.layout_mode {
             LayoutMode::Bsp => {
@@ -276,7 +279,7 @@ impl Window {
                 out
             }
             LayoutMode::Tiling => {
-                // BSP ツリーからペイン ID を挿入順（ソート済み）で収集する
+                // Collect pane IDs from the BSP tree in insertion order (sorted).
                 let mut pane_ids: Vec<u32> = self.panes.keys().copied().collect();
                 pane_ids.extend(self.serial_panes.keys().copied());
                 pane_ids.sort();
@@ -285,17 +288,17 @@ impl Window {
         }
     }
 
-    /// レイアウトモードを変更し、全ペインを新レイアウトにリサイズする
+    /// Change the layout mode and resize every pane to the new layout.
     pub fn set_layout_mode(&mut self, mode: LayoutMode, cols: u16, rows: u16) {
         self.layout_mode = mode;
         self.resize_all_panes(cols, rows);
     }
 
-    // ---- フローティングペイン ----
+    // ---- Floating panes ----
 
-    /// フローティングペインを生成してウィンドウ中央に配置する
+    /// Create a floating pane and place it in the center of the window.
     ///
-    /// 返り値: (pane_id, FloatRect) — IPC が FloatingPaneOpened を送信するために使う
+    /// Returns `(pane_id, FloatRect)` — used by the IPC layer to emit `FloatingPaneOpened`.
     pub fn open_floating_pane(
         &mut self,
         total_cols: u16,
@@ -304,13 +307,13 @@ impl Window {
         shell: &str,
         args: &[String],
     ) -> Result<(u32, FloatRect)> {
-        // デフォルトサイズ: ウィンドウの 60%×70%、中央寄せ
+        // Default size: 60% x 70% of the window, centered.
         let fp_cols = (total_cols as f32 * 0.6) as u16;
         let fp_rows = (total_rows as f32 * 0.7) as u16;
         let col_off = (total_cols.saturating_sub(fp_cols)) / 2;
         let row_off = (total_rows.saturating_sub(fp_rows)) / 2;
 
-        // Sprint 5-2 / B2: フォーカス中ペインの CWD を継承する
+        // Sprint 5-2 / B2: inherit the focused pane's CWD.
         let parent_cwd = self
             .panes
             .get(&self.focused_pane_id)
@@ -338,12 +341,12 @@ impl Window {
         Ok((pane_id, rect))
     }
 
-    /// フローティングペインを閉じる
+    /// Close a floating pane.
     pub fn close_floating_pane(&mut self, pane_id: u32) -> bool {
         self.floating_panes.remove(&pane_id).is_some()
     }
 
-    /// フローティングペインを移動する
+    /// Move a floating pane.
     pub fn move_floating_pane(
         &mut self,
         pane_id: u32,
@@ -359,7 +362,7 @@ impl Window {
         }
     }
 
-    /// フローティングペインをリサイズする
+    /// Resize a floating pane.
     pub fn resize_floating_pane(
         &mut self,
         pane_id: u32,
@@ -376,7 +379,7 @@ impl Window {
         }
     }
 
-    /// フローティングペインに入力を書き込む
+    /// Write input to a floating pane.
     #[allow(dead_code)]
     pub fn write_to_floating(&self, pane_id: u32, data: &[u8]) -> Result<()> {
         if let Some((pane, _)) = self.floating_panes.get(&pane_id) {
@@ -385,7 +388,7 @@ impl Window {
         Ok(())
     }
 
-    /// フローティングペインの一覧（表示用）
+    /// Return the list of floating panes (for display).
     #[allow(dead_code)]
     pub fn floating_pane_rects(&self) -> Vec<(u32, FloatRect)> {
         self.floating_panes
@@ -394,19 +397,19 @@ impl Window {
             .collect()
     }
 
-    /// フローティングペインが存在するか確認する
+    /// Check whether a floating pane with the given id exists.
     #[allow(dead_code)]
     pub fn has_floating_pane(&self, pane_id: u32) -> bool {
         self.floating_panes.contains_key(&pane_id)
     }
 
-    /// LayoutChanged メッセージを生成する（IPC 送信用）。
+    /// Build a `LayoutChanged` message (for IPC).
     ///
-    /// `panes` 配列の順序は `pane_order` の論理タブ順に従う（Sprint 5-7 / Phase 2-3）。
-    /// 物理レイアウト計算結果（BSP 再帰順）とは独立に管理されるため、ドラッグ&ドロップで
-    /// 並べ替えても各ペインの画面上の位置・サイズは変わらない。
+    /// The order of the `panes` array follows the logical tab order in `pane_order` (Sprint 5-7 /
+    /// Phase 2-3). It is managed independently from the physical layout (BSP recursion order), so
+    /// a drag-and-drop reorder does not change any pane's on-screen position or size.
     pub fn layout_changed_msg(&self, cols: u16, rows: u16) -> ServerToClient {
-        // ズーム中はフォーカスペインのみをウィンドウ全体サイズで返す
+        // While zoomed, return only the focused pane sized to the entire window.
         if self.zoomed {
             return ServerToClient::LayoutChanged {
                 panes: vec![PaneLayout {
@@ -421,7 +424,7 @@ impl Window {
             };
         }
         let rects = self.compute_layouts(cols, rows);
-        // rect を pane_id でルックアップできるよう Map 化してから pane_order の順で並べる
+        // Make a lookup map keyed by pane_id so we can iterate in pane_order.
         let rect_by_id: HashMap<u32, &PaneRect> = rects.iter().map(|r| (r.pane_id, r)).collect();
         let mut ordered: Vec<PaneLayout> = self
             .pane_order
@@ -437,7 +440,7 @@ impl Window {
                 })
             })
             .collect();
-        // pane_order に未登録のペイン（バグ防止のフォールバック）も末尾に追加
+        // Fallback: append any panes not registered in pane_order (defensive against bugs).
         for rect in &rects {
             if !self.pane_order.contains(&rect.pane_id) {
                 ordered.push(PaneLayout {
@@ -456,14 +459,15 @@ impl Window {
         }
     }
 
-    /// タブ表示順序を新しい順列で置き換える（Sprint 5-7 / Phase 2-3）。
+    /// Replace the tab display order with a new permutation (Sprint 5-7 / Phase 2-3).
     ///
-    /// `new_order` には現在の既知ペイン集合のすべてが含まれていなくても、また
-    /// 存在しないペイン ID が含まれていても安全に動作する:
-    /// - 未知の ID は無視
-    /// - 既知だが指定されなかった ID は末尾に補完（元の `pane_order` の相対順を維持）
+    /// `new_order` is safe even when it does not contain every currently known pane or contains
+    /// nonexistent pane IDs:
+    /// - Unknown IDs are ignored.
+    /// - Known IDs not mentioned in the request are appended (preserving their relative order in
+    ///   the existing `pane_order`).
     ///
-    /// 戻り値: 実際に並び替えが行われた場合 `true`、無変化なら `false`。
+    /// Returns `true` if the order actually changed, `false` otherwise.
     pub fn reorder_panes(&mut self, new_order: Vec<u32>) -> bool {
         let known: std::collections::HashSet<u32> = self
             .panes
@@ -479,43 +483,43 @@ impl Window {
         true
     }
 
-    /// 現在のタブ表示順序を返す（テスト・デバッグ用）。
+    /// Return the current tab display order (for tests and debugging).
     #[allow(dead_code)]
     pub fn pane_order(&self) -> &[u32] {
         &self.pane_order
     }
 
-    /// フォーカスペインのズームをトグルする。
-    /// ズーム中はフォーカスペインをウィンドウ全体に拡大し、他のペインは非表示になる。
-    /// 戻り値: ズーム後の状態 (true = ズーム中)
+    /// Toggle zoom on the focused pane.
+    /// While zoomed, the focused pane is expanded to the full window and other panes are hidden.
+    /// Returns the post-toggle state (`true` = zoomed).
     pub fn toggle_zoom(&mut self, cols: u16, rows: u16) -> bool {
         self.zoomed = !self.zoomed;
-        // ズーム時はフォーカスペインをウィンドウサイズにリサイズする
+        // While zoomed, resize the focused pane to the window size.
         if self.zoomed {
             if let Some(pane) = self.panes.get_mut(&self.focused_pane_id) {
                 let _ = pane.resize_pty(cols, rows);
             }
         } else {
-            // アンズーム時は全ペインを正規レイアウトに戻す
+            // When unzooming, return every pane to the regular layout.
             self.resize_all_panes(cols, rows);
         }
         self.zoomed
     }
 
-    /// ズーム状態を返す
+    /// Return the zoom state.
     #[allow(dead_code)]
     pub fn is_zoomed(&self) -> bool {
         self.zoomed
     }
 
-    /// 指定ペインにフォーカスを移動する（クリック等）
+    /// Move focus to the specified pane (e.g. on click).
     pub fn set_focused_pane(&mut self, pane_id: u32) {
         if self.panes.contains_key(&pane_id) {
             self.focused_pane_id = pane_id;
         }
     }
 
-    /// 次のペインにフォーカスを移動する
+    /// Move focus to the next pane.
     pub fn focus_next(&mut self) {
         let ids: Vec<u32> = {
             let mut v: Vec<u32> = self.panes.keys().copied().collect();
@@ -527,7 +531,7 @@ impl Window {
         }
     }
 
-    /// 前のペインにフォーカスを移動する
+    /// Move focus to the previous pane.
     pub fn focus_prev(&mut self) {
         let ids: Vec<u32> = {
             let mut v: Vec<u32> = self.panes.keys().copied().collect();
@@ -540,40 +544,40 @@ impl Window {
         }
     }
 
-    /// 指定ペインへの参照を返す
+    /// Return a reference to the pane with the given id.
     pub fn pane(&self, id: u32) -> Option<&Pane> {
         self.panes.get(&id)
     }
 
-    /// フォーカスペインを BSP ツリーから削除する。
+    /// Remove the focused pane from the BSP tree.
     ///
-    /// ペインが 1 つしかない場合は `Err` を返す（最後のペインは削除不可）。
-    /// 成功した場合は削除されたペインの隣のペインにフォーカスが移る。
+    /// Returns `Err` if only one pane remains (the last pane cannot be removed).
+    /// On success, focus shifts to the adjacent pane.
     pub fn remove_focused_pane(&mut self, cols: u16, rows: u16) -> Result<u32> {
         if self.panes.len() <= 1 {
-            return Err(anyhow::anyhow!("最後のペインは削除できません"));
+            return Err(anyhow::anyhow!("cannot remove the last remaining pane"));
         }
         let target_id = self.focused_pane_id;
 
-        // BSP ツリーから削除する
+        // Remove from the BSP tree.
         self.layout.remove(target_id);
 
-        // ペイン Map から削除する（PTY またはシリアルポート）
+        // Remove from the pane map (PTY or serial port).
         self.panes.remove(&target_id);
         self.serial_panes.remove(&target_id);
-        // タブ順序からも除去（Sprint 5-7 / Phase 2-3）
+        // Also drop from the tab order (Sprint 5-7 / Phase 2-3).
         self.pane_order.retain(|&id| id != target_id);
 
-        // 残ったペインにフォーカスを移す（ID が最も小さいものを選ぶ）
+        // Move focus to one of the remaining panes (pick the smallest ID).
         let next_id = self
             .panes
             .keys()
             .copied()
             .min()
-            .expect("panes は len > 1 ガード済みのため少なくとも1つ残っているはず");
+            .expect("panes guarded by len > 1, so at least one must remain");
         self.focused_pane_id = next_id;
 
-        // 残ったペインをリサイズする
+        // Resize the remaining panes.
         let layouts = self.compute_layouts(cols, rows);
         for rect in &layouts {
             if let Some(pane) = self.panes.get_mut(&rect.pane_id) {
@@ -584,7 +588,7 @@ impl Window {
         Ok(target_id)
     }
 
-    /// フォーカスペインに最も近い分割の比率を変更する。
+    /// Adjust the ratio of the split closest to the focused pane.
     pub fn adjust_split_ratio(&mut self, delta: f32, cols: u16, rows: u16) {
         if self.layout.adjust_ratio_for(self.focused_pane_id, delta) {
             let layouts = self.compute_layouts(cols, rows);
@@ -596,7 +600,7 @@ impl Window {
         }
     }
 
-    /// フォーカスペインと指定ペインを BSP ツリー内で入れ替える
+    /// Swap the focused pane with the specified pane in the BSP tree.
     pub fn swap_focused_with(&mut self, target_pane_id: u32) {
         let focused = self.focused_pane_id;
         if focused != target_pane_id {
@@ -604,7 +608,7 @@ impl Window {
         }
     }
 
-    /// フォーカスペインと隣接ペイン（next 方向）を入れ替える
+    /// Swap the focused pane with its neighbor in the "next" direction.
     #[allow(dead_code)]
     pub fn swap_with_next(&mut self) {
         let focused = self.focused_pane_id;
@@ -619,7 +623,7 @@ impl Window {
         }
     }
 
-    /// フォーカスペインと隣接ペイン（prev 方向）を入れ替える
+    /// Swap the focused pane with its neighbor in the "prev" direction.
     #[allow(dead_code)]
     pub fn swap_with_prev(&mut self) {
         let focused = self.focused_pane_id;
@@ -638,35 +642,35 @@ impl Window {
         }
     }
 
-    /// フォーカスペインを Pane Map から取り出す（break-pane / join-pane 用）
+    /// Take the focused pane out of the pane map (used by break-pane / join-pane).
     ///
-    /// ペインが1つしかない場合は `None` を返す（最後のペインは取り出せない）。
-    /// BSP ツリーからは削除してフォーカスを隣接ペインに移動する。
+    /// Returns `None` if only one pane remains (the last pane cannot be taken).
+    /// Also removes the pane from the BSP tree and moves focus to an adjacent pane.
     pub fn take_focused_pane(&mut self, cols: u16, rows: u16) -> Option<Pane> {
         if self.panes.len() <= 1 {
             return None;
         }
         let target_id = self.focused_pane_id;
-        // BSP ツリーから削除する
+        // Remove from the BSP tree.
         self.layout.remove(target_id);
-        // シリアルペインは break-pane できない（PTY のみ対応）
+        // Serial panes cannot be broken out (PTY only).
         if self.serial_panes.contains_key(&target_id) {
             return None;
         }
-        // ペイン Map から取り出す
+        // Take out of the pane map.
         let pane = self.panes.remove(&target_id)?;
-        // タブ順序からも除去（Sprint 5-7 / Phase 2-3）
+        // Drop from the tab order (Sprint 5-7 / Phase 2-3).
         self.pane_order.retain(|&id| id != target_id);
-        // フォーカスを残ったペインの最小 ID に移す
+        // Move focus to the smallest remaining ID.
         let next_id = self
             .panes
             .keys()
             .copied()
             .min()
-            .expect("panes は len > 1 ガード済みのため少なくとも1つ残っているはず");
+            .expect("panes guarded by len > 1, so at least one must remain");
         self.focused_pane_id = next_id;
         self.zoomed = false;
-        // 残ったペインをリサイズする
+        // Resize the remaining panes.
         let layouts = self.compute_layouts(cols, rows);
         for rect in &layouts {
             if let Some(p) = self.panes.get_mut(&rect.pane_id) {
@@ -676,16 +680,17 @@ impl Window {
         Some(pane)
     }
 
-    /// この Window を消費して、残っている唯一の PTY Pane を取り出す（Sprint 5-8 Phase 4-4）。
+    /// Consume this window and take the only PTY pane remaining (Sprint 5-8 Phase 4-4).
     ///
-    /// 「最後の 1 ペインをタブ外ドロップして新規 Window に移す」シナリオで、ソース Window 自体を
-    /// 削除する際に使う。`take_pane_by_id` は `pane_count() <= 1` でブロックするため、最後のペインの
-    /// 場合は `Session::windows.remove(&id)` で Window 自体を取り出してから本 API を呼ぶ。
+    /// Used in the "drag the last pane out of the tab bar and move it into a new window" scenario,
+    /// when the source window itself must be removed. Because `take_pane_by_id` blocks at
+    /// `pane_count() <= 1`, callers should pull the window out via `Session::windows.remove(&id)`
+    /// first and then call this API.
     ///
-    /// 戻り値 `None` のケース:
-    /// - PTY Pane が存在しない（panes が空）
-    /// - PTY Pane が 2 個以上残っている（呼び出し順序を間違えている）
-    /// - シリアルペインが含まれている（PTY のみ取り出し対応）
+    /// Returns `None` in the following cases:
+    /// - No PTY panes exist (`panes` is empty).
+    /// - More than one PTY pane remains (wrong call order).
+    /// - Serial panes are present (only PTY pane extraction is supported).
     pub fn into_single_pane(self) -> Option<Pane> {
         if !self.serial_panes.is_empty() {
             return None;
@@ -696,18 +701,19 @@ impl Window {
         self.panes.into_values().next()
     }
 
-    /// 指定 `pane_id` のペインをこのウィンドウから取り出す（Sprint 5-8 Phase 4-3、move-pane-to-window 用）
+    /// Take the pane with the given `pane_id` out of this window (Sprint 5-8 Phase 4-3,
+    /// for move-pane-to-window).
     ///
-    /// `take_focused_pane` の汎用版。任意の `pane_id` を引数で指定する。
-    /// 振る舞いは `take_focused_pane` と同じ:
-    /// - ペインが 1 つしかない場合は `None` を返す（最後のペインは取り出せない）
-    /// - シリアルペインは取り出せない（PTY のみ対応）
-    /// - 取り出し後はフォーカスを残った最小 ID に移し、残りペインをリサイズする
+    /// A general-purpose variant of `take_focused_pane`. Takes an arbitrary `pane_id` as argument.
+    /// Behavior matches `take_focused_pane`:
+    /// - Returns `None` when only one pane remains (the last pane cannot be taken).
+    /// - Serial panes cannot be taken (PTY only).
+    /// - After removal, focus moves to the smallest remaining ID, and remaining panes are resized.
     ///
-    /// 戻り値 `None` のケース:
-    /// - 指定 `pane_id` が存在しない
-    /// - `pane_id` がシリアルペイン
-    /// - このウィンドウのペイン総数が 1 個（取り出すとウィンドウが空になる）
+    /// Returns `None` in the following cases:
+    /// - The specified `pane_id` does not exist.
+    /// - `pane_id` is a serial pane.
+    /// - This window has only one pane total (removing it would leave the window empty).
     pub fn take_pane_by_id(&mut self, pane_id: u32, cols: u16, rows: u16) -> Option<Pane> {
         if self.panes.len() <= 1 {
             return None;
@@ -718,24 +724,24 @@ impl Window {
         if self.serial_panes.contains_key(&pane_id) {
             return None;
         }
-        // BSP ツリーから削除する
+        // Remove from the BSP tree.
         self.layout.remove(pane_id);
-        // ペイン Map から取り出す
+        // Take out of the pane map.
         let pane = self.panes.remove(&pane_id)?;
-        // タブ順序からも除去
+        // Drop from the tab order.
         self.pane_order.retain(|&id| id != pane_id);
-        // フォーカスが取り出したペインだった場合は残ったペインの最小 ID に移す
+        // If the focus was on the taken pane, move it to the smallest remaining ID.
         if self.focused_pane_id == pane_id {
             let next_id = self
                 .panes
                 .keys()
                 .copied()
                 .min()
-                .expect("panes は len > 1 ガード済みのため少なくとも1つ残っているはず");
+                .expect("panes guarded by len > 1, so at least one must remain");
             self.focused_pane_id = next_id;
         }
         self.zoomed = false;
-        // 残ったペインをリサイズする
+        // Resize the remaining panes.
         let layouts = self.compute_layouts(cols, rows);
         for rect in &layouts {
             if let Some(p) = self.panes.get_mut(&rect.pane_id) {
@@ -745,21 +751,22 @@ impl Window {
         Some(pane)
     }
 
-    /// 外部から持ち込まれたペインをフォーカスペインの後に追加する（join-pane 用）
+    /// Append an externally brought-in pane after the focused pane (used by join-pane).
     pub fn insert_pane(&mut self, pane: Pane, total_cols: u16, total_rows: u16, dir: SplitDir) {
         self.insert_pane_at(pane, total_cols, total_rows, dir, None);
     }
 
-    /// 外部から持ち込まれたペインを指定位置に挿入する（Sprint 5-8 Phase 4-4、tab tearing merge 用）
+    /// Insert an externally brought-in pane at the specified position (Sprint 5-8 Phase 4-4,
+    /// used by tab-tearing merge).
     ///
-    /// `position` は `pane_order` 内の挿入インデックス:
-    /// - `None`: 既存 `insert_pane` と同じ挙動（フォーカスペインの直後に挿入）
-    /// - `Some(0)`: 先頭に挿入
-    /// - `Some(n)`: インデックス `n` の位置に挿入（`pane_order.len()` 以上は末尾追加）
+    /// `position` is the insertion index in `pane_order`:
+    /// - `None`: same behavior as the existing `insert_pane` (insert immediately after the focused pane).
+    /// - `Some(0)`: insert at the beginning.
+    /// - `Some(n)`: insert at index `n` (values >= `pane_order.len()` append at the end).
     ///
-    /// BSP ツリーへの挿入位置は常に「フォーカスペインの隣」（既存 `insert_pane` と同じ）。
-    /// `position` は表示用のタブ順序 (`pane_order`) のみに影響する。BSP の物理レイアウトと
-    /// タブの表示順序は独立して管理される（Phase 2-3 の設計どおり）。
+    /// The BSP tree insertion position is always "next to the focused pane" (matching the existing
+    /// `insert_pane`). `position` only affects the display tab order (`pane_order`). The BSP
+    /// physical layout and the tab display order are managed independently (as designed in Phase 2-3).
     pub fn insert_pane_at(
         &mut self,
         pane: Pane,
@@ -774,10 +781,11 @@ impl Window {
         self.focused_pane_id = new_id;
         self.zoomed = false;
 
-        // タブ順序: position 指定時はその位置、なければフォーカスペインの直後（純粋関数化）
-        // 注: `pane_order` には new_id を `panes.insert` 前に追加していないため、
-        //     `current_len` は挿入前の長さを使う（compute_insert_position の `Some(p).min` で
-        //     past-the-end を含む `len` まで許容）。
+        // Tab order: insert at `position` if provided, otherwise just after the focused pane
+        // (delegated to the pure `compute_insert_position`).
+        // Note: `new_id` has not been added to `pane_order` yet, so `current_len` uses the
+        //       pre-insert length (`compute_insert_position`'s `Some(p).min` allows the
+        //       past-the-end value `len`).
         let focused_index = self
             .pane_order
             .iter()
@@ -785,7 +793,7 @@ impl Window {
         let new_pos = compute_insert_position(self.pane_order.len(), position, focused_index);
         self.pane_order.insert(new_pos, new_id);
 
-        // 全ペインをリサイズする
+        // Resize every pane.
         let layouts = self.compute_layouts(total_cols, total_rows);
         for rect in &layouts {
             if let Some(p) = self.panes.get_mut(&rect.pane_id) {
@@ -794,31 +802,32 @@ impl Window {
         }
     }
 
-    /// ペイン数を返す（PTY + シリアル）
+    /// Return the pane count (PTY + serial).
     pub fn pane_count(&self) -> usize {
         self.panes.len() + self.serial_panes.len()
     }
 
-    /// このウィンドウのいずれかのペインで foreground プロセス（シェル以外）が動作中かを返す。
+    /// Return whether any pane in this window is running a foreground process (other than the shell).
     ///
-    /// Sprint 5-8 Phase 4-4 で本実装。各 `Pane::has_foreground_process()`（Linux 実装、
-    /// macOS / Windows は現状 false）を OR で集計する。
-    /// `window.close_action = "prompt"` 時の確認ダイアログ表示判定で使用する。
+    /// Implemented in Sprint 5-8 Phase 4-4. Aggregates `Pane::has_foreground_process()` (Linux
+    /// implementation; currently `false` on macOS / Windows) with OR semantics. Used to decide
+    /// whether to show the confirmation dialog when `window.close_action = "prompt"`.
     ///
-    /// 戻り値:
-    /// - `true`: 少なくとも 1 つのペインで foreground プロセス（vim・ssh・長時間ジョブ等）が動作中
-    /// - `false`: 全ペインがシェルプロンプト直下、または検出非対応 OS
+    /// Returns:
+    /// - `true`: at least one pane has a foreground process (vim, ssh, long-running job, ...).
+    /// - `false`: every pane sits at the shell prompt, or the OS does not support detection.
     ///
-    /// シリアルペインはこの集計の対象外（PTY のみ判定）。
+    /// Serial panes are excluded from this aggregation (PTY-only).
     ///
-    /// 注: Phase 4-4 時点では `QueryForegroundProcess` IPC 未追加のため呼び出し元が存在しない。
-    /// Phase 4-5 で IPC ハンドラを追加して `on_close_requested` の Prompt 分岐から呼ぶ予定。
+    /// Note: as of Phase 4-4, the `QueryForegroundProcess` IPC has not been added yet, so no
+    /// caller exists. Phase 4-5 will add an IPC handler that invokes this from the Prompt branch
+    /// of `on_close_requested`.
     #[allow(dead_code)]
     pub fn has_foreground_process(&self) -> bool {
         self.panes.values().any(|p| p.has_foreground_process())
     }
 
-    /// フォーカス中のペインに入力データを書き込む（PTY またはシリアルポート）
+    /// Write input data to the focused pane (PTY or serial port).
     pub fn write_to_focused(&self, data: &[u8]) -> Result<()> {
         if let Some(pane) = self.panes.get(&self.focused_pane_id) {
             return pane.write_input(data);
@@ -826,10 +835,10 @@ impl Window {
         if let Some(sp) = self.serial_panes.get(&self.focused_pane_id) {
             return sp.write_input(data);
         }
-        Err(anyhow::anyhow!("フォーカスペインが見つかりません"))
+        Err(anyhow::anyhow!("focused pane not found"))
     }
 
-    /// フォーカスペインのブラケットペーストモードが有効かどうかを返す
+    /// Return whether the focused pane's bracketed-paste mode is enabled.
     pub fn focused_bracketed_paste_mode(&self) -> bool {
         self.panes
             .get(&self.focused_pane_id)
@@ -837,7 +846,7 @@ impl Window {
             .unwrap_or(false)
     }
 
-    /// フォーカスペインのマウスレポーティングモードを返す（0=無効）
+    /// Return the focused pane's mouse-reporting mode (0 = disabled).
     pub fn focused_mouse_mode(&self) -> u8 {
         self.panes
             .get(&self.focused_pane_id)
@@ -845,17 +854,17 @@ impl Window {
             .unwrap_or(0)
     }
 
-    /// フォーカス中のペインのみをリサイズする（後方互換・単一ペイン用）
+    /// Resize only the focused pane (backward compatibility, single-pane use).
     #[allow(dead_code)]
     pub fn resize_focused(&mut self, cols: u16, rows: u16) -> Result<()> {
         let pane = self
             .panes
             .get_mut(&self.focused_pane_id)
-            .ok_or_else(|| anyhow::anyhow!("フォーカスペインが見つかりません"))?;
+            .ok_or_else(|| anyhow::anyhow!("focused pane not found"))?;
         pane.resize_pty(cols, rows)
     }
 
-    /// 全ペインを新しいトータルサイズに従ってリサイズする
+    /// Resize every pane according to a new total size.
     pub fn resize_all_panes(&mut self, cols: u16, rows: u16) {
         let layouts = self.compute_layouts(cols, rows);
         for rect in &layouts {
@@ -867,7 +876,7 @@ impl Window {
         }
     }
 
-    /// シリアルポートペインを BSP ツリーに追加する
+    /// Add a serial port pane to the BSP tree.
     #[allow(clippy::too_many_arguments)]
     pub fn add_serial_pane(
         &mut self,
@@ -888,63 +897,64 @@ impl Window {
         self.layout.insert_after(self.focused_pane_id, new_id, dir);
         self.serial_panes.insert(new_id, sp);
         self.focused_pane_id = new_id;
-        // タブ順序: 末尾に追加（Sprint 5-7 / Phase 2-3）
+        // Tab order: append at the end (Sprint 5-7 / Phase 2-3).
         self.pane_order.push(new_id);
         Ok(new_id)
     }
 
-    /// 全ペインの PTY 出力チャネルを差し替える — broadcast では再アタッチ時の差し替えは不要（no-op）
+    /// Replace the PTY output channel for every pane — broadcast sharing means no swap is needed
+    /// on client reattach (no-op).
     #[allow(dead_code)]
     pub fn update_tx_for_all(&self, _tx: &broadcast::Sender<ServerToClient>) {
-        // broadcast::Sender は共有されるため、クライアント再アタッチ時に差し替え不要
+        // `broadcast::Sender` is shared, so swapping is unnecessary when a client reattaches.
     }
 
-    /// フォーカスペインの録音を開始する（Phase 5-A で完全実装）
+    /// Start recording the focused pane (full implementation in Phase 5-A).
     pub fn start_recording(&self, path: &str) -> Result<u32> {
         let pane = self
             .panes
             .get(&self.focused_pane_id)
-            .ok_or_else(|| anyhow::anyhow!("フォーカスペインが見つかりません"))?;
+            .ok_or_else(|| anyhow::anyhow!("focused pane not found"))?;
         pane.start_recording(path)?;
         Ok(self.focused_pane_id)
     }
 
-    /// フォーカスペインの録音を停止する（Phase 5-A で完全実装）
+    /// Stop recording the focused pane (full implementation in Phase 5-A).
     pub fn stop_recording(&self) -> Result<u32> {
         let pane = self
             .panes
             .get(&self.focused_pane_id)
-            .ok_or_else(|| anyhow::anyhow!("フォーカスペインが見つかりません"))?;
+            .ok_or_else(|| anyhow::anyhow!("focused pane not found"))?;
         pane.stop_recording()?;
         Ok(self.focused_pane_id)
     }
 
-    /// フォーカスペインの asciicast 録画を開始する
+    /// Start an asciicast recording on the focused pane.
     pub fn start_asciicast(&self, path: &str) -> Result<u32> {
         let pane = self
             .panes
             .get(&self.focused_pane_id)
-            .ok_or_else(|| anyhow::anyhow!("フォーカスペインが見つかりません"))?;
+            .ok_or_else(|| anyhow::anyhow!("focused pane not found"))?;
         pane.start_asciicast(path)?;
         Ok(self.focused_pane_id)
     }
 
-    /// フォーカスペインの asciicast 録画を停止する
+    /// Stop the asciicast recording on the focused pane.
     pub fn stop_asciicast(&self) -> Result<u32> {
         let pane = self
             .panes
             .get(&self.focused_pane_id)
-            .ok_or_else(|| anyhow::anyhow!("フォーカスペインが見つかりません"))?;
+            .ok_or_else(|| anyhow::anyhow!("focused pane not found"))?;
         pane.stop_asciicast()?;
         Ok(self.focused_pane_id)
     }
 
-    // ---- スナップショット ----
+    // ---- Snapshot ----
 
-    /// ウィンドウをスナップショットに変換する
+    /// Convert the window to a snapshot.
     pub fn to_snapshot(&self) -> WindowSnapshot {
         let mut layout = self.layout.to_snapshot();
-        // 各ペインの作業ディレクトリをスナップショットに填入する
+        // Populate each pane's working directory into the snapshot.
         self.fill_cwd_in_snapshot(&mut layout);
         WindowSnapshot {
             id: self.id,
@@ -954,9 +964,9 @@ impl Window {
         }
     }
 
-    /// スナップショットからウィンドウを復元する
+    /// Restore a window from a snapshot.
     ///
-    /// 各ペインは保存されたシェル・作業ディレクトリで新規 PTY として起動する。
+    /// Each pane is launched as a fresh PTY with the saved shell and working directory.
     pub fn restore_from_snapshot(
         snap: &WindowSnapshot,
         tx: &broadcast::Sender<ServerToClient>,
@@ -964,17 +974,17 @@ impl Window {
         cols: u16,
         rows: u16,
     ) -> Result<Self> {
-        // BSP ツリーを再構築する
+        // Reconstruct the BSP tree.
         let layout = SplitNode::from_snapshot(&snap.layout);
 
-        // 各ペインのサイズを BSP 計算で求めてから PTY を起動する
+        // Compute each pane's size from the BSP layout before starting the PTY.
         let mut size_map = Vec::new();
         compute_pane_sizes(&snap.layout, cols, rows, &mut size_map);
 
         let mut panes = HashMap::new();
-        // タブ順序は BSP ツリーの DFS 順序を初期値として採用する。
-        // スナップショット v3 以前には pane_order が存在しないため、復元時に
-        // size_map（compute_pane_sizes が DFS で並べる）の登場順をそのまま使う。
+        // Use the BSP tree's DFS order as the initial tab order.
+        // Snapshot v3 and earlier do not store `pane_order`, so on restore we use the appearance
+        // order from `size_map` (compute_pane_sizes traverses in DFS).
         let mut pane_order: Vec<u32> = Vec::with_capacity(size_map.len());
         for (pane_id, pane_cols, pane_rows) in size_map {
             let cwd = find_cwd_in_snapshot(&snap.layout, pane_id);
@@ -1008,7 +1018,7 @@ impl Window {
         })
     }
 
-    /// BSP スナップショット内の各ペインに作業ディレクトリを填入する
+    /// Populate each pane's working directory inside a BSP snapshot.
     fn fill_cwd_in_snapshot(&self, node: &mut SplitNodeSnapshot) {
         match node {
             SplitNodeSnapshot::Pane { pane_id, cwd } => {

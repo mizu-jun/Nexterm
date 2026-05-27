@@ -1,14 +1,14 @@
-//! ターミナルフック実行 — イベント発生時にシェルコマンドおよび Lua 関数を非同期で実行する
+//! Terminal hook execution — runs shell commands and Lua functions asynchronously on events.
 //!
-//! シェルコマンドフックは `sh -c <cmd>` で実行される。失敗してもサーバーは継続する。
-//! 利用可能な環境変数:
-//!   $NEXTERM_PANE_ID     — 対象ペイン ID（ペインイベントのみ）
-//!   $NEXTERM_SESSION     — セッション名（全イベント）
+//! Shell-command hooks are executed via `sh -c <cmd>`. The server keeps running even if a hook fails.
+//! Environment variables exposed to hooks:
+//!   $NEXTERM_PANE_ID     — target pane ID (pane events only)
+//!   $NEXTERM_SESSION     — session name (all events)
 
 use nexterm_config::{HookEvent, HooksConfig, LuaHookRunner};
 use tracing::warn;
 
-/// フックを非同期タスクとして起動する（fire-and-forget）
+/// Spawn a hook as an async task (fire-and-forget).
 pub fn fire(cmd: &str, session: &str, pane_id: Option<u32>) {
     let cmd = cmd.to_string();
     let session = session.to_string();
@@ -25,17 +25,17 @@ pub fn fire(cmd: &str, session: &str, pane_id: Option<u32>) {
         {
             Ok(c) => c,
             Err(e) => {
-                warn!("フック起動失敗 '{}': {}", cmd, e);
+                warn!("failed to launch hook '{}': {}", cmd, e);
                 return;
             }
         };
         if let Err(e) = child.wait().await {
-            warn!("フック終了待機失敗 '{}': {}", cmd, e);
+            warn!("failed to wait for hook '{}': {}", cmd, e);
         }
     });
 }
 
-/// on_pane_open フックを実行する（シェルコマンド + Lua）
+/// Execute the `on_pane_open` hook (shell command + Lua).
 pub fn on_pane_open(hooks: &HooksConfig, lua: &LuaHookRunner, session: &str, pane_id: u32) {
     if let Some(cmd) = &hooks.on_pane_open {
         fire(cmd, session, Some(pane_id));
@@ -46,7 +46,7 @@ pub fn on_pane_open(hooks: &HooksConfig, lua: &LuaHookRunner, session: &str, pan
     });
 }
 
-/// on_pane_close フックを実行する（シェルコマンド + Lua）
+/// Execute the `on_pane_close` hook (shell command + Lua).
 #[allow(dead_code)]
 pub fn on_pane_close(hooks: &HooksConfig, lua: &LuaHookRunner, session: &str, pane_id: u32) {
     if let Some(cmd) = &hooks.on_pane_close {
@@ -58,7 +58,7 @@ pub fn on_pane_close(hooks: &HooksConfig, lua: &LuaHookRunner, session: &str, pa
     });
 }
 
-/// on_session_start フックを実行する（シェルコマンド + Lua）
+/// Execute the `on_session_start` hook (shell command + Lua).
 pub fn on_session_start(hooks: &HooksConfig, lua: &LuaHookRunner, session: &str) {
     if let Some(cmd) = &hooks.on_session_start {
         fire(cmd, session, None);
@@ -68,7 +68,7 @@ pub fn on_session_start(hooks: &HooksConfig, lua: &LuaHookRunner, session: &str)
     });
 }
 
-/// on_attach フックを実行する（シェルコマンド + Lua）
+/// Execute the `on_attach` hook (shell command + Lua).
 pub fn on_attach(hooks: &HooksConfig, lua: &LuaHookRunner, session: &str) {
     if let Some(cmd) = &hooks.on_attach {
         fire(cmd, session, None);
@@ -78,7 +78,7 @@ pub fn on_attach(hooks: &HooksConfig, lua: &LuaHookRunner, session: &str) {
     });
 }
 
-/// on_detach フックを実行する（シェルコマンド + Lua）
+/// Execute the `on_detach` hook (shell command + Lua).
 pub fn on_detach(hooks: &HooksConfig, lua: &LuaHookRunner, session: &str) {
     if let Some(cmd) = &hooks.on_detach {
         fire(cmd, session, None);

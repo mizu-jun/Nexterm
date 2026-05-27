@@ -1,5 +1,5 @@
-//! セッション関連の IPC ハンドラ — Ping/Hello/Attach/Detach/ListSessions/KillSession/
-//! StartRecording/StopRecording/StartAsciicast/StopAsciicast/SetBroadcast/DisplayPanes
+//! Session-related IPC handlers — Ping/Hello/Attach/Detach/ListSessions/KillSession/
+//! StartRecording/StopRecording/StartAsciicast/StopAsciicast/SetBroadcast/DisplayPanes.
 
 use nexterm_proto::ServerToClient;
 use tracing::info;
@@ -12,16 +12,16 @@ pub(super) async fn handle_ping(ctx: &mut DispatchContext<'_>) {
 }
 
 pub(super) fn handle_hello() {
-    // Hello はハンドシェイク段階で handler.rs が処理する。
-    // ここに到達した場合はプロトコル違反（Hello を再送）として無視する。
-    tracing::warn!("ハンドシェイク後に Hello を再送信されました。無視します。");
+    // Hello is handled during the handshake phase by handler.rs.
+    // Reaching this point means the client violated the protocol (re-sent Hello); ignore it.
+    tracing::warn!("Hello re-sent after the handshake; ignoring");
 }
 
 pub(super) async fn handle_attach(ctx: &mut DispatchContext<'_>, session_name: &str) {
     let manager = ctx.manager;
     let tx = ctx.tx.clone();
 
-    // セッションが存在しない場合は新規作成してアタッチ
+    // If the session does not exist, create and attach to a new one.
     let is_new_session = {
         let arc = manager.sessions();
         let sessions = arc.lock().await;
@@ -34,7 +34,7 @@ pub(super) async fn handle_attach(ctx: &mut DispatchContext<'_>, session_name: &
                 crate::hooks::on_session_start(ctx.hooks, &ctx.lua, session_name);
             }
 
-            // Full Refresh を送信する
+            // Send a Full Refresh.
             let refresh = {
                 let arc = manager.sessions();
                 let sessions = arc.lock().await;
@@ -49,7 +49,7 @@ pub(super) async fn handle_attach(ctx: &mut DispatchContext<'_>, session_name: &
                 let _ = tx.send(ServerToClient::FullRefresh { pane_id, grid }).await;
             }
 
-            // レイアウト変更通知を送信する（全ペインの位置・サイズを通知）
+            // Send a layout-changed notification (positions and sizes of every pane).
             let layout_msg = {
                 let arc = manager.sessions();
                 let sessions = arc.lock().await;
@@ -62,15 +62,15 @@ pub(super) async fn handle_attach(ctx: &mut DispatchContext<'_>, session_name: &
                 let _ = tx.send(msg).await;
             }
 
-            // セッション一覧も送信する
+            // Also send the session list.
             let list = manager.list_sessions().await;
             let _ = tx
                 .send(ServerToClient::SessionList { sessions: list })
                 .await;
 
-            // Sprint 5-12 Phase 4: 起動時警告（config ロード失敗など）を消化して送信。
-            // クライアント側で `error_banner` として可視化される。
-            // 複数件ある場合は ";" 区切りで結合（バナーは単一スロットのため最新で上書きされる）。
+            // Sprint 5-12 Phase 4: drain and forward startup warnings (e.g. config load failure).
+            // The client visualizes these as `error_banner`.
+            // Multiple warnings are joined with "; " (the banner has a single slot, so the latest overwrites).
             let warnings = manager.take_startup_warnings();
             if !warnings.is_empty() {
                 let _ = tx
@@ -80,10 +80,10 @@ pub(super) async fn handle_attach(ctx: &mut DispatchContext<'_>, session_name: &
                     .await;
             }
 
-            // on_attach フック
+            // on_attach hook.
             crate::hooks::on_attach(ctx.hooks, &ctx.lua, session_name);
 
-            // broadcast forwarder タスクを起動する
+            // Spawn the broadcast forwarder task.
             let bcast_rx = {
                 let arc = manager.sessions();
                 let sessions = arc.lock().await;
@@ -104,7 +104,7 @@ pub(super) async fn handle_attach(ctx: &mut DispatchContext<'_>, session_name: &
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                                 tracing::warn!(
-                                    "broadcast: {} メッセージをスキップしました（バッファ溢れ）",
+                                    "broadcast: skipped {} messages (buffer overflow)",
                                     n
                                 );
                                 continue;
@@ -132,7 +132,7 @@ pub(super) async fn handle_detach(ctx: &mut DispatchContext<'_>) {
         let mut sessions = arc.lock().await;
         if let Some(s) = sessions.get_mut(&name) {
             s.detach_all();
-            info!("セッション '{}' をデタッチしました", name);
+            info!("detached session '{}'", name);
         }
     }
 }
@@ -288,12 +288,12 @@ pub(super) async fn handle_set_broadcast(ctx: &mut DispatchContext<'_>, enabled:
 }
 
 pub(super) fn handle_display_panes() {
-    // サーバー側での処理は不要（クライアント側のオーバーレイ表示のみ）
+    // No server-side processing required (the client just shows an overlay).
 }
 
-// ---- ワークスペース管理 (Sprint 5-7 / Phase 2-1) ----
+// ---- Workspace management (Sprint 5-7 / Phase 2-1) ----
 
-/// 現在のワークスペース一覧をクライアントに送信する
+/// Send the current workspace list to the client.
 pub(super) async fn handle_list_workspaces(ctx: &mut DispatchContext<'_>) {
     let (current, workspaces) = ctx.manager.list_workspaces().await;
     let _ = ctx
@@ -305,7 +305,7 @@ pub(super) async fn handle_list_workspaces(ctx: &mut DispatchContext<'_>) {
         .await;
 }
 
-/// ワークスペースを新規作成し、最新の一覧を送信する
+/// Create a new workspace and send the latest list.
 pub(super) async fn handle_create_workspace(ctx: &mut DispatchContext<'_>, name: &str) {
     match ctx.manager.create_workspace(name).await {
         Ok(()) => {
@@ -329,7 +329,7 @@ pub(super) async fn handle_create_workspace(ctx: &mut DispatchContext<'_>, name:
     }
 }
 
-/// 現在のワークスペースを切り替え、切替通知と最新一覧を送信する
+/// Switch the current workspace and send a switch notification together with the latest list.
 pub(super) async fn handle_switch_workspace(ctx: &mut DispatchContext<'_>, name: &str) {
     match ctx.manager.switch_workspace(name).await {
         Ok(switched) => {
@@ -359,7 +359,7 @@ pub(super) async fn handle_switch_workspace(ctx: &mut DispatchContext<'_>, name:
     }
 }
 
-/// ワークスペースをリネームし、最新の一覧を送信する
+/// Rename a workspace and send the latest list.
 pub(super) async fn handle_rename_workspace(ctx: &mut DispatchContext<'_>, from: &str, to: &str) {
     match ctx.manager.rename_workspace(from, to).await {
         Ok(()) => {
@@ -383,18 +383,18 @@ pub(super) async fn handle_rename_workspace(ctx: &mut DispatchContext<'_>, from:
     }
 }
 
-// ---- Quake モード (Sprint 5-7 / Phase 2-2) ----
+// ---- Quake mode (Sprint 5-7 / Phase 2-2) ----
 
-/// Quake トグル要求を全 GPU クライアントへ配信する
+/// Broadcast a Quake toggle request to every GPU client.
 ///
-/// `action` は "toggle" / "show" / "hide" のいずれか。それ以外は警告ログを出して
-/// "toggle" として扱う（クライアント側で再度厳密にパースする）。
+/// `action` must be one of "toggle" / "show" / "hide". Anything else is logged as a warning
+/// and treated as "toggle" (the client parses it strictly again).
 pub(super) async fn handle_quake_toggle(ctx: &mut DispatchContext<'_>, action: &str) {
     let normalized = match action {
         "toggle" | "show" | "hide" => action.to_string(),
         other => {
             tracing::warn!(
-                "QuakeToggle に未知の action='{}' が指定されました。'toggle' として処理します",
+                "received unknown QuakeToggle action='{}'; falling back to 'toggle'",
                 other
             );
             "toggle".to_string()
@@ -402,13 +402,13 @@ pub(super) async fn handle_quake_toggle(ctx: &mut DispatchContext<'_>, action: &
     };
     let delivered = ctx.manager.broadcast_quake_request(&normalized).await;
     tracing::info!(
-        "Quake トグル要求 '{}' を {} セッションにブロードキャストしました",
+        "broadcast Quake toggle request '{}' to {} session(s)",
         normalized,
         delivered
     );
 }
 
-/// ワークスペースを削除し、最新の一覧を送信する
+/// Delete a workspace and send the latest list.
 pub(super) async fn handle_delete_workspace(
     ctx: &mut DispatchContext<'_>,
     name: &str,

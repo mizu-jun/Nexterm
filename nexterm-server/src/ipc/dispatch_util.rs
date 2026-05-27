@@ -1,17 +1,17 @@
-//! IPC ディスパッチ層の共通ヘルパ — 録画パス検証など
+//! Common helpers for the IPC dispatch layer (e.g. recording-path validation).
 
-/// 録音出力パスのバリデーション（ディレクトリトラバーサル攻撃を防ぐ）
+/// Validate a recording output path (defends against directory traversal).
 pub(super) fn validate_recording_path(output_path: &str) -> anyhow::Result<()> {
     use std::path::{Component, Path};
     if output_path.is_empty() {
-        return Err(anyhow::anyhow!("出力パスが空です"));
+        return Err(anyhow::anyhow!("output path is empty"));
     }
     if Path::new(output_path)
         .components()
         .any(|c| matches!(c, Component::ParentDir))
     {
         return Err(anyhow::anyhow!(
-            "セキュリティエラー: パスに '..' を含めることはできません: {}",
+            "security error: paths must not contain '..': {}",
             output_path
         ));
     }
@@ -26,7 +26,7 @@ pub(super) fn validate_recording_path(output_path: &str) -> anyhow::Result<()> {
             let first_allowed = &allowed[0];
             std::fs::create_dir_all(first_allowed).ok();
             return Err(anyhow::anyhow!(
-                "セキュリティエラー: 録音ファイルは {} または {} 内に保存してください (指定パス: {})",
+                "security error: recording files must be stored inside {} or {} (given path: {})",
                 allowed[0].display(),
                 allowed
                     .get(1)
@@ -41,7 +41,7 @@ pub(super) fn validate_recording_path(output_path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 録音ファイルを保存できる許可ディレクトリ一覧を返す
+/// Return the list of directories where recording files are allowed to be saved.
 pub(super) fn allowed_recording_dirs() -> Vec<std::path::PathBuf> {
     let mut dirs = Vec::new();
 
@@ -76,14 +76,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn パストラバーサルを含むパスは拒否される() {
+    fn rejects_paths_with_parent_traversal() {
         assert!(validate_recording_path("../../etc/passwd").is_err());
         assert!(validate_recording_path("../secret.txt").is_err());
         assert!(validate_recording_path("foo/../bar.txt").is_err());
     }
 
     #[test]
-    fn 正常なパスは通過する() {
+    fn accepts_normal_paths() {
         assert!(validate_recording_path("recording.txt").is_ok());
         #[cfg(unix)]
         assert!(validate_recording_path("/tmp/nexterm/session.rec").is_ok());
@@ -98,7 +98,7 @@ mod tests {
     }
 
     #[test]
-    fn 許可外の絶対パスは拒否される() {
+    fn rejects_absolute_paths_outside_allowed_dirs() {
         #[cfg(unix)]
         {
             assert!(validate_recording_path("/home/user/recording.txt").is_err());
@@ -112,31 +112,31 @@ mod tests {
     }
 
     #[test]
-    fn 空パスは拒否される() {
+    fn rejects_empty_path() {
         assert!(validate_recording_path("").is_err());
     }
 
     #[test]
-    fn 単一のドットは許可される() {
-        // カレントディレクトリ参照は許可
+    fn accepts_single_dot() {
+        // A reference to the current directory is allowed.
         assert!(validate_recording_path("./recording.txt").is_ok());
     }
 
     #[test]
-    fn 複数階層の有効なパス() {
+    fn accepts_multi_level_valid_paths() {
         assert!(validate_recording_path("2024/01/session.log").is_ok());
         assert!(validate_recording_path("recordings/subdir/file.txt").is_ok());
     }
 
     #[test]
-    fn 隠しファイル名は許可される() {
-        // Unixの隠しファイル
+    fn accepts_hidden_filenames() {
+        // Unix hidden files.
         assert!(validate_recording_path(".hidden").is_ok());
         assert!(validate_recording_path("dir/.hidden").is_ok());
     }
 
     #[test]
-    fn 特殊文字を含むパスは許可される() {
+    fn accepts_paths_with_special_characters() {
         assert!(validate_recording_path("file-with-dashes.txt").is_ok());
         assert!(validate_recording_path("file_with_underscores.txt").is_ok());
     }
@@ -145,7 +145,7 @@ mod tests {
     fn allowed_recording_dirs_returns_temp() {
         let dirs = allowed_recording_dirs();
         assert!(!dirs.is_empty());
-        // Unixでは /tmp が含まれる
+        // Unix should include /tmp.
         #[cfg(unix)]
         assert!(dirs.iter().any(|d| d.to_str().unwrap().contains("tmp")));
     }

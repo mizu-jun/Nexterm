@@ -1,9 +1,9 @@
-//! SFTP アップロード・ダウンロードヘルパー
+//! SFTP upload/download helpers.
 
 use nexterm_proto::ServerToClient;
 use tokio::sync::mpsc;
 
-/// HostConfig から SshConfig を構築してアップロードを実行する
+/// Build an `SshConfig` from a `HostConfig` and perform the upload.
 pub(super) async fn run_sftp_upload(
     host: &nexterm_config::HostConfig,
     local_path: &str,
@@ -40,7 +40,7 @@ pub(super) async fn run_sftp_upload(
     let mut session = SshSession::connect(&ssh_config).await?;
     session.authenticate(&ssh_config).await?;
 
-    // 進捗チャネル
+    // Progress channel.
     let (prog_tx, mut prog_rx) = tokio::sync::mpsc::channel::<(u64, u64)>(32);
     let tx2 = tx.clone();
     let path_display = local_path.to_string();
@@ -61,7 +61,7 @@ pub(super) async fn run_sftp_upload(
         .await
 }
 
-/// HostConfig から SshConfig を構築してダウンロードを実行する
+/// Build an `SshConfig` from a `HostConfig` and perform the download.
 pub(super) async fn run_sftp_download(
     host: &nexterm_config::HostConfig,
     remote_path: &str,
@@ -98,7 +98,7 @@ pub(super) async fn run_sftp_download(
     let mut session = SshSession::connect(&ssh_config).await?;
     session.authenticate(&ssh_config).await?;
 
-    // 進捗チャネル
+    // Progress channel.
     let (prog_tx, mut prog_rx) = tokio::sync::mpsc::channel::<(u64, u64)>(32);
     let tx2 = tx.clone();
     let path_display = remote_path.to_string();

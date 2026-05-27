@@ -1,4 +1,4 @@
-//! ファイル / 外部接続関連の IPC ハンドラ — Templates/SSH/SFTP/Macro/Serial
+//! IPC handlers for file and external-connection commands — Templates/SSH/SFTP/Macro/Serial.
 
 use nexterm_proto::ServerToClient;
 
@@ -10,13 +10,13 @@ pub(super) async fn handle_save_template(ctx: &mut DispatchContext<'_>, name: &s
     let result: anyhow::Result<String> = async {
         let session_name = session_name_opt
             .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("セッションにアタッチしていません"))?;
+            .ok_or_else(|| anyhow::anyhow!("not attached to any session"))?;
         let (window_titles, pane_counts) = {
             let arc = manager.sessions();
             let sessions = arc.lock().await;
             let session = sessions
                 .get(session_name)
-                .ok_or_else(|| anyhow::anyhow!("セッションが見つかりません: {}", session_name))?;
+                .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_name))?;
             let info = session.window_list();
             let titles: Vec<String> = info.iter().map(|w| w.name.clone()).collect();
             let counts: Vec<usize> = info.iter().map(|w| w.pane_count as usize).collect();
@@ -101,11 +101,10 @@ pub(super) async fn handle_connect_ssh(
     use nexterm_ssh::{SshAuth, SshConfig, SshSession};
     use zeroize::Zeroizing;
 
-    // Sprint 5-1 / G1: パスワード認証時は IPC 経由ではなく OS キーリング経由で取得する。
-    // クライアントが事前に Service="nexterm-ssh", Account="<username>@<host_name>" で
-    // 保存したエントリをサーバーが取り出して russh に渡す。
-    // ephemeral_password=true（PasswordModal.remember=false 由来）のときは
-    // 認証完了後にエントリを削除する。
+    // Sprint 5-1 / G1: for password auth, fetch credentials via the OS keyring instead of IPC.
+    // The client stores the entry as Service="nexterm-ssh", Account="<username>@<host_name>" up
+    // front, and the server retrieves it here to pass into russh. When ephemeral_password=true
+    // (`PasswordModal.remember=false`), the entry is deleted after the auth attempt.
     let mut keyring_cleanup: Option<(String, String)> = None;
 
     let auth = match auth_type {
@@ -117,7 +116,7 @@ pub(super) async fn handle_connect_ssh(
                             if ephemeral_password {
                                 keyring_cleanup = Some((kr_host.clone(), kr_user.clone()));
                             }
-                            // Zeroizing<String> を SshAuth::Password に渡す
+                            // Pass a `Zeroizing<String>` into `SshAuth::Password`.
                             SshAuth::Password(pw)
                         }
                         Err(e) => {
@@ -125,7 +124,7 @@ pub(super) async fn handle_connect_ssh(
                                 .tx
                                 .send(ServerToClient::Error {
                                     message: format!(
-                                        "OS キーリングからのパスワード取得に失敗しました: {}",
+                                        "failed to fetch password from OS keyring: {}",
                                         e
                                     ),
                                 })
@@ -139,7 +138,7 @@ pub(super) async fn handle_connect_ssh(
                         .tx
                         .send(ServerToClient::Error {
                             message: format!(
-                                "不正な keyring account 形式 (期待: <username>@<host_name>): '{}'",
+                                "invalid keyring account format (expected <username>@<host_name>): '{}'",
                                 account
                             ),
                         })
@@ -148,7 +147,7 @@ pub(super) async fn handle_connect_ssh(
                 }
             },
             None => {
-                // パスワード認証なのに account がない場合は空パスワードで進む（既存挙動を保持）
+                // Password auth without an account: proceed with an empty password (legacy behavior).
                 SshAuth::Password(Zeroizing::new(String::new()))
             }
         },
@@ -182,13 +181,15 @@ pub(super) async fn handle_connect_ssh(
             Ok(()) => {
                 for spec in remote_forwards {
                     if let Err(e) = session.start_remote_forward(spec).await {
-                        tracing::warn!("リモートフォワーディング失敗 '{}': {}", spec, e);
+                        tracing::warn!("remote forwarding failed '{}': {}", spec, e);
                     }
                 }
                 let _ = ctx
                     .tx
                     .send(ServerToClient::Error {
-                        message: "SSH 認証成功。シェル統合は開発中です".to_string(),
+                        message:
+                            "SSH authentication succeeded; shell integration is in development"
+                                .to_string(),
                     })
                     .await;
             }
@@ -196,7 +197,7 @@ pub(super) async fn handle_connect_ssh(
                 let _ = ctx
                     .tx
                     .send(ServerToClient::Error {
-                        message: format!("SSH 認証失敗: {}", e),
+                        message: format!("SSH authentication failed: {}", e),
                     })
                     .await;
             }
@@ -205,18 +206,18 @@ pub(super) async fn handle_connect_ssh(
             let _ = ctx
                 .tx
                 .send(ServerToClient::Error {
-                    message: format!("SSH 接続失敗: {}", e),
+                    message: format!("SSH connection failed: {}", e),
                 })
                 .await;
         }
     }
 
-    // ephemeral_password=true の場合は keyring エントリを削除（成功・失敗を問わず）
+    // If ephemeral_password=true, delete the keyring entry (regardless of success/failure).
     if let Some((host_name, user)) = keyring_cleanup
         && let Err(e) = nexterm_config::keyring::delete_password(&host_name, &user)
     {
         tracing::warn!(
-            "ephemeral keyring エントリ削除に失敗しました (host={}, user={}): {}",
+            "failed to delete ephemeral keyring entry (host={}, user={}): {}",
             host_name,
             user,
             e
@@ -224,10 +225,10 @@ pub(super) async fn handle_connect_ssh(
     }
 }
 
-/// `<username>@<host_name>` 形式の keyring account を `(username, host_name)` に分解する。
+/// Split a `<username>@<host_name>` keyring account into `(username, host_name)`.
 ///
-/// `host_name` 側に `@` が含まれる場合は最初の `@` で分割し、残りはすべて host 部とする。
-/// account に `@` が無い、もしくは username 部が空の場合は `None` を返す。
+/// When `host_name` itself contains `@`, the split is performed on the first `@` and the rest
+/// becomes the host part. Returns `None` when `account` has no `@` or the username part is empty.
 fn parse_keyring_account(account: &str) -> Option<(String, String)> {
     let (user, host) = account.split_once('@')?;
     if user.is_empty() || host.is_empty() {
@@ -263,7 +264,7 @@ pub(super) async fn handle_sftp_upload(
         let _ = ctx
             .tx
             .send(ServerToClient::Error {
-                message: format!("SFTP: ホスト '{}' が設定に見つかりません", host_name),
+                message: format!("SFTP: host '{}' not found in configuration", host_name),
             })
             .await;
     }
@@ -296,7 +297,7 @@ pub(super) async fn handle_sftp_download(
         let _ = ctx
             .tx
             .send(ServerToClient::Error {
-                message: format!("SFTP: ホスト '{}' が設定に見つかりません", host_name),
+                message: format!("SFTP: host '{}' not found in configuration", host_name),
             })
             .await;
     }
@@ -393,37 +394,37 @@ mod connect_ssh_tests {
     use super::parse_keyring_account;
 
     #[test]
-    fn parse_keyring_account_標準形式() {
+    fn parse_keyring_account_standard_form() {
         let parsed = parse_keyring_account("alice@dev-server").unwrap();
         assert_eq!(parsed.0, "alice");
         assert_eq!(parsed.1, "dev-server");
     }
 
     #[test]
-    fn parse_keyring_account_host側に_at_を含む() {
-        // host_name にラベルとして @ が含まれていても最初の @ で分割される
+    fn parse_keyring_account_host_contains_at_sign() {
+        // Even if the host_name contains an extra '@' label, the split happens on the first '@'.
         let parsed = parse_keyring_account("alice@host@label").unwrap();
         assert_eq!(parsed.0, "alice");
         assert_eq!(parsed.1, "host@label");
     }
 
     #[test]
-    fn parse_keyring_account_at_無し() {
+    fn parse_keyring_account_without_at_sign() {
         assert!(parse_keyring_account("alice").is_none());
     }
 
     #[test]
-    fn parse_keyring_account_空ユーザー() {
+    fn parse_keyring_account_empty_user() {
         assert!(parse_keyring_account("@dev-server").is_none());
     }
 
     #[test]
-    fn parse_keyring_account_空ホスト() {
+    fn parse_keyring_account_empty_host() {
         assert!(parse_keyring_account("alice@").is_none());
     }
 
     #[test]
-    fn parse_keyring_account_空文字列() {
+    fn parse_keyring_account_empty_string() {
         assert!(parse_keyring_account("").is_none());
     }
 }

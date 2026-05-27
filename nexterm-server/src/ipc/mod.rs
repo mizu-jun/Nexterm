@@ -1,4 +1,4 @@
-//! IPC 層 — Unix Domain Socket (Linux/macOS) / Named Pipe (Windows) の切り替え
+//! IPC layer — switches between Unix Domain Socket (Linux/macOS) and Named Pipe (Windows).
 
 mod dispatch;
 mod dispatch_util;
@@ -16,7 +16,7 @@ use crate::runtime_config::SharedRuntimeConfig;
 use crate::session::SessionManager;
 use anyhow::Result;
 
-/// IPC サーバーを起動してクライアント接続を受け付ける
+/// Start the IPC server and accept client connections.
 pub async fn serve(
     manager: std::sync::Arc<SessionManager>,
     runtime_cfg: SharedRuntimeConfig,

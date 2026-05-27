@@ -1,6 +1,6 @@
-//! フローティングペインの矩形情報
+//! Rectangle information for floating panes.
 
-/// フローティングペインの矩形情報
+/// Rectangle information for a floating pane.
 #[derive(Clone, Debug)]
 pub struct FloatRect {
     pub col_off: u16,

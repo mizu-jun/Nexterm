@@ -1,19 +1,19 @@
-//! BSP（バイナリ空間分割）ツリー実装
+//! BSP (Binary Space Partitioning) tree implementation.
 //!
-//! ウィンドウ内のペイン分割レイアウトを管理するBSPツリーの実装。
+//! Manages the pane split layout inside a window using a BSP tree.
 
 use crate::snapshot::{SplitDirSnapshot, SplitNodeSnapshot};
 
-/// ペイン分割方向
+/// Pane split direction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SplitDir {
-    /// 左右分割（垂直境界線）
+    /// Left/right split (vertical separator).
     Vertical,
-    /// 上下分割（水平境界線）
+    /// Top/bottom split (horizontal separator).
     Horizontal,
 }
 
-/// サーバー内部でのペイン矩形（グリッド座標）
+/// Server-side pane rectangle (grid coordinates).
 #[derive(Clone, Debug)]
 pub struct PaneRect {
     pub pane_id: u32,
@@ -23,25 +23,25 @@ pub struct PaneRect {
     pub rows: u16,
 }
 
-/// remove() の結果
+/// Result of `remove()`.
 pub(super) enum RemoveResult {
-    /// 自分自身が削除対象（呼び出し元が兄弟に置換する）
+    /// This node is the removal target; the caller must replace it with its sibling.
     RemoveSelf,
-    /// 子孫の削除が完了した
+    /// A descendant was removed successfully.
     Removed,
-    /// ターゲットが見つからなかった
+    /// The target was not found.
     NotFound,
 }
 
-/// BSP 分割ツリーのノード
+/// Node of the BSP split tree.
 #[derive(Clone, Debug)]
 pub(super) enum SplitNode {
-    /// 末端ノード（単一ペイン）
+    /// Leaf node (a single pane).
     Pane { pane_id: u32 },
-    /// 分割ノード（左/上 と 右/下 の子を持つ）
+    /// Split node with left/top and right/bottom children.
     Split {
         dir: SplitDir,
-        /// 左/上の占有割合（0.0〜1.0）
+        /// Occupancy ratio for the left/top child (0.0..1.0).
         ratio: f32,
         left: Box<SplitNode>,
         right: Box<SplitNode>,
@@ -49,7 +49,7 @@ pub(super) enum SplitNode {
 }
 
 impl SplitNode {
-    /// 指定ペインを分割して新ペインを右/下に挿入する
+    /// Split the specified pane and insert a new pane on the right/bottom side.
     pub(super) fn insert_after(&mut self, target_id: u32, new_id: u32, dir: SplitDir) -> bool {
         match self {
             SplitNode::Pane { pane_id } if *pane_id == target_id => {
@@ -70,7 +70,7 @@ impl SplitNode {
         }
     }
 
-    /// 矩形 (col_off, row_off, cols, rows) を再帰的に計算して out に追加する
+    /// Recursively compute the rectangle (col_off, row_off, cols, rows) and append it to `out`.
     pub(super) fn compute(
         &self,
         col_off: u16,
@@ -96,7 +96,7 @@ impl SplitNode {
                 right,
             } => match dir {
                 SplitDir::Vertical => {
-                    // 左右分割（境界線1列分を差し引く）
+                    // Left/right split (one column reserved for the separator).
                     let left_cols = ((cols as f32 * ratio) as u16)
                         .max(1)
                         .min(cols.saturating_sub(2));
@@ -105,7 +105,7 @@ impl SplitNode {
                     right.compute(col_off + left_cols + 1, row_off, right_cols, rows, out);
                 }
                 SplitDir::Horizontal => {
-                    // 上下分割（境界線1行分を差し引く）
+                    // Top/bottom split (one row reserved for the separator).
                     let top_rows = ((rows as f32 * ratio) as u16)
                         .max(1)
                         .min(rows.saturating_sub(2));
@@ -117,9 +117,10 @@ impl SplitNode {
         }
     }
 
-    /// 指定ペインを BSP ツリーから削除し、兄弟ノードを親に昇格させる。
-    /// 削除に成功した場合は `Some(self_after_removal)` を返す。
-    /// `None` は「自分自身が削除対象だった」ことを示す（呼び出し元で兄弟に置換する）。
+    /// Remove the specified pane from the BSP tree and promote its sibling.
+    /// Returns `Some(self_after_removal)` on success.
+    /// `None` indicates that the current node was the removal target itself (caller
+    /// must replace it with its sibling).
     pub(super) fn remove(&mut self, target_id: u32) -> RemoveResult {
         match self {
             SplitNode::Pane { pane_id } if *pane_id == target_id => RemoveResult::RemoveSelf,
@@ -127,7 +128,7 @@ impl SplitNode {
             SplitNode::Split { left, right, .. } => {
                 match left.remove(target_id) {
                     RemoveResult::RemoveSelf => {
-                        // 左を削除 → 右を自分の場所に昇格させる
+                        // Removed the left child -> promote the right child into this slot.
                         let sibling =
                             std::mem::replace(right.as_mut(), SplitNode::Pane { pane_id: 0 });
                         *self = sibling;
@@ -136,7 +137,7 @@ impl SplitNode {
                     RemoveResult::Removed => RemoveResult::Removed,
                     RemoveResult::NotFound => match right.remove(target_id) {
                         RemoveResult::RemoveSelf => {
-                            // 右を削除 → 左を自分の場所に昇格させる
+                            // Removed the right child -> promote the left child into this slot.
                             let sibling =
                                 std::mem::replace(left.as_mut(), SplitNode::Pane { pane_id: 0 });
                             *self = sibling;
@@ -149,8 +150,8 @@ impl SplitNode {
         }
     }
 
-    /// フォーカスペインに最も近い Split ノードの ratio を delta だけ変更する。
-    /// delta > 0 でフォーカスペインを広げ、delta < 0 で縮める。
+    /// Adjust by `delta` the ratio of the Split node closest to the focused pane.
+    /// `delta > 0` enlarges the focused pane; `delta < 0` shrinks it.
     pub(super) fn adjust_ratio_for(&mut self, target_id: u32, delta: f32) -> bool {
         match self {
             SplitNode::Pane { .. } => false,
@@ -175,7 +176,7 @@ impl SplitNode {
         }
     }
 
-    /// BSP ツリー内の 2 つのペイン ID を入れ替える
+    /// Swap two pane IDs within the BSP tree.
     pub(super) fn swap_ids(&mut self, id_a: u32, id_b: u32) -> bool {
         match self {
             SplitNode::Pane { pane_id } => {
@@ -195,7 +196,7 @@ impl SplitNode {
         }
     }
 
-    /// 隣接するペイン ID を返す（フォーカスペインの兄弟ノード）
+    /// Return the ID of an adjacent pane (sibling of the focused pane).
     #[allow(dead_code)]
     pub(super) fn neighbor_id(&self, target_id: u32) -> Option<u32> {
         match self {
@@ -213,7 +214,7 @@ impl SplitNode {
         }
     }
 
-    /// サブツリー内の最初のペイン ID を返す
+    /// Return the first pane ID inside the subtree.
     #[allow(dead_code)]
     pub(super) fn first_pane_id(&self) -> Option<u32> {
         match self {
@@ -222,7 +223,7 @@ impl SplitNode {
         }
     }
 
-    /// 指定ペインがこのサブツリーに含まれるか確認する
+    /// Check whether the specified pane is contained in this subtree.
     pub(super) fn contains(&self, target_id: u32) -> bool {
         match self {
             SplitNode::Pane { pane_id } => *pane_id == target_id,
@@ -232,7 +233,7 @@ impl SplitNode {
         }
     }
 
-    /// BSP ツリーをスナップショットに変換する（CWD は Window::to_snapshot() で後から填入）
+    /// Convert the BSP tree to a snapshot (CWD values are filled in later by `Window::to_snapshot()`).
     pub(super) fn to_snapshot(&self) -> SplitNodeSnapshot {
         match self {
             SplitNode::Pane { pane_id } => SplitNodeSnapshot::Pane {
@@ -256,7 +257,7 @@ impl SplitNode {
         }
     }
 
-    /// スナップショットから BSP ツリーを再構築する
+    /// Reconstruct a BSP tree from a snapshot.
     pub(super) fn from_snapshot(snap: &SplitNodeSnapshot) -> Self {
         match snap {
             SplitNodeSnapshot::Pane { pane_id, .. } => SplitNode::Pane { pane_id: *pane_id },

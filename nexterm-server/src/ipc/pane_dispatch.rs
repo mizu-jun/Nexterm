@@ -1,5 +1,5 @@
-//! ペイン関連の IPC ハンドラ — KeyEvent/PasteText/MouseReport/Focus*/ClosePane/
-//! ToggleZoom/SwapPane/BreakPane/JoinPane/フローティング系
+//! Pane-related IPC handlers — KeyEvent/PasteText/MouseReport/Focus*/ClosePane/
+//! ToggleZoom/SwapPane/BreakPane/JoinPane and floating panes.
 
 use nexterm_proto::{KeyCode, Modifiers, ServerToClient};
 use tracing::error;
@@ -19,7 +19,7 @@ pub(super) async fn handle_key_event(
             if let Some(s) = sessions.get(name)
                 && let Err(e) = s.write_to_focused(&bytes)
             {
-                error!("PTY 書き込みエラー: {}", e);
+                error!("PTY write error: {}", e);
             }
         }
     }
@@ -39,7 +39,7 @@ pub(super) async fn handle_paste_text(ctx: &mut DispatchContext<'_>, text: &str)
                 text.as_bytes().to_vec()
             };
             if let Err(e) = s.write_to_focused(&data) {
-                error!("ペーストエラー: {}", e);
+                error!("paste error: {}", e);
             }
         }
     }
@@ -63,7 +63,7 @@ pub(super) async fn handle_mouse_report(
                 let cb = button as u32 + if motion { 32 } else { 0 };
                 let seq = format!("\x1b[<{};{};{}{}", cb, col + 1, row + 1, suffix as char);
                 if let Err(e) = s.write_to_focused(seq.as_bytes()) {
-                    error!("マウスレポート送信エラー: {}", e);
+                    error!("mouse report send error: {}", e);
                 }
             }
         }
@@ -213,10 +213,10 @@ pub(super) async fn handle_toggle_zoom(ctx: &mut DispatchContext<'_>) {
     }
 }
 
-/// タブ並べ替え要求を処理する（Sprint 5-7 / Phase 2-3）。
+/// Handle a tab-reorder request (Sprint 5-7 / Phase 2-3).
 ///
-/// クライアントから受信した新順序を `Window::reorder_panes` に渡して反映させ、
-/// 順序に変更があった場合のみ最新の `LayoutChanged` を送信する（無変化なら no-op）。
+/// Passes the new order from the client through `Window::reorder_panes` and sends the latest
+/// `LayoutChanged` only when the order actually changed (no-op otherwise).
 pub(super) async fn handle_reorder_panes(ctx: &mut DispatchContext<'_>, pane_ids: &[u32]) {
     if let Some(ref name) = *ctx.current_session {
         let layout_msg = {
@@ -353,16 +353,16 @@ pub(super) async fn handle_join_pane(ctx: &mut DispatchContext<'_>, target_windo
     }
 }
 
-/// `ClientToServer::MovePaneToWindow` ハンドラ（Sprint 5-8 Phase 4-3、PROTOCOL_VERSION 8）。
+/// Handler for `ClientToServer::MovePaneToWindow` (Sprint 5-8 Phase 4-3, PROTOCOL_VERSION 8).
 ///
-/// クライアントがタブを別 OS Window または OS Window 外にドロップしたとき呼ばれる。
-/// `Session::move_pane` を実行して:
-/// 1. ペインをソース Window から取り出す
-/// 2. 移動先 Window（`target_window_id == 0` なら新規生成）に追加する
-/// 3. 双方の Window に対する `LayoutChanged` と `WindowListChanged` を全クライアントに送信
+/// Invoked when the client drops a tab onto another OS window or outside any OS window.
+/// Executes `Session::move_pane` to:
+/// 1. Take the pane out of the source window.
+/// 2. Add it to the destination window (a new window is created when `target_window_id == 0`).
+/// 3. Send `LayoutChanged` for both windows and `WindowListChanged` to every client.
 ///
-/// 失敗時は info ログのみ出力（クライアントへのエラー応答は Phase 4-4 以降の `ErrorResponse`
-/// メッセージ整備時に検討）。
+/// On failure, only an info log is emitted (a proper client-facing error response will be
+/// designed alongside the `ErrorResponse` message in Phase 4-4 or later).
 pub(super) async fn handle_move_pane_to_window(
     ctx: &mut DispatchContext<'_>,
     pane_id: u32,
@@ -382,11 +382,11 @@ pub(super) async fn handle_move_pane_to_window(
         let rows = s.rows;
         match s.move_pane(pane_id, target_window_id, insert_at) {
             Ok((src_window_id, new_window_id, moved_pane_id)) => {
-                // 移動先 Window の LayoutChanged を構築
+                // Build LayoutChanged for the destination window.
                 let dst_layout = s
                     .window(new_window_id)
                     .map(|w| w.layout_changed_msg(cols, rows));
-                // ソース Window の LayoutChanged を構築（Window が削除されていなければ）
+                // Build LayoutChanged for the source window (if it has not been removed).
                 let src_layout = s
                     .window(src_window_id)
                     .map(|w| w.layout_changed_msg(cols, rows));
@@ -401,7 +401,7 @@ pub(super) async fn handle_move_pane_to_window(
                 ))
             }
             Err(e) => {
-                tracing::info!("MovePaneToWindow 失敗: {}", e);
+                tracing::info!("MovePaneToWindow failed: {}", e);
                 None
             }
         }
@@ -410,7 +410,7 @@ pub(super) async fn handle_move_pane_to_window(
         result
     {
         tracing::info!(
-            "ペイン {} を Window {} → Window {} に移動",
+            "moved pane {} from Window {} to Window {}",
             moved_pane_id,
             src_window_id,
             new_window_id
@@ -425,7 +425,7 @@ pub(super) async fn handle_move_pane_to_window(
         if let Some(msg) = dst_layout {
             let _ = ctx.tx.send(msg).await;
         }
-        // 移動先ペインの FullRefresh を送って画面再描画を促す
+        // Send FullRefresh for the moved pane to trigger a screen redraw.
         let refresh = {
             let arc = ctx.manager.sessions();
             let sessions = arc.lock().await;
