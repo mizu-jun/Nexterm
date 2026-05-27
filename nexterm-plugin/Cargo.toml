@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Nexterm WASM プラグインホストランタイム"
+description = "Nexterm WASM plugin host runtime"
 
 [dependencies]
 anyhow.workspace = true
@@ -13,7 +13,7 @@ tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
-# WASM ランタイム（純粋 Rust 実装、クロスプラットフォーム）
+# WASM runtime (pure-Rust implementation, cross-platform)
 wasmi = "0.38"
 
 [dev-dependencies]

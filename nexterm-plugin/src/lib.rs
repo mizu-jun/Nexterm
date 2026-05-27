@@ -1,72 +1,73 @@
 #![warn(missing_docs)]
-//! Nexterm WASM プラグインホストランタイム
+//! Nexterm WASM plugin host runtime.
 //!
-//! # プラグイン ABI バージョン
+//! # Plugin ABI version
 //!
-//! [`PLUGIN_API_VERSION`] が安定 ABI を識別する。プラグインは
-//! `nexterm.api_version() -> i32` インポートで照合できる。
+//! [`PLUGIN_API_VERSION`] identifies the stable ABI. Plugins can query it via
+//! the `nexterm.api_version() -> i32` import.
 //!
-//! ## v2（現行・推奨）
+//! ## v2 (current, recommended)
 //!
-//! - 入力データ（ペイン出力 / コマンド文字列）は **サニタイズ済み**で渡される。
-//!   ESC・C0 制御文字・OSC/CSI/DCS/APC シーケンスは除去される。
-//!   タブ・改行・印字可能 ASCII / UTF-8 マルチバイトのみ通過する。
-//! - `nexterm.write_pane(pane_id, ...)` は呼び出しスコープごとに**許可された
-//!   pane_id 集合**でフィルタされる。`nexterm_on_output(pane_id, ...)` 中は
-//!   その `pane_id` のみ書き込み可、`nexterm_on_command(...)` 中はどの
-//!   pane にも書き込めない。
+//! - Input data (pane output / command strings) is passed **already sanitized**.
+//!   ESC, C0 controls, and OSC/CSI/DCS/APC sequences are stripped; only tab,
+//!   newline, printable ASCII, and UTF-8 multibyte sequences pass through.
+//! - `nexterm.write_pane(pane_id, ...)` is filtered per call by the
+//!   **allowed pane_id set**. During `nexterm_on_output(pane_id, ...)` only
+//!   that `pane_id` may be written to; during `nexterm_on_command(...)` no
+//!   pane may be written to at all.
 //!
-//! ## v1（後方互換のため継続サポート）
+//! ## v1 (still supported for backwards compatibility)
 //!
-//! `nexterm_api_version` エクスポートを公開していない、または `1` を返す
-//! プラグインは v1 として扱われる:
+//! Plugins that do not export `nexterm_api_version`, or that return `1`, are
+//! treated as v1:
 //!
-//! - 入力データはサニタイズされず生バイト列が渡される（旧挙動）
-//! - `write_pane` は任意の pane_id に書き込み可（旧挙動）
-//! - ロード時に **deprecation 警告**を 1 回だけログに出す
+//! - Input data is not sanitized; raw bytes are forwarded (legacy behavior).
+//! - `write_pane` accepts any pane_id (legacy behavior).
+//! - A one-shot **deprecation warning** is logged at load time.
 //!
-//! v1 は **v2.0.0 リリース時に削除予定**（ADR-0003 参照）。新規プラグインは
-//! v2 で実装すること。
+//! v1 is **scheduled to be removed at the v2.0.0 release** (see ADR-0003).
+//! New plugins should target v2.
 //!
-//! # WASM エクスポート（プラグイン側が実装する）
+//! # WASM exports (provided by the plugin)
 //!
 //! ```wat
-//! ;; モジュール初期化（オプション）
+//! ;; Module initialization (optional)
 //! (export "nexterm_init" (func ...))
 //!
-//! ;; API バージョン宣言（v2 では必須）
+//! ;; API version declaration (required for v2)
 //! (export "nexterm_api_version" (func (result i32)))
 //!
-//! ;; プラグインメタデータ: name_ptr/name_len / version_ptr/version_len を返す
-//! ;; 戻り値: 常に 0（未使用）
+//! ;; Plugin metadata: returns name_ptr/name_len / version_ptr/version_len.
+//! ;; Return value: always 0 (unused).
 //! (export "nexterm_meta" (func (param i32 i32 i32 i32) (result i32)))
 //!
-//! ;; ペイン出力フック: data_ptr/data_len は線形メモリ上の UTF-8 バイト列
-//! ;; 戻り値: 0=そのまま通過, 1=抑制
+//! ;; Pane output hook: data_ptr/data_len point to UTF-8 bytes in linear memory.
+//! ;; Return value: 0 = pass through, 1 = suppress.
 //! (export "nexterm_on_output" (func (param i32 i32 i32) (result i32)))
 //!
-//! ;; カスタムコマンドフック: cmd_ptr/cmd_len は `:cmd arg` 形式の文字列
-//! ;; 戻り値: 0=処理済み, 1=未処理
+//! ;; Custom command hook: cmd_ptr/cmd_len is a `:cmd arg` formatted string.
+//! ;; Return value: 0 = handled, 1 = unhandled.
 //! (export "nexterm_on_command" (func (param i32 i32) (result i32)))
 //! ```
 //!
-//! # ホストインポート（プラグインが利用できる）
+//! # Host imports (available to the plugin)
 //!
 //! ```wat
-//! (import "nexterm" "log" (func (param i32 i32)))            ;; ログ出力
-//! (import "nexterm" "write_pane" (func (param i32 i32 i32))) ;; ペインへの書き込み
-//! (import "nexterm" "api_version" (func (result i32)))        ;; API バージョン照合
+//! (import "nexterm" "log" (func (param i32 i32)))            ;; log output
+//! (import "nexterm" "write_pane" (func (param i32 i32 i32))) ;; write to a pane
+//! (import "nexterm" "api_version" (func (result i32)))        ;; API version query
 //! ```
 
-/// プラグイン ABI の現行バージョン番号（最新仕様）。
-/// プラグインが `nexterm_api_version` エクスポートで宣言する値はこの値と
-/// 一致するか、`MIN_SUPPORTED_API_VERSION` 以上であれば受け入れる。
+/// Current plugin ABI version number (latest specification).
+///
+/// The value that a plugin declares via the `nexterm_api_version` export must
+/// either equal this value or be at least [`MIN_SUPPORTED_API_VERSION`].
 pub const PLUGIN_API_VERSION: u32 = 2;
 
-/// 後方互換でロードを許可する最小 API バージョン。
+/// Lowest API version accepted for load (for backwards compatibility).
 ///
-/// v1 プラグインはサニタイズなし・pane_id 検証なしで動作する旧挙動を維持する。
-/// ロード時に deprecation 警告がログに出る。
+/// v1 plugins keep the legacy behavior of running without sanitization and
+/// without pane_id validation. A deprecation warning is logged at load time.
 pub const MIN_SUPPORTED_API_VERSION: u32 = 1;
 
 use std::collections::HashSet;
@@ -77,39 +78,41 @@ use anyhow::{Context, Result};
 use tracing::{error, info, warn};
 use wasmi::{Config, Engine, Linker, Module, Store};
 
-/// プラグイン 1 回の呼び出しごとに供給する fuel（命令数の概算）。
+/// Fuel (an approximate instruction budget) supplied per plugin invocation.
 ///
-/// 無限ループや極端に重い処理でホスト側を停止させない上限。
-/// CRITICAL #10 対応: wasmi はデフォルトで fuel 制限がない。
+/// Acts as an upper bound that prevents infinite loops or extremely heavy
+/// computation from stalling the host. CRITICAL #10 mitigation: wasmi does
+/// not enforce a fuel limit by default.
 const FUEL_PER_CALL: u64 = 10_000_000;
 
-/// プラグインメモリの最大ページ数 (1 ページ = 64 KiB)。
+/// Maximum number of plugin memory pages (1 page = 64 KiB).
 ///
-/// 256 ページ = 16 MiB を上限とする。CRITICAL #10 対応:
-/// wasmi はデフォルトで線形メモリ上限がなく、悪意あるプラグインが
-/// `memory.grow` で GB 単位のメモリを確保できる。
+/// 256 pages = 16 MiB upper bound. CRITICAL #10 mitigation: wasmi does not
+/// enforce a linear-memory limit by default, so a malicious plugin could
+/// allocate gigabytes via `memory.grow`.
 const MAX_MEMORY_PAGES: u32 = 256;
 
-// ---- 入力サニタイズ -------------------------------------------------------
+// ---- Input sanitization ---------------------------------------------------
 
-/// v2 プラグインに渡す前に入力バイト列から制御文字・エスケープシーケンスを除去する。
+/// Strip control characters and escape sequences from a byte slice before
+/// handing it to a v2 plugin.
 ///
-/// 通過するバイト:
-/// - `0x09`（TAB）、`0x0A`（LF）、`0x0D`（CR）
-/// - `0x20..=0x7E`（印字可能 ASCII）
-/// - `0x80..=0xFF`（UTF-8 マルチバイト先頭・継続バイト）
+/// Bytes that pass through:
+/// - `0x09` (TAB), `0x0A` (LF), `0x0D` (CR)
+/// - `0x20..=0x7E` (printable ASCII)
+/// - `0x80..=0xFF` (UTF-8 lead bytes / continuation bytes)
 ///
-/// 除去される:
-/// - その他の C0 制御文字（`0x00..=0x08`, `0x0B..=0x0C`, `0x0E..=0x1F`）
-/// - `0x7F`（DEL）
-/// - ESC (`0x1B`) で始まる CSI / OSC / DCS / APC シーケンス全体
-///   （ESC と続くシーケンス終端まで一括破棄）
+/// Bytes that are stripped:
+/// - Other C0 controls (`0x00..=0x08`, `0x0B..=0x0C`, `0x0E..=0x1F`)
+/// - `0x7F` (DEL)
+/// - CSI / OSC / DCS / APC sequences starting with ESC (`0x1B`) — ESC and the
+///   trailing sequence are discarded together as a unit.
 ///
-/// ## v2 でサニタイズする理由
+/// ## Why we sanitize in v2
 ///
-/// v1 ではプラグインがクリップボード書き換え（OSC 52）やハイパーリンク
-/// （OSC 8）等の機密シーケンスを直接観測できた。v2 ではホスト側で先に
-/// 除去することで、プラグインに渡る情報をプレーンテキストに限定する。
+/// In v1, plugins could directly observe sensitive sequences such as
+/// clipboard rewrites (OSC 52) and hyperlinks (OSC 8). In v2 the host strips
+/// them first so the data delivered to plugins is restricted to plain text.
 pub fn sanitize_for_plugin(input: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(input.len());
     let mut i = 0;
@@ -117,24 +120,24 @@ pub fn sanitize_for_plugin(input: &[u8]) -> Vec<u8> {
         let b = input[i];
         match b {
             0x1B => {
-                // ESC: 続くシーケンスをスキップ
+                // ESC: skip the following sequence.
                 i += 1;
                 if i >= input.len() {
                     break;
                 }
                 match input[i] {
                     b'[' => {
-                        // CSI: パラメータ + 中間バイト + 終端バイト (0x40..=0x7E)
+                        // CSI: parameter + intermediate + final byte (0x40..=0x7E).
                         i += 1;
                         while i < input.len() && !(0x40..=0x7E).contains(&input[i]) {
                             i += 1;
                         }
                         if i < input.len() {
-                            i += 1; // 終端バイトを消費
+                            i += 1; // consume the final byte
                         }
                     }
                     b']' | b'P' | b'_' | b'^' => {
-                        // OSC / DCS / APC / PM: ST (ESC \) または BEL (0x07) で終了
+                        // OSC / DCS / APC / PM: terminated by ST (ESC \) or BEL (0x07).
                         i += 1;
                         while i < input.len() {
                             if input[i] == 0x07 {
@@ -149,22 +152,22 @@ pub fn sanitize_for_plugin(input: &[u8]) -> Vec<u8> {
                         }
                     }
                     _ => {
-                        // 2 バイトエスケープ（ESC c, ESC =, ESC > 等）: 1 バイト消費
+                        // Two-byte escape (ESC c, ESC =, ESC > etc.): consume one byte.
                         i += 1;
                     }
                 }
             }
             0x09 | 0x0A | 0x0D => {
-                // TAB / LF / CR は通過
+                // TAB / LF / CR pass through.
                 out.push(b);
                 i += 1;
             }
             0x00..=0x1F | 0x7F => {
-                // その他の C0 制御 + DEL は除去
+                // Other C0 controls and DEL are stripped.
                 i += 1;
             }
             _ => {
-                // 印字可能 ASCII / UTF-8 マルチバイト
+                // Printable ASCII / UTF-8 multibyte.
                 out.push(b);
                 i += 1;
             }
@@ -173,44 +176,45 @@ pub fn sanitize_for_plugin(input: &[u8]) -> Vec<u8> {
     out
 }
 
-// ---- ホストステート -------------------------------------------------------
+// ---- Host state -----------------------------------------------------------
 
-/// プラグインホストへのコールバック（ペイン書き込み等）
+/// Host callback exposed to plugins (e.g. pane writes).
 pub type WritePaneFn = Arc<dyn Fn(u32, &[u8]) + Send + Sync>;
 
-/// 1 プラグインのランタイムインスタンス
+/// One plugin's runtime instance.
 struct PluginInstance {
-    /// プラグインファイルパス（デバッグ用）
+    /// Path to the plugin file (for debugging).
     path: PathBuf,
-    /// プラグインが宣言した API バージョン（`nexterm_api_version` 取得値、
-    /// 取得不可の場合は `1`）
+    /// API version declared by the plugin (value of `nexterm_api_version`;
+    /// defaults to `1` when unavailable).
     api_version: u32,
-    /// プラグインが公開する名前（nexterm_meta から取得、任意）
+    /// Plugin-declared name (from `nexterm_meta`; optional).
     pub meta_name: Option<String>,
-    /// プラグインが公開するバージョン（nexterm_meta から取得、任意）
+    /// Plugin-declared version (from `nexterm_meta`; optional).
     pub meta_version: Option<String>,
-    /// WASM ストア
+    /// WASM store.
     store: Store<HostState>,
-    /// WASM インスタンス
+    /// WASM instance.
     instance: wasmi::Instance,
 }
 
-/// WASM ストアに格納するホスト側ステート
+/// Host-side state stored inside the WASM store.
 struct HostState {
-    /// ペイン書き込みコールバック
+    /// Pane-write callback.
     write_pane: WritePaneFn,
-    /// ログバッファ（インポート "nexterm" "log" で受け取った文字列）
+    /// Log buffer (strings received via the `nexterm.log` import).
     log_buf: Vec<String>,
-    /// 現在実行中のフック呼び出しで `write_pane` が許可されている pane_id 集合。
-    /// v2 プラグインのみ参照。空集合 = どのペインにも書き込めない。
+    /// Pane IDs that `write_pane` is permitted to write to during the current
+    /// hook invocation. Only consulted for v2 plugins. An empty set means no
+    /// pane may be written to.
     allowed_panes: HashSet<u32>,
-    /// プラグインの API バージョン（v1 では allowed_panes を無視するために必要）
+    /// API version of the plugin (needed to bypass `allowed_panes` for v1).
     api_version: u32,
 }
 
-// ---- プラグインマネージャー -----------------------------------------------
+// ---- Plugin manager -------------------------------------------------------
 
-/// WASM プラグインをロード・管理するマネージャー
+/// Manager that loads and tracks WASM plugins.
 pub struct PluginManager {
     engine: Engine,
     plugins: Mutex<Vec<PluginInstance>>,
@@ -218,19 +222,21 @@ pub struct PluginManager {
 }
 
 impl PluginManager {
-    /// 新しいプラグインマネージャーを作成する
+    /// Construct a new plugin manager.
     ///
-    /// `write_pane` はプラグインが `nexterm.write_pane` を呼んだときに実行されるコールバック。
-    /// v2 プラグインの場合、許可された pane_id でしか呼び出されない。
+    /// `write_pane` is invoked whenever a plugin calls `nexterm.write_pane`.
+    /// For v2 plugins it is only called with allowed pane IDs.
     ///
-    /// # サンドボックス設定（CRITICAL #10 対応）
+    /// # Sandbox configuration (CRITICAL #10 mitigation)
     ///
-    /// - fuel 計測を有効化（デフォルト全有効）
-    /// - 各 `on_output` / `on_command` 呼び出し前に `FUEL_PER_CALL` を供給
-    /// - fuel 枯渇時は呼び出しが TrappedFuelExhausted エラーで中断
+    /// - Fuel metering is enabled (covering all engine operations by default).
+    /// - Each `on_output` / `on_command` invocation is refueled with
+    ///   `FUEL_PER_CALL`.
+    /// - When fuel is exhausted the call aborts with a `TrappedFuelExhausted`
+    ///   error.
     pub fn new(write_pane: WritePaneFn) -> Self {
         let mut config = Config::default();
-        // fuel 計測 = 命令単位の上限を強制
+        // Fuel metering = per-instruction budget enforcement.
         config.consume_fuel(true);
         let engine = Engine::new(&config);
         Self {
@@ -240,13 +246,13 @@ impl PluginManager {
         }
     }
 
-    /// WASM ファイルをロードしてプラグインとして登録する
+    /// Load a WASM file and register it as a plugin.
     pub fn load(&self, path: &Path) -> Result<()> {
         let wasm_bytes = std::fs::read(path)
-            .with_context(|| format!("プラグインファイルの読み込みに失敗: {}", path.display()))?;
+            .with_context(|| format!("failed to read plugin file: {}", path.display()))?;
 
         let module = Module::new(&self.engine, &wasm_bytes[..])
-            .with_context(|| format!("WASM モジュールのコンパイルに失敗: {}", path.display()))?;
+            .with_context(|| format!("failed to compile WASM module: {}", path.display()))?;
 
         let write_pane = Arc::clone(&self.write_pane);
         let mut store = Store::new(
@@ -255,21 +261,21 @@ impl PluginManager {
                 write_pane,
                 log_buf: Vec::new(),
                 allowed_panes: HashSet::new(),
-                // 暫定値。`nexterm_api_version` 取得後に確定する。
+                // Provisional value; finalized after reading `nexterm_api_version`.
                 api_version: MIN_SUPPORTED_API_VERSION,
             },
         );
 
         let mut linker = Linker::<HostState>::new(&self.engine);
 
-        // ホストインポート: nexterm.api_version() -> i32
+        // Host import: nexterm.api_version() -> i32
         linker.func_wrap(
             "nexterm",
             "api_version",
             |_: wasmi::Caller<'_, HostState>| PLUGIN_API_VERSION as i32,
         )?;
 
-        // ホストインポート: nexterm.log(ptr: i32, len: i32)
+        // Host import: nexterm.log(ptr: i32, len: i32)
         linker.func_wrap(
             "nexterm",
             "log",
@@ -287,11 +293,11 @@ impl PluginManager {
             },
         )?;
 
-        // ホストインポート: nexterm.write_pane(pane_id: i32, ptr: i32, len: i32)
+        // Host import: nexterm.write_pane(pane_id: i32, ptr: i32, len: i32)
         //
-        // v2 プラグイン: pane_id が `allowed_panes` に含まれない場合は
-        //   呼び出しを無視し、warn ログを出す（拒否を明示するため）。
-        // v1 プラグイン: 旧挙動どおり常に許可する。
+        // v2 plugin: if `pane_id` is not in `allowed_panes`, ignore the call
+        //   and emit a warn log (to surface the denial explicitly).
+        // v1 plugin: always permit (legacy behavior).
         linker.func_wrap(
             "nexterm",
             "write_pane",
@@ -303,7 +309,7 @@ impl PluginManager {
                 };
                 if !allowed {
                     warn!(
-                        "[plugin] write_pane 拒否: pane_id={} は許可リスト外（API v2）",
+                        "[plugin] write_pane denied: pane_id={} is not in the allow list (API v2)",
                         pane_u
                     );
                     return;
@@ -320,51 +326,52 @@ impl PluginManager {
             },
         )?;
 
-        // 初期 fuel を供給（インスタンス化・nexterm_init・nexterm_meta で消費される）
+        // Provide initial fuel (consumed by instantiation, nexterm_init, and nexterm_meta).
         store
             .set_fuel(FUEL_PER_CALL)
-            .with_context(|| "fuel 設定に失敗")?;
+            .with_context(|| "failed to set fuel")?;
 
         let instance = linker
             .instantiate(&mut store, &module)
-            .with_context(|| "プラグインのインスタンス化に失敗")?
+            .with_context(|| "failed to instantiate the plugin")?
             .start(&mut store)
-            .with_context(|| "プラグインの起動に失敗")?;
+            .with_context(|| "failed to start the plugin")?;
 
-        // メモリ制限検証（CRITICAL #10）: 初期メモリサイズが上限を超えていたら拒否
+        // Memory-limit check (CRITICAL #10): reject if the initial memory size
+        // exceeds the cap.
         if let Some(mem) = instance.get_memory(&store, "memory")
             && mem.size(&store) > MAX_MEMORY_PAGES
         {
             anyhow::bail!(
-                "プラグインメモリが上限を超えています: {} pages > {} pages (上限 {} MiB)",
+                "plugin memory exceeds the limit: {} pages > {} pages (cap {} MiB)",
                 mem.size(&store),
                 MAX_MEMORY_PAGES,
                 MAX_MEMORY_PAGES * 64 / 1024
             );
         }
 
-        // API バージョン検出 + 互換性チェック
-        // - エクスポートあり → 値を採用、`PLUGIN_API_VERSION` を上回ったら拒否
-        // - エクスポートあり、呼び出し失敗 → ロード継続（v1 扱い）
-        // - エクスポートなし → v1 扱い
+        // API version detection + compatibility check.
+        // - Export present → adopt the value; reject if it exceeds `PLUGIN_API_VERSION`.
+        // - Export present, call failed → continue loading (treat as v1).
+        // - Export absent → treat as v1.
         let mut api_version = MIN_SUPPORTED_API_VERSION;
         if let Ok(version_fn) = instance.get_typed_func::<(), i32>(&store, "nexterm_api_version") {
             store
                 .set_fuel(FUEL_PER_CALL)
-                .with_context(|| "fuel 設定に失敗")?;
+                .with_context(|| "failed to set fuel")?;
             match version_fn.call(&mut store, ()) {
                 Ok(v) => {
                     let v_u = v as u32;
                     if v_u > PLUGIN_API_VERSION {
                         anyhow::bail!(
-                            "プラグイン API バージョンがホストより新しい: plugin={}, host={}",
+                            "plugin API version is newer than the host: plugin={}, host={}",
                             v_u,
                             PLUGIN_API_VERSION
                         );
                     }
                     if v_u < MIN_SUPPORTED_API_VERSION {
                         anyhow::bail!(
-                            "プラグイン API バージョンが古すぎます: plugin={}, min={}",
+                            "plugin API version is too old: plugin={}, min={}",
                             v_u,
                             MIN_SUPPORTED_API_VERSION
                         );
@@ -373,7 +380,7 @@ impl PluginManager {
                 }
                 Err(e) => {
                     warn!(
-                        "プラグイン API バージョン取得失敗（v1 として続行）: {}: {}",
+                        "failed to obtain plugin API version (continuing as v1): {}: {}",
                         path.display(),
                         e
                     );
@@ -381,37 +388,37 @@ impl PluginManager {
             }
         }
 
-        // HostState の api_version を最終確定値で書き換える
+        // Commit the resolved API version back into the HostState.
         store.data_mut().api_version = api_version;
 
-        // v1 プラグインには deprecation 警告を 1 回だけ出す
+        // Emit a one-shot deprecation warning for v1 plugins.
         if api_version < PLUGIN_API_VERSION {
             warn!(
-                "プラグインが API v{} で動作中（現行 v{}）: {} — \
-                 サニタイズ・PaneId 検証なしの旧挙動で動作します。\
-                 将来のバージョンで v1 サポートは削除予定です。",
+                "plugin is running under API v{} (current v{}): {} — \
+                 running with the legacy behavior (no sanitization, no PaneId check). \
+                 v1 support will be removed in a future release.",
                 api_version,
                 PLUGIN_API_VERSION,
                 path.display()
             );
         }
 
-        // nexterm_init があれば呼ぶ（オプション）
+        // Call `nexterm_init` if present (optional).
         if let Ok(init_fn) = instance.get_typed_func::<(), ()>(&store, "nexterm_init") {
             store
                 .set_fuel(FUEL_PER_CALL)
-                .with_context(|| "fuel 設定に失敗")?;
+                .with_context(|| "failed to set fuel")?;
             init_fn.call(&mut store, ()).ok();
         }
 
-        // nexterm_meta があればメタデータを取得する（オプション）
+        // Read metadata from `nexterm_meta` if present (optional).
         store
             .set_fuel(FUEL_PER_CALL)
-            .with_context(|| "fuel 設定に失敗")?;
+            .with_context(|| "failed to set fuel")?;
         let (meta_name, meta_version) = read_plugin_meta(&mut store, &instance);
 
         info!(
-            "プラグインをロードしました: {} (api=v{} name={:?} version={:?})",
+            "plugin loaded: {} (api=v{} name={:?} version={:?})",
             path.display(),
             api_version,
             meta_name,
@@ -419,7 +426,7 @@ impl PluginManager {
         );
 
         let mut plugins = self.plugins.lock().unwrap_or_else(|poisoned| {
-            tracing::warn!("plugins mutex がポイズン状態。回復して継続します");
+            tracing::warn!("plugins mutex is poisoned; recovering and continuing");
             poisoned.into_inner()
         });
         plugins.push(PluginInstance {
@@ -434,60 +441,61 @@ impl PluginManager {
         Ok(())
     }
 
-    /// 指定パスのプラグインをアンロードする。存在しない場合は Ok(false) を返す。
+    /// Unload the plugin at the given path. Returns `Ok(false)` if no such plugin exists.
     pub fn unload(&self, path: &Path) -> Result<bool> {
         let mut plugins = self.plugins.lock().unwrap_or_else(|poisoned| {
-            tracing::warn!("plugins mutex がポイズン状態。回復して継続します");
+            tracing::warn!("plugins mutex is poisoned; recovering and continuing");
             poisoned.into_inner()
         });
         let before = plugins.len();
         plugins.retain(|p| p.path != path);
         let removed = plugins.len() < before;
         if removed {
-            info!("プラグインをアンロードしました: {}", path.display());
+            info!("plugin unloaded: {}", path.display());
         }
         Ok(removed)
     }
 
-    /// 指定パスのプラグインを再ロードする（アンロード → ロード）。
+    /// Reload the plugin at the given path (unload, then load).
     pub fn reload(&self, path: &Path) -> Result<()> {
         self.unload(path)?;
         self.load(path)
     }
 
-    /// ディレクトリ内の全 `.wasm` ファイルをロードする
+    /// Load every `.wasm` file in the given directory.
     pub fn load_dir(&self, dir: &Path) -> Result<usize> {
         if !dir.exists() {
             return Ok(0);
         }
         let mut count = 0;
         for entry in std::fs::read_dir(dir)
-            .with_context(|| format!("プラグインディレクトリの読み込みに失敗: {}", dir.display()))?
+            .with_context(|| format!("failed to read the plugin directory: {}", dir.display()))?
         {
             let entry = entry?;
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) == Some("wasm") {
                 match self.load(&path) {
                     Ok(()) => count += 1,
-                    Err(e) => warn!("プラグインのロードをスキップ: {} — {}", path.display(), e),
+                    Err(e) => warn!("skipping plugin load: {} — {}", path.display(), e),
                 }
             }
         }
         Ok(count)
     }
 
-    /// ペイン出力フック — 全プラグインの `nexterm_on_output` を呼ぶ
+    /// Pane output hook — calls `nexterm_on_output` on every plugin.
     ///
-    /// 戻り値: `true` = 抑制（クライアントに転送しない）
+    /// Return value: `true` = suppress (do not forward to the client).
     ///
-    /// v2 プラグイン: `data` をサニタイズしてから渡し、`pane_id` のみ
-    ///   `write_pane` 経由で書き込み可能にする。
-    /// v1 プラグイン: 生バイト列を渡し、書き込み制限なし（旧挙動）。
+    /// v2 plugin: `data` is sanitized before being passed, and only `pane_id`
+    ///   can be written to via `write_pane`.
+    /// v1 plugin: raw bytes are passed and there is no write restriction
+    ///   (legacy behavior).
     pub fn on_output(&self, pane_id: u32, data: &[u8]) -> bool {
-        // v2 用にサニタイズ済みデータを 1 度だけ計算（複数プラグインで再利用）
+        // Sanitize once for v2 (reused across plugins).
         let sanitized = sanitize_for_plugin(data);
         let mut plugins = self.plugins.lock().unwrap_or_else(|poisoned| {
-            tracing::warn!("plugins mutex がポイズン状態。回復して継続します");
+            tracing::warn!("plugins mutex is poisoned; recovering and continuing");
             poisoned.into_inner()
         });
         for plugin in plugins.iter_mut() {
@@ -502,18 +510,22 @@ impl PluginManager {
             } else {
                 data
             };
-            // WASM 線形メモリにデータを書き込む
+            // Write the payload into the plugin's WASM linear memory.
             if let Some(mem) = plugin.instance.get_memory(&plugin.store, "memory") {
-                let offset = 64 * 1024usize; // スタック上部から安全な領域
+                let offset = 64 * 1024usize; // safe region above the stack
                 let mem_size = mem.data_size(&plugin.store);
                 if offset + payload.len() <= mem_size {
                     mem.write(&mut plugin.store, offset, payload).ok();
-                    // 各呼び出し前に fuel を補充（無限ループ防止、CRITICAL #10）
+                    // Refuel before each call (prevents infinite loops; CRITICAL #10).
                     if let Err(e) = plugin.store.set_fuel(FUEL_PER_CALL) {
-                        error!("[plugin {}] fuel 設定失敗: {}", plugin.path.display(), e);
+                        error!(
+                            "[plugin {}] failed to set fuel: {}",
+                            plugin.path.display(),
+                            e
+                        );
                         continue;
                     }
-                    // v2: 許可 pane を {pane_id} に設定（呼び出しスコープのみ有効）
+                    // v2: scope the allow list to `{pane_id}` for this call only.
                     {
                         let state = plugin.store.data_mut();
                         state.allowed_panes.clear();
@@ -525,13 +537,13 @@ impl PluginManager {
                         &mut plugin.store,
                         (pane_id as i32, offset as i32, payload.len() as i32),
                     );
-                    // 後片付け: 許可リストを必ず空に戻す
+                    // Cleanup: always clear the allow list afterwards.
                     plugin.store.data_mut().allowed_panes.clear();
                     match result {
-                        Ok(1) => return true, // 抑制
+                        Ok(1) => return true, // suppress
                         Ok(_) => {}
                         Err(e) => {
-                            error!("[plugin {}] on_output エラー: {}", plugin.path.display(), e)
+                            error!("[plugin {}] on_output error: {}", plugin.path.display(), e)
                         }
                     }
                 }
@@ -540,18 +552,19 @@ impl PluginManager {
         false
     }
 
-    /// カスタムコマンドフック — `:cmd arg` 形式の文字列を全プラグインに渡す
+    /// Custom command hook — forward a `:cmd arg` style string to every plugin.
     ///
-    /// 戻り値: `true` = いずれかのプラグインが処理済み
+    /// Return value: `true` = at least one plugin handled it.
     ///
-    /// v2 プラグイン: 文字列をサニタイズしてから渡し、`write_pane` は
-    ///   どのペインにも書き込めない（許可リスト空）。
-    /// v1 プラグイン: 生文字列を渡し、書き込み制限なし（旧挙動）。
+    /// v2 plugin: the string is sanitized before being passed, and `write_pane`
+    ///   cannot write to any pane (the allow list is empty).
+    /// v1 plugin: the raw string is passed and there is no write restriction
+    ///   (legacy behavior).
     pub fn on_command(&self, cmd: &str) -> bool {
         let cmd_bytes = cmd.as_bytes();
         let sanitized = sanitize_for_plugin(cmd_bytes);
         let mut plugins = self.plugins.lock().unwrap_or_else(|poisoned| {
-            tracing::warn!("plugins mutex がポイズン状態。回復して継続します");
+            tracing::warn!("plugins mutex is poisoned; recovering and continuing");
             poisoned.into_inner()
         });
         for plugin in plugins.iter_mut() {
@@ -571,24 +584,26 @@ impl PluginManager {
                 let mem_size = mem.data_size(&plugin.store);
                 if offset + payload.len() <= mem_size {
                     mem.write(&mut plugin.store, offset, payload).ok();
-                    // 各呼び出し前に fuel を補充（無限ループ防止、CRITICAL #10）
+                    // Refuel before each call (prevents infinite loops; CRITICAL #10).
                     if let Err(e) = plugin.store.set_fuel(FUEL_PER_CALL) {
-                        error!("[plugin {}] fuel 設定失敗: {}", plugin.path.display(), e);
+                        error!(
+                            "[plugin {}] failed to set fuel: {}",
+                            plugin.path.display(),
+                            e
+                        );
                         continue;
                     }
-                    // v2: コマンドフックではどの pane にも書き込ませない
+                    // v2: command hooks cannot write to any pane.
                     plugin.store.data_mut().allowed_panes.clear();
                     let result =
                         func.call(&mut plugin.store, (offset as i32, payload.len() as i32));
                     plugin.store.data_mut().allowed_panes.clear();
                     match result {
-                        Ok(0) => return true, // 処理済み
+                        Ok(0) => return true, // handled
                         Ok(_) => {}
-                        Err(e) => error!(
-                            "[plugin {}] on_command エラー: {}",
-                            plugin.path.display(),
-                            e
-                        ),
+                        Err(e) => {
+                            error!("[plugin {}] on_command error: {}", plugin.path.display(), e)
+                        }
                     }
                 }
             }
@@ -596,7 +611,7 @@ impl PluginManager {
         false
     }
 
-    /// ロード済みプラグイン数を返す
+    /// Return the number of loaded plugins.
     pub fn plugin_count(&self) -> usize {
         self.plugins
             .lock()
@@ -604,7 +619,7 @@ impl PluginManager {
             .len()
     }
 
-    /// ロード済みプラグインのパス一覧を返す
+    /// Return the paths of all loaded plugins.
     pub fn plugin_paths(&self) -> Vec<PathBuf> {
         self.plugins
             .lock()
@@ -615,10 +630,10 @@ impl PluginManager {
     }
 }
 
-// ---- メタデータヘルパー ------------------------------------------------------
+// ---- Metadata helpers -----------------------------------------------------
 
-/// `nexterm_meta` エクスポートからプラグイン名とバージョン文字列を取得する。
-/// エクスポートがない場合は (None, None) を返す。
+/// Read the plugin name and version strings from the `nexterm_meta` export.
+/// Returns `(None, None)` if the export is absent.
 fn read_plugin_meta(
     store: &mut Store<HostState>,
     instance: &wasmi::Instance,
@@ -633,7 +648,7 @@ fn read_plugin_meta(
         return (None, None);
     };
 
-    // 名前・バージョン用バッファを WASM メモリ上に確保する（各 128 バイト）
+    // Allocate name/version buffers in WASM memory (128 bytes each).
     let name_off: usize = 64 * 1024;
     let ver_off: usize = name_off + 128;
     let mem_size = mem.data_size(&mut *store);
@@ -641,7 +656,7 @@ fn read_plugin_meta(
         return (None, None);
     }
 
-    // バッファをゼロ埋めしてから呼ぶ
+    // Zero the buffers before the call.
     mem.write(&mut *store, name_off, &[0u8; 128]).ok();
     mem.write(&mut *store, ver_off, &[0u8; 128]).ok();
 
@@ -653,7 +668,7 @@ fn read_plugin_meta(
     (name, ver)
 }
 
-/// WASM 線形メモリからヌル終端 UTF-8 文字列を読み出す。
+/// Read a NUL-terminated UTF-8 string from WASM linear memory.
 fn read_cstr_from(data: &[u8], offset: usize, max_len: usize) -> Option<String> {
     let slice = data.get(offset..offset + max_len)?;
     let end = slice.iter().position(|&b| b == 0).unwrap_or(max_len);
@@ -663,23 +678,23 @@ fn read_cstr_from(data: &[u8], offset: usize, max_len: usize) -> Option<String> 
     String::from_utf8(slice[..end].to_vec()).ok()
 }
 
-// ---- プラグイン情報（ctl 表示用） -----------------------------------------
+// ---- Plugin information (for ctl display) ---------------------------------
 
-/// プラグイン情報（`nexterm-ctl plugin list` 等で表示）
+/// Plugin information (displayed by `nexterm-ctl plugin list` and similar).
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct PluginInfo {
-    /// WASM プラグインファイルのパス
+    /// Path of the WASM plugin file.
     pub path: String,
-    /// プラグインが宣言した API バージョン
+    /// API version declared by the plugin.
     pub api_version: u32,
-    /// プラグインが公開する名前（nexterm_meta から取得）
+    /// Plugin-declared name (from `nexterm_meta`).
     pub name: Option<String>,
-    /// プラグインが公開するバージョン（nexterm_meta から取得）
+    /// Plugin-declared version (from `nexterm_meta`).
     pub version: Option<String>,
 }
 
 impl PluginManager {
-    /// ロード済みプラグイン情報の一覧を返す
+    /// Return information about all loaded plugins.
     pub fn list_info(&self) -> Vec<PluginInfo> {
         self.plugins
             .lock()
@@ -695,9 +710,9 @@ impl PluginManager {
     }
 }
 
-// ---- デフォルトプラグインディレクトリ ------------------------------------
+// ---- Default plugin directory ---------------------------------------------
 
-/// デフォルトのプラグインディレクトリパスを返す
+/// Return the default plugin directory path.
 ///
 /// - Linux/macOS: `~/.config/nexterm/plugins`
 /// - Windows:     `%APPDATA%\nexterm\plugins`
@@ -717,7 +732,7 @@ pub fn default_plugin_dir() -> PathBuf {
     }
 }
 
-// ---- テスト ---------------------------------------------------------------
+// ---- Tests ----------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -736,7 +751,7 @@ mod tests {
     #[test]
     fn test_load_dir_nonexistent() {
         let mgr = PluginManager::new(noop_write_pane());
-        // 存在しないディレクトリは Ok(0) を返す
+        // A missing directory returns Ok(0).
         let result = mgr.load_dir(Path::new("/nonexistent/path"));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 0);
@@ -745,23 +760,23 @@ mod tests {
     #[test]
     fn test_on_output_no_plugins() {
         let mgr = PluginManager::new(noop_write_pane());
-        // プラグインがない場合は常に false（抑制しない）
+        // Always returns false when there are no plugins (i.e. nothing is suppressed).
         assert!(!mgr.on_output(1, b"hello"));
     }
 
     #[test]
     fn test_on_command_no_plugins() {
         let mgr = PluginManager::new(noop_write_pane());
-        // プラグインがない場合は常に false（未処理）
+        // Always returns false when there are no plugins (i.e. unhandled).
         assert!(!mgr.on_command(":hello world"));
     }
 
     #[test]
     fn test_default_plugin_dir() {
         let dir = default_plugin_dir();
-        // パスが空でないこと
+        // Path must not be empty.
         assert!(!dir.as_os_str().is_empty());
-        // "nexterm" と "plugins" セグメントを含むこと
+        // Must contain the `nexterm` and `plugins` segments.
         let s = dir.display().to_string();
         assert!(s.contains("nexterm"));
         assert!(s.contains("plugins"));
@@ -776,16 +791,16 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// 最小限の有効な WASM モジュール（空のモジュール）をロードできること
+    /// Loading a minimal valid WASM module (an empty module) should not panic.
     #[test]
     fn test_load_minimal_wasm() {
-        // (module) の最小 WASM バイナリ（手書きエンコーディング）
+        // Hand-encoded minimal WASM binary for `(module)`.
         let wasm = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
         let mgr = PluginManager::new(noop_write_pane());
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(tmp.path(), &wasm).unwrap();
-        // nexterm.log / nexterm.write_pane インポートがないので失敗するが、
-        // ロード試行自体はエラーを返すだけでパニックしない
+        // The load attempt itself should only return an error, never panic
+        // (the nexterm.log / nexterm.write_pane imports are missing).
         let _ = mgr.load(tmp.path());
     }
 
@@ -806,7 +821,7 @@ mod tests {
     fn test_load_dir_empty_dir() {
         let dir = tempfile::tempdir().unwrap();
         let mgr = PluginManager::new(noop_write_pane());
-        // 空のディレクトリでは 0 件
+        // Empty directory yields zero loaded plugins.
         let count = mgr.load_dir(dir.path()).unwrap();
         assert_eq!(count, 0);
     }
@@ -814,19 +829,19 @@ mod tests {
     #[test]
     fn test_load_dir_skips_non_wasm_files() {
         let dir = tempfile::tempdir().unwrap();
-        // .wasm でないファイルを置く
+        // Drop non-`.wasm` files in place.
         std::fs::write(dir.path().join("script.sh"), b"#!/bin/sh\necho hello").unwrap();
         std::fs::write(dir.path().join("config.toml"), b"[plugin]\nname = \"test\"").unwrap();
         let mgr = PluginManager::new(noop_write_pane());
         let count = mgr.load_dir(dir.path()).unwrap();
-        // .wasm ファイルがないので 0 件（.sh/.toml はスキップ）
+        // No `.wasm` files present, so count is zero (`.sh` / `.toml` are skipped).
         assert_eq!(count, 0);
     }
 
     #[test]
     fn test_on_output_returns_false_without_plugins() {
         let mgr = PluginManager::new(noop_write_pane());
-        // 長いデータでも false を返す
+        // Long data should still return false.
         let data = b"Hello, World! This is a test output from a pane.";
         assert!(!mgr.on_output(42, data));
     }
@@ -850,7 +865,7 @@ mod tests {
     fn test_plugin_api_version_constant() {
         assert_eq!(PLUGIN_API_VERSION, 2);
         assert_eq!(MIN_SUPPORTED_API_VERSION, 1);
-        // const assert で互換性条件を保証する
+        // const assert: guarantees the compatibility invariant.
         const _: () = assert!(MIN_SUPPORTED_API_VERSION <= PLUGIN_API_VERSION);
     }
 
@@ -875,7 +890,7 @@ mod tests {
         assert_eq!(result.as_deref(), Some("hello"));
     }
 
-    // ---- サニタイズのテスト（Sprint 4-2） ----
+    // ---- Sanitization tests (Sprint 4-2) ----
 
     #[test]
     fn sanitize_passes_printable_ascii() {
@@ -898,13 +913,13 @@ mod tests {
     #[test]
     fn sanitize_strips_other_c0_controls() {
         let input = b"a\x00b\x07c\x08d\x0Be\x7Ff";
-        // NUL, BEL, BS, VT, DEL は除去
+        // NUL, BEL, BS, VT, DEL are stripped.
         assert_eq!(sanitize_for_plugin(input), b"abcdef");
     }
 
     #[test]
     fn sanitize_strips_csi_sequence() {
-        // ESC [ 31 m  → 赤色 SGR
+        // ESC [ 31 m  → SGR red.
         let input = b"red:\x1b[31mfoo\x1b[0mend";
         assert_eq!(sanitize_for_plugin(input), b"red:fooend");
     }
@@ -925,7 +940,7 @@ mod tests {
 
     #[test]
     fn sanitize_strips_dcs_and_apc() {
-        // DCS / APC それぞれ ESC \ で終わる
+        // DCS / APC are each terminated by ESC \.
         let input = b"a\x1bP123\x1b\\b\x1b_apc\x1b\\c";
         assert_eq!(sanitize_for_plugin(input), b"abc");
     }
@@ -939,7 +954,7 @@ mod tests {
 
     #[test]
     fn sanitize_handles_truncated_csi() {
-        // ESC [ で終わる場合（パラメータ未終了）はそれ以降を破棄
+        // Sequence ending mid-CSI (no final byte) — discard everything after ESC.
         let input = b"safe\x1b[31";
         let out = sanitize_for_plugin(input);
         assert_eq!(out, b"safe");
@@ -954,7 +969,7 @@ mod tests {
 
     #[test]
     fn sanitize_does_not_panic_on_arbitrary_bytes() {
-        // 全 256 バイトを含む入力でパニックしないこと
+        // No panic on an input that covers every possible byte value.
         let input: Vec<u8> = (0..=255u8).collect();
         let _ = sanitize_for_plugin(&input);
     }
