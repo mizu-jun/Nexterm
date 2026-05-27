@@ -1,34 +1,35 @@
-//! アニメーション設定（Sprint 5-7 / Phase 3-2）
+//! Animation configuration (Sprint 5-7 / Phase 3-2).
 //!
-//! タブ切替・ペイン追加・カーソルブリンク等の UI アニメーション全体を制御する。
-//! `enabled = false` または `intensity = "off"` で完全に無効化でき、
-//! アクセシビリティ（reduced motion）への配慮が可能。
+//! Controls every UI animation, including tab switching, pane insertion, and
+//! the cursor blink. Setting `enabled = false` or `intensity = "off"` disables
+//! them entirely, which lets the application respect a reduced-motion
+//! accessibility preference.
 
 use serde::{Deserialize, Serialize};
 
-/// アニメーション強度（duration をスケールする係数を返す）。
+/// Animation intensity (provides the factor by which the duration is scaled).
 ///
-/// 系統:
-/// - `Off`     — 全て即時反映（0 ms）
-/// - `Subtle`  — 控えめ（duration × 0.5）
-/// - `Normal`  — 標準（duration × 1.0、デフォルト）
-/// - `Energetic` — 強調（duration × 1.5）
+/// Levels:
+/// - `Off`     — apply instantly (0 ms).
+/// - `Subtle`  — restrained (duration × 0.5).
+/// - `Normal`  — standard (duration × 1.0, the default).
+/// - `Energetic` — pronounced (duration × 1.5).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum AnimationIntensity {
-    /// 無効（duration = 0）
+    /// Disabled (duration = 0).
     Off,
-    /// 控えめ（× 0.5）
+    /// Subtle (× 0.5).
     Subtle,
-    /// 標準（× 1.0）
+    /// Standard (× 1.0).
     #[default]
     Normal,
-    /// 強調（× 1.5）
+    /// Energetic (× 1.5).
     Energetic,
 }
 
 impl AnimationIntensity {
-    /// 基準 duration（ミリ秒）に乗算する係数を返す。
+    /// Returns the multiplier applied to the base duration (in milliseconds).
     pub fn multiplier(&self) -> f32 {
         match self {
             AnimationIntensity::Off => 0.0,
@@ -39,7 +40,7 @@ impl AnimationIntensity {
     }
 }
 
-/// アニメーション全体設定。
+/// Top-level animation configuration.
 ///
 /// ```toml
 /// [animations]
@@ -49,16 +50,18 @@ impl AnimationIntensity {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AnimationsConfig {
-    /// アニメーション全体の有効/無効。`false` の場合 intensity に関わらず全て即時反映
+    /// Master switch. When `false`, every animation is applied instantly
+    /// regardless of `intensity`.
     #[serde(default = "default_animations_enabled")]
     pub enabled: bool,
-    /// アニメーション強度（off / subtle / normal / energetic）
+    /// Animation intensity (off / subtle / normal / energetic).
     #[serde(default)]
     pub intensity: AnimationIntensity,
 }
 
 fn default_animations_enabled() -> bool {
-    // デフォルト有効。ユーザーが reduced motion を希望する場合は `enabled = false` で停止
+    // Enabled by default. Users who prefer reduced motion can disable
+    // animations with `enabled = false`.
     true
 }
 
@@ -72,7 +75,8 @@ impl Default for AnimationsConfig {
 }
 
 impl AnimationsConfig {
-    /// 有効な係数を返す（`enabled = false` または `Off` で 0）。
+    /// Returns the effective multiplier (0 when `enabled = false` or
+    /// `intensity = Off`).
     pub fn effective_multiplier(&self) -> f32 {
         if self.enabled {
             self.intensity.multiplier()
@@ -81,8 +85,8 @@ impl AnimationsConfig {
         }
     }
 
-    /// 基準 duration（ミリ秒）にスケールを掛けた実効 duration を返す。
-    /// 0 を返すと「アニメーションなし（即時反映）」を意味する。
+    /// Returns the effective duration (the base milliseconds scaled by the
+    /// multiplier). A return value of `0` means "no animation; apply instantly".
     pub fn scaled_duration_ms(&self, base_ms: u32) -> u32 {
         let mult = self.effective_multiplier();
         if mult <= 0.0 {
@@ -97,7 +101,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn デフォルトは有効_normal() {
+    fn defaults_are_enabled_and_normal() {
         let cfg = AnimationsConfig::default();
         assert!(cfg.enabled);
         assert_eq!(cfg.intensity, AnimationIntensity::Normal);
@@ -105,7 +109,7 @@ mod tests {
     }
 
     #[test]
-    fn intensity_乗算係数の検証() {
+    fn intensity_multipliers_are_correct() {
         assert!((AnimationIntensity::Off.multiplier() - 0.0).abs() < f32::EPSILON);
         assert!((AnimationIntensity::Subtle.multiplier() - 0.5).abs() < f32::EPSILON);
         assert!((AnimationIntensity::Normal.multiplier() - 1.0).abs() < f32::EPSILON);
@@ -113,7 +117,7 @@ mod tests {
     }
 
     #[test]
-    fn enabled_false_で全てが_0() {
+    fn enabled_false_yields_zero() {
         let cfg = AnimationsConfig {
             enabled: false,
             intensity: AnimationIntensity::Energetic,
@@ -123,7 +127,7 @@ mod tests {
     }
 
     #[test]
-    fn off_で全てが_0() {
+    fn off_yields_zero() {
         let cfg = AnimationsConfig {
             enabled: true,
             intensity: AnimationIntensity::Off,
@@ -133,7 +137,7 @@ mod tests {
     }
 
     #[test]
-    fn scaled_duration_ms_は係数を反映する() {
+    fn scaled_duration_ms_honors_the_multiplier() {
         let cfg = AnimationsConfig {
             enabled: true,
             intensity: AnimationIntensity::Subtle,
@@ -147,7 +151,7 @@ mod tests {
     }
 
     #[test]
-    fn tomlでパースできる() {
+    fn parses_from_toml() {
         let toml_str = r#"
 [animations]
 enabled = true
@@ -159,7 +163,7 @@ intensity = "subtle"
     }
 
     #[test]
-    fn デフォルト構造体のtoml往復() {
+    fn default_struct_toml_roundtrip() {
         let cfg = AnimationsConfig::default();
         let s = toml::to_string(&cfg).unwrap();
         let parsed: AnimationsConfig = toml::from_str(&s).unwrap();

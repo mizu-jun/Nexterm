@@ -1,42 +1,42 @@
-//! SSH ホスト設定とイベントフック
+//! SSH host configuration and event hooks.
 
 use serde::{Deserialize, Serialize};
 
-/// SSH ホスト設定
+/// SSH host configuration.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Default)]
 pub struct HostConfig {
-    /// 表示名
+    /// Display name.
     pub name: String,
-    /// ホスト名または IP アドレス
+    /// Host name or IP address.
     pub host: String,
-    /// SSH ポート（デフォルト: 22）
+    /// SSH port (default: 22).
     #[serde(default = "default_ssh_port")]
     pub port: u16,
-    /// ユーザー名
+    /// User name.
     pub username: String,
-    /// 認証方式: "password", "key", "agent"
+    /// Authentication method: `"password"`, `"key"`, or `"agent"`.
     #[serde(default = "default_auth_type")]
     pub auth_type: String,
-    /// 秘密鍵ファイルパス（auth_type = "key" の場合）
+    /// Private-key path (used when `auth_type = "key"`).
     pub key_path: Option<String>,
-    /// ローカルポートフォワーディング設定（例: "8080:localhost:80"）
+    /// Local port-forwarding specifications (e.g. `"8080:localhost:80"`).
     #[serde(default)]
     pub forward_local: Vec<String>,
-    /// リモートポートフォワーディング設定（例: "9090:localhost:9090"）
+    /// Remote port-forwarding specifications (e.g. `"9090:localhost:9090"`).
     #[serde(default)]
     pub forward_remote: Vec<String>,
-    /// ProxyJump ホスト名（hosts に登録されたエントリ名）
+    /// ProxyJump host name (an entry name registered in `hosts`).
     pub proxy_jump: Option<String>,
-    /// X11 フォワーディングを有効にするか（ssh -X 相当）
+    /// Whether to enable X11 forwarding (equivalent to `ssh -X`).
     #[serde(default)]
     pub x11_forward: bool,
-    /// 信頼された X11 フォワーディング（ssh -Y 相当）
+    /// Trusted X11 forwarding (equivalent to `ssh -Y`).
     #[serde(default)]
     pub x11_trusted: bool,
-    /// グループ名（ホストをカテゴリ分けするための任意文字列）
+    /// Group name (arbitrary string used to categorize hosts).
     #[serde(default)]
     pub group: String,
-    /// タグ一覧（複数のラベルで絞り込みに使用する）
+    /// Tag list (multiple labels used for filtering).
     #[serde(default)]
     pub tags: Vec<String>,
 }
@@ -49,33 +49,36 @@ fn default_auth_type() -> String {
     "key".to_string()
 }
 
-/// ターミナルフック設定 — イベント発生時に実行するシェルコマンドまたは Lua 関数
+/// Terminal hook configuration — shell commands or Lua functions to run when
+/// the corresponding event fires.
 ///
-/// シェルコマンドフック: 文字列で指定（`sh -c` で実行）
-///   `$NEXTERM_PANE_ID` / `$NEXTERM_SESSION` 環境変数が利用可能
+/// Shell-command hooks: specify a string; it is executed via `sh -c`.
+///   The `$NEXTERM_PANE_ID` and `$NEXTERM_SESSION` environment variables are
+///   available.
 ///
-/// Lua 関数フック: `lua_on_*` フィールドに Lua 関数名を指定
-///   設定ファイル内で `function on_pane_open(session, pane_id) ... end` のように定義する
+/// Lua-function hooks: specify a Lua function name in the `lua_on_*` field.
+///   Define the function inside the configuration file as, for example,
+///   `function on_pane_open(session, pane_id) ... end`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct HooksConfig {
-    /// 新しいペインが開かれたときに実行するシェルコマンド
+    /// Shell command run when a new pane is opened.
     pub on_pane_open: Option<String>,
-    /// ペインが閉じられたときに実行するシェルコマンド
+    /// Shell command run when a pane is closed.
     pub on_pane_close: Option<String>,
-    /// 新しいセッションが開始されたときに実行するシェルコマンド
+    /// Shell command run when a new session starts.
     pub on_session_start: Option<String>,
-    /// セッションにクライアントがアタッチしたときに実行するシェルコマンド
+    /// Shell command run when a client attaches to a session.
     pub on_attach: Option<String>,
-    /// クライアントがセッションからデタッチしたときに実行するシェルコマンド
+    /// Shell command run when a client detaches from a session.
     pub on_detach: Option<String>,
-    /// ペインが開かれたときに呼び出す Lua 関数名（例: "on_pane_open"）
+    /// Lua function name invoked on pane open (e.g. `"on_pane_open"`).
     pub lua_on_pane_open: Option<String>,
-    /// ペインが閉じられたときに呼び出す Lua 関数名
+    /// Lua function name invoked on pane close.
     pub lua_on_pane_close: Option<String>,
-    /// セッション開始時に呼び出す Lua 関数名
+    /// Lua function name invoked on session start.
     pub lua_on_session_start: Option<String>,
-    /// アタッチ時に呼び出す Lua 関数名
+    /// Lua function name invoked on attach.
     pub lua_on_attach: Option<String>,
-    /// デタッチ時に呼び出す Lua 関数名
+    /// Lua function name invoked on detach.
     pub lua_on_detach: Option<String>,
 }

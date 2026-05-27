@@ -1,10 +1,10 @@
-//! Quake モード設定（Sprint 5-7 / Phase 2-2）
+//! Quake-mode configuration (Sprint 5-7 / Phase 2-2).
 //!
-//! Quake モードとは、グローバルホットキーで画面上端（または下端・左端・右端）
-//! からターミナルウィンドウをスライド表示・非表示できるトグル機能。
-//! Tilix・Guake・iTerm2 の "Hotkey Window" 機能に相当する。
+//! Quake mode is a toggle that slides the terminal window in from the top edge
+//! of the screen (or the bottom, left, or right edge) via a global hotkey.
+//! Equivalent to the "Hotkey Window" feature in Tilix, Guake, and iTerm2.
 //!
-//! 設定は `config.toml` の `[quake_mode]` セクションで指定する:
+//! Configure it under the `[quake_mode]` section of `config.toml`:
 //!
 //! ```toml
 //! [quake_mode]
@@ -16,58 +16,64 @@
 //! animation_ms = 150
 //! ```
 //!
-//! プラットフォーム制約:
-//! - Linux Wayland では Wayland プロトコルの仕様上、グローバルホットキーは
-//!   compositor 経由でのみ実現可能。本実装は `global-hotkey` クレートを用いる
-//!   ため Windows / macOS / Linux X11 では動作するが、Wayland では動かない。
-//!   Wayland ユーザーは `nexterm-ctl quake toggle` を compositor の `bindsym`
-//!   等から呼び出すワークアラウンドを利用してほしい（README 参照）。
+//! Platform notes:
+//! - On Linux/Wayland, global hotkeys can only be implemented through the
+//!   compositor by spec. This implementation relies on the `global-hotkey`
+//!   crate and therefore works on Windows / macOS / Linux X11 but not on
+//!   Wayland. Wayland users should fall back to invoking
+//!   `nexterm-ctl quake toggle` from the compositor's `bindsym` (see the README).
 
 use serde::{Deserialize, Serialize};
 
-/// Quake ウィンドウのアンカー位置
+/// Anchor edge for the Quake window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum QuakeEdge {
-    /// 画面上端（デフォルト）
+    /// Top edge (default).
     #[default]
     Top,
-    /// 画面下端
+    /// Bottom edge.
     Bottom,
-    /// 画面左端
+    /// Left edge.
     Left,
-    /// 画面右端
+    /// Right edge.
     Right,
 }
 
-/// Quake モード設定
+/// Quake-mode configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct QuakeModeConfig {
-    /// Quake モードを有効にするか。
-    /// `false` の場合、ホットキー登録もウィンドウ装飾切替も行わない。
+    /// Whether Quake mode is enabled.
+    /// When `false`, no hotkey is registered and the window decorations are
+    /// left as-is.
     pub enabled: bool,
-    /// グローバルホットキー文字列（例: `"ctrl+`"`, `"alt+space"`）。
-    /// 修飾子は `ctrl` / `alt` / `shift` / `super`（または `meta` / `cmd` / `win`）を
-    /// `+` 区切りで連結する。最後のトークンが主キー。詳細は `global-hotkey` クレート参照。
+    /// Global hotkey string (e.g. `"ctrl+`"`, `"alt+space"`).
+    /// Modifiers are joined with `+`: `ctrl` / `alt` / `shift` / `super`
+    /// (or `meta` / `cmd` / `win`). The last token is the primary key.
+    /// See the `global-hotkey` crate for full details.
     pub hotkey: String,
-    /// アンカー位置（top/bottom/left/right）。
+    /// Anchor position (`top` / `bottom` / `left` / `right`).
     pub edge: QuakeEdge,
-    /// 画面の何 % の高さを使うか（top/bottom 時。1〜100）。
+    /// Percentage of the screen height to occupy (when `edge` is
+    /// top/bottom; 1..=100).
     pub height_pct: u8,
-    /// 画面の何 % の幅を使うか（left/right 時、または top/bottom でも横幅指定したい場合。1〜100）。
+    /// Percentage of the screen width to occupy (when `edge` is left/right —
+    /// or top/bottom if you want to narrow the window; 1..=100).
     pub width_pct: u8,
-    /// スライドアニメーション時間（ミリ秒）。0 で即時表示。
+    /// Slide-animation duration in milliseconds (0 disables the animation).
     pub animation_ms: u32,
-    /// 表示時に常時最前面化（topmost）するか。
+    /// Keep the window topmost while it is visible.
     pub always_on_top: bool,
-    /// 非表示時にウィンドウを最小化するか（`false` の場合は `set_visible(false)` のみ）。
-    /// macOS では `Hide` 相当となり Dock からも消えるため UX 上は `false` 推奨。
+    /// Whether to minimize the window when hiding (otherwise just
+    /// `set_visible(false)` is used).
+    /// On macOS, minimizing maps to `Hide`, which removes the window from the
+    /// Dock as well; `false` is recommended for UX reasons.
     pub minimize_on_hide: bool,
 }
 
 fn default_hotkey() -> String {
-    // Ctrl + バッククォート（チルダキー）。Guake / Tilix のデフォルトに合わせる。
+    // Ctrl + backtick (tilde key). Matches the defaults used by Guake / Tilix.
     "ctrl+`".to_string()
 }
 
@@ -99,12 +105,12 @@ impl Default for QuakeModeConfig {
 }
 
 impl QuakeModeConfig {
-    /// `height_pct` / `width_pct` を 1〜100 にクランプして返す。
+    /// Returns `height_pct` clamped to the range 1..=100.
     pub fn clamped_height_pct(&self) -> u8 {
         self.height_pct.clamp(1, 100)
     }
 
-    /// `width_pct` のクランプ済みコピー。
+    /// Returns `width_pct` clamped to the range 1..=100.
     pub fn clamped_width_pct(&self) -> u8 {
         self.width_pct.clamp(1, 100)
     }
@@ -115,7 +121,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn quake_デフォルトは無効() {
+    fn quake_is_disabled_by_default() {
         let cfg = QuakeModeConfig::default();
         assert!(!cfg.enabled);
         assert_eq!(cfg.hotkey, "ctrl+`");
@@ -128,7 +134,7 @@ mod tests {
     }
 
     #[test]
-    fn quake_clamped_pct_が範囲内に収まる() {
+    fn quake_clamped_pct_stays_in_range() {
         let cfg_low = QuakeModeConfig {
             height_pct: 0,
             width_pct: 0,
@@ -147,7 +153,7 @@ mod tests {
     }
 
     #[test]
-    fn quake_toml往復() {
+    fn quake_toml_roundtrip() {
         let cfg = QuakeModeConfig {
             enabled: true,
             hotkey: "alt+space".to_string(),
@@ -164,7 +170,7 @@ mod tests {
     }
 
     #[test]
-    fn quake_部分指定の_toml_でもデフォルト値で埋まる() {
+    fn quake_partial_toml_fills_defaults() {
         let toml_str = r#"
 enabled = true
 hotkey = "ctrl+space"
@@ -172,7 +178,7 @@ hotkey = "ctrl+space"
         let parsed: QuakeModeConfig = toml::from_str(toml_str).unwrap();
         assert!(parsed.enabled);
         assert_eq!(parsed.hotkey, "ctrl+space");
-        // 他はデフォルト
+        // The rest stays at the defaults.
         assert_eq!(parsed.edge, QuakeEdge::Top);
         assert_eq!(parsed.height_pct, 45);
     }

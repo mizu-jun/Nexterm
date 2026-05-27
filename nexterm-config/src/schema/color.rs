@@ -1,45 +1,45 @@
-//! カラースキーム（組み込みパレット + カスタムパレット）
+//! Color schemes (built-in palettes plus custom palettes).
 
 use serde::{Deserialize, Serialize};
 
-/// カラースキームのパレット（前景・背景・ANSI 16色）
+/// A color-scheme palette (foreground, background, and the ANSI 16-color set).
 #[derive(Debug, Clone)]
 pub struct SchemePalette {
-    /// デフォルト前景色 [R, G, B]
+    /// Default foreground color, as `[R, G, B]`.
     pub fg: [u8; 3],
-    /// デフォルト背景色 [R, G, B]
+    /// Default background color, as `[R, G, B]`.
     pub bg: [u8; 3],
-    /// ANSI 16色パレット（0=black … 15=bright white）
+    /// ANSI 16-color palette (0 = black … 15 = bright white).
     pub ansi: [[u8; 3]; 16],
 }
 
-/// 組み込みカラースキーム
+/// Built-in color scheme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BuiltinScheme {
-    /// ダークテーマ
+    /// Dark theme.
     Dark,
-    /// ライトテーマ
+    /// Light theme.
     Light,
-    /// Tokyo Night テーマ
+    /// Tokyo Night theme.
     TokyoNight,
-    /// Solarized テーマ
+    /// Solarized theme.
     Solarized,
-    /// Gruvbox テーマ
+    /// Gruvbox theme.
     Gruvbox,
-    /// Catppuccin テーマ
+    /// Catppuccin theme.
     Catppuccin,
-    /// Dracula テーマ
+    /// Dracula theme.
     Dracula,
-    /// Nord テーマ
+    /// Nord theme.
     Nord,
     #[serde(rename = "onedark")]
-    /// One Dark テーマ
+    /// One Dark theme.
     OneDark,
 }
 
 impl BuiltinScheme {
-    /// スキームの表示名を返す
+    /// Returns the human-readable display name of the scheme.
     pub fn display_name(&self) -> &'static str {
         match self {
             Self::Dark => "Dark",
@@ -54,7 +54,7 @@ impl BuiltinScheme {
         }
     }
 
-    /// スキームの TOML 識別子（lowercase）を返す
+    /// Returns the TOML identifier (lower-case) of the scheme.
     pub fn toml_name(&self) -> &'static str {
         match self {
             Self::Dark => "dark",
@@ -69,7 +69,7 @@ impl BuiltinScheme {
         }
     }
 
-    /// すべての組み込みスキームをリストで返す（Sprint 5-4 / D4: テーマギャラリー）
+    /// Returns every built-in scheme as a slice (Sprint 5-4 / D4: theme gallery).
     pub fn all() -> &'static [Self] {
         &[
             Self::Dark,
@@ -84,10 +84,11 @@ impl BuiltinScheme {
         ]
     }
 
-    /// TOML 識別子から組み込みスキームを取得する。
+    /// Returns the built-in scheme matching the given TOML identifier.
     ///
-    /// 大文字小文字は問わない。未知の名前は `None` を返す（旧 `parse_builtin_scheme`
-    /// は不明値を Dark にフォールバックしていたが、本メソッドは厳格チェック用）。
+    /// Matching is case-insensitive. Unknown names return `None` (the legacy
+    /// `parse_builtin_scheme` fell back to `Dark`; this method is for strict
+    /// validation).
     pub fn from_toml_name(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "dark" => Some(Self::Dark),
@@ -103,7 +104,7 @@ impl BuiltinScheme {
         }
     }
 
-    /// スキームのカラーパレットを返す
+    /// Returns the color palette of the scheme.
     pub fn palette(&self) -> SchemePalette {
         match self {
             Self::Dark => SchemePalette {
@@ -309,31 +310,32 @@ impl BuiltinScheme {
     }
 }
 
-/// カスタムカラーパレット（TOML で定義）
+/// Custom color palette (defined in TOML).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CustomPalette {
-    /// 前景色 (#RRGGBB)
+    /// Foreground color (`#RRGGBB`).
     pub foreground: String,
-    /// 背景色 (#RRGGBB)
+    /// Background color (`#RRGGBB`).
     pub background: String,
-    /// カーソル色 (#RRGGBB)
+    /// Cursor color (`#RRGGBB`).
     pub cursor: String,
-    /// ANSI 16色 (#RRGGBB × 16: black, red, green, yellow, blue, magenta, cyan, white, bright×8)
+    /// ANSI 16-color palette (`#RRGGBB × 16`: black, red, green, yellow, blue,
+    /// magenta, cyan, white, and the eight bright variants).
     pub ansi: Vec<String>,
 }
 
-/// カラースキーム設定
+/// Color-scheme configuration.
 ///
-/// TOML では以下の 3 形式を受け付ける（カスタム deserializer で対応）:
-/// 1. `colors = "tokyonight"` — 文字列で組み込みスキーム指定
-/// 2. `[colors] scheme = "tokyonight"` — テーブル形式（公式ドキュメント記載）
-/// 3. `[colors] foreground = "#..." background = "#..." ...` — 完全カスタムパレット
+/// TOML accepts three forms (handled by a custom deserializer):
+/// 1. `colors = "tokyonight"` — string referring to a built-in scheme.
+/// 2. `[colors] scheme = "tokyonight"` — table form (documented form).
+/// 3. `[colors] foreground = "#..." background = "#..." ...` — full custom palette.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum ColorScheme {
-    /// 組み込みスキーム名
+    /// Built-in scheme name.
     Builtin(BuiltinScheme),
-    /// カスタムパレット
+    /// Custom palette.
     Custom(CustomPalette),
 }
 
@@ -358,7 +360,7 @@ impl<'de> Deserialize<'de> for ColorScheme {
 
             fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
                 f.write_str(
-                    "string (組み込みスキーム名) または table ([colors] scheme = \"...\" / カスタムパレット)",
+                    "a string (the name of a built-in scheme) or a table (`[colors] scheme = \"...\"` or a custom palette)",
                 )
             }
 
@@ -371,25 +373,26 @@ impl<'de> Deserialize<'de> for ColorScheme {
             }
 
             fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
-                // 一旦すべてのキーを HashMap に集める
+                // Collect every key into a HashMap first.
                 let mut entries: std::collections::HashMap<String, toml::Value> =
                     std::collections::HashMap::new();
                 while let Some((key, value)) = map.next_entry::<String, toml::Value>()? {
                     entries.insert(key, value);
                 }
 
-                // パターン 2: [colors] scheme = "tokyonight"
+                // Pattern 2: `[colors] scheme = "tokyonight"`.
                 if let Some(scheme) = entries.get("scheme")
                     && let Some(name) = scheme.as_str()
                 {
                     return Ok(ColorScheme::Builtin(parse_builtin_scheme(name)));
                 }
 
-                // パターン 3: フルカスタムパレット（foreground / background / cursor / ansi）
+                // Pattern 3: full custom palette (foreground / background /
+                // cursor / ansi).
                 let palette: CustomPalette = toml::Value::Table(entries.into_iter().collect())
                     .try_into()
                     .map_err(|e| {
-                        de::Error::custom(format!("カスタムパレットのパースに失敗: {}", e))
+                        de::Error::custom(format!("failed to parse the custom palette: {}", e))
                     })?;
                 Ok(ColorScheme::Custom(palette))
             }
@@ -399,11 +402,13 @@ impl<'de> Deserialize<'de> for ColorScheme {
     }
 }
 
-/// 組み込みスキーム名を `BuiltinScheme` にパースする。未知の値は Dark にフォールバック。
+/// Parses a built-in scheme name into a `BuiltinScheme`. Unknown values fall
+/// back to `Dark`.
 ///
-/// Sprint 5-4 / D4: 旧版では 5 種類しかパースできず、Catppuccin / Dracula / Nord /
-/// OneDark を指定しても Dark にフォールバックしていた。`BuiltinScheme::from_toml_name`
-/// に委譲して全 9 種類を扱えるように修正。
+/// Sprint 5-4 / D4: the previous implementation could only parse 5 of the
+/// 9 schemes, so `catppuccin` / `dracula` / `nord` / `onedark` were silently
+/// downgraded to `Dark`. Delegating to `BuiltinScheme::from_toml_name` fixes
+/// the issue and covers all 9 entries.
 fn parse_builtin_scheme(s: &str) -> BuiltinScheme {
     BuiltinScheme::from_toml_name(s).unwrap_or(BuiltinScheme::Dark)
 }

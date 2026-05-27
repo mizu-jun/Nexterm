@@ -1,16 +1,17 @@
-//! Lua フックランナー — 設定ファイルの Lua 関数をイベントフックとして呼び出す
+//! Lua hook runner — invokes Lua functions defined in the configuration file
+//! as event hooks.
 //!
-//! # 設計
+//! # Design
 //!
-//! `LuaHookRunner` は `LuaWorker` と同様に専用スレッドで動作する。
-//! フックイベントは `fire_hook()` で非同期に送信し、fire-and-forget で実行される。
+//! Like `LuaWorker`, `LuaHookRunner` runs on a dedicated thread. Hook events
+//! are sent asynchronously via `fire_hook()` and executed fire-and-forget.
 //!
-//! # Lua フックの書き方
+//! # Writing Lua hooks
 //!
 //! ```lua
 //! -- ~/.config/nexterm/nexterm.lua
 //! hooks.on_pane_open = function(session, pane_id)
-//!   -- 例: 新しいペインの情報をログに記録する
+//!   -- Example: log information about the newly opened pane.
 //!   io.write("pane opened: " .. tostring(pane_id) .. " in " .. session .. "\n")
 //! end
 //!
@@ -25,63 +26,63 @@ use std::sync::mpsc;
 use mlua::prelude::*;
 use tracing::{error, warn};
 
-/// フックイベントの種別
+/// Hook event kind.
 #[derive(Debug)]
 pub enum HookEvent {
-    /// ペインが開かれた
+    /// A pane was opened.
     PaneOpen {
-        /// セッション名
+        /// Session name.
         session: String,
-        /// ペイン ID
+        /// Pane ID.
         pane_id: u32,
     },
-    /// ペインが閉じられた
+    /// A pane was closed.
     PaneClose {
-        /// セッション名
+        /// Session name.
         session: String,
-        /// ペイン ID
+        /// Pane ID.
         pane_id: u32,
     },
-    /// セッションが開始された
+    /// A session started.
     SessionStart {
-        /// セッション名
+        /// Session name.
         session: String,
     },
-    /// クライアントがアタッチした
+    /// A client attached.
     Attach {
-        /// セッション名
+        /// Session name.
         session: String,
     },
-    /// クライアントがデタッチした
+    /// A client detached.
     Detach {
-        /// セッション名
+        /// Session name.
         session: String,
     },
-    /// マクロ実行リクエスト（応答チャネル付き）
+    /// Macro execution request (with a reply channel).
     RunMacro {
-        /// 実行する Lua 関数名
+        /// Name of the Lua function to invoke.
         lua_fn: String,
-        /// セッション名
+        /// Session name.
         session: String,
-        /// ペイン ID
+        /// Pane ID.
         pane_id: u32,
-        /// 実行結果を返すチャネル
+        /// Channel that returns the execution result.
         reply_tx: mpsc::SyncSender<Option<String>>,
     },
 }
 
-/// Lua フックランナー
+/// Lua hook runner.
 ///
-/// 専用スレッドで Lua を実行し、フックイベントを処理する。
+/// Runs Lua on a dedicated thread and handles hook events.
 pub struct LuaHookRunner {
-    /// イベント送信チャネル（None = Lua スクリプトが存在しない）
+    /// Event-send channel (`None` = no Lua script is present).
     event_tx: Option<mpsc::SyncSender<HookEvent>>,
 }
 
 impl LuaHookRunner {
-    /// Lua スクリプトを読み込んでランナーを起動する
+    /// Loads the Lua script and starts the runner.
     ///
-    /// スクリプトが存在しない場合は no-op のランナーを返す。
+    /// Returns a no-op runner when the script is missing.
     pub fn new(lua_script_path: Option<PathBuf>) -> Self {
         let script_path = match lua_script_path {
             Some(p) if p.exists() => p,
@@ -91,7 +92,7 @@ impl LuaHookRunner {
         let script = match std::fs::read_to_string(&script_path) {
             Ok(s) => s,
             Err(e) => {
-                warn!("LuaHookRunner: スクリプト読み込みエラー: {}", e);
+                warn!("LuaHookRunner: error reading the script: {}", e);
                 return Self { event_tx: None };
             }
         };
@@ -101,62 +102,70 @@ impl LuaHookRunner {
         std::thread::Builder::new()
             .name("nexterm-lua-hooks".to_string())
             .spawn(move || {
-                // CRITICAL #4: サンドボックス化された Lua を使用（os/io/package 無効）
+                // CRITICAL #4: use the sandboxed Lua (os/io/package disabled).
                 let lua = match crate::lua_sandbox::sandboxed_lua() {
                     Ok(l) => l,
                     Err(e) => {
-                        warn!("LuaHookRunner: サンドボックス Lua 初期化失敗: {}", e);
+                        warn!(
+                            "LuaHookRunner: failed to initialize the sandboxed Lua: {}",
+                            e
+                        );
                         return;
                     }
                 };
 
-                // `hooks` テーブルを事前に作成する（Lua でフック関数を登録できるようにする）
+                // Pre-create the `hooks` table so the user's script can register hook functions.
                 if let Err(e) = lua.load("hooks = {}").exec() {
-                    warn!("LuaHookRunner: hooks テーブルの初期化に失敗しました: {}", e);
+                    warn!(
+                        "LuaHookRunner: failed to initialize the `hooks` table: {}",
+                        e
+                    );
                     return;
                 }
 
-                // ユーザースクリプトを実行する
+                // Run the user script.
                 if let Err(e) = lua.load(&script).exec() {
-                    warn!("LuaHookRunner: スクリプト実行エラー: {}", e);
+                    warn!("LuaHookRunner: error executing the script: {}", e);
                 }
 
-                // イベントループ
+                // Event loop.
                 while let Ok(event) = rx.recv() {
                     if let Err(e) = call_hook(&lua, &event) {
-                        error!("LuaHookRunner: フック実行エラー ({:?}): {}", event, e);
+                        error!("LuaHookRunner: hook execution error ({:?}): {}", event, e);
                     }
                 }
             })
-            .expect("LuaHookRunner スレッドの起動に失敗");
+            .expect("failed to start the LuaHookRunner thread");
 
         Self { event_tx: Some(tx) }
     }
 
-    /// フックイベントを非同期で送信する（fire-and-forget）
+    /// Fires a hook event asynchronously (fire-and-forget).
     ///
-    /// チャネルが満杯の場合はイベントを破棄してログを出力する。
+    /// When the channel is full, the event is dropped and a log line is emitted.
     pub fn fire(&self, event: HookEvent) {
         if let Some(tx) = &self.event_tx
             && tx.try_send(event).is_err()
         {
-            warn!("LuaHookRunner: イベントキューが満杯です。フックをスキップします");
+            warn!("LuaHookRunner: event queue is full; skipping the hook");
         }
     }
 
-    /// Lua フックランナーが有効か（スクリプトが存在するか）
+    /// Returns whether the Lua hook runner is active (i.e. a script exists).
     pub fn is_enabled(&self) -> bool {
         self.event_tx.is_some()
     }
 
-    /// Lua マクロを同期実行して返り値（PTY 送信テキスト）を返す
+    /// Runs a Lua macro synchronously and returns its return value (the text
+    /// to send to the PTY).
     ///
-    /// マクロは `function(session, pane_id) -> string` のシグネチャを持つ。
-    /// タイムアウト（500ms）または Lua が無効な場合は `None` を返す。
+    /// The macro must have the signature
+    /// `function(session, pane_id) -> string`. Returns `None` on a timeout
+    /// (500 ms) or when Lua is disabled.
     pub fn call_macro(&self, lua_fn: &str, session: &str, pane_id: u32) -> Option<String> {
         let tx = self.event_tx.as_ref()?;
 
-        // 応答チャネル（容量1 = 呼び出し側は結果を1回受信する）
+        // Reply channel (capacity 1: the caller receives exactly one result).
         let (reply_tx, reply_rx) = mpsc::sync_channel::<Option<String>>(1);
 
         tx.try_send(HookEvent::RunMacro {
@@ -167,7 +176,7 @@ impl LuaHookRunner {
         })
         .ok()?;
 
-        // 500ms 以内に結果を待つ
+        // Wait up to 500 ms for the response.
         reply_rx
             .recv_timeout(std::time::Duration::from_millis(500))
             .ok()
@@ -175,13 +184,13 @@ impl LuaHookRunner {
     }
 }
 
-/// Lua フック関数を呼び出す
+/// Calls a Lua hook function.
 ///
-/// `hooks.<event_name>` が関数として定義されている場合のみ呼び出す。
+/// Only invokes `hooks.<event_name>` when it is defined as a function.
 fn call_hook(lua: &Lua, event: &HookEvent) -> LuaResult<()> {
     let hooks: LuaTable = match lua.globals().get::<LuaTable>("hooks") {
         Ok(t) => t,
-        Err(_) => return Ok(()), // hooks テーブルが存在しない
+        Err(_) => return Ok(()), // `hooks` table does not exist
     };
 
     match event {
@@ -216,7 +225,8 @@ fn call_hook(lua: &Lua, event: &HookEvent) -> LuaResult<()> {
             pane_id,
             reply_tx,
         } => {
-            // グローバル関数名で探す（macros テーブル経由とグローバル直接呼び出し両対応）
+            // Look up by global function name (works for both `macros.*`
+            // entries and direct global functions).
             let result: Option<String> = lua
                 .globals()
                 .get::<LuaFunction>(lua_fn.as_str())
@@ -226,7 +236,7 @@ fn call_hook(lua: &Lua, event: &HookEvent) -> LuaResult<()> {
                     LuaValue::String(s) => s.to_str().ok().map(|s| s.to_string()),
                     _ => None,
                 });
-            // 応答を送る（受信側がタイムアウトしていても無視）
+            // Send the response (ignored if the receiver has already timed out).
             let _ = reply_tx.try_send(result);
         }
     }

@@ -1,8 +1,8 @@
-//! 設定スキーマ定義（8 サブモジュールで構成）
+//! Configuration schema definitions (organized into 8 submodules).
 //!
-//! 詳細な型定義はサブモジュールに分割されており、本ファイルは [`Config`] と
-//! デフォルトキーバインドを保持する。外部からの利用は `nexterm_config::*` の
-//! 再 export 経由を推奨する。
+//! Most type definitions are split into submodules; this file owns [`Config`]
+//! itself and the default key bindings. External users should consume the
+//! types via the `nexterm_config::*` re-exports.
 
 pub mod animations;
 pub mod color;
@@ -33,126 +33,132 @@ pub use window::{
 
 use serde::{Deserialize, Serialize};
 
-/// メイン設定構造体
+/// Top-level configuration structure.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
-    /// 設定ロード時に発生したエラー一覧（Lua/TOML パースエラー）
-    /// シリアライズ対象外 — ランタイムのみで使用する
+    /// Errors raised while loading configuration (Lua / TOML parse errors).
+    /// Skipped during serialization — runtime-only.
     #[serde(skip)]
     pub config_errors: Vec<String>,
 
-    /// 設定 API バージョン（SemVer 管理）
+    /// Configuration API version (managed with SemVer).
     #[serde(default)]
     pub api_version: ApiVersion,
 
-    /// フォント設定
+    /// Font configuration.
     #[serde(default)]
     pub font: FontConfig,
 
-    /// カラースキーム
+    /// Color scheme.
     #[serde(default)]
     pub colors: ColorScheme,
 
-    /// シェル設定
+    /// Shell configuration.
     #[serde(default)]
     pub shell: ShellConfig,
 
-    /// キーバインド
+    /// Key bindings.
     #[serde(default)]
     pub keys: Vec<KeyBinding>,
 
-    /// ステータスバー（Phase 3）
+    /// Status bar (Phase 3).
     #[serde(default)]
     pub status_bar: StatusBarConfig,
 
-    /// スクロールバック行数
+    /// Scrollback line count.
     #[serde(default = "default_scrollback")]
     pub scrollback_lines: usize,
 
-    /// ウィンドウ設定（透過・ぼかし・装飾）
+    /// Window configuration (transparency, blur, decorations).
     #[serde(default)]
     pub window: WindowConfig,
 
-    /// タブバー設定
+    /// Tab-bar configuration.
     #[serde(default)]
     pub tab_bar: TabBarConfig,
 
-    /// SSH ホスト一覧
+    /// SSH host list.
     #[serde(default)]
     pub hosts: Vec<HostConfig>,
 
-    /// Lua マクロ一覧（`[[macros]]` テーブルで定義）
+    /// Lua macro list (defined as `[[macros]]` tables).
     #[serde(default)]
     pub macros: Vec<MacroConfig>,
 
-    /// シリアルポートプリセット一覧
+    /// Serial-port presets.
     #[serde(default)]
     pub serial_ports: Vec<SerialPortConfig>,
 
-    /// ログ設定
+    /// Logging configuration.
     #[serde(default)]
     pub log: LogConfig,
 
-    /// ターミナルフック（イベント駆動シェルコマンド）
+    /// Terminal hooks (event-driven shell commands).
     #[serde(default)]
     pub hooks: HooksConfig,
 
-    /// Web ターミナル設定（WebSocket + xterm.js）
+    /// Web terminal configuration (WebSocket + xterm.js).
     #[serde(default)]
     pub web: WebConfig,
 
-    /// 名前付き設定プロファイル一覧
+    /// Named configuration profiles.
     #[serde(default)]
     pub profiles: Vec<Profile>,
 
-    /// 現在アクティブなプロファイル名（None = デフォルト設定を使用）
+    /// Currently active profile name (`None` = use the default configuration).
     #[serde(default)]
     pub active_profile: Option<String>,
 
-    /// WASM プラグインを格納するディレクトリ（None = デフォルトディレクトリを使用）
-    /// デフォルト: `~/.config/nexterm/plugins`（Linux/macOS）/ `%APPDATA%\nexterm\plugins`（Windows）
+    /// Directory that holds WASM plugins (`None` = use the default directory).
+    /// Default: `~/.config/nexterm/plugins` (Linux/macOS) or
+    /// `%APPDATA%\nexterm\plugins` (Windows).
     #[serde(default)]
     pub plugin_dir: Option<String>,
 
-    /// プラグインを無効にするかどうか
+    /// Whether plugins are disabled.
     #[serde(default)]
     pub plugins_disabled: bool,
 
-    /// GPU レンダラー設定
+    /// GPU renderer configuration.
     #[serde(default)]
     pub gpu: GpuConfig,
 
-    /// 表示言語（"auto" = OS 検出, "en"/"ja"/"fr"/"de"/"es"/"it"/"zh-CN"/"ko"）
+    /// Display language (`"auto"` = OS detection, or `"en"` / `"ja"` / `"fr"`
+    /// / `"de"` / `"es"` / `"it"` / `"zh-CN"` / `"ko"`).
     #[serde(default = "default_language")]
     pub language: String,
 
-    /// カーソルの表示スタイル（"block"/"beam"/"underline"）。デフォルト: block
+    /// Cursor display style (`"block"` / `"beam"` / `"underline"`). Default: block.
     #[serde(default)]
     pub cursor_style: CursorStyle,
 
-    /// 起動時に GitHub Releases API で最新バージョンを確認するか（デフォルト: true）
+    /// Whether to check the GitHub Releases API for the latest version at
+    /// startup (default: `true`).
     #[serde(default = "default_auto_check_update")]
     pub auto_check_update: bool,
 
-    /// セキュリティ・同意ポリシー（外部 URL / OSC 52 / OSC 通知）
+    /// Security / consent policy (external URLs, OSC 52, OSC notifications).
     #[serde(default)]
     pub security: SecurityConfig,
 
-    /// Leader key（tmux prefix 風）。キーバインド内の `<leader>` をこの値に展開する。
-    /// 既定: `"ctrl+b"`（tmux 互換）。Emacs の C-b 競合を避けたい場合は `"ctrl+q"` 等を指定。
-    /// Sprint 5-7 / UI-1-3。
+    /// Leader key (tmux-prefix style). Expands `<leader>` inside key bindings
+    /// to this value.
+    /// Default: `"ctrl+b"` (tmux-compatible). To avoid clashing with Emacs's
+    /// C-b, set this to `"ctrl+q"` or similar.
+    /// Sprint 5-7 / UI-1-3.
     #[serde(default = "default_leader_key")]
     pub leader_key: String,
 
-    /// Quake モード設定（Sprint 5-7 / Phase 2-2）。
-    /// グローバルホットキーで画面端からスライド表示する Tilix / Guake 風機能。
-    /// デフォルトは `enabled = false`。
+    /// Quake-mode configuration (Sprint 5-7 / Phase 2-2).
+    /// A Tilix / Guake-style toggle that slides the window in from a screen
+    /// edge via a global hotkey. Default: `enabled = false`.
     #[serde(default)]
     pub quake_mode: QuakeModeConfig,
 
-    /// アニメーション設定（Sprint 5-7 / Phase 3-2）。
-    /// タブ切替・ペイン追加等の UI アニメーションを統一制御する。
-    /// `enabled = false` または `intensity = "off"` で全て即時反映（reduced motion 対応）。
+    /// Animation configuration (Sprint 5-7 / Phase 3-2).
+    /// Provides unified control over UI animations such as tab switching and
+    /// pane insertion. Setting `enabled = false` or `intensity = "off"`
+    /// applies every change instantly (reduced-motion support).
     #[serde(default)]
     pub animations: AnimationsConfig,
 }
@@ -209,10 +215,12 @@ impl Default for Config {
 }
 
 impl Config {
-    /// キーバインド文字列の `<leader>` を `self.leader_key` で展開する（Sprint 5-7 / UI-1-3）。
+    /// Expands `<leader>` in a key-binding string into `self.leader_key`
+    /// (Sprint 5-7 / UI-1-3).
     ///
-    /// 例: leader_key = "ctrl+q" のとき、`"<leader> %"` → `"ctrl+q %"`。
-    /// `<leader>` を含まない文字列はそのまま返す（後方互換）。
+    /// For example, when `leader_key = "ctrl+q"`, `"<leader> %"` becomes
+    /// `"ctrl+q %"`. Strings that do not contain `<leader>` are returned
+    /// unchanged (backward-compatible).
     pub fn expand_leader(&self, key: &str) -> String {
         if key.contains("<leader>") {
             key.replace("<leader>", &self.leader_key)
@@ -221,8 +229,9 @@ impl Config {
         }
     }
 
-    /// アクティブプロファイルを適用した設定を返す。
-    /// プロファイルが未設定または存在しない場合は self を clone して返す。
+    /// Returns the configuration with the active profile applied.
+    /// When no profile is active or the named profile is missing, returns a
+    /// clone of `self`.
     pub fn effective(&self) -> Config {
         if let Some(ref name) = self.active_profile
             && let Some(profile) = self.profiles.iter().find(|p| &p.name == name)
@@ -232,20 +241,21 @@ impl Config {
         self.clone()
     }
 
-    /// 指定名のプロファイルをアクティブにする（存在しない名前は無視）
+    /// Activates the profile with the given name (ignored if no such profile
+    /// exists).
     pub fn activate_profile(&mut self, name: &str) {
         if self.profiles.iter().any(|p| p.name == name) {
             self.active_profile = Some(name.to_string());
         }
     }
 
-    /// プロファイルをクリアしてデフォルト設定に戻す
+    /// Clears the active profile and reverts to the default configuration.
     pub fn clear_active_profile(&mut self) {
         self.active_profile = None;
     }
 }
 
-/// デフォルトキーバインド（tmux 互換）
+/// Default key bindings (tmux-compatible).
 fn default_keybindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding {
@@ -272,7 +282,8 @@ fn default_keybindings() -> Vec<KeyBinding> {
             key: "ctrl+b z".to_string(),
             action: "ToggleZoom".to_string(),
         },
-        // Sprint 5-4 / D8: tmux 流の Ctrl+B Z に加えて、初心者向けの直感的バインド
+        // Sprint 5-4 / D8: in addition to the tmux-style Ctrl+B Z, add a more
+        // discoverable binding for newcomers.
         KeyBinding {
             key: "ctrl+shift+z".to_string(),
             action: "ToggleZoom".to_string(),
@@ -289,13 +300,15 @@ fn default_keybindings() -> Vec<KeyBinding> {
             key: "ctrl+b !".to_string(),
             action: "BreakPane".to_string(),
         },
-        // Sprint 5-8 / Phase 4-5: tab tearing 関連デフォルトバインド
-        // `<leader> D` = ctrl+b D で現在のタブを新規 OS Window に分離。Wayland 代替 UX #2。
+        // Sprint 5-8 / Phase 4-5: default bindings related to tab tearing.
+        // `<leader> D` = ctrl+b D detaches the current tab into a new OS
+        // Window (Wayland alternative UX #2).
         KeyBinding {
             key: "ctrl+b d".to_string(),
             action: "DetachToNewWindow".to_string(),
         },
-        // `<leader> w` = ctrl+b w で現在の OS Window だけを閉じる（最後の Window なら exit）。
+        // `<leader> w` = ctrl+b w closes only the current OS Window
+        // (exits when it is the last one).
         KeyBinding {
             key: "ctrl+b w".to_string(),
             action: "CloseOsWindow".to_string(),
@@ -312,7 +325,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn デフォルト設定が生成できる() {
+    fn default_config_can_be_constructed() {
         let config = Config::default();
         assert_eq!(config.api_version.0, "1.0");
         assert!(config.font.size > 0.0);
@@ -321,22 +334,22 @@ mod tests {
     }
 
     #[test]
-    fn フォントデフォルト値() {
+    fn font_default_values() {
         let font = FontConfig::default();
         assert!(font.ligatures);
         assert_eq!(font.size, 15.0);
     }
 
-    // ---- Sprint 5-7 / UI-1-3: Leader key 展開テスト ----
+    // ---- Sprint 5-7 / UI-1-3: leader-key expansion tests ----
 
     #[test]
-    fn leader_key_デフォルトはctrl_b() {
+    fn leader_key_default_is_ctrl_b() {
         let cfg = Config::default();
         assert_eq!(cfg.leader_key, "ctrl+b");
     }
 
     #[test]
-    fn expand_leader_は_leader_を展開する() {
+    fn expand_leader_replaces_leader() {
         let cfg = Config {
             leader_key: "ctrl+q".to_string(),
             ..Default::default()
@@ -346,21 +359,21 @@ mod tests {
     }
 
     #[test]
-    fn expand_leader_は_leader_を含まないキーをそのまま返す() {
+    fn expand_leader_returns_unchanged_when_no_leader_present() {
         let cfg = Config::default();
         assert_eq!(cfg.expand_leader("ctrl+b %"), "ctrl+b %");
         assert_eq!(cfg.expand_leader("ctrl+shift+p"), "ctrl+shift+p");
     }
 
     #[test]
-    fn expand_leader_は複数の_leader_も置換する() {
+    fn expand_leader_replaces_multiple_occurrences() {
         let cfg = Config::default();
-        // 通常は1個だが念のため
+        // Normally there is only one, but check just in case.
         assert_eq!(cfg.expand_leader("<leader>+<leader>"), "ctrl+b+ctrl+b");
     }
 
-    /// Sprint 5-4 / D8: ToggleZoom はデフォルトキーバインドに 2 つ存在する
-    /// （tmux 流 `Ctrl+B Z` + 初心者向け `Ctrl+Shift+Z`）
+    /// Sprint 5-4 / D8: there are two default key bindings for `ToggleZoom`
+    /// (the tmux-style `Ctrl+B Z` and the newcomer-friendly `Ctrl+Shift+Z`).
     #[test]
     fn toggle_zoom_has_two_default_bindings() {
         let bindings = default_keybindings();
@@ -371,14 +384,14 @@ mod tests {
         assert_eq!(
             zoom_bindings.len(),
             2,
-            "ToggleZoom は 2 つのデフォルトバインドを持つべき"
+            "ToggleZoom should have 2 default bindings"
         );
         let keys: Vec<&str> = zoom_bindings.iter().map(|b| b.key.as_str()).collect();
         assert!(keys.contains(&"ctrl+b z"));
         assert!(keys.contains(&"ctrl+shift+z"));
     }
 
-    /// Sprint 5-4 / D8: QuickSelect もキーバインド経由でアクセスできる
+    /// Sprint 5-4 / D8: `QuickSelect` is also reachable via a default key binding.
     #[test]
     fn quick_select_has_default_binding() {
         let bindings = default_keybindings();
@@ -390,7 +403,7 @@ mod tests {
     }
 
     #[test]
-    fn tomlシリアライズ往復() {
+    fn toml_serialize_roundtrip() {
         let config = Config::default();
         let toml_str = toml::to_string(&config).unwrap();
         let parsed: Config = toml::from_str(&toml_str).unwrap();
@@ -399,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn プロファイルが設定に適用される() {
+    fn profile_is_applied_to_config() {
         let mut config = Config::default();
         config.profiles.push(Profile {
             name: "big-font".to_string(),
@@ -415,27 +428,27 @@ mod tests {
         let effective = config.effective();
         assert_eq!(effective.font.size, 20.0);
         assert_eq!(effective.font.family, "Hack Nerd Font");
-        // プロファイルで指定していない設定はベースのまま
+        // Settings not overridden by the profile keep their base values.
         assert_eq!(effective.scrollback_lines, config.scrollback_lines);
     }
 
     #[test]
-    fn 存在しないプロファイルは無視される() {
+    fn nonexistent_profile_is_ignored() {
         let mut config = Config::default();
         config.activate_profile("non-existent");
-        // 存在しない場合は active_profile が変わらない
+        // The active profile should remain unchanged when the name is unknown.
         assert_eq!(config.active_profile, None);
     }
 
     #[test]
-    fn プロファイルなしはベース設定をそのまま返す() {
+    fn no_active_profile_returns_the_base_config() {
         let config = Config::default();
         let effective = config.effective();
         assert_eq!(effective.font, config.font);
     }
 
     #[test]
-    fn プロファイルをtrueでパースできる() {
+    fn profile_parses_from_toml() {
         let toml_str = r#"
 [[profiles]]
 name = "minimal"
@@ -454,17 +467,17 @@ ligatures = false
     }
 
     #[test]
-    fn status_bar_config_デフォルト値() {
+    fn status_bar_config_default_values() {
         let sb = StatusBarConfig::default();
         assert!(!sb.enabled);
         assert!(sb.widgets.is_empty());
-        // right_widgets にデフォルトで "time" が含まれること
+        // `right_widgets` should include `"time"` by default.
         assert!(sb.right_widgets.contains(&"time".to_string()));
         assert_eq!(sb.separator, "  ");
     }
 
     #[test]
-    fn status_bar_config_toml往復() {
+    fn status_bar_config_toml_roundtrip() {
         let toml_str = r#"
 [status_bar]
 enabled = true
@@ -480,14 +493,14 @@ separator = " | "
     }
 
     #[test]
-    fn plugin_dir_はデフォルトnone() {
+    fn plugin_dir_defaults_to_none() {
         let config = Config::default();
         assert!(config.plugin_dir.is_none());
         assert!(!config.plugins_disabled);
     }
 
     #[test]
-    fn window_config_デフォルト値() {
+    fn window_config_default_values() {
         let w = WindowConfig::default();
         assert!((w.background_opacity - 0.95).abs() < f32::EPSILON);
         assert_eq!(w.macos_window_background_blur, 0);
@@ -496,7 +509,7 @@ separator = " | "
     }
 
     #[test]
-    fn window_config_layout_modeをtomlで設定() {
+    fn window_config_layout_mode_can_be_set_via_toml() {
         let toml_str = r#"
 [window]
 background_opacity = 0.9
@@ -515,17 +528,17 @@ layout_mode = "tiling"
     }
 
     #[test]
-    fn webconfig_の_allow_http_fallback_デフォルトは_false() {
-        // CRITICAL #3 対応: 安全なデフォルトであることを保証する
+    fn webconfig_allow_http_fallback_defaults_to_false() {
+        // CRITICAL #3: guarantees the safe default.
         let cfg = WebConfig::default();
         assert!(
             !cfg.allow_http_fallback,
-            "allow_http_fallback のデフォルトは false でなければならない（HTTP フォールバック禁止）"
+            "the default of allow_http_fallback must be false (no HTTP fallback)"
         );
     }
 
     #[test]
-    fn webconfig_は_toml_から_allow_http_fallback_を読める() {
+    fn webconfig_reads_allow_http_fallback_from_toml() {
         let toml_str = r#"
 enabled = true
 allow_http_fallback = true

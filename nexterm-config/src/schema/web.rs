@@ -1,22 +1,23 @@
-//! Web ターミナル（HTTPS / WebSocket / OAuth / TOTP）設定
+//! Web terminal (HTTPS / WebSocket / OAuth / TOTP) configuration.
 
 use serde::{Deserialize, Serialize};
 
-/// TOTP 認証設定
+/// TOTP authentication configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WebAuthConfig {
-    /// TOTP 認証を有効にするか（デフォルト: false）
+    /// Whether to enable TOTP authentication (default: `false`).
     #[serde(default)]
     pub totp_enabled: bool,
-    /// TOTP シークレット（Base32 エンコード）。未設定の場合は初回起動時に生成してブラウザで設定
+    /// TOTP secret (Base32-encoded). When unset, it is generated on first
+    /// launch and configured via the browser.
     pub totp_secret: Option<String>,
-    /// 認証アプリに表示する発行者名（デフォルト: "Nexterm"）
+    /// Issuer name shown by the authenticator app (default: `"Nexterm"`).
     #[serde(default = "default_totp_issuer")]
     pub issuer: String,
-    /// OAuth2 / OIDC 設定（設定された場合は TOTP より優先）
+    /// OAuth2 / OIDC configuration (takes precedence over TOTP when present).
     #[serde(default)]
     pub oauth: OAuthConfig,
-    /// セッション有効期限（秒）。デフォルト: 86400（24 時間）
+    /// Session expiration (seconds). Default: 86_400 (24 hours).
     #[serde(default = "default_session_timeout_secs")]
     pub session_timeout_secs: u64,
 }
@@ -41,62 +42,66 @@ impl Default for WebAuthConfig {
     }
 }
 
-/// OAuth2 / OIDC 認証設定
+/// OAuth2 / OIDC authentication configuration.
 ///
-/// 対応プロバイダー: GitHub / Google / Azure AD / 任意の OIDC プロバイダー
+/// Supported providers: GitHub / Google / Azure AD / any OIDC provider.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct OAuthConfig {
-    /// OAuth2 を有効にするか（デフォルト: false）
+    /// Whether to enable OAuth2 (default: `false`).
     #[serde(default)]
     pub enabled: bool,
-    /// プロバイダー識別子: "github" | "google" | "azure" | "oidc"
+    /// Provider identifier: `"github"` | `"google"` | `"azure"` | `"oidc"`.
     #[serde(default)]
     pub provider: String,
-    /// クライアント ID
+    /// Client ID.
     pub client_id: Option<String>,
-    /// クライアントシークレット（環境変数 NEXTERM_OAUTH_CLIENT_SECRET での上書き推奨）
+    /// Client secret. Overriding via the `NEXTERM_OAUTH_CLIENT_SECRET`
+    /// environment variable is recommended.
     pub client_secret: Option<String>,
-    /// OIDC ディスカバリー URL（provider = "oidc" の場合に使用）
-    /// 例: `"https://login.microsoftonline.com/{tenant}/v2.0"`
+    /// OIDC discovery URL (used when `provider = "oidc"`).
+    /// Example: `"https://login.microsoftonline.com/{tenant}/v2.0"`.
     pub issuer_url: Option<String>,
-    /// 許可するメールアドレスのリスト（空 = 全員許可）
+    /// Allow-list of e-mail addresses (empty means "everyone is allowed").
     #[serde(default)]
     pub allowed_emails: Vec<String>,
-    /// 許可する GitHub Organization 名のリスト（provider = "github" のみ）
+    /// Allow-list of GitHub organization names (only with `provider = "github"`).
     #[serde(default)]
     pub allowed_orgs: Vec<String>,
-    /// OAuth2 コールバック URL（デフォルト: "http://localhost:{port}/auth/callback"）
+    /// OAuth2 callback URL (default: `"http://localhost:{port}/auth/callback"`).
     pub redirect_url: Option<String>,
 }
 
-/// TLS / HTTPS 設定
+/// TLS / HTTPS configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct TlsConfig {
-    /// HTTPS を有効にするか（デフォルト: false）
+    /// Whether to enable HTTPS (default: `false`).
     #[serde(default)]
     pub enabled: bool,
-    /// 証明書ファイルパス（PEM）。省略時は自己署名証明書を自動生成
+    /// Path to the certificate file (PEM). When omitted, a self-signed
+    /// certificate is generated automatically.
     pub cert_file: Option<String>,
-    /// 秘密鍵ファイルパス（PEM）
+    /// Path to the private-key file (PEM).
     pub key_file: Option<String>,
 }
 
-/// アクセスログ設定
+/// Access-log configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AccessLogConfig {
-    /// アクセスログを有効にするか（デフォルト: false）
+    /// Whether to enable the access log (default: `false`).
     #[serde(default)]
     pub enabled: bool,
-    /// ログファイルパス。省略時はサーバーログ（tracing）に出力
+    /// Log file path. When omitted, the access log is written through the
+    /// regular tracing pipeline.
     pub file: Option<String>,
-    /// 1 ファイルあたりの最大サイズ（MiB）。0 = サイズベースのローテーション無効
+    /// Maximum size per file (MiB). 0 disables size-based rotation.
     #[serde(default = "default_access_log_max_size_mib")]
     pub max_size_mib: u64,
-    /// 保持する世代数（0 = ローテーション無効。1 以上で `.1`〜`.N` を保持）
+    /// Number of generations to keep (0 disables rotation; 1+ keeps
+    /// `.1`..=`.N`).
     #[serde(default = "default_access_log_max_generations")]
     pub max_generations: u32,
-    /// gzip 圧縮を有効化するか（ローテーション時に `.{N}.gz` として保存）
+    /// Enable gzip compression for rotated files (saved as `.{N}.gz`).
     #[serde(default)]
     pub compress: bool,
 }
@@ -121,41 +126,44 @@ impl Default for AccessLogConfig {
     }
 }
 
-/// Web ターミナル設定（WebSocket + xterm.js）
+/// Web terminal configuration (WebSocket + xterm.js).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WebConfig {
-    /// Web ターミナルを有効にするか（デフォルト: false）
+    /// Whether to enable the web terminal (default: `false`).
     #[serde(default)]
     pub enabled: bool,
-    /// 待ち受けポート（デフォルト: 7681）
+    /// Listen port (default: 7681).
     #[serde(default = "default_web_port")]
     pub port: u16,
-    /// 認証トークン — 後方互換性のために残す（TOTP と併用不可）
+    /// Authentication token — kept for backward compatibility (cannot be used
+    /// together with TOTP).
     pub token: Option<String>,
-    /// TOTP 認証設定
+    /// TOTP authentication configuration.
     #[serde(default)]
     pub auth: WebAuthConfig,
-    /// TLS / HTTPS 設定
+    /// TLS / HTTPS configuration.
     #[serde(default)]
     pub tls: TlsConfig,
-    /// HTTP アクセス時に HTTPS へ強制リダイレクトするか（デフォルト: false）
-    /// tls.enabled = true の場合のみ有効
+    /// Whether to redirect HTTP access to HTTPS (default: `false`).
+    /// Effective only when `tls.enabled = true`.
     #[serde(default)]
     pub force_https: bool,
-    /// 同時セッション数の上限（0 = 無制限。デフォルト: 0）
+    /// Maximum concurrent sessions (0 = unlimited; default: 0).
     #[serde(default)]
     pub max_sessions: usize,
-    /// アクセスログ設定
+    /// Access-log configuration.
     #[serde(default)]
     pub access_log: AccessLogConfig,
-    /// **危険**: TLS 設定失敗時に平文 HTTP でフォールバック起動を許可するか（デフォルト: false）
+    /// **Dangerous**: allow falling back to plain-text HTTP when TLS
+    /// configuration fails (default: `false`).
     ///
-    /// `tls.enabled = true` で証明書ファイル不在・読み込み失敗・パーミッションエラー
-    /// 等が起きた場合の挙動を制御する:
-    /// - `false`（デフォルト・推奨）: サーバー起動を中止する。セッショントークンや
-    ///   TOTP コードが平文で漏れることを防ぐ。
-    /// - `true`: 警告ログを出して HTTP にフォールバックする（テスト・開発のみ）。
+    /// Controls the behavior when `tls.enabled = true` and the certificate
+    /// file is missing, fails to load, has permission errors, etc.:
+    /// - `false` (default, recommended): abort startup so that session
+    ///   tokens and TOTP codes are never leaked in plain text.
+    /// - `true`: log a warning and fall back to HTTP (for testing /
+    ///   development only).
     #[serde(default)]
     pub allow_http_fallback: bool,
 }

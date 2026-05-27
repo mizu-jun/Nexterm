@@ -1,20 +1,22 @@
-//! WSL ディストロ自動検出（Sprint 5-4 / E1）。
+//! Automatic WSL distro detection (Sprint 5-4 / E1).
 //!
-//! Windows 環境で `wsl.exe -l -q` を実行して利用可能なディストロを列挙し、
-//! それぞれを `Profile` に変換する。Windows 以外では常に空ベクタを返す。
+//! On Windows, run `wsl.exe -l -q` to enumerate the available distros and
+//! convert each one into a `Profile`. On every other platform this always
+//! returns an empty vector.
 //!
-//! # 出力エンコーディング
+//! # Output encoding
 //!
-//! `wsl.exe -l -q` の標準出力は **UTF-16LE** で、行末は CR/LF。
-//! 本実装は BOM の有無に関わらず UTF-16LE を UTF-8 に変換する。
+//! The standard output of `wsl.exe -l -q` is **UTF-16LE** with CR/LF line
+//! endings. This implementation converts UTF-16LE to UTF-8 with or without
+//! a BOM.
 //!
-//! # 使用例
+//! # Example
 //!
 //! ```no_run
 //! use nexterm_config::wsl::detect_distros;
 //! let distros = detect_distros();
 //! for d in distros {
-//!     println!("発見: {}", d.name);
+//!     println!("found: {}", d.name);
 //! }
 //! ```
 
@@ -22,10 +24,10 @@ use crate::schema::Profile;
 #[cfg(windows)]
 use crate::schema::ShellConfig;
 
-/// 検出された WSL ディストロを `Profile` のベクタとして返す。
+/// Returns the detected WSL distros as a vector of `Profile`s.
 ///
-/// Windows 以外では常に空ベクタを返す。
-/// `wsl.exe` がインストールされていない、または検出に失敗した場合も空ベクタを返す。
+/// On every platform other than Windows this returns an empty vector. It also
+/// returns an empty vector when `wsl.exe` is not installed or detection fails.
 pub fn detect_distros() -> Vec<Profile> {
     #[cfg(windows)]
     {
@@ -50,7 +52,7 @@ fn detect_distros_windows() -> Vec<Profile> {
         return Vec::new();
     }
 
-    // wsl.exe -l -q は UTF-16LE で出力する
+    // `wsl.exe -l -q` writes UTF-16LE to stdout.
     let names = parse_wsl_list_output(&output.stdout);
 
     names
@@ -67,19 +69,19 @@ fn detect_distros_windows() -> Vec<Profile> {
         .collect()
 }
 
-/// UTF-16LE バイト列からディストロ名のリストを抽出する。
+/// Extracts the distro names from a UTF-16LE byte string.
 ///
-/// BOM (0xFF 0xFE) は許容する。空行・null 文字を除去する。
-/// テスト容易化のため OS 非依存で公開する。
+/// Tolerates a BOM (`0xFF 0xFE`). Empty lines and null characters are dropped.
+/// Exposed regardless of the host OS to make it easy to test.
 pub fn parse_wsl_list_output(bytes: &[u8]) -> Vec<String> {
-    // BOM をスキップ
+    // Skip the BOM.
     let payload = if bytes.starts_with(&[0xFF, 0xFE]) {
         &bytes[2..]
     } else {
         bytes
     };
 
-    // 2 バイトずつ UTF-16LE として decode
+    // Decode pairs of bytes as UTF-16LE.
     let utf16: Vec<u16> = payload
         .chunks_exact(2)
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
@@ -104,7 +106,7 @@ mod tests {
 
     #[test]
     fn parse_with_bom_strips_bom() {
-        // BOM + "Ubuntu\r\n" を UTF-16LE で構築
+        // Build `BOM + "Ubuntu\r\n"` as UTF-16LE.
         let mut bytes = vec![0xFF, 0xFE];
         for c in "Ubuntu\r\n".encode_utf16() {
             bytes.extend_from_slice(&c.to_le_bytes());
@@ -115,7 +117,7 @@ mod tests {
 
     #[test]
     fn parse_multiple_distros() {
-        // "Ubuntu\r\nDebian\r\nAlpine\r\n" を UTF-16LE で構築
+        // Build `"Ubuntu\r\nDebian\r\nAlpine\r\n"` as UTF-16LE.
         let mut bytes = Vec::new();
         for c in "Ubuntu-22.04\r\nDebian\r\nAlpine\r\n".encode_utf16() {
             bytes.extend_from_slice(&c.to_le_bytes());

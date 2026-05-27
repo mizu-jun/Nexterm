@@ -1,4 +1,4 @@
-//! 設定ローダー — TOML → Lua の2層ロードを実装する
+//! Configuration loader — implements the two-layer TOML → Lua load.
 
 use std::path::PathBuf;
 
@@ -8,77 +8,77 @@ use tracing::{info, warn};
 
 use crate::schema::{ColorScheme, Config};
 
-/// 設定ディレクトリのパスを返す
+/// Returns the path to the configuration directory.
 pub fn config_dir() -> PathBuf {
     dirs_next::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("nexterm")
 }
 
-/// TOML 設定ファイルのパスを返す
+/// Returns the path to the TOML configuration file.
 pub fn toml_path() -> PathBuf {
     config_dir().join("nexterm.toml")
 }
 
-/// Lua 設定ファイルのパスを返す
+/// Returns the path to the Lua configuration file.
 pub fn lua_path() -> PathBuf {
     config_dir().join("nexterm.lua")
 }
 
-/// LuaError を anyhow::Error に変換するヘルパー
+/// Helper that converts a `LuaError` into an `anyhow::Error`.
 fn lua_err(e: LuaError) -> anyhow::Error {
-    anyhow::anyhow!("Lua エラー: {}", e)
+    anyhow::anyhow!("Lua error: {}", e)
 }
 
-/// 設定ローダー
+/// Configuration loader.
 pub struct ConfigLoader;
 
 impl ConfigLoader {
-    /// 設定を読み込む（TOML → Lua の順）
+    /// Loads the configuration (TOML first, Lua second).
     ///
-    /// 1. ビルトインデフォルト値から開始
-    /// 2. nexterm.toml が存在すれば読み込んでマージ
-    /// 3. nexterm.lua が存在すれば実行してマージ
+    /// 1. Start from the built-in defaults.
+    /// 2. If `nexterm.toml` exists, load and merge it.
+    /// 3. If `nexterm.lua` exists, execute and merge it.
     pub fn load() -> Result<Config> {
         let mut config = Config::default();
 
-        // Step 1: TOML を読み込む（Config を直接 deserialize する）
+        // Step 1: read the TOML (deserialize directly into `Config`).
         let toml_path = toml_path();
         if toml_path.exists() {
             match Self::load_toml(&toml_path) {
                 Ok(loaded) => {
                     config = loaded;
-                    info!("TOML 設定を読み込みました: {}", toml_path.display());
+                    info!("Loaded the TOML configuration: {}", toml_path.display());
                 }
                 Err(e) => {
-                    let msg = format!("TOML 設定の読み込みに失敗しました: {}", e);
+                    let msg = format!("Failed to load the TOML configuration: {}", e);
                     warn!("{}", msg);
                     config.config_errors.push(msg);
                 }
             }
         } else {
-            // 初回起動: デフォルト設定ファイルを生成する
+            // First launch: generate the default configuration file.
             if let Err(e) = Self::write_default_config(&toml_path) {
-                warn!("デフォルト設定ファイルの生成に失敗しました: {}", e);
+                warn!("Failed to generate the default configuration file: {}", e);
             } else {
                 info!(
-                    "デフォルト設定ファイルを生成しました: {}",
+                    "Generated the default configuration file: {}",
                     toml_path.display()
                 );
             }
         }
 
-        // Step 2: Lua を実行してマージ
+        // Step 2: execute Lua and merge.
         let lua_path = lua_path();
         if lua_path.exists() {
             match Self::apply_lua(&mut config, &lua_path) {
                 Ok(()) => {
-                    info!("Lua 設定を適用しました: {}", lua_path.display());
+                    info!("Applied the Lua configuration: {}", lua_path.display());
                 }
                 Err(e) => {
-                    let msg = format!("Lua 設定エラー ({}): {}", lua_path.display(), e);
+                    let msg = format!("Lua configuration error ({}): {}", lua_path.display(), e);
                     warn!("{}", msg);
-                    // クライアントへ通知するためにエラーを収集する
+                    // Collect the error so the client can surface it.
                     config.config_errors.push(msg);
                 }
             }
@@ -87,7 +87,7 @@ impl ConfigLoader {
         Ok(config)
     }
 
-    /// デフォルト設定ファイルを書き出す（初回起動時のみ呼ばれる）
+    /// Writes the default configuration file (called only on first launch).
     fn write_default_config(path: &std::path::Path) -> Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
@@ -96,31 +96,32 @@ impl ConfigLoader {
         Ok(())
     }
 
-    /// TOML ファイルを `Config` に直接 deserialize する。
+    /// Deserializes the TOML file directly into a `Config`.
     ///
-    /// `Config` の全フィールドに `#[serde(default)]` が付いているため、
-    /// TOML に書かれていないフィールドは `Default::default()` で埋まる。
+    /// Every field of `Config` carries `#[serde(default)]`, so missing fields
+    /// are filled in with `Default::default()`.
     fn load_toml(path: &std::path::Path) -> Result<Config> {
         let content = std::fs::read_to_string(path)
-            .with_context(|| format!("TOML ファイル読み込み失敗: {}", path.display()))?;
+            .with_context(|| format!("failed to read the TOML file: {}", path.display()))?;
         let parsed: Config = toml::from_str(&content)
-            .with_context(|| format!("TOML パース失敗: {}", path.display()))?;
+            .with_context(|| format!("failed to parse the TOML file: {}", path.display()))?;
         Ok(parsed)
     }
 
-    /// Lua スクリプトを実行して Config を更新する
+    /// Executes the Lua script and updates the configuration.
     fn apply_lua(config: &mut Config, path: &std::path::Path) -> Result<()> {
-        // CRITICAL #4: サンドボックス化された Lua を使用（os/io/package 無効）
+        // CRITICAL #4: use the sandboxed Lua (os/io/package disabled).
         let lua = crate::lua_sandbox::sandboxed_lua()
-            .map_err(|e| anyhow::anyhow!("サンドボックス Lua の初期化に失敗: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("failed to initialize the sandboxed Lua: {}", e))?;
 
-        // 現在の設定を Lua テーブルに変換してグローバルに設定
+        // Convert the current configuration into a Lua table and bind it globally.
         let config_table = config_to_lua_table(&lua, config)?;
         lua.globals()
             .set("nexterm", config_table.clone())
             .map_err(lua_err)?;
 
-        // package.preload["nexterm"] に登録して require("nexterm") で取得できるようにする
+        // Register it under `package.preload["nexterm"]` so that
+        // `require("nexterm")` returns the same table.
         let preload: LuaTable = lua
             .globals()
             .get::<LuaTable>("package")
@@ -136,11 +137,11 @@ impl ConfigLoader {
             )
             .map_err(lua_err)?;
 
-        // Lua ファイルを実行する
+        // Execute the Lua file.
         let script = std::fs::read_to_string(path)?;
         let result: LuaValue = lua.load(&script).eval().map_err(lua_err)?;
 
-        // 戻り値のテーブルを Config にマージする
+        // Merge the returned table back into `Config`.
         if let LuaValue::Table(tbl) = result {
             apply_lua_table_to_config(config, &tbl)?;
         }
@@ -149,7 +150,7 @@ impl ConfigLoader {
     }
 }
 
-/// カラースキーム文字列をパースする（後方互換のため public のまま残す）
+/// Parses a color-scheme string (kept `pub` for backward compatibility).
 pub fn parse_color_scheme(s: &str) -> ColorScheme {
     use crate::schema::BuiltinScheme;
     match s.to_lowercase().as_str() {
@@ -162,11 +163,12 @@ pub fn parse_color_scheme(s: &str) -> ColorScheme {
     }
 }
 
-/// Config を Lua テーブルに変換する（mlua 0.10 ではライフタイム不要）
+/// Converts a `Config` into a Lua table (lifetime annotations are not needed
+/// in mlua 0.10).
 fn config_to_lua_table(lua: &Lua, config: &Config) -> Result<LuaTable> {
     let tbl = lua.create_table().map_err(lua_err)?;
 
-    // font テーブル
+    // `font` table.
     let font = lua.create_table().map_err(lua_err)?;
     font.set("family", config.font.family.clone())
         .map_err(lua_err)?;
@@ -175,25 +177,25 @@ fn config_to_lua_table(lua: &Lua, config: &Config) -> Result<LuaTable> {
         .map_err(lua_err)?;
     tbl.set("font", font).map_err(lua_err)?;
 
-    // colors（文字列として渡す）
+    // `colors` (passed as a string).
     let scheme_str = match &config.colors {
         ColorScheme::Builtin(b) => format!("{:?}", b).to_lowercase(),
         ColorScheme::Custom(_) => "custom".to_string(),
     };
     tbl.set("colors", scheme_str).map_err(lua_err)?;
 
-    // shell テーブル
+    // `shell` table.
     let shell = lua.create_table().map_err(lua_err)?;
     shell
         .set("program", config.shell.program.clone())
         .map_err(lua_err)?;
     tbl.set("shell", shell).map_err(lua_err)?;
 
-    // scrollback_lines
+    // `scrollback_lines`.
     tbl.set("scrollback_lines", config.scrollback_lines)
         .map_err(lua_err)?;
 
-    // tab_bar テーブル
+    // `tab_bar` table.
     let tab_bar = lua.create_table().map_err(lua_err)?;
     tab_bar
         .set("enabled", config.tab_bar.enabled)
@@ -212,7 +214,7 @@ fn config_to_lua_table(lua: &Lua, config: &Config) -> Result<LuaTable> {
         .map_err(lua_err)?;
     tbl.set("tab_bar", tab_bar).map_err(lua_err)?;
 
-    // hooks テーブル（nil = 未設定）
+    // `hooks` table (nil = unset).
     let hooks = lua.create_table().map_err(lua_err)?;
     hooks
         .set("on_pane_open", config.hooks.on_pane_open.clone())
@@ -234,7 +236,7 @@ fn config_to_lua_table(lua: &Lua, config: &Config) -> Result<LuaTable> {
     Ok(tbl)
 }
 
-/// Lua テーブルの値を Config にマージする
+/// Merges values from a Lua table into a `Config`.
 pub fn apply_lua_table_to_config(config: &mut Config, tbl: &LuaTable) -> Result<()> {
     // font
     if let Ok(LuaValue::Table(font)) = tbl.get("font") {
@@ -255,17 +257,18 @@ pub fn apply_lua_table_to_config(config: &mut Config, tbl: &LuaTable) -> Result<
     }
 
     // shell
-    // Sprint 5-12 Phase 3: `shell.args` を Lua からマージできるように拡張した。
-    // 例: `shell = { program = "pwsh.exe", args = {"-NoLogo", "-NonInteractive"} }`
-    // 旧実装では `args` を無視していたため、`program` のみ上書きされて args は
-    // TOML 由来の値（または `ShellConfig::default()` の値）が維持されていた。
+    // Sprint 5-12 Phase 3: extended to also merge `shell.args` from Lua.
+    // Example: `shell = { program = "pwsh.exe", args = {"-NoLogo", "-NonInteractive"} }`.
+    // The previous implementation discarded `args`, so only `program` was
+    // overridden and `args` kept whatever value came from the TOML (or
+    // `ShellConfig::default()`).
     if let Ok(LuaValue::Table(shell)) = tbl.get("shell") {
         if let Ok(program) = shell.get::<String>("program") {
             config.shell.program = program;
         }
         if let Ok(LuaValue::Table(args_tbl)) = shell.get("args") {
             let mut args: Vec<String> = Vec::new();
-            // Lua のテーブルは 1-indexed
+            // Lua tables are 1-indexed.
             for i in 1.. {
                 match args_tbl.get::<String>(i) {
                     Ok(arg) => args.push(arg),
@@ -317,7 +320,7 @@ pub fn apply_lua_table_to_config(config: &mut Config, tbl: &LuaTable) -> Result<
     Ok(())
 }
 
-// 設定ディレクトリの解決（標準ライブラリのみで実装）
+// Resolves the configuration directory (using only the standard library).
 mod dirs_next {
     pub fn config_dir() -> Option<std::path::PathBuf> {
         #[cfg(windows)]
@@ -346,12 +349,13 @@ mod dirs_next {
     }
 }
 
-/// 初回起動時に生成するデフォルト設定テンプレート
+/// Default configuration template generated on first launch.
 ///
-/// **注意**: 実装の `Config` 構造体と一致するキー名を使用する。
-/// 過去のテンプレートにあった `[color_scheme] builtin = ...` /
-/// `[tab_bar] show = ...` / `[status_bar] show = ...` は
-/// 実装と一致しないキー名でサイレント無視されていたため修正済み。
+/// **Note**: uses key names that match the actual `Config` struct.
+/// Older templates contained `[color_scheme] builtin = ...`,
+/// `[tab_bar] show = ...`, and `[status_bar] show = ...`, which were silently
+/// ignored because the names did not match the implementation; that has been
+/// fixed.
 const DEFAULT_CONFIG_TOML: &str = r#"# Nexterm configuration file
 # Documentation: https://github.com/mizu-jun/Nexterm
 # This file was auto-generated on first launch. Edit freely.
@@ -376,7 +380,7 @@ ligatures = true
 # font_fallbacks = ["Noto Color Emoji"]
 
 # Built-in color schemes: "dark", "light", "tokyonight", "solarized", "gruvbox"
-# 文字列で指定するか [colors] scheme = "..." の形式も可
+# Either pass the name as a string or use the [colors] scheme = "..." table form.
 colors = "tokyonight"
 
 # [shell]
@@ -415,13 +419,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn デフォルトロードが成功する() {
+    fn default_load_succeeds() {
         let config = ConfigLoader::load().unwrap();
         assert!(!config.shell.program.is_empty());
     }
 
     #[test]
-    fn toml文字列から設定をパースできる() {
+    fn config_parses_from_toml_string() {
         let toml_str = r#"
 scrollback_lines = 10000
 
@@ -438,8 +442,9 @@ ligatures = false
     }
 
     #[test]
-    fn config_に_hosts_セクションを書ける() {
-        // 以前 TomlConfig が hosts を持たず、ユーザー設定がサイレント無視されていた問題の回帰テスト
+    fn config_supports_a_hosts_section() {
+        // Regression test for an earlier bug where TomlConfig lacked a `hosts`
+        // section and user settings were silently ignored.
         let toml_str = r#"
 [[hosts]]
 name = "production"
@@ -457,8 +462,9 @@ key_path = "~/.ssh/id_ed25519"
     }
 
     #[test]
-    fn config_に_window_セクションを書ける() {
-        // 以前 TomlConfig が window を持たず、ユーザー設定がサイレント無視されていた問題の回帰テスト
+    fn config_supports_a_window_section() {
+        // Regression test for an earlier bug where TomlConfig lacked a `window`
+        // section and user settings were silently ignored.
         let toml_str = r#"
 [window]
 background_opacity = 0.85
@@ -472,7 +478,7 @@ padding_y = 4
     }
 
     #[test]
-    fn config_に_macros_セクションを書ける() {
+    fn config_supports_a_macros_section() {
         let toml_str = r#"
 [[macros]]
 name = "git-status"
@@ -485,7 +491,7 @@ lua_fn = "macro_git_status"
     }
 
     #[test]
-    fn config_に_cursor_style_と_auto_check_update_を書ける() {
+    fn config_supports_cursor_style_and_auto_check_update() {
         let toml_str = r#"
 cursor_style = "beam"
 auto_check_update = false
@@ -501,24 +507,24 @@ language = "ja"
     }
 
     #[test]
-    fn colors_を文字列でも_scheme_テーブルでも_カスタムでも書ける() {
+    fn colors_accept_string_scheme_table_and_full_custom_palette() {
         use crate::schema::BuiltinScheme;
 
-        // 形式 1: 文字列
+        // Form 1: a string.
         let parsed: Config = toml::from_str("colors = \"gruvbox\"").unwrap();
         assert!(matches!(
             parsed.colors,
             ColorScheme::Builtin(BuiltinScheme::Gruvbox)
         ));
 
-        // 形式 2: [colors] scheme = "..."
+        // Form 2: `[colors] scheme = "..."`.
         let parsed: Config = toml::from_str("[colors]\nscheme = \"solarized\"").unwrap();
         assert!(matches!(
             parsed.colors,
             ColorScheme::Builtin(BuiltinScheme::Solarized)
         ));
 
-        // 形式 3: フルカスタムパレット
+        // Form 3: full custom palette.
         let custom_toml = r##"
 [colors]
 foreground = "#cdd6f4"
@@ -535,17 +541,17 @@ ansi = ["#000000", "#ff0000", "#00ff00", "#ffff00",
                 assert_eq!(p.foreground, "#cdd6f4");
                 assert_eq!(p.ansi.len(), 16);
             }
-            _ => panic!("Custom パレットがパースされなかった"),
+            _ => panic!("the custom palette failed to parse"),
         }
     }
 
     #[test]
-    fn デフォルトテンプレートが_config_として_パース可能() {
-        // 初回起動時のテンプレート自体が壊れていないことを確認する
+    fn default_template_parses_as_a_config() {
+        // Confirms the first-launch template itself is well-formed.
         let parsed: Result<Config> = toml::from_str(DEFAULT_CONFIG_TOML).map_err(Into::into);
         assert!(
             parsed.is_ok(),
-            "DEFAULT_CONFIG_TOML が Config としてパースできない: {:?}",
+            "DEFAULT_CONFIG_TOML failed to parse as `Config`: {:?}",
             parsed.err()
         );
         let cfg = parsed.unwrap();
@@ -553,7 +559,8 @@ ansi = ["#000000", "#ff0000", "#00ff00", "#ffff00",
         assert_eq!(cfg.language, "auto");
         assert!(cfg.tab_bar.enabled);
         assert!(cfg.status_bar.enabled);
-        // 旧テンプレートは [color_scheme] builtin = "..." だったがそれが効かない問題の回帰テスト
+        // Regression test for the previous template that used
+        // `[color_scheme] builtin = "..."` which was ignored.
         assert!(matches!(
             cfg.colors,
             ColorScheme::Builtin(crate::schema::BuiltinScheme::TokyoNight)
@@ -561,13 +568,13 @@ ansi = ["#000000", "#ff0000", "#00ff00", "#ffff00",
     }
 
     #[test]
-    fn luaで設定を上書きできる() {
+    fn lua_can_override_the_configuration() {
         let lua = crate::lua_sandbox::sandboxed_lua().unwrap();
         let mut config = Config::default();
 
         let tbl = config_to_lua_table(&lua, &config).unwrap();
 
-        // font テーブルを直接変更して apply する
+        // Mutate the `font` table directly and apply.
         let font: LuaTable = tbl.get("font").unwrap();
         font.set("size", 20.0f32).unwrap();
         font.set("family", "Hack").unwrap();
@@ -577,16 +584,17 @@ ansi = ["#000000", "#ff0000", "#00ff00", "#ffff00",
         assert_eq!(config.font.family, "Hack");
     }
 
-    /// Sprint 5-12 Phase 3: Lua の `shell.args` がマージされず無視されていたバグの回帰テスト。
-    /// 旧実装では `shell.program` のみ上書きされ、`shell.args` は読み捨てられていた。
+    /// Sprint 5-12 Phase 3: regression test for the bug where Lua's
+    /// `shell.args` was not merged and silently discarded. The previous
+    /// implementation only overrode `shell.program`, dropping `shell.args`.
     #[test]
-    fn luaで_shell_args_を上書きできる() {
+    fn lua_can_override_shell_args() {
         let lua = crate::lua_sandbox::sandboxed_lua().unwrap();
         let mut config = Config::default();
 
         let tbl = config_to_lua_table(&lua, &config).unwrap();
 
-        // shell.program と shell.args の両方を Lua 側で更新する
+        // Update both `shell.program` and `shell.args` from Lua.
         let shell: LuaTable = tbl.get("shell").unwrap();
         shell.set("program", "pwsh.exe").unwrap();
         let args = lua.create_table().unwrap();
@@ -607,9 +615,10 @@ ansi = ["#000000", "#ff0000", "#00ff00", "#ffff00",
         );
     }
 
-    /// Lua で `shell.program` だけ指定し `shell.args` を省略した場合、既存の args が維持される。
+    /// When Lua specifies only `shell.program` and omits `shell.args`, the
+    /// existing args are preserved.
     #[test]
-    fn luaで_shell_args_省略時は既存の値が維持される() {
+    fn lua_keeps_existing_shell_args_when_omitted() {
         let lua = crate::lua_sandbox::sandboxed_lua().unwrap();
         let mut config = Config::default();
         config.shell.args = vec!["--existing".to_string(), "--flag".to_string()];
@@ -617,7 +626,7 @@ ansi = ["#000000", "#ff0000", "#00ff00", "#ffff00",
         let tbl = config_to_lua_table(&lua, &config).unwrap();
         let shell: LuaTable = tbl.get("shell").unwrap();
         shell.set("program", "/bin/bash").unwrap();
-        // args は意図的にセットしない
+        // Intentionally do not set `args`.
 
         apply_lua_table_to_config(&mut config, &tbl).unwrap();
         assert_eq!(config.shell.program, "/bin/bash");
@@ -627,10 +636,11 @@ ansi = ["#000000", "#ff0000", "#00ff00", "#ffff00",
         );
     }
 
-    /// Lua で `shell.args` を空テーブルにした場合、既存の値を保持する。
-    /// （空配列で全引数を消したい場合は別 API を用意するべきだが、現状は安全側に倒す）
+    /// When Lua passes an empty table for `shell.args`, the existing value is
+    /// preserved. (Erasing the args entirely would need a separate API; the
+    /// current behavior errs on the safe side.)
     #[test]
-    fn luaで_shell_args_空テーブルなら既存値を保持する() {
+    fn lua_keeps_existing_shell_args_when_table_is_empty() {
         let lua = crate::lua_sandbox::sandboxed_lua().unwrap();
         let mut config = Config::default();
         config.shell.args = vec!["--existing".to_string()];
@@ -644,13 +654,13 @@ ansi = ["#000000", "#ff0000", "#00ff00", "#ffff00",
     }
 
     #[test]
-    fn カラースキームのパース() {
+    fn color_scheme_parses_correctly() {
         use crate::schema::BuiltinScheme;
         assert!(matches!(
             parse_color_scheme("tokyonight"),
             ColorScheme::Builtin(BuiltinScheme::TokyoNight)
         ));
-        // 未知のスキーム名はデフォルト (Dark) にフォールバックする
+        // Unknown scheme names fall back to the default (`Dark`).
         assert!(matches!(
             parse_color_scheme("custom_theme"),
             ColorScheme::Builtin(BuiltinScheme::Dark)

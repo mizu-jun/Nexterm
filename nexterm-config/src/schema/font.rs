@@ -1,18 +1,18 @@
-//! フォント設定
+//! Font configuration.
 
 use serde::{Deserialize, Serialize};
 
-/// フォント設定
+/// Font configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FontConfig {
-    /// フォントファミリー名
+    /// Font family name.
     pub family: String,
-    /// フォントサイズ（pt）
+    /// Font size in points.
     pub size: f32,
-    /// リガチャを有効にするか
+    /// Whether to enable ligatures.
     pub ligatures: bool,
-    /// フォントフォールバックチェーン（グリフが見つからない場合に順番に試行）
+    /// Font fallback chain (each entry is tried in order when a glyph is missing).
     #[serde(default)]
     pub font_fallbacks: Vec<String>,
 }
@@ -23,7 +23,7 @@ impl Default for FontConfig {
             family: "monospace".to_string(),
             size: 15.0,
             ligatures: true,
-            // プログラミングフォント → CJK → 絵文字 の順に試行
+            // Tried in order: programming fonts → CJK → emoji.
             font_fallbacks: vec![
                 "Cascadia Code".to_string(),
                 "JetBrains Mono".to_string(),

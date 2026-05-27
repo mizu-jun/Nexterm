@@ -1,43 +1,44 @@
-//! ウィンドウ・タブバー・カーソルなど表示まわりの設定
+//! Display-related configuration: window, tab bar, and cursor.
 
 use serde::{Deserialize, Serialize};
 
-/// ウィンドウ装飾の種別
+/// Window decoration mode.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum WindowDecorations {
-    /// OS 標準のタイトルバーと境界線を表示する
+    /// Show the OS-native title bar and borders.
     #[default]
     Full,
-    /// タイトルバーなし・境界線なし（ボーダーレス）
+    /// No title bar and no borders (borderless).
     None,
-    /// タイトルバーのみ非表示
+    /// Hide only the title bar.
     NoTitle,
 }
 
-/// 背景画像のフィット方式（Sprint 5-7 / Phase 3-1）
+/// Background-image fit mode (Sprint 5-7 / Phase 3-1).
 ///
-/// アスペクト比保持の有無と切り取り/余白の扱いを決定する。
+/// Determines whether the aspect ratio is preserved and how cropping or
+/// padding is handled.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum BackgroundFit {
-    /// 画面を完全に覆う（アスペクト比保持・はみ出し部分は切り取り）
+    /// Cover the entire screen (aspect ratio preserved; overflow is cropped).
     #[default]
     Cover,
-    /// 画面に収める（アスペクト比保持・余白部分は透明）
+    /// Fit inside the screen (aspect ratio preserved; the margin is transparent).
     Contain,
-    /// 画面サイズに完全フィット（アスペクト比無視・引き伸ばし）
+    /// Stretch to the screen size exactly (ignores the aspect ratio).
     Stretch,
-    /// 画像サイズのまま画面中央に配置（拡縮なし）
+    /// Center the image at its natural size (no scaling).
     Center,
-    /// 画像をタイル状に並べる（拡縮なし）
+    /// Tile the image (no scaling).
     Tile,
 }
 
-/// 背景画像設定（Sprint 5-7 / Phase 3-1）
+/// Background-image configuration (Sprint 5-7 / Phase 3-1).
 ///
-/// ターミナル背面に画像を表示する。画像は起動時に 1 度ロードされる
-/// （ホットリロードは未対応）。サポート形式: PNG / JPEG。
+/// Displays an image behind the terminal. The image is loaded once at startup
+/// (hot reload is not supported). Supported formats: PNG / JPEG.
 ///
 /// ```toml
 /// [window.background_image]
@@ -48,18 +49,18 @@ pub enum BackgroundFit {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BackgroundImageConfig {
-    /// 画像ファイルパス（チルダ `~` 展開対応）
+    /// Image file path (`~` is expanded).
     pub path: String,
-    /// 画像の不透明度（0.0 = 完全透明、1.0 = 不透明）。デフォルト 0.3
+    /// Image opacity (0.0 = fully transparent, 1.0 = opaque). Default: 0.3.
     #[serde(default = "default_image_opacity")]
     pub opacity: f32,
-    /// フィット方式（cover / contain / stretch / center / tile）。デフォルト cover
+    /// Fit mode (cover / contain / stretch / center / tile). Default: cover.
     #[serde(default)]
     pub fit: BackgroundFit,
 }
 
 fn default_image_opacity() -> f32 {
-    // 0.3 は読みやすさを保ちつつ画像を視認できる中庸な値
+    // 0.3 keeps the terminal readable while leaving the image visible.
     0.3
 }
 
@@ -74,12 +75,12 @@ impl Default for BackgroundImageConfig {
 }
 
 impl BackgroundImageConfig {
-    /// `path` が空文字でない場合のみ有効とみなす。
+    /// Treats the config as enabled only when `path` is non-empty.
     pub fn is_enabled(&self) -> bool {
         !self.path.trim().is_empty()
     }
 
-    /// `opacity` を `[0.0, 1.0]` の範囲にクランプして返す。
+    /// Returns `opacity` clamped to the range `[0.0, 1.0]`.
     pub fn clamped_opacity(&self) -> f32 {
         self.opacity.clamp(0.0, 1.0)
     }
@@ -90,7 +91,7 @@ mod background_image_tests {
     use super::*;
 
     #[test]
-    fn デフォルト値は空パスで無効() {
+    fn default_is_disabled_with_an_empty_path() {
         let cfg = BackgroundImageConfig::default();
         assert!(cfg.path.is_empty());
         assert!(!cfg.is_enabled());
@@ -99,7 +100,7 @@ mod background_image_tests {
     }
 
     #[test]
-    fn 空白パスは無効扱い() {
+    fn whitespace_only_path_is_treated_as_disabled() {
         let cfg = BackgroundImageConfig {
             path: "   ".to_string(),
             ..BackgroundImageConfig::default()
@@ -108,7 +109,7 @@ mod background_image_tests {
     }
 
     #[test]
-    fn パスが指定されると有効() {
+    fn specifying_a_path_enables_the_background() {
         let cfg = BackgroundImageConfig {
             path: "~/wall.png".to_string(),
             ..BackgroundImageConfig::default()
@@ -117,7 +118,7 @@ mod background_image_tests {
     }
 
     #[test]
-    fn opacity_は_0_から_1_にクランプ() {
+    fn opacity_is_clamped_to_0_through_1() {
         let cfg = BackgroundImageConfig {
             opacity: -0.5,
             ..BackgroundImageConfig::default()
@@ -131,7 +132,7 @@ mod background_image_tests {
     }
 
     #[test]
-    fn tomlでパースできる() {
+    fn parses_from_toml() {
         let toml_str = r#"
 [window.background_image]
 path = "~/wallpaper.png"
@@ -146,69 +147,78 @@ fit = "contain"
     }
 
     #[test]
-    fn デフォルトでは_background_image_は_none() {
+    fn background_image_is_none_by_default() {
         let cfg = WindowConfig::default();
         assert!(cfg.background_image.is_none());
     }
 }
 
-/// OS ウィンドウ閉じ操作時の挙動（Sprint 5-7 / Phase 4-1）
+/// Behavior when the user closes an OS window (Sprint 5-7 / Phase 4-1).
 ///
-/// クライアントの OS Window（× ボタン / Cmd+W / Ctrl+Shift+Q 等）を閉じたとき、
-/// 対応するサーバー側 Window（論理ウィンドウ）の扱いを決定する。Phase 4 未決事項 #1 のハイブリッド方針:
+/// Decides what happens to the corresponding server-side Window (a logical
+/// window) when the user closes the client's OS Window (via the × button,
+/// Cmd+W, Ctrl+Shift+Q, etc.). The hybrid approach from Phase 4 open question
+/// #1:
 ///
-/// - `Prompt`（デフォルト）: foreground プロセスが残っている場合のみ確認ダイアログ。
-///   それ以外は kill 相当（誤クローズ防止と直感性のバランス）。
-/// - `Detach`: 常にサーバー側 Window を残す（tmux 流の detached session）。
-///   `nexterm-ctl attach` で再表示可能。長時間ジョブを誤って失う事故に強い。
-/// - `Kill`: 常に破棄。配下の Pane を全て kill し Server Window も削除。
-///   モダン GUI 流（Windows Terminal / VS Code）の挙動。
+/// - `Prompt` (default): show a confirmation dialog only when a foreground
+///   process is still running; otherwise kill (balances accidental-close
+///   protection with intuitive behavior).
+/// - `Detach`: always keep the server-side Window (tmux-style detached
+///   session). The user can reattach it with `nexterm-ctl attach`, which is
+///   resilient to accidentally losing long-running jobs.
+/// - `Kill`: always destroy. Every pane is killed and the server Window is
+///   removed (the behavior of modern GUI terminals such as Windows Terminal
+///   and VS Code).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum CloseAction {
-    /// foreground プロセスがある場合のみ確認ダイアログを表示。それ以外は kill。
+    /// Show a confirmation dialog only if a foreground process exists; kill
+    /// otherwise.
     #[default]
     Prompt,
-    /// 常にサーバー側 Window を保持（detach）。
+    /// Always keep the server-side Window (detach).
     Detach,
-    /// 常にサーバー側 Window を破棄（kill）。
+    /// Always destroy the server-side Window (kill).
     Kill,
 }
 
-/// ウィンドウ設定（透過・ぼかし・装飾）
+/// Window configuration (opacity, blur, decorations).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WindowConfig {
-    /// ウィンドウの不透明度（0.0 = 完全透明、1.0 = 不透明）
+    /// Window opacity (0.0 = fully transparent, 1.0 = opaque).
     #[serde(default = "default_background_opacity")]
     pub background_opacity: f32,
-    /// macOS のウィンドウぼかし強度（0 = なし）
+    /// macOS window blur strength (0 = none).
     #[serde(default)]
     pub macos_window_background_blur: u32,
-    /// ウィンドウ装飾
+    /// Window decorations.
     #[serde(default)]
     pub decorations: WindowDecorations,
-    /// ペインレイアウトモード: "bsp"（手動分割・デフォルト）または "tiling"（均等自動配置）
+    /// Pane layout mode: `"bsp"` (manual splits; default) or `"tiling"`
+    /// (automatic even tiling).
     #[serde(default = "default_layout_mode")]
     pub layout_mode: String,
-    /// ウィンドウ内の水平パディング（ピクセル）。デフォルト: 0
+    /// Horizontal padding inside the window (pixels). Default: 0.
     #[serde(default)]
     pub padding_x: u32,
-    /// ウィンドウ内の垂直パディング（ピクセル）。デフォルト: 0
+    /// Vertical padding inside the window (pixels). Default: 0.
     #[serde(default)]
     pub padding_y: u32,
-    /// 背景画像設定（Sprint 5-7 / Phase 3-1）。None = 背景画像なし。
+    /// Background-image configuration (Sprint 5-7 / Phase 3-1). `None` = no
+    /// background image.
     #[serde(default)]
     pub background_image: Option<BackgroundImageConfig>,
-    /// OS Window の閉じる操作時の挙動（Sprint 5-7 / Phase 4-1）。
-    /// `prompt` / `detach` / `kill` のいずれか。デフォルト `prompt`。
-    /// 詳細は [`CloseAction`] を参照。
+    /// Behavior when the OS Window is closed (Sprint 5-7 / Phase 4-1).
+    /// One of `prompt` / `detach` / `kill`. Default: `prompt`.
+    /// See [`CloseAction`] for details.
     #[serde(default)]
     pub close_action: CloseAction,
 }
 
 fn default_background_opacity() -> f32 {
-    // デフォルト 0.95（若干透過）。完全不透明にしたい場合は nexterm.toml で 1.0 に設定
+    // Default 0.95 (slightly transparent). Set to 1.0 in `nexterm.toml` for
+    // a fully opaque window.
     0.95
 }
 
@@ -236,14 +246,14 @@ mod close_action_tests {
     use super::*;
 
     #[test]
-    fn デフォルトは_prompt() {
+    fn default_is_prompt() {
         assert_eq!(CloseAction::default(), CloseAction::Prompt);
         let cfg = WindowConfig::default();
         assert_eq!(cfg.close_action, CloseAction::Prompt);
     }
 
     #[test]
-    fn toml_で_prompt_をパースできる() {
+    fn toml_parses_prompt() {
         let toml_str = r#"
 [window]
 close_action = "prompt"
@@ -253,7 +263,7 @@ close_action = "prompt"
     }
 
     #[test]
-    fn toml_で_detach_をパースできる() {
+    fn toml_parses_detach() {
         let toml_str = r#"
 [window]
 close_action = "detach"
@@ -263,7 +273,7 @@ close_action = "detach"
     }
 
     #[test]
-    fn toml_で_kill_をパースできる() {
+    fn toml_parses_kill() {
         let toml_str = r#"
 [window]
 close_action = "kill"
@@ -273,7 +283,7 @@ close_action = "kill"
     }
 
     #[test]
-    fn toml_未指定時はデフォルト() {
+    fn omitting_close_action_in_toml_uses_the_default() {
         let toml_str = r#"
 [window]
 background_opacity = 0.9
@@ -283,84 +293,88 @@ background_opacity = 0.9
     }
 
     #[test]
-    fn 不正な値はパースエラー() {
+    fn invalid_values_fail_to_parse() {
         let toml_str = r#"
 [window]
 close_action = "invalid"
 "#;
         let result: Result<super::super::Config, _> = toml::from_str(toml_str);
-        assert!(result.is_err(), "未知の値はパースエラーとなるべき");
+        assert!(result.is_err(), "unknown values should fail to parse");
     }
 
     #[test]
-    fn toml_ラウンドトリップで値を保つ() {
-        // 各バリアントを `WindowConfig` 経由で serialize → deserialize して同値性を確認
+    fn toml_roundtrip_preserves_the_value() {
+        // Serialize → deserialize each variant through `WindowConfig` and
+        // verify equality.
         for action in [CloseAction::Prompt, CloseAction::Detach, CloseAction::Kill] {
             let cfg = WindowConfig {
                 close_action: action,
                 ..WindowConfig::default()
             };
-            let s = toml::to_string(&cfg).expect("WindowConfig は serialize 可能");
+            let s = toml::to_string(&cfg).expect("WindowConfig should be serializable");
             let parsed: WindowConfig =
-                toml::from_str(&s).expect("シリアライズしたものは deserialize 可能");
+                toml::from_str(&s).expect("serialized output should be deserializable");
             assert_eq!(parsed.close_action, action);
         }
     }
 }
 
-/// カーソルの表示スタイル
+/// Cursor display style.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum CursorStyle {
-    /// ブロック型（全セルを塗りつぶす）
+    /// Block (fills the entire cell).
     #[default]
     Block,
-    /// ビーム型（縦 2px の細線）
+    /// Beam (a 2-pixel vertical line).
     Beam,
-    /// アンダーライン型（横 2px の下線）
+    /// Underline (a 2-pixel horizontal line).
     Underline,
 }
 
-/// タブバー設定（WezTerm スタイル）
+/// Tab-bar configuration (WezTerm-style).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TabBarConfig {
-    /// タブバーを表示するか
+    /// Whether to show the tab bar.
     pub enabled: bool,
-    /// タブバーの高さ（ピクセル）
+    /// Tab-bar height (pixels).
     pub height: u32,
-    /// アクティブタブの背景色（RRGGBB）
+    /// Active-tab background color (`RRGGBB`).
     pub active_tab_bg: String,
-    /// 非アクティブタブの背景色（RRGGBB）
+    /// Inactive-tab background color (`RRGGBB`).
     pub inactive_tab_bg: String,
-    /// タブセパレータ文字
+    /// Tab separator character.
     pub separator: String,
-    /// アクティビティのある非アクティブタブの背景色（RRGGBB）。
-    /// Sprint 5-7 / UI-1-1: WezTerm の `format-tab-title` 相当でハイライト色を指定可能に。
+    /// Background color for an inactive tab that has activity (`RRGGBB`).
+    /// Sprint 5-7 / UI-1-1: lets you specify a highlight color similar to
+    /// WezTerm's `format-tab-title`.
     #[serde(default = "default_activity_tab_bg")]
     pub activity_tab_bg: String,
-    /// アクティブタブ下端のアクセントライン色（RRGGBB）。
+    /// Accent-line color at the bottom of the active tab (`RRGGBB`).
     #[serde(default = "default_active_accent_color")]
     pub active_accent_color: String,
-    /// タブラベルにペイン番号を `[1]` 形式で前置するか（Windows Terminal 風）。
+    /// Whether to prefix the tab label with the pane number in `[1]` form
+    /// (Windows Terminal-style).
     #[serde(default)]
     pub show_tab_number: bool,
-    /// 非アクティブタブのテキスト色をどれだけミュート（暗く）するか（0.0=暗い〜1.0=明るい）。
-    /// デフォルト 0.55 で WezTerm の `#5c6d74` に近い暗さ。
+    /// How much to mute inactive-tab text (0.0 = darkest, 1.0 = lightest).
+    /// The default of 0.55 produces a darkness close to WezTerm's `#5c6d74`.
     #[serde(default = "default_inactive_text_brightness")]
     pub inactive_text_brightness: f32,
-    /// マウスホバー時にタブ背景を明るくするか。
+    /// Whether to brighten the tab background on mouse hover.
     #[serde(default = "default_true")]
     pub hover_highlight: bool,
 }
 
 fn default_activity_tab_bg() -> String {
-    // やや暖色気味のオレンジで activity をハイライト（WezTerm 流の `#ae8b2d` 近似）
+    // A slightly warm orange for activity highlights (close to WezTerm's
+    // `#ae8b2d`).
     "#7A4D1A".to_string()
 }
 
 fn default_active_accent_color() -> String {
-    // Tokyo Night blue (#7AA2F7)
+    // Tokyo Night blue (#7AA2F7).
     "#7AA2F7".to_string()
 }
 
@@ -377,7 +391,7 @@ impl Default for TabBarConfig {
         Self {
             enabled: true,
             height: 32,
-            // Tokyo Night アクセントカラー
+            // Tokyo Night accent color.
             active_tab_bg: "#3B4261".to_string(),
             inactive_tab_bg: "#1E2030".to_string(),
             separator: "❯".to_string(),

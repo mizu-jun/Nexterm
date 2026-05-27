@@ -1,59 +1,63 @@
-//! セキュリティ・同意ポリシー設定（Sprint 4-1）
+//! Security / consent-policy configuration (Sprint 4-1).
 //!
-//! 機密操作に対するユーザー同意フローを制御する:
-//! - 外部 URL クリック前の確認
-//! - OSC 52 クリップボード書き込み要求
-//! - OSC 9 / 777 デスクトップ通知要求
+//! Controls the user-consent flow for sensitive operations:
+//! - Confirmation before opening an external URL.
+//! - OSC 52 clipboard-write requests.
+//! - OSC 9 / 777 desktop-notification requests.
 //!
-//! 各ポリシーは `allow` / `deny` / `prompt` のいずれか。
-//! デフォルトはすべて `prompt`（ユーザーに同意を求める）。
+//! Each policy is one of `allow` / `deny` / `prompt`. The default is `prompt`
+//! for all of them (asks the user for consent).
 
 use serde::{Deserialize, Serialize};
 
-/// 機密操作のデフォルト動作
+/// Default behavior for a sensitive operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ConsentPolicy {
-    /// 確認なしで許可する
+    /// Allow without prompting.
     Allow,
-    /// 確認なしで拒否する
+    /// Deny without prompting.
     Deny,
-    /// 確認モーダルを表示してユーザー判断を仰ぐ（デフォルト）
+    /// Show a confirmation modal and defer to the user (default).
     #[default]
     Prompt,
 }
 
-/// セキュリティ設定
+/// Security configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecurityConfig {
-    /// OSC 8 ハイパーリンクや Ctrl+クリックによる外部 URL オープン時の動作
+    /// Behavior when opening an external URL via an OSC 8 hyperlink or
+    /// Ctrl+click.
     #[serde(default)]
     pub external_url: ConsentPolicy,
 
-    /// OSC 52（クリップボード書き込み要求）受信時の動作
+    /// Behavior when an OSC 52 (clipboard-write) request is received.
     #[serde(default)]
     pub osc52_clipboard: ConsentPolicy,
 
-    /// OSC 9 / 777（デスクトップ通知要求）受信時の動作
+    /// Behavior when an OSC 9 / 777 (desktop-notification) request is received.
     #[serde(default)]
     pub osc_notification: ConsentPolicy,
 
-    /// OSC 52 で書き込めるテキストの最大長（バイト単位）。これを超える要求は無条件で拒否する
+    /// Maximum size (bytes) of text that OSC 52 may write. Larger requests are
+    /// rejected unconditionally.
     #[serde(default = "default_osc52_max_bytes")]
     pub osc52_max_bytes: usize,
 
-    /// OSC 9 / 777 で通知できるテキストの最大長（バイト単位）。超過分は切り詰める
+    /// Maximum size (bytes) of text that OSC 9 / 777 may send. Excess content
+    /// is truncated.
     #[serde(default = "default_notification_max_bytes")]
     pub notification_max_bytes: usize,
 }
 
 fn default_osc52_max_bytes() -> usize {
-    // 一般的なクリップボード操作で十分な上限。攻撃者による巨大ペイロード DoS を防ぐ
+    // Sufficient for ordinary clipboard operations; blocks DoS attacks via
+    // gigantic payloads.
     1024 * 1024 // 1 MiB
 }
 
 fn default_notification_max_bytes() -> usize {
-    4096 // 通知は短く保つ
+    4096 // Notifications should stay short.
 }
 
 impl Default for SecurityConfig {
@@ -73,7 +77,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn デフォルトはすべて_prompt() {
+    fn default_is_prompt_everywhere() {
         let cfg = SecurityConfig::default();
         assert_eq!(cfg.external_url, ConsentPolicy::Prompt);
         assert_eq!(cfg.osc52_clipboard, ConsentPolicy::Prompt);
@@ -81,14 +85,14 @@ mod tests {
     }
 
     #[test]
-    fn デフォルトサイズ上限() {
+    fn default_size_limits() {
         let cfg = SecurityConfig::default();
         assert_eq!(cfg.osc52_max_bytes, 1024 * 1024);
         assert_eq!(cfg.notification_max_bytes, 4096);
     }
 
     #[test]
-    fn toml_から_allow_を読める() {
+    fn allow_is_parsed_from_toml() {
         let toml_str = r#"
 external_url = "allow"
 osc52_clipboard = "deny"
@@ -101,7 +105,7 @@ osc_notification = "prompt"
     }
 
     #[test]
-    fn toml_往復() {
+    fn toml_roundtrip() {
         let cfg = SecurityConfig {
             external_url: ConsentPolicy::Deny,
             osc52_clipboard: ConsentPolicy::Allow,

@@ -1,14 +1,14 @@
-//! シェル・シリアルポート・マクロ・キーバインドなど対話入力まわりの設定
+//! Configuration for interactive input — shell, serial ports, macros, and key bindings.
 
 use serde::{Deserialize, Serialize};
 
-/// シェル設定
+/// Shell configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ShellConfig {
-    /// シェルプログラムのパス
+    /// Path to the shell executable.
     pub program: String,
-    /// シェルに渡す引数
+    /// Arguments passed to the shell.
     pub args: Vec<String>,
 }
 
@@ -16,11 +16,12 @@ impl Default for ShellConfig {
     fn default() -> Self {
         #[cfg(windows)]
         {
-            // %ProgramFiles%\PowerShell\* を動的スキャンして最新バージョンを選択する。
-            // Sprint 5-12 Phase 2: `PathBuf` の `>` 演算子は辞書順比較のため
-            // "7" > "10" となり PowerShell 7 が PowerShell 10 より「新しい」と
-            // 誤判定されるバグがあった。ディレクトリ名を `u32` としてパースして
-            // 数値比較するよう修正。
+            // Scan `%ProgramFiles%\PowerShell\*` dynamically and pick the
+            // latest version. Sprint 5-12 Phase 2: the previous implementation
+            // compared `PathBuf`s with `>`, which is lexicographic. That made
+            // "7" > "10", so PowerShell 7 was incorrectly judged "newer" than
+            // PowerShell 10. The fix parses the directory name as `u32` and
+            // compares numerically.
             let prog_files =
                 std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".to_string());
             let ps_root = std::path::Path::new(&prog_files).join("PowerShell");
@@ -43,7 +44,7 @@ impl Default for ShellConfig {
                     };
                 }
             }
-            // PowerShell 5 フォールバック
+            // Fallback to PowerShell 5.
             let ps5 = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
             if std::path::Path::new(ps5).exists() {
                 return Self {
@@ -51,7 +52,7 @@ impl Default for ShellConfig {
                     args: vec!["-NoLogo".to_string()],
                 };
             }
-            // 最終フォールバック: cmd.exe
+            // Final fallback: cmd.exe.
             Self {
                 program: "C:\\Windows\\System32\\cmd.exe".to_string(),
                 args: vec![],
@@ -66,14 +67,16 @@ impl Default for ShellConfig {
     }
 }
 
-/// `pwsh.exe` のフルパスからインストール先ディレクトリ名（バージョン番号）を数値として抽出する。
+/// Extracts the installation directory name (the version number) from a full
+/// path to `pwsh.exe` as a number.
 ///
-/// 例: `C:\Program Files\PowerShell\7\pwsh.exe` → `7`、
-/// `C:\Program Files\PowerShell\10\pwsh.exe` → `10`。
-/// パースに失敗した場合（プレビュービルドの `7-preview` など）は `0` を返すため、
-/// 数値バージョンが利用可能な場合はそちらが優先される。
+/// For example: `C:\Program Files\PowerShell\7\pwsh.exe` → `7`,
+/// `C:\Program Files\PowerShell\10\pwsh.exe` → `10`.
+/// Returns `0` when the parse fails (e.g. a preview build named `7-preview`),
+/// so any numeric version takes precedence when one is available.
 ///
-/// Sprint 5-12 Phase 2: PathBuf の辞書順比較バグ（"7" > "10"）を回避するために導入。
+/// Sprint 5-12 Phase 2: introduced to work around the lexicographic `PathBuf`
+/// comparison bug (`"7" > "10"`).
 #[cfg(windows)]
 pub(crate) fn pwsh_version_number(pwsh_exe_path: &std::path::Path) -> u32 {
     pwsh_exe_path
@@ -84,23 +87,23 @@ pub(crate) fn pwsh_version_number(pwsh_exe_path: &std::path::Path) -> u32 {
         .unwrap_or(0)
 }
 
-/// シリアルポート設定（接続プリセット）
+/// Serial-port configuration (a connection preset).
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct SerialPortConfig {
-    /// 表示名
+    /// Display name.
     pub name: String,
-    /// デバイスパス（例: "/dev/ttyUSB0", "COM3"）
+    /// Device path (e.g. `/dev/ttyUSB0`, `COM3`).
     pub port: String,
-    /// ボーレート
+    /// Baud rate.
     #[serde(default = "default_baud_rate")]
     pub baud_rate: u32,
-    /// データビット: 5, 6, 7, 8
+    /// Data bits: 5, 6, 7, or 8.
     #[serde(default = "default_data_bits")]
     pub data_bits: u8,
-    /// ストップビット: 1, 2
+    /// Stop bits: 1 or 2.
     #[serde(default = "default_stop_bits")]
     pub stop_bits: u8,
-    /// パリティ: "none", "odd", "even"
+    /// Parity: `"none"`, `"odd"`, or `"even"`.
     #[serde(default = "default_parity")]
     pub parity: String,
 }
@@ -123,23 +126,24 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    /// Sprint 5-12 Phase 2: 辞書順バグ回帰テスト。
-    /// 旧実装では `PathBuf` の `>` で比較していたため、"7" > "10" と判定されて
-    /// PowerShell 10 が利用可能でも 7 が選ばれていた。
+    /// Sprint 5-12 Phase 2: regression test for the lexicographic-order bug.
+    /// The previous implementation compared `PathBuf`s with `>`, which made
+    /// `"7" > "10"` so PowerShell 7 was chosen even when PowerShell 10 was
+    /// installed.
     #[test]
     fn pwsh_version_number_extracts_numeric_directory_name() {
         let p7 = PathBuf::from(r"C:\Program Files\PowerShell\7\pwsh.exe");
         let p10 = PathBuf::from(r"C:\Program Files\PowerShell\10\pwsh.exe");
         assert_eq!(pwsh_version_number(&p7), 7);
         assert_eq!(pwsh_version_number(&p10), 10);
-        // 数値比較として v10 > v7 が成立すること（辞書順バグの回帰テスト）
+        // Numerically, v10 > v7 (regression test for the lex-order bug).
         assert!(pwsh_version_number(&p10) > pwsh_version_number(&p7));
     }
 
     #[test]
     fn pwsh_version_number_returns_zero_for_non_numeric_directory() {
         let path = PathBuf::from(r"C:\Program Files\PowerShell\7-preview\pwsh.exe");
-        // 数値パース失敗時は 0 にフォールバック
+        // When numeric parsing fails, fall back to 0.
         assert_eq!(pwsh_version_number(&path), 0);
     }
 
@@ -151,32 +155,34 @@ mod tests {
 
     #[test]
     fn pwsh_version_number_numeric_beats_non_numeric() {
-        // 候補比較ループで unwrap_or(0) により、数値バージョンが非数値バージョンより
-        // 必ず優先される（数値の最小値 1 > 0）。
+        // Because the candidate-comparison loop uses `unwrap_or(0)`, a numeric
+        // version always wins over a non-numeric one (the smallest numeric
+        // value, 1, is still greater than 0).
         let numeric = PathBuf::from(r"C:\Program Files\PowerShell\1\pwsh.exe");
         let preview = PathBuf::from(r"C:\Program Files\PowerShell\7-preview\pwsh.exe");
         assert!(pwsh_version_number(&numeric) > pwsh_version_number(&preview));
     }
 }
 
-/// Lua マクロ定義（設定ファイルで `[[macros]]` として登録する）
+/// Lua macro definition (registered as `[[macros]]` in the configuration file).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MacroConfig {
-    /// コマンドパレット / マクロピッカーに表示する名前
+    /// Name shown in the command palette / macro picker.
     pub name: String,
-    /// マクロの説明文（オプション）
+    /// Optional description of the macro.
     #[serde(default)]
     pub description: String,
-    /// nexterm.lua 内の Lua 関数名
-    /// この関数は `function(session: string, pane_id: number) -> string` のシグネチャを持つ
+    /// Name of the Lua function in `nexterm.lua`.
+    /// The function must have the signature
+    /// `function(session: string, pane_id: number) -> string`.
     pub lua_fn: String,
 }
 
-/// キーバインド定義
+/// Key-binding definition.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeyBinding {
-    /// キー文字列（例: "ctrl+shift+p"）
+    /// Key string (e.g. `"ctrl+shift+p"`).
     pub key: String,
-    /// アクション名（例: "CommandPalette"）
+    /// Action name (e.g. `"CommandPalette"`).
     pub action: String,
 }

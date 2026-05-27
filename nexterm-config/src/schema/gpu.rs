@@ -1,4 +1,4 @@
-//! GPU レンダラー設定・API バージョン・プロファイル
+//! GPU renderer configuration, API version, and profiles.
 
 use serde::{Deserialize, Serialize};
 
@@ -7,7 +7,7 @@ use super::font::FontConfig;
 use super::shell::ShellConfig;
 use super::window::TabBarConfig;
 
-/// 設定 API バージョン
+/// Configuration API version.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApiVersion(pub String);
 
@@ -17,7 +17,7 @@ impl Default for ApiVersion {
     }
 }
 
-/// 名前付き設定プロファイル（フォント・カラー・シェルを上書きできる）
+/// Named configuration profile that can override font / colors / shell.
 ///
 /// ```toml
 /// [[profiles]]
@@ -32,36 +32,36 @@ impl Default for ApiVersion {
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Profile {
-    /// プロファイル名（一意）
+    /// Profile name (must be unique).
     pub name: String,
-    /// タブ・コンテキストメニューに表示するアイコン（絵文字またはASCII文字）
+    /// Icon displayed in tabs and the context menu (emoji or ASCII).
     #[serde(default)]
     pub icon: String,
-    /// フォント設定（None = Config の font を使用）
+    /// Font configuration (`None` = use `Config.font`).
     #[serde(default)]
     pub font: Option<FontConfig>,
-    /// カラースキーム設定（None = Config の colors を使用）
+    /// Color-scheme configuration (`None` = use `Config.colors`).
     #[serde(default)]
     pub colors: Option<ColorScheme>,
-    /// シェル設定（None = Config の shell を使用）
+    /// Shell configuration (`None` = use `Config.shell`).
     #[serde(default)]
     pub shell: Option<ShellConfig>,
-    /// スクロールバック行数（None = Config の値を使用）
+    /// Scrollback line count (`None` = use `Config`'s value).
     #[serde(default)]
     pub scrollback_lines: Option<usize>,
-    /// タブバー設定（None = Config の tab_bar を使用）
+    /// Tab-bar configuration (`None` = use `Config.tab_bar`).
     #[serde(default)]
     pub tab_bar: Option<TabBarConfig>,
-    /// 起動時の作業ディレクトリ（None = デフォルト）
+    /// Initial working directory (`None` = the default).
     #[serde(default)]
     pub working_dir: Option<String>,
-    /// 追加環境変数（シェル起動時に設定する）
+    /// Extra environment variables to set when launching the shell.
     #[serde(default)]
     pub env: std::collections::HashMap<String, String>,
 }
 
 impl Profile {
-    /// このプロファイルを `base` Config に適用して新しい Config を返す
+    /// Applies this profile to `base` and returns the resulting `Config`.
     pub fn apply_to(&self, base: &super::Config) -> super::Config {
         let mut result = base.clone();
         if let Some(font) = &self.font {
@@ -83,57 +83,61 @@ impl Profile {
     }
 }
 
-/// wgpu の Present Mode 設定
+/// wgpu present-mode configuration.
 ///
-/// Sprint 5-3 / C3: デフォルトを `Fifo` → `Mailbox` に変更。
-/// Mailbox はティアリングなしで Fifo より 1 フレーム分（約 16 ms @60Hz）レイテンシが低い。
-/// 非対応環境（一部の Linux Wayland コンポジタ等）では renderer 側で自動的に Fifo に
-/// フォールバックする（`renderer/mod.rs` の `select_present_mode` 参照）。
+/// Sprint 5-3 / C3: the default changed from `Fifo` to `Mailbox`. Mailbox is
+/// tearing-free and saves roughly one frame of latency over Fifo
+/// (~16 ms at 60 Hz). On environments that do not support it (some Linux
+/// Wayland compositors, etc.) the renderer falls back to Fifo automatically
+/// (see `select_present_mode` in `renderer/mod.rs`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum PresentModeConfig {
-    /// 垂直同期（ティアリングなし、レイテンシ高め）
+    /// Vertical sync (no tearing, but higher latency).
     Fifo,
-    /// 最新フレームのみキュー（低レイテンシ、非対応環境では Fifo にフォールバック）。
-    /// Sprint 5-3 / C3 以降のデフォルト
+    /// Queue only the latest frame (low latency; falls back to Fifo on
+    /// unsupported environments). Default from Sprint 5-3 / C3 onward.
     #[default]
     Mailbox,
-    /// アダプタが最適なモードを自動選択
+    /// Let the adapter pick the best mode.
     Auto,
 }
 
-/// GPU レンダラー設定
+/// GPU renderer configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct GpuConfig {
-    /// 背景矩形用カスタム WGSL シェーダーファイルのパス（省略時はビルトイン使用）
+    /// Path to a custom WGSL shader file for background rectangles (uses the
+    /// built-in shader when omitted).
     ///
-    /// シェーダーは `@vertex fn vs_main` / `@fragment fn fs_main` を実装する必要がある。
-    /// 頂点入力: `position: vec2<f32>`, `color: vec4<f32>`
+    /// The shader must implement `@vertex fn vs_main` / `@fragment fn fs_main`.
+    /// Vertex input: `position: vec2<f32>`, `color: vec4<f32>`.
     ///
-    /// 例: `custom_bg_shader = "~/.config/nexterm/shaders/crt.wgsl"`
+    /// Example: `custom_bg_shader = "~/.config/nexterm/shaders/crt.wgsl"`.
     #[serde(default)]
     pub custom_bg_shader: Option<String>,
 
-    /// テキスト（グリフ）用カスタム WGSL シェーダーファイルのパス
+    /// Path to a custom WGSL shader file for text (glyphs).
     ///
-    /// 頂点入力: `position: vec2<f32>`, `uv: vec2<f32>`, `color: vec4<f32>`
-    /// バインディング: `@group(0) @binding(0)` glyph_texture, `@binding(1)` glyph_sampler
+    /// Vertex input: `position: vec2<f32>`, `uv: vec2<f32>`, `color: vec4<f32>`.
+    /// Bindings: `@group(0) @binding(0)` is `glyph_texture`,
+    /// `@binding(1)` is `glyph_sampler`.
     #[serde(default)]
     pub custom_text_shader: Option<String>,
 
-    /// フレームレート制限（FPS）。0 = 制限なし（デフォルト: 60）
+    /// Frame-rate cap (FPS). 0 = unlimited (default: 60).
     #[serde(default = "default_fps_limit")]
     pub fps_limit: u32,
 
-    /// グリフアトラスのサイズ（ピクセル、正方形）。デフォルト: 2048
-    /// 高DPI や大フォントサイズ使用時は 4096 に増やすと効果的
+    /// Square glyph-atlas size (pixels). Default: 2048.
+    /// Raising it to 4096 helps on high-DPI displays or with very large fonts.
     #[serde(default = "default_atlas_size")]
     pub atlas_size: u32,
 
-    /// wgpu Present Mode 設定。Sprint 5-3 / C3 以降のデフォルト: mailbox（低レイテンシ）
-    /// fifo: 垂直同期（ティアリングなし、レイテンシ高め、約 16 ms @60Hz 増）
-    /// mailbox: 低レイテンシ（非対応環境では fifo にフォールバック）
-    /// auto: アダプタ自動選択
+    /// wgpu present-mode configuration. Default from Sprint 5-3 / C3 onward:
+    /// `mailbox` (low latency).
+    /// `fifo`: vsync — tearing-free but higher latency (+~16 ms at 60 Hz).
+    /// `mailbox`: low latency (falls back to `fifo` on unsupported environments).
+    /// `auto`: the adapter chooses.
     #[serde(default)]
     pub present_mode: PresentModeConfig,
 }

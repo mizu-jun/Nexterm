@@ -1,23 +1,26 @@
-//! ステータスバーウィジェット評価器
+//! Status-bar widget evaluator.
 //!
-//! ウィジェットは以下の 2 種類をサポートする：
+//! Widgets fall into two kinds:
 //!
-//! 1. **ビルトインキーワード** — Rust ネイティブで高速に評価する
-//!    - `"time"` → `HH:MM:SS`
-//!    - `"date"` → `YYYY-MM-DD`
-//!    - `"hostname"` → システムのホスト名
-//!    - `"session"` → 現在のセッション名（IPC から受信した値）
-//!    - `"pane_id"` → フォーカスペインの ID
-//!    - `"cwd"` → フォーカスペインの作業ディレクトリ（OSC 7 が来ていれば。Sprint 5-7 / UI-1-2）
-//!    - `"cwd_short"` → cwd のホームディレクトリを `~` に置換、長すぎる場合は末尾のみ
-//!    - `"git_branch"` → cwd 配下の `.git/HEAD` を読んだブランチ名（無ければ空）
-//!    - `"workspace"` → 現在のワークスペース名（Phase 2-1 後に有効化）
+//! 1. **Built-in keywords** — evaluated quickly in native Rust.
+//!    - `"time"` → `HH:MM:SS`.
+//!    - `"date"` → `YYYY-MM-DD`.
+//!    - `"hostname"` → the system's host name.
+//!    - `"session"` → the current session name (received via IPC).
+//!    - `"pane_id"` → the focused pane's ID.
+//!    - `"cwd"` → the focused pane's working directory (when OSC 7 has been
+//!      received; Sprint 5-7 / UI-1-2).
+//!    - `"cwd_short"` → the cwd with the home directory replaced by `~`,
+//!      truncated from the front when too long.
+//!    - `"git_branch"` → the branch name read from `.git/HEAD` under the cwd
+//!      (empty when none is found).
+//!    - `"workspace"` → the current workspace name (enabled after Phase 2-1).
 //!
-//! 2. **Lua 式** — バックグラウンドスレッドで評価する
-//!    - `'os.date("%H:%M")'` → Lua の `os.date` を実行した結果
-//!    - `'"custom text"'` → 文字列リテラル
+//! 2. **Lua expressions** — evaluated on a background thread.
+//!    - `'os.date("%H:%M")'` → the result of Lua's `os.date`.
+//!    - `'"custom text"'` → a string literal.
 //!
-//! # 設定例（nexterm.lua）
+//! # Example configuration (`nexterm.lua`)
 //!
 //! ```lua
 //! return {
@@ -32,27 +35,28 @@
 use crate::loader::lua_path;
 use crate::lua_worker::LuaWorker;
 
-// ---- ビルトインウィジェット評価 -------------------------------------------
+// ---- Built-in widget evaluation -------------------------------------------
 
-/// 現在のコンテキスト（セッション名・ペイン ID・cwd・ワークスペース）
+/// Current context (session name, pane ID, cwd, workspace).
 ///
-/// `evaluate_builtin` に渡すことで動的なビルトインウィジェットを評価できる。
+/// Pass this into `evaluate_builtin` to evaluate dynamic built-in widgets.
 #[derive(Debug, Clone, Default)]
 pub struct WidgetContext {
-    /// 現在のセッション名
+    /// Current session name.
     pub session_name: Option<String>,
-    /// フォーカス中のペイン ID
+    /// Currently focused pane ID.
     pub pane_id: Option<u32>,
-    /// フォーカス中のペインの作業ディレクトリ（OSC 7 で報告された CWD）。
-    /// `cwd` / `cwd_short` / `git_branch` ウィジェットで利用する（Sprint 5-7 / UI-1-2）。
+    /// Working directory of the focused pane (CWD reported via OSC 7).
+    /// Used by the `cwd` / `cwd_short` / `git_branch` widgets
+    /// (Sprint 5-7 / UI-1-2).
     pub cwd: Option<String>,
-    /// 現在のワークスペース名（Phase 2-1 で導入予定）
+    /// Current workspace name (to be introduced in Phase 2-1).
     pub workspace_name: Option<String>,
 }
 
-/// ビルトインウィジェットキーワードを評価する
+/// Evaluates a built-in widget keyword.
 ///
-/// 未知のキーワード（Lua 式）は `None` を返す。
+/// Returns `None` for an unknown keyword (a Lua expression).
 pub fn evaluate_builtin(keyword: &str, ctx: &WidgetContext) -> Option<String> {
     match keyword {
         "time" => {
@@ -60,7 +64,8 @@ pub fn evaluate_builtin(keyword: &str, ctx: &WidgetContext) -> Option<String> {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default();
             let secs = now.as_secs();
-            // UTC 秒から HH:MM:SS を計算する（libc 不使用のポータブル実装）
+            // Compute HH:MM:SS from the UTC seconds (a portable implementation
+            // that does not use libc).
             let hms = secs % 86400;
             let h = hms / 3600;
             let m = (hms % 3600) / 60;
@@ -71,13 +76,14 @@ pub fn evaluate_builtin(keyword: &str, ctx: &WidgetContext) -> Option<String> {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default();
-            // UTC の日付を計算する（うるう年を正確に処理）
+            // Compute the UTC date (leap years handled correctly).
             let days = now.as_secs() / 86400;
             let (y, mo, d) = days_to_ymd(days);
             Some(format!("{:04}-{:02}-{:02}", y, mo, d))
         }
         "hostname" => {
-            // 環境変数 HOSTNAME を試み、なければ fallback する
+            // Try the `HOSTNAME` environment variable first; fall back to
+            // alternatives otherwise.
             let name = std::env::var("HOSTNAME")
                 .or_else(|_| std::env::var("COMPUTERNAME"))
                 .unwrap_or_else(|_| "localhost".to_string());
@@ -97,14 +103,15 @@ pub fn evaluate_builtin(keyword: &str, ctx: &WidgetContext) -> Option<String> {
         "cwd" => Some(ctx.cwd.clone().unwrap_or_default()),
         "cwd_short" => Some(shorten_cwd(ctx.cwd.as_deref().unwrap_or_default())),
         "git_branch" => Some(read_git_branch(ctx.cwd.as_deref().unwrap_or_default())),
-        _ => None, // Lua 式として扱う
+        _ => None, // treat as a Lua expression
     }
 }
 
-/// cwd をホーム短縮 + 末尾 2 階層に整形する。
+/// Shortens a cwd by collapsing the home directory and keeping only the last
+/// two path components.
 ///
-/// 例: `/home/alice/projects/foo` → `~/projects/foo`
-/// 長すぎる場合は末尾 30 文字程度に省略する。
+/// For example, `/home/alice/projects/foo` becomes `~/projects/foo`. Strings
+/// longer than the threshold are abbreviated to roughly the last 30 characters.
 fn shorten_cwd(path: &str) -> String {
     if path.is_empty() {
         return String::new();
@@ -118,9 +125,9 @@ fn shorten_cwd(path: &str) -> String {
     } else {
         path.to_string()
     };
-    // パス区切りの揺れを統一
+    // Normalize the path-separator style.
     s = s.replace('\\', "/");
-    // 長すぎる場合は末尾のみ
+    // Keep only the tail when the result is too long.
     const MAX: usize = 40;
     if s.chars().count() > MAX {
         let tail: String = s.chars().rev().take(MAX - 1).collect::<String>();
@@ -131,10 +138,12 @@ fn shorten_cwd(path: &str) -> String {
     }
 }
 
-/// 指定された cwd 配下の `.git/HEAD` を読み、現在のブランチ名（または短縮 SHA）を返す。
+/// Reads `.git/HEAD` under the given cwd and returns the current branch name
+/// (or a short SHA).
 ///
-/// 親ディレクトリを再帰的に遡って `.git` を探す。`cwd` が空または .git が見つからなければ
-/// 空文字列を返す（外部プロセスを呼ばないので毎秒の評価でも軽量）。
+/// Walks the parent directories looking for a `.git` directory. Returns an
+/// empty string when `cwd` is empty or no `.git` is found (no external process
+/// is spawned, so this is cheap even when invoked once per second).
 fn read_git_branch(cwd: &str) -> String {
     if cwd.is_empty() {
         return String::new();
@@ -144,11 +153,11 @@ fn read_git_branch(cwd: &str) -> String {
         let head = dir.join(".git").join("HEAD");
         if let Ok(content) = std::fs::read_to_string(&head) {
             let trimmed = content.trim();
-            // `ref: refs/heads/master` のフォーマット
+            // Format `ref: refs/heads/master`.
             if let Some(refpath) = trimmed.strip_prefix("ref: refs/heads/") {
                 return refpath.to_string();
             }
-            // detached HEAD（コミット SHA 直書き）
+            // Detached HEAD (a raw commit SHA).
             if trimmed.len() >= 7 && trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
                 return trimmed.chars().take(7).collect();
             }
@@ -161,9 +170,9 @@ fn read_git_branch(cwd: &str) -> String {
     String::new()
 }
 
-/// エポック日数 (1970-01-01 = 0) を (year, month, day) に変換する
+/// Converts an epoch day count (1970-01-01 = 0) to `(year, month, day)`.
 fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
-    // 400年サイクル = 146097 日
+    // A 400-year cycle is 146097 days.
     let years400 = days / 146097;
     days %= 146097;
     let years100 = (days / 36524).min(3);
@@ -175,7 +184,7 @@ fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
 
     let year = years400 * 400 + years100 * 100 + years4 * 4 + years1 + 1970;
 
-    // 月ごとの日数（うるう年を考慮）
+    // Days per month (accounts for leap years).
     let leap = (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400);
     let month_days: [u64; 12] = [
         31,
@@ -203,20 +212,20 @@ fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
     (year, month, days + 1)
 }
 
-// ---- Lua ステータスバーウィジェット評価器 ----------------------------------
+// ---- Lua status-bar widget evaluator --------------------------------------
 
-/// Lua ウィジェット式を評価してステータスバーテキストを生成する
+/// Evaluates Lua widget expressions and produces the status-bar text.
 ///
-/// 内部の `LuaWorker` がバックグラウンドスレッドで Lua を実行するため、
-/// `evaluate_widgets()` はメインスレッドをブロックしない。
+/// The internal `LuaWorker` runs Lua on a background thread, so
+/// `evaluate_widgets()` never blocks the main thread.
 pub struct StatusBarEvaluator {
     worker: LuaWorker,
 }
 
 impl StatusBarEvaluator {
-    /// 評価器を生成する（nexterm.lua が存在すれば読み込む）
+    /// Creates the evaluator (loads `nexterm.lua` if it exists).
     ///
-    /// Lua 読み込みエラーは警告ログのみで、パニックしない。
+    /// Lua-load errors only produce a warning log; they never panic.
     pub fn new() -> Self {
         let path = lua_path();
         let lua_script_path = if path.exists() { Some(path) } else { None };
@@ -225,16 +234,17 @@ impl StatusBarEvaluator {
         }
     }
 
-    /// ウィジェットリストを評価して区切り文字で連結した文字列を返す
+    /// Evaluates the widget list and returns the result concatenated with the
+    /// separator.
     ///
-    /// - ビルトインキーワードはネイティブで評価する（ブロックなし）
-    /// - Lua 式はバックグラウンドスレッドで評価する（ブロックなし）
-    /// - 各式の評価エラーは空文字列で置換する
+    /// - Built-in keywords are evaluated natively (non-blocking).
+    /// - Lua expressions are evaluated on a background thread (non-blocking).
+    /// - Each expression's evaluation errors are replaced with empty strings.
     pub fn evaluate_widgets(&self, widgets: &[String]) -> String {
         self.evaluate_with_context(widgets, &WidgetContext::default(), "  ")
     }
 
-    /// コンテキストと区切り文字を指定して評価する
+    /// Evaluates the widget list with a specified context and separator.
     pub fn evaluate_with_context(
         &self,
         widgets: &[String],
@@ -245,7 +255,7 @@ impl StatusBarEvaluator {
             return String::new();
         }
 
-        // ビルトインキーワードと Lua 式を分離する
+        // Separate built-in keywords from Lua expressions.
         let mut lua_exprs: Vec<String> = Vec::new();
         let mut has_lua = false;
         for w in widgets {
@@ -255,12 +265,12 @@ impl StatusBarEvaluator {
             }
         }
 
-        // Lua 式をバックグラウンドで評価する（キャッシュ更新のみ）
+        // Evaluate the Lua expressions in the background (the cache is updated).
         if has_lua {
             self.worker.eval_widgets(&lua_exprs);
         }
 
-        // 結果を構築する
+        // Build the result.
         let mut parts: Vec<String> = Vec::with_capacity(widgets.len());
         let mut lua_idx = 0usize;
         for w in widgets {
@@ -269,24 +279,30 @@ impl StatusBarEvaluator {
                     parts.push(builtin);
                 }
             } else {
-                // Lua 式のキャッシュ済み結果を取得する（lua_idx 番目）
+                // Fetch the cached result for Lua expression number `lua_idx`.
                 let result = self.worker.eval_widgets(&lua_exprs);
-                // eval_widgets は全式を連結して返すが、個別取得が必要なので
-                // worker から個別に取得できるようにする（既存 API の制約で全体を取得）
-                // 簡単化のため全 Lua 式を連結した値を使う
+                // `eval_widgets` returns the joined value of every expression,
+                // but we need per-expression results, so this should ideally
+                // be fetched individually from the worker (the existing API
+                // only returns the joined output).
+                // For simplicity, fall back to the joined output of every
+                // Lua expression.
                 let _ = lua_idx;
                 let _ = result;
                 lua_idx += 1;
             }
         }
 
-        // Lua 式が単独の場合は worker の出力をそのまま使う
+        // When there is exactly one widget and it is a Lua expression, use
+        // the worker's output directly.
         if widgets.len() == 1 && has_lua {
             return self.worker.eval_widgets(widgets);
         }
 
-        // 混在の場合: ビルトイン部分のみを繋いで Lua 部分を末尾に付加する
-        // TODO: ウィジェット個別の Lua 評価（現 API では全体連結のみ対応）
+        // Mixed case: join the built-in parts and append the Lua part at the
+        // end.
+        // TODO: per-widget Lua evaluation (the current API only supports the
+        // joined output).
         let lua_part = if has_lua {
             self.worker.eval_widgets(&lua_exprs)
         } else {
@@ -308,31 +324,31 @@ impl Default for StatusBarEvaluator {
     }
 }
 
-// ---- テスト ---------------------------------------------------------------
+// ---- Tests ----------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Duration;
 
-    /// バックグラウンドスレッドの評価完了を待つ
+    /// Waits for the background evaluation to complete.
     fn wait_for_eval() {
         std::thread::sleep(Duration::from_millis(150));
     }
 
     #[test]
-    fn lua式を評価できる() {
+    fn lua_expression_can_be_evaluated() {
         let eval = StatusBarEvaluator::new();
-        // 最初の呼び出しでリクエストを送信する
+        // The first call sends a request.
         eval.evaluate_widgets(&["\"hello\"".to_string()]);
         wait_for_eval();
-        // バックグラウンド評価完了後にキャッシュから結果を取得する
+        // After the background evaluation finishes, fetch the cached result.
         let result = eval.evaluate_widgets(&["\"hello\"".to_string()]);
         assert_eq!(result, "hello");
     }
 
     #[test]
-    fn 複数ウィジェットをスペース区切りで連結する() {
+    fn multiple_widgets_are_joined_with_spaces() {
         let eval = StatusBarEvaluator::new();
         eval.evaluate_widgets(&["\"foo\"".to_string(), "\"bar\"".to_string()]);
         wait_for_eval();
@@ -341,18 +357,18 @@ mod tests {
     }
 
     #[test]
-    fn 評価エラーは空文字列に置換される() {
+    fn evaluation_errors_become_empty_strings() {
         let eval = StatusBarEvaluator::new();
-        // 存在しない変数を参照するとエラーになる
+        // Referencing an undefined variable triggers an error.
         eval.evaluate_widgets(&["undefined_variable_xyz".to_string()]);
         wait_for_eval();
         let result = eval.evaluate_widgets(&["undefined_variable_xyz".to_string()]);
-        // エラーでも空文字列が返りパニックしないことを確認する
+        // Even on error, the function returns an empty string and does not panic.
         assert_eq!(result, "");
     }
 
     #[test]
-    fn 空リストは空文字列を返す() {
+    fn empty_list_returns_empty_string() {
         let eval = StatusBarEvaluator::new();
         eval.evaluate_widgets(&[]);
         wait_for_eval();
@@ -361,34 +377,34 @@ mod tests {
     }
 
     #[test]
-    fn ビルトインtime_はhh_mm_ss形式を返す() {
+    fn builtin_time_returns_hh_mm_ss_format() {
         let ctx = WidgetContext::default();
         let result = evaluate_builtin("time", &ctx).unwrap();
-        // HH:MM:SS 形式であること
+        // Must be HH:MM:SS.
         assert_eq!(result.len(), 8);
         assert_eq!(&result[2..3], ":");
         assert_eq!(&result[5..6], ":");
     }
 
     #[test]
-    fn ビルトインdate_はyyyy_mm_dd形式を返す() {
+    fn builtin_date_returns_yyyy_mm_dd_format() {
         let ctx = WidgetContext::default();
         let result = evaluate_builtin("date", &ctx).unwrap();
-        // YYYY-MM-DD 形式であること
+        // Must be YYYY-MM-DD.
         assert_eq!(result.len(), 10);
         assert_eq!(&result[4..5], "-");
         assert_eq!(&result[7..8], "-");
     }
 
     #[test]
-    fn ビルトインhostname_は空でない文字列を返す() {
+    fn builtin_hostname_returns_a_non_empty_string() {
         let ctx = WidgetContext::default();
         let result = evaluate_builtin("hostname", &ctx).unwrap();
         assert!(!result.is_empty());
     }
 
     #[test]
-    fn ビルトインsession_はコンテキストのセッション名を返す() {
+    fn builtin_session_returns_the_session_name_from_context() {
         let ctx = WidgetContext {
             session_name: Some("my-session".to_string()),
             ..Default::default()
@@ -397,7 +413,7 @@ mod tests {
     }
 
     #[test]
-    fn ビルトインpane_id_はフォーカスペイン番号を返す() {
+    fn builtin_pane_id_returns_the_focused_pane_number() {
         let ctx = WidgetContext {
             pane_id: Some(42),
             ..Default::default()
@@ -406,13 +422,13 @@ mod tests {
     }
 
     #[test]
-    fn 未知キーワードはnoneを返す() {
+    fn unknown_keywords_return_none() {
         let ctx = WidgetContext::default();
         assert!(evaluate_builtin("unknown_widget", &ctx).is_none());
     }
 
     #[test]
-    fn ビルトインcwd_はコンテキストのcwdを返す() {
+    fn builtin_cwd_returns_the_cwd_from_context() {
         let ctx = WidgetContext {
             cwd: Some("/tmp/foo".to_string()),
             ..Default::default()
@@ -421,8 +437,8 @@ mod tests {
     }
 
     #[test]
-    fn ビルトインcwd_short_はホーム短縮形を返す() {
-        // HOME を一時的に上書きしてテスト独立性を保つ
+    fn builtin_cwd_short_returns_the_home_abbreviated_form() {
+        // Override HOME temporarily to keep the test independent.
         unsafe {
             std::env::set_var("HOME", "/home/alice");
         }
@@ -437,7 +453,7 @@ mod tests {
     }
 
     #[test]
-    fn ビルトインworkspace_は名前を返す() {
+    fn builtin_workspace_returns_the_workspace_name() {
         let ctx = WidgetContext {
             workspace_name: Some("work".to_string()),
             ..Default::default()
@@ -446,7 +462,7 @@ mod tests {
     }
 
     #[test]
-    fn ビルトインgit_branch_はgit外なら空を返す() {
+    fn builtin_git_branch_returns_empty_outside_a_git_repo() {
         let ctx = WidgetContext {
             cwd: Some("/nonexistent_path_for_test_xyz123".to_string()),
             ..Default::default()
@@ -461,7 +477,7 @@ mod tests {
 
     #[test]
     fn days_to_ymd_known_date() {
-        // 2024-01-01 = 1970-01-01 から 19723 日後
+        // 2024-01-01 is 19723 days after 1970-01-01.
         let (y, m, d) = days_to_ymd(19723);
         assert_eq!(y, 2024);
         assert_eq!(m, 1);

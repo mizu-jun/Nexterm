@@ -1,4 +1,4 @@
-//! 設定ファイルのホットリロード監視
+//! Hot-reload watcher for configuration files.
 
 use anyhow::Result;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
@@ -8,44 +8,45 @@ use tracing::{info, warn};
 use crate::loader::{ConfigLoader, config_dir};
 use crate::schema::Config;
 
-/// 設定変更通知チャネルの受信端
+/// Receiver end of the config-change notification channel.
 pub type ConfigRx = mpsc::Receiver<Config>;
 
-/// 設定ファイルの変更を監視して新しい Config を送信するウォッチャーを起動する
+/// Starts a watcher that detects configuration-file changes and sends a fresh
+/// `Config` over the channel.
 ///
-/// 戻り値の `_watcher` は Drop されるまで監視を継続する。
-/// 必ず変数にバインドして保持すること。
+/// The returned `_watcher` keeps watching until it is dropped. The caller must
+/// bind it to a variable to keep it alive.
 pub fn watch_config(tx: mpsc::Sender<Config>) -> Result<RecommendedWatcher> {
     let tx_clone = tx.clone();
 
     let mut watcher = notify::recommended_watcher(move |result: notify::Result<Event>| {
         match result {
             Ok(event) => {
-                // 書き込み・作成・削除イベントで再ロード
+                // Reload on write / create / delete events.
                 use notify::EventKind::*;
                 if matches!(event.kind, Modify(_) | Create(_) | Remove(_)) {
-                    info!("設定ファイルの変更を検知しました。再ロードします。");
+                    info!("Detected a configuration-file change. Reloading.");
                     match ConfigLoader::load() {
                         Ok(new_config) => {
                             let _ = tx_clone.blocking_send(new_config);
                         }
                         Err(e) => {
-                            warn!("設定の再ロードに失敗しました: {}", e);
+                            warn!("Failed to reload the configuration: {}", e);
                         }
                     }
                 }
             }
-            Err(e) => warn!("ファイル監視エラー: {}", e),
+            Err(e) => warn!("File-watcher error: {}", e),
         }
     })?;
 
     let dir = config_dir();
     if dir.exists() {
         watcher.watch(&dir, RecursiveMode::NonRecursive)?;
-        info!("設定ディレクトリを監視中: {}", dir.display());
+        info!("Watching the configuration directory: {}", dir.display());
     } else {
         warn!(
-            "設定ディレクトリが存在しません。監視を開始できません: {}",
+            "The configuration directory does not exist; cannot start watching: {}",
             dir.display()
         );
     }
@@ -58,11 +59,12 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn ウォッチャーが起動できる() {
+    async fn watcher_can_be_started() {
         let (tx, _rx) = mpsc::channel::<Config>(1);
-        // 設定ディレクトリが存在しない場合は警告のみで Ok が返る
+        // When the configuration directory is missing, the function logs a
+        // warning and still returns `Ok`.
         let result = watch_config(tx);
-        // エラーでないことを確認（ディレクトリ不在でも panic しない）
-        assert!(result.is_ok() || result.is_err()); // どちらでも panic しなければ OK
+        // Confirm that it does not panic regardless of which variant is returned.
+        assert!(result.is_ok() || result.is_err());
     }
 }

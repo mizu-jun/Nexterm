@@ -1,26 +1,26 @@
-//! ログ・ステータスバーなど観測まわりの設定
+//! Observability-related configuration (logging, status bar, etc.).
 
 use serde::{Deserialize, Serialize};
 
-/// ステータスバー設定
+/// Status-bar configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StatusBarConfig {
-    /// ステータスバーを表示するか
+    /// Whether to show the status bar.
     pub enabled: bool,
-    /// 左側に表示するウィジェット（ビルトインキーワードまたは Lua 式）
+    /// Widgets displayed on the left (a built-in keyword or a Lua expression).
     ///
-    /// ビルトインキーワード: "time", "date", "hostname", "session", "pane_id"
-    /// それ以外は Lua 式として評価される
+    /// Built-in keywords: `"time"`, `"date"`, `"hostname"`, `"session"`,
+    /// `"pane_id"`. Anything else is evaluated as a Lua expression.
     #[serde(default)]
     pub widgets: Vec<String>,
-    /// 右側に表示するウィジェット
+    /// Widgets displayed on the right.
     #[serde(default)]
     pub right_widgets: Vec<String>,
-    /// ステータスバーの背景色（RRGGBB 形式、省略時はデフォルト）
+    /// Background color of the status bar (`RRGGBB`; uses the default when omitted).
     #[serde(default)]
     pub background_color: Option<String>,
-    /// ウィジェット区切り文字（デフォルト: "  "）
+    /// Widget separator (default: `"  "`).
     #[serde(default = "default_widget_separator")]
     pub separator: String,
 }
@@ -41,31 +41,31 @@ impl Default for StatusBarConfig {
     }
 }
 
-/// ログ設定
+/// Logging configuration.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Default)]
 pub struct LogConfig {
-    /// 自動ログ有効化
+    /// Enables automatic logging.
     #[serde(default)]
     pub auto_log: bool,
-    /// ログ保存ディレクトリ
+    /// Directory where logs are stored.
     pub log_dir: Option<String>,
-    /// タイムスタンプ付きログ
+    /// Prefixes each log line with a timestamp.
     #[serde(default)]
     pub timestamp: bool,
-    /// ANSI エスケープ除去
+    /// Strips ANSI escape sequences from the log.
     #[serde(default)]
     pub strip_ansi: bool,
-    /// ログファイル名テンプレート
+    /// Log file-name template.
     ///
-    /// 利用可能なプレースホルダー:
-    ///   {session}  — セッション名
-    ///   {pane}     — ペイン ID
-    ///   {datetime} — 起動時刻 (YYYYMMDD_HHMMSS)
+    /// Available placeholders:
+    ///   `{session}`  — session name
+    ///   `{pane}`     — pane ID
+    ///   `{datetime}` — start time (`YYYYMMDD_HHMMSS`)
     ///
-    /// 例: "{session}_{pane}_{datetime}.log"
-    /// デフォルト: None（ディレクトリ + 固定名）
+    /// Example: `"{session}_{pane}_{datetime}.log"`.
+    /// Default: `None` (directory + a fixed file name).
     pub file_name_template: Option<String>,
-    /// raw PTY バイト列をバイナリファイル (.bin) にも保存するか
+    /// Whether to also write raw PTY bytes to a binary file (`.bin`).
     #[serde(default)]
     pub binary_log: bool,
 }

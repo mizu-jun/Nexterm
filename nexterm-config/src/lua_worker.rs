@@ -1,17 +1,19 @@
-//! Lua 評価ワーカー — 専用 OS スレッドで Lua を実行する
+//! Lua evaluation worker — runs Lua on a dedicated OS thread.
 //!
-//! # 背景
+//! # Background
 //!
-//! `mlua::Lua` は `!Send + !Sync` のため tokio スレッドプールに渡せない。
-//! winit イベントループ（メインスレッド）で同期的に Lua を評価すると、
-//! 複雑なスクリプトが UI をブロックするリスクがある。
+//! `mlua::Lua` is `!Send + !Sync`, so it cannot be handed to a tokio
+//! thread pool. Evaluating Lua synchronously on the winit event loop (the
+//! main thread) risks blocking the UI when a script is complex.
 //!
-//! # 設計
+//! # Design
 //!
-//! - `std::thread::spawn` で専用の Lua ワーカースレッドを起動する
-//! - ワーカーは `sync_channel(1)` でリクエストを受信して評価し、結果をキャッシュに書き込む
-//! - `eval_widgets()` はキャッシュを即座に返す（ブロックしない）
-//! - チャネルが満杯の場合（ワーカーが評価中）はリクエストを破棄し、前回キャッシュを返す
+//! - Spawn a dedicated Lua worker thread via `std::thread::spawn`.
+//! - The worker receives requests through a `sync_channel(1)`, evaluates
+//!   them, and writes the result into a cache.
+//! - `eval_widgets()` returns from the cache immediately (it never blocks).
+//! - When the channel is full (because the worker is busy), the request is
+//!   dropped and the previously cached value is returned.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -21,42 +23,50 @@ use mlua::prelude::*;
 use mlua::{HookTriggers, VmState};
 use tracing::{error, warn};
 
-/// ワーカースレッドへの評価リクエスト
+/// Evaluation request sent to the worker thread.
 struct LuaRequest {
     widgets: Vec<String>,
 }
 
-/// バックグラウンドスレッドで Lua を評価するワーカー
+/// Worker that evaluates Lua on a background thread.
 ///
-/// `Lua` インスタンスは専用スレッド上にのみ存在する（`!Send` の制約を満たす）。
-/// メインスレッドは `eval_widgets()` でキャッシュを即座に取得できる。
+/// The `Lua` instance lives exclusively on that worker thread (which keeps
+/// it within the `!Send` constraint). The main thread can fetch the cached
+/// result immediately via `eval_widgets()`.
 pub struct LuaWorker {
-    /// 最新評価結果のキャッシュ（ワーカースレッドが更新する）
+    /// Cache of the latest evaluation result (updated by the worker thread).
     cache: Arc<Mutex<String>>,
-    /// 評価リクエスト送信チャネル（容量 1: 満杯時は try_send が Err を返す）
+    /// Send channel for evaluation requests (capacity 1: when full,
+    /// `try_send` returns `Err`).
     request_tx: std::sync::mpsc::SyncSender<LuaRequest>,
 }
 
+/// Sentinel string used to recognize the timeout error inside the worker.
+const LUA_TIMEOUT_MARKER: &str = "Lua evaluation timed out";
+
 impl LuaWorker {
-    /// ワーカースレッドを起動する
+    /// Starts the worker thread.
     ///
-    /// `lua_script_path` が `Some` の場合、そのスクリプトをワーカー起動時に実行する。
+    /// When `lua_script_path` is `Some`, that script is executed once at
+    /// worker startup.
     pub fn new(lua_script_path: Option<PathBuf>) -> Self {
         let cache = Arc::new(Mutex::new(String::new()));
         let cache_clone = Arc::clone(&cache);
 
-        // 容量 1 のチャネル: ワーカーが評価中のとき try_send は即座に Err を返す
+        // Capacity-1 channel: when the worker is busy, `try_send` returns
+        // `Err` immediately.
         let (tx, rx) = std::sync::mpsc::sync_channel::<LuaRequest>(1);
 
         std::thread::Builder::new()
             .name("nexterm-lua-worker".to_string())
             .spawn(move || {
-                // Lua インスタンスをこのスレッド内で生成する（!Send のため move 不可）
-                // CRITICAL #4: サンドボックス化された Lua を使用（os/io/package 無効）
+                // The Lua instance has to be created on this thread (it is
+                // `!Send`, so it cannot be moved in from outside).
+                // CRITICAL #4: use the sandboxed Lua (os/io/package disabled).
                 let lua = match crate::lua_sandbox::sandboxed_lua() {
                     Ok(l) => l,
                     Err(e) => {
-                        warn!("Lua ワーカー: サンドボックス Lua 初期化失敗: {}", e);
+                        warn!("Lua worker: failed to initialize the sandboxed Lua: {}", e);
                         return;
                     }
                 };
@@ -67,24 +77,25 @@ impl LuaWorker {
                     match std::fs::read_to_string(&path) {
                         Ok(script) => {
                             if let Err(e) = lua.load(&script).exec() {
-                                warn!("Lua ワーカー: スクリプト読み込みエラー: {}", e);
+                                warn!("Lua worker: error loading the script: {}", e);
                             }
                         }
-                        Err(e) => warn!("Lua ワーカー: ファイル読み込みエラー: {}", e),
+                        Err(e) => warn!("Lua worker: error reading the file: {}", e),
                     }
                 }
 
-                // リクエストを順番に処理する（チャネルが閉じられたら終了）
+                // Process requests in order. Exit when the channel closes.
                 while let Ok(req) = rx.recv() {
-                    // 評価タイムアウト: 100ms を超えたら中断する
+                    // Evaluation timeout: abort after 100 ms.
                     let deadline = Instant::now() + Duration::from_millis(100);
                     lua.set_hook(
                         HookTriggers::new().every_nth_instruction(500),
                         move |_lua, _debug| {
                             if Instant::now() > deadline {
-                                Err(LuaError::RuntimeError(
-                                    "Lua 評価タイムアウト (100ms)".to_string(),
-                                ))
+                                Err(LuaError::RuntimeError(format!(
+                                    "{} (100ms)",
+                                    LUA_TIMEOUT_MARKER
+                                )))
                             } else {
                                 Ok(VmState::Continue)
                             }
@@ -97,13 +108,13 @@ impl LuaWorker {
                         .map(|expr| match lua.load(expr.as_str()).eval::<String>() {
                             Ok(s) => s,
                             Err(LuaError::RuntimeError(ref msg))
-                                if msg.contains("タイムアウト") =>
+                                if msg.contains(LUA_TIMEOUT_MARKER) =>
                             {
-                                warn!("Lua 評価タイムアウト: {}", expr);
+                                warn!("Lua evaluation timed out: {}", expr);
                                 String::new()
                             }
                             Err(e) => {
-                                error!("Lua 評価エラー: {}", e);
+                                error!("Lua evaluation error: {}", e);
                                 String::new()
                             }
                         })
@@ -118,7 +129,7 @@ impl LuaWorker {
                     }
                 }
             })
-            .expect("Lua ワーカースレッドの起動に失敗");
+            .expect("failed to start the Lua worker thread");
 
         Self {
             cache,
@@ -126,13 +137,16 @@ impl LuaWorker {
         }
     }
 
-    /// ウィジェット式の評価をリクエストし、キャッシュ済み結果を返す
+    /// Requests evaluation of the widget expressions and returns the cached result.
     ///
-    /// - バックグラウンドスレッドへリクエストを送信してから即座に返す
-    /// - ワーカーが評価中の場合、リクエストは破棄されて前回の結果を返す
-    /// - 初回呼び出しは空文字列を返す（次フレームから結果が表示される）
+    /// - The request is sent to the background thread and `eval_widgets`
+    ///   returns immediately.
+    /// - When the worker is busy, the request is dropped and the previously
+    ///   cached result is returned.
+    /// - The first call returns an empty string; the result becomes visible
+    ///   from the next frame onward.
     pub fn eval_widgets(&self, widgets: &[String]) -> String {
-        // try_send: チャネル満杯なら破棄（ブロックしない）
+        // `try_send`: drop the request when the channel is full (no blocking).
         let _ = self.request_tx.try_send(LuaRequest {
             widgets: widgets.to_vec(),
         });

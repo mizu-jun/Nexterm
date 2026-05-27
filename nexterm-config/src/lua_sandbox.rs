@@ -1,43 +1,45 @@
-//! Lua サンドボックス — config.lua / Lua フック / マクロの実行制限
+//! Lua sandbox — execution restrictions for `config.lua`, Lua hooks, and macros.
 //!
-//! # CRITICAL #4 対応
+//! # CRITICAL #4 mitigation
 //!
-//! mlua の `Lua::new()` は標準ライブラリ全開（os / io / package 等）でインスタンスを
-//! 生成する。これにより、信頼できない `config.lua`（dotfiles 共有・チームテンプレ等）
-//! をクローンしただけで `os.execute("rm -rf ~")` や `io.open("/etc/passwd")` が
-//! 実行されるリモートコード実行（RCE）相当の脆弱性が存在した。
+//! mlua's `Lua::new()` returns an instance with every standard library enabled
+//! (`os`, `io`, `package`, …). That made the simple act of cloning an
+//! untrusted `config.lua` (shared dotfiles, team templates, etc.) effectively
+//! equivalent to remote code execution: `os.execute("rm -rf ~")` and
+//! `io.open("/etc/passwd")` could be run automatically.
 //!
-//! 本モジュールは安全なサブセットのみを公開する `Lua` インスタンスを生成する:
-//! - 許可: `string`, `table`, `math`, `coroutine`, `print`（warn として記録）
-//! - 削除: `os`（time/date/clock を除く）, `io`, `package`, `require`, `dofile`,
-//!   `loadfile`, `load`, `loadstring`, `debug`, `collectgarbage`
+//! This module produces a `Lua` instance that only exposes the safe subset:
+//! - Allowed: `string`, `table`, `math`, `coroutine`, `print` (logged as a warning).
+//! - Removed: `os` (except `time`/`date`/`clock`), `io`, `package`, `require`,
+//!   `dofile`, `loadfile`, `load`, `loadstring`, `debug`, `collectgarbage`.
 //!
-//! # 互換性破壊
+//! # Breaking change
 //!
-//! 既存の `config.lua` で `os.date()` 以外の `os.*` や `io.*` を使っていると失敗する。
-//! Migration ドキュメントに代替 API（将来追加予定の `nexterm.*` 名前空間）を記載すること。
+//! Existing `config.lua` files that use anything other than `os.date()` from
+//! `os.*`, or anything from `io.*`, will fail. Document the replacement APIs
+//! (a forthcoming `nexterm.*` namespace) in the migration guide.
 
 use mlua::{Lua, LuaOptions, StdLib};
 
-/// サンドボックス化された `Lua` インスタンスを生成する。
+/// Creates a sandboxed `Lua` instance.
 ///
-/// 標準ライブラリは `STRING | TABLE | MATH | COROUTINE` のみ有効化し、
-/// 残りの危険なグローバル（`os` / `io` / `package` / `require` / `dofile` /
-/// `loadfile` / `load` / `loadstring` / `debug` / `collectgarbage`）を
-/// 明示的に削除する。
+/// Only `STRING | TABLE | MATH | COROUTINE` from the standard library is
+/// enabled, and the remaining dangerous globals (`os` / `io` / `package` /
+/// `require` / `dofile` / `loadfile` / `load` / `loadstring` / `debug` /
+/// `collectgarbage`) are explicitly removed.
 ///
-/// # 戻り値
+/// # Returns
 ///
-/// サンドボックス化された `Lua`、または初期化失敗時のエラー。
+/// The sandboxed `Lua`, or an error if initialization fails.
 pub fn sandboxed_lua() -> mlua::Result<Lua> {
-    // 安全なライブラリのみロード（os / io / package / debug を除外）
+    // Load only the safe libraries (excluding `os` / `io` / `package` / `debug`).
     let lua = Lua::new_with(
         StdLib::STRING | StdLib::TABLE | StdLib::MATH | StdLib::COROUTINE,
         LuaOptions::default(),
     )?;
 
-    // 念のため、インポートされた場合に備えて危険なグローバルを削除する
-    // （StdLib フラグで除外されているはずだが、防御の深さとして二重ガード）
+    // Remove dangerous globals just in case (the `StdLib` flags should have
+    // excluded them already, but this provides defense in depth).
     let globals = lua.globals();
     for name in &[
         "os",
@@ -57,7 +59,7 @@ pub fn sandboxed_lua() -> mlua::Result<Lua> {
         "setfenv",
         "getfenv",
     ] {
-        // エラーは無視: もともと存在しない場合がある
+        // Ignore errors: the global may not exist in the first place.
         let _ = globals.set(*name, mlua::Nil);
     }
 
@@ -69,14 +71,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn 安全な_lua_は基本演算ができる() {
+    fn sandboxed_lua_can_evaluate_basic_expressions() {
         let lua = sandboxed_lua().unwrap();
         let result: i32 = lua.load("return 1 + 2").eval().unwrap();
         assert_eq!(result, 3);
     }
 
     #[test]
-    fn 安全な_lua_は_string_テーブル_数学が使える() {
+    fn sandboxed_lua_can_use_string_table_and_math() {
         let lua = sandboxed_lua().unwrap();
         let result: String = lua
             .load(r#"return string.upper("hello") .. " " .. tostring(math.floor(3.7))"#)
@@ -86,49 +88,49 @@ mod tests {
     }
 
     #[test]
-    fn 安全な_lua_は_os_execute_を使えない() {
-        // CRITICAL #4 核心テスト: os.execute による RCE が成立しないことを保証
+    fn sandboxed_lua_cannot_use_os_execute() {
+        // CRITICAL #4 core test: ensures `os.execute` cannot be used to gain RCE.
         let lua = sandboxed_lua().unwrap();
         let result: mlua::Result<()> = lua.load(r#"os.execute("echo PWNED")"#).eval();
         assert!(
             result.is_err(),
-            "os.execute が呼べてしまっている。サンドボックス失敗"
+            "os.execute is reachable; the sandbox failed"
         );
     }
 
     #[test]
-    fn 安全な_lua_は_io_open_を使えない() {
+    fn sandboxed_lua_cannot_use_io_open() {
         let lua = sandboxed_lua().unwrap();
         let result: mlua::Result<()> = lua.load(r#"io.open("/etc/passwd", "r")"#).eval();
-        assert!(result.is_err(), "io.open が呼べてしまっている");
+        assert!(result.is_err(), "io.open is reachable");
     }
 
     #[test]
-    fn 安全な_lua_は_require_を使えない() {
+    fn sandboxed_lua_cannot_use_require() {
         let lua = sandboxed_lua().unwrap();
         let result: mlua::Result<()> = lua.load(r#"require("os")"#).eval();
-        assert!(result.is_err(), "require が呼べてしまっている");
+        assert!(result.is_err(), "require is reachable");
     }
 
     #[test]
-    fn 安全な_lua_は_dofile_loadfile_を使えない() {
+    fn sandboxed_lua_cannot_use_dofile_or_loadfile() {
         let lua = sandboxed_lua().unwrap();
         let r1: mlua::Result<()> = lua.load(r#"dofile("/tmp/x.lua")"#).eval();
-        assert!(r1.is_err(), "dofile が呼べてしまっている");
+        assert!(r1.is_err(), "dofile is reachable");
 
         let r2: mlua::Result<()> = lua.load(r#"loadfile("/tmp/x.lua")"#).eval();
-        assert!(r2.is_err(), "loadfile が呼べてしまっている");
+        assert!(r2.is_err(), "loadfile is reachable");
     }
 
     #[test]
-    fn 安全な_lua_は_debug_ライブラリを使えない() {
+    fn sandboxed_lua_cannot_use_the_debug_library() {
         let lua = sandboxed_lua().unwrap();
         let result: mlua::Result<()> = lua.load(r#"debug.getregistry()"#).eval();
-        assert!(result.is_err(), "debug ライブラリが使えてしまっている");
+        assert!(result.is_err(), "the debug library is reachable");
     }
 
     #[test]
-    fn 安全な_lua_でも_テーブル操作は通常通り使える() {
+    fn sandboxed_lua_still_supports_normal_table_operations() {
         let lua = sandboxed_lua().unwrap();
         let result: i32 = lua
             .load(

@@ -1,11 +1,11 @@
 #![warn(missing_docs)]
-//! nexterm-config — Lua + TOML 2層設定システム
+//! nexterm-config — two-layer Lua + TOML configuration system.
 //!
-//! ロード順序:
-//!   1. ビルトインデフォルト値
-//!   2. ~/.config/nexterm/nexterm.toml を読み込み
-//!   3. ~/.config/nexterm/nexterm.lua が存在すれば実行してマージ
-//!   4. ファイル変更監視 → ホットリロード
+//! Load order:
+//!   1. Built-in defaults.
+//!   2. Read `~/.config/nexterm/nexterm.toml`.
+//!   3. If `~/.config/nexterm/nexterm.lua` exists, run it and merge the result.
+//!   4. Watch the files for changes → hot reload.
 
 pub mod defaults;
 pub mod keyring;
