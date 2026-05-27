@@ -1,482 +1,494 @@
-//! IPC メッセージ型定義
+//! IPC message type definitions.
 //!
-//! クライアント → サーバー、サーバー → クライアントの両方向メッセージを定義する。
+//! Covers messages for both directions: client → server and server → client.
 
 use serde::{Deserialize, Serialize};
 
 use crate::{DirtyRow, Grid};
 
-/// キー修飾キーのビットフラグ
+/// Bit flags for keyboard modifier keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Modifiers(pub u8);
 
 impl Modifiers {
-    /// Shift キーのビットマスク
+    /// Bit mask for the Shift key.
     pub const SHIFT: u8 = 0b0001;
-    /// Ctrl キーのビットマスク
+    /// Bit mask for the Ctrl key.
     pub const CTRL: u8 = 0b0010;
-    /// Alt / Option キーのビットマスク
+    /// Bit mask for the Alt / Option key.
     pub const ALT: u8 = 0b0100;
-    /// Meta / Super / Windows キーのビットマスク
+    /// Bit mask for the Meta / Super / Windows key.
     pub const META: u8 = 0b1000;
 
-    /// Ctrl キーが押されているか確認する
+    /// Returns whether the Ctrl key is held.
     pub fn is_ctrl(self) -> bool {
         self.0 & Self::CTRL != 0
     }
-    /// Shift キーが押されているか確認する
+    /// Returns whether the Shift key is held.
     pub fn is_shift(self) -> bool {
         self.0 & Self::SHIFT != 0
     }
 }
 
-/// キーイベント
+/// A key event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum KeyCode {
-    /// 通常文字
+    /// A regular character.
     Char(char),
-    /// ファンクションキー F1〜F12
+    /// Function keys F1..=F12.
     F(u8),
-    /// Enter / Return キー
+    /// Enter / Return.
     Enter,
-    /// Backspace キー
+    /// Backspace.
     Backspace,
-    /// Delete キー
+    /// Delete.
     Delete,
-    /// Escape キー
+    /// Escape.
     Escape,
-    /// Tab キー
+    /// Tab.
     Tab,
-    /// Shift+Tab（逆方向タブ）
+    /// Shift+Tab (reverse tab).
     BackTab,
-    /// 上矢印キー
+    /// Up arrow.
     Up,
-    /// 下矢印キー
+    /// Down arrow.
     Down,
-    /// 左矢印キー
+    /// Left arrow.
     Left,
-    /// 右矢印キー
+    /// Right arrow.
     Right,
-    /// Home キー
+    /// Home.
     Home,
-    /// End キー
+    /// End.
     End,
-    /// Page Up キー
+    /// Page Up.
     PageUp,
-    /// Page Down キー
+    /// Page Down.
     PageDown,
-    /// Insert キー
+    /// Insert.
     Insert,
 }
 
-/// クライアント → サーバー メッセージ
+/// Client → server messages.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ClientToServer {
-    /// キー入力イベント
+    /// Key input event.
     KeyEvent {
-        /// 押されたキー
+        /// The key that was pressed.
         code: KeyCode,
-        /// 同時に押された修飾キー
+        /// Modifier keys held at the same time.
         modifiers: Modifiers,
     },
-    /// 端末サイズ変更
+    /// Terminal resize.
     Resize {
-        /// 新しい列数
+        /// New column count.
         cols: u16,
-        /// 新しい行数
+        /// New row count.
         rows: u16,
     },
-    /// セッションからデタッチ（クライアント終了）
+    /// Detach from the session (client is exiting).
     Detach,
-    /// セッション名を指定してアタッチ
+    /// Attach to a session by name.
     Attach {
-        /// アタッチ先セッション名
+        /// Target session name.
         session_name: String,
     },
-    /// ペイン作成（垂直分割）
+    /// Create a pane (vertical split).
     SplitVertical,
-    /// ペイン作成（水平分割）
+    /// Create a pane (horizontal split).
     SplitHorizontal,
-    /// 次のペインにフォーカス移動
+    /// Move focus to the next pane.
     FocusNextPane,
-    /// 前のペインにフォーカス移動
+    /// Move focus to the previous pane.
     FocusPrevPane,
-    /// 指定 ID のペインにフォーカスを移動する（クリック操作など）
+    /// Move focus to the pane with the given ID (e.g. from a mouse click).
     FocusPane {
-        /// フォーカス先のペイン ID
+        /// Pane ID to receive focus.
         pane_id: u32,
     },
-    /// テキストをフォーカスペインにペーストする
+    /// Paste text into the focused pane.
     PasteText {
-        /// ペーストするテキスト
+        /// Text to paste.
         text: String,
     },
-    /// 接続確認
+    /// Liveness check.
     Ping,
-    /// セッション一覧を取得する（アタッチなし）
+    /// List sessions without attaching.
     ListSessions,
-    /// セッションを強制終了する
+    /// Force-kill a session.
     KillSession {
-        /// 終了するセッション名
+        /// Name of the session to terminate.
         name: String,
     },
-    /// セッション録音を開始する
+    /// Start recording a session.
     StartRecording {
-        /// 録音対象セッション名
+        /// Session name to record.
         session_name: String,
-        /// 録音ファイルの出力パス
+        /// Output path for the recording file.
         output_path: String,
     },
-    /// セッション録音を停止する
+    /// Stop recording a session.
     StopRecording {
-        /// 停止するセッション名
+        /// Session name to stop recording.
         session_name: String,
     },
-    /// フォーカスペインを閉じる
+    /// Close the focused pane.
     ClosePane,
-    /// フォーカスペインの分割比率を変更する（正: 広げる、負: 縮める）
+    /// Adjust the split ratio of the focused pane (positive = grow, negative = shrink).
     ResizeSplit {
-        /// サイズ変更量（0.0〜1.0 の割合、正=拡大、負=縮小）
+        /// Resize delta in the range 0.0..=1.0; positive grows, negative shrinks.
         delta: f32,
     },
-    /// SSH 接続（設定済みホスト名を指定）
+    /// SSH connection (host configured by name).
     ///
-    /// **PROTOCOL_VERSION 2（Sprint 5-1 / G1）からの非互換変更**:
-    /// 旧フィールド `password: Option<String>` を削除し、
-    /// `password_keyring_account` + `ephemeral_password` に置換した。
-    /// IPC 経路でパスワード平文を流さないため、クライアントが OS キーリングに
-    /// 保存し、サーバーが `Service="nexterm-ssh"` + `Account=<account>` で取得する。
+    /// **Breaking change since PROTOCOL_VERSION 2 (Sprint 5-1 / G1):**
+    /// the legacy `password: Option<String>` field was removed and replaced with
+    /// `password_keyring_account` + `ephemeral_password`. To keep plain-text passwords
+    /// off the IPC channel, the client stores the password in the OS keyring and the
+    /// server retrieves it using `Service="nexterm-ssh"` + `Account=<account>`.
     ConnectSsh {
-        /// 接続先ホスト名または IP アドレス
+        /// Destination host name or IP address.
         host: String,
-        /// SSH ポート番号（通常 22）
+        /// SSH port (typically 22).
         port: u16,
-        /// ログインユーザー名
+        /// Login user name.
         username: String,
-        /// 認証方式: "password", "key", "agent"
+        /// Authentication method: `"password"`, `"key"`, or `"agent"`.
         auth_type: String,
-        /// パスワード認証時にサーバーが OS キーリングから取得するアカウント識別子。
-        /// `<username>@<host_name>` 形式（`host_name` は `HostConfig.name`）。
-        /// `Service` は固定で `"nexterm-ssh"`。
+        /// Account identifier the server uses to fetch the password from the OS keyring
+        /// when authenticating with a password. Format: `<username>@<host_name>`
+        /// (`host_name` is `HostConfig.name`). The `Service` is the fixed string
+        /// `"nexterm-ssh"`.
         ///
-        /// クライアントは事前にこの account 名で keyring に保存してから IPC 送信する。
-        /// auth_type が "password" 以外、もしくは空パスワードを意図する場合は `None`。
+        /// The client must store the password under this account name in the keyring
+        /// before sending the IPC message. Use `None` when `auth_type` is not
+        /// `"password"` or when an empty password is intended.
         password_keyring_account: Option<String>,
-        /// `true` の場合、サーバーは認証完了（成功・失敗のいずれでも）後に
-        /// 該当 keyring エントリを削除する。`PasswordModal.remember=false` 用。
+        /// When `true`, the server removes the keyring entry after authentication
+        /// finishes (regardless of success or failure). Used when
+        /// `PasswordModal.remember = false`.
         #[serde(default)]
         ephemeral_password: bool,
-        /// 公開鍵認証時の秘密鍵パス
+        /// Private key path for public-key authentication.
         key_path: Option<String>,
-        /// リモートポートフォワーディング指定（"remote_port:local_host:local_port" 形式、複数可）
+        /// Remote port forwarding specifications ("remote_port:local_host:local_port",
+        /// may be repeated).
         #[serde(default)]
         remote_forwards: Vec<String>,
-        /// X11 フォワーディングを有効にするか（ssh -X 相当）
+        /// Whether to enable X11 forwarding (equivalent to `ssh -X`).
         #[serde(default)]
         x11_forward: bool,
-        /// 信頼された X11 フォワーディング（ssh -Y 相当）
+        /// Whether to use trusted X11 forwarding (equivalent to `ssh -Y`).
         #[serde(default)]
         x11_trusted: bool,
     },
-    /// 新しいウィンドウを作成する
+    /// Create a new window.
     NewWindow,
-    /// 指定ウィンドウを閉じる（最後のウィンドウは閉じられない）
+    /// Close the specified window (the last remaining window cannot be closed).
     CloseWindow {
-        /// 閉じるウィンドウの ID
+        /// ID of the window to close.
         window_id: u32,
     },
-    /// 指定ウィンドウにフォーカスを移動する
+    /// Move focus to the specified window.
     FocusWindow {
-        /// フォーカスするウィンドウ ID
+        /// Window ID to focus.
         window_id: u32,
     },
-    /// 指定ウィンドウをリネームする
+    /// Rename the specified window.
     RenameWindow {
-        /// リネームするウィンドウ ID
+        /// Window ID to rename.
         window_id: u32,
-        /// 新しいウィンドウ名
+        /// New window name.
         name: String,
     },
-    /// ブロードキャストモードを設定する（true: 全ペインに入力、false: フォーカスペインのみ）
+    /// Set broadcast mode (true: send input to every pane; false: focused pane only).
     SetBroadcast {
-        /// true = 全ペインに入力、false = フォーカスペインのみ
+        /// `true` to broadcast to all panes; `false` to limit to the focused pane.
         enabled: bool,
     },
-    /// ペイン番号オーバーレイを表示/非表示
+    /// Show/hide the pane-number overlay.
     DisplayPanes {
-        /// true = オーバーレイを表示
+        /// `true` to show the overlay.
         show: bool,
     },
-    /// asciicast v2 形式での録画を開始する
+    /// Start recording in asciicast v2 format.
     StartAsciicast {
-        /// 録画対象セッション名
+        /// Session name to record.
         session_name: String,
-        /// asciicast ファイルの出力パス
+        /// Output path for the asciicast file.
         output_path: String,
     },
-    /// asciicast v2 形式での録画を停止する
+    /// Stop the asciicast v2 recording.
     StopAsciicast {
-        /// 停止するセッション名
+        /// Session name to stop recording.
         session_name: String,
     },
-    /// レイアウトテンプレートを保存する
+    /// Save the current layout as a template.
     SaveTemplate {
-        /// 保存するテンプレート名
+        /// Template name to save under.
         name: String,
     },
-    /// レイアウトテンプレートを読み込んで適用する
+    /// Load and apply a layout template.
     LoadTemplate {
-        /// 読み込むテンプレート名
+        /// Template name to load.
         name: String,
     },
-    /// 保存済みテンプレートの一覧を取得する
+    /// List saved templates.
     ListTemplates,
-    /// フォーカスペインをウィンドウ全体にズーム（トグル）
+    /// Toggle full-window zoom of the focused pane.
     ToggleZoom,
-    /// フォーカスペインと指定ペインを入れ替える（BSP ツリー内の ID swap）
+    /// Swap the focused pane with the specified pane (swaps IDs inside the BSP tree).
     SwapPane {
-        /// 入れ替え先のペイン ID
+        /// Target pane ID to swap with.
         target_pane_id: u32,
     },
-    /// フォーカスペインを新しいウィンドウとして切り離す
+    /// Detach the focused pane into a brand-new window.
     BreakPane,
-    /// フォーカスペインを指定ウィンドウに移動する
+    /// Move the focused pane into the specified window.
     JoinPane {
-        /// 移動先ウィンドウ ID
+        /// Target window ID.
         target_window_id: u32,
     },
-    /// SFTP アップロード: ローカルファイルをリモートに転送する
+    /// SFTP upload: transfer a local file to the remote.
     SftpUpload {
-        /// 接続先 SSH ホスト設定名（config.hosts のエントリ名）
+        /// SSH host configuration name (an entry under `config.hosts`).
         host_name: String,
-        /// ローカルファイルパス
+        /// Local file path.
         local_path: String,
-        /// リモート保存先パス
+        /// Remote destination path.
         remote_path: String,
     },
-    /// SFTP ダウンロード: リモートファイルをローカルに転送する
+    /// SFTP download: transfer a remote file to the local machine.
     SftpDownload {
-        /// 接続先 SSH ホスト設定名（config.hosts のエントリ名）
+        /// SSH host configuration name (an entry under `config.hosts`).
         host_name: String,
-        /// リモートファイルパス
+        /// Remote file path.
         remote_path: String,
-        /// ローカル保存先パス
+        /// Local destination path.
         local_path: String,
     },
-    /// Lua マクロを実行して結果をフォーカスペインに送信する
+    /// Execute a Lua macro and send its result to the focused pane.
     RunMacro {
-        /// nexterm.lua 内の Lua 関数名
+        /// Lua function name inside `nexterm.lua`.
         macro_fn: String,
-        /// コマンドパレット / UI に表示する表示名（ログ用）
+        /// Display name shown in the command palette / UI (for logging).
         #[serde(default)]
         display_name: String,
     },
-    /// マウスイベントを PTY に送信する（マウスレポーティングモード時）
+    /// Forward a mouse event to the PTY (used while mouse reporting is enabled).
     MouseReport {
-        /// ボタン番号（0=左, 1=中, 2=右, 64=ホイールアップ, 65=ホイールダウン）
+        /// Button number (0 = left, 1 = middle, 2 = right, 64 = wheel up, 65 = wheel down).
         button: u8,
-        /// グリッド列（0始まり）
+        /// Grid column (0-based).
         col: u16,
-        /// グリッド行（0始まり）
+        /// Grid row (0-based).
         row: u16,
-        /// 押下 = true、リリース = false
+        /// `true` for press, `false` for release.
         pressed: bool,
-        /// マウス移動イベント（ドラッグ）
+        /// Whether this is a motion event (drag).
         motion: bool,
     },
-    /// レイアウトモードを設定する（"bsp" または "tiling"）
+    /// Set the layout mode (`"bsp"` or `"tiling"`).
     SetLayoutMode {
-        /// レイアウトモード文字列（"bsp" または "tiling"）
+        /// Layout mode string (`"bsp"` or `"tiling"`).
         mode: String,
     },
-    /// フローティングペインを開く（Ctrl+B f）
+    /// Open a floating pane (Ctrl+B f).
     OpenFloatingPane,
-    /// フローティングペインを閉じる
+    /// Close a floating pane.
     CloseFloatingPane {
-        /// 閉じるフローティングペイン ID
+        /// ID of the floating pane to close.
         pane_id: u32,
     },
-    /// フローティングペインを移動する（マウスドラッグ）
+    /// Move a floating pane (e.g. via mouse drag).
     MoveFloatingPane {
-        /// 移動するフローティングペイン ID
+        /// ID of the floating pane to move.
         pane_id: u32,
-        /// 新しい列方向オフセット（0始まり）
+        /// New column offset (0-based).
         col_off: u16,
-        /// 新しい行方向オフセット（0始まり）
+        /// New row offset (0-based).
         row_off: u16,
     },
-    /// フローティングペインをリサイズする
+    /// Resize a floating pane.
     ResizeFloatingPane {
-        /// リサイズするフローティングペイン ID
+        /// ID of the floating pane to resize.
         pane_id: u32,
-        /// 新しい列数
+        /// New column count.
         cols: u16,
-        /// 新しい行数
+        /// New row count.
         rows: u16,
     },
-    /// シリアルポートに接続する
+    /// Connect to a serial port.
     ConnectSerial {
-        /// デバイスパス（例: "/dev/ttyUSB0", "COM3"）
+        /// Device path (e.g. `/dev/ttyUSB0`, `COM3`).
         port: String,
-        /// ボーレート（例: 115200）
+        /// Baud rate (e.g. 115200).
         baud_rate: u32,
-        /// データビット: 5, 6, 7, 8
+        /// Data bits: 5, 6, 7, or 8.
         #[serde(default = "default_data_bits")]
         data_bits: u8,
-        /// ストップビット: 1, 2
+        /// Stop bits: 1 or 2.
         #[serde(default = "default_stop_bits")]
         stop_bits: u8,
-        /// パリティ: "none", "odd", "even"
+        /// Parity: `"none"`, `"odd"`, or `"even"`.
         #[serde(default = "default_parity")]
         parity: String,
     },
-    /// ロード済みプラグイン一覧を取得する
+    /// List currently loaded plugins.
     ListPlugins,
-    /// WASM プラグインをロードする
+    /// Load a WASM plugin.
     LoadPlugin {
-        /// WASM ファイルのパス
+        /// Path to the WASM file.
         path: String,
     },
-    /// ロード済みプラグインをアンロードする
+    /// Unload a loaded plugin.
     UnloadPlugin {
-        /// アンロードするプラグインのパス
+        /// Path of the plugin to unload.
         path: String,
     },
-    /// プラグインを再ロードする（ファイルが更新された場合）
+    /// Reload a plugin (e.g. after the source file changed).
     ReloadPlugin {
-        /// 再ロードするプラグインのパス
+        /// Path of the plugin to reload.
         path: String,
     },
-    /// ワークスペース一覧を取得する（Sprint 5-7 / Phase 2-1）。
+    /// List workspaces (Sprint 5-7 / Phase 2-1).
     ///
-    /// レスポンスは `ServerToClient::WorkspaceList` で、現在アクティブな
-    /// ワークスペース名と全ワークスペース情報を返す。
+    /// The response is `ServerToClient::WorkspaceList`, which returns the currently
+    /// active workspace name along with every workspace's info.
     ListWorkspaces,
-    /// 新しいワークスペースを作成する（Sprint 5-7 / Phase 2-1）。
+    /// Create a new workspace (Sprint 5-7 / Phase 2-1).
     ///
-    /// 既に同名のワークスペースが存在する場合はエラーを返す。
-    /// 作成しただけではアクティブにはならない（`SwitchWorkspace` で切替）。
+    /// Returns an error if a workspace with the same name already exists. Creation
+    /// alone does not activate the workspace; use `SwitchWorkspace` to switch.
     CreateWorkspace {
-        /// ワークスペース名（一意。空文字は不可）
+        /// Workspace name (must be unique; empty strings are not allowed).
         name: String,
     },
-    /// アクティブなワークスペースを切り替える（Sprint 5-7 / Phase 2-1）。
+    /// Switch the active workspace (Sprint 5-7 / Phase 2-1).
     ///
-    /// 存在しないワークスペース名を指定した場合はエラー。切替成功時は
-    /// `ServerToClient::WorkspaceSwitched` を返す。
+    /// Returns an error when the workspace does not exist. On success, the server
+    /// responds with `ServerToClient::WorkspaceSwitched`.
     SwitchWorkspace {
-        /// 切り替え先のワークスペース名
+        /// Target workspace name.
         name: String,
     },
-    /// ワークスペースをリネームする（Sprint 5-7 / Phase 2-1）。
+    /// Rename a workspace (Sprint 5-7 / Phase 2-1).
     ///
-    /// 配下のセッションの `workspace_name` も一括更新する。
-    /// `from` が存在しない、または `to` が既存名と衝突する場合はエラー。
+    /// Also updates `workspace_name` on every session that belongs to it. Errors if
+    /// `from` does not exist or `to` collides with an existing name.
     RenameWorkspace {
-        /// 旧名
+        /// Old name.
         from: String,
-        /// 新名
+        /// New name.
         to: String,
     },
-    /// ワークスペースを削除する（Sprint 5-7 / Phase 2-1）。
+    /// Delete a workspace (Sprint 5-7 / Phase 2-1).
     ///
-    /// `default` ワークスペースは削除不可。配下にセッションが残っている場合、
-    /// `force=true` のときは default ワークスペースに退避させる。
-    /// 現在アクティブなワークスペースを削除した場合は default に切り替わる。
+    /// The `default` workspace cannot be removed. If sessions still belong to the
+    /// workspace, `force = true` migrates them to `default` before deletion. Deleting
+    /// the currently active workspace switches the active selection to `default`.
     DeleteWorkspace {
-        /// 削除対象のワークスペース名
+        /// Workspace name to remove.
         name: String,
-        /// `true`: 配下セッションを default に移動して削除を強行
+        /// `true` to forcibly migrate remaining sessions to `default` and delete anyway.
         #[serde(default)]
         force: bool,
     },
-    /// Quake モードのトグル要求（Sprint 5-7 / Phase 2-2）。
+    /// Quake-mode toggle request (Sprint 5-7 / Phase 2-2).
     ///
-    /// nexterm-ctl が Wayland など `global-hotkey` が動かない環境で、compositor
-    /// の `bindsym` 経由でトリガーするために用いる。サーバーは接続中の全 GPU
-    /// クライアントに `ServerToClient::QuakeToggleRequest` をブロードキャストし、
-    /// 実際のウィンドウ操作（表示・非表示・アンカー位置）はクライアント側で行う。
+    /// Used by `nexterm-ctl` to drive the toggle through the compositor's `bindsym`
+    /// in environments where `global-hotkey` does not work (e.g. Wayland). The server
+    /// broadcasts `ServerToClient::QuakeToggleRequest` to every connected GPU client,
+    /// and the actual window operation (show / hide / anchor) is performed on the
+    /// client side.
     QuakeToggle {
-        /// 操作種別: "toggle" / "show" / "hide"
+        /// Operation: `"toggle"`, `"show"`, or `"hide"`.
         #[serde(default = "default_quake_action")]
         action: String,
     },
-    /// タブ表示順序の並べ替え要求（Sprint 5-7 / Phase 2-3）。
+    /// Tab reorder request (Sprint 5-7 / Phase 2-3).
     ///
-    /// クライアントがタブバー上でドラッグ&ドロップして決めた新順序をサーバーに送る。
-    /// サーバーは `Window.pane_order` を新順序で上書きし、後続の `LayoutChanged` の
-    /// `panes` 配列順序に反映する。`pane_ids` に未知の ID が含まれる場合や、現在の
-    /// 既知ペインを網羅していない場合はサーバー側でフィルタ + 補完する。
+    /// The client sends the new order it decided via drag-and-drop on the tab bar.
+    /// The server overwrites `Window.pane_order` with the new ordering so that
+    /// subsequent `LayoutChanged.panes` reflect it. If `pane_ids` contains unknown
+    /// IDs or does not cover all known panes, the server filters and completes the
+    /// list on its side.
     ReorderPanes {
-        /// 新しい表示順序（タブバー左から右へ）
+        /// New display order, left-to-right across the tab bar.
         pane_ids: Vec<u32>,
     },
-    /// ペインを別 Window に移動する要求（Sprint 5-8 / Phase 4-3、PROTOCOL_VERSION 8）。
+    /// Move a pane into another window (Sprint 5-8 / Phase 4-3, PROTOCOL_VERSION 8).
     ///
-    /// クライアントがタブを **別 OS Window のタブバー上** または **OS Window 外**
-    /// にドロップした際に送信する。サーバーは:
-    /// 1. ソース Window から `Pane` を `detach_pane` で取り出す
-    /// 2. 取り出した `Pane` をターゲット Window に `attach_pane` で挿入する
-    /// 3. ソース・ターゲット双方の Window に `LayoutChanged` をブロードキャストする
+    /// Sent when the client drops a tab onto **another OS Window's tab bar** or
+    /// **outside any OS Window**. The server:
+    /// 1. Removes the `Pane` from the source window via `detach_pane`.
+    /// 2. Inserts the `Pane` into the target window via `attach_pane`.
+    /// 3. Broadcasts `LayoutChanged` to both the source and the target window.
     ///
-    /// `target_window_id == 0` は **新規 Window 生成** を意味し、サーバーは新規
-    /// `Window` を生成して `Session.windows` に登録する。新規 Window の `id` は
-    /// `LayoutChanged.window_id` 経由でクライアントに通知される（クライアントは
-    /// 受信時に新規 OS Window をスポーンして `Attach` する）。
+    /// `target_window_id == 0` means **create a new window**: the server creates a
+    /// fresh `Window` and registers it under `Session.windows`. The new window's
+    /// `id` is communicated to the client via `LayoutChanged.window_id`, after which
+    /// the client spawns a new OS Window and issues an `Attach`.
     ///
-    /// `insert_at` は **ターゲット Window 内の挿入位置**（`pane_order` インデックス、
-    /// 0-origin）。`None` なら末尾に追加。
+    /// `insert_at` is the **insertion index inside the target window** (an index into
+    /// `pane_order`, 0-based). `None` appends to the end.
     ///
-    /// 失敗条件:
-    /// - `pane_id` がソース Window に存在しない → サーバーログにエラー出力 + 何もしない
-    /// - `target_window_id` がセッション内に存在しない（かつ 0 でもない）→ 同上
-    /// - ソース Window のペインが 1 個のみで detach するとソースが空になる場合 →
-    ///   ソース Window を自動削除（既存の `close_pane` フローと整合）
+    /// Failure conditions:
+    /// - `pane_id` is not in the source window → the server logs an error and does
+    ///   nothing.
+    /// - `target_window_id` is not present in the session (and is not 0) → same as above.
+    /// - The source window had only one pane and detaching empties it → the source
+    ///   window is removed automatically (consistent with the existing `close_pane`
+    ///   flow).
     MovePaneToWindow {
-        /// 移動対象のペイン ID
+        /// ID of the pane to move.
         pane_id: u32,
-        /// 移動先 Window ID（`0` = 新規 Window 生成）
+        /// Destination window ID (`0` = create a new window).
         target_window_id: u32,
-        /// ターゲット Window 内での挿入位置（`pane_order` インデックス）。`None` で末尾。
+        /// Insertion position inside the target window (an index into `pane_order`).
+        /// `None` appends to the end.
         insert_at: Option<u32>,
     },
-    /// プロトコルハンドシェイク。接続後の最初のメッセージとして送信する。
+    /// Protocol handshake. Sent as the very first message after the connection opens.
     ///
-    /// サーバーは `proto_version` を `nexterm_proto::PROTOCOL_VERSION` と比較し、
-    /// 不一致ならエラーを返して接続を切断する。
+    /// The server compares `proto_version` against `nexterm_proto::PROTOCOL_VERSION`
+    /// and, on a mismatch, returns an error and drops the connection.
     Hello {
-        /// `nexterm_proto::PROTOCOL_VERSION`
+        /// `nexterm_proto::PROTOCOL_VERSION`.
         proto_version: u32,
-        /// クライアント種別
+        /// Client kind.
         client_kind: ClientKind,
-        /// クライアントの Cargo バージョン文字列（ログ用）
+        /// Client's Cargo version string (used for logging).
         client_version: String,
     },
-    /// OS Window 閉じ確認用: 指定 Window 内に前景プロセス（シェル子孫）が動作中か問い合わせる。
+    /// Used to confirm OS-window closes: queries whether any foreground process
+    /// (a descendant of the shell) is running inside the specified window.
     ///
-    /// クライアントは `window.close_action = "prompt"` 設定時に OS Window 閉じ要求を
-    /// 受けたら本メッセージを送り、`ServerToClient::ForegroundProcessStatus` の応答を
-    /// 受けて確認ダイアログを出すか即時 detach/kill するかを判断する。
+    /// When `window.close_action = "prompt"`, the client sends this message after a
+    /// close request comes in and uses the `ServerToClient::ForegroundProcessStatus`
+    /// reply to decide whether to show a confirmation dialog or immediately
+    /// detach / kill.
     ///
-    /// PROTOCOL_VERSION 8 互換: enum 末尾追加のため既存バリアントの discriminant に
-    /// 影響しない（旧クライアントは送信しない、旧サーバーは未対応 → サーバーから
-    /// `Error` 応答が返るので Phase 4-3 で bump 済みの v8 互換範囲で扱う）。
+    /// PROTOCOL_VERSION 8 compatibility: appended to the end of the enum so the
+    /// existing variant discriminants are untouched (old clients do not send it;
+    /// old servers reply with `Error` because they do not handle it — both
+    /// scenarios remain within the additive compatibility window of v8).
     QueryForegroundProcess {
-        /// 確認対象の Server Window ID
+        /// Server-side window ID to query.
         window_id: u32,
     },
 }
 
-/// クライアント種別（IPC ハンドシェイクで識別）
+/// Client kind (identified during the IPC handshake).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ClientKind {
-    /// GPU クライアント (winit + wgpu)
+    /// GPU client (winit + wgpu).
     Gpu,
-    /// TUI クライアント (ratatui + crossterm)
+    /// TUI client (ratatui + crossterm).
     Tui,
-    /// CLI ツール (nexterm-ctl)
+    /// CLI tool (nexterm-ctl).
     Ctl,
-    /// その他（プラグイン等）
+    /// Other (plugins, etc.).
     Other,
 }
 
@@ -493,356 +505,360 @@ fn default_quake_action() -> String {
     "toggle".to_string()
 }
 
-/// ペインのレイアウト情報（グリッド座標系）
+/// Layout information for a pane (in grid coordinates).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaneLayout {
-    /// ペインの一意 ID
+    /// Unique pane ID.
     pub pane_id: u32,
-    /// ウィンドウ内の列オフセット（0 始まり）
+    /// Column offset inside the window (0-based).
     pub col_offset: u16,
-    /// ウィンドウ内の行オフセット（0 始まり）
+    /// Row offset inside the window (0-based).
     pub row_offset: u16,
-    /// ペインの列数（文字単位）
+    /// Number of columns in the pane (in characters).
     pub cols: u16,
-    /// ペインの行数（文字単位）
+    /// Number of rows in the pane (in characters).
     pub rows: u16,
-    /// このペインがフォーカスを持っているか
+    /// Whether this pane currently holds focus.
     pub is_focused: bool,
 }
 
-/// サーバー → クライアント メッセージ
+/// Server → client messages.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServerToClient {
-    /// 差分グリッド更新（通常の描画更新）
+    /// Differential grid update (regular paint update).
     GridDiff {
-        /// 対象ペイン ID
+        /// Target pane ID.
         pane_id: u32,
-        /// ダーティ行のみ
+        /// Dirty rows only.
         dirty_rows: Vec<DirtyRow>,
-        /// カーソルの列位置（0始まり）
+        /// Cursor column (0-based).
         cursor_col: u16,
-        /// カーソルの行位置（0始まり）
+        /// Cursor row (0-based).
         cursor_row: u16,
     },
-    /// 全画面スナップショット（アタッチ時・再接続時）
+    /// Full-screen snapshot (on attach / reconnect).
     FullRefresh {
-        /// 対象ペイン ID
+        /// Target pane ID.
         pane_id: u32,
-        /// スナップショットグリッド
+        /// Snapshot grid.
         grid: Grid,
     },
-    /// セッション一覧
+    /// Session list.
     SessionList {
-        /// セッション情報の一覧
+        /// Session info entries.
         sessions: Vec<SessionInfo>,
     },
-    /// Ping の応答
+    /// Response to `Ping`.
     Pong,
-    /// エラー通知
+    /// Error notification.
     Error {
-        /// エラーメッセージ
+        /// Error message.
         message: String,
     },
-    /// 画像配置通知（Sixel / Kitty プロトコル）
+    /// Image placement notification (Sixel / Kitty protocol).
     ImagePlaced {
-        /// 対象ペイン ID
+        /// Target pane ID.
         pane_id: u32,
-        /// 画像の一意 ID（フレーム管理用）
+        /// Unique image ID (used for frame management).
         image_id: u32,
-        /// グリッド上の配置列（0始まり）
+        /// Placement column in the grid (0-based).
         col: u16,
-        /// グリッド上の配置行（0始まり）
+        /// Placement row in the grid (0-based).
         row: u16,
-        /// 画像ピクセル幅
+        /// Image width in pixels.
         width: u32,
-        /// 画像ピクセル高さ
+        /// Image height in pixels.
         height: u32,
-        /// RGBA ピクセルデータ
+        /// RGBA pixel data.
         rgba: Vec<u8>,
     },
-    /// レイアウト変更通知（分割・フォーカス変更・リサイズ時）
+    /// Layout-change notification (on split, focus change, or resize).
     LayoutChanged {
-        /// 全ペインのレイアウト一覧
+        /// Layouts for all panes.
         panes: Vec<PaneLayout>,
-        /// 現在フォーカスを持つペイン ID
+        /// ID of the pane that currently holds focus.
         focused_pane_id: u32,
     },
-    /// BEL 通知（\x07 を受信したペインから発行）
+    /// BEL notification (emitted by a pane that received `\x07`).
     Bell {
-        /// BEL を受信したペイン ID
+        /// Pane ID that received the BEL.
         pane_id: u32,
     },
-    /// セッション録音開始通知
+    /// Session-recording start notification.
     RecordingStarted {
-        /// 録音対象ペイン ID
+        /// Pane ID being recorded.
         pane_id: u32,
-        /// 録音ファイルパス
+        /// Recording file path.
         path: String,
     },
-    /// セッション録音停止通知
+    /// Session-recording stop notification.
     RecordingStopped {
-        /// 録音対象ペイン ID
+        /// Pane ID that was being recorded.
         pane_id: u32,
     },
-    /// ウィンドウ一覧変更通知
+    /// Window-list change notification.
     WindowListChanged {
-        /// 最新のウィンドウ情報一覧
+        /// Latest list of windows.
         windows: Vec<WindowInfo>,
     },
-    /// ペインが閉じられた通知（ウィンドウも一緒に閉じられた場合は pane_id を 0 にする）
+    /// Notification that a pane was closed (set `pane_id` to 0 when the entire
+    /// window was closed alongside it).
     PaneClosed {
-        /// 閉じられたペイン ID（0 = ウィンドウごと閉じた）
+        /// Closed pane ID (0 = the entire window was closed).
         pane_id: u32,
     },
-    /// ウィンドウ/ペインタイトル変更通知
+    /// Window/pane title-change notification.
     TitleChanged {
-        /// タイトルが変わったペイン ID
+        /// Pane ID whose title changed.
         pane_id: u32,
-        /// 新しいタイトル文字列
+        /// New title string.
         title: String,
     },
-    /// デスクトップ通知
+    /// Desktop notification.
     DesktopNotification {
-        /// 通知元ペイン ID
+        /// Source pane ID.
         pane_id: u32,
-        /// 通知タイトル
+        /// Notification title.
         title: String,
-        /// 通知本文
+        /// Notification body.
         body: String,
     },
-    /// OSC 52 クリップボード書き込み要求（Sprint 4-1）
+    /// OSC 52 clipboard-write request (Sprint 4-1).
     ///
-    /// クライアントは `SecurityConfig.osc52_clipboard` ポリシーに従って
-    /// 同意ダイアログを表示するか、即時許可/拒否するかを判断する。
+    /// The client follows the `SecurityConfig.osc52_clipboard` policy to decide
+    /// whether to display a consent dialog or grant/deny the request immediately.
     ClipboardWriteRequest {
-        /// 要求元ペイン ID
+        /// Requesting pane ID.
         pane_id: u32,
-        /// 書き込み内容（サーバー側で制御文字除去済み）
+        /// Content to write (control characters stripped on the server side).
         text: String,
     },
-    /// ブロードキャストモード状態通知
+    /// Broadcast-mode status notification.
     BroadcastModeChanged {
-        /// true = 全ペインに入力、false = フォーカスペインのみ
+        /// `true` = broadcast to all panes, `false` = focused pane only.
         enabled: bool,
     },
-    /// asciicast v2 録画開始通知
+    /// asciicast v2 recording-start notification.
     AsciicastStarted {
-        /// 録音対象ペイン ID
+        /// Pane ID being recorded.
         pane_id: u32,
-        /// asciicast ファイルパス
+        /// Path to the asciicast file.
         path: String,
     },
-    /// asciicast v2 録画停止通知
+    /// asciicast v2 recording-stop notification.
     AsciicastStopped {
-        /// 録音対象ペイン ID
+        /// Pane ID that was being recorded.
         pane_id: u32,
     },
-    /// テンプレート保存完了通知
+    /// Template-save completion notification.
     TemplateSaved {
-        /// テンプレート名
+        /// Template name.
         name: String,
-        /// 保存ファイルパス
+        /// Path to the saved file.
         path: String,
     },
-    /// テンプレート読み込み完了通知
+    /// Template-load completion notification.
     TemplateLoaded {
-        /// 読み込んだテンプレート名
+        /// Name of the loaded template.
         name: String,
     },
-    /// テンプレート一覧
+    /// Template list.
     TemplateList {
-        /// 保存済みテンプレート名の一覧
+        /// Names of saved templates.
         names: Vec<String>,
     },
-    /// ペインズーム状態変化通知
+    /// Pane-zoom state-change notification.
     ZoomChanged {
-        /// true = ズーム中、false = 通常表示
+        /// `true` = zoomed, `false` = normal layout.
         is_zoomed: bool,
     },
-    /// BreakPane 完了通知（新ウィンドウの ID）
+    /// `BreakPane` completion notification (the new window's ID).
     PaneBroken {
-        /// 新しく作成されたウィンドウの ID
+        /// ID of the newly created window.
         new_window_id: u32,
-        /// 分離されたペイン ID
+        /// Pane ID that was broken out.
         pane_id: u32,
     },
-    /// シリアル接続成功通知
+    /// Serial connection success notification.
     SerialConnected {
-        /// 割り当てられたペイン ID
+        /// Allocated pane ID.
         pane_id: u32,
-        /// 接続したポート名（例: "/dev/ttyUSB0"）
+        /// Connected port name (e.g. `/dev/ttyUSB0`).
         port: String,
     },
-    /// SFTP 転送進捗通知
+    /// SFTP transfer progress notification.
     SftpProgress {
-        /// 転送元ローカルパスまたはリモートパス（UI 表示用）
+        /// Source local path or remote path (used for the UI).
         path: String,
-        /// 転送済みバイト数
+        /// Number of bytes transferred so far.
         transferred: u64,
-        /// 合計バイト数（0 = 不明）
+        /// Total byte count (0 = unknown).
         total: u64,
     },
-    /// SFTP 転送完了通知
+    /// SFTP transfer completion notification.
     SftpDone {
-        /// 転送元/先パス（UI 表示用）
+        /// Source/destination path (used for the UI).
         path: String,
-        /// 成功時は None, エラー時はメッセージ
+        /// `None` on success, error message on failure.
         error: Option<String>,
     },
-    /// OSC 133 セマンティックゾーンマーク通知
+    /// OSC 133 semantic-zone-mark notification.
     SemanticMark {
-        /// マークが付いたペイン ID
+        /// Pane ID that received the mark.
         pane_id: u32,
-        /// マーク行（0始まり）
+        /// Marked row (0-based).
         row: u16,
-        /// "A"=PromptStart, "B"=CommandStart, "C"=OutputStart, "D"=CommandEnd
+        /// `"A"` = PromptStart, `"B"` = CommandStart, `"C"` = OutputStart, `"D"` = CommandEnd.
         kind: String,
-        /// D マーク時のみ Some
+        /// Only `Some` for the D mark.
         exit_code: Option<i32>,
     },
-    /// OSC 7 現在の作業ディレクトリ（CWD）変更通知（Sprint 5-2 / B2）
+    /// OSC 7 current-working-directory (CWD) change notification (Sprint 5-2 / B2).
     ///
-    /// シェルが `printf '\033]7;file://%s%s\033\\' "$HOSTNAME" "$PWD"` などを
-    /// 出力したときに通知される。クライアントはタブ表示・タイトル表示・新規ペイン
-    /// 作成時の親 CWD 継承に利用する。
+    /// Emitted when the shell writes something like
+    /// `printf '\033]7;file://%s%s\033\\' "$HOSTNAME" "$PWD"`. The client uses the
+    /// new CWD for tab display, window title, and to inherit the parent CWD when
+    /// creating a new pane.
     CwdChanged {
-        /// CWD が変わったペイン ID
+        /// Pane ID whose CWD changed.
         pane_id: u32,
-        /// 新しい CWD（`file://` 除去 + パーセントデコード済み、絶対パス想定）
+        /// New CWD (with `file://` stripped and percent-decoded; assumed absolute).
         cwd: String,
     },
-    /// フローティングペイン開始通知
+    /// Floating-pane open notification.
     FloatingPaneOpened {
-        /// 開かれたフローティングペイン ID
+        /// Opened floating-pane ID.
         pane_id: u32,
-        /// 列方向オフセット（0始まり）
+        /// Column offset (0-based).
         col_off: u16,
-        /// 行方向オフセット（0始まり）
+        /// Row offset (0-based).
         row_off: u16,
-        /// ペインの列数
+        /// Column count of the pane.
         cols: u16,
-        /// ペインの行数
+        /// Row count of the pane.
         rows: u16,
     },
-    /// フローティングペイン位置・サイズ変更通知
+    /// Floating-pane position/size-change notification.
     FloatingPaneMoved {
-        /// 移動されたフローティングペイン ID
+        /// Floating-pane ID that moved.
         pane_id: u32,
-        /// 列方向オフセット（0始まり）
+        /// Column offset (0-based).
         col_off: u16,
-        /// 行方向オフセット（0始まり）
+        /// Row offset (0-based).
         row_off: u16,
-        /// ペインの列数
+        /// Column count of the pane.
         cols: u16,
-        /// ペインの行数
+        /// Row count of the pane.
         rows: u16,
     },
-    /// フローティングペイン閉鎖通知
+    /// Floating-pane close notification.
     FloatingPaneClosed {
-        /// 閉じられたフローティングペイン ID
+        /// Closed floating-pane ID.
         pane_id: u32,
     },
-    /// ロード済みプラグイン一覧
+    /// List of currently loaded plugins.
     PluginList {
-        /// プラグインパスの一覧
+        /// Plugin paths.
         paths: Vec<String>,
     },
-    /// プラグイン操作完了通知
+    /// Plugin operation completion notification.
     PluginOk {
-        /// 操作対象のプラグインパス
+        /// Target plugin path.
         path: String,
-        /// 操作種別: "loaded", "unloaded", "reloaded"
+        /// Operation kind: `"loaded"`, `"unloaded"`, or `"reloaded"`.
         action: String,
     },
-    /// ワークスペース一覧（Sprint 5-7 / Phase 2-1）。
+    /// Workspace list (Sprint 5-7 / Phase 2-1).
     ///
-    /// `ListWorkspaces` 要求、または `CreateWorkspace` / `RenameWorkspace` /
-    /// `DeleteWorkspace` 成功後に送信される。
+    /// Sent in response to `ListWorkspaces`, or after a successful
+    /// `CreateWorkspace` / `RenameWorkspace` / `DeleteWorkspace`.
     WorkspaceList {
-        /// 現在アクティブなワークスペース名
+        /// Currently active workspace name.
         current: String,
-        /// 全ワークスペース情報
+        /// Information for every workspace.
         workspaces: Vec<WorkspaceInfo>,
     },
-    /// ワークスペース切替完了通知（Sprint 5-7 / Phase 2-1）。
+    /// Workspace-switch completion notification (Sprint 5-7 / Phase 2-1).
     WorkspaceSwitched {
-        /// 切り替え後のワークスペース名
+        /// Workspace name after the switch.
         name: String,
     },
-    /// Quake モード トグル要求（Sprint 5-7 / Phase 2-2）。
+    /// Quake-mode toggle request (Sprint 5-7 / Phase 2-2).
     ///
-    /// `ClientToServer::QuakeToggle` を受け取ったサーバーが、接続中の全 GPU
-    /// クライアントへブロードキャストする。Quake モード対応クライアント（GPU 版）
-    /// は `action` に従ってウィンドウを表示・非表示・トグルする。
+    /// When the server receives `ClientToServer::QuakeToggle`, it broadcasts this
+    /// message to every connected GPU client. Quake-mode-capable clients (the GPU
+    /// build) react to `action` by showing, hiding, or toggling their window.
     QuakeToggleRequest {
-        /// "toggle" / "show" / "hide" のいずれか
+        /// One of `"toggle"`, `"show"`, or `"hide"`.
         action: String,
     },
-    /// プロトコルハンドシェイク応答（サーバー → クライアント）。
+    /// Protocol handshake response (server → client).
     ///
-    /// クライアントが Hello を送ってきた直後に、サーバーが自身のバージョン情報を返す。
-    /// バージョン不一致でサーバーが接続を切断する場合は本メッセージは送信されない
-    /// （`Error` バリアント + 切断のみ）。
+    /// Sent by the server immediately after the client's Hello, carrying the server's
+    /// version info. When the server drops the connection because of a version
+    /// mismatch, this message is **not** sent (only an `Error` variant plus the
+    /// disconnect).
     HelloAck {
-        /// サーバー側がサポートする最低プロトコルバージョン
+        /// Lowest protocol version the server supports.
         proto_version: u32,
-        /// サーバーの Cargo バージョン文字列
+        /// Server's Cargo version string.
         server_version: String,
     },
-    /// `QueryForegroundProcess` への応答（Sprint 5-8 / Phase 4-5）。
+    /// Reply to `QueryForegroundProcess` (Sprint 5-8 / Phase 4-5).
     ///
-    /// 指定 Window 内に前景プロセス（シェル以外の子プロセス）が動作中かを返す。
-    /// クライアントは `has_foreground = true` の場合に確認ダイアログを表示する。
+    /// Indicates whether any foreground process (i.e. a non-shell child) is running
+    /// inside the specified window. When `has_foreground = true`, the client shows
+    /// the confirmation dialog.
     ///
-    /// PROTOCOL_VERSION 8 互換: enum 末尾追加。旧クライアントは送信しないため
-    /// 本応答も発火しない。
+    /// PROTOCOL_VERSION 8 compatibility: appended to the end of the enum. Old
+    /// clients do not send the query, so this reply never fires for them.
     ForegroundProcessStatus {
-        /// 問い合わせ対象の Server Window ID（クライアント側の対応付け用）
+        /// Server-side window ID being queried (used for client-side correlation).
         window_id: u32,
-        /// `true` なら少なくとも 1 ペインで前景プロセスが動作中
+        /// `true` when at least one pane has a foreground process running.
         has_foreground: bool,
     },
 }
 
-/// セッション情報
+/// Session information.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionInfo {
-    /// セッション名
+    /// Session name.
     pub name: String,
-    /// ウィンドウ数
+    /// Number of windows.
     pub window_count: u32,
-    /// クライアントがアタッチ中かどうか
+    /// Whether a client is currently attached.
     pub attached: bool,
-    /// 所属ワークスペース名（Sprint 5-7 / Phase 2-1）。
+    /// Owning workspace name (Sprint 5-7 / Phase 2-1).
     ///
-    /// PROTOCOL_VERSION 5 で追加。`#[serde(default)]` により旧クライアントとの
-    /// postcard 往復で欠落しても `""` で復元可能。サーバーは常に値を埋める
-    /// （デフォルトは `"default"`）。
+    /// Added in PROTOCOL_VERSION 5. `#[serde(default)]` lets older clients decode
+    /// the structure with an empty string when the field is missing in the postcard
+    /// payload. The server always populates the field (defaulting to `"default"`).
     #[serde(default)]
     pub workspace_name: String,
 }
 
-/// ウィンドウ情報
+/// Window information.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WindowInfo {
-    /// ウィンドウの一意 ID
+    /// Unique window ID.
     pub window_id: u32,
-    /// ウィンドウ名
+    /// Window name.
     pub name: String,
-    /// ウィンドウ内のペイン数
+    /// Number of panes in the window.
     pub pane_count: u32,
-    /// このウィンドウがフォーカスを持っているか
+    /// Whether this window currently holds focus.
     pub is_focused: bool,
 }
 
-/// ワークスペース情報（Sprint 5-7 / Phase 2-1 で追加）
+/// Workspace information (added in Sprint 5-7 / Phase 2-1).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceInfo {
-    /// ワークスペース名
+    /// Workspace name.
     pub name: String,
-    /// このワークスペースに属するセッション数
+    /// Number of sessions belonging to this workspace.
     pub session_count: u32,
-    /// 現在アクティブなワークスペースかどうか
+    /// Whether this is the currently active workspace.
     pub is_active: bool,
 }
 
@@ -852,7 +868,7 @@ mod tests {
     use crate::{Cell, Grid};
 
     #[test]
-    fn キーイベントのpostcard往復() {
+    fn key_event_postcard_roundtrip() {
         let msg = ClientToServer::KeyEvent {
             code: KeyCode::Char('a'),
             modifiers: Modifiers(Modifiers::CTRL),
@@ -863,7 +879,7 @@ mod tests {
     }
 
     #[test]
-    fn full_refreshのpostcard往復() {
+    fn full_refresh_postcard_roundtrip() {
         let grid = Grid::new(80, 24);
         let msg = ServerToClient::FullRefresh { pane_id: 1, grid };
         let encoded = postcard::to_stdvec(&msg).unwrap();
@@ -872,7 +888,7 @@ mod tests {
     }
 
     #[test]
-    fn grid_diffのpostcard往復() {
+    fn grid_diff_postcard_roundtrip() {
         let msg = ServerToClient::GridDiff {
             pane_id: 0,
             dirty_rows: vec![DirtyRow {
@@ -888,14 +904,14 @@ mod tests {
     }
 
     #[test]
-    fn modifiers_ビットフラグ() {
+    fn modifiers_bit_flags() {
         let m = Modifiers(Modifiers::CTRL | Modifiers::SHIFT);
         assert!(m.is_ctrl());
         assert!(m.is_shift());
     }
 
     #[test]
-    fn hello_メッセージの_postcard_往復() {
+    fn hello_message_postcard_roundtrip() {
         let msg = ClientToServer::Hello {
             proto_version: 1,
             client_kind: ClientKind::Gpu,
@@ -907,7 +923,7 @@ mod tests {
     }
 
     #[test]
-    fn hello_ack_メッセージの_postcard_往復() {
+    fn hello_ack_message_postcard_roundtrip() {
         let msg = ServerToClient::HelloAck {
             proto_version: 1,
             server_version: "1.0.2".to_string(),
@@ -918,7 +934,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_ipc_の_postcard_往復() {
+    fn workspace_ipc_postcard_roundtrip() {
         // ListWorkspaces
         let msg = ClientToServer::ListWorkspaces;
         let encoded = postcard::to_stdvec(&msg).unwrap();
@@ -977,27 +993,28 @@ mod tests {
     }
 
     #[test]
-    fn session_info_workspace_name_は_serde_default_で空文字() {
-        // 旧クライアント互換: workspace_name フィールドがない postcard ペイロードでも
-        // SessionInfo がデコードできること（Default 値 "" で復元）。
+    fn session_info_workspace_name_defaults_to_empty_via_serde_default() {
+        // Compatibility with older clients: a postcard payload that omits the
+        // `workspace_name` field should still decode into a SessionInfo (with the
+        // default value `""`).
         //
-        // postcard は struct のフィールド順を尊重するので、旧仕様で
-        // (name, window_count, attached) のみを並べたバイト列を生成して検証する。
+        // postcard honors struct field order, so we synthesize the legacy byte layout
+        // containing only (name, window_count, attached) and verify the behavior.
         let name = "old".to_string();
         let window_count: u32 = 1;
         let attached = false;
         let mut buf = postcard::to_stdvec(&name).unwrap();
         buf.extend(postcard::to_stdvec(&window_count).unwrap());
         buf.extend(postcard::to_stdvec(&attached).unwrap());
-        // 末尾に workspace_name を含めない（= 旧フォーマット）
+        // Intentionally omit `workspace_name` (= legacy format).
         let decoded: Result<SessionInfo, _> = postcard::from_bytes(&buf);
-        // 旧フォーマットは長さが足りないので、postcard 1.x は短いペイロードでエラーを返す。
-        // 後方互換性は serde 層では取れないため、SessionInfo が常にサーバー側で
-        // workspace_name を埋めることをサーバー実装で保証する（ここでは型として
-        // 存在することだけを確認）。
-        let _ = decoded; // 厳密互換性の保証はサーバー側に任せる
+        // The legacy format is shorter than the new one, so postcard 1.x returns an
+        // error for the truncated payload. Backward compatibility cannot be solved
+        // purely at the serde layer; the server implementation is expected to always
+        // populate `workspace_name`. Here we only check that the type still exists.
+        let _ = decoded; // strict back-compat is the server's responsibility
 
-        // 新フォーマット（workspace_name 含む）の postcard 往復は通る
+        // The new format (including `workspace_name`) round-trips through postcard.
         let info = SessionInfo {
             name: "ok".to_string(),
             window_count: 2,
@@ -1010,7 +1027,7 @@ mod tests {
     }
 
     #[test]
-    fn reorder_panes_ipc_の_postcard_往復() {
+    fn reorder_panes_ipc_postcard_roundtrip() {
         let msg = ClientToServer::ReorderPanes {
             pane_ids: vec![3, 1, 4, 1, 5, 9, 2, 6],
         };
@@ -1018,7 +1035,7 @@ mod tests {
         let dec: ClientToServer = postcard::from_bytes(&enc).unwrap();
         assert_eq!(msg, dec);
 
-        // 空ベクタも往復可能
+        // An empty vector round-trips just as well.
         let empty = ClientToServer::ReorderPanes { pane_ids: vec![] };
         let enc = postcard::to_stdvec(&empty).unwrap();
         let dec: ClientToServer = postcard::from_bytes(&enc).unwrap();
@@ -1026,9 +1043,9 @@ mod tests {
     }
 
     #[test]
-    fn move_pane_to_window_ipc_の_postcard_往復() {
-        // Sprint 5-8 / Phase 4-3 — PROTOCOL_VERSION 8 で追加。
-        // target_window_id != 0、insert_at = Some の典型パターン
+    fn move_pane_to_window_ipc_postcard_roundtrip() {
+        // Sprint 5-8 / Phase 4-3 — added in PROTOCOL_VERSION 8.
+        // Typical pattern: target_window_id != 0 with insert_at = Some.
         let msg = ClientToServer::MovePaneToWindow {
             pane_id: 42,
             target_window_id: 7,
@@ -1038,7 +1055,7 @@ mod tests {
         let dec: ClientToServer = postcard::from_bytes(&enc).unwrap();
         assert_eq!(msg, dec);
 
-        // target_window_id = 0（新規 Window 生成）、insert_at = None（末尾追加）
+        // target_window_id = 0 (create a new window), insert_at = None (append to end).
         let new_window = ClientToServer::MovePaneToWindow {
             pane_id: 99,
             target_window_id: 0,
@@ -1050,8 +1067,8 @@ mod tests {
     }
 
     #[test]
-    fn quake_toggle_ipc_の_postcard_往復() {
-        // QuakeToggle（クライアント → サーバー）
+    fn quake_toggle_ipc_postcard_roundtrip() {
+        // QuakeToggle (client → server).
         let msg = ClientToServer::QuakeToggle {
             action: "toggle".to_string(),
         };
@@ -1059,7 +1076,7 @@ mod tests {
         let dec: ClientToServer = postcard::from_bytes(&enc).unwrap();
         assert_eq!(msg, dec);
 
-        // QuakeToggleRequest（サーバー → クライアント、ブロードキャスト）
+        // QuakeToggleRequest (server → client, broadcast).
         let req = ServerToClient::QuakeToggleRequest {
             action: "show".to_string(),
         };
@@ -1069,7 +1086,7 @@ mod tests {
     }
 
     #[test]
-    fn client_kind_の全バリアントが_postcard_往復可能() {
+    fn client_kind_every_variant_postcard_roundtrips() {
         for kind in [
             ClientKind::Gpu,
             ClientKind::Tui,

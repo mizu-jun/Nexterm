@@ -1,14 +1,15 @@
-//! nexterm-proto — IPC 通信プロトコル定義
+//! nexterm-proto — IPC protocol definitions.
 //!
-//! nexterm-server と nexterm-client 間で交わすメッセージ型を定義する。
-//! postcard でシリアライズしてUnix Domain Socket / Named Pipe で転送する。
+//! Defines the message types exchanged between `nexterm-server` and `nexterm-client`.
+//! Messages are serialized with `postcard` and transferred over a Unix Domain Socket
+//! or a Windows Named Pipe.
 #![warn(missing_docs)]
 
-/// ターミナルセル型定義（`Attrs`・`Cell`・`Color`）
+/// Terminal cell types (`Attrs`, `Cell`, `Color`).
 pub mod cell;
-/// 仮想グリッド型定義（`Grid`・`DirtyRow`・`HyperlinkSpan`）
+/// Virtual grid types (`Grid`, `DirtyRow`, `HyperlinkSpan`).
 pub mod grid;
-/// IPC メッセージ型定義（`ClientToServer`・`ServerToClient`）
+/// IPC message types (`ClientToServer`, `ServerToClient`).
 pub mod message;
 
 pub use cell::{Attrs, Cell, Color};
@@ -18,71 +19,73 @@ pub use message::{
     WindowInfo, WorkspaceInfo,
 };
 
-/// IPC プロトコルバージョン。
+/// IPC protocol version.
 ///
-/// クライアントとサーバーが接続時に Hello メッセージで交換する。
-/// バージョン不一致時はサーバーが接続を切断する。
+/// Exchanged via the Hello handshake at connection time. The server drops the
+/// connection on a version mismatch.
 ///
-/// # 履歴
+/// # History
 ///
-/// - v1: 初版（PR-C Task 10 で導入）
-/// - v2: Sprint 5-1 / G1 — `ConnectSsh` から `password: Option<String>` を削除し、
-///   `password_keyring_account: Option<String>` + `ephemeral_password: bool` に置換。
-///   IPC 経路で SSH パスワード平文が流れないようサーバー側 keyring 取得に統一。
-/// - v3: Sprint 5-1 / G3 — IPC ワイヤフォーマットを `bincode` 1.x から
-///   `postcard` 1.x に変更。RUSTSEC-2025-0141 (bincode 1.x の supply chain 状態) 対応。
-///   varint エンコードでメッセージサイズが縮小する。
-/// - v4: Sprint 5-2 / B2 — `ServerToClient::CwdChanged` を追加。
-///   OSC 7 (`file://host/path`) で受信したシェルの現在ディレクトリをクライアントに伝搬し、
-///   新規ペイン作成時の親 CWD 継承・タブ表示に利用する。enum バリアント追加のため
-///   旧クライアント (v3) は新サーバーが送る `CwdChanged` をデコードできない。
-/// - v5: Sprint 5-7 / Phase 2-1 — ワークスペース機能を追加。
+/// - v1: Initial release (introduced in PR-C Task 10).
+/// - v2: Sprint 5-1 / G1 — Removed `password: Option<String>` from `ConnectSsh` and
+///   replaced it with `password_keyring_account: Option<String>` + `ephemeral_password: bool`.
+///   Plain-text SSH passwords no longer flow over the IPC channel; the server fetches
+///   credentials from its keyring instead.
+/// - v3: Sprint 5-1 / G3 — Switched the IPC wire format from `bincode` 1.x to
+///   `postcard` 1.x. Mitigates RUSTSEC-2025-0141 (bincode 1.x supply-chain status).
+///   Varint encoding also reduces message size.
+/// - v4: Sprint 5-2 / B2 — Added `ServerToClient::CwdChanged`. The shell's current
+///   working directory, received via OSC 7 (`file://host/path`), is propagated to the
+///   client so new panes can inherit the parent CWD and tabs can display it. Because
+///   this adds an enum variant, v3 clients cannot decode `CwdChanged` from a new server.
+/// - v5: Sprint 5-7 / Phase 2-1 — Added workspace support. New variants:
 ///   `ClientToServer::{CreateWorkspace, SwitchWorkspace, ListWorkspaces, RenameWorkspace, DeleteWorkspace}`
-///   と `ServerToClient::{WorkspaceList, WorkspaceSwitched}` を新設。`SessionInfo` に
-///   `workspace_name: String`（`#[serde(default)]` で旧クライアント互換）を追加し、
-///   セッションを論理グループに束ねる上位概念を導入する。
-/// - v6: Sprint 5-7 / Phase 2-2 — Quake モード（グローバルホットキー表示切替）を追加。
-///   `ClientToServer::QuakeToggle { action }` を新設（nexterm-ctl が Wayland 等で
-///   compositor の `bindsym` 経由でトリガーするために必要）。サーバーは接続中の全
-///   GPU クライアントに `ServerToClient::QuakeToggleRequest { action }` をブロード
-///   キャストして実際のウィンドウ操作を依頼する。
-/// - v7: Sprint 5-7 / Phase 2-3 — タブ並べ替えドラッグ。
-///   `ClientToServer::ReorderPanes { pane_ids }` を新設。クライアントがタブバー上の
-///   ドラッグ&ドロップで決めた新順序をサーバーに送り、サーバーは `Window.pane_order`
-///   を更新して `LayoutChanged.panes` 配列の順序に反映する（既存メッセージの
-///   フィールド順序変更のみで、enum バリアント追加は本変更では ReorderPanes のみ）。
-/// - v8: Sprint 5-8 / Phase 4-3 — タブ外ドロップ（tab tearing）。
-///   `ClientToServer::MovePaneToWindow { pane_id, target_window_id, insert_at }` を
-///   新設。クライアントがタブを別 OS Window（または新規 OS Window）にドロップした際、
-///   サーバー内で `Window::detach_pane` + `Window::attach_pane` を実行して
-///   セッションの Window 構成を変更する。v7 クライアントは新メッセージをデコードできない
-///   ため、サーバーは Hello 時にバージョン不一致で接続を切断する。
-///   - Phase 4-5 で `ClientToServer::QueryForegroundProcess` および
-///     `ServerToClient::ForegroundProcessStatus` を enum 末尾に追加（v8 互換追加）。
-///     旧 v8 クライアント・サーバーは新バリアントを送らない・受け取らないため、
-///     既存 v8 接続の動作には影響しない。
+///   and `ServerToClient::{WorkspaceList, WorkspaceSwitched}`. `SessionInfo` gained a
+///   `workspace_name: String` field (`#[serde(default)]` for compatibility with older
+///   clients), bundling sessions into logical groups.
+/// - v6: Sprint 5-7 / Phase 2-2 — Added Quake mode (global-hotkey show/hide toggle).
+///   `ClientToServer::QuakeToggle { action }` was introduced so that `nexterm-ctl` can
+///   trigger the toggle via the compositor's `bindsym` on Wayland and similar
+///   environments. The server broadcasts `ServerToClient::QuakeToggleRequest { action }`
+///   to every connected GPU client to perform the actual window operation.
+/// - v7: Sprint 5-7 / Phase 2-3 — Tab reordering by drag.
+///   `ClientToServer::ReorderPanes { pane_ids }` was added: the client sends the new
+///   order decided by drag-and-drop on the tab bar, and the server updates
+///   `Window.pane_order` so the ordering is reflected in the next `LayoutChanged.panes`.
+///   `ReorderPanes` is the only new variant in this bump; nothing else changed.
+/// - v8: Sprint 5-8 / Phase 4-3 — Tab tearing (drop a tab outside its tab bar).
+///   `ClientToServer::MovePaneToWindow { pane_id, target_window_id, insert_at }` was
+///   added. When the client drops a tab onto another OS Window (or a brand-new one),
+///   the server calls `Window::detach_pane` + `Window::attach_pane` to change the
+///   session's Window layout. v7 clients cannot decode the new message, so the server
+///   drops the connection during Hello on a version mismatch.
+///   - Phase 4-5 appended `ClientToServer::QueryForegroundProcess` and
+///     `ServerToClient::ForegroundProcessStatus` at the end of the enums (additive,
+///     still v8 compatible). Old v8 clients/servers neither send nor receive the new
+///     variants, so existing v8 connections are unaffected.
 pub const PROTOCOL_VERSION: u32 = 8;
 
-/// IPC メッセージ 1 件の最大サイズ（バイト数）。
+/// Maximum size (in bytes) of a single IPC message.
 ///
-/// 受信側はこの値を超える長さプレフィックスを受け取った時点で接続を切断する。
-/// 64 MiB は `ImagePlaced` の最大ペイロード（4096×4096×4 = 64 MiB）+ メタデータを許容する設定。
-/// 4 GiB の `vec![0u8; msg_len]` 確保による OOM 攻撃を防ぐ。
+/// The receiver drops the connection as soon as a length prefix exceeds this value.
+/// 64 MiB accommodates the worst-case `ImagePlaced` payload (4096 × 4096 × 4 = 64 MiB)
+/// plus its metadata, and guards against OOM attacks that would otherwise allocate
+/// `vec![0u8; msg_len]` for a multi-gigabyte length prefix.
 pub const MAX_MSG_LEN: usize = 64 * 1024 * 1024;
 
-/// 受信した長さプレフィックスを検証する共通ヘルパー。
+/// Shared helper that validates a received length prefix.
 ///
-/// `MAX_MSG_LEN` を超える場合はエラーを返す。
+/// Returns an error when `msg_len` exceeds [`MAX_MSG_LEN`].
 ///
-/// # 引数
-/// - `msg_len`: 受信した長さプレフィックス（バイト数）
+/// # Arguments
+/// - `msg_len`: The received length prefix in bytes.
 ///
-/// # エラー
-/// `msg_len` が `MAX_MSG_LEN` を超えた場合
+/// # Errors
+/// When `msg_len` is greater than [`MAX_MSG_LEN`].
 pub fn validate_msg_len(msg_len: usize) -> std::result::Result<(), String> {
     if msg_len > MAX_MSG_LEN {
         Err(format!(
-            "IPC メッセージサイズが上限を超えています: {} > {} バイト",
+            "IPC message size exceeds the limit: {} > {} bytes",
             msg_len, MAX_MSG_LEN
         ))
     } else {
@@ -95,21 +98,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn 上限以内のサイズは許容される() {
+    fn sizes_within_the_limit_are_accepted() {
         assert!(validate_msg_len(0).is_ok());
         assert!(validate_msg_len(1024).is_ok());
         assert!(validate_msg_len(MAX_MSG_LEN).is_ok());
     }
 
     #[test]
-    fn 上限超過は拒否される() {
+    fn sizes_over_the_limit_are_rejected() {
         assert!(validate_msg_len(MAX_MSG_LEN + 1).is_err());
         assert!(validate_msg_len(usize::MAX).is_err());
         assert!(validate_msg_len(u32::MAX as usize).is_err());
     }
 
     #[test]
-    fn エラーメッセージにサイズが含まれる() {
+    fn error_message_includes_the_size() {
         let err = validate_msg_len(MAX_MSG_LEN + 1).unwrap_err();
         assert!(err.contains(&format!("{}", MAX_MSG_LEN + 1)));
         assert!(err.contains(&format!("{}", MAX_MSG_LEN)));

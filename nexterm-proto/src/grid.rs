@@ -1,51 +1,51 @@
-//! 仮想グリッド（W×H のセル配列）型定義
+//! Virtual grid (a W×H array of cells) type definitions.
 
 use serde::{Deserialize, Serialize};
 
 use crate::Cell;
 
-/// 差分転送用のダーティ行データ
+/// A dirty row used for differential updates.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirtyRow {
-    /// 行インデックス（0始まり）
+    /// Row index (0-based).
     pub row: u16,
-    /// その行のセル配列（列0から列W-1まで）
+    /// Cells in this row (from column 0 to column W-1).
     pub cells: Vec<Cell>,
 }
 
-/// OSC 8 ハイパーリンクのスパン情報
+/// OSC 8 hyperlink span.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HyperlinkSpan {
-    /// 行インデックス（0始まり）
+    /// Row index (0-based).
     pub row: u16,
-    /// リンク開始列（0始まり、inclusive）
+    /// Start column of the link (0-based, inclusive).
     pub col_start: u16,
-    /// リンク終了列（0始まり、exclusive）
+    /// End column of the link (0-based, exclusive).
     pub col_end: u16,
-    /// リンク先 URL
+    /// Link target URL.
     pub url: String,
 }
 
-/// 画面全体のスナップショット（Full Refresh 用）
+/// Full-screen snapshot (used for a full refresh).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Grid {
-    /// グリッドの列数（文字単位）
+    /// Number of columns in the grid (in characters).
     pub width: u16,
-    /// グリッドの行数（文字単位）
+    /// Number of rows in the grid (in characters).
     pub height: u16,
-    /// 行優先の二次元配列（`rows[y][x]`）
+    /// Row-major 2D array (`rows[y][x]`).
     pub rows: Vec<Vec<Cell>>,
-    /// カーソルの列位置（0始まり）
+    /// Cursor column (0-based).
     pub cursor_col: u16,
-    /// カーソルの行位置（0始まり）
+    /// Cursor row (0-based).
     pub cursor_row: u16,
-    /// OSC 8 ハイパーリンク（VT シーケンスで明示的に指定されたもの）
+    /// OSC 8 hyperlinks declared explicitly via VT sequences.
     #[serde(default)]
     pub hyperlinks: Vec<HyperlinkSpan>,
 }
 
 impl Grid {
-    /// 空のグリッドを生成する
+    /// Creates an empty grid.
     pub fn new(width: u16, height: u16) -> Self {
         let rows = vec![vec![Cell::default(); width as usize]; height as usize];
         Self {
@@ -58,14 +58,14 @@ impl Grid {
         }
     }
 
-    /// 指定セルへアクセス（範囲外は None）
+    /// Returns the cell at the given position (or `None` if out of bounds).
     pub fn get(&self, col: u16, row: u16) -> Option<&Cell> {
         self.rows
             .get(row as usize)
             .and_then(|r| r.get(col as usize))
     }
 
-    /// 指定セルへ書き込み（範囲外は無視）
+    /// Writes to the given cell (out-of-bounds writes are ignored).
     pub fn set(&mut self, col: u16, row: u16, cell: Cell) {
         if let Some(r) = self.rows.get_mut(row as usize)
             && let Some(c) = r.get_mut(col as usize)
@@ -74,19 +74,22 @@ impl Grid {
         }
     }
 
-    /// 行全体をデフォルトセルで埋める（範囲外は無視してパニックしない）
+    /// Fills the entire row with default cells (out-of-bounds rows are ignored
+    /// instead of panicking).
     pub fn clear_row(&mut self, row: u16) {
         if let Some(r) = self.rows.get_mut(row as usize) {
             r.iter_mut().for_each(|c| *c = Cell::default());
         }
     }
 
-    /// src 行の内容を dst 行へコピーする（範囲外は無視してパニックしない）
+    /// Copies the contents of row `src` into row `dst` (out-of-bounds indices are
+    /// ignored instead of panicking).
     pub fn copy_row(&mut self, dst: u16, src: u16) {
         if dst == src {
             return;
         }
-        // src 行を先にクローンしてから dst に書き込む（借用の競合を回避）
+        // Clone the source row first, then write into the destination, to sidestep
+        // the borrow-checker conflict.
         let src_cells = match self.rows.get(src as usize) {
             Some(r) => r.clone(),
             None => return,
@@ -103,18 +106,18 @@ mod tests {
     use crate::{Attrs, Color};
 
     #[test]
-    fn グリッド生成とセルアクセス() {
+    fn grid_creation_and_cell_access() {
         let grid = Grid::new(80, 24);
         assert_eq!(grid.width, 80);
         assert_eq!(grid.height, 24);
-        // 全セルがデフォルト（空白）であること
+        // Every cell should be the default (blank).
         assert_eq!(grid.get(0, 0).unwrap().ch, ' ');
         assert_eq!(grid.get(79, 23).unwrap().ch, ' ');
-        assert!(grid.get(80, 0).is_none()); // 範囲外
+        assert!(grid.get(80, 0).is_none()); // out of bounds
     }
 
     #[test]
-    fn グリッドのセット() {
+    fn grid_set() {
         let mut grid = Grid::new(80, 24);
         let cell = Cell {
             ch: 'X',
@@ -127,7 +130,7 @@ mod tests {
     }
 
     #[test]
-    fn グリッドのpostcard往復() {
+    fn grid_postcard_roundtrip() {
         let mut grid = Grid::new(10, 5);
         grid.set(
             3,
@@ -145,23 +148,23 @@ mod tests {
     }
 
     #[test]
-    fn 範囲外セットは無視される() {
+    fn out_of_bounds_set_is_ignored() {
         let mut grid = Grid::new(5, 5);
-        // 範囲外への書き込みはパニックせず無視される
+        // Out-of-bounds writes must not panic; they are silently dropped.
         grid.set(100, 100, Cell::default());
-        // 既存セルが変わっていないこと
+        // Existing cells must remain untouched.
         assert_eq!(grid.get(0, 0).unwrap().ch, ' ');
     }
 
     #[test]
-    fn カーソル位置の初期値は0_0() {
+    fn cursor_position_defaults_to_origin() {
         let grid = Grid::new(80, 24);
         assert_eq!(grid.cursor_col, 0);
         assert_eq!(grid.cursor_row, 0);
     }
 
     #[test]
-    fn dirty_row_シリアライズ往復() {
+    fn dirty_row_postcard_roundtrip() {
         let row = DirtyRow {
             row: 3,
             cells: vec![
@@ -185,7 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn hyperlink_span_フィールド確認() {
+    fn hyperlink_span_field_check() {
         let span = HyperlinkSpan {
             row: 1,
             col_start: 5,
