@@ -1,47 +1,47 @@
-//! vte::Perform の実装 — VT シーケンスを Screen に反映する
+//! `vte::Perform` implementation — applies VT sequences to a `Screen`.
 
 use vte::Perform;
 
 use crate::screen::{Screen, SemanticMarkKind};
 
 impl Perform for Screen {
-    /// 印字可能文字の書き込み
+    /// Writes a printable character.
     fn print(&mut self, c: char) {
         self.write_char(c);
     }
 
-    /// 制御文字（C0/C1）の処理
+    /// Handles a control character (C0/C1).
     fn execute(&mut self, byte: u8) {
         match byte {
-            // BEL (ベル) — 通知フラグを立てる
+            // BEL — raise the pending-notification flag.
             0x07 => {
                 self.set_pending_bell();
             }
-            // BS (バックスペース)
+            // BS (backspace).
             0x08 if self.cursor().0 > 0 => {
                 let (col, row) = self.cursor();
                 self.move_cursor(col - 1, row);
             }
-            // HT (水平タブ) — 次の8の倍数列へ
+            // HT (horizontal tab) — move to the next multiple of 8.
             0x09 => {
                 let (col, row) = self.cursor();
                 let next_tab = ((col / 8) + 1) * 8;
                 self.move_cursor(next_tab.min(self.grid().width.saturating_sub(1)), row);
             }
-            // LF / VT / FF (改行相当)
+            // LF / VT / FF (line-break family).
             0x0A..=0x0C => {
                 self.advance_line();
             }
-            // CR (キャリッジリターン)
+            // CR (carriage return).
             0x0D => {
                 let (_, row) = self.cursor();
                 self.move_cursor(0, row);
             }
-            _ => {} // その他の制御文字は無視
+            _ => {} // Ignore every other control character.
         }
     }
 
-    /// CSI シーケンス（エスケープコード）の処理
+    /// Handles a CSI (escape-code) sequence.
     fn csi_dispatch(
         &mut self,
         params: &vte::Params,
@@ -49,7 +49,7 @@ impl Perform for Screen {
         _ignore: bool,
         action: char,
     ) {
-        // DEC プライベートモード（`?` プレフィックス付き）を処理する
+        // Handle DEC private modes (those carrying a `?` prefix).
         if intermediates.first() == Some(&b'?') {
             match action {
                 'h' => {
@@ -64,13 +64,13 @@ impl Perform for Screen {
             }
         }
 
-        // パラメータをフラットな Vec<u16> に変換する
+        // Flatten the parameter list into a `Vec<u16>`.
         let p: Vec<u16> = params
             .iter()
             .map(|sub| sub.first().copied().unwrap_or(0))
             .collect();
 
-        // 第1・第2パラメータのデフォルト値を解決するヘルパー
+        // Helpers that resolve the first/second parameters with their default values.
         let p1 = |default: u16| {
             if p.is_empty() || p[0] == 0 {
                 default
@@ -87,60 +87,62 @@ impl Perform for Screen {
         };
 
         match action {
-            // CUP / HVP — カーソル位置移動（1始まり → 0始まり）
+            // CUP / HVP — move the cursor (1-based → 0-based).
             'H' | 'f' => {
                 let row = p1(1).saturating_sub(1);
                 let col = p2(1).saturating_sub(1);
                 self.move_cursor(col, row);
             }
-            // CUU — カーソル上移動
+            // CUU — move the cursor up.
             'A' => {
                 let (col, row) = self.cursor();
                 self.move_cursor(col, row.saturating_sub(p1(1)));
             }
-            // CUD — カーソル下移動
+            // CUD — move the cursor down.
             'B' => {
                 let (col, row) = self.cursor();
-                // 巨大な引数 (例: `\x1b[99999999B`) で u32 加算 panic を起こさないよう
-                // saturating_add を使う。後段の `.min` で grid 範囲内にクランプされる。
+                // Use saturating_add so huge arguments (e.g. `\x1b[99999999B`) do
+                // not panic during u32 addition. The trailing `.min` then clamps the
+                // value into the grid.
                 let new_row = row
                     .saturating_add(p1(1))
                     .min(self.grid().height.saturating_sub(1));
                 self.move_cursor(col, new_row);
             }
-            // CUF — カーソル右移動
+            // CUF — move the cursor right.
             'C' => {
                 let (col, row) = self.cursor();
-                // 同上。Sprint 5-7 後段 fuzz `osc_url` が発見した panic の修正。
+                // Same idea as above. Fix for the panic discovered by the late
+                // Sprint 5-7 fuzz target `osc_url`.
                 let new_col = col
                     .saturating_add(p1(1))
                     .min(self.grid().width.saturating_sub(1));
                 self.move_cursor(new_col, row);
             }
-            // CUB — カーソル左移動
+            // CUB — move the cursor left.
             'D' => {
                 let (col, row) = self.cursor();
                 self.move_cursor(col.saturating_sub(p1(1)), row);
             }
-            // CHA — カーソル列移動（1始まり）
+            // CHA — move to the given column (1-based).
             'G' => {
                 let (_, row) = self.cursor();
                 self.move_cursor(p1(1).saturating_sub(1), row);
             }
-            // VPA — カーソル行移動（1始まり）
+            // VPA — move to the given row (1-based).
             'd' => {
                 let (col, _) = self.cursor();
                 self.move_cursor(col, p1(1).saturating_sub(1));
             }
-            // ED — 画面消去
+            // ED — erase in display.
             'J' => {
                 self.erase_in_display(p1(0));
             }
-            // EL — 行消去
+            // EL — erase in line.
             'K' => {
                 self.erase_in_line(p1(0));
             }
-            // SGR — 属性設定
+            // SGR — set graphic rendition.
             'm' => {
                 let sgr: Vec<u16> = params
                     .iter()
@@ -148,19 +150,19 @@ impl Perform for Screen {
                     .collect();
                 self.apply_sgr(&sgr);
             }
-            // DECSTBM — スクロール領域設定
+            // DECSTBM — set the scrolling region.
             'r' => {
                 let top = p1(1).saturating_sub(1);
                 let bottom = p2(self.grid().height).saturating_sub(1);
-                // Screen への直接アクセスが必要なため screen.rs のメソッドを呼ぶ
+                // Direct access to Screen is needed here, so call the helper on screen.rs.
                 self.set_scroll_region(top, bottom);
             }
-            _ => {} // 未対応の CSI シーケンスは無視
+            _ => {} // Ignore every unsupported CSI sequence.
         }
     }
 
     fn osc_dispatch(&mut self, params: &[&[u8]], _bell_terminated: bool) {
-        // params[0] がコード、params[1] 以降がデータ
+        // `params[0]` is the code; `params[1..]` is the payload.
         if params.is_empty() {
             return;
         }
@@ -169,9 +171,9 @@ impl Perform for Screen {
             Err(_) => return,
         };
         match code {
-            // OSC 0: アイコン名とウィンドウタイトルを設定
-            // OSC 1: アイコン名を設定（タイトルとして扱う）
-            // OSC 2: ウィンドウタイトルを設定
+            // OSC 0: set the icon name and the window title.
+            // OSC 1: set the icon name (treated as the title here).
+            // OSC 2: set the window title.
             "0" | "1" | "2" => {
                 if let Some(title_bytes) = params.get(1)
                     && let Ok(title) = std::str::from_utf8(title_bytes)
@@ -179,11 +181,11 @@ impl Perform for Screen {
                     self.set_pending_title(title.to_string());
                 }
             }
-            // OSC 7: 現在の作業ディレクトリ (CWD) 報告
-            // フォーマット: ESC ] 7 ; file://[host]/path BEL
-            // - host 部は無視（ローカル/リモートで一律 path のみ採用）
-            // - path はパーセントエンコードされている可能性あり
-            // - 親 Pane の CWD を新規 Pane に継承するために使う
+            // OSC 7: current working directory (CWD) report.
+            // Format: ESC ] 7 ; file://[host]/path BEL
+            // - The host part is ignored (local/remote alike use the path only).
+            // - The path may be percent-encoded.
+            // - Used to inherit the parent pane's CWD when spawning a new pane.
             "7" => {
                 if let Some(payload_bytes) = params.get(1)
                     && let Ok(payload) = std::str::from_utf8(payload_bytes)
@@ -192,11 +194,11 @@ impl Perform for Screen {
                     self.set_pending_cwd(cwd);
                 }
             }
-            // OSC 8: ハイパーリンク
-            // フォーマット: ESC ] 8 ; <params> ; <URI> BEL
-            // URI が空文字列の場合はリンク終了
+            // OSC 8: hyperlink.
+            // Format: ESC ] 8 ; <params> ; <URI> BEL
+            // An empty URI string terminates the link.
             "8" => {
-                // params[1] = オプション（無視可）、params[2] = URI
+                // params[1] holds optional attributes (which we ignore); params[2] is the URI.
                 let uri = params
                     .get(2)
                     .and_then(|b| std::str::from_utf8(b).ok())
@@ -208,8 +210,8 @@ impl Perform for Screen {
                     self.set_hyperlink(Some(uri.to_string()));
                 }
             }
-            // OSC 9: iTerm2 互換デスクトップ通知
-            // フォーマット: ESC ] 9 ; <メッセージ> BEL
+            // OSC 9: iTerm2-compatible desktop notification.
+            // Format: ESC ] 9 ; <message> BEL
             "9" => {
                 if let Some(msg_bytes) = params.get(1)
                     && let Ok(msg) = std::str::from_utf8(msg_bytes)
@@ -217,19 +219,22 @@ impl Perform for Screen {
                     self.set_pending_notification("Nexterm".to_string(), msg.to_string());
                 }
             }
-            // OSC 52: クリップボード書き込み要求（Sprint 4-1）
-            // フォーマット: ESC ] 52 ; <selection> ; <base64 ペイロード> BEL/ST
-            // selection は c (clipboard) のみ対応。p (primary) や s (secondary) は無視する。
-            // ペイロードが "?" の場合はクリップボード読み出し要求だが、
-            // セキュリティ上の理由から読み出しはサポートしない（全要求を無視）。
-            // クライアント側で SecurityConfig.osc52_clipboard ポリシーに従って
-            // 確認ダイアログを表示するため、本ハンドラは pending として queue するだけ。
+            // OSC 52: clipboard write request (Sprint 4-1).
+            // Format: ESC ] 52 ; <selection> ; <base64 payload> BEL/ST
+            // Only the `c` (clipboard) selection is supported; `p` (primary) and `s`
+            // (secondary) are ignored.
+            // A payload of `"?"` is a read request, but reading is intentionally not
+            // supported for security reasons (every such request is ignored).
+            // The client side prompts for consent according to the
+            // SecurityConfig.osc52_clipboard policy, so this handler only queues the
+            // request as pending.
             "52" => {
                 let selection = params
                     .get(1)
                     .and_then(|b| std::str::from_utf8(b).ok())
                     .unwrap_or("");
-                // selection が "c" を含むときのみ処理する（複数指定 "cs" 等にも対応）
+                // Process only when the selection includes `c` (also accepts
+                // multi-target selections such as `"cs"`).
                 if !selection.contains('c') {
                     return;
                 }
@@ -238,13 +243,14 @@ impl Perform for Screen {
                     .and_then(|b| std::str::from_utf8(b).ok())
                     .unwrap_or("")
                     .trim();
-                // "?" は読み出し要求 → セキュリティ上拒否
+                // `"?"` is a read request → reject it for security reasons.
                 if payload == "?" {
                     return;
                 }
-                // OSC 52 のペイロードサイズには上限を設ける（DoS 対策）。
-                // 実際の上限は SecurityConfig.osc52_max_bytes でクライアント側がチェックする。
-                // ここでは VT パーサ側でも 16 MiB で打ち切る（base64 で 12 MiB 相当）。
+                // Cap the OSC 52 payload size to mitigate DoS attacks.
+                // The actual policy limit is enforced on the client side via
+                // SecurityConfig.osc52_max_bytes; here the VT parser also bails out
+                // at 16 MiB (about 12 MiB of decoded base64).
                 const MAX_OSC52_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
                 if payload.len() > MAX_OSC52_PAYLOAD_BYTES {
                     return;
@@ -255,8 +261,8 @@ impl Perform for Screen {
                     self.queue_clipboard_write(text);
                 }
             }
-            // OSC 777: rxvt 互換デスクトップ通知
-            // フォーマット: ESC ] 777 ; notify ; <タイトル> ; <本文> BEL/ST
+            // OSC 777: rxvt-compatible desktop notification.
+            // Format: ESC ] 777 ; notify ; <title> ; <body> BEL/ST
             "777" => {
                 let cmd = params
                     .get(1)
@@ -277,8 +283,8 @@ impl Perform for Screen {
                     .to_string();
                 self.set_pending_notification(title, body);
             }
-            // OSC 133: セマンティックゾーン（プロンプト / コマンド / 出力のマーキング）
-            // フォーマット: ESC ] 133 ; <A|B|C|D[;exit_code]> ST
+            // OSC 133: semantic zone markers (prompt / command / output marking).
+            // Format: ESC ] 133 ; <A|B|C|D[;exit_code]> ST
             "133" => {
                 if let Some(mark_bytes) = params.get(1)
                     && let Ok(mark) = std::str::from_utf8(mark_bytes)
@@ -295,7 +301,7 @@ impl Perform for Screen {
                         }
                         "D" => {
                             // ESC ] 133 ; D ; <exit_code> BEL
-                            // params[2] が exit_code（省略可能）
+                            // `params[2]` is the (optional) exit code.
                             let exit_code = params
                                 .get(2)
                                 .and_then(|b| std::str::from_utf8(b).ok())
@@ -311,31 +317,31 @@ impl Perform for Screen {
     }
     fn esc_dispatch(&mut self, _intermediates: &[u8], _ignore: bool, _byte: u8) {}
 
-    /// DCS 開始 — action == 'q' のとき Sixel
+    /// DCS start — when `action == 'q'`, this is a Sixel sequence.
     fn hook(&mut self, _params: &vte::Params, _intermediates: &[u8], _ignore: bool, action: char) {
         if action == 'q' {
             self.start_sixel();
         }
     }
 
-    /// DCS データバイト
+    /// DCS data byte.
     fn put(&mut self, byte: u8) {
         self.push_dcs_byte(byte);
     }
 
-    /// DCS 終了 — Sixel デコードを確定する
+    /// DCS end — finalizes the Sixel decode.
     fn unhook(&mut self) {
         self.finish_sixel();
     }
 }
 
 impl Screen {
-    /// DEC プライベートモードの設定（`?` プレフィックス付き CSI h / l）
+    /// Sets DEC private modes (CSI `h` / `l` with a `?` prefix).
     fn dec_private_mode(&mut self, params: &vte::Params, enable: bool) {
         for param in params.iter() {
             let mode = param.first().copied().unwrap_or(0);
             match mode {
-                // DEC Private Mode 47 / 1047: 代替画面バッファ（カーソル保存なし）
+                // DEC Private Mode 47 / 1047: alternate screen buffer (no cursor save).
                 47 | 1047 => {
                     if enable {
                         self.switch_to_alt();
@@ -343,7 +349,7 @@ impl Screen {
                         self.switch_to_primary();
                     }
                 }
-                // DEC Private Mode 1049: 代替画面バッファ（カーソル保存付き）
+                // DEC Private Mode 1049: alternate screen buffer (with cursor save).
                 1049 => {
                     if enable {
                         self.switch_to_alt();
@@ -351,19 +357,19 @@ impl Screen {
                         self.switch_to_primary();
                     }
                 }
-                // DEC Private Mode 1000: X11 マウスレポーティング（基本クリック）
+                // DEC Private Mode 1000: X11 mouse reporting (basic click).
                 1000 => {
                     self.mouse_mode = if enable { 1 } else { 0 };
                 }
-                // DEC Private Mode 1006: SGR 拡張マウスレポーティング
+                // DEC Private Mode 1006: SGR extended mouse reporting.
                 1006 => {
                     self.mouse_mode = if enable { 2 } else { 0 };
                 }
-                // DEC Private Mode 2004: ブラケットペーストモード
+                // DEC Private Mode 2004: bracketed paste mode.
                 2004 => {
                     self.set_bracketed_paste(enable);
                 }
-                // DEC Private Mode 2026: 同期出力モード
+                // DEC Private Mode 2026: synchronized output mode.
                 2026 => {
                     self.set_synchronized_output(enable);
                 }

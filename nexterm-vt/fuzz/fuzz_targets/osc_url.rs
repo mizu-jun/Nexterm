@@ -1,30 +1,30 @@
 #![no_main]
-//! Sprint 3-5: OSC 8 ハイパーリンク + OSC 52 / 133 などの OSC ハンドラに対するファジング
+//! Sprint 3-5: fuzz the OSC handlers (OSC 8 hyperlinks plus OSC 52 / 133).
 //!
-//! 任意のバイト列を OSC シーケンス (`ESC ] ... BEL` または `ESC ] ... ESC \`)
-//! でラップし、`VtParser::advance()` 経由で OSC ハンドラに到達させる。
-//! URL allowlist チェック・長さ上限・URL パース失敗で
-//! パニックや OOM が起きないことを検証する（CRITICAL #5 の事前検出）。
+//! Wraps arbitrary bytes inside an OSC sequence (`ESC ] ... BEL` or
+//! `ESC ] ... ESC \`) and feeds them through `VtParser::advance()` to reach
+//! the OSC handlers. Verifies that the URL allow-list check, length cap, and
+//! URL parse failures never panic or OOM (proactive detection for CRITICAL #5).
 //!
-//! 想定攻撃シナリオ:
-//! - 巨大な URL（数 MiB）
-//! - 不正な URL スキーマ (`javascript:`, `data:`, `file:`)
-//! - 終端文字なしの OSC
-//! - OSC 番号自体が異常（例: 99999）
+//! Attack scenarios in scope:
+//! - Huge URLs (several MiB).
+//! - Disallowed URL schemes (`javascript:`, `data:`, `file:`).
+//! - OSC sequences without a terminator.
+//! - Abnormal OSC numbers (e.g. 99999).
 
 use libfuzzer_sys::fuzz_target;
 use nexterm_vt::VtParser;
 
 fuzz_target!(|data: &[u8]| {
-    // 入力を OSC 8 ハイパーリンク・OSC 52 クリップボード・OSC 133 セマンティック
-    // のいずれかとして 3 種類のパターンに包んでテストする
+    // Wrap the input into three different OSC patterns (OSC 8 hyperlink,
+    // OSC 52 clipboard, and OSC 133 semantic mark) and test each one.
     let bytes = if data.len() > 65_536 {
         &data[..65_536]
     } else {
         data
     };
 
-    // パターン 1: OSC 8 ハイパーリンク (URL 部分にファザ入力)
+    // Pattern 1: OSC 8 hyperlink (fuzzer input goes into the URL).
     {
         let mut parser = VtParser::new(80, 24);
         let mut seq = Vec::with_capacity(bytes.len() + 16);
@@ -34,7 +34,7 @@ fuzz_target!(|data: &[u8]| {
         parser.advance(&seq);
     }
 
-    // パターン 2: OSC 52 クリップボード (base64 部分にファザ入力)
+    // Pattern 2: OSC 52 clipboard (fuzzer input goes into the base64 payload).
     {
         let mut parser = VtParser::new(80, 24);
         let mut seq = Vec::with_capacity(bytes.len() + 16);
@@ -44,7 +44,7 @@ fuzz_target!(|data: &[u8]| {
         parser.advance(&seq);
     }
 
-    // パターン 3: OSC 133 セマンティックマーク (任意フィールド)
+    // Pattern 3: OSC 133 semantic mark (fuzzer input goes into the free fields).
     {
         let mut parser = VtParser::new(80, 24);
         let mut seq = Vec::with_capacity(bytes.len() + 16);
@@ -52,7 +52,7 @@ fuzz_target!(|data: &[u8]| {
         seq.extend_from_slice(bytes);
         seq.extend_from_slice(b"\x07");
         parser.advance(&seq);
-        // 副作用も取得してパニックしないことを確認
+        // Drain the side effects to confirm they do not panic.
         let _ = parser.screen_mut().take_semantic_marks();
     }
 });

@@ -1,22 +1,22 @@
 #![no_main]
-//! Sprint 3-5: Kitty グラフィックスプロトコルデコーダに対するファジング
+//! Sprint 3-5: fuzz the Kitty graphics protocol decoder.
 //!
-//! `nexterm_vt::image::decode_kitty()` に任意の APC ペイロードを投入し、
-//! 不正な base64・幅高指定・チャンク連結で OOM やパニックを
-//! 起こさないことを検証する。
+//! Feeds arbitrary APC payloads to `nexterm_vt::image::decode_kitty()` and
+//! verifies that no OOM or panic occurs from malformed base64, width/height
+//! specifiers, or chunk concatenation.
 //!
-//! 想定攻撃シナリオ:
-//! - 巨大な width/height 指定 (`s=99999,v=99999`) によるメモリ枯渇
-//! - 不正な base64 文字列
-//! - 不一致な width × height × bytes_per_pixel
-//! - 未知のフォーマット指定子 (`f=`)
+//! Attack scenarios in scope:
+//! - Memory exhaustion through huge width/height values (`s=99999,v=99999`).
+//! - Malformed base64 strings.
+//! - Inconsistent `width × height × bytes_per_pixel`.
+//! - Unknown format specifiers (`f=`).
 
 use libfuzzer_sys::fuzz_target;
 use nexterm_vt::image::decode_kitty;
 
 fuzz_target!(|data: &[u8]| {
-    // Kitty APC ペイロードは画像サイズによる。
-    // 4 MiB（VtParser の APC バッファ上限と同じ）に切り詰める
+    // A Kitty APC payload depends on the image size.
+    // Truncate at 4 MiB (matching the VtParser APC buffer limit).
     let bytes = if data.len() > 4 * 1024 * 1024 {
         &data[..4 * 1024 * 1024]
     } else {

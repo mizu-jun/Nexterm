@@ -1,17 +1,19 @@
-//! Sixel / Kitty 画像プロトコルデコーダ
+//! Sixel / Kitty image protocol decoders.
 
 use std::collections::HashMap;
 
-/// 画像 1 枚あたりの最大バイト数（256 MiB）。
+/// Maximum bytes per image (256 MiB).
 ///
-/// 悪意ある PTY / SSH ホストが極端に大きな width × height を指定して
-/// `vec![0u8; width * height * 4]` で u32 オーバーフロー後に
-/// 極小バッファを確保し、その後の境界外書き込みでヒープを破壊する攻撃を防ぐ。
+/// Defends against a malicious PTY / SSH host that specifies an extreme
+/// `width × height`, overflows the `u32` multiplication inside
+/// `vec![0u8; width * height * 4]`, allocates a tiny buffer, and then writes
+/// out of bounds to corrupt the heap.
 const MAX_IMAGE_BYTES: usize = 256 * 1024 * 1024;
 
-/// 幅 × 高さ × チャネル数 を `usize` で安全に計算する。
+/// Computes `width × height × channels` safely as a `usize`.
 ///
-/// `u64` 経由でオーバーフローを検出し、`MAX_IMAGE_BYTES` を超える場合は `None` を返す。
+/// Detects overflow by routing through `u64` and returns `None` when the result
+/// would exceed [`MAX_IMAGE_BYTES`].
 fn checked_image_bytes(width: u32, height: u32, channels: u32) -> Option<usize> {
     let bytes = (width as u64)
         .checked_mul(height as u64)?
@@ -22,20 +24,20 @@ fn checked_image_bytes(width: u32, height: u32, channels: u32) -> Option<usize> 
     Some(bytes as usize)
 }
 
-/// デコードされた画像データ（RGBA）
+/// Decoded image data (RGBA).
 #[derive(Debug, Clone)]
 pub struct DecodedImage {
-    /// 画像の幅（ピクセル）
+    /// Image width in pixels.
     pub width: u32,
-    /// 画像の高さ（ピクセル）
+    /// Image height in pixels.
     pub height: u32,
-    /// RGBA ピクセルデータ（width × height × 4 バイト）
+    /// RGBA pixel data (`width × height × 4` bytes).
     pub rgba: Vec<u8>,
 }
 
-// ---- Sixel デコーダ ----
+// ---- Sixel decoder ----
 
-/// DCS Sixel データをデコードして RGBA 画像を返す
+/// Decodes DCS Sixel data into an RGBA image.
 pub fn decode_sixel(data: &[u8]) -> Option<DecodedImage> {
     let mut palette: HashMap<u16, [u8; 3]> = default_sixel_palette();
     let mut current_color: u16 = 0;
@@ -44,14 +46,14 @@ pub fn decode_sixel(data: &[u8]) -> Option<DecodedImage> {
     let mut max_x: usize = 0;
     let mut max_band: usize = 0;
 
-    // ピクセルバッファ: buf[row][col] = RGBA
+    // Pixel buffer: `buf[row][col] = RGBA`.
     let mut buf: Vec<Vec<Option<[u8; 3]>>> = vec![Vec::new()];
 
     let mut i = 0;
     while i < data.len() {
         match data[i] {
             b'#' => {
-                // カラー選択 / カラー定義
+                // Color selection / color definition.
                 i += 1;
                 let n = match parse_decimal(data, &mut i) {
                     Some(v) => v,
@@ -71,7 +73,7 @@ pub fn decode_sixel(data: &[u8]) -> Option<DecodedImage> {
                                 let p3 = parse_decimal(data, &mut i).unwrap_or(0) as u32;
                                 match kind {
                                     2 => {
-                                        // RGB (0–100%)
+                                        // RGB (0–100%).
                                         palette.insert(
                                             n,
                                             [
@@ -82,7 +84,7 @@ pub fn decode_sixel(data: &[u8]) -> Option<DecodedImage> {
                                         );
                                     }
                                     1 => {
-                                        // HLS — 簡易近似（白として扱う）
+                                        // HLS — rough approximation (treat as white).
                                         palette.insert(n, [200, 200, 200]);
                                     }
                                     _ => {}
@@ -94,12 +96,12 @@ pub fn decode_sixel(data: &[u8]) -> Option<DecodedImage> {
                 current_color = n;
             }
             b'$' => {
-                // Graphics Carriage Return — 列を先頭に戻す
+                // Graphics Carriage Return — reset the column to the start.
                 x = 0;
                 i += 1;
             }
             b'-' => {
-                // Graphics New Line — 次のバンド（6行）へ
+                // Graphics New Line — move to the next band (6 rows).
                 x = 0;
                 band += 1;
                 max_band = max_band.max(band);
@@ -107,7 +109,7 @@ pub fn decode_sixel(data: &[u8]) -> Option<DecodedImage> {
                 i += 1;
             }
             b'!' => {
-                // リピート: !n<char>
+                // Repeat: `!n<char>`.
                 i += 1;
                 let count = parse_decimal(data, &mut i).unwrap_or(1) as usize;
                 if i < data.len() {
@@ -126,7 +128,7 @@ pub fn decode_sixel(data: &[u8]) -> Option<DecodedImage> {
                 }
             }
             b'?'..=b'~' => {
-                // Sixel ピクセルデータ（1文字 = 6ビット縦列）
+                // Sixel pixel data (one character = 6 vertical bits).
                 let color = *palette.get(&current_color).unwrap_or(&[200, 200, 200]);
                 let bits = data[i] - b'?';
                 ensure_bands(&mut buf, band);
@@ -147,7 +149,8 @@ pub fn decode_sixel(data: &[u8]) -> Option<DecodedImage> {
         return None;
     }
 
-    // 巨大画像での `u32` 乗算オーバーフロー → 極小バッファ確保後の境界外書き込みを防ぐ
+    // Prevent `u32` overflow on massive images (which would produce a tiny
+    // `expected`, followed by an out-of-bounds write).
     let width_u32 = u32::try_from(width).ok()?;
     let height_u32 = u32::try_from(height).ok()?;
     let total = checked_image_bytes(width_u32, height_u32, 4)?;
@@ -171,14 +174,14 @@ pub fn decode_sixel(data: &[u8]) -> Option<DecodedImage> {
     })
 }
 
-/// バッファを (band+1)*6 行まで拡張する
+/// Grows the buffer to `(band + 1) * 6` rows.
 fn ensure_bands(buf: &mut Vec<Vec<Option<[u8; 3]>>>, band: usize) {
     while buf.len() < (band + 1) * 6 {
         buf.push(Vec::new());
     }
 }
 
-/// Sixel の1列ピクセル（6ビット）をバッファに書き込む
+/// Writes one Sixel column (6 bits) into the buffer.
 fn paint_col(buf: &mut [Vec<Option<[u8; 3]>>], x: usize, band: usize, bits: u8, color: [u8; 3]) {
     for bit in 0..6usize {
         if bits & (1 << bit) != 0 {
@@ -193,7 +196,7 @@ fn paint_col(buf: &mut [Vec<Option<[u8; 3]>>], x: usize, band: usize, bits: u8, 
     }
 }
 
-/// VT340 デフォルトカラーパレット（一部）
+/// VT340 default color palette (a subset).
 fn default_sixel_palette() -> HashMap<u16, [u8; 3]> {
     let mut m = HashMap::new();
     let colors: &[(u16, [u8; 3])] = &[
@@ -220,12 +223,13 @@ fn default_sixel_palette() -> HashMap<u16, [u8; 3]> {
     m
 }
 
-// ---- Kitty グラフィックスプロトコルデコーダ ----
+// ---- Kitty graphics protocol decoder ----
 
-/// Kitty APC データをデコードする
+/// Decodes Kitty APC data.
 ///
-/// 形式: `G<key>=<val>,...;<base64_payload>`
-/// 対応フォーマット: a=T (送信), f=32 (RGBA) / f=24 (RGB), s=幅, v=高さ
+/// Format: `G<key>=<val>,...;<base64_payload>`.
+/// Supported parameters: `a=T` (transmit), `f=32` (RGBA) / `f=24` (RGB),
+/// `s=width`, `v=height`.
 pub fn decode_kitty(apc_data: &[u8]) -> Option<DecodedImage> {
     if apc_data.first() != Some(&b'G') {
         return None;
@@ -255,7 +259,7 @@ pub fn decode_kitty(apc_data: &[u8]) -> Option<DecodedImage> {
         }
     }
 
-    // 送信アクション以外は無視する
+    // Ignore anything other than the transmit action.
     if action != b'T' {
         return None;
     }
@@ -264,11 +268,12 @@ pub fn decode_kitty(apc_data: &[u8]) -> Option<DecodedImage> {
 
     match format {
         32 => {
-            // RGBA 8-bit
+            // 8-bit RGBA.
             if width == 0 || height == 0 {
                 return None;
             }
-            // u32 乗算オーバーフローで小さな expected が出来るとパニック / バッファ不一致が起きる
+            // A `u32` multiplication overflow could produce a tiny `expected`,
+            // which would later cause a panic or a buffer-size mismatch.
             let expected = checked_image_bytes(width, height, 4)?;
             if pixel_data.len() < expected {
                 return None;
@@ -280,11 +285,12 @@ pub fn decode_kitty(apc_data: &[u8]) -> Option<DecodedImage> {
             })
         }
         24 => {
-            // RGB 8-bit → RGBA 変換
+            // 8-bit RGB → convert to RGBA.
             if width == 0 || height == 0 {
                 return None;
             }
-            // u32 乗算オーバーフロー対策。RGB は 3 チャネル、変換後の RGBA は 4 チャネル。
+            // Guard against `u32` overflow. RGB has 3 channels; the converted
+            // RGBA has 4.
             let expected = checked_image_bytes(width, height, 3)?;
             let rgba_capacity = checked_image_bytes(width, height, 4)?;
             if pixel_data.len() < expected {
@@ -305,7 +311,7 @@ pub fn decode_kitty(apc_data: &[u8]) -> Option<DecodedImage> {
     }
 }
 
-// ---- ユーティリティ ----
+// ---- Utilities ----
 
 fn parse_decimal(data: &[u8], i: &mut usize) -> Option<u16> {
     if *i >= data.len() || !data[*i].is_ascii_digit() {
@@ -313,10 +319,11 @@ fn parse_decimal(data: &[u8], i: &mut usize) -> Option<u16> {
     }
     let mut result: u32 = 0;
     while *i < data.len() && data[*i].is_ascii_digit() {
-        // 悪意あるエスケープシーケンスで巨大な数字列を渡されたとき u32 が overflow して
-        // panic することを防ぐため saturating 演算を使う。最終的に u16 にクランプする
-        // 用途なので、上限を超えた値はすべて u16::MAX に丸めて構わない。
-        // Sprint 5-7 後段で nightly Fuzz が発見した DoS バグの修正。
+        // Use saturating arithmetic to avoid a `u32` overflow panic when a
+        // malicious escape sequence supplies an enormous digit string. The
+        // caller clamps to `u16`, so any value above the cap can be folded
+        // down to `u16::MAX`.
+        // Fix for the DoS bug found by the late Sprint 5-7 nightly fuzz.
         result = result
             .saturating_mul(10)
             .saturating_add((data[*i] - b'0') as u32);
@@ -329,15 +336,16 @@ fn parse_u32_bytes(data: &[u8]) -> u32 {
     let mut result: u32 = 0;
     for &b in data {
         if b.is_ascii_digit() {
-            // 上に同じ。Kitty image protocol のパラメータが巨大数値を含むケースで
-            // panic していたバグの修正（fuzz `kitty_image` ターゲットで再現可能）。
+            // Same idea as above. Fixes the panic that occurred when a Kitty
+            // image protocol parameter carried an enormous number
+            // (reproducible via the `kitty_image` fuzz target).
             result = result.saturating_mul(10).saturating_add((b - b'0') as u32);
         }
     }
     result
 }
 
-/// Base64 デコード（パディング有無どちらも対応）
+/// Base64 decode (handles both padded and unpadded input).
 pub(crate) fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
     fn decode_char(c: u8) -> Option<u8> {
         match c {
@@ -382,36 +390,36 @@ pub(crate) fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
     Some(result)
 }
 
-// ---- テスト ----
+// ---- Tests ----
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn base64デコードが正しく動作する() {
-        // "Man" → "TWFu"
+    fn base64_decode_works() {
+        // "Man" → "TWFu".
         let decoded = base64_decode(b"TWFu").unwrap();
         assert_eq!(decoded, b"Man");
     }
 
     #[test]
-    fn base64パディングありのデコード() {
-        // "Ma" → "TWE="
+    fn base64_decode_with_padding() {
+        // "Ma" → "TWE=".
         let decoded = base64_decode(b"TWE=").unwrap();
         assert_eq!(decoded, b"Ma");
     }
 
     #[test]
     #[allow(non_snake_case)]
-    fn 空のsixelはNoneを返す() {
+    fn empty_sixel_returns_None() {
         let result = decode_sixel(b"");
         assert!(result.is_none());
     }
 
     #[test]
-    fn 単純なsixelをデコードできる() {
-        // '#0;2;0;0;0' (黒を色0に定義) + '~' (全ビット=全6ピクセル) x 1列
+    fn a_simple_sixel_decodes() {
+        // '#0;2;0;0;0' (define color 0 as black) + '~' (all bits = full 6 pixels) × 1 column.
         let data = b"#0;2;0;0;0~";
         let result = decode_sixel(data);
         assert!(result.is_some());
@@ -421,81 +429,82 @@ mod tests {
     }
 
     #[test]
-    fn 通常サイズの画像バイト数計算() {
+    fn ordinary_image_byte_count() {
         assert_eq!(checked_image_bytes(100, 100, 4), Some(40_000));
         assert_eq!(checked_image_bytes(1, 1, 4), Some(4));
         assert_eq!(checked_image_bytes(0, 0, 4), Some(0));
     }
 
     #[test]
-    fn u32_オーバーフロー時に_none_を返す() {
-        // 65536 * 65536 * 4 = 17 GB → u32 でラップして極小値、u64 で正しく計算してチェック
+    fn returns_none_on_u32_overflow() {
+        // 65536 × 65536 × 4 = 17 GB → wraps under u32 to a tiny value; computed
+        // correctly via u64 and rejected here.
         assert_eq!(checked_image_bytes(65536, 65536, 4), None);
-        // 4096 * 4096 * 4 = 64 MiB（256 MiB 以下、許容）
+        // 4096 × 4096 × 4 = 64 MiB (≤ 256 MiB, allowed).
         assert_eq!(checked_image_bytes(4096, 4096, 4), Some(67_108_864));
-        // 8192 * 8192 * 4 = 256 MiB（境界、許容）
+        // 8192 × 8192 × 4 = 256 MiB (boundary, allowed).
         assert_eq!(checked_image_bytes(8192, 8192, 4), Some(MAX_IMAGE_BYTES));
-        // 8193 * 8192 * 4 = 256 MiB + 32 KiB（境界超過、拒否）
+        // 8193 × 8192 × 4 = 256 MiB + 32 KiB (over the boundary, rejected).
         assert_eq!(checked_image_bytes(8193, 8192, 4), None);
-        // u32::MAX 単独でも overflow させずに None を返す
+        // `u32::MAX` alone must also return None without overflowing.
         assert_eq!(checked_image_bytes(u32::MAX, u32::MAX, 4), None);
     }
 
     #[test]
-    fn 巨大kitty画像はデコードを拒否する() {
-        // format=32, width=65536, height=65536 → 17GB → 拒否されるべき
-        // 実際の APC 文字列を組み立てる
-        let payload = b""; // 空の base64 ペイロード（バッファ確保前に検証されるはず）
+    fn rejects_decoding_a_huge_kitty_image() {
+        // format=32, width=65536, height=65536 → 17 GB → must be rejected.
+        // Build the actual APC string.
+        let payload = b""; // empty base64 payload (validation should happen before allocation)
         let mut data = Vec::new();
         data.extend_from_slice(b"a=T,f=32,s=65536,v=65536;");
         data.extend_from_slice(payload);
         let result = decode_kitty(&data);
-        // 巨大画像なので checked_image_bytes が None を返し、結果は None
-        assert!(result.is_none(), "巨大画像のデコードは拒否されるべき");
+        // The image is huge, so `checked_image_bytes` returns None and the result is None.
+        assert!(result.is_none(), "decoding a huge image should be rejected");
     }
 
-    // ---- 数値パース系の panic 回帰テスト（Sprint 5-7 後段 fuzz 発見バグ） ----
+    // ---- Regression tests for numeric-parser panics (Sprint 5-7 late-fuzz bugs) ----
 
     #[test]
-    fn parse_decimal_は巨大数字列でpanicしない() {
-        // u32 を桁あふれさせる長さ（10 文字以上）の数字列を渡しても
-        // saturating_mul/add で吸収して panic しないことを確認する。
-        let data = b"99999999999999999999"; // 20 桁、u32::MAX (10 桁) を大幅超過
+    fn parse_decimal_does_not_panic_on_a_huge_digit_string() {
+        // Pass a digit string longer than u32 can hold (10+ chars) and confirm
+        // it is absorbed by saturating_mul/add rather than panicking.
+        let data = b"99999999999999999999"; // 20 digits, well above u32::MAX (10 digits)
         let mut i = 0;
         let result = parse_decimal(data, &mut i).unwrap();
-        // 上限は u16::MAX (65535)
+        // Result is capped at u16::MAX (65535).
         assert_eq!(result, u16::MAX);
-        assert_eq!(i, data.len(), "全桁を消費しているはず");
+        assert_eq!(i, data.len(), "every digit should be consumed");
     }
 
     #[test]
-    fn parse_decimal_は通常値を正しく返す() {
+    fn parse_decimal_returns_normal_values_correctly() {
         let data = b"12345abc";
         let mut i = 0;
         let result = parse_decimal(data, &mut i).unwrap();
         assert_eq!(result, 12345);
-        assert_eq!(i, 5, "数字でない文字の手前で停止する");
+        assert_eq!(i, 5, "stops just before the non-digit character");
     }
 
     #[test]
-    fn parse_decimal_は非数字で_none_を返す() {
+    fn parse_decimal_returns_none_for_non_digits() {
         let data = b"abc";
         let mut i = 0;
         assert!(parse_decimal(data, &mut i).is_none());
     }
 
     #[test]
-    fn parse_u32_bytes_は巨大数字列でpanicしない() {
-        // u32 を桁あふれさせる長さでも saturating で吸収。
-        let data = b"99999999999999999999"; // 20 桁
+    fn parse_u32_bytes_does_not_panic_on_a_huge_digit_string() {
+        // A digit string long enough to overflow u32 is still absorbed by saturating math.
+        let data = b"99999999999999999999"; // 20 digits
         let result = parse_u32_bytes(data);
         assert_eq!(result, u32::MAX);
     }
 
     #[test]
-    fn parse_u32_bytes_は通常値を正しく返す() {
+    fn parse_u32_bytes_returns_normal_values_correctly() {
         assert_eq!(parse_u32_bytes(b"42"), 42);
-        // 非数字はスキップされる
+        // Non-digit bytes are skipped.
         assert_eq!(parse_u32_bytes(b"1a2b3"), 123);
         assert_eq!(parse_u32_bytes(b""), 0);
     }

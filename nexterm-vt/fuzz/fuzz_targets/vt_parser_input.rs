@@ -1,24 +1,24 @@
 #![no_main]
-//! Sprint 3-5: VT パーサ全体に対する任意バイト列ファジング
+//! Sprint 3-5: fuzz the whole VT parser with arbitrary byte streams.
 //!
-//! `nexterm_vt::VtParser::advance()` に任意のバイト列を投入し、
-//! パニック・OOM・無限ループを起こさないことを検証する。
+//! Feeds arbitrary bytes to `nexterm_vt::VtParser::advance()` and verifies
+//! that no panic, OOM, or infinite loop occurs.
 //!
-//! 想定攻撃シナリオ:
-//! - 不正な CSI / OSC / DCS / APC シーケンス
-//! - 巨大な CSI パラメータ列
-//! - 改行・タブ・カーソル移動の異常な組み合わせ
-//! - 同期出力モード (DEC ?2026) の悪用
+//! Attack scenarios in scope:
+//! - Malformed CSI / OSC / DCS / APC sequences.
+//! - Huge CSI parameter lists.
+//! - Unusual combinations of newlines, tabs, and cursor motion.
+//! - Abuse of synchronized output mode (DEC ?2026).
 
 use libfuzzer_sys::fuzz_target;
 use nexterm_vt::VtParser;
 
 fuzz_target!(|data: &[u8]| {
-    // 80x24 の標準サイズで初期化（リソース消費を抑える）
+    // Initialize at the standard 80x24 size (to keep resource use low).
     let mut parser = VtParser::new(80, 24);
 
-    // 入力サイズに上限を設けてファザのメモリ消費を抑制する
-    // (cargo-fuzz の -max_len はデフォルト 4096 だが念のため明示)
+    // Cap the input size to limit the fuzzer's memory footprint
+    // (cargo-fuzz's `-max_len` defaults to 4096, but enforce it here as well).
     let bytes = if data.len() > 65_536 {
         &data[..65_536]
     } else {
@@ -27,7 +27,7 @@ fuzz_target!(|data: &[u8]| {
 
     parser.advance(bytes);
 
-    // 副次的な状態取得もパニックしないことを検証する
+    // Confirm that the side-effect getters also do not panic.
     let _ = parser.screen().grid();
     let _ = parser.screen().cursor();
     let _ = parser.bracketed_paste_mode();

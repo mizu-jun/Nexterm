@@ -14,16 +14,16 @@ unicode-width = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-# Sprint 4-4: Sixel / Kitty パーサのプロパティテスト
+# Sprint 4-4: property-based tests for the Sixel / Kitty parsers.
 proptest = { workspace = true }
-# Sprint 5-3 / C5: criterion ベンチマーク
+# Sprint 5-3 / C5: criterion benchmarks.
 criterion = { workspace = true }
 
 [lints]
 workspace = true
 
-# Sprint 5-3 / C5: VT advance のスループットベンチマーク
-# 実行: cargo bench -p nexterm-vt --bench vt_throughput
+# Sprint 5-3 / C5: throughput benchmarks for VT advance.
+# Run with: cargo bench -p nexterm-vt --bench vt_throughput
 [[bench]]
 name = "vt_throughput"
 harness = false

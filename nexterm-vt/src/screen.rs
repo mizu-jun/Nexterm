@@ -1,57 +1,61 @@
-//! 仮想スクリーン — グリッド + ダーティフラグ + カーソル状態
+//! Virtual screen — grid plus dirty flags plus cursor state.
 
 use nexterm_proto::{Attrs, Cell, Color, DirtyRow, Grid};
 use unicode_width::UnicodeWidthChar;
 
 use crate::image::{decode_kitty, decode_sixel};
 
-/// DCS Sixel バッファの最大サイズ。
+/// Maximum size of the DCS Sixel buffer.
 ///
-/// 悪意ある PTY が DCS を終端しないまま延々送り続ける DoS への対策（CRITICAL #7）。
-/// 16 MiB は 1 ページの大きな Sixel 画像 + マージン。
+/// Mitigates the DoS where a malicious PTY streams an unterminated DCS forever
+/// (CRITICAL #7). 16 MiB accommodates one page of a large Sixel image plus
+/// some margin.
 const MAX_DCS_BUF_LEN: usize = 16 * 1024 * 1024;
 
-/// Kitty 分割転送ペイロードの最大サイズ。
+/// Maximum size of a Kitty multi-chunk transfer payload.
 ///
-/// `m=1` チャンクで延々と送られ続ける場合の DoS 対策（CRITICAL #7）。
-/// 64 MiB は分割画像の合計上限。
+/// Mitigates the DoS in which a peer keeps sending `m=1` chunks forever
+/// (CRITICAL #7). 64 MiB is the upper bound for the combined chunks.
 const MAX_KITTY_CHUNK_LEN: usize = 64 * 1024 * 1024;
 
-/// OSC タイトル文字列の最大長（バイト）。
+/// Maximum length (in bytes) of an OSC title string.
 ///
-/// 長大なタイトルでターミナルバーやウィンドウマネージャーへの DoS を防ぐ
-/// （CRITICAL #13 対応）。256 バイトはほぼ全ターミナルの実用範囲をカバー。
+/// Prevents a very long title from causing a DoS in the terminal bar or window
+/// manager (mitigates CRITICAL #13). 256 bytes covers virtually every terminal's
+/// practical range.
 const MAX_TITLE_LEN: usize = 256;
 
-/// OSC 9 デスクトップ通知のタイトル/本文の最大長（バイト）。
+/// Maximum length (in bytes) for the title/body of an OSC 9 desktop notification.
 const MAX_NOTIFICATION_LEN: usize = 1024;
 
-/// OSC 8 ハイパーリンク URI の最大長（バイト）。
+/// Maximum length (in bytes) of an OSC 8 hyperlink URI.
 const MAX_HYPERLINK_URI_LEN: usize = 2048;
 
-/// OSC 7 CWD (working directory) パスの最大長（バイト）。
+/// Maximum length (in bytes) of an OSC 7 CWD (working-directory) path.
 ///
-/// Linux の `PATH_MAX` 相当の 4096。長すぎるパスは DoS 防止のため切り詰める。
+/// Set to 4096 (Linux `PATH_MAX` equivalent). Longer paths are truncated as a
+/// DoS countermeasure.
 const MAX_CWD_LEN: usize = 4096;
 
-/// OSC 8 ハイパーリンクで許可する URI スキーム。
+/// URI schemes allowed in OSC 8 hyperlinks.
 ///
-/// 旧実装は `javascript:` / `file:` 等を含む全スキームを通過させていたため、
-/// 悪意ある SSH 接続先がターミナル経由でクリックジャッキング・ローカル
-/// ファイル参照を誘発できる脆弱性があった（CRITICAL #13）。
+/// The previous implementation accepted every scheme — including
+/// `javascript:` and `file:` — which allowed a malicious SSH destination to
+/// trigger clickjacking or local-file access through the terminal (CRITICAL #13).
 const ALLOWED_HYPERLINK_SCHEMES: &[&str] = &[
     "http://", "https://", "mailto:", "ftp://", "ftps://", "ssh://",
 ];
 
-/// OSC 由来の文字列をサニタイズする。
+/// Sanitizes a string sourced from an OSC sequence.
 ///
-/// - 制御文字（C0/C1）を除去（ログインジェクション・改行偽装防止）
-/// - 長さ上限で切り詰め（CJK 等の UTF-8 境界を尊重）
+/// - Strips control characters (C0/C1) to prevent log injection and forged
+///   line breaks.
+/// - Truncates to the length cap, respecting UTF-8 boundaries (e.g. CJK).
 fn sanitize_osc_string(s: String, max_len: usize) -> String {
     let cleaned: String = s
         .chars()
         .filter(|c| {
-            // C0 (0x00-0x1F、ただし TAB/LF/CR は除外)、DEL、C1 (0x80-0x9F) を除去
+            // Drop C0 (0x00..=0x1F, except TAB/LF/CR), DEL, and C1 (0x80..=0x9F).
             let cp = *c as u32;
             !(cp <= 0x1F && *c != '\t' && *c != '\n' && *c != '\r')
                 && cp != 0x7F
@@ -62,7 +66,7 @@ fn sanitize_osc_string(s: String, max_len: usize) -> String {
     if cleaned.len() <= max_len {
         return cleaned;
     }
-    // バイト境界で安全に切り詰める
+    // Truncate safely on a byte boundary.
     let mut end = max_len;
     while end > 0 && !cleaned.is_char_boundary(end) {
         end -= 1;
@@ -70,9 +74,10 @@ fn sanitize_osc_string(s: String, max_len: usize) -> String {
     cleaned[..end].to_string()
 }
 
-/// OSC 8 ハイパーリンク URI を検証する。
+/// Validates an OSC 8 hyperlink URI.
 ///
-/// 許可スキームに該当しない / 長すぎる URI は `None` を返す（無効化）。
+/// Returns `None` when the URI is too long or does not use an allowed scheme
+/// (i.e. the link is disabled).
 pub(crate) fn validate_hyperlink_uri(uri: &str) -> Option<String> {
     if uri.is_empty() || uri.len() > MAX_HYPERLINK_URI_LEN {
         return None;
@@ -83,12 +88,12 @@ pub(crate) fn validate_hyperlink_uri(uri: &str) -> Option<String> {
         .any(|s| lower.starts_with(s))
     {
         tracing::warn!(
-            "OSC 8: 許可されていない URI スキーム — 無効化: {}",
+            "OSC 8: disallowed URI scheme — disabling link: {}",
             &uri[..uri.len().min(80)]
         );
         return None;
     }
-    // 制御文字を除去
+    // Strip control characters.
     let cleaned: String = uri
         .chars()
         .filter(|c| {
@@ -102,37 +107,40 @@ pub(crate) fn validate_hyperlink_uri(uri: &str) -> Option<String> {
     Some(cleaned)
 }
 
-/// OSC 7 の `file://[host]/percent-encoded-path` 形式から CWD パスを抽出する。
+/// Extracts the CWD path from the OSC 7 form `file://[host]/percent-encoded-path`.
 ///
-/// 受け付ける入力例:
-/// - `file:///home/user/proj` (host 省略、先頭 `/` 維持)
-/// - `file://hostname/home/user` (host あり、無視して path のみ取り出す)
-/// - `file:///C:/Users/foo` (Windows 形式、先頭の `/` を除去して `C:/Users/foo` に正規化)
-/// - `/home/user/proj` (スキームなし、互換目的で素通し)
+/// Accepted inputs include:
+/// - `file:///home/user/proj` (host omitted; the leading `/` is kept).
+/// - `file://hostname/home/user` (host present; ignored, only the path is taken).
+/// - `file:///C:/Users/foo` (Windows-style; the leading `/` is stripped and the
+///   value is normalized to `C:/Users/foo`).
+/// - `/home/user/proj` (no scheme; passed through for compatibility).
 ///
-/// 制御文字は除去し、`MAX_CWD_LEN` で切り詰める。
-/// 完全に空になった場合は `None`。
+/// Control characters are stripped, and the result is truncated to
+/// [`MAX_CWD_LEN`]. Returns `None` if the result becomes completely empty.
 pub(crate) fn parse_osc7_cwd(input: &str) -> Option<String> {
     if input.is_empty() || input.len() > MAX_CWD_LEN * 4 {
-        // 過大な入力は DoS 防止で即拒否（パーセントデコード前なので *4 程度の余裕）
+        // Reject excessively large inputs up front for DoS reasons (this runs
+        // before percent decoding, so 4× the cap is a reasonable margin).
         return None;
     }
 
-    // `file://` プレフィックスを除去し、ホスト部 (`//host/path`) もスキップする
+    // Strip the `file://` prefix and skip the host segment (`//host/path`).
     let after_scheme = if let Some(rest) = input.strip_prefix("file://") {
-        // `/path` まで進める（host 部が空でもそうでなくても最初の `/` まで）
+        // Advance to the `/path` part (the first `/`, regardless of whether the
+        // host segment is empty).
         match rest.find('/') {
             Some(idx) => &rest[idx..],
-            None => return None, // パスがない
+            None => return None, // No path.
         }
     } else {
         input
     };
 
-    // パーセントデコード
+    // Percent-decode.
     let decoded = percent_decode(after_scheme);
 
-    // Windows パス対応: `/C:/Users/foo` → `C:/Users/foo`
+    // Windows path support: `/C:/Users/foo` → `C:/Users/foo`.
     #[cfg(windows)]
     let decoded = if decoded.len() >= 3
         && decoded.starts_with('/')
@@ -144,7 +152,7 @@ pub(crate) fn parse_osc7_cwd(input: &str) -> Option<String> {
         decoded
     };
 
-    // 制御文字除去 + 長さ上限
+    // Strip control characters and apply the length cap.
     let cleaned = sanitize_osc_string(decoded, MAX_CWD_LEN);
     if cleaned.is_empty() {
         None
@@ -153,9 +161,10 @@ pub(crate) fn parse_osc7_cwd(input: &str) -> Option<String> {
     }
 }
 
-/// `%XX` 形式のパーセントエンコーディングをデコードする（OSC 7 用の最小実装）。
+/// Minimal `%XX` percent-decoder (just enough for OSC 7).
 ///
-/// 不正な `%XX` は素通し（`%` を含むパス名を破壊しないため）。
+/// Malformed `%XX` triplets are passed through (so we do not corrupt path names
+/// that legitimately contain a `%`).
 fn percent_decode(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -173,125 +182,129 @@ fn percent_decode(input: &str) -> String {
         out.push(bytes[i]);
         i += 1;
     }
-    // 不正な UTF-8 はロスでデコード（OSC 7 path には通常 UTF-8 が来る）
+    // Decode invalid UTF-8 lossily (OSC 7 paths are normally UTF-8 anyway).
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// OSC 133 セマンティックゾーンのマーク種別
+/// OSC 133 semantic-zone mark kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SemanticMarkKind {
-    /// プロンプト開始（A）
+    /// Prompt start (A).
     PromptStart,
-    /// コマンド入力開始（B）
+    /// Command input start (B).
     CommandStart,
-    /// コマンド実行開始・出力開始（C）
+    /// Command execution / output start (C).
     OutputStart,
-    /// コマンド終了（D）
+    /// Command end (D).
     CommandEnd,
 }
 
-/// OSC 133 セマンティックゾーンのマーク（行番号 + 種別）
+/// OSC 133 semantic-zone mark (row + kind).
 #[derive(Debug, Clone)]
 pub struct SemanticMark {
-    /// グリッド行番号（0始まり）
+    /// Grid row (0-based).
     pub row: u16,
-    /// 種別
+    /// Mark kind.
     pub kind: SemanticMarkKind,
-    /// コマンド終了時の exit code（D マーク時のみ Some）
+    /// Exit code on command end (only `Some` for a `D` mark).
     pub exit_code: Option<i32>,
 }
 
-/// 配置待ち画像（クライアントへの送信前）
+/// Pending image (before being forwarded to the client).
 pub struct PendingImage {
-    /// 画像 ID（Kitty プロトコルで使用）
+    /// Image ID (used by the Kitty protocol).
     pub id: u32,
-    /// 配置先の列（文字セル単位）
+    /// Placement column (character cells).
     pub col: u16,
-    /// 配置先の行（文字セル単位）
+    /// Placement row (character cells).
     pub row: u16,
-    /// 画像の幅（ピクセル）
+    /// Image width in pixels.
     pub width: u32,
-    /// 画像の高さ（ピクセル）
+    /// Image height in pixels.
     pub height: u32,
-    /// RGBA ピクセルデータ（width × height × 4 バイト）
+    /// RGBA pixel data (`width × height × 4` bytes).
     pub rgba: Vec<u8>,
 }
 
-/// スクリーンバッファの内容（主画面と代替画面で共有）
+/// Screen-buffer contents (shared between the primary and alternate screens).
 struct ScreenBuffer {
     rows: Vec<Vec<Cell>>,
     cursor_col: u16,
     cursor_row: u16,
 }
 
-/// 仮想スクリーン（PTY 出力を反映する内部状態）
+/// Virtual screen (internal state reflecting the PTY output).
 pub struct Screen {
-    /// セル配列と寸法
+    /// Cell array and dimensions.
     grid: Grid,
-    /// 行単位ダーティフラグ（true = 変更あり）
+    /// Per-row dirty flags (`true` = changed).
     dirty: Vec<bool>,
-    /// カーソル列（0始まり）
+    /// Cursor column (0-based).
     cursor_col: u16,
-    /// カーソル行（0始まり）
+    /// Cursor row (0-based).
     cursor_row: u16,
-    /// 現在の前景色
+    /// Current foreground color.
     current_fg: Color,
-    /// 現在の背景色
+    /// Current background color.
     current_bg: Color,
-    /// 現在の文字属性
+    /// Current character attributes.
     current_attrs: Attrs,
-    /// スクロール領域の上端行（0始まり）
+    /// Top row of the scrolling region (0-based).
     scroll_top: u16,
-    /// スクロール領域の下端行（0始まり）
+    /// Bottom row of the scrolling region (0-based).
     scroll_bottom: u16,
-    // ---- DCS / Sixel 受信状態 ----
-    /// Sixel DCS 受信中フラグ
+    // ---- DCS / Sixel reception state ----
+    /// Whether we are receiving a Sixel DCS.
     dcs_sixel_active: bool,
-    /// DCS データバッファ
+    /// DCS data buffer.
     dcs_buf: Vec<u8>,
-    /// Sixel 開始時のカーソル位置
+    /// Cursor position when the Sixel started.
     dcs_cursor: (u16, u16),
-    /// 完成した画像のキュー（take_pending_images で取り出す）
+    /// Queue of completed images (drained via `take_pending_images`).
     pending_images: Vec<PendingImage>,
-    /// 次の画像 ID
+    /// Next image ID.
     next_image_id: u32,
-    /// Kitty 分割転送のペイロード累積バッファ（m=1 チャンク）
+    /// Accumulator for Kitty multi-chunk transfers (`m=1` chunks).
     kitty_chunk_payload: Vec<u8>,
-    /// Kitty 分割転送の最初のチャンクパラメータ（m=1 時に保存）
+    /// Parameters of the first Kitty chunk (saved at `m=1`).
     kitty_chunk_params: Option<Vec<u8>>,
-    /// BEL 受信フラグ（take_pending_bell で取り出す）
+    /// BEL pending flag (drained via `take_pending_bell`).
     pending_bell: bool,
-    /// タイトル変更通知（OSC 0/1/2 で設定）
+    /// Title change pending (set by OSC 0/1/2).
     pending_title: Option<String>,
-    /// デスクトップ通知（OSC 9 で設定）
+    /// Desktop notification pending (set by OSC 9).
     pending_notification: Option<(String, String)>,
-    /// CWD 変更通知（OSC 7 で設定、`file://` 除去 + パーセントデコード済み）
+    /// CWD change pending (set by OSC 7, with `file://` stripped and
+    /// percent-decoded).
     pending_cwd: Option<String>,
-    /// 代替スクリーンバッファ（None = 主画面モード）
+    /// Alternate screen buffer (`None` = primary mode).
     alt_screen: Option<Box<ScreenBuffer>>,
-    /// 代替画面モード中か
+    /// Whether the alternate screen is active.
     pub alt_mode: bool,
-    /// ブラケットペーストモード（DEC ?2004）が有効か
+    /// Whether bracketed paste mode (DEC ?2004) is enabled.
     bracketed_paste: bool,
-    /// 同期出力モード（DEC ?2026）が有効か（有効中はダーティフラグを溜める）
+    /// Whether synchronized output mode (DEC ?2026) is enabled (holds back
+    /// dirty flags while active).
     synchronized_output: bool,
-    /// マウスレポーティングモード（X11 ?1000=1, SGR ?1006=2, 0=無効）
+    /// Mouse reporting mode (X11 ?1000 = 1, SGR ?1006 = 2, 0 = off).
     pub mouse_mode: u8,
-    /// OSC 133 セマンティックゾーンのマーク一覧（行番号 + マーク種別）
+    /// OSC 133 semantic-zone marks (row + kind).
     pub semantic_marks: Vec<SemanticMark>,
-    /// 現在アクティブな OSC 8 ハイパーリンク URL（None = リンクなし）
+    /// Currently active OSC 8 hyperlink URL (`None` = no link).
     current_hyperlink_url: Option<String>,
-    /// OSC 8 ハイパーリンクの開始列（current_hyperlink_url が Some の場合に有効）
+    /// Start column of the OSC 8 hyperlink (valid when
+    /// `current_hyperlink_url` is `Some`).
     hyperlink_start_col: u16,
-    /// OSC 8 ハイパーリンクの開始行
+    /// Start row of the OSC 8 hyperlink.
     hyperlink_start_row: u16,
-    /// OSC 52 で受信したクリップボード書き込み要求のキュー（Sprint 4-1）
-    /// クライアント側で SecurityConfig.osc52_clipboard ポリシーに従って処理する
+    /// Queue of OSC 52 clipboard-write requests (Sprint 4-1).
+    /// Processed on the client side according to
+    /// `SecurityConfig.osc52_clipboard`.
     pending_clipboard_writes: Vec<String>,
 }
 
 impl Screen {
-    /// 指定サイズのスクリーンを生成する
+    /// Creates a screen with the given dimensions.
     pub fn new(cols: u16, rows: u16) -> Self {
         let scroll_bottom = rows.saturating_sub(1);
         Self {
@@ -328,19 +341,20 @@ impl Screen {
         }
     }
 
-    /// 代替画面バッファに切り替える（SMCUP / DEC Private Mode 47/1047/1049）
+    /// Switches to the alternate screen buffer (SMCUP / DEC Private Mode
+    /// 47/1047/1049).
     pub(crate) fn switch_to_alt(&mut self) {
         if self.alt_mode {
             return;
         }
-        // 現在の主画面内容を保存する
+        // Save the current contents of the primary screen.
         let saved = ScreenBuffer {
             rows: self.grid.rows.clone(),
             cursor_col: self.cursor_col,
             cursor_row: self.cursor_row,
         };
         self.alt_screen = Some(Box::new(saved));
-        // 代替バッファを空白で初期化する
+        // Initialize the alternate buffer with blanks.
         let cols = self.grid.width;
         let rows = self.grid.height;
         self.grid = Grid::new(cols, rows);
@@ -352,7 +366,8 @@ impl Screen {
         self.alt_mode = true;
     }
 
-    /// 主画面バッファに戻る（RMCUP / DEC Private Mode 47/1047/1049 リセット）
+    /// Returns to the primary screen buffer (RMCUP / resets DEC Private Mode
+    /// 47/1047/1049).
     pub(crate) fn switch_to_primary(&mut self) {
         if !self.alt_mode {
             return;
@@ -368,32 +383,32 @@ impl Screen {
         self.alt_mode = false;
     }
 
-    /// グリッドへの参照を返す
+    /// Returns a reference to the grid.
     pub fn grid(&self) -> &Grid {
         &self.grid
     }
 
-    /// カーソル位置を返す（列, 行）
+    /// Returns the cursor position as `(col, row)`.
     pub fn cursor(&self) -> (u16, u16) {
         (self.cursor_col, self.cursor_row)
     }
 
-    /// 指定行がダーティかどうかを返す
+    /// Returns whether the given row is dirty.
     pub fn is_dirty(&self, row: u16) -> bool {
         self.dirty.get(row as usize).copied().unwrap_or(false)
     }
 
-    /// 全ダーティフラグをクリアする
+    /// Clears every dirty flag.
     pub fn clear_dirty(&mut self) {
         self.dirty.fill(false);
     }
 
-    /// ダーティ行のみを収集して返す（差分転送用）
+    /// Collects and returns only the dirty rows (used for differential transfer).
     ///
-    /// 同期出力モード（DEC ?2026）が有効な場合は空を返し、
-    /// 無効化されたタイミングで蓄積分をまとめて返す。
+    /// Returns empty while synchronized output mode (DEC ?2026) is enabled and
+    /// flushes the accumulated rows once the mode is disabled.
     pub fn take_dirty_rows(&mut self) -> Vec<DirtyRow> {
-        // 同期出力モード中はレンダリングを保留する
+        // Hold off rendering while synchronized output is active.
         if self.synchronized_output {
             return Vec::new();
         }
@@ -411,17 +426,17 @@ impl Screen {
         result
     }
 
-    /// 同期出力モード（DEC ?2026）の状態を返す
+    /// Returns the synchronized-output (DEC ?2026) state.
     pub fn synchronized_output_mode(&self) -> bool {
         self.synchronized_output
     }
 
-    /// 同期出力モードを設定する（performer から呼び出す）
+    /// Sets the synchronized-output state (called from the performer).
     pub(crate) fn set_synchronized_output(&mut self, enabled: bool) {
         self.synchronized_output = enabled;
     }
 
-    /// 全画面スナップショット（Full Refresh 用）
+    /// Full-screen snapshot (used for a full refresh).
     pub fn full_refresh_grid(&self) -> Grid {
         let mut g = self.grid.clone();
         g.cursor_col = self.cursor_col;
@@ -429,7 +444,7 @@ impl Screen {
         g
     }
 
-    /// リサイズ処理（内容は可能な範囲でコピー）
+    /// Handles a resize (content is copied as much as the new size allows).
     pub fn resize(&mut self, new_cols: u16, new_rows: u16) {
         let mut new_grid = Grid::new(new_cols, new_rows);
         let copy_rows = self.grid.height.min(new_rows) as usize;
@@ -440,25 +455,25 @@ impl Screen {
             }
         }
         self.grid = new_grid;
-        self.dirty = vec![true; new_rows as usize]; // リサイズ後は全行ダーティ
+        self.dirty = vec![true; new_rows as usize]; // Every row is dirty after a resize.
         self.cursor_col = self.cursor_col.min(new_cols.saturating_sub(1));
         self.cursor_row = self.cursor_row.min(new_rows.saturating_sub(1));
         self.scroll_top = 0;
         self.scroll_bottom = new_rows.saturating_sub(1);
     }
 
-    /// カーソル位置に文字を書き込み、カーソルを進める
+    /// Writes a character at the cursor and advances it.
     pub(crate) fn write_char(&mut self, ch: char) {
-        // 文字の表示幅を取得する（CJK 全角は 2、通常は 1）
+        // Determine the character's display width (CJK fullwidth = 2, others = 1).
         let char_width = UnicodeWidthChar::width(ch).unwrap_or(1) as u16;
 
         if self.cursor_col >= self.grid.width {
-            // 行末で折り返し
+            // Wrap at the end of the line.
             self.cursor_col = 0;
             self.advance_line();
         }
 
-        // ワイド文字が行末からはみ出す場合は次行に折り返す
+        // If a wide character would overflow the line, wrap to the next row.
         if char_width == 2 && self.cursor_col + 1 >= self.grid.width {
             self.cursor_col = 0;
             self.advance_line();
@@ -476,7 +491,7 @@ impl Screen {
         self.mark_dirty(row);
         self.cursor_col += 1;
 
-        // ワイド文字の場合は次のカラムにプレースホルダーセルを配置する
+        // For wide characters, drop a placeholder cell into the next column.
         if char_width == 2 && self.cursor_col < self.grid.width {
             let placeholder = Cell {
                 ch: ' ',
@@ -489,7 +504,7 @@ impl Screen {
         }
     }
 
-    /// カーソルを次の行へ進める（スクロール処理を含む）
+    /// Advances the cursor to the next row, scrolling if necessary.
     pub(crate) fn advance_line(&mut self) {
         if self.cursor_row >= self.scroll_bottom {
             self.scroll_up();
@@ -498,34 +513,35 @@ impl Screen {
         }
     }
 
-    /// スクロール領域を1行上にスクロールする
+    /// Scrolls the region up by one row.
     fn scroll_up(&mut self) {
         let top = self.scroll_top as usize;
         let bottom = self.scroll_bottom as usize;
-        // 領域内の行を1行ずつ上にコピー（直接インデックスアクセスを避けてパニック防止）
+        // Copy each row in the region up by one (avoiding direct index access
+        // to prevent panics).
         for r in top..bottom {
             self.grid.copy_row(r as u16, (r + 1) as u16);
             self.mark_dirty(r as u16);
         }
-        // 最下行をクリア
+        // Clear the bottom row.
         self.grid.clear_row(bottom as u16);
         self.mark_dirty(bottom as u16);
     }
 
-    /// 指定行をダーティとしてマークする
+    /// Marks the given row as dirty.
     fn mark_dirty(&mut self, row: u16) {
         if let Some(d) = self.dirty.get_mut(row as usize) {
             *d = true;
         }
     }
 
-    /// SGR（Select Graphic Rendition）属性を適用する
+    /// Applies an SGR (Select Graphic Rendition) attribute list.
     pub(crate) fn apply_sgr(&mut self, params: &[u16]) {
         let mut i = 0;
         while i < params.len() {
             match params[i] {
                 0 => {
-                    // リセット
+                    // Reset.
                     self.current_fg = Color::Default;
                     self.current_bg = Color::Default;
                     self.current_attrs = Attrs::default();
@@ -539,7 +555,7 @@ impl Screen {
                 22 => self.current_attrs.0 &= !Attrs::BOLD,
                 24 => self.current_attrs.0 &= !Attrs::UNDERLINE,
                 27 => self.current_attrs.0 &= !Attrs::REVERSE,
-                // 前景色: 30〜37 (ANSI), 38 (拡張), 39 (デフォルト)
+                // Foreground: 30..=37 (ANSI), 38 (extended), 39 (default).
                 30..=37 => self.current_fg = Color::Indexed(params[i] as u8 - 30),
                 38 => {
                     if params.get(i + 1) == Some(&5) && params.get(i + 2).is_some() {
@@ -555,7 +571,7 @@ impl Screen {
                     }
                 }
                 39 => self.current_fg = Color::Default,
-                // 背景色: 40〜47 (ANSI), 48 (拡張), 49 (デフォルト)
+                // Background: 40..=47 (ANSI), 48 (extended), 49 (default).
                 40..=47 => self.current_bg = Color::Indexed(params[i] as u8 - 40),
                 48 => {
                     if params.get(i + 1) == Some(&5) && params.get(i + 2).is_some() {
@@ -571,51 +587,51 @@ impl Screen {
                     }
                 }
                 49 => self.current_bg = Color::Default,
-                // 明るい前景色: 90〜97
+                // Bright foreground: 90..=97.
                 90..=97 => self.current_fg = Color::Indexed(params[i] as u8 - 90 + 8),
-                // 明るい背景色: 100〜107
+                // Bright background: 100..=107.
                 100..=107 => self.current_bg = Color::Indexed(params[i] as u8 - 100 + 8),
-                _ => {} // 未対応の属性は無視
+                _ => {} // Ignore unsupported attributes.
             }
             i += 1;
         }
     }
 
-    /// カーソルを指定位置へ移動する（0始まり座標）
+    /// Moves the cursor to the given position (0-based coordinates).
     pub(crate) fn move_cursor(&mut self, col: u16, row: u16) {
         self.cursor_col = col.min(self.grid.width.saturating_sub(1));
         self.cursor_row = row.min(self.grid.height.saturating_sub(1));
     }
 
-    /// スクロール領域を設定する（DECSTBM）
+    /// Sets the scrolling region (DECSTBM).
     pub(crate) fn set_scroll_region(&mut self, top: u16, bottom: u16) {
         let max = self.grid.height.saturating_sub(1);
         self.scroll_top = top.min(max);
         self.scroll_bottom = bottom.min(max);
-        // DECSTBM はカーソルをホームポジションへ移動する
+        // DECSTBM moves the cursor to the home position.
         self.cursor_col = 0;
         self.cursor_row = 0;
     }
 
-    /// カーソル行をクリアする（行の一部または全体）
+    /// Erases part or all of the current row.
     pub(crate) fn erase_in_line(&mut self, mode: u16) {
         let row = self.cursor_row;
         let width = self.grid.width as usize;
         match mode {
             0 => {
-                // カーソルから行末までクリア（Grid::set で範囲チェック済み）
+                // Clear from the cursor to the end of the line (Grid::set bounds-checks).
                 for c in self.cursor_col as usize..width {
                     self.grid.set(c as u16, row, Cell::default());
                 }
             }
             1 => {
-                // 行頭からカーソルまでクリア（Grid::set で範囲チェック済み）
+                // Clear from the start of the line to the cursor (Grid::set bounds-checks).
                 for c in 0..=self.cursor_col as usize {
                     self.grid.set(c as u16, row, Cell::default());
                 }
             }
             2 => {
-                // 行全体をクリア（Grid::clear_row で範囲チェック済み）
+                // Clear the entire row (Grid::clear_row bounds-checks).
                 self.grid.clear_row(row);
             }
             _ => {}
@@ -623,12 +639,13 @@ impl Screen {
         self.mark_dirty(row);
     }
 
-    /// 画面をクリアする（一部または全体）
+    /// Erases part or all of the display.
     pub(crate) fn erase_in_display(&mut self, mode: u16) {
         let height = self.grid.height as usize;
         match mode {
             0 => {
-                // カーソルから画面末までクリア（Grid::clear_row で範囲チェック済み）
+                // Clear from the cursor to the end of the display
+                // (Grid::clear_row bounds-checks).
                 self.erase_in_line(0);
                 for r in (self.cursor_row as usize + 1)..height {
                     self.grid.clear_row(r as u16);
@@ -636,7 +653,8 @@ impl Screen {
                 }
             }
             1 => {
-                // 画面頭からカーソルまでクリア（Grid::clear_row で範囲チェック済み）
+                // Clear from the top of the display to the cursor
+                // (Grid::clear_row bounds-checks).
                 for r in 0..self.cursor_row as usize {
                     self.grid.clear_row(r as u16);
                     self.mark_dirty(r as u16);
@@ -644,7 +662,7 @@ impl Screen {
                 self.erase_in_line(1);
             }
             2 | 3 => {
-                // 画面全体をクリア（Grid::clear_row で範囲チェック済み）
+                // Clear the entire display (Grid::clear_row bounds-checks).
                 for r in 0..height {
                     self.grid.clear_row(r as u16);
                     self.mark_dirty(r as u16);
@@ -658,26 +676,27 @@ impl Screen {
         }
     }
 
-    // ---- DCS / Sixel / Kitty 画像処理 ----
+    // ---- DCS / Sixel / Kitty image processing ----
 
-    /// Sixel DCS 受信を開始する（hook 呼び出し時）
+    /// Begins receiving a Sixel DCS (called from `hook`).
     pub(crate) fn start_sixel(&mut self) {
         self.dcs_sixel_active = true;
         self.dcs_buf.clear();
         self.dcs_cursor = (self.cursor_col, self.cursor_row);
     }
 
-    /// DCS バイトをバッファに追加する（put 呼び出し時）
+    /// Appends a DCS byte to the buffer (called from `put`).
     ///
-    /// 上限超過時はバッファクリア + DCS 状態を破棄して通常パースに復帰する
-    /// （CRITICAL #7: 悪意ある PTY が DCS を終端せずに送り続ける DoS 対策）。
+    /// On overflow, the buffer is cleared and the DCS state is dropped so normal
+    /// parsing can resume (CRITICAL #7: defense against a malicious PTY that
+    /// streams an unterminated DCS forever).
     pub(crate) fn push_dcs_byte(&mut self, byte: u8) {
         if !self.dcs_sixel_active {
             return;
         }
         if self.dcs_buf.len() >= MAX_DCS_BUF_LEN {
             tracing::warn!(
-                "DCS Sixel バッファが上限 ({} バイト) を超過。シーケンスを破棄します。",
+                "DCS Sixel buffer exceeded the limit ({} bytes); discarding the sequence.",
                 MAX_DCS_BUF_LEN
             );
             self.dcs_buf.clear();
@@ -687,7 +706,8 @@ impl Screen {
         self.dcs_buf.push(byte);
     }
 
-    /// Sixel DCS を完了してデコードし、pending_images に積む（unhook 呼び出し時）
+    /// Finishes the Sixel DCS, decodes it, and pushes onto `pending_images`
+    /// (called from `unhook`).
     pub(crate) fn finish_sixel(&mut self) {
         if !self.dcs_sixel_active {
             return;
@@ -708,10 +728,12 @@ impl Screen {
         self.dcs_buf.clear();
     }
 
-    /// Kitty APC 画像シーケンスを処理して pending_images に積む
+    /// Processes a Kitty APC image sequence and pushes the result onto
+    /// `pending_images`.
     ///
-    /// Kitty グラフィックスプロトコルの分割転送（m=1/m=0）にも対応する。
-    /// data は ESC _ と ESC \ を除いた APC 内容（先頭は 'G'）。
+    /// Supports the Kitty graphics protocol's chunked transfer (`m=1` / `m=0`).
+    /// `data` is the APC content with ESC `_` and ESC `\` stripped (so the
+    /// first byte is `'G'`).
     pub(crate) fn handle_kitty_apc(&mut self, data: &[u8]) {
         if data.first() != Some(&b'G') {
             return;
@@ -725,18 +747,20 @@ impl Screen {
             &[] as &[u8]
         };
 
-        // m=1 フラグを確認する（more_data: 続きのチャンクあり）
+        // Check the `m=1` flag (more_data: more chunks to come).
         let more_data = params_bytes.split(|&b| b == b',').any(|p| p == b"m=1");
 
         if more_data {
-            // 分割転送中: 最初のチャンクのパラメータを保存し、ペイロードを累積する
+            // In the middle of a chunked transfer: save the first chunk's
+            // parameters and accumulate the payload.
             if self.kitty_chunk_params.is_none() {
                 self.kitty_chunk_params = Some(params_bytes.to_vec());
             }
-            // 上限チェック: 累積ペイロードが MAX_KITTY_CHUNK_LEN を超えたら破棄
+            // Bounds check: discard once the accumulated payload exceeds
+            // MAX_KITTY_CHUNK_LEN.
             if self.kitty_chunk_payload.len() + payload.len() > MAX_KITTY_CHUNK_LEN {
                 tracing::warn!(
-                    "Kitty 分割転送ペイロードが上限 ({} バイト) を超過。シーケンスを破棄します。",
+                    "Kitty chunked transfer payload exceeded the limit ({} bytes); discarding the sequence.",
                     MAX_KITTY_CHUNK_LEN
                 );
                 self.kitty_chunk_payload.clear();
@@ -745,19 +769,19 @@ impl Screen {
             }
             self.kitty_chunk_payload.extend_from_slice(payload);
         } else {
-            // 最終チャンク（または単一チャンク）: デコードして登録する
+            // Final chunk (or a single chunk): decode and register the image.
             let (decode_params, full_payload) =
                 if let Some(first_params) = self.kitty_chunk_params.take() {
-                    // 分割転送の最終チャンク — 蓄積分と結合する
+                    // Final chunk of a chunked transfer — combine with the accumulator.
                     self.kitty_chunk_payload.extend_from_slice(payload);
                     let combined_payload = std::mem::take(&mut self.kitty_chunk_payload);
                     (first_params, combined_payload)
                 } else {
-                    // 単一チャンク
+                    // Single chunk.
                     (params_bytes.to_vec(), payload.to_vec())
                 };
 
-            // decode_kitty が期待する形式 `G<params>;<payload>` に組み立てる
+            // Assemble the form expected by `decode_kitty`: `G<params>;<payload>`.
             let mut full_apc = Vec::with_capacity(decode_params.len() + full_payload.len() + 2);
             full_apc.push(b'G');
             full_apc.extend_from_slice(&decode_params);
@@ -779,37 +803,38 @@ impl Screen {
         }
     }
 
-    /// 蓄積された画像を取り出してキューをクリアする
+    /// Drains the accumulated images and clears the queue.
     pub fn take_pending_images(&mut self) -> Vec<PendingImage> {
         std::mem::take(&mut self.pending_images)
     }
 
-    /// BEL フラグを取り出してクリアする
+    /// Drains the BEL flag and clears it.
     pub fn take_pending_bell(&mut self) -> bool {
         std::mem::replace(&mut self.pending_bell, false)
     }
 
-    /// BEL を設定する（performer から呼ばれる）
+    /// Sets the BEL flag (called from the performer).
     pub(crate) fn set_pending_bell(&mut self) {
         self.pending_bell = true;
     }
 
-    /// タイトル変更を設定する（performer から呼ばれる）
+    /// Sets a pending title change (called from the performer).
     ///
-    /// OSC 0/1/2 由来の文字列は制御文字除去 + 長さ上限で
-    /// サニタイズしてからセットする（CRITICAL #13）。
+    /// OSC 0/1/2 strings are sanitized (control characters stripped, length
+    /// capped) before being stored (CRITICAL #13).
     pub(crate) fn set_pending_title(&mut self, title: String) {
         self.pending_title = Some(sanitize_osc_string(title, MAX_TITLE_LEN));
     }
 
-    /// タイトル変更を取り出してクリアする
+    /// Drains the pending title and clears it.
     pub fn take_pending_title(&mut self) -> Option<String> {
         self.pending_title.take()
     }
 
-    /// デスクトップ通知を設定する（performer から呼ばれる）
+    /// Sets a pending desktop notification (called from the performer).
     ///
-    /// OSC 9 由来の文字列はサニタイズ（制御文字除去 + 長さ上限）する（CRITICAL #13）。
+    /// OSC 9 strings are sanitized (control characters stripped, length
+    /// capped) (CRITICAL #13).
     pub(crate) fn set_pending_notification(&mut self, title: String, body: String) {
         self.pending_notification = Some((
             sanitize_osc_string(title, MAX_NOTIFICATION_LEN),
@@ -817,51 +842,53 @@ impl Screen {
         ));
     }
 
-    /// デスクトップ通知を取り出してクリアする
+    /// Drains the pending desktop notification and clears it.
     pub fn take_pending_notification(&mut self) -> Option<(String, String)> {
         self.pending_notification.take()
     }
 
-    /// CWD 変更を設定する（performer が OSC 7 受信時に呼び出す）。
+    /// Sets a pending CWD change (called by the performer on OSC 7).
     ///
-    /// `path` は既に `parse_osc7_cwd` で `file://` 除去 + パーセントデコード済みであることを期待する。
-    /// ここで追加のサニタイズ（制御文字除去 + 長さ上限）を行う。
+    /// Expects `path` to already be `file://`-stripped and percent-decoded by
+    /// `parse_osc7_cwd`. An additional sanitization step (control characters
+    /// stripped, length capped) is applied here.
     pub(crate) fn set_pending_cwd(&mut self, path: String) {
         self.pending_cwd = Some(sanitize_osc_string(path, MAX_CWD_LEN));
     }
 
-    /// CWD 変更を取り出してクリアする
+    /// Drains the pending CWD change and clears it.
     pub fn take_pending_cwd(&mut self) -> Option<String> {
         self.pending_cwd.take()
     }
 
-    /// OSC 52 クリップボード書き込み要求をキューに追加する（Sprint 4-1）
+    /// Queues an OSC 52 clipboard-write request (Sprint 4-1).
     ///
-    /// 1 度のフラッシュで複数の OSC 52 が来る可能性があるため Vec で蓄積する。
-    /// 制御文字は除去し、長さは MAX_NOTIFICATION_LEN の 1024 倍（約 1 MiB）で打ち切る。
-    /// 実際の上限はクライアント側の SecurityConfig.osc52_max_bytes でも再チェックされる。
+    /// Multiple OSC 52 requests may arrive in a single flush, so they are
+    /// accumulated in a `Vec`. Control characters are stripped, and the length
+    /// is capped at 1024× MAX_NOTIFICATION_LEN (≈ 1 MiB). The actual cap is
+    /// re-checked on the client side via `SecurityConfig.osc52_max_bytes`.
     pub(crate) fn queue_clipboard_write(&mut self, text: String) {
-        const MAX_CLIPBOARD_LEN: usize = MAX_NOTIFICATION_LEN * 1024; // 約 1 MiB
+        const MAX_CLIPBOARD_LEN: usize = MAX_NOTIFICATION_LEN * 1024; // ≈ 1 MiB
         let cleaned = sanitize_osc_string(text, MAX_CLIPBOARD_LEN);
         self.pending_clipboard_writes.push(cleaned);
     }
 
-    /// OSC 52 クリップボード書き込み要求を取り出してクリアする
+    /// Drains the pending OSC 52 clipboard-write requests and clears the queue.
     pub fn take_pending_clipboard_writes(&mut self) -> Vec<String> {
         std::mem::take(&mut self.pending_clipboard_writes)
     }
 
-    /// ブラケットペーストモード（DEC ?2004）の状態を返す
+    /// Returns the bracketed paste (DEC ?2004) state.
     pub fn bracketed_paste_mode(&self) -> bool {
         self.bracketed_paste
     }
 
-    /// ブラケットペーストモードを設定する（performer から呼び出す）
+    /// Sets the bracketed paste state (called from the performer).
     pub(crate) fn set_bracketed_paste(&mut self, enabled: bool) {
         self.bracketed_paste = enabled;
     }
 
-    /// OSC 133 セマンティックゾーンマークを記録する
+    /// Records an OSC 133 semantic-zone mark.
     pub(crate) fn add_semantic_mark(&mut self, kind: SemanticMarkKind, exit_code: Option<i32>) {
         self.semantic_marks.push(SemanticMark {
             row: self.cursor_row,
@@ -870,18 +897,19 @@ impl Screen {
         });
     }
 
-    /// 溜まったセマンティックマークを取り出してクリアする
+    /// Drains the accumulated semantic marks and clears the buffer.
     pub fn take_semantic_marks(&mut self) -> Vec<SemanticMark> {
         std::mem::take(&mut self.semantic_marks)
     }
 
-    /// OSC 8 ハイパーリンクの開始（url が Some）または終了（None）を処理する
+    /// Handles the start (`url` is `Some`) or end (`None`) of an OSC 8 hyperlink.
     ///
-    /// 許可されていない URI スキーム（`javascript:` / `file:` 等）は無効化する
-    /// （CRITICAL #13: 悪意ある SSH 接続先によるクリックジャッキング対策）。
+    /// Disabling URIs whose scheme is not in the allow list (e.g. `javascript:`
+    /// or `file:`) (CRITICAL #13: defends against clickjacking from a malicious
+    /// SSH peer).
     pub(crate) fn set_hyperlink(&mut self, url: Option<String>) {
         if let Some(active_url) = self.current_hyperlink_url.take() {
-            // 既存リンクを確定させて grid.hyperlinks に追加する
+            // Finalize the existing link and push it onto `grid.hyperlinks`.
             let col_end = self.cursor_col;
             let row = self.hyperlink_start_row;
             if self.hyperlink_start_row == row && col_end > self.hyperlink_start_col {
@@ -895,13 +923,14 @@ impl Screen {
             }
         }
         if let Some(url) = url {
-            // URI スキームと長さを検証 — 不正なら無効化（None として扱う）
+            // Validate the scheme and length — disable the link on failure
+            // (treat as `None`).
             let validated = validate_hyperlink_uri(&url);
             if validated.is_none() {
                 self.current_hyperlink_url = None;
                 return;
             }
-            // 新しいリンクの開始位置を記録する
+            // Record the start position of the new link.
             self.current_hyperlink_url = validated;
             self.hyperlink_start_col = self.cursor_col;
             self.hyperlink_start_row = self.cursor_row;
@@ -914,7 +943,7 @@ mod osc_security_tests {
     use super::*;
 
     #[test]
-    fn 制御文字は_osc_文字列から除去される() {
+    fn control_characters_are_stripped_from_osc_strings() {
         let input = "Title\x00\x01\x07\x1bWith Control".to_string();
         let cleaned = sanitize_osc_string(input, MAX_TITLE_LEN);
         assert!(!cleaned.contains('\x00'));
@@ -925,82 +954,82 @@ mod osc_security_tests {
     }
 
     #[test]
-    fn osc_文字列は_max_len_で切り詰められる() {
+    fn osc_strings_are_truncated_at_max_len() {
         let input = "a".repeat(1000);
         let cleaned = sanitize_osc_string(input, 100);
         assert_eq!(cleaned.len(), 100);
     }
 
     #[test]
-    fn cjk_文字でも_utf8_境界で切り詰められる() {
+    fn cjk_characters_are_truncated_on_utf8_boundaries() {
         let input = "あいうえお".repeat(100);
         let cleaned = sanitize_osc_string(input, 10);
         assert!(cleaned.len() <= 10);
-        // UTF-8 として有効
+        // Still valid UTF-8.
         assert!(cleaned.chars().count() > 0);
     }
 
     #[test]
-    fn osc_文字列は_tab_lf_cr_を保持する() {
+    fn osc_strings_preserve_tab_lf_cr() {
         let input = "Hello\tWorld\nNext\rLine".to_string();
         let cleaned = sanitize_osc_string(input, 100);
         assert_eq!(cleaned, "Hello\tWorld\nNext\rLine");
     }
 
     #[test]
-    fn http_https_uri_は許可される() {
+    fn http_and_https_uris_are_allowed() {
         assert!(validate_hyperlink_uri("https://example.com").is_some());
         assert!(validate_hyperlink_uri("http://example.com/path").is_some());
         assert!(validate_hyperlink_uri("HTTPS://EXAMPLE.COM").is_some());
     }
 
     #[test]
-    fn javascript_uri_は拒否される() {
-        // CRITICAL #13: クリックジャッキング対策の核心テスト
+    fn javascript_uris_are_rejected() {
+        // CRITICAL #13: core test for the clickjacking defense.
         assert!(validate_hyperlink_uri("javascript:alert(1)").is_none());
         assert!(validate_hyperlink_uri("JavaScript:void(0)").is_none());
     }
 
     #[test]
-    fn file_uri_は拒否される() {
+    fn file_uris_are_rejected() {
         assert!(validate_hyperlink_uri("file:///etc/passwd").is_none());
         assert!(validate_hyperlink_uri("FILE:///c:/windows/system32").is_none());
     }
 
     #[test]
-    fn data_uri_は拒否される() {
+    fn data_uris_are_rejected() {
         assert!(validate_hyperlink_uri("data:text/html,<script>alert(1)</script>").is_none());
     }
 
     #[test]
-    fn 長すぎる_uri_は拒否される() {
+    fn excessively_long_uris_are_rejected() {
         let long = "https://".to_string() + &"a".repeat(MAX_HYPERLINK_URI_LEN);
         assert!(validate_hyperlink_uri(&long).is_none());
     }
 
     #[test]
-    fn 制御文字を含む_uri_は除去される() {
-        // タブ・改行を含む URI も除去対象（厳密化）
+    fn control_characters_inside_a_uri_are_stripped() {
+        // Tabs and newlines inside a URI are also stripped (strict policy).
         let result = validate_hyperlink_uri("https://example.com/\x00path").unwrap();
         assert!(!result.contains('\x00'));
     }
 
     #[test]
-    fn mailto_ssh_ftp_uri_は許可される() {
+    fn mailto_ssh_and_ftp_uris_are_allowed() {
         assert!(validate_hyperlink_uri("mailto:user@example.com").is_some());
         assert!(validate_hyperlink_uri("ssh://server.example.com").is_some());
         assert!(validate_hyperlink_uri("ftp://files.example.com").is_some());
     }
 
     #[test]
-    fn 空文字列_uri_は拒否される() {
+    fn empty_string_uri_is_rejected() {
         assert!(validate_hyperlink_uri("").is_none());
     }
 
-    // ---- OSC 7 (CWD reporting) のテスト群（Sprint 5-2 / B2） ----
+    // ---- Tests for OSC 7 (CWD reporting), Sprint 5-2 / B2 ----
 
     #[test]
-    fn osc7_file_uri_スキーム付きパスを抽出する() {
+    fn osc_7_extracts_a_path_from_a_file_uri() {
         assert_eq!(
             parse_osc7_cwd("file:///home/user/projects"),
             Some("/home/user/projects".to_string())
@@ -1008,8 +1037,8 @@ mod osc_security_tests {
     }
 
     #[test]
-    fn osc7_host_部分を無視する() {
-        // file://hostname/path 形式（host 部は無視して path のみ採用）
+    fn osc_7_ignores_the_host_segment() {
+        // `file://hostname/path` form — the host is ignored; only the path is used.
         assert_eq!(
             parse_osc7_cwd("file://example.host/home/user"),
             Some("/home/user".to_string())
@@ -1017,7 +1046,7 @@ mod osc_security_tests {
     }
 
     #[test]
-    fn osc7_スキームなしも素通しする() {
+    fn osc_7_passes_through_paths_without_a_scheme() {
         assert_eq!(
             parse_osc7_cwd("/home/user/proj"),
             Some("/home/user/proj".to_string())
@@ -1025,19 +1054,19 @@ mod osc_security_tests {
     }
 
     #[test]
-    fn osc7_パーセントエンコードをデコードする() {
-        // " " (0x20) は %20
+    fn osc_7_decodes_percent_encoding() {
+        // `" "` (0x20) → `%20`.
         assert_eq!(
             parse_osc7_cwd("file:///home/user/dir%20with%20space"),
             Some("/home/user/dir with space".to_string())
         );
-        // 日本語パス（UTF-8: あ = E3 81 82）
+        // Japanese path (UTF-8: あ = E3 81 82).
         assert_eq!(parse_osc7_cwd("file:///%E3%81%82"), Some("/あ".to_string()));
     }
 
     #[test]
-    fn osc7_不正なパーセント_xx_は素通しする() {
-        // `%ZZ` は16進ではないので変換せずに元の文字列を残す
+    fn osc_7_passes_malformed_percent_xx_through() {
+        // `%ZZ` is not hex, so it is left in place rather than converted.
         assert_eq!(
             parse_osc7_cwd("file:///path/%ZZ/foo"),
             Some("/path/%ZZ/foo".to_string())
@@ -1045,17 +1074,17 @@ mod osc_security_tests {
     }
 
     #[test]
-    fn osc7_空入力は_none() {
+    fn osc_7_returns_none_for_empty_input() {
         assert!(parse_osc7_cwd("").is_none());
     }
 
     #[test]
-    fn osc7_file_スキームだけでパスなしは_none() {
+    fn osc_7_returns_none_for_the_file_scheme_with_no_path() {
         assert!(parse_osc7_cwd("file://hostname").is_none());
     }
 
     #[test]
-    fn osc7_制御文字は除去される() {
+    fn osc_7_strips_control_characters() {
         let result = parse_osc7_cwd("file:///home/\x00user\x07/dir").unwrap();
         assert!(!result.contains('\x00'));
         assert!(!result.contains('\x07'));
@@ -1063,39 +1092,40 @@ mod osc_security_tests {
     }
 
     #[test]
-    fn osc7_長い入力は早期拒否される() {
-        // 入力長が `MAX_CWD_LEN * 4` を超えると DoS 防止で None
+    fn osc_7_rejects_very_long_input_early() {
+        // Inputs longer than `MAX_CWD_LEN * 4` are rejected up front for DoS reasons.
         let huge_path = format!("file:///{}", "a".repeat(MAX_CWD_LEN * 5));
         assert!(parse_osc7_cwd(&huge_path).is_none());
     }
 
     #[test]
-    fn osc7_max_cwd_len_で結果が切り詰められる() {
-        // 入力が早期拒否されない範囲内で、結果が MAX_CWD_LEN 以下に収まることを検証
+    fn osc_7_truncates_results_at_max_cwd_len() {
+        // For inputs within the early-rejection range, verify the result fits into MAX_CWD_LEN.
         let near_limit = format!("file:///{}", "a".repeat(MAX_CWD_LEN + 100));
-        let result = parse_osc7_cwd(&near_limit).expect("早期拒否範囲内では Some を返すこと");
+        let result = parse_osc7_cwd(&near_limit)
+            .expect("inputs below the early-rejection cap should return Some");
         assert!(
             result.len() <= MAX_CWD_LEN,
-            "結果は MAX_CWD_LEN 以下に切り詰められること。実際: {}",
+            "result must be truncated to MAX_CWD_LEN. actual: {}",
             result.len()
         );
     }
 
     #[test]
-    fn osc7_screen_の_pending_cwd_で取り出せる() {
+    fn osc_7_value_can_be_retrieved_via_screen_pending_cwd() {
         let mut screen = Screen::new(80, 24);
         screen.set_pending_cwd("/home/user/test".to_string());
         assert_eq!(
             screen.take_pending_cwd(),
             Some("/home/user/test".to_string())
         );
-        // take 後はクリアされる
+        // After `take`, the value is cleared.
         assert!(screen.take_pending_cwd().is_none());
     }
 
     #[cfg(windows)]
     #[test]
-    fn osc7_windows_パスの先頭スラッシュを除去する() {
+    fn osc_7_strips_the_leading_slash_on_windows_paths() {
         // file:///C:/Users/foo → C:/Users/foo
         assert_eq!(
             parse_osc7_cwd("file:///C:/Users/foo"),

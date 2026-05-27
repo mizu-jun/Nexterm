@@ -1,29 +1,30 @@
-//! Sprint 5-3 / C5: VT パーサのスループットベンチマーク
+//! Sprint 5-3 / C5: throughput benchmarks for the VT parser.
 //!
-//! alacritty/vtebench のシナリオを参考に、`VtParser::advance` の
-//! 単位時間あたりのバイト処理速度を計測する。
+//! Modeled after the `alacritty/vtebench` scenarios, this benchmark measures the
+//! number of bytes per second that `VtParser::advance` can process.
 //!
-//! 実行: `cargo bench -p nexterm-vt --bench vt_throughput`
+//! Run with: `cargo bench -p nexterm-vt --bench vt_throughput`.
 //!
-//! 各シナリオ:
-//! - light_cells: ASCII のみ（最も基本的なスループット）
-//! - medium_cells: ANSI 8 色 + ASCII（`ls --color` 風）
-//! - dense_cells: 24-bit カラー前景背景フル（フル装飾）
-//! - cursor_motion: CSI H で大量カーソル移動（vim / htop 風）
-//! - scrolling: 改行で連続スクロール（`tail -f` 風）
-//! - alt_screen_random: 代替画面 + ランダム配置（TUI 全画面再描画風）
-//! - sync_output: DEC ?2026 で同期描画
+//! Scenarios:
+//! - `light_cells`: ASCII only (the most basic throughput).
+//! - `medium_cells`: ANSI 8-color + ASCII (`ls --color`-style output).
+//! - `dense_cells`: 24-bit color on both foreground and background (full styling).
+//! - `cursor_motion`: heavy cursor movement via CSI H (vim / htop-style).
+//! - `scrolling`: continuous scrolling via newlines (`tail -f`-style).
+//! - `alt_screen_random`: alternate screen with random placement
+//!   (full-screen TUI repaints).
+//! - `sync_output`: synchronized drawing via DEC ?2026.
 //!
-//! 表示される時間は 1 シナリオ分のバイト列を 1 回処理する時間。
-//! スループット (MB/s) は criterion の `throughput` 機能で自動表示される。
+//! The displayed time is for processing one scenario's byte stream once.
+//! Throughput (MB/s) is shown automatically by criterion's `throughput` feature.
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use nexterm_vt::VtParser;
 use std::hint::black_box;
 
-/// ASCII テキストのみのシナリオ。
+/// ASCII-only scenario.
 ///
-/// 1 行 80 桁 × 24 行を CR LF 区切りで繰り返す。
+/// Repeats a 24-row × 80-column line separated by CR LF.
 fn build_light_cells(bytes_target: usize) -> Vec<u8> {
     let mut buf = Vec::with_capacity(bytes_target);
     let line: &[u8] = b"The quick brown fox jumps over the lazy dog. 0123456789 !@#$%^&*()_+-=  ";
@@ -35,12 +36,12 @@ fn build_light_cells(bytes_target: usize) -> Vec<u8> {
     buf
 }
 
-/// ANSI 8 色 + ASCII のシナリオ。
+/// ANSI 8-color + ASCII scenario.
 ///
-/// `ls --color` や色付きログ出力の典型。SGR シーケンスを多数含む。
+/// Typical of `ls --color` and colored log output; contains many SGR sequences.
 fn build_medium_cells(bytes_target: usize) -> Vec<u8> {
     let mut buf = Vec::with_capacity(bytes_target);
-    // 各カラム 8 種類の前景色を交互に変える
+    // Alternate through 8 foreground colors across columns.
     let colors: [u8; 8] = [30, 31, 32, 33, 34, 35, 36, 37];
     let mut row = 0u32;
     while buf.len() < bytes_target {
@@ -56,9 +57,9 @@ fn build_medium_cells(bytes_target: usize) -> Vec<u8> {
     buf
 }
 
-/// 24-bit カラー (truecolor) を前景背景に毎セル設定するシナリオ。
+/// Per-cell 24-bit color (truecolor) on both foreground and background.
 ///
-/// `bat` や `cmatrix` のような重い装飾出力の典型。
+/// Typical of heavily styled output such as `bat` or `cmatrix`.
 fn build_dense_cells(bytes_target: usize) -> Vec<u8> {
     let mut buf = Vec::with_capacity(bytes_target);
     let mut col = 0u32;
@@ -66,7 +67,7 @@ fn build_dense_cells(bytes_target: usize) -> Vec<u8> {
         let r = (col & 0xFF) as u8;
         let g = ((col >> 3) & 0xFF) as u8;
         let b = ((col >> 5) & 0xFF) as u8;
-        // CSI 38;2;r;g;b;48;2;R;G;B m + 1 文字
+        // CSI 38;2;r;g;b;48;2;R;G;B m + 1 character.
         buf.extend_from_slice(b"\x1b[38;2;");
         buf.extend_from_slice(r.to_string().as_bytes());
         buf.push(b';');
@@ -89,9 +90,9 @@ fn build_dense_cells(bytes_target: usize) -> Vec<u8> {
     buf
 }
 
-/// CSI H でカーソルを大量に移動するシナリオ。
+/// Heavy cursor motion via CSI H.
 ///
-/// vim / htop / tmux のような TUI が画面更新する際の典型。
+/// Typical of TUI updates from vim / htop / tmux.
 fn build_cursor_motion(bytes_target: usize) -> Vec<u8> {
     let mut buf = Vec::with_capacity(bytes_target);
     let mut row = 1u16;
@@ -111,9 +112,9 @@ fn build_cursor_motion(bytes_target: usize) -> Vec<u8> {
     buf
 }
 
-/// 改行で連続スクロールするシナリオ。
+/// Continuous scrolling driven by newlines.
 ///
-/// `tail -f` や長いビルドログの典型。
+/// Typical of `tail -f` or a long build log.
 fn build_scrolling(bytes_target: usize) -> Vec<u8> {
     let mut buf = Vec::with_capacity(bytes_target);
     let mut n = 0u64;
@@ -127,16 +128,16 @@ fn build_scrolling(bytes_target: usize) -> Vec<u8> {
     buf
 }
 
-/// 代替画面 + ランダム位置への描画のシナリオ。
+/// Alternate screen with paints at random positions.
 ///
-/// TUI が画面全体を再描画する際の典型（vim refresh 等）。
+/// Typical of a TUI that redraws the whole screen (e.g. a `vim` refresh).
 fn build_alt_screen_random(bytes_target: usize) -> Vec<u8> {
     let mut buf = Vec::with_capacity(bytes_target);
-    // 代替画面に切り替え
+    // Switch to the alternate screen.
     buf.extend_from_slice(b"\x1b[?1049h");
     let mut seed: u32 = 0x1234_5678;
     while buf.len() < bytes_target {
-        // 簡易 xorshift で row, col を決定論的に生成
+        // Generate row/col deterministically with a small xorshift.
         seed ^= seed << 13;
         seed ^= seed >> 17;
         seed ^= seed << 5;
@@ -153,9 +154,9 @@ fn build_alt_screen_random(bytes_target: usize) -> Vec<u8> {
     buf
 }
 
-/// DEC ?2026 同期出力で大量のテキストを送るシナリオ。
+/// Large amount of text sent through DEC ?2026 synchronized output.
 ///
-/// Sprint 5-2 / B5 で完全対応した経路の計測。
+/// Measures the path that was completed in Sprint 5-2 / B5.
 fn build_sync_output(bytes_target: usize) -> Vec<u8> {
     let mut buf = Vec::with_capacity(bytes_target);
     while buf.len() < bytes_target {
@@ -169,28 +170,28 @@ fn build_sync_output(bytes_target: usize) -> Vec<u8> {
     buf
 }
 
-/// 1 シナリオ分のベンチを行うヘルパ。
+/// Helper for benchmarking one scenario.
 ///
-/// criterion の `throughput` を `Bytes(len)` に設定することで MB/s を自動算出させる。
+/// Setting criterion's `throughput` to `Bytes(len)` makes MB/s appear automatically.
 fn bench_scenario(c: &mut Criterion, name: &str, data: &[u8]) {
     let mut group = c.benchmark_group("vt_advance");
     group.throughput(Throughput::Bytes(data.len() as u64));
     group.bench_with_input(BenchmarkId::new(name, data.len()), data, |b, data| {
-        // 各イテレーションで Parser を作り直す（warm cache の影響を抑える）
+        // Recreate the parser each iteration to minimize warm-cache effects.
         b.iter(|| {
             let mut parser = VtParser::new(80, 24);
             parser.advance(black_box(data));
-            // grid() を黒箱に渡してデッドコード除去を防ぐ
+            // Pipe `grid()` through black_box so dead-code elimination does not strip it.
             black_box(parser.screen().grid().get(0, 0));
         });
     });
     group.finish();
 }
 
-/// すべてのシナリオを 256 KiB / 1 シナリオで実行する。
+/// Run every scenario at 256 KiB per scenario.
 fn vt_throughput(c: &mut Criterion) {
-    // 1 シナリオあたりのターゲットバイト数。
-    // ローカル実行で十分な精度が出るサイズ。CI のジョブ時間制限内でも完走可能。
+    // Target bytes per scenario. Large enough for stable numbers locally and
+    // still completes within the CI job timeout.
     const TARGET_BYTES: usize = 256 * 1024;
 
     bench_scenario(c, "light_cells", &build_light_cells(TARGET_BYTES));
@@ -206,18 +207,19 @@ fn vt_throughput(c: &mut Criterion) {
     bench_scenario(c, "sync_output", &build_sync_output(TARGET_BYTES));
 }
 
-/// Sprint 5-3 / C1: 入力レイテンシ（per-keystroke）ベンチマーク
+/// Sprint 5-3 / C1: per-keystroke input-latency benchmark.
 ///
-/// `Ghostty 2 ms / Alacritty 3 ms / kitty 3 ms` といったエンドツーエンドの
-/// レイテンシは GPU + winit + コンポジタが絡むため正確な比較は困難。
-/// ここでは「タイピング 1 文字相当のバイト列を VT に流して dirty を取り出す」
-/// 経路に絞った時間を計測する。VT 層のオーバーヘッドの上限を可視化する目的。
+/// End-to-end latency numbers like `Ghostty 2 ms / Alacritty 3 ms / kitty 3 ms`
+/// involve the GPU, winit, and the compositor, so a precise comparison is
+/// difficult. Here we measure only the path of "feeding a single keystroke
+/// through the VT and pulling the dirty rows back out". The goal is to expose
+/// the upper bound on the VT layer's overhead.
 fn vt_latency(c: &mut Criterion) {
     let mut group = c.benchmark_group("vt_keystroke_latency");
-    // throughput を Elements(1) にすることで「1 キーストローク」あたりの ns を表示する。
+    // Setting throughput to Elements(1) displays nanoseconds per keystroke.
     group.throughput(Throughput::Elements(1));
 
-    // 1) 単一 ASCII 文字 (b"a") を打鍵 → dirty 抽出
+    // 1) A single ASCII character (`b"a"`) → take dirty rows.
     group.bench_function("single_ascii", |b| {
         let mut parser = VtParser::new(80, 24);
         b.iter(|| {
@@ -226,7 +228,7 @@ fn vt_latency(c: &mut Criterion) {
         });
     });
 
-    // 2) Enter (CR LF) で改行 → dirty 抽出
+    // 2) Enter (CR LF) → take dirty rows.
     group.bench_function("enter_newline", |b| {
         let mut parser = VtParser::new(80, 24);
         b.iter(|| {
@@ -235,10 +237,10 @@ fn vt_latency(c: &mut Criterion) {
         });
     });
 
-    // 3) Backspace 相当（BS + Space + BS）→ dirty 抽出
+    // 3) Backspace equivalent (BS + Space + BS) → take dirty rows.
     group.bench_function("backspace", |b| {
         let mut parser = VtParser::new(80, 24);
-        // 事前に何か入力してから BS
+        // Type something first, then backspace it.
         parser.advance(b"abc");
         parser.screen_mut().take_dirty_rows();
         b.iter(|| {
@@ -247,10 +249,10 @@ fn vt_latency(c: &mut Criterion) {
         });
     });
 
-    // 4) カーソル移動 (CSI A) → dirty 抽出
+    // 4) Cursor motion (CSI A) → take dirty rows.
     group.bench_function("cursor_up", |b| {
         let mut parser = VtParser::new(80, 24);
-        parser.advance(b"\x1b[10;10H"); // 初期位置
+        parser.advance(b"\x1b[10;10H"); // initial position
         parser.screen_mut().take_dirty_rows();
         b.iter(|| {
             parser.advance(black_box(b"\x1b[A"));
@@ -258,7 +260,7 @@ fn vt_latency(c: &mut Criterion) {
         });
     });
 
-    // 5) SGR カラー変更を伴う 1 文字 (色付き打鍵)
+    // 5) A single character with SGR color change (a colored keystroke).
     group.bench_function("colored_char", |b| {
         let mut parser = VtParser::new(80, 24);
         b.iter(|| {
