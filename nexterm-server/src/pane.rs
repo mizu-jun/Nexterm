@@ -1,7 +1,7 @@
-//! ペイン — PTY プロセスと仮想グリッドを管理する最小単位
+//! Pane — the smallest unit, managing a PTY process and its virtual grid.
 //!
-//! PTY 出力チャネルは `Arc<broadcast::Sender>` で保持する。
-//! broadcast により複数クライアントへ同時送信でき、再アタッチ時の差し替え不要。
+//! The PTY output channel is held as `Arc<broadcast::Sender>`.
+//! Broadcasting allows sending to multiple clients simultaneously, and no swap is needed on reattach.
 
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
@@ -20,22 +20,22 @@ use nexterm_vt::VtParser;
 
 static NEXT_PANE_ID: AtomicU32 = AtomicU32::new(1);
 
-/// PTY 出力のログライター（録音中のみ Some）
+/// PTY output log writer (`Some` only while recording).
 struct LogWriterInner {
     writer: BufWriter<File>,
-    /// タイムスタンプを各行先頭に付加するかどうか
+    /// Whether to prepend a timestamp to each line.
     timestamp: bool,
-    /// ANSI エスケープシーケンスを除去するかどうか
+    /// Whether to strip ANSI escape sequences.
     strip_ansi: bool,
-    /// 行バッファ（改行が来るまで蓄積する）
+    /// Line buffer (accumulates until a newline is seen).
     line_buf: Vec<u8>,
-    /// ログファイルのパス（ローテーション用）
+    /// Log file path (for rotation).
     path: String,
-    /// 現在のファイルに書き込んだバイト数
+    /// Number of bytes already written to the current file.
     written_bytes: u64,
-    /// ローテーション上限バイト数（0 = 無制限）
+    /// Rotation byte limit (0 = unlimited).
     max_bytes: u64,
-    /// 保持する最大ファイル数
+    /// Maximum number of files to keep.
     max_files: u32,
 }
 
@@ -60,41 +60,41 @@ impl LogWriterInner {
         }
     }
 
-    /// ローテーションが必要かどうかを確認して実行する
+    /// Check whether rotation is needed and perform it if so.
     fn rotate_if_needed(&mut self) -> std::io::Result<()> {
         if self.max_bytes == 0 || self.written_bytes < self.max_bytes {
             return Ok(());
         }
-        // バッファをフラッシュしてからローテーション
+        // Flush the buffer before rotating.
         self.writer.flush()?;
-        // 古いファイルをシフト: .{max_files-1} を削除、.N を .{N+1} にリネーム
+        // Shift the older files: delete `.{max_files-1}`, rename `.N` to `.{N+1}`.
         let path = self.path.clone();
         let max = self.max_files;
-        // 一番古いファイルを削除
+        // Delete the oldest file.
         let oldest = format!("{}.{}", path, max);
         let _ = std::fs::remove_file(&oldest);
-        // N-1 → N にシフト
+        // Shift N-1 -> N.
         for i in (1..max).rev() {
             let from = format!("{}.{}", path, i);
             let to = format!("{}.{}", path, i + 1);
             let _ = std::fs::rename(&from, &to);
         }
-        // 現在のファイルを .1 にリネーム
+        // Rename the current file to `.1`.
         let _ = std::fs::rename(&path, format!("{}.1", path));
-        // 新しいファイルを作成
+        // Create the new file.
         let new_file = File::create(&path)?;
         self.writer = BufWriter::new(new_file);
         self.written_bytes = 0;
         Ok(())
     }
 
-    /// バイト列を書き込む（改行単位でタイムスタンプ付加・ANSI 除去を適用）
+    /// Write bytes (applies per-line timestamp prefixing and ANSI stripping).
     fn write(&mut self, data: &[u8]) -> std::io::Result<()> {
-        // ローテーションが必要か確認する
+        // Rotate if needed.
         self.rotate_if_needed()?;
 
         if !self.timestamp && !self.strip_ansi {
-            // 最適化: 特別な処理なしに直接書き込む
+            // Fast path: no special processing, write directly.
             self.written_bytes += data.len() as u64;
             return self.writer.write_all(data);
         }
@@ -109,7 +109,7 @@ impl LogWriterInner {
         Ok(())
     }
 
-    /// 蓄積した行を処理して書き込む
+    /// Process and write the accumulated line.
     fn flush_line(&mut self) -> std::io::Result<()> {
         let line = std::mem::take(&mut self.line_buf);
         let processed = if self.strip_ansi {
@@ -133,7 +133,7 @@ impl LogWriterInner {
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        // 残りのバッファを書き込む
+        // Write any remaining buffered bytes.
         if !self.line_buf.is_empty() {
             let line = std::mem::take(&mut self.line_buf);
             let processed = if self.strip_ansi {
@@ -158,23 +158,23 @@ impl LogWriterInner {
     }
 }
 
-/// ログファイル名テンプレートを展開する
+/// Expand the log filename template.
 ///
-/// 利用可能なプレースホルダー:
-///   {session}  — セッション名
-///   {pane}     — ペイン ID
-///   {datetime} — 起動時刻 (YYYYMMDD_HHMMSS)
+/// Available placeholders:
+///   {session}  — session name
+///   {pane}     — pane ID
+///   {datetime} — start time (YYYYMMDD_HHMMSS)
 pub fn expand_log_filename_template(template: &str, session: &str, pane_id: u32) -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    // UTC 時刻を手動計算する（chrono 不使用）
+    // Compute the UTC time manually (no chrono dependency).
     let secs_in_day = now % 86400;
     let h = secs_in_day / 3600;
     let m = (secs_in_day / 60) % 60;
     let s = secs_in_day % 60;
-    // 簡易日付計算（Unix エポックから日数 → 年月日）
+    // Simple date calculation (days since the Unix epoch -> year/month/day).
     let days = now / 86400;
     let (year, month, day) = days_to_ymd(days);
     let datetime = format!("{:04}{:02}{:02}_{:02}{:02}{:02}", year, month, day, h, m, s);
@@ -185,9 +185,9 @@ pub fn expand_log_filename_template(template: &str, session: &str, pane_id: u32)
         .replace("{datetime}", &datetime)
 }
 
-/// Unix エポックからの日数を年月日に変換する（グレゴリオ暦）
+/// Convert days since the Unix epoch into a (year, month, day) tuple (Gregorian).
 fn days_to_ymd(days: u64) -> (u32, u32, u32) {
-    // アルゴリズム: http://howardhinnant.github.io/date_algorithms.html
+    // Algorithm: http://howardhinnant.github.io/date_algorithms.html
     let z = days as i64 + 719468;
     let era = if z >= 0 { z } else { z - 146096 } / 146097;
     let doe = (z - era * 146097) as u64;
@@ -201,7 +201,7 @@ fn days_to_ymd(days: u64) -> (u32, u32, u32) {
     (y as u32, m as u32, d as u32)
 }
 
-/// ANSI エスケープシーケンスを除去する（ESC[ ... 終端文字 の形式に対応）
+/// Strip ANSI escape sequences (handles the `ESC[ ... terminator` form).
 fn strip_ansi_escapes(input: &[u8]) -> Vec<u8> {
     let mut output = Vec::with_capacity(input.len());
     let mut i = 0;
@@ -211,15 +211,15 @@ fn strip_ansi_escapes(input: &[u8]) -> Vec<u8> {
             if i < input.len() {
                 match input[i] {
                     b'[' => {
-                        // CSI シーケンス: ESC [ ... 終端文字（0x40-0x7e）
+                        // CSI sequence: ESC [ ... terminator (0x40-0x7e).
                         i += 1;
                         while i < input.len() && !(0x40..=0x7e).contains(&input[i]) {
                             i += 1;
                         }
-                        i += 1; // 終端文字をスキップ
+                        i += 1; // Skip the terminator.
                     }
                     b']' => {
-                        // OSC シーケンス: ESC ] ... BEL or ST
+                        // OSC sequence: ESC ] ... BEL or ST.
                         i += 1;
                         while i < input.len() {
                             if input[i] == 0x07 {
@@ -234,7 +234,7 @@ fn strip_ansi_escapes(input: &[u8]) -> Vec<u8> {
                         }
                     }
                     _ => {
-                        // その他の ESC シーケンスは次の 1 バイトをスキップ
+                        // Skip a single byte for any other ESC sequence.
                         i += 1;
                     }
                 }
@@ -249,14 +249,14 @@ fn strip_ansi_escapes(input: &[u8]) -> Vec<u8> {
 
 type LogWriter = Arc<Mutex<Option<LogWriterInner>>>;
 
-/// asciicast v2 形式ライター
+/// asciicast v2 format writer.
 pub struct AsciicastWriter {
     file: BufWriter<File>,
     started_at: Instant,
 }
 
 impl AsciicastWriter {
-    /// 新しい AsciicastWriter を作成してヘッダー行を書き込む
+    /// Create a new `AsciicastWriter` and write the header line.
     pub fn new(path: &str, cols: u16, rows: u16) -> Result<Self> {
         let file = File::create(path)?;
         let mut w = BufWriter::new(file);
@@ -275,17 +275,17 @@ impl AsciicastWriter {
         })
     }
 
-    /// PTY 出力データを asciicast イベント行として書き込む
+    /// Write PTY output data as an asciicast event line.
     pub fn write_output(&mut self, data: &[u8]) -> std::io::Result<()> {
         let elapsed = self.started_at.elapsed().as_secs_f64();
         let text = String::from_utf8_lossy(data);
-        // serde_json で JSON 文字列にエスケープする
+        // Escape the text into a JSON string via serde_json.
         let escaped = serde_json::to_string(&*text).unwrap_or_else(|_| "\"\"".to_string());
         writeln!(self.file, "[{:.6},\"o\",{}]", elapsed, escaped)?;
         Ok(())
     }
 
-    /// バッファをフラッシュする
+    /// Flush the buffer.
     pub fn flush(&mut self) -> std::io::Result<()> {
         self.file.flush()
     }
@@ -293,57 +293,57 @@ impl AsciicastWriter {
 
 type AsciicastWriterHandle = Arc<Mutex<Option<AsciicastWriter>>>;
 
-/// ペイン ID を新規発行する
+/// Allocate a new pane ID.
 pub fn new_pane_id() -> u32 {
     NEXT_PANE_ID.fetch_add(1, Ordering::Relaxed)
 }
 
-/// スナップショット復元後に ID カウンターを更新する
+/// Update the ID counter after restoring from a snapshot.
 ///
-/// 復元したペインの最大 ID + 1 以上になるよう調整して ID 衝突を防ぐ。
+/// Bumps the counter to at least the highest restored pane ID + 1 to avoid ID collisions.
 pub fn set_min_pane_id(min_id: u32) {
     NEXT_PANE_ID.fetch_max(min_id, Ordering::Relaxed);
 }
 
-/// 全クライアントへのブロードキャスト送信チャネル（sync 送信、Mutex 不要）
+/// Broadcast send channel to every client (sync send, no Mutex required).
 type SharedTx = Arc<broadcast::Sender<ServerToClient>>;
 
-/// ペインの状態
+/// Pane state.
 pub struct Pane {
     pub id: u32,
     pub cols: u16,
     pub rows: u16,
-    /// 子プロセスの PID（Linux: /proc/{pid}/cwd から作業ディレクトリ取得に使用）
+    /// Child process PID (Linux: used to read the working directory via `/proc/{pid}/cwd`).
     #[allow(dead_code)]
     pid: Option<u32>,
-    /// PTY 出力先チャネル（再アタッチ時に差し替え可能）
+    /// PTY output destination channel (can be swapped on reattach).
     #[allow(dead_code)]
     shared_tx: SharedTx,
-    /// PTY マスタ（リサイズ用）
+    /// PTY master (for resizing).
     master: Box<dyn MasterPty + Send>,
-    /// PTY 書き込みハンドル（キー入力転送用）
+    /// PTY write handle (used to forward key input).
     writer: Mutex<Box<dyn Write + Send>>,
-    /// テキストログファイルライター（録音中のみ Some）
+    /// Text-log file writer (`Some` only while recording).
     log_writer: LogWriter,
-    /// バイナリログファイルライター（binary_log=true 時のみ Some）
+    /// Binary-log file writer (`Some` only when `binary_log=true`).
     binary_log_writer: LogWriter,
-    /// asciicast v2 ライター（録音中のみ Some）
+    /// asciicast v2 writer (`Some` only while recording).
     asciicast_writer: AsciicastWriterHandle,
-    /// ブラケットペーストモード（DEC ?2004）が有効かどうか
+    /// Whether bracketed-paste mode (DEC ?2004) is enabled.
     pub bracketed_paste: Arc<std::sync::atomic::AtomicBool>,
-    /// マウスレポーティングモード（0=無効, 1=X11 ?1000, 2=SGR ?1006）
+    /// Mouse-reporting mode (0 = disabled, 1 = X11 ?1000, 2 = SGR ?1006).
     pub mouse_mode: Arc<std::sync::atomic::AtomicU8>,
-    /// OSC 7 で報告された現在の作業ディレクトリ（Sprint 5-2 / B2）
+    /// Current working directory reported by OSC 7 (Sprint 5-2 / B2).
     ///
-    /// シェルが `printf '\\033]7;file://...' "$PWD"` などを出力したときに更新される。
-    /// 新規ペイン分割時に親 CWD として子に継承する用途。
-    /// OSC 7 が一度も来ていない場合は `None`（その場合は `working_dir()` で `/proc/{pid}/cwd`
-    /// にフォールバックする）。
+    /// Updated when the shell emits something like `printf '\033]7;file://...' "$PWD"`.
+    /// Used to inherit the parent CWD when splitting into a new pane.
+    /// `None` when OSC 7 has never been received (callers fall back to `working_dir()` =
+    /// `/proc/{pid}/cwd`).
     pub current_cwd: Arc<Mutex<Option<std::path::PathBuf>>>,
 }
 
 impl Pane {
-    /// 新しいペインを生成してシェルを起動する
+    /// Create a new pane and launch the shell.
     pub fn spawn(
         cols: u16,
         rows: u16,
@@ -354,7 +354,7 @@ impl Pane {
         Self::spawn_impl(new_pane_id(), cols, rows, initial_tx, shell, args, None)
     }
 
-    /// 指定 ID でペインを生成する（BSP 分割時に ID を事前確定するために使用）
+    /// Create a pane with the specified ID (used to fix the ID up front when splitting via BSP).
     pub fn spawn_with_id(
         id: u32,
         cols: u16,
@@ -366,7 +366,7 @@ impl Pane {
         Self::spawn_impl(id, cols, rows, initial_tx, shell, args, None)
     }
 
-    /// 指定 ID・作業ディレクトリでペインを生成する（スナップショット復元時に使用）
+    /// Create a pane with a specific ID and working directory (used to restore a snapshot).
     pub fn spawn_with_cwd(
         id: u32,
         cols: u16,
@@ -379,7 +379,7 @@ impl Pane {
         Self::spawn_impl(id, cols, rows, initial_tx, shell, args, Some(cwd))
     }
 
-    /// 内部 PTY 起動実装（CWD はオプション）
+    /// Internal PTY launch implementation (CWD is optional).
     fn spawn_impl(
         id: u32,
         cols: u16,
@@ -400,7 +400,7 @@ impl Pane {
 
         let mut cmd = CommandBuilder::new(shell);
         cmd.args(args);
-        // 明示的な CWD がなければユーザーのホームディレクトリを使う
+        // Fall back to the user's home directory if no explicit CWD is given.
         let home_buf: Option<std::path::PathBuf> = cwd
             .is_none()
             .then(|| {
@@ -422,105 +422,105 @@ impl Pane {
         }
 
         let child = pair.slave.spawn_command(cmd)?;
-        // 子プロセスの PID を保存する（child を drop してもプロセスは継続する）
+        // Save the child PID (the process keeps running even after `child` is dropped).
         let pid = child.process_id();
 
-        // 書き込みハンドル（1 度だけ取得可）と読み取りハンドルを取得する
+        // Acquire the write handle (one-shot) and the read handle.
         let writer = Mutex::new(pair.master.take_writer()?);
         let mut reader = pair.master.try_clone_reader()?;
         let master = pair.master;
 
-        // broadcast::Sender を Arc で共有する（Mutex 不要、sync 送信）
+        // Share the `broadcast::Sender` via `Arc` (no Mutex needed, sync send).
         let shared_tx: SharedTx = Arc::new(initial_tx);
         let shared_tx_clone = Arc::clone(&shared_tx);
         let pane_id = id;
 
-        // ログライターを Arc<Mutex> で共有する
+        // Share the log writer via `Arc<Mutex>`.
         let log_writer: LogWriter = Arc::new(Mutex::new(None));
         let log_writer_clone = Arc::clone(&log_writer);
 
-        // バイナリログライターを Arc<Mutex> で共有する
+        // Share the binary log writer via `Arc<Mutex>`.
         let binary_log_writer: LogWriter = Arc::new(Mutex::new(None));
         let binary_log_writer_clone = Arc::clone(&binary_log_writer);
 
-        // asciicast ライターを Arc<Mutex> で共有する
+        // Share the asciicast writer via `Arc<Mutex>`.
         let asciicast_writer: AsciicastWriterHandle = Arc::new(Mutex::new(None));
         let asciicast_writer_clone = Arc::clone(&asciicast_writer);
 
-        // ブラケットペーストモードフラグを Arc<AtomicBool> で共有する
+        // Share the bracketed-paste mode flag via `Arc<AtomicBool>`.
         let bracketed_paste: Arc<std::sync::atomic::AtomicBool> =
             Arc::new(std::sync::atomic::AtomicBool::new(false));
         let bracketed_paste_clone = Arc::clone(&bracketed_paste);
 
-        // マウスレポーティングモードを Arc<AtomicU8> で共有する
+        // Share the mouse-reporting mode via `Arc<AtomicU8>`.
         let mouse_mode: Arc<std::sync::atomic::AtomicU8> =
             Arc::new(std::sync::atomic::AtomicU8::new(0));
         let mouse_mode_clone = Arc::clone(&mouse_mode);
 
-        // OSC 7 で受信した CWD を Arc<Mutex<Option<PathBuf>>> で共有する（Sprint 5-2 / B2）
+        // Share the OSC 7 CWD via `Arc<Mutex<Option<PathBuf>>>` (Sprint 5-2 / B2).
         let current_cwd: Arc<Mutex<Option<std::path::PathBuf>>> = Arc::new(Mutex::new(None));
         let current_cwd_clone = Arc::clone(&current_cwd);
 
-        // PTY 読み取りスレッドを起動する
+        // Launch the PTY reader thread.
         tokio::task::spawn_blocking(move || {
             let mut parser = VtParser::new(cols, rows);
             let mut buf = [0u8; 4096];
 
-            /// broadcast::Sender でメッセージを送信するヘルパー（sync、待機なし）
+            /// Helper that sends a message via the `broadcast::Sender` (sync, no waiting).
             fn send_msg(tx: &broadcast::Sender<ServerToClient>, msg: ServerToClient) {
-                // 受信者がいない場合は無視（クライアント未接続時）
+                // Ignore when there are no receivers (no client attached).
                 let _ = tx.send(msg);
             }
 
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => {
-                        debug!("ペイン {} の PTY が EOF になりました", pane_id);
+                        debug!("pane {}: PTY reached EOF", pane_id);
                         break;
                     }
                     Ok(n) => {
                         parser.advance(&buf[..n]);
 
-                        // ブラケットペーストモードの変化を AtomicBool に反映する
+                        // Reflect bracketed-paste mode changes into the AtomicBool.
                         bracketed_paste_clone.store(
                             parser.bracketed_paste_mode(),
                             std::sync::atomic::Ordering::Relaxed,
                         );
 
-                        // マウスレポーティングモードの変化を AtomicU8 に反映する
+                        // Reflect mouse-reporting mode changes into the AtomicU8.
                         mouse_mode_clone.store(
                             parser.screen().mouse_mode,
                             std::sync::atomic::Ordering::Relaxed,
                         );
 
-                        // 録音中であれば生バイト列をログファイルに書き込む
+                        // If recording, write the raw byte sequence to the log file.
                         if let Ok(mut guard) = log_writer_clone.lock()
                             && let Some(w) = guard.as_mut()
                             && let Err(e) = w.write(&buf[..n])
                         {
-                            error!("ログ書き込みエラー: {}", e);
+                            error!("log write error: {}", e);
                             *guard = None;
                         }
 
-                        // バイナリログ: raw PTY bytes をそのまま保存する
+                        // Binary log: save raw PTY bytes verbatim.
                         if let Ok(mut guard) = binary_log_writer_clone.lock()
                             && let Some(w) = guard.as_mut()
                             && let Err(e) = w.write(&buf[..n])
                         {
-                            error!("バイナリログ書き込みエラー: {}", e);
+                            error!("binary log write error: {}", e);
                             *guard = None;
                         }
 
-                        // asciicast 録音中であれば書き込む
+                        // If asciicast recording is active, write to it.
                         if let Ok(mut guard) = asciicast_writer_clone.lock()
                             && let Some(w) = guard.as_mut()
                             && let Err(e) = w.write_output(&buf[..n])
                         {
-                            error!("asciicast 書き込みエラー: {}", e);
+                            error!("asciicast write error: {}", e);
                             *guard = None;
                         }
 
-                        // グリッド差分を送信する
+                        // Send the grid diff.
                         let dirty = parser.screen_mut().take_dirty_rows();
                         if !dirty.is_empty() {
                             let (cursor_col, cursor_row) = parser.screen().cursor();
@@ -533,19 +533,19 @@ impl Pane {
                             send_msg(&shared_tx_clone, msg);
                         }
 
-                        // BEL を受信していればクライアントに通知する
+                        // Notify the client if a BEL was received.
                         if parser.screen_mut().take_pending_bell() {
                             let msg = ServerToClient::Bell { pane_id };
                             send_msg(&shared_tx_clone, msg);
                         }
 
-                        // タイトル変更通知を送信する（OSC 0/1/2）
+                        // Send a title-change notification (OSC 0/1/2).
                         if let Some(title) = parser.screen_mut().take_pending_title() {
                             let msg = ServerToClient::TitleChanged { pane_id, title };
                             send_msg(&shared_tx_clone, msg);
                         }
 
-                        // デスクトップ通知を送信する（OSC 9 / 777）
+                        // Send a desktop notification (OSC 9 / 777).
                         if let Some((title, body)) = parser.screen_mut().take_pending_notification()
                         {
                             let msg = ServerToClient::DesktopNotification {
@@ -556,14 +556,14 @@ impl Pane {
                             send_msg(&shared_tx_clone, msg);
                         }
 
-                        // OSC 52 クリップボード書き込み要求を送信する（Sprint 4-1）
-                        // クライアント側で SecurityConfig.osc52_clipboard ポリシーに従って処理する
+                        // Send OSC 52 clipboard write requests (Sprint 4-1).
+                        // The client honors the `SecurityConfig.osc52_clipboard` policy on its side.
                         for text in parser.screen_mut().take_pending_clipboard_writes() {
                             let msg = ServerToClient::ClipboardWriteRequest { pane_id, text };
                             send_msg(&shared_tx_clone, msg);
                         }
 
-                        // OSC 7 CWD 変更通知を送信する（Sprint 5-2 / B2）
+                        // Send an OSC 7 CWD change notification (Sprint 5-2 / B2).
                         if let Some(cwd) = parser.screen_mut().take_pending_cwd() {
                             if let Ok(mut guard) = current_cwd_clone.lock() {
                                 *guard = Some(std::path::PathBuf::from(&cwd));
@@ -572,7 +572,7 @@ impl Pane {
                             send_msg(&shared_tx_clone, msg);
                         }
 
-                        // OSC 133 セマンティックゾーンマークを送信する
+                        // Send OSC 133 semantic-zone marks.
                         for mark in parser.screen_mut().take_semantic_marks() {
                             let kind = match mark.kind {
                                 nexterm_vt::SemanticMarkKind::PromptStart => "A",
@@ -589,7 +589,7 @@ impl Pane {
                             send_msg(&shared_tx_clone, msg);
                         }
 
-                        // 画像データを送信する（Sixel / Kitty）
+                        // Send image data (Sixel / Kitty).
                         let images = parser.screen_mut().take_pending_images();
                         for img in images {
                             let msg = ServerToClient::ImagePlaced {
@@ -605,30 +605,24 @@ impl Pane {
                         }
                     }
                     Err(e) => {
-                        error!("PTY 読み取りエラー: {}", e);
+                        error!("PTY read error: {}", e);
                         break;
                     }
                 }
             }
 
-            // Fix 2: PTY EOF 時にプロセスグループへ SIGHUP を送信してゾンビプロセスを防ぐ
+            // Fix 2: send SIGHUP to the process group on PTY EOF to avoid zombie processes.
             #[cfg(unix)]
             if let Some(pid_val) = pid
                 && pid_val > 0
             {
-                // SAFETY: kill() は有効な pid に対して安全。pgid は pid と同一（setsid 未使用）。
+                // SAFETY: kill() is safe with a valid pid; pgid == pid (we did not call setsid).
                 unsafe { libc::kill(pid_val as libc::pid_t, libc::SIGHUP) };
-                debug!(
-                    "ペイン {}: PID {} に SIGHUP を送信しました",
-                    pane_id, pid_val
-                );
+                debug!("pane {}: sent SIGHUP to PID {}", pane_id, pid_val);
             }
 
-            // Fix 1: PTY EOF / シェル終了時に PaneClosed を送信する
-            debug!(
-                "ペイン {} の PTY ループが終了しました。PaneClosed を送信します",
-                pane_id
-            );
+            // Fix 1: emit PaneClosed when the PTY reaches EOF or the shell exits.
+            debug!("pane {}: PTY loop finished; sending PaneClosed", pane_id);
             send_msg(&shared_tx_clone, ServerToClient::PaneClosed { pane_id });
         });
 
@@ -649,43 +643,43 @@ impl Pane {
         })
     }
 
-    /// 直近に OSC 7 で報告された CWD を返す（一度も来ていなければ `None`）。
+    /// Return the most recent CWD reported via OSC 7 (`None` if never received).
     ///
-    /// 親ペイン分割時に子へ継承する用途で使う。OSC 7 がない場合は呼び出し側で
-    /// `working_dir()` (`/proc/{pid}/cwd` 等) にフォールバックする。
+    /// Used to inherit the CWD into a child pane when splitting. When OSC 7 is unavailable,
+    /// callers fall back to `working_dir()` (e.g. `/proc/{pid}/cwd`).
     pub fn osc7_cwd(&self) -> Option<std::path::PathBuf> {
         self.current_cwd.lock().ok().and_then(|g| g.clone())
     }
 
-    /// Full Refresh グリッドを生成する（アタッチ時用）
+    /// Build a Full Refresh grid (used on client attach).
     pub fn make_full_refresh(&self) -> Grid {
         Grid::new(self.cols, self.rows)
     }
 
-    /// PTY 出力チャネルを差し替える — broadcast では再アタッチ時の差し替えは不要（no-op）
+    /// Swap the PTY output channel — for broadcast, no swap is needed on reattach (no-op).
     #[allow(dead_code)]
     pub fn update_tx(&self, _new_tx: broadcast::Sender<ServerToClient>) {
-        // broadcast::Sender は共有されるため、クライアント再アタッチ時に差し替え不要
+        // `broadcast::Sender` is shared, so reattaching does not require a swap.
     }
 
-    /// PTY にデータを書き込む（キー入力転送）
+    /// Write data to the PTY (forwarded key input).
     pub fn write_input(&self, data: &[u8]) -> Result<()> {
         let mut w = self
             .writer
             .lock()
-            .map_err(|e| anyhow::anyhow!("writer ロック取得に失敗しました: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("failed to acquire writer lock: {}", e))?;
         w.write_all(data)?;
         Ok(())
     }
 
-    /// PTY 出力のファイル録音を開始する
+    /// Start recording PTY output to a file.
     ///
-    /// 録音中の場合は前のファイルを閉じてから新しいファイルを開く。
+    /// When already recording, the previous file is closed before opening the new one.
     pub fn start_recording(&self, path: &str) -> Result<()> {
         self.start_recording_with_options(path, false, false)
     }
 
-    /// PTY 出力のファイル録音をオプション付きで開始する
+    /// Start recording PTY output with options.
     pub fn start_recording_with_options(
         &self,
         path: &str,
@@ -695,9 +689,9 @@ impl Pane {
         self.start_recording_with_rotation(path, timestamp, strip_ansi, 0, 5)
     }
 
-    /// PTY 出力のファイル録音をローテーション設定付きで開始する
+    /// Start recording PTY output with rotation settings.
     ///
-    /// `max_size_mb` が 0 の場合はローテーションしない。`max_files` は保持ファイル数。
+    /// When `max_size_mb` is 0, rotation is disabled. `max_files` is the number of files to keep.
     pub fn start_recording_with_rotation(
         &self,
         path: &str,
@@ -711,7 +705,7 @@ impl Pane {
         let mut guard = self
             .log_writer
             .lock()
-            .map_err(|e| anyhow::anyhow!("log_writer ロック取得に失敗しました: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("failed to acquire log_writer lock: {}", e))?;
         *guard = Some(LogWriterInner::new(
             file,
             timestamp,
@@ -720,37 +714,37 @@ impl Pane {
             max_bytes,
             max_files,
         ));
-        info!("ペイン {} の録音を開始しました: {}", self.id, path);
+        info!("pane {}: started recording to {}", self.id, path);
         Ok(())
     }
 
-    /// PTY 出力のファイル録音を停止する
+    /// Stop recording PTY output to a file.
     ///
-    /// バッファをフラッシュしてからファイルを閉じる。
+    /// Flushes the buffer before closing the file.
     pub fn stop_recording(&self) -> Result<()> {
         let mut guard = self
             .log_writer
             .lock()
-            .map_err(|e| anyhow::anyhow!("log_writer ロック取得に失敗しました: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("failed to acquire log_writer lock: {}", e))?;
         if let Some(mut w) = guard.take() {
             w.flush()?;
-            info!("ペイン {} の録音を停止しました", self.id);
+            info!("pane {}: stopped recording", self.id);
         }
         Ok(())
     }
 
-    /// LogConfig の設定（テンプレート・バイナリログ）を使って録音を開始する
+    /// Start recording using `LogConfig` (template, binary log, ...).
     ///
-    /// `base_path` はテンプレートを使わない場合のデフォルトパス。
+    /// `base_path` is the default path used when no template is set.
     pub fn start_recording_with_config(
         &self,
         base_path: &str,
         session: &str,
         log_config: &nexterm_config::LogConfig,
     ) -> Result<()> {
-        // テンプレートが設定されていれば展開する
+        // Expand the template if configured.
         let resolved_path = if let Some(ref tmpl) = log_config.file_name_template {
-            // テンプレートを使用してファイル名を生成する
+            // Use the template to generate the filename.
             let filename = expand_log_filename_template(tmpl, session, self.id);
             if let Some(log_dir) = &log_config.log_dir {
                 format!("{}/{}", log_dir.trim_end_matches('/'), filename)
@@ -761,27 +755,27 @@ impl Pane {
             base_path.to_string()
         };
 
-        // 親ディレクトリを作成する
+        // Create the parent directory.
         if let Some(parent) = std::path::Path::new(&resolved_path).parent() {
             std::fs::create_dir_all(parent)?;
         }
 
-        // テキストログを開始する
+        // Start the text log.
         self.start_recording_with_options(
             &resolved_path,
             log_config.timestamp,
             log_config.strip_ansi,
         )?;
 
-        // バイナリログが有効な場合は raw バイナリファイルも開始する
+        // When binary logging is enabled, also start a raw-binary file.
         if log_config.binary_log {
             let bin_path = format!("{}.bin", resolved_path.trim_end_matches(".log"));
             let bin_file = File::create(&bin_path)?;
-            // バイナリログは timestamp/strip_ansi なしで raw bytes を保存する
+            // Binary log saves raw bytes without timestamp/strip_ansi.
             let mut guard = self
                 .binary_log_writer
                 .lock()
-                .map_err(|e| anyhow::anyhow!("binary_log_writer ロック取得失敗: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("failed to acquire binary_log_writer lock: {}", e))?;
             *guard = Some(LogWriterInner::new(
                 bin_file,
                 false,
@@ -790,46 +784,40 @@ impl Pane {
                 0,
                 0,
             ));
-            info!(
-                "ペイン {} のバイナリログを開始しました: {}",
-                self.id, bin_path
-            );
+            info!("pane {}: started binary log at {}", self.id, bin_path);
         }
 
         Ok(())
     }
 
-    /// asciicast v2 形式での録画を開始する
+    /// Start an asciicast v2 recording.
     pub fn start_asciicast(&self, path: &str) -> Result<()> {
         let writer = AsciicastWriter::new(path, self.cols, self.rows)?;
         let mut guard = self
             .asciicast_writer
             .lock()
-            .map_err(|e| anyhow::anyhow!("asciicast_writer ロック取得に失敗しました: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("failed to acquire asciicast_writer lock: {}", e))?;
         *guard = Some(writer);
-        info!(
-            "ペイン {} の asciicast 録画を開始しました: {}",
-            self.id, path
-        );
+        info!("pane {}: started asciicast recording at {}", self.id, path);
         Ok(())
     }
 
-    /// asciicast v2 形式での録画を停止する
+    /// Stop the asciicast v2 recording.
     ///
-    /// バッファをフラッシュしてからファイルを閉じる。
+    /// Flushes the buffer before closing the file.
     pub fn stop_asciicast(&self) -> Result<()> {
         let mut guard = self
             .asciicast_writer
             .lock()
-            .map_err(|e| anyhow::anyhow!("asciicast_writer ロック取得に失敗しました: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("failed to acquire asciicast_writer lock: {}", e))?;
         if let Some(mut w) = guard.take() {
             w.flush()?;
-            info!("ペイン {} の asciicast 録画を停止しました", self.id);
+            info!("pane {}: stopped asciicast recording", self.id);
         }
         Ok(())
     }
 
-    /// PTY をリサイズする
+    /// Resize the PTY.
     pub fn resize_pty(&mut self, cols: u16, rows: u16) -> Result<()> {
         self.cols = cols;
         self.rows = rows;
@@ -842,31 +830,30 @@ impl Pane {
         Ok(())
     }
 
-    /// 現在の作業ディレクトリを返す
+    /// Return the current working directory.
     ///
-    /// Linux のみ `/proc/{pid}/cwd` シンボリックリンクから取得する。
-    /// 他の環境では `None` を返す。
+    /// Only Linux reads it via the `/proc/{pid}/cwd` symlink. Other platforms return `None`.
     pub fn working_dir(&self) -> Option<std::path::PathBuf> {
         self.read_working_dir()
     }
 
-    /// Linux 実装: /proc/{pid}/cwd から作業ディレクトリを取得する
+    /// Linux implementation: read the working directory from `/proc/{pid}/cwd`.
     #[cfg(target_os = "linux")]
     fn read_working_dir(&self) -> Option<std::path::PathBuf> {
         self.pid
             .and_then(|pid| std::fs::read_link(format!("/proc/{}/cwd", pid)).ok())
     }
 
-    /// macOS 実装: lsof を使って CWD を取得する
+    /// macOS implementation: read the CWD via `lsof`.
     #[cfg(target_os = "macos")]
     fn read_working_dir(&self) -> Option<std::path::PathBuf> {
         let pid = self.pid?;
-        // lsof を使って CWD を取得する
+        // Use lsof to get the CWD.
         let output = std::process::Command::new("lsof")
             .args(["-p", &pid.to_string(), "-a", "-d", "cwd", "-Fn"])
             .output()
             .ok()?;
-        // 出力例: "n/Users/jun/Documents\n"
+        // Example output: "n/Users/jun/Documents\n"
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines() {
             if let Some(path_str) = line.strip_prefix('n') {
@@ -879,11 +866,11 @@ impl Pane {
         None
     }
 
-    /// Windows 実装: PowerShell で子プロセスの CWD を取得する
+    /// Windows implementation: ask PowerShell for the child process CWD.
     #[cfg(windows)]
     fn read_working_dir(&self) -> Option<std::path::PathBuf> {
         let pid = self.pid?;
-        // PowerShell の (Get-Process).Path はバイナリパスなので Split-Path で親を取得する
+        // `(Get-Process).Path` is the binary path, so take the parent via Split-Path.
         let script = format!(
             "(Get-Process -Id {} -ErrorAction SilentlyContinue).Path | Split-Path -Parent",
             pid
@@ -902,40 +889,42 @@ impl Pane {
         None
     }
 
-    /// その他の OS: 作業ディレクトリ取得は非対応
+    /// Other operating systems: working-directory detection is unsupported.
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     fn read_working_dir(&self) -> Option<std::path::PathBuf> {
         None
     }
 
-    /// このペインで foreground プロセス（シェル以外の子プロセス）が動作中かを返す。
+    /// Return whether a foreground process (a child other than the shell itself) is running in
+    /// this pane.
     ///
-    /// Sprint 5-8 Phase 4-4 で本実装。OS Window を閉じる際に `close_action = "prompt"` だった
-    /// 場合の確認ダイアログ表示判定に使う。
+    /// Implemented in Sprint 5-8 Phase 4-4. Used to decide whether to show the confirmation
+    /// dialog when `close_action = "prompt"` and the OS window is being closed.
     ///
-    /// 注: Phase 4-4 時点では呼び出し元が `Window::has_foreground_process` 経由のみで、
-    /// その `Window` 側も `QueryForegroundProcess` IPC 追加（Phase 4-5）まで dead_code 状態。
+    /// Note: as of Phase 4-4, the only caller is `Window::has_foreground_process`, which itself
+    /// is dead_code until the `QueryForegroundProcess` IPC is added in Phase 4-5.
     #[allow(dead_code)]
     ///
-    /// **Linux 実装**:
-    /// - `/proc/{pid}/stat` の `tpgid`（foreground process group ID）と `pgrp` を比較
-    /// - `tpgid != pgrp` ならシェル以外のプロセス（例: vim・ssh・長時間ジョブ）が前面で動いている
-    /// - `tpgid <= 0`: controlling terminal なし → `false`
+    /// **Linux implementation**:
+    /// - Compare `tpgid` (foreground process group ID) and `pgrp` from `/proc/{pid}/stat`.
+    /// - When `tpgid != pgrp`, a non-shell process (e.g. vim, ssh, long-running job) is in the
+    ///   foreground.
+    /// - `tpgid <= 0`: no controlling terminal -> `false`.
     ///
-    /// **macOS 実装** (Phase 4-6): `ps -A -o pid=,ppid=` で子プロセスツリーを scan。
+    /// **macOS implementation** (Phase 4-6): scan the child process tree with `ps -A -o pid=,ppid=`.
     ///
-    /// **Windows 実装** (Phase 4-7): `CreateToolhelp32Snapshot` + `Process32FirstW/NextW`
-    /// で全プロセスを列挙し、シェル PID を親に持つプロセスが存在するか判定する。
-    /// `windows-sys` クレートに依存する。
+    /// **Windows implementation** (Phase 4-7): enumerate every process via
+    /// `CreateToolhelp32Snapshot` + `Process32FirstW/NextW` and check whether any child has the
+    /// shell PID as its parent. Depends on the `windows-sys` crate.
     ///
-    /// 戻り値:
-    /// - `true`: 確認ダイアログ表示が必要（長時間実行ジョブ・ssh セッション等）
-    /// - `false`: そのまま閉じてよい（シェルプロンプト直下、または検出非対応 OS）
+    /// Returns:
+    /// - `true`: a confirmation dialog is required (long-running job, ssh session, ...).
+    /// - `false`: safe to close immediately (sitting at the shell prompt, or the OS is unsupported).
     pub fn has_foreground_process(&self) -> bool {
         self.read_has_foreground_process()
     }
 
-    /// Linux 実装: `/proc/{pid}/stat` の `tpgid` と `pgrp` を比較する
+    /// Linux implementation: compare `tpgid` and `pgrp` from `/proc/{pid}/stat`.
     #[cfg(target_os = "linux")]
     fn read_has_foreground_process(&self) -> bool {
         let Some(pid) = self.pid else {
@@ -944,13 +933,13 @@ impl Pane {
         let Ok(stat) = std::fs::read_to_string(format!("/proc/{}/stat", pid)) else {
             return false;
         };
-        // stat の形式: "pid (comm) state ppid pgrp session tty_nr tpgid flags ..."
-        // comm にはスペース・括弧・改行を含む可能性があるため、最後の ") " で分割する。
+        // stat format: "pid (comm) state ppid pgrp session tty_nr tpgid flags ..."
+        // `comm` may contain spaces, parens, and newlines; split on the last `") "`.
         let Some((_, after)) = stat.rsplit_once(") ") else {
             return false;
         };
         let fields: Vec<&str> = after.split_whitespace().collect();
-        // after_comm のインデックス:
+        // Indices in after_comm:
         // [0]=state, [1]=ppid, [2]=pgrp, [3]=session, [4]=tty_nr, [5]=tpgid
         let Some(pgrp) = fields.get(2).and_then(|s| s.parse::<i32>().ok()) else {
             return false;
@@ -958,22 +947,22 @@ impl Pane {
         let Some(tpgid) = fields.get(5).and_then(|s| s.parse::<i32>().ok()) else {
             return false;
         };
-        // tpgid <= 0 は controlling terminal なし or 取得不可
+        // `tpgid <= 0` means no controlling terminal or unreadable.
         tpgid > 0 && tpgid != pgrp
     }
 
-    /// macOS 実装（Sprint 5-9 Phase 4-6）: `ps -A -o pid=,ppid=` で子プロセスを scan する。
+    /// macOS implementation (Sprint 5-9 Phase 4-6): scan children with `ps -A -o pid=,ppid=`.
     ///
-    /// シェル PID を親に持つプロセスが 1 つ以上あれば前景プロセスとみなす。
-    /// 完全な POSIX `tcgetpgrp` ベースの判定ではないが、ssh / vim / 長時間ジョブの
-    /// ような「シェル直下で動いている子プロセス」の検出には十分。
+    /// If at least one process has the shell PID as its parent, treat it as having a foreground
+    /// process. Not a full POSIX `tcgetpgrp`-based check, but sufficient to detect "a child
+    /// running directly under the shell" such as ssh / vim / long-running jobs.
     ///
-    /// 注意:
-    /// - `ps` を毎回 spawn するため数十 ms のオーバーヘッドあり。
-    ///   `QueryForegroundProcess` は Window 閉じ時にしか呼ばれないため許容範囲。
-    /// - シェルがバックグラウンドジョブ（`&` で起動済みの長時間プロセス）を持つ場合、
-    ///   実際はフォアグラウンドが空でも `true` を返す。安全側のフォールバック動作
-    ///   としては妥当（誤検知 = 確認ダイアログが出る = ユーザーが選べる）。
+    /// Caveats:
+    /// - Spawning `ps` every time costs tens of milliseconds. Acceptable because
+    ///   `QueryForegroundProcess` is invoked only when a window is closing.
+    /// - When the shell has background jobs (long-running processes started with `&`), this
+    ///   returns `true` even if no foreground job exists. A reasonable safe-side fallback
+    ///   (a false positive only shows the confirmation dialog, which the user can dismiss).
     #[cfg(target_os = "macos")]
     fn read_has_foreground_process(&self) -> bool {
         let Some(pid) = self.pid else {
@@ -990,22 +979,23 @@ impl Pane {
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
         stdout.lines().any(|line| {
-            // 形式: "  1234   5678" (pid, ppid)
+            // Format: "  1234   5678" (pid, ppid).
             let mut parts = line.split_whitespace();
             let _ = parts.next(); // pid
             parts.next().and_then(|s| s.parse::<u32>().ok()) == Some(pid)
         })
     }
 
-    /// Windows 実装 (Sprint 5-10 Phase 4-7): `CreateToolhelp32Snapshot` でプロセス一覧を
-    /// 取得し、シェル PID (`self.pid`) を親に持つプロセスが 1 つ以上あれば前景プロセスとみなす。
+    /// Windows implementation (Sprint 5-10 Phase 4-7): enumerate processes with
+    /// `CreateToolhelp32Snapshot` and treat any process whose parent is the shell PID
+    /// (`self.pid`) as a foreground process.
     ///
-    /// macOS 実装と同様、完全な ConPTY 前景プロセスグループ判定ではないが、
-    /// ssh / vim / 長時間ジョブのような「シェル直下で動いている子プロセス」検出には十分。
-    /// 誤検知（バックグラウンドジョブを抱えたシェルでも true）は安全側のフォールバック動作。
+    /// Same as the macOS implementation: not a full ConPTY foreground-process-group check, but
+    /// sufficient for ssh / vim / long-running jobs. The false-positive case (a shell that holds
+    /// background jobs returning `true`) is a safe-side fallback.
     ///
-    /// パフォーマンス: スナップショット取得は数ミリ秒のオーバーヘッド。
-    /// `QueryForegroundProcess` は Window 閉じ時にしか呼ばれないため許容範囲。
+    /// Performance: the snapshot has a few-millisecond overhead.
+    /// Acceptable since `QueryForegroundProcess` is only invoked when a window is closing.
     #[cfg(windows)]
     fn read_has_foreground_process(&self) -> bool {
         use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
@@ -1018,20 +1008,20 @@ impl Pane {
             return false;
         };
 
-        // SAFETY: CreateToolhelp32Snapshot は失敗時に INVALID_HANDLE_VALUE を返すため、
-        // 後続の API 呼び出し前に必ず値を検証する。引数は仕様通り
-        // (TH32CS_SNAPPROCESS, 0=システム全体)。
+        // SAFETY: CreateToolhelp32Snapshot returns INVALID_HANDLE_VALUE on failure, so we always
+        // check it before calling any subsequent API. Arguments follow the spec
+        // (TH32CS_SNAPPROCESS, 0=system-wide).
         let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
         if snapshot == INVALID_HANDLE_VALUE {
             return false;
         }
 
-        // ハンドルリーク防止: 早期 return / panic でも Drop で CloseHandle が呼ばれる。
+        // Prevent handle leak: even on early return / panic, Drop calls CloseHandle.
         struct HandleGuard(HANDLE);
         impl Drop for HandleGuard {
             fn drop(&mut self) {
-                // SAFETY: HANDLE は CreateToolhelp32Snapshot 由来の有効なハンドルで、
-                // INVALID_HANDLE_VALUE のケースは guard 生成前に return 済み。
+                // SAFETY: HANDLE is a valid handle from CreateToolhelp32Snapshot; the
+                // INVALID_HANDLE_VALUE case returned before the guard was created.
                 unsafe {
                     CloseHandle(self.0);
                 }
@@ -1039,12 +1029,12 @@ impl Pane {
         }
         let _guard = HandleGuard(snapshot);
 
-        // SAFETY: PROCESSENTRY32W は POD（全フィールド数値・固定長配列）のためゼロ初期化可能。
+        // SAFETY: PROCESSENTRY32W is POD (all numeric / fixed-length fields), so zero-init is fine.
         let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
         entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
 
-        // SAFETY: snapshot は有効なハンドル、entry は dwSize 設定済みで API 要件を満たす。
-        // 失敗（0 リターン）時は前景プロセスなしとして false を返す。
+        // SAFETY: snapshot is valid; entry has dwSize set, satisfying the API requirements.
+        // On failure (return 0) treat it as "no foreground process" and return false.
         if unsafe { Process32FirstW(snapshot, &mut entry) } == 0 {
             return false;
         }
@@ -1053,8 +1043,8 @@ impl Pane {
             if entry.th32ParentProcessID == pid {
                 return true;
             }
-            // SAFETY: snapshot は有効、entry はループ内で再利用可能。
-            // Process32NextW が 0 を返す（= もうエントリなし）でループ終了。
+            // SAFETY: snapshot is valid; entry can be reused inside the loop.
+            // Process32NextW returning 0 (= no more entries) ends the loop.
             if unsafe { Process32NextW(snapshot, &mut entry) } == 0 {
                 break;
             }
@@ -1063,7 +1053,7 @@ impl Pane {
         false
     }
 
-    /// その他の OS: 検出非対応
+    /// Other operating systems: detection is unsupported.
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     fn read_has_foreground_process(&self) -> bool {
         false
@@ -1075,22 +1065,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pane_idは単調増加する() {
+    fn pane_id_increases_monotonically() {
         let id1 = new_pane_id();
         let id2 = new_pane_id();
         assert!(id2 > id1);
     }
 
     #[test]
-    fn set_min_pane_id_でカウンターが更新される() {
+    fn set_min_pane_id_updates_counter() {
         let current = new_pane_id();
-        // 現在値より大きい値を設定すると反映される
+        // Setting a value larger than the current counter takes effect.
         set_min_pane_id(current + 100);
         let next = new_pane_id();
         assert!(next >= current + 100);
     }
 
-    // ---- strip_ansi_escapes テスト ----
+    // ---- strip_ansi_escapes tests ----
 
     #[test]
     fn strip_ansi_escapes_removes_color_codes() {
@@ -1116,7 +1106,7 @@ mod tests {
 
     #[test]
     fn strip_ansi_escapes_handles_partial_sequences() {
-        // 不完全なシーケンス: ESC[だけの場合
+        // Incomplete sequence: just ESC[.
         let input = b"\x1b[";
         let output = strip_ansi_escapes(input);
         assert_eq!(output, b"");
@@ -1124,7 +1114,7 @@ mod tests {
 
     #[test]
     fn strip_ansi_escapes_removes_cursor_position() {
-        // ESC[H (カーソルをホームに移動)
+        // ESC[H (move cursor home).
         let input = b"\x1b[HHello";
         let output = strip_ansi_escapes(input);
         assert_eq!(output, b"Hello");
@@ -1132,7 +1122,7 @@ mod tests {
 
     #[test]
     fn strip_ansi_escapes_handles_styles() {
-        // ESC[1m (太字), ESC[4m (下線)
+        // ESC[1m (bold), ESC[4m (underline).
         let input = b"\x1b[1mbold\x1b[0m_\x1b[4munderline\x1b[0m";
         let output = strip_ansi_escapes(input);
         assert_eq!(output, b"bold_underline");
@@ -1140,7 +1130,7 @@ mod tests {
 
     #[test]
     fn strip_ansi_escapes_preserves_logo_and_newline() {
-        // エスケープシーケンス以外の特殊文字は保持される
+        // Special characters other than escape sequences are preserved.
         let input = b"line1\nline2\tdata";
         let output = strip_ansi_escapes(input);
         assert_eq!(output, b"line1\nline2\tdata");
@@ -1148,7 +1138,7 @@ mod tests {
 
     #[test]
     fn strip_ansi_escapes_handles_multiple_sequences() {
-        // 複数のシーケンスが混在
+        // Multiple sequences mixed together.
         let input = b"\x1b[31m\x1b[1m\x1b[4mred bold underline\x1b[0m";
         let output = strip_ansi_escapes(input);
         assert_eq!(output, b"red bold underline");
@@ -1156,7 +1146,7 @@ mod tests {
 
     #[test]
     fn strip_ansi_escapes_handles_osc_sequences() {
-        // OSCシーケンス: ESC]title BEL
+        // OSC sequence: ESC]title BEL.
         let input = b"\x1b]0;window title\x07content";
         let output = strip_ansi_escapes(input);
         assert_eq!(output, b"content");
@@ -1164,9 +1154,9 @@ mod tests {
 
     #[test]
     fn strip_ansi_escapes_handles_unicode() {
-        // Unicodeテキストを含む
-        let input = b"\x1b[31m\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e\x1b[0m"; // 「日本語」を赤色
+        // Includes Unicode text.
+        let input = b"\x1b[31m\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e\x1b[0m"; // "日本語" (Japanese) colored red.
         let output = strip_ansi_escapes(input);
-        assert_eq!(output, b"\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e"); // 「日本語」
+        assert_eq!(output, b"\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e"); // "日本語" (Japanese).
     }
 }
