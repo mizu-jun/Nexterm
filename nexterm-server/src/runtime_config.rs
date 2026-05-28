@@ -1,16 +1,16 @@
-//! ランタイム設定 — 設定ファイルのホットリロード対応
+//! Runtime config — supports hot-reloading from the configuration file.
 //!
-//! [`RuntimeConfig`] はディスパッチ層から参照される設定のサブセットを保持する。
-//! [`SharedRuntimeConfig`] (= `Arc<ArcSwap<RuntimeConfig>>`) を介して全クライアント
-//! ハンドラに共有され、`config.toml` 変更時に [`spawn_watcher`] が
-//! アトミックに新しい設定へ差し替える。
+//! [`RuntimeConfig`] holds the subset of configuration referenced from the dispatch layer.
+//! It is shared with every client handler through [`SharedRuntimeConfig`]
+//! (= `Arc<ArcSwap<RuntimeConfig>>`); [`spawn_watcher`] atomically swaps in the new value
+//! whenever `config.toml` changes.
 //!
-//! 注意: フック (Hooks)、ログ (LogConfig)、ホスト (Hosts) のみホットリロード対象。
-//! 以下はサーバー再起動が必要:
-//! - `web` (起動済みリスナーは変更不可)
-//! - `plugins` (動作中の WASM インスタンスを差し替えると状態を失う)
-//! - `shell` (新規セッションのみに影響、既存 PTY には影響しない)
-//! - `lua_runner` (LuaWorker スレッドの再生成が必要)
+//! Note: only hooks, log config, and hosts are hot-reloadable. The following require a server
+//! restart:
+//! - `web` (the listener that is already started cannot be reconfigured).
+//! - `plugins` (replacing running WASM instances loses their state).
+//! - `shell` (affects only new sessions; existing PTYs are unaffected).
+//! - `lua_runner` (regenerating the LuaWorker thread is required).
 
 use std::sync::Arc;
 
@@ -19,19 +19,19 @@ use nexterm_config::{Config, HooksConfig, HostConfig, LogConfig};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-/// ランタイム中にホットリロード可能な設定のサブセット
+/// Subset of configuration that can be hot-reloaded at runtime.
 #[derive(Clone, Debug)]
 pub struct RuntimeConfig {
-    /// Lua フック設定
+    /// Lua hook configuration.
     pub hooks: Arc<HooksConfig>,
-    /// ログ・録画設定
+    /// Logging / recording configuration.
     pub log_config: Arc<LogConfig>,
-    /// SSH ホスト設定
+    /// SSH host configuration.
     pub hosts: Arc<Vec<HostConfig>>,
 }
 
 impl RuntimeConfig {
-    /// 完全な [`Config`] からホットリロード対象のサブセットを抽出する
+    /// Extract the hot-reloadable subset from a full [`Config`].
     pub fn from_config(cfg: &Config) -> Self {
         Self {
             hooks: Arc::new(cfg.hooks.clone()),
@@ -40,7 +40,7 @@ impl RuntimeConfig {
         }
     }
 
-    /// 個別フィールドから組み立てる（テストおよび初期化用）
+    /// Assemble from individual fields (for tests and initialization).
     #[cfg(test)]
     fn new(
         hooks: Arc<HooksConfig>,
@@ -55,35 +55,35 @@ impl RuntimeConfig {
     }
 }
 
-/// IPC レイヤー全体で共有されるランタイム設定ハンドル
+/// Runtime config handle shared across the entire IPC layer.
 pub type SharedRuntimeConfig = Arc<ArcSwap<RuntimeConfig>>;
 
-/// 初期 [`RuntimeConfig`] を共有ハンドルにラップする
+/// Wrap an initial [`RuntimeConfig`] in a shared handle.
 pub fn shared(initial: RuntimeConfig) -> SharedRuntimeConfig {
     Arc::new(ArcSwap::from(Arc::new(initial)))
 }
 
-/// 受信チャネルから [`Config`] を読み続けて [`SharedRuntimeConfig`] を更新する
-/// バックグラウンドタスクを起動する。watcher 本体とは分離してテスト可能にしている。
+/// Spawn a background task that keeps reading [`Config`] values from the channel and updates the
+/// [`SharedRuntimeConfig`]. Separated from the watcher itself so it can be tested.
 pub fn spawn_runtime_updater(shared: SharedRuntimeConfig, mut rx: mpsc::Receiver<Config>) {
     tokio::spawn(async move {
         while let Some(new_cfg) = rx.recv().await {
             let new_runtime = RuntimeConfig::from_config(&new_cfg);
             shared.store(Arc::new(new_runtime));
             info!(
-                "ランタイム設定を更新しました（hosts={}件、auto_log={}）",
+                "updated runtime config (hosts={}, auto_log={})",
                 new_cfg.hosts.len(),
                 new_cfg.log.auto_log
             );
         }
-        warn!("config watcher チャネルが閉じました。ホットリロードを停止します。");
+        warn!("config watcher channel closed; stopping hot-reload.");
     });
 }
 
-/// `config.toml` の変更を監視してランタイム設定を更新するバックグラウンドタスクを起動する。
+/// Watch `config.toml` and spawn a background task that updates the runtime config on changes.
 ///
-/// 戻り値の `RecommendedWatcher` は drop されると監視を停止するため、呼び出し元で
-/// `_watcher` などにバインドして保持する必要がある（`run_server` のスコープで保持される）。
+/// The returned `RecommendedWatcher` stops watching when dropped, so the caller must bind it to a
+/// variable like `_watcher` to keep it alive (held within `run_server`'s scope).
 pub fn spawn_watcher(shared: SharedRuntimeConfig) -> anyhow::Result<notify::RecommendedWatcher> {
     let (tx, rx) = mpsc::channel::<Config>(8);
     let watcher = nexterm_config::watch_config(tx)?;
@@ -91,7 +91,7 @@ pub fn spawn_watcher(shared: SharedRuntimeConfig) -> anyhow::Result<notify::Reco
     Ok(watcher)
 }
 
-/// 現在の [`Config`] から [`SharedRuntimeConfig`] を構築するヘルパー
+/// Build a [`SharedRuntimeConfig`] from the current [`Config`].
 pub fn build_shared(cfg: &Config) -> SharedRuntimeConfig {
     shared(RuntimeConfig::from_config(cfg))
 }
@@ -102,7 +102,7 @@ mod tests {
     use nexterm_config::{HooksConfig, LogConfig};
 
     #[test]
-    fn shared_に_runtime_config_をラップして取り出せる() {
+    fn shared_wraps_and_returns_runtime_config() {
         let rc = RuntimeConfig::new(
             Arc::new(HooksConfig::default()),
             Arc::new(LogConfig::default()),
@@ -114,7 +114,7 @@ mod tests {
     }
 
     #[test]
-    fn store_でアトミックに差し替えられる() {
+    fn store_atomically_swaps_value() {
         let rc = RuntimeConfig::new(
             Arc::new(HooksConfig::default()),
             Arc::new(LogConfig::default()),
@@ -137,7 +137,7 @@ mod tests {
     }
 
     #[test]
-    fn from_config_で必要なフィールドのみ抽出される() {
+    fn from_config_extracts_only_required_fields() {
         let mut cfg = Config::default();
         cfg.hosts.push(HostConfig {
             name: "h1".into(),
@@ -152,25 +152,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn updater_がチャネル経由で受信した設定を反映する() {
-        // 初期は空の hosts
+    async fn updater_reflects_config_received_via_channel() {
+        // Hosts start empty.
         let shared = build_shared(&Config::default());
         assert!(shared.load().hosts.is_empty());
 
-        // updater タスクを起動
+        // Spawn the updater task.
         let (tx, rx) = mpsc::channel::<Config>(4);
         spawn_runtime_updater(Arc::clone(&shared), rx);
 
-        // 1 件追加した Config を送信
+        // Send a Config with one host added.
         let mut updated = Config::default();
         updated.hosts.push(HostConfig {
             name: "h1".into(),
             host: "h1.example.com".into(),
             ..Default::default()
         });
-        tx.send(updated).await.expect("送信失敗");
+        tx.send(updated).await.expect("send failed");
 
-        // updater が反映するまで待つ（短時間ポーリング）
+        // Wait for the updater to apply the change (brief polling).
         for _ in 0..50 {
             if shared.load().hosts.len() == 1 {
                 break;
@@ -180,7 +180,7 @@ mod tests {
         assert_eq!(shared.load().hosts.len(), 1);
         assert_eq!(shared.load().hosts[0].name, "h1");
 
-        // 2 件目を送信
+        // Send a second update with two hosts.
         let mut updated2 = Config::default();
         updated2.hosts.push(HostConfig {
             name: "h2".into(),
@@ -190,7 +190,7 @@ mod tests {
             name: "h3".into(),
             ..Default::default()
         });
-        tx.send(updated2).await.expect("送信失敗");
+        tx.send(updated2).await.expect("send failed");
 
         for _ in 0..50 {
             if shared.load().hosts.len() == 2 {
@@ -202,12 +202,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn 複数読者が同じ_arcswap_を共有して最新値を読める() {
+    async fn multiple_readers_share_arcswap_and_see_latest_value() {
         let shared = build_shared(&Config::default());
         let (tx, rx) = mpsc::channel::<Config>(4);
         spawn_runtime_updater(Arc::clone(&shared), rx);
 
-        // 別タスクで読みつつ、メインで書く
+        // Read in another task while we write from the main one.
         let reader = Arc::clone(&shared);
         let handle = tokio::spawn(async move {
             for _ in 0..200 {
@@ -221,9 +221,9 @@ mod tests {
             name: "concurrent".into(),
             ..Default::default()
         });
-        tx.send(updated).await.expect("送信失敗");
+        tx.send(updated).await.expect("send failed");
 
-        handle.await.expect("reader タスク失敗");
+        handle.await.expect("reader task failed");
         assert_eq!(shared.load().hosts.len(), 1);
     }
 }

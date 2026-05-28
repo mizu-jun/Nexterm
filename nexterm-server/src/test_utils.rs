@@ -1,4 +1,4 @@
-//! テストユーティリティ — 共通テストヘルパー関数
+//! Test utilities — shared test helpers.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -6,21 +6,22 @@ use tempfile::TempDir;
 
 static TEST_PORT: AtomicU16 = AtomicU16::new(9000);
 
-/// ユニークなテスト用パスを生成する
+/// Generate a unique path for tests.
 pub fn temp_json_path(name: &str) -> PathBuf {
-    let temp = TempDir::new().expect("一時ディレクトリの作成に失敗");
+    let temp = TempDir::new().expect("failed to create temp directory");
     temp.path()
         .join(format!("{}_{}.json", name, std::process::id()))
 }
 
-/// テスト用に一時的に環境変数を設定し、スコープ終了時に自動クリーンアップする
+/// Temporarily set an environment variable for the duration of the test; automatically cleaned
+/// up at scope end.
 pub struct TempEnvVar {
     key: String,
     original: Option<String>,
 }
 
 impl TempEnvVar {
-    /// 環境変数を一時的に設定
+    /// Set an environment variable temporarily.
     pub fn set(key: &str, value: &str) -> Self {
         let original = std::env::var(key).ok();
         unsafe {
@@ -47,17 +48,17 @@ impl Drop for TempEnvVar {
     }
 }
 
-/// テスト用の一時ファイルパスを管理し、自動クリーンアップする
+/// Manage a test temporary file path with automatic cleanup.
 pub struct TempFile {
-    /// 一時ファイルへのパス（ファイル本体は呼び出し側で書き込む）
+    /// Path to the temporary file (the caller writes the contents).
     pub path: PathBuf,
     _temp_dir: TempDir,
 }
 
 impl TempFile {
-    /// 一時ディレクトリ配下に `<name>_<pid>.json` パスを生成する（ファイルは作らない）
+    /// Generate a `<name>_<pid>.json` path under a temp directory (file is not created).
     pub fn new(name: &str) -> Self {
-        let temp_dir = TempDir::new().expect("一時ディレクトリの作成に失敗");
+        let temp_dir = TempDir::new().expect("failed to create temp directory");
         let path = temp_dir
             .path()
             .join(format!("{}_{}.json", name, std::process::id()));
@@ -68,14 +69,14 @@ impl TempFile {
     }
 }
 
-/// 一意のテスト用ポート番号を取得
+/// Return a unique port number for tests.
 pub fn next_test_port() -> u16 {
     TEST_PORT.fetch_add(1, Ordering::SeqCst)
 }
 
-/// テスト用の有効期限付きの一時ディレクトリ
+/// A temp directory with test-scoped lifetime.
 pub fn temp_dir() -> TempDir {
-    TempDir::new().expect("一時ディレクトリの作成に失敗")
+    TempDir::new().expect("failed to create temp directory")
 }
 
 #[cfg(test)]

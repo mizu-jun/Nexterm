@@ -1,157 +1,156 @@
-//! セッションスナップショット型定義
+//! Session snapshot type definitions.
 //!
-//! サーバー再起動をまたいでセッション状態を保存・復元するための
-//! シリアライズ可能なデータ構造を定義する。
+//! Defines serializable data structures used to save and restore session state across server
+//! restarts.
 //!
-//! # 保存対象
+//! # Persisted state
 //!
-//! - セッション名・シェル・端末サイズ
-//! - ウィンドウ名・フォーカス状態
-//! - BSP 分割ツリー（ペイン ID・分割方向・比率）
-//! - 各ペインの作業ディレクトリ（Linux のみ `/proc/{pid}/cwd` より取得）
+//! - Session name, shell, terminal size.
+//! - Window names and focus state.
+//! - BSP split tree (pane IDs, split directions, ratios).
+//! - Each pane's working directory (only obtained from `/proc/{pid}/cwd` on Linux).
 //!
-//! # 復元の制約
+//! # Restore limitations
 //!
-//! PTY プロセス自体は復元不可のため、復元時は保存されたシェルと
-//! 作業ディレクトリで新規 PTY プロセスを起動する。
-//! スクロールバック内容は保存されない（将来課題）。
+//! PTY processes themselves cannot be restored, so we spawn new PTY processes with the saved
+//! shell and working directory.
+//! Scrollback content is not saved (future work).
 //!
-//! # スキーマバージョン履歴
+//! # Schema version history
 //!
-//! - v1: 初期バージョン（`shell_args` が後から追加、`#[serde(default)]` で互換）
-//! - v2: `session_title` フィールドを追加。v1 スナップショットは自動マイグレーション可能
-//! - v3: Sprint 5-7 / Phase 2-1 — `SessionSnapshot.workspace_name` を追加し、
-//!   セッションをワークスペースにグルーピングする。v2 以前は `default` ワークスペース
-//!   に所属するものとして自動マイグレーション可能
-//! - v4: Sprint 5-8 / Phase 4-5 — `ServerSnapshot.client_os_windows` を追加し、
-//!   クライアント側の複数 OS Window 配置（位置・サイズ・所属 Server Window 集合）を
-//!   保存する。v3 以前は空 `Vec` を補完し、起動時に単一 OS Window として復元される
+//! - v1: initial version (`shell_args` added later, made compatible with `#[serde(default)]`).
+//! - v2: add the `session_title` field. v1 snapshots can be auto-migrated.
+//! - v3: Sprint 5-7 / Phase 2-1 — add `SessionSnapshot.workspace_name` so sessions can be grouped
+//!   by workspace. v2 and earlier snapshots are auto-migrated into the `default` workspace.
+//! - v4: Sprint 5-8 / Phase 4-5 — add `ServerSnapshot.client_os_windows` to save the client-side
+//!   OS window placement (position, size, set of attached server windows). v3 and earlier
+//!   snapshots fill the field with an empty `Vec` and restore as a single-OS-window setup.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// スナップショットのスキーマバージョン
+/// Snapshot schema version.
 ///
-/// フォーマットを変更した場合はインクリメントする。
-/// 旧バージョンのスナップショットは `persist::load_snapshot` でマイグレーションを試みる。
+/// Bumped whenever the format changes.
+/// Older snapshots are migrated by `persist::load_snapshot`.
 pub const SNAPSHOT_VERSION: u32 = 4;
 
-/// 旧バージョン（v1）との互換読み込みに使う最低サポートバージョン
+/// Minimum supported version retained for backward-compatible reading (v1).
 ///
-/// v2.0.0 リリース時に `2` へ bump 予定。
-/// 詳細は ADR-0007 (`docs/adr/0007-snapshot-v1-deprecation.md`) を参照。
+/// Planned to be bumped to `2` at v2.0.0.
+/// See ADR-0007 (`docs/adr/0007-snapshot-v1-deprecation.md`) for details.
 pub const SNAPSHOT_VERSION_MIN: u32 = 1;
 
-/// デフォルトワークスペース名。新規セッションや旧スナップショットの復元時に使用する。
+/// Default workspace name. Used for new sessions and when restoring older snapshots.
 pub const DEFAULT_WORKSPACE: &str = "default";
 
 fn default_workspace() -> String {
     DEFAULT_WORKSPACE.to_string()
 }
 
-/// サーバー全体のスナップショット（保存の最上位単位）
+/// Server-wide snapshot (top-level unit of persistence).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ServerSnapshot {
-    /// スキーマバージョン
+    /// Schema version.
     pub version: u32,
-    /// 保存時点の全セッション
+    /// All sessions at save time.
     pub sessions: Vec<SessionSnapshot>,
-    /// 保存時の Unix タイムスタンプ（秒）
+    /// Unix timestamp (seconds) at save time.
     pub saved_at: u64,
-    /// 保存時にアクティブだったワークスペース名（v3 追加。省略時は `default`）
+    /// Workspace that was active at save time (added in v3; defaults to `default`).
     #[serde(default = "default_workspace")]
     pub current_workspace: String,
-    /// クライアント側 OS Window の配置一覧（v4 追加）
+    /// Placement of client-side OS windows (added in v4).
     ///
-    /// tab tearing で複数の OS Window に分離された状態を保存・復元する。
-    /// 空 `Vec` の場合は単一 OS Window 構成として復元される（v3 以前の互換）。
+    /// Saves the multi-OS-window state produced by tab tearing.
+    /// An empty `Vec` restores as a single-OS-window setup (v3 and earlier compatibility).
     #[serde(default)]
     pub client_os_windows: Vec<OsWindowSnapshot>,
 }
 
-/// クライアント側 OS Window のスナップショット（v4 追加）
+/// Snapshot of a client-side OS window (added in v4).
 ///
-/// 1 プロセス内で複数開かれた winit ネイティブウィンドウの位置・サイズと、
-/// そのウィンドウが表示している Server Window 集合を記録する。
+/// Records the position and size of a winit native window opened within the same process, along
+/// with the set of server windows displayed in it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OsWindowSnapshot {
-    /// ウィンドウ左上のスクリーン座標 (x, y) ピクセル
+    /// Top-left screen coordinates (x, y) in pixels.
     pub position: (i32, i32),
-    /// ウィンドウの外形サイズ (width, height) ピクセル
+    /// Outer window size (width, height) in pixels.
     pub size: (u32, u32),
-    /// このウィンドウに所属する Server Window ID（タブとして表示）
+    /// Server window IDs assigned to this OS window (shown as tabs).
     pub server_window_ids: Vec<u32>,
-    /// このウィンドウでアクティブだった Server Window ID
+    /// The server window ID that was active in this OS window.
     pub focused_server_window_id: u32,
 }
 
-/// セッションのスナップショット
+/// Snapshot of a session.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SessionSnapshot {
-    /// セッション名
+    /// Session name.
     pub name: String,
-    /// 起動シェルコマンド
+    /// Launch shell command.
     pub shell: String,
-    /// シェル起動引数（例: ["-NoLogo"] for PowerShell）
+    /// Shell launch arguments (e.g. `["-NoLogo"]` for PowerShell).
     #[serde(default)]
     pub shell_args: Vec<String>,
-    /// 端末列数
+    /// Number of terminal columns.
     pub cols: u16,
-    /// 端末行数
+    /// Number of terminal rows.
     pub rows: u16,
-    /// ウィンドウ一覧
+    /// Window list.
     pub windows: Vec<WindowSnapshot>,
-    /// フォーカスしているウィンドウ ID
+    /// Focused window ID.
     pub focused_window_id: u32,
-    /// セッションの表示タイトル（v2 追加。省略時はセッション名を使用）
+    /// Displayed session title (added in v2; falls back to the session name when omitted).
     #[serde(default)]
     pub session_title: Option<String>,
-    /// 所属ワークスペース名（v3 追加。省略時は `default`）
+    /// Owning workspace name (added in v3; defaults to `default`).
     #[serde(default = "default_workspace")]
     pub workspace_name: String,
 }
 
-/// ウィンドウのスナップショット
+/// Snapshot of a window.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WindowSnapshot {
-    /// ウィンドウ ID
+    /// Window ID.
     pub id: u32,
-    /// ウィンドウ名
+    /// Window name.
     pub name: String,
-    /// フォーカスしているペイン ID
+    /// Focused pane ID.
     pub focused_pane_id: u32,
-    /// BSP 分割ツリー
+    /// BSP split tree.
     pub layout: SplitNodeSnapshot,
 }
 
-/// BSP 分割ツリーのスナップショット
+/// Snapshot of a BSP split tree.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum SplitNodeSnapshot {
-    /// 単一ペイン
+    /// A single pane.
     Pane {
-        /// ペイン ID
+        /// Pane ID.
         pane_id: u32,
-        /// 作業ディレクトリ（Linux のみ取得可能）
+        /// Working directory (only obtainable on Linux).
         cwd: Option<PathBuf>,
     },
-    /// 分割ノード
+    /// A split node.
     Split {
-        /// 分割方向
+        /// Split direction.
         dir: SplitDirSnapshot,
-        /// 左/上の占有割合（0.0〜1.0）
+        /// Occupancy ratio for the left/top child (0.0..1.0).
         ratio: f32,
-        /// 左/上の子ノード
+        /// Left/top child node.
         left: Box<SplitNodeSnapshot>,
-        /// 右/下の子ノード
+        /// Right/bottom child node.
         right: Box<SplitNodeSnapshot>,
     },
 }
 
-/// 分割方向のスナップショット
+/// Snapshot of a split direction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SplitDirSnapshot {
-    /// 垂直分割（左右）
+    /// Vertical split (left/right).
     Vertical,
-    /// 水平分割（上下）
+    /// Horizontal split (top/bottom).
     Horizontal,
 }

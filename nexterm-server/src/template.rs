@@ -1,32 +1,32 @@
-//! レイアウトテンプレート — ウィンドウ/ペイン構成の保存と復元
+//! Layout templates — save and restore window/pane composition.
 //!
-//! テンプレートは `~/.config/nexterm/templates/<name>.json` に保存される。
+//! Templates are stored under `~/.config/nexterm/templates/<name>.json`.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::info;
 
-// ---- テンプレート型 ----
+// ---- Template types ----
 
-/// ペインツリーの再帰表現
+/// Recursive representation of a pane tree.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum PaneTemplate {
-    /// 末端ペイン
+    /// Leaf pane.
     Leaf {
-        /// 起動コマンド（None の場合はデフォルトシェル）
+        /// Launch command (defaults to the shell when `None`).
         command: Option<String>,
-        /// 作業ディレクトリ（None の場合はデフォルト）
+        /// Working directory (uses the default when `None`).
         cwd: Option<String>,
     },
-    /// 垂直分割（左右）
+    /// Vertical split (left/right).
     SplitH {
         ratio: f32,
         left: Box<PaneTemplate>,
         right: Box<PaneTemplate>,
     },
-    /// 水平分割（上下）
+    /// Horizontal split (top/bottom).
     SplitV {
         ratio: f32,
         top: Box<PaneTemplate>,
@@ -34,41 +34,41 @@ pub enum PaneTemplate {
     },
 }
 
-/// ウィンドウテンプレート
+/// Window template.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowTemplate {
-    /// ウィンドウタイトル
+    /// Window title.
     pub title: String,
-    /// ペインレイアウト
+    /// Pane layout.
     pub layout: PaneTemplate,
 }
 
-/// セッション全体のレイアウトテンプレート
+/// Layout template for an entire session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LayoutTemplate {
-    /// テンプレート名
+    /// Template name.
     pub name: String,
-    /// ウィンドウ一覧
+    /// Window list.
     pub windows: Vec<WindowTemplate>,
-    /// 作成日時（UNIX timestamp）
+    /// Creation timestamp (UNIX).
     pub created_at: u64,
 }
 
-// ---- ファイルシステム操作 ----
+// ---- Filesystem operations ----
 
-/// テンプレートを保存するディレクトリを返す
+/// Return the directory where templates are stored.
 pub fn template_dir() -> PathBuf {
     let base = nexterm_config::loader::config_dir();
     base.join("templates")
 }
 
-/// テンプレートのファイルパスを返す
+/// Return the file path of the template with the given name.
 pub fn template_path(name: &str) -> PathBuf {
     template_dir().join(format!("{}.json", name))
 }
 
 impl LayoutTemplate {
-    /// 新しいテンプレートを生成する（デフォルト: 単一ペイン×1ウィンドウ）
+    /// Create a new template (default: a single pane in a single window).
     #[allow(dead_code)]
     pub fn new(name: &str) -> Self {
         Self {
@@ -84,55 +84,48 @@ impl LayoutTemplate {
         }
     }
 
-    /// テンプレートをファイルに保存する
+    /// Save the template to a file.
     ///
-    /// 戻り値: 保存先パスの文字列
+    /// Returns the destination path as a string.
     pub fn save(&self) -> Result<String> {
         let dir = template_dir();
-        std::fs::create_dir_all(&dir).with_context(|| {
-            format!(
-                "テンプレートディレクトリの作成に失敗しました: {}",
-                dir.display()
-            )
-        })?;
+        std::fs::create_dir_all(&dir)
+            .with_context(|| format!("failed to create template directory: {}", dir.display()))?;
 
         let path = template_path(&self.name);
-        let json = serde_json::to_string_pretty(self)
-            .context("テンプレートの JSON シリアライズに失敗しました")?;
+        let json =
+            serde_json::to_string_pretty(self).context("failed to JSON-serialize the template")?;
         std::fs::write(&path, &json)
-            .with_context(|| format!("テンプレートの書き込みに失敗しました: {}", path.display()))?;
+            .with_context(|| format!("failed to write template: {}", path.display()))?;
 
-        info!("テンプレートを保存しました: {}", path.display());
+        info!("saved template: {}", path.display());
         Ok(path.to_string_lossy().to_string())
     }
 
-    /// ファイルからテンプレートを読み込む
+    /// Load a template from a file.
     pub fn load(name: &str) -> Result<Self> {
         let path = template_path(name);
         let json = std::fs::read_to_string(&path)
-            .with_context(|| format!("テンプレートの読み込みに失敗しました: {}", path.display()))?;
+            .with_context(|| format!("failed to read template: {}", path.display()))?;
         let template: Self = serde_json::from_str(&json).with_context(|| {
             format!(
-                "テンプレートの JSON デシリアライズに失敗しました: {}",
+                "failed to JSON-deserialize the template: {}",
                 path.display()
             )
         })?;
         Ok(template)
     }
 
-    /// 保存済みテンプレートの名前一覧を返す
+    /// Return the names of all saved templates.
     pub fn list() -> Result<Vec<String>> {
         let dir = template_dir();
         if !dir.exists() {
             return Ok(Vec::new());
         }
         let mut names = Vec::new();
-        for entry in std::fs::read_dir(&dir).with_context(|| {
-            format!(
-                "テンプレートディレクトリの読み取りに失敗しました: {}",
-                dir.display()
-            )
-        })? {
+        for entry in std::fs::read_dir(&dir)
+            .with_context(|| format!("failed to read template directory: {}", dir.display()))?
+        {
             let entry = entry?;
             let path = entry.path();
             if path.extension().map(|e| e == "json").unwrap_or(false)
@@ -146,18 +139,18 @@ impl LayoutTemplate {
     }
 }
 
-// ---- セッションからテンプレートを生成する ----
+// ---- Generate a template from a session ----
 
-/// Session の BSP ツリーを LayoutTemplate に変換するヘルパー
+/// Helper that converts a session's BSP tree into a `LayoutTemplate`.
 ///
-/// セッションの実際のウィンドウ構造を走査してテンプレートを生成する。
-/// 現時点では各ペインの CWD と分割構造を記録する（コマンドは記録しない）。
+/// Walks the session's actual window structure and produces a template.
+/// For now records each pane's CWD and split structure (no commands).
 pub fn template_from_session_info(
     name: &str,
     window_titles: Vec<String>,
     pane_count_per_window: Vec<usize>,
 ) -> LayoutTemplate {
-    // ウィンドウごとに単純なリーフノードを生成する（BSP 走査は将来拡張）
+    // For each window produce a simple leaf node (BSP traversal is future work).
     let windows = window_titles
         .into_iter()
         .zip(pane_count_per_window)
@@ -174,7 +167,7 @@ pub fn template_from_session_info(
     }
 }
 
-/// n 個のペインを均等分割するレイアウトを生成する
+/// Build a layout that evenly splits `n` panes.
 fn build_balanced_layout(count: usize) -> PaneTemplate {
     if count <= 1 {
         return PaneTemplate::Leaf {
@@ -227,7 +220,7 @@ mod tests {
         let layout = build_balanced_layout(1);
         match layout {
             PaneTemplate::Leaf { .. } => {}
-            _ => panic!("1個のペインはLeafになるべき"),
+            _ => panic!("a single pane should be a Leaf"),
         }
     }
 
@@ -236,18 +229,18 @@ mod tests {
         let layout = build_balanced_layout(2);
         match layout {
             PaneTemplate::SplitH { ratio, left, right } => {
-                assert!((ratio - 0.5).abs() < 0.01); // 1:1分割
-                // 左右はLeaf
+                assert!((ratio - 0.5).abs() < 0.01); // 1:1 split.
+                // Both children should be Leaf.
                 match *left {
                     PaneTemplate::Leaf { .. } => {}
-                    _ => panic!("左はLeafになるべき"),
+                    _ => panic!("left should be a Leaf"),
                 }
                 match *right {
                     PaneTemplate::Leaf { .. } => {}
-                    _ => panic!("右はLeafになるべき"),
+                    _ => panic!("right should be a Leaf"),
                 }
             }
-            _ => panic!("2個のペインはSplitHになるべき"),
+            _ => panic!("two panes should produce a SplitH"),
         }
     }
 
@@ -256,17 +249,17 @@ mod tests {
         let layout = build_balanced_layout(4);
         match layout {
             PaneTemplate::SplitH { left, right, .. } => {
-                // 左: 2ペインの分割、右: 2ペインの分割
+                // Left: 2-pane split. Right: 2-pane split.
                 match *left {
                     PaneTemplate::SplitH { .. } => {}
-                    _ => panic!("左は再帰的に2分割されるべき"),
+                    _ => panic!("left should recursively split in two"),
                 }
                 match *right {
                     PaneTemplate::SplitH { .. } | PaneTemplate::Leaf { .. } => {}
                     PaneTemplate::SplitV { .. } => {}
                 }
             }
-            _ => panic!("4個のペインはSplitHになるべき"),
+            _ => panic!("four panes should produce a SplitH"),
         }
     }
 

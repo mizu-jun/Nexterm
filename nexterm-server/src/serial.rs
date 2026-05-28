@@ -1,7 +1,7 @@
-//! シリアルポート接続 — serialport クレートを使って COM/tty デバイスに接続する
+//! Serial port connection — connect to COM / tty devices via the `serialport` crate.
 //!
-//! `SerialPane` は PTY の代わりにシリアルポートを入出力バックエンドとして使用する。
-//! BSP レイアウトツリーへの統合は通常ペインと同一の仕組みで行う。
+//! `SerialPane` uses a serial port as the I/O backend instead of a PTY. Integration into the BSP
+//! layout tree follows the same mechanism as regular panes.
 
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -14,7 +14,7 @@ use tracing::{debug, error, info};
 
 use crate::pane::new_pane_id;
 
-/// シリアルポートのパリティ設定を serialport 型に変換する
+/// Convert the parity string into a `serialport::Parity`.
 fn parse_parity(parity: &str) -> serialport::Parity {
     match parity {
         "odd" => serialport::Parity::Odd,
@@ -23,7 +23,7 @@ fn parse_parity(parity: &str) -> serialport::Parity {
     }
 }
 
-/// シリアルポートのデータビットを serialport 型に変換する
+/// Convert the data-bits value into a `serialport::DataBits`.
 fn parse_data_bits(data_bits: u8) -> serialport::DataBits {
     match data_bits {
         5 => serialport::DataBits::Five,
@@ -33,7 +33,7 @@ fn parse_data_bits(data_bits: u8) -> serialport::DataBits {
     }
 }
 
-/// シリアルポートのストップビットを serialport 型に変換する
+/// Convert the stop-bits value into a `serialport::StopBits`.
 fn parse_stop_bits(stop_bits: u8) -> serialport::StopBits {
     match stop_bits {
         2 => serialport::StopBits::Two,
@@ -41,19 +41,19 @@ fn parse_stop_bits(stop_bits: u8) -> serialport::StopBits {
     }
 }
 
-/// シリアルポートバックエンドのペイン
+/// Pane backed by a serial port.
 pub struct SerialPane {
     pub id: u32,
     #[allow(dead_code)]
     pub cols: u16,
     #[allow(dead_code)]
     pub rows: u16,
-    /// シリアルポートへの書き込みハンドル
+    /// Write handle to the serial port.
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
 }
 
 impl SerialPane {
-    /// シリアルポートに接続してペインを生成する
+    /// Connect to a serial port and create a pane.
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         port_name: &str,
@@ -71,23 +71,23 @@ impl SerialPane {
             .parity(parse_parity(parity))
             .timeout(std::time::Duration::from_millis(10))
             .open()
-            .map_err(|e| anyhow!("シリアルポート '{}' を開けませんでした: {}", port_name, e))?;
+            .map_err(|e| anyhow!("failed to open serial port '{}': {}", port_name, e))?;
 
         let pane_id = new_pane_id();
         info!(
-            "シリアルポート '{}' をペイン {} として起動しました (baud={})",
+            "started serial port '{}' as pane {} (baud={})",
             port_name, pane_id, baud_rate
         );
 
-        // 書き込み用クローン
+        // Clone for writes.
         let serial_write = serial
             .try_clone()
-            .map_err(|e| anyhow!("シリアルポートのクローンに失敗しました: {}", e))?;
+            .map_err(|e| anyhow!("failed to clone serial port: {}", e))?;
 
         let writer: Arc<Mutex<Box<dyn Write + Send>>> =
             Arc::new(Mutex::new(Box::new(serial_write)));
 
-        // 初期グリッドを broadcast に送信する
+        // Send the initial grid via broadcast.
         let _ = tx.send(ServerToClient::FullRefresh {
             pane_id,
             grid: Grid::new(cols, rows),
@@ -95,7 +95,7 @@ impl SerialPane {
 
         let tx_clone = tx;
 
-        // 読み取りスレッドを起動する（serial は blocking I/O のため専用スレッド）
+        // Launch the reader thread (serial uses blocking I/O, so it lives on its own thread).
         std::thread::Builder::new()
             .name(format!("nexterm-serial-{}", pane_id))
             .spawn(move || {
@@ -107,7 +107,7 @@ impl SerialPane {
                     use std::io::Read;
                     match read_port.read(&mut buf) {
                         Ok(0) => {
-                            debug!("シリアルポート: EOF (pane={})", pane_id);
+                            debug!("serial port: EOF (pane={})", pane_id);
                             break;
                         }
                         Ok(n) => {
@@ -127,18 +127,18 @@ impl SerialPane {
                             }
                         }
                         Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                            continue; // ポーリングタイムアウトは正常
+                            continue; // Polling timeouts are expected.
                         }
                         Err(e) => {
-                            error!("シリアルポート読み取りエラー (pane={}): {}", pane_id, e);
+                            error!("serial port read error (pane={}): {}", pane_id, e);
                             break;
                         }
                     }
                 }
 
-                // 切断通知
+                // Disconnect notification.
                 let _ = tx_clone.send(ServerToClient::PaneClosed { pane_id });
-                info!("シリアルポート切断 (pane={})", pane_id);
+                info!("serial port disconnected (pane={})", pane_id);
             })?;
 
         Ok(Self {
@@ -149,28 +149,28 @@ impl SerialPane {
         })
     }
 
-    /// データをシリアルポートに書き込む（キー入力）
+    /// Write data to the serial port (key input).
     pub fn write_input(&self, data: &[u8]) -> Result<()> {
         let mut w = self
             .writer
             .lock()
-            .map_err(|e| anyhow!("シリアルライターのロック取得失敗: {}", e))?;
+            .map_err(|e| anyhow!("failed to acquire serial writer lock: {}", e))?;
         w.write_all(data)?;
         Ok(())
     }
 
-    /// リサイズは no-op（シリアルポートにウィンドウサイズの概念はない）
+    /// Resizing is a no-op (a serial port has no concept of window size).
     pub fn resize_pty(&self, _cols: u16, _rows: u16) -> Result<()> {
         Ok(())
     }
 
-    /// Full Refresh グリッドを生成する
+    /// Build a Full Refresh grid.
     #[allow(dead_code)]
     pub fn make_full_refresh(&self) -> Grid {
         Grid::new(self.cols, self.rows)
     }
 
-    /// 作業ディレクトリは常に None（シリアルポートには CWD がない）
+    /// Working directory is always `None` (a serial port has no CWD).
     pub fn working_dir(&self) -> Option<std::path::PathBuf> {
         None
     }

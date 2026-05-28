@@ -1,6 +1,6 @@
 #![warn(missing_docs)]
-//! nexterm-server ライブラリクレート
-//! GPU クライアントに組み込んでシングルバイナリとして実行するために公開する。
+//! nexterm-server library crate.
+//! Exposed for embedding into the GPU client as a single binary.
 
 mod hooks;
 mod ipc;
@@ -23,34 +23,34 @@ use tracing::info;
 
 use session::SessionManager;
 
-/// nexterm-server のメインロジックを実行する。
-/// ログ初期化は呼び出し元で行うこと（GPU クライアントに組み込む場合は不要）。
-/// シャットダウンシグナルまたは IPC サーバー終了まで待機する。
+/// Run the main logic of `nexterm-server`.
+/// The caller is responsible for log initialization (no need when embedded in the GPU client).
+/// Waits until shutdown signal or until the IPC server exits.
 pub async fn run_server() -> Result<()> {
-    info!("nexterm-server 起動中...");
+    info!("starting nexterm-server...");
 
-    // Sprint 5-12 Phase 4: 設定ロードに失敗した場合、サイレントにデフォルトを使うのではなく
-    // 警告メッセージを SessionManager に積んでおく。初回 attach 時にクライアントへ
-    // `ServerToClient::Error` で送信され、エラーバナーとして可視化される。
+    // Sprint 5-12 Phase 4: when config loading fails, instead of silently falling back to
+    // defaults we queue warning messages on the SessionManager. They are delivered to the client
+    // as `ServerToClient::Error` on the first attach and shown as an error banner.
     let mut startup_warnings: Vec<String> = Vec::new();
     let shell_config = match nexterm_config::ConfigLoader::load() {
         Ok(cfg) => cfg.shell,
         Err(e) => {
-            tracing::error!("設定ファイルのロードに失敗しました: {e}");
+            tracing::error!("failed to load config file: {e}");
             startup_warnings.push(format!(
-                "設定ファイルのロードに失敗しました（デフォルト設定で起動）: {e}"
+                "failed to load config file (starting with defaults): {e}"
             ));
             nexterm_config::Config::default().shell
         }
     };
     let manager = Arc::new(SessionManager::new(shell_config));
 
-    // スナップショットが存在すれば前回のセッションを復元する
+    // Restore the previous session(s) when a snapshot exists.
     if let Some(snap) = persist::load_snapshot() {
         let restored = manager.restore_from_snapshot(&snap).await;
         if !restored.is_empty() {
-            info!("復元したセッション: {:?}", restored);
-            // 復元したペイン/ウィンドウの最大 ID より大きい値をカウンターに設定して衝突を防ぐ
+            info!("restored sessions: {:?}", restored);
+            // Bump the counters above the largest restored pane/window ID to avoid collisions.
             let max_pane_id = max_pane_id_in_snapshot(&snap);
             pane::set_min_pane_id(max_pane_id + 1);
             let max_window_id = max_window_id_in_snapshot(&snap);
@@ -60,15 +60,15 @@ pub async fn run_server() -> Result<()> {
 
     let manager_for_ipc = Arc::clone(&manager);
 
-    // 設定を読み込んでフック設定・ログ設定・ホスト設定を抽出する
+    // Load config and extract hook / log / hosts configuration.
     let (runtime_cfg, lua_runner, web_config) = {
-        // Sprint 5-12 Phase 4: 2 回目の load も失敗時は警告キューに積む。
+        // Sprint 5-12 Phase 4: queue warnings on the second failed load as well.
         let cfg = match nexterm_config::ConfigLoader::load() {
             Ok(cfg) => cfg,
             Err(e) => {
-                tracing::error!("設定ファイルの再ロードに失敗しました: {e}");
+                tracing::error!("failed to reload config file: {e}");
                 startup_warnings.push(format!(
-                    "フック・Web 設定のロードに失敗しました（デフォルトで起動）: {e}"
+                    "failed to load hook/web config (starting with defaults): {e}"
                 ));
                 nexterm_config::Config::default()
             }
@@ -76,7 +76,7 @@ pub async fn run_server() -> Result<()> {
         let lua_script = nexterm_config::lua_path();
         let runner = nexterm_config::LuaHookRunner::new(Some(lua_script));
 
-        // WASM プラグインマネージャーを初期化して SessionManager に登録する
+        // Initialize the WASM plugin manager and register it on the SessionManager.
         if !cfg.plugins_disabled {
             let plugin_dir = cfg
                 .plugin_dir
@@ -86,9 +86,9 @@ pub async fn run_server() -> Result<()> {
             let mgr = nexterm_plugin::PluginManager::new(std::sync::Arc::new(|_pane_id, _data| {}));
             if plugin_dir.exists() {
                 match mgr.load_dir(&plugin_dir) {
-                    Ok(n) if n > 0 => info!("{} 個の WASM プラグインをロードしました", n),
+                    Ok(n) if n > 0 => info!("loaded {} WASM plugin(s)", n),
                     Ok(_) => {}
-                    Err(e) => tracing::warn!("プラグインのロードに失敗しました: {}", e),
+                    Err(e) => tracing::warn!("failed to load plugins: {}", e),
                 }
             }
             manager.set_plugin_manager(mgr);
@@ -101,70 +101,70 @@ pub async fn run_server() -> Result<()> {
         )
     };
 
-    // Sprint 5-12 Phase 4: 起動時の警告（config ロード失敗など）をクライアントへ
-    // 通知できるよう SessionManager に登録。初回 attach 時に取り出される。
+    // Sprint 5-12 Phase 4: register startup warnings (e.g. config load failures) on the
+    // SessionManager so they can be forwarded to the client; drained on first attach.
     if !startup_warnings.is_empty() {
         manager.set_startup_warnings(startup_warnings);
     }
 
-    // config.toml の変更を監視してランタイム設定をホットリロードする
-    // _watcher は drop されると監視を停止するため run_server スコープで保持する
+    // Watch config.toml and hot-reload runtime config on changes.
+    // `_watcher` stops watching when dropped, so retain it within run_server's scope.
     let _watcher = match runtime_config::spawn_watcher(Arc::clone(&runtime_cfg)) {
         Ok(w) => Some(w),
         Err(e) => {
             tracing::warn!(
-                "config watcher の起動に失敗しました（ホットリロードは無効）: {}",
+                "failed to start config watcher (hot-reload disabled): {}",
                 e
             );
             None
         }
     };
 
-    // Web ターミナルが有効な場合はバックグラウンドで起動する
+    // Launch the web terminal in the background if enabled.
     if web_config.enabled {
         let web_manager = Arc::clone(&manager);
         tokio::spawn(web::start_web_server(web_config, web_manager));
     }
 
-    // 30秒ごとにスナップショットを自動保存するバックグラウンドタスク
+    // Background task: auto-save the snapshot every 30 seconds.
     let auto_save_manager = Arc::clone(&manager);
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
-        interval.tick().await; // 最初の tick は即時なのでスキップ
+        interval.tick().await; // The first tick fires immediately, so skip it.
         loop {
             interval.tick().await;
             let snap = auto_save_manager.to_snapshot().await;
             if !snap.sessions.is_empty()
                 && let Err(e) = persist::save_snapshot(&snap)
             {
-                tracing::warn!("自動保存に失敗しました: {}", e);
+                tracing::warn!("auto-save failed: {}", e);
             }
         }
     });
 
-    // IPC サーバーを実行してシャットダウンシグナルを待機する
+    // Run the IPC server and wait for a shutdown signal.
     tokio::select! {
         result = ipc::serve(manager_for_ipc, runtime_cfg, lua_runner) => {
             result?;
         }
         _ = shutdown_signal() => {
-            info!("シャットダウンシグナルを受信しました。終了します...");
+            info!("received shutdown signal; exiting...");
         }
     }
 
-    // シャットダウン時にスナップショットを保存する
+    // Save a snapshot on shutdown.
     let snap = manager.to_snapshot().await;
     if !snap.sessions.is_empty()
         && let Err(e) = persist::save_snapshot(&snap)
     {
-        tracing::warn!("スナップショットの保存に失敗しました: {}", e);
+        tracing::warn!("failed to save snapshot: {}", e);
     }
 
-    info!("nexterm-server 停止");
+    info!("nexterm-server stopped");
     Ok(())
 }
 
-/// スナップショット内の最大ペイン ID を返す（カウンター更新に使用）
+/// Return the maximum pane ID inside a snapshot (used to bump the counter).
 fn max_pane_id_in_snapshot(snap: &snapshot::ServerSnapshot) -> u32 {
     snap.sessions
         .iter()
@@ -183,7 +183,7 @@ fn max_pane_id_in_node(node: &snapshot::SplitNodeSnapshot) -> u32 {
     }
 }
 
-/// スナップショット内の最大ウィンドウ ID を返す（カウンター更新に使用）
+/// Return the maximum window ID inside a snapshot (used to bump the counter).
 fn max_window_id_in_snapshot(snap: &snapshot::ServerSnapshot) -> u32 {
     snap.sessions
         .iter()
@@ -193,15 +193,15 @@ fn max_window_id_in_snapshot(snap: &snapshot::ServerSnapshot) -> u32 {
         .unwrap_or(0)
 }
 
-/// シャットダウンシグナルハンドラー（Unix/Windows）
+/// Shutdown signal handler (Unix/Windows).
 #[cfg(unix)]
 async fn shutdown_signal() {
     use tokio::signal::unix::{SignalKind, signal};
-    let mut term = signal(SignalKind::terminate()).expect("SIGTERM ハンドラーの設定に失敗");
-    let mut int = signal(SignalKind::interrupt()).expect("SIGINT ハンドラーの設定に失敗");
+    let mut term = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+    let mut int = signal(SignalKind::interrupt()).expect("failed to install SIGINT handler");
     tokio::select! {
-        _ = term.recv() => { info!("SIGTERM を受信しました"); }
-        _ = int.recv()  => { info!("SIGINT を受信しました"); }
+        _ = term.recv() => { info!("received SIGTERM"); }
+        _ = int.recv()  => { info!("received SIGINT"); }
     }
 }
 
@@ -209,6 +209,6 @@ async fn shutdown_signal() {
 async fn shutdown_signal() {
     tokio::signal::ctrl_c()
         .await
-        .expect("Ctrl+C ハンドラーの設定に失敗");
-    info!("Ctrl+C を受信しました");
+        .expect("failed to install Ctrl+C handler");
+    info!("received Ctrl+C");
 }

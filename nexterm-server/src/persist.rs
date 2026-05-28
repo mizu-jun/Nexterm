@@ -1,8 +1,8 @@
-//! セッション永続化 — スナップショットをファイルに保存・復元する
+//! Session persistence — save and restore snapshots on disk.
 //!
-//! 保存先（スナップショット）:
-//!   `~/.local/state/nexterm/snapshot.json`（Unix）
-//!   `%APPDATA%\nexterm\snapshot.json`（Windows）
+//! Storage location (snapshot):
+//!   `~/.local/state/nexterm/snapshot.json` (Unix)
+//!   `%APPDATA%\nexterm\snapshot.json` (Windows)
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -12,30 +12,29 @@ use tracing::{info, instrument, warn};
 
 use crate::snapshot::{SNAPSHOT_VERSION, SNAPSHOT_VERSION_MIN, ServerSnapshot};
 
-// ---- atomic write ヘルパー ----
+// ---- atomic write helper ----
 
-/// ファイルをアトミックに（一時ファイル → rename で）書き込み、
-/// Unix では所有者のみ R/W のパーミッション (0600) を強制する。
+/// Atomically write a file (via tempfile -> rename); on Unix, force owner-only R/W
+/// permissions (0600).
 ///
-/// クラッシュ時のスナップショット破損と、共有ホストでの他ユーザーによる
-/// 機密読み取りの両方を防ぐ。
+/// Prevents both snapshot corruption on crashes and secret reads by other users on a shared host.
 ///
-/// # 引数
-/// - `path`: 書き込み先のパス
-/// - `content`: 書き込み内容
+/// # Arguments
+/// - `path`: destination path.
+/// - `content`: bytes to write.
 ///
-/// # エラー
-/// - 親ディレクトリが取得できない場合
-/// - 一時ファイル書き込みに失敗した場合
-/// - rename に失敗した場合
+/// # Errors
+/// - The parent directory cannot be obtained.
+/// - Writing the temporary file failed.
+/// - The rename failed.
 pub fn write_atomic_secure(path: &Path, content: &[u8]) -> Result<()> {
     let parent = path
         .parent()
-        .with_context(|| format!("親ディレクトリが取得できません: {:?}", path))?;
+        .with_context(|| format!("cannot obtain parent directory: {:?}", path))?;
     std::fs::create_dir_all(parent)
-        .with_context(|| format!("ディレクトリの作成に失敗: {:?}", parent))?;
+        .with_context(|| format!("failed to create directory: {:?}", parent))?;
 
-    // PID + プロセス内一意なサフィックスで衝突を回避
+    // Avoid collisions with a PID + per-process unique suffix.
     let tmp_name = format!(
         ".{}.tmp.{}",
         path.file_name()
@@ -45,7 +44,7 @@ pub fn write_atomic_secure(path: &Path, content: &[u8]) -> Result<()> {
     );
     let tmp_path = parent.join(tmp_name);
 
-    // クリーンアップ用 RAII ガード（rename 成功時はキャンセル）
+    // RAII guard used for cleanup (cancelled on successful rename).
     struct CleanupGuard<'a> {
         path: &'a Path,
         cancelled: bool,
@@ -62,7 +61,7 @@ pub fn write_atomic_secure(path: &Path, content: &[u8]) -> Result<()> {
         cancelled: false,
     };
 
-    // 一時ファイル作成 + 0600 パーミッション (Unix) で書き込み
+    // Create the temp file and (on Unix) set 0600 permissions while writing.
     {
         #[cfg(unix)]
         let mut file = {
@@ -73,7 +72,7 @@ pub fn write_atomic_secure(path: &Path, content: &[u8]) -> Result<()> {
                 .truncate(true)
                 .mode(0o600)
                 .open(&tmp_path)
-                .with_context(|| format!("一時ファイル作成失敗: {:?}", tmp_path))?
+                .with_context(|| format!("failed to create temp file: {:?}", tmp_path))?
         };
         #[cfg(windows)]
         let mut file = std::fs::OpenOptions::new()
@@ -81,23 +80,23 @@ pub fn write_atomic_secure(path: &Path, content: &[u8]) -> Result<()> {
             .create(true)
             .truncate(true)
             .open(&tmp_path)
-            .with_context(|| format!("一時ファイル作成失敗: {:?}", tmp_path))?;
+            .with_context(|| format!("failed to create temp file: {:?}", tmp_path))?;
 
         file.write_all(content)
-            .with_context(|| format!("書き込み失敗: {:?}", tmp_path))?;
+            .with_context(|| format!("failed to write: {:?}", tmp_path))?;
         file.sync_all()
-            .with_context(|| format!("fsync 失敗: {:?}", tmp_path))?;
+            .with_context(|| format!("fsync failed: {:?}", tmp_path))?;
     }
 
-    // atomic rename
+    // Atomic rename.
     std::fs::rename(&tmp_path, path)
-        .with_context(|| format!("rename 失敗: {:?} -> {:?}", tmp_path, path))?;
+        .with_context(|| format!("rename failed: {:?} -> {:?}", tmp_path, path))?;
     guard.cancelled = true;
 
     Ok(())
 }
 
-// ---- パスヘルパー ----
+// ---- Path helpers ----
 
 fn state_dir() -> PathBuf {
     #[cfg(windows)]
@@ -109,7 +108,7 @@ fn state_dir() -> PathBuf {
     }
     #[cfg(not(windows))]
     {
-        // XDG_STATE_HOME が設定されていればそれを優先する（テスト隔離にも有用）
+        // Prefer XDG_STATE_HOME if set (useful for test isolation as well).
         if let Ok(xdg) = std::env::var("XDG_STATE_HOME") {
             return PathBuf::from(xdg).join("nexterm");
         }
@@ -124,25 +123,25 @@ fn snapshot_path() -> PathBuf {
     state_dir().join("snapshot.json")
 }
 
-// ---- スナップショット保存・読み込み ----
+// ---- Snapshot save / load ----
 
-/// スナップショットを JSON ファイルに保存する
+/// Save the snapshot to a JSON file.
 ///
-/// atomic write（一時ファイル → rename）で書き込み、Unix では 0600 パーミッションを強制する。
-/// クラッシュ時の破損と、共有ホストでの他ユーザーによる機密情報読み取りを防ぐ。
+/// Uses atomic write (temp file -> rename) and forces 0600 permissions on Unix.
+/// Prevents corruption on crashes and secret reads by other users on a shared host.
 #[instrument(name = "save_snapshot", skip(snap), fields(version = snap.version, sessions = snap.sessions.len()))]
 pub fn save_snapshot(snap: &ServerSnapshot) -> Result<()> {
     let path = snapshot_path();
     let json = serde_json::to_string_pretty(snap)?;
     write_atomic_secure(&path, json.as_bytes())?;
-    info!("スナップショットを保存しました: {:?}", path);
+    info!("saved snapshot: {:?}", path);
     Ok(())
 }
 
-/// スナップショットを JSON ファイルから読み込む
+/// Load the snapshot from a JSON file.
 ///
-/// ファイルが存在しない場合や解析エラーの場合は `None` を返す。
-/// 旧バージョン（v1）のスナップショットは自動マイグレーションを試みる。
+/// Returns `None` when the file does not exist or parsing fails.
+/// Older snapshots (v1) are automatically migrated.
 #[instrument(name = "load_snapshot")]
 pub fn load_snapshot() -> Option<ServerSnapshot> {
     let path = snapshot_path();
@@ -152,62 +151,61 @@ pub fn load_snapshot() -> Option<ServerSnapshot> {
     let json = match std::fs::read_to_string(&path) {
         Ok(j) => j,
         Err(e) => {
-            warn!("スナップショットファイルの読み込みに失敗しました: {}", e);
+            warn!("failed to read snapshot file: {}", e);
             return None;
         }
     };
 
-    // まず通常デシリアライズを試みる
+    // Try the normal deserialization first.
     match serde_json::from_str::<ServerSnapshot>(&json) {
         Ok(snap) => {
-            // バージョン範囲チェック（古すぎる場合は破棄）
+            // Version range check (too old -> discard).
             if snap.version < SNAPSHOT_VERSION_MIN {
                 warn!(
-                    "スナップショットバージョンが古すぎます（got={}, min={}）。破棄します",
+                    "snapshot version is too old (got={}, min={}); discarding",
                     snap.version, SNAPSHOT_VERSION_MIN
                 );
                 return None;
             }
-            // v1 → v2 / v2 → v3 / v3 → v4 マイグレーション: バージョンを現在値に更新して返す。
+            // v1 -> v2 / v2 -> v3 / v3 -> v4 migration: bump the version field to the current
+            // value and return.
             //
-            // v1 → v2: `session_title` フィールド追加（`#[serde(default)]` で `None`）
-            // v2 → v3: `SessionSnapshot.workspace_name` および `ServerSnapshot.current_workspace`
-            //          追加（`#[serde(default = "default_workspace")]` で `"default"`）
-            // v3 → v4: `ServerSnapshot.client_os_windows` 追加
-            //          （`#[serde(default)]` で空 `Vec`、起動時に単一 OS Window 構成として復元）
+            // v1 -> v2: add `session_title` (`#[serde(default)]` so older files get `None`).
+            // v2 -> v3: add `SessionSnapshot.workspace_name` and `ServerSnapshot.current_workspace`
+            //          (`#[serde(default = "default_workspace")]` so older files get `"default"`).
+            // v3 -> v4: add `ServerSnapshot.client_os_windows`
+            //          (`#[serde(default)]` so older files get an empty `Vec`; restored as a
+            //          single-OS-window setup at startup).
             if snap.version < SNAPSHOT_VERSION {
                 info!(
-                    "スナップショット v{} → v{} にマイグレーションします",
+                    "migrating snapshot v{} to v{}",
                     snap.version, SNAPSHOT_VERSION
                 );
                 let migrated = ServerSnapshot {
                     version: SNAPSHOT_VERSION,
                     ..snap
                 };
-                info!(
-                    "スナップショットを読み込みました（マイグレーション済み）: {:?}",
-                    path
-                );
+                info!("loaded snapshot (migrated): {:?}", path);
                 return Some(migrated);
             }
-            info!("スナップショットを読み込みました: {:?}", path);
+            info!("loaded snapshot: {:?}", path);
             Some(snap)
         }
         Err(e) => {
-            warn!("スナップショットの解析に失敗しました: {}", e);
+            warn!("failed to parse snapshot: {}", e);
             None
         }
     }
 }
 
-/// スナップショットファイルを削除する（クリーンシャットダウン時）
+/// Delete the snapshot file (used on clean shutdown).
 #[allow(dead_code)]
 pub fn clear_snapshot() {
     let path = snapshot_path();
     if path.exists()
         && let Err(e) = std::fs::remove_file(&path)
     {
-        warn!("スナップショットファイルの削除に失敗しました: {}", e);
+        warn!("failed to delete snapshot file: {}", e);
     }
 }
 
@@ -217,7 +215,7 @@ mod tests {
     use crate::snapshot::SNAPSHOT_VERSION;
 
     #[test]
-    fn スナップショットの保存と読み込み() {
+    fn snapshot_save_and_load() {
         let snap = ServerSnapshot {
             version: SNAPSHOT_VERSION,
             sessions: Vec::new(),
@@ -226,12 +224,12 @@ mod tests {
             client_os_windows: Vec::new(),
         };
 
-        // 一時ファイルに書き込む
+        // Write to a temp file.
         let tmp = std::env::temp_dir().join("nexterm_test_snapshot.json");
         let json = serde_json::to_string_pretty(&snap).unwrap();
         std::fs::write(&tmp, &json).unwrap();
 
-        // 読み込んで内容を確認する
+        // Read it back and verify.
         let loaded: ServerSnapshot =
             serde_json::from_str(&std::fs::read_to_string(&tmp).unwrap()).unwrap();
         assert_eq!(loaded.version, SNAPSHOT_VERSION);
@@ -241,7 +239,7 @@ mod tests {
     }
 
     #[test]
-    fn atomic_write_でファイルが書き込まれる() {
+    fn atomic_write_writes_file() {
         let tmp =
             std::env::temp_dir().join(format!("nexterm_test_atomic_{}.txt", std::process::id()));
         let _ = std::fs::remove_file(&tmp);
@@ -250,7 +248,7 @@ mod tests {
         let content = std::fs::read(&tmp).unwrap();
         assert_eq!(content, b"hello\n");
 
-        // 上書き
+        // Overwrite.
         write_atomic_secure(&tmp, b"world\n").unwrap();
         let content = std::fs::read(&tmp).unwrap();
         assert_eq!(content, b"world\n");
@@ -260,7 +258,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn atomic_write_でパーミッションが_0600_になる() {
+    fn atomic_write_sets_permissions_to_0600() {
         use std::os::unix::fs::PermissionsExt;
         let tmp =
             std::env::temp_dir().join(format!("nexterm_test_perm_{}.txt", std::process::id()));
@@ -268,11 +266,11 @@ mod tests {
 
         write_atomic_secure(&tmp, b"secret\n").unwrap();
         let mode = std::fs::metadata(&tmp).unwrap().permissions().mode();
-        // 下位 9 ビット (rwxrwxrwx) を抽出。0o600 = 所有者のみ R/W。
+        // Extract the lower 9 bits (rwxrwxrwx). 0o600 = owner-only R/W.
         assert_eq!(
             mode & 0o777,
             0o600,
-            "atomic write 後のパーミッションが 0600 ではない: {:o}",
+            "post-atomic-write permission is not 0600: {:o}",
             mode & 0o777
         );
 
@@ -280,14 +278,14 @@ mod tests {
     }
 
     #[test]
-    fn atomic_write_で一時ファイルが残らない() {
+    fn atomic_write_leaves_no_temp_file() {
         let tmp =
             std::env::temp_dir().join(format!("nexterm_test_cleanup_{}.txt", std::process::id()));
         let _ = std::fs::remove_file(&tmp);
 
         write_atomic_secure(&tmp, b"final\n").unwrap();
 
-        // 親ディレクトリで `.<filename>.tmp.<pid>` 形式の一時ファイルがないことを確認
+        // Verify no `.<filename>.tmp.<pid>` style file remains in the parent directory.
         let parent = tmp.parent().unwrap();
         let tmp_pattern = format!(".{}.tmp.", tmp.file_name().unwrap().to_str().unwrap());
         for entry in std::fs::read_dir(parent).unwrap().flatten() {
@@ -295,7 +293,7 @@ mod tests {
             let name_str = name.to_str().unwrap_or("");
             assert!(
                 !name_str.starts_with(&tmp_pattern),
-                "一時ファイルが残っている: {}",
+                "temp file left behind: {}",
                 name_str
             );
         }

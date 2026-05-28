@@ -1,21 +1,22 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-//! nexterm-server スタンドアロンバイナリのエントリーポイント。
-//! サーバーロジックは lib.rs に集約されている。
+//! Entry point for the `nexterm-server` standalone binary.
+//! The server logic itself lives in `lib.rs`.
 
 use anyhow::Result;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // スタンドアロン起動時はここでログを初期化する
-    // GPU クライアントに組み込まれた場合はクライアント側で初期化済み
+    // Initialize logging here when running standalone.
+    // When embedded in the GPU client, the client already initialized logging.
     let _log_guard = init_tracing();
     nexterm_server::run_server().await
 }
 
-/// ログ初期化。Windows リリースビルドではファイル出力（%LOCALAPPDATA%\nexterm\nexterm-server.log）。
-/// 他の環境では標準出力に出力する。
-/// 戻り値の guard はドロップするとログ書き込みが停止するため、main() の lifetime まで保持する。
+/// Initialize logging. Windows release builds write to a file
+/// (`%LOCALAPPDATA%\nexterm\nexterm-server.log`); other environments write to stdout.
+/// Dropping the returned guard stops log writes, so it must be kept alive for the lifetime of
+/// `main()`.
 #[cfg(all(windows, not(debug_assertions)))]
 fn init_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
     let log_dir = dirs::data_local_dir()
