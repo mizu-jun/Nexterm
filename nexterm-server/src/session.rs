@@ -1,4 +1,4 @@
-//! セッション管理 — セッション/ウィンドウのライフサイクルを管理する
+//! Session management — manages the lifecycle of sessions and windows.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,39 +21,39 @@ fn new_window_id() -> u32 {
     NEXT_WINDOW_ID.fetch_add(1, Ordering::Relaxed)
 }
 
-/// スナップショット復元後にウィンドウ ID カウンターを更新する
+/// Update the window ID counter after restoring from a snapshot.
 pub fn set_min_window_id(min_id: u32) {
     NEXT_WINDOW_ID.fetch_max(min_id, Ordering::Relaxed);
 }
 
-/// セッション
+/// Session.
 pub struct Session {
     pub name: String,
-    /// ウィンドウ一覧（ID → Window）
+    /// Window list (ID -> Window).
     windows: HashMap<u32, Window>,
-    /// 現在フォーカス中のウィンドウ ID
+    /// Currently focused window ID.
     focused_window_id: u32,
-    /// PTY 出力のブロードキャスト送信チャネル（全クライアントへ同時配信）
+    /// Broadcast send channel for PTY output (delivers to every client simultaneously).
     broadcast_tx: broadcast::Sender<ServerToClient>,
-    /// デフォルトシェル
+    /// Default shell.
     shell: String,
-    /// デフォルトシェル引数
+    /// Default shell arguments.
     shell_args: Vec<String>,
-    /// デフォルト端末サイズ
+    /// Default terminal size.
     pub cols: u16,
     pub rows: u16,
-    /// ブロードキャストモードフラグ（全ペインへの入力転送）
+    /// Broadcast mode flag (forward input to every pane).
     broadcast: bool,
-    /// 所属ワークスペース名（Sprint 5-7 / Phase 2-1）。
-    /// デフォルトは `"default"`。`SessionManager` 経由で変更する。
+    /// Owning workspace name (Sprint 5-7 / Phase 2-1).
+    /// Defaults to `"default"`. Change via the `SessionManager`.
     pub workspace_name: String,
 }
 
 impl Session {
-    /// 最初のウィンドウを持つセッションを生成する（デフォルトワークスペース所属）
+    /// Construct a session with a single initial window (belonging to the default workspace).
     ///
-    /// 内部的には `new_in_workspace(.., DEFAULT_WORKSPACE)` を呼ぶ薄いラッパー。
-    /// テストおよび後方互換 API のために残している。
+    /// Thin wrapper around `new_in_workspace(.., DEFAULT_WORKSPACE)`.
+    /// Retained for tests and backward-compatible API.
     #[allow(dead_code)]
     pub fn new(
         name: String,
@@ -72,7 +72,7 @@ impl Session {
         )
     }
 
-    /// 指定ワークスペースに所属するセッションを生成する（Sprint 5-7 / Phase 2-1）
+    /// Construct a session that belongs to the specified workspace (Sprint 5-7 / Phase 2-1).
     pub fn new_in_workspace(
         name: String,
         cols: u16,
@@ -109,7 +109,7 @@ impl Session {
         })
     }
 
-    /// セッション情報を返す
+    /// Return the session info.
     pub fn info(&self) -> SessionInfo {
         SessionInfo {
             name: self.name.clone(),
@@ -119,65 +119,65 @@ impl Session {
         }
     }
 
-    /// フォーカス中のウィンドウへの参照を返す
+    /// Return a reference to the focused window.
     pub fn focused_window(&self) -> Option<&Window> {
         self.windows.get(&self.focused_window_id)
     }
 
-    /// 指定 `window_id` のウィンドウ参照を返す（Sprint 5-8 Phase 4-3）。
+    /// Return a reference to the window with the specified `window_id` (Sprint 5-8 Phase 4-3).
     ///
-    /// 移動後の各 Window への `LayoutChanged` メッセージ構築や FullRefresh 取得など、
-    /// 「特定の Window」を参照する用途で使う。
+    /// Used by callers that need a specific window (e.g. building `LayoutChanged` for each window
+    /// after a move, or obtaining FullRefresh).
     pub fn window(&self, window_id: u32) -> Option<&Window> {
         self.windows.get(&window_id)
     }
 
-    /// フォーカス中のウィンドウへの可変参照を返す
+    /// Return a mutable reference to the focused window.
     pub fn focused_window_mut(&mut self) -> Option<&mut Window> {
         self.windows.get_mut(&self.focused_window_id)
     }
 
-    /// クライアントをアタッチする — broadcast::Receiver を返す
+    /// Attach a client and return its `broadcast::Receiver`.
     ///
-    /// 複数クライアントの同時接続に対応する。PTY 出力は broadcast::Sender 経由で
-    /// 全 Receiver に自動配信される。ファンアウトタスクの生成は不要。
+    /// Supports multiple simultaneous clients. PTY output is automatically delivered to every
+    /// receiver via the `broadcast::Sender`; no fan-out task is required.
     pub fn attach(&self) -> broadcast::Receiver<ServerToClient> {
         self.broadcast_tx.subscribe()
     }
 
-    /// 指定クライアントをデタッチする — broadcast では Receiver を drop するだけでよいため no-op
+    /// Detach a single client — for broadcast, dropping the receiver is sufficient (no-op).
     pub fn detach_one(&mut self, _tx: &mpsc::Sender<ServerToClient>) {
-        // broadcast::Receiver は drop 時に自動的に購読解除される
+        // `broadcast::Receiver` unsubscribes automatically on drop.
     }
 
-    /// 全クライアントをデタッチする — broadcast では Receiver を全て drop するだけ（no-op）
+    /// Detach every client — for broadcast, dropping all receivers is sufficient (no-op).
     pub fn detach_all(&mut self) {
-        // broadcast チャネルは Sender が生きている限り継続する
-        // クライアントが全員 Receiver を drop すると receiver_count() が 0 になる
+        // The broadcast channel keeps living as long as the sender is alive.
+        // `receiver_count()` becomes 0 once every client drops its receiver.
     }
 
-    /// アタッチ中かどうかを返す（broadcast の受信者数で判定）
+    /// Return whether any client is attached (judged by the broadcast receiver count).
     #[allow(dead_code)]
     pub fn is_attached(&self) -> bool {
         self.broadcast_tx.receiver_count() > 0
     }
 
-    /// broadcast::Sender を返す（新規ペイン/ウィンドウ生成時に使用）
+    /// Return the broadcast::Sender (used when creating new panes/windows).
     pub fn broadcast_sender(&self) -> broadcast::Sender<ServerToClient> {
         self.broadcast_tx.clone()
     }
 
-    /// デフォルトシェルを返す
+    /// Return the default shell.
     pub fn shell(&self) -> &str {
         &self.shell
     }
 
-    /// デフォルトシェル引数を返す
+    /// Return the default shell arguments.
     pub fn shell_args(&self) -> &[String] {
         &self.shell_args
     }
 
-    /// 新しいウィンドウを追加する
+    /// Add a new window.
     pub fn add_window(&mut self) -> Result<u32> {
         let window_id = new_window_id();
         let name = format!("window-{}", window_id);
@@ -195,46 +195,46 @@ impl Session {
         Ok(window_id)
     }
 
-    /// 指定ウィンドウを削除する（最後のウィンドウは削除不可）
+    /// Remove the specified window (the last remaining window cannot be removed).
     pub fn remove_window(&mut self, window_id: u32) -> Result<()> {
         if self.windows.len() <= 1 {
-            return Err(anyhow::anyhow!("最後のウィンドウは削除できません"));
+            return Err(anyhow::anyhow!("cannot remove the last remaining window"));
         }
         if !self.windows.contains_key(&window_id) {
-            return Err(anyhow::anyhow!("ウィンドウ {} が見つかりません", window_id));
+            return Err(anyhow::anyhow!("window {} not found", window_id));
         }
         self.windows.remove(&window_id);
-        // フォーカスが削除されたウィンドウにあった場合、残ったウィンドウに移す
+        // If focus was on the removed window, move it to one of the remaining windows.
         if self.focused_window_id == window_id {
             self.focused_window_id = *self
                 .windows
                 .keys()
                 .next()
-                .expect("windows が空でないことは len() > 1 チェック済み");
+                .expect("windows is non-empty; verified by len() > 1");
         }
         Ok(())
     }
 
-    /// 指定ウィンドウにフォーカスを移動する
+    /// Move focus to the specified window.
     pub fn focus_window(&mut self, window_id: u32) -> Result<()> {
         if !self.windows.contains_key(&window_id) {
-            return Err(anyhow::anyhow!("ウィンドウ {} が見つかりません", window_id));
+            return Err(anyhow::anyhow!("window {} not found", window_id));
         }
         self.focused_window_id = window_id;
         Ok(())
     }
 
-    /// 指定ウィンドウをリネームする
+    /// Rename the specified window.
     pub fn rename_window(&mut self, window_id: u32, name: String) -> Result<()> {
         let window = self
             .windows
             .get_mut(&window_id)
-            .ok_or_else(|| anyhow::anyhow!("ウィンドウ {} が見つかりません", window_id))?;
+            .ok_or_else(|| anyhow::anyhow!("window {} not found", window_id))?;
         window.name = name;
         Ok(())
     }
 
-    /// ウィンドウ情報の一覧を返す
+    /// Return the list of window info.
     pub fn window_list(&self) -> Vec<WindowInfo> {
         let mut list: Vec<WindowInfo> = self
             .windows
@@ -250,19 +250,19 @@ impl Session {
         list
     }
 
-    /// フォーカスペインを新しいウィンドウとして切り離す（break-pane）
+    /// Break the focused pane out into a new window (break-pane).
     ///
-    /// 成功した場合は新ウィンドウ ID を返す。
-    /// フォーカスウィンドウにペインが 1 つしかない場合は `Err` を返す。
+    /// Returns the new window ID on success.
+    /// Returns `Err` when the focused window has only a single pane.
     pub fn break_pane(&mut self) -> Result<u32> {
         let cols = self.cols;
         let rows = self.rows;
         let pane = {
             let w = self
                 .focused_window_mut()
-                .ok_or_else(|| anyhow::anyhow!("フォーカスウィンドウが見つかりません"))?;
+                .ok_or_else(|| anyhow::anyhow!("focused window not found"))?;
             w.take_focused_pane(cols, rows)
-                .ok_or_else(|| anyhow::anyhow!("最後のペインは切り離せません"))?
+                .ok_or_else(|| anyhow::anyhow!("cannot break out the last remaining pane"))?
         };
         let new_window_id = new_window_id();
         let new_window = Window::new_with_pane(new_window_id, "window-broken".to_string(), pane)?;
@@ -271,32 +271,33 @@ impl Session {
         Ok(new_window_id)
     }
 
-    /// 指定 `pane_id` のペインを別の Window に移動する（Sprint 5-8 Phase 4-3 / 4-4、tab tearing 用）。
+    /// Move the pane with the given `pane_id` to another window (Sprint 5-8 Phase 4-3 / 4-4,
+    /// used by tab tearing).
     ///
-    /// クライアントがタブを別 OS Window または OS Window 外にドロップしたとき、
-    /// `ClientToServer::MovePaneToWindow` から呼ばれる。
+    /// Invoked from `ClientToServer::MovePaneToWindow` when the client drops a tab onto another OS
+    /// window or outside any OS window.
     ///
-    /// 動作:
-    /// - `target_window_id == 0`: **新規 Window 生成**。`break_pane` と同じく
-    ///   `Window::new_with_pane` で新規 Window を作り、`focused_window_id` を切り替える
-    /// - `target_window_id != 0`: 既存 Window への移動。
-    ///   - `insert_at` が `Some` の場合は `Window::insert_pane_at` で位置指定挿入
-    ///   - `None` の場合は既存 `insert_pane`（フォーカスペインの直後）
-    /// - **ソース Window のペインが 1 個のみの場合** (Phase 4-4):
-    ///   - Window 自体を `self.windows` から削除（`into_single_pane` で消費）
-    ///   - これによりタブ外ドロップで「最後のペインを移動」しても整合性が保たれる
-    ///   - WindowListChanged で削除済み Window が自動的に消える
+    /// Behavior:
+    /// - `target_window_id == 0`: **create a new window**. Behaves like `break_pane`: create a
+    ///   new window via `Window::new_with_pane` and switch `focused_window_id`.
+    /// - `target_window_id != 0`: move into an existing window.
+    ///   - If `insert_at` is `Some`, use `Window::insert_pane_at` for position-specified insertion.
+    ///   - If `None`, use the existing `insert_pane` (right after the focused pane).
+    /// - **When the source window has only one pane** (Phase 4-4):
+    ///   - The window itself is removed from `self.windows` (consumed via `into_single_pane`).
+    ///   - This keeps invariants intact when "the last pane is moved" via a tab-out drop.
+    ///   - `WindowListChanged` automatically reflects the deleted window.
     ///
-    /// 戻り値: `(source_window_id, new_window_id, moved_pane_id)`
-    /// - `source_window_id`: 移動元 Window ID（削除されていても元の値を返す。呼び出し側は
-    ///   `Session::window(src_id)` の `Option` で削除有無を判定できる）
-    /// - `new_window_id`: 移動先 Window ID（`target_window_id == 0` の場合は新規生成された ID）
-    /// - `moved_pane_id`: 移動したペイン ID（= 引数の `pane_id`）
+    /// Returns `(source_window_id, new_window_id, moved_pane_id)`.
+    /// - `source_window_id`: source window ID (returned even if the window was removed; the caller
+    ///   can detect removal via `Session::window(src_id)` returning `None`).
+    /// - `new_window_id`: destination window ID (a newly generated ID when `target_window_id == 0`).
+    /// - `moved_pane_id`: moved pane ID (equal to the `pane_id` argument).
     ///
-    /// エラー条件:
-    /// - `pane_id` がどの Window にも見つからない
-    /// - `target_window_id != 0` かつ Window が存在しない
-    /// - ソース Window の最後の Pane がシリアルペイン（取り出し不可）
+    /// Error conditions:
+    /// - `pane_id` is not found in any window.
+    /// - `target_window_id != 0` and the window does not exist.
+    /// - The last remaining pane of the source window is a serial pane (cannot be taken).
     pub fn move_pane(
         &mut self,
         pane_id: u32,
@@ -306,40 +307,40 @@ impl Session {
         let cols = self.cols;
         let rows = self.rows;
 
-        // ペインが存在するソース Window を特定する
+        // Identify the source window that contains the pane.
         let source_window_id = self
             .windows
             .iter()
             .find(|(_, w)| w.pane_ids().contains(&pane_id))
             .map(|(id, _)| *id)
-            .ok_or_else(|| anyhow::anyhow!("ペイン {} が見つかりません", pane_id))?;
+            .ok_or_else(|| anyhow::anyhow!("pane {} not found", pane_id))?;
 
-        // ソース Window から自分自身への移動は no-op エラー
+        // Moving from a window to itself is a no-op error.
         if source_window_id == target_window_id {
             return Err(anyhow::anyhow!(
-                "ペイン {} は既に Window {} にあります",
+                "pane {} is already in window {}",
                 pane_id,
                 target_window_id
             ));
         }
 
-        // ソース Window のペイン数を確認（== 1 なら Window 自体を削除）
+        // Check the source window's pane count (== 1 means we delete the window itself).
         let source_pane_count = self
             .windows
             .get(&source_window_id)
             .map(|w| w.pane_count())
             .unwrap_or(0);
 
-        // ペインを取り出す（最後の 1 個なら Window ごと消費）
+        // Take the pane out (consume the window if it was the last pane).
         let pane = if source_pane_count <= 1 {
-            // 最後の 1 ペイン: Window を削除して中の pane を取り出す
+            // Last pane: remove the window and extract its only pane.
             let source = self
                 .windows
                 .remove(&source_window_id)
-                .ok_or_else(|| anyhow::anyhow!("ソース Window が見つかりません"))?;
+                .ok_or_else(|| anyhow::anyhow!("source window not found"))?;
             source.into_single_pane().ok_or_else(|| {
                 anyhow::anyhow!(
-                    "Window {} の最後の Pane を取り出せません（シリアル等の非対応ペイン）",
+                    "cannot extract the last pane of window {} (unsupported pane such as serial)",
                     source_window_id
                 )
             })?
@@ -347,30 +348,30 @@ impl Session {
             let source = self
                 .windows
                 .get_mut(&source_window_id)
-                .ok_or_else(|| anyhow::anyhow!("ソース Window が見つかりません"))?;
+                .ok_or_else(|| anyhow::anyhow!("source window not found"))?;
             source.take_pane_by_id(pane_id, cols, rows).ok_or_else(|| {
                 anyhow::anyhow!(
-                    "ペイン {} を Window {} から取り出せません",
+                    "cannot take pane {} out of window {}",
                     pane_id,
                     source_window_id
                 )
             })?
         };
 
-        // 移動先 Window を準備する
+        // Prepare the destination window.
         let new_window_id = if target_window_id == 0 {
-            // 新規 Window 生成（break_pane と同じパターン）
+            // Create a new window (same pattern as break_pane).
             let new_id = new_window_id();
             let new_window = Window::new_with_pane(new_id, "window-torn".to_string(), pane)?;
             self.windows.insert(new_id, new_window);
             new_id
         } else {
-            // 既存 Window に追加
+            // Add to an existing window.
             let target = self
                 .windows
                 .get_mut(&target_window_id)
-                .ok_or_else(|| anyhow::anyhow!("Window {} が見つかりません", target_window_id))?;
-            // insert_at が Some なら位置指定挿入、なければ末尾追加（Phase 4-4）
+                .ok_or_else(|| anyhow::anyhow!("window {} not found", target_window_id))?;
+            // `Some(insert_at)` uses position-specified insertion, otherwise append (Phase 4-4).
             let position = insert_at.map(|i| i as usize);
             target.insert_pane_at(
                 pane,
@@ -382,59 +383,61 @@ impl Session {
             target_window_id
         };
 
-        // フォーカスを移動先に切り替える（ソース Window が削除済みでも安全）
+        // Move focus to the destination (safe even if the source window was removed).
         self.focused_window_id = new_window_id;
 
         Ok((source_window_id, new_window_id, pane_id))
     }
 
-    /// フォーカスペインを指定ウィンドウに移動する（join-pane）
+    /// Move the focused pane to the specified window (join-pane).
     ///
-    /// 成功した場合は移動したペイン ID を返す。
+    /// Returns the moved pane ID on success.
     pub fn join_pane(&mut self, target_window_id: u32) -> Result<u32> {
         let cols = self.cols;
         let rows = self.rows;
-        // フォーカスウィンドウ ID を退避（borrow checker 対策）
+        // Stash the focused window ID (to satisfy the borrow checker).
         let focused_win_id = self.focused_window_id;
         if focused_win_id == target_window_id {
-            return Err(anyhow::anyhow!("移動先が現在のウィンドウと同じです"));
+            return Err(anyhow::anyhow!(
+                "destination is the same as the current window"
+            ));
         }
-        // ペインを取り出す
+        // Take the pane out.
         let pane = {
             let w = self
                 .windows
                 .get_mut(&focused_win_id)
-                .ok_or_else(|| anyhow::anyhow!("フォーカスウィンドウが見つかりません"))?;
+                .ok_or_else(|| anyhow::anyhow!("focused window not found"))?;
             w.take_focused_pane(cols, rows)
-                .ok_or_else(|| anyhow::anyhow!("最後のペインは移動できません"))?
+                .ok_or_else(|| anyhow::anyhow!("cannot move the last remaining pane"))?
         };
         let pane_id = pane.id;
-        // 移動先ウィンドウに挿入する
+        // Insert into the destination window.
         let target = self
             .windows
             .get_mut(&target_window_id)
-            .ok_or_else(|| anyhow::anyhow!("ウィンドウ {} が見つかりません", target_window_id))?;
+            .ok_or_else(|| anyhow::anyhow!("window {} not found", target_window_id))?;
         target.insert_pane(pane, cols, rows, crate::window::SplitDir::Vertical);
         self.focused_window_id = target_window_id;
         Ok(pane_id)
     }
 
-    /// ブロードキャストモードを設定する
+    /// Set the broadcast mode.
     pub fn set_broadcast(&mut self, enabled: bool) {
         self.broadcast = enabled;
     }
 
-    /// ブロードキャストモードかどうかを返す
+    /// Return whether broadcast mode is active.
     #[allow(dead_code)]
     pub fn is_broadcast(&self) -> bool {
         self.broadcast
     }
 
-    /// ブロードキャストモード: フォーカスウィンドウの全ペインに書き込む
+    /// Broadcast mode: write to every pane of the focused window.
     pub fn write_to_all(&self, data: &[u8]) -> Result<()> {
         let window = self
             .focused_window()
-            .ok_or_else(|| anyhow::anyhow!("フォーカスウィンドウが見つかりません"))?;
+            .ok_or_else(|| anyhow::anyhow!("focused window not found"))?;
         for pane_id in window.pane_ids() {
             if let Some(pane) = window.pane(pane_id) {
                 let _ = pane.write_input(data);
@@ -443,45 +446,45 @@ impl Session {
         Ok(())
     }
 
-    /// フォーカスウィンドウのフォーカスペインに入力を書き込む
+    /// Write input to the focused pane of the focused window.
     pub fn write_to_focused(&self, data: &[u8]) -> Result<()> {
         if self.broadcast {
             self.write_to_all(data)
         } else {
             self.focused_window()
-                .ok_or_else(|| anyhow::anyhow!("フォーカスウィンドウが見つかりません"))?
+                .ok_or_else(|| anyhow::anyhow!("focused window not found"))?
                 .write_to_focused(data)
         }
     }
 
-    /// フォーカスペインのブラケットペーストモードが有効かどうかを返す
+    /// Return whether bracketed-paste mode is enabled on the focused pane.
     pub fn focused_bracketed_paste_mode(&self) -> bool {
         self.focused_window()
             .map(|w| w.focused_bracketed_paste_mode())
             .unwrap_or(false)
     }
 
-    /// フォーカスペインのマウスレポーティングモードを返す（0=無効）
+    /// Return the focused pane's mouse-reporting mode (0 = disabled).
     pub fn focused_mouse_mode(&self) -> u8 {
         self.focused_window()
             .map(|w| w.focused_mouse_mode())
             .unwrap_or(0)
     }
 
-    /// ウィンドウ全体をリサイズする（全ペインを BSP 計算で再配置する）
+    /// Resize the whole window (recompute every pane via BSP).
     pub fn resize_focused(&mut self, cols: u16, rows: u16) -> Result<()> {
         self.cols = cols;
         self.rows = rows;
         let window = self
             .focused_window_mut()
-            .ok_or_else(|| anyhow::anyhow!("フォーカスウィンドウが見つかりません"))?;
+            .ok_or_else(|| anyhow::anyhow!("focused window not found"))?;
         window.resize_all_panes(cols, rows);
         Ok(())
     }
 
-    // ---- スナップショット ----
+    // ---- Snapshot ----
 
-    /// セッションをスナップショットに変換する
+    /// Convert the session into a snapshot.
     pub fn to_snapshot(&self) -> SessionSnapshot {
         SessionSnapshot {
             name: self.name.clone(),
@@ -496,12 +499,12 @@ impl Session {
         }
     }
 
-    /// スナップショットからセッションを復元する
+    /// Restore a session from a snapshot.
     ///
-    /// クライアントは未接続の状態で復元する。
-    /// クライアントが接続したときに `attach()` で TX を設定する。
+    /// Restore happens with no clients attached.
+    /// `attach()` is called by the IPC layer once a client connects.
     pub fn restore_from_snapshot(snap: &SessionSnapshot) -> Result<Self> {
-        // broadcast チャネルを生成する（クライアント未接続時は Receiver なし）
+        // Create the broadcast channel (no receivers yet because no client is attached).
         let (broadcast_tx, _) = broadcast::channel::<ServerToClient>(2048);
 
         let mut windows = HashMap::new();
@@ -517,16 +520,13 @@ impl Session {
                     windows.insert(win_snap.id, window);
                 }
                 Err(e) => {
-                    warn!("ウィンドウ '{}' の復元に失敗しました: {}", win_snap.name, e);
+                    warn!("failed to restore window '{}': {}", win_snap.name, e);
                 }
             }
         }
 
         if windows.is_empty() {
-            bail!(
-                "セッション '{}' のウィンドウが 1 つも復元できませんでした",
-                snap.name
-            );
+            bail!("no window could be restored for session '{}'", snap.name);
         }
 
         Ok(Self {
@@ -548,31 +548,31 @@ impl Session {
     }
 }
 
-/// セッションマネージャー（全セッションを管理）
+/// Session manager (manages every session).
 pub struct SessionManager {
     sessions: Arc<Mutex<HashMap<String, Session>>>,
-    /// デフォルトシェル設定（設定ファイルから読み込む）
+    /// Default shell configuration (loaded from config files).
     shell_config: nexterm_config::ShellConfig,
-    /// WASM プラグインマネージャー（IPC 経由でロード/アンロード操作を受け付ける）
+    /// WASM plugin manager (accepts load/unload commands over IPC).
     pub plugin_manager: Arc<std::sync::Mutex<Option<nexterm_plugin::PluginManager>>>,
-    /// ワークスペース管理状態（Sprint 5-7 / Phase 2-1）。
+    /// Workspace management state (Sprint 5-7 / Phase 2-1).
     ///
-    /// 既知のワークスペース集合（`default` を必ず含む）と、現在アクティブな名前を保持する。
+    /// Holds the set of known workspaces (always includes `default`) and the active name.
     workspace_state: Arc<Mutex<WorkspaceState>>,
-    /// 起動時に発生した警告メッセージのキュー（Sprint 5-12 Phase 4）。
+    /// Queue of warning messages emitted at startup (Sprint 5-12 Phase 4).
     ///
-    /// `run_server` が config ロード等で軽微なエラーを検出したとき、ここに積んでおく。
-    /// クライアントの初回 Attach 時に `take_startup_warnings()` で取り出して
-    /// `ServerToClient::Error` で送信する。同期 Mutex を使うのは Tokio タスクの外側
-    /// （`run_server` の早い段階）からセットされ得るため。
+    /// When `run_server` detects a minor error (e.g. config load failure), it stashes it here.
+    /// On a client's first Attach, `take_startup_warnings()` drains the queue and emits the
+    /// messages as `ServerToClient::Error`. A sync `Mutex` is used because this can be set from
+    /// outside any Tokio task (early during `run_server`).
     startup_warnings: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
-/// SessionManager 内部のワークスペース状態
+/// Internal workspace state held by `SessionManager`.
 struct WorkspaceState {
-    /// 既知のワークスペース名（順序保持のため Vec を使用）
+    /// Set of known workspace names (`Vec` to preserve insertion order).
     known: Vec<String>,
-    /// 現在アクティブなワークスペース名
+    /// Currently active workspace name.
     current: String,
 }
 
@@ -596,27 +596,27 @@ impl SessionManager {
         }
     }
 
-    /// プラグインマネージャーを設定する（サーバー起動時に呼ぶ）
+    /// Set the plugin manager (called at server startup).
     pub fn set_plugin_manager(&self, mgr: nexterm_plugin::PluginManager) {
         let mut lock = self.plugin_manager.lock().expect("plugin_manager poisoned");
         *lock = Some(mgr);
     }
 
-    /// 起動時警告メッセージを置き換える（Sprint 5-12 Phase 4）。
+    /// Replace the startup warning messages (Sprint 5-12 Phase 4).
     ///
-    /// `run_server` が config ロードに失敗した場合などに呼び出す。
-    /// 通常は `take_startup_warnings()` で初回 attach 時に消化される。
+    /// Called when `run_server` fails to load configuration, for example.
+    /// Normally drained on the first attach via `take_startup_warnings()`.
     pub fn set_startup_warnings(&self, warnings: Vec<String>) {
         if let Ok(mut guard) = self.startup_warnings.lock() {
             *guard = warnings;
         }
     }
 
-    /// 蓄積された起動時警告を取り出してキューを空にする（Sprint 5-12 Phase 4）。
+    /// Take the accumulated startup warnings and empty the queue (Sprint 5-12 Phase 4).
     ///
-    /// クライアント側に `ServerToClient::Error` として通知するため、初回 attach の
-    /// IPC ハンドラから呼ぶ。複数クライアントが同時 attach した場合は最初の
-    /// クライアントだけが受け取る（メッセージの永続表示はせず一過性で扱う）。
+    /// Called by the IPC handler on the first attach so the messages can be forwarded as
+    /// `ServerToClient::Error`. If multiple clients attach simultaneously, only the first one
+    /// receives them (the messages are transient and not persisted in the UI).
     pub fn take_startup_warnings(&self) -> Vec<String> {
         self.startup_warnings
             .lock()
@@ -624,50 +624,50 @@ impl SessionManager {
             .unwrap_or_default()
     }
 
-    /// セッションへの Arc を返す（IPC ハンドラで使用）
+    /// Return an `Arc` to the sessions map (used by IPC handlers).
     pub fn sessions(&self) -> Arc<Mutex<HashMap<String, Session>>> {
         Arc::clone(&self.sessions)
     }
 
-    /// 新規セッションを作成する
+    /// Create a new session.
     #[allow(dead_code)]
     pub async fn create_session(&self, name: String, cols: u16, rows: u16) -> Result<()> {
         let mut sessions = self.sessions.lock().await;
         if sessions.contains_key(&name) {
-            bail!("セッション '{}' は既に存在します", name);
+            bail!("session '{}' already exists", name);
         }
         let shell = self.shell_config.program.clone();
         let args = self.shell_config.args.clone();
         let workspace = self.workspace_state.lock().await.current.clone();
         let session = Session::new_in_workspace(name.clone(), cols, rows, shell, args, workspace)?;
         sessions.insert(name.clone(), session);
-        info!("セッション '{}' を作成しました", name);
+        info!("created session '{}'", name);
         Ok(())
     }
 
-    /// 既存セッションにアタッチする（broadcast::Receiver を返す）
+    /// Attach to an existing session (returns a `broadcast::Receiver`).
     #[allow(dead_code)]
     pub async fn attach_session(&self, name: &str) -> Result<broadcast::Receiver<ServerToClient>> {
         let sessions = self.sessions.lock().await;
         let session = sessions
             .get(name)
-            .ok_or_else(|| anyhow::anyhow!("セッション '{}' が見つかりません", name))?;
+            .ok_or_else(|| anyhow::anyhow!("session '{}' not found", name))?;
         let rx = session.attach();
-        info!("セッション '{}' にアタッチしました", name);
+        info!("attached to session '{}'", name);
         Ok(rx)
     }
 
-    /// セッション一覧を返す
+    /// Return the list of sessions.
     pub async fn list_sessions(&self) -> Vec<SessionInfo> {
         let sessions = self.sessions.lock().await;
         sessions.values().map(|s| s.info()).collect()
     }
 
-    /// セッションが存在しない場合は新規作成してアタッチ、存在する場合は再アタッチする
+    /// Create the session if it does not exist; otherwise re-attach to it.
     pub async fn get_or_create_and_attach(&self, name: &str, cols: u16, rows: u16) -> Result<()> {
         let mut sessions = self.sessions.lock().await;
         if sessions.contains_key(name) {
-            info!("セッション '{}' に再アタッチしました", name);
+            info!("re-attached to session '{}'", name);
         } else {
             let shell = self.shell_config.program.clone();
             let args = self.shell_config.args.clone();
@@ -675,38 +675,38 @@ impl SessionManager {
             let session =
                 Session::new_in_workspace(name.to_string(), cols, rows, shell, args, workspace)?;
             sessions.insert(name.to_string(), session);
-            info!("セッション '{}' を新規作成しました", name);
+            info!("created new session '{}'", name);
         }
         Ok(())
     }
 
-    /// セッションを強制終了する（Drop によって PTY が閉じられる）
+    /// Force-terminate a session (its PTYs are closed via `Drop`).
     pub async fn kill_session(&self, name: &str) -> Result<()> {
         let mut sessions = self.sessions.lock().await;
         if sessions.remove(name).is_some() {
-            info!("セッション '{}' を終了しました", name);
+            info!("terminated session '{}'", name);
             Ok(())
         } else {
-            bail!("セッション '{}' が見つかりません", name)
+            bail!("session '{}' not found", name)
         }
     }
 
-    /// セッションのフォーカスペインで録音を開始する
+    /// Start recording the session's focused pane.
     pub async fn start_recording(&self, name: &str, path: &str) -> Result<u32> {
         let sessions = self.sessions.lock().await;
         let session = sessions
             .get(name)
-            .ok_or_else(|| anyhow::anyhow!("セッション '{}' が見つかりません", name))?;
+            .ok_or_else(|| anyhow::anyhow!("session '{}' not found", name))?;
         let window = session
             .focused_window()
-            .ok_or_else(|| anyhow::anyhow!("ウィンドウが見つかりません"))?;
+            .ok_or_else(|| anyhow::anyhow!("window not found"))?;
         let pane_id = window.start_recording(path)?;
         Ok(pane_id)
     }
 
-    /// ログ設定（テンプレート・バイナリログ）を使って録音を開始する
+    /// Start recording using log configuration (templates and binary log).
     ///
-    /// `log_config.file_name_template` が設定されている場合はテンプレートを展開してファイル名を生成する。
+    /// When `log_config.file_name_template` is set, expand the template to generate the filename.
     pub async fn start_recording_with_log_config(
         &self,
         session_name: &str,
@@ -716,57 +716,57 @@ impl SessionManager {
         let sessions = self.sessions.lock().await;
         let session = sessions
             .get(session_name)
-            .ok_or_else(|| anyhow::anyhow!("セッション '{}' が見つかりません", session_name))?;
+            .ok_or_else(|| anyhow::anyhow!("session '{}' not found", session_name))?;
         let window = session
             .focused_window()
-            .ok_or_else(|| anyhow::anyhow!("ウィンドウが見つかりません"))?;
+            .ok_or_else(|| anyhow::anyhow!("window not found"))?;
         let pane = window
             .pane(window.focused_pane_id())
-            .ok_or_else(|| anyhow::anyhow!("フォーカスペインが見つかりません"))?;
+            .ok_or_else(|| anyhow::anyhow!("focused pane not found"))?;
         pane.start_recording_with_config(base_dir, session_name, log_config)?;
         Ok(pane.id)
     }
 
-    /// セッションのフォーカスペインで録音を停止する（Phase 5-A で完全実装）
+    /// Stop recording the session's focused pane (fully implemented in Phase 5-A).
     pub async fn stop_recording(&self, name: &str) -> Result<u32> {
         let sessions = self.sessions.lock().await;
         let session = sessions
             .get(name)
-            .ok_or_else(|| anyhow::anyhow!("セッション '{}' が見つかりません", name))?;
+            .ok_or_else(|| anyhow::anyhow!("session '{}' not found", name))?;
         let window = session
             .focused_window()
-            .ok_or_else(|| anyhow::anyhow!("ウィンドウが見つかりません"))?;
+            .ok_or_else(|| anyhow::anyhow!("window not found"))?;
         let pane_id = window.stop_recording()?;
         Ok(pane_id)
     }
 
-    /// セッションのフォーカスペインで asciicast 録画を開始する
+    /// Start an asciicast recording on the session's focused pane.
     pub async fn start_asciicast(&self, name: &str, path: &str) -> Result<u32> {
         let sessions = self.sessions.lock().await;
         let session = sessions
             .get(name)
-            .ok_or_else(|| anyhow::anyhow!("セッション '{}' が見つかりません", name))?;
+            .ok_or_else(|| anyhow::anyhow!("session '{}' not found", name))?;
         let window = session
             .focused_window()
-            .ok_or_else(|| anyhow::anyhow!("ウィンドウが見つかりません"))?;
+            .ok_or_else(|| anyhow::anyhow!("window not found"))?;
         let pane_id = window.start_asciicast(path)?;
         Ok(pane_id)
     }
 
-    /// セッションのフォーカスペインで asciicast 録画を停止する
+    /// Stop the asciicast recording on the session's focused pane.
     pub async fn stop_asciicast(&self, name: &str) -> Result<u32> {
         let sessions = self.sessions.lock().await;
         let session = sessions
             .get(name)
-            .ok_or_else(|| anyhow::anyhow!("セッション '{}' が見つかりません", name))?;
+            .ok_or_else(|| anyhow::anyhow!("session '{}' not found", name))?;
         let window = session
             .focused_window()
-            .ok_or_else(|| anyhow::anyhow!("ウィンドウが見つかりません"))?;
+            .ok_or_else(|| anyhow::anyhow!("window not found"))?;
         let pane_id = window.stop_asciicast()?;
         Ok(pane_id)
     }
 
-    /// シリアルポートペインを作成してフォーカスウィンドウに追加する
+    /// Create a serial port pane and add it to the focused window.
     pub async fn connect_serial(
         &self,
         session_name: &str,
@@ -779,13 +779,13 @@ impl SessionManager {
         let mut sessions = self.sessions.lock().await;
         let session = sessions
             .get_mut(session_name)
-            .ok_or_else(|| anyhow::anyhow!("セッション '{}' が見つかりません", session_name))?;
+            .ok_or_else(|| anyhow::anyhow!("session '{}' not found", session_name))?;
         let cols = session.cols;
         let rows = session.rows;
         let tx = session.broadcast_sender();
         let window = session
             .focused_window_mut()
-            .ok_or_else(|| anyhow::anyhow!("フォーカスウィンドウが見つかりません"))?;
+            .ok_or_else(|| anyhow::anyhow!("focused window not found"))?;
         window.add_serial_pane(
             cols,
             rows,
@@ -799,13 +799,13 @@ impl SessionManager {
         )
     }
 
-    // ---- Quake モード（Sprint 5-7 / Phase 2-2） ----
+    // ---- Quake mode (Sprint 5-7 / Phase 2-2) ----
 
-    /// 接続中の全 GPU クライアントに Quake トグル要求を配信する。
+    /// Broadcast a Quake toggle request to every attached GPU client.
     ///
-    /// 各 Session の broadcast::Sender に `ServerToClient::QuakeToggleRequest` を送る。
-    /// receiver（アタッチ中のクライアント）がいないセッションへの送信は無視される。
-    /// 戻り値: 配信先となった broadcast チャネル数（= セッション数）。
+    /// Sends `ServerToClient::QuakeToggleRequest` through each session's `broadcast::Sender`.
+    /// Sessions with no receivers (no attached clients) silently ignore the send.
+    /// Returns the number of broadcast channels reached (= session count).
     pub async fn broadcast_quake_request(&self, action: &str) -> usize {
         let sessions = self.sessions.lock().await;
         let mut delivered = 0;
@@ -820,23 +820,23 @@ impl SessionManager {
         delivered
     }
 
-    // ---- ワークスペース管理（Sprint 5-7 / Phase 2-1） ----
+    // ---- Workspace management (Sprint 5-7 / Phase 2-1) ----
 
-    /// 現在アクティブなワークスペース名を返す（テスト・将来のフック用）
+    /// Return the currently active workspace name (for tests and future hooks).
     #[allow(dead_code)]
     pub async fn current_workspace(&self) -> String {
         self.workspace_state.lock().await.current.clone()
     }
 
-    /// 全ワークスペースの情報を返す（IPC `ListWorkspaces` 用）。
+    /// Return info for every workspace (used by IPC `ListWorkspaces`).
     ///
-    /// 各ワークスペースのセッション数は `sessions` の `workspace_name` から集計する。
-    /// 既知のワークスペース集合にはセッションが 0 件でも残る（明示削除されるまで保持）。
+    /// Session counts per workspace are aggregated from `sessions` via `workspace_name`.
+    /// Known workspaces remain in the set even with zero sessions (kept until explicitly deleted).
     pub async fn list_workspaces(&self) -> (String, Vec<WorkspaceInfo>) {
         let state = self.workspace_state.lock().await;
         let sessions = self.sessions.lock().await;
 
-        // セッション数集計
+        // Aggregate session counts.
         let mut counts: HashMap<String, u32> = HashMap::new();
         for session in sessions.values() {
             *counts.entry(session.workspace_name.clone()).or_insert(0) += 1;
@@ -854,100 +854,97 @@ impl SessionManager {
         (state.current.clone(), workspaces)
     }
 
-    /// 新しいワークスペースを作成する
+    /// Create a new workspace.
     pub async fn create_workspace(&self, name: &str) -> Result<()> {
         let trimmed = name.trim();
         if trimmed.is_empty() {
-            bail!("ワークスペース名が空です");
+            bail!("workspace name is empty");
         }
         let mut state = self.workspace_state.lock().await;
         if state.known.iter().any(|w| w == trimmed) {
-            bail!("ワークスペース '{}' は既に存在します", trimmed);
+            bail!("workspace '{}' already exists", trimmed);
         }
         state.known.push(trimmed.to_string());
-        info!("ワークスペース '{}' を作成しました", trimmed);
+        info!("created workspace '{}'", trimmed);
         Ok(())
     }
 
-    /// 現在アクティブなワークスペースを切り替える
+    /// Switch the currently active workspace.
     ///
-    /// 切替後のワークスペース名を返す。
+    /// Returns the post-switch workspace name.
     pub async fn switch_workspace(&self, name: &str) -> Result<String> {
         let mut state = self.workspace_state.lock().await;
         if !state.known.iter().any(|w| w == name) {
-            bail!("ワークスペース '{}' が見つかりません", name);
+            bail!("workspace '{}' not found", name);
         }
         state.current = name.to_string();
-        info!("ワークスペース '{}' に切り替えました", name);
+        info!("switched to workspace '{}'", name);
         Ok(state.current.clone())
     }
 
-    /// ワークスペースをリネームする
+    /// Rename a workspace.
     ///
-    /// 配下のセッションの `workspace_name` も一括更新する。
+    /// Updates the `workspace_name` of every session that belongs to it.
     pub async fn rename_workspace(&self, from: &str, to: &str) -> Result<()> {
         let to_trimmed = to.trim();
         if to_trimmed.is_empty() {
-            bail!("新しいワークスペース名が空です");
+            bail!("new workspace name is empty");
         }
         if from == to_trimmed {
             return Ok(());
         }
         let mut state = self.workspace_state.lock().await;
         if !state.known.iter().any(|w| w == from) {
-            bail!("ワークスペース '{}' が見つかりません", from);
+            bail!("workspace '{}' not found", from);
         }
         if state.known.iter().any(|w| w == to_trimmed) {
-            bail!("ワークスペース '{}' は既に存在します", to_trimmed);
+            bail!("workspace '{}' already exists", to_trimmed);
         }
         if from == DEFAULT_WORKSPACE {
             bail!(
-                "デフォルトワークスペース '{}' はリネームできません",
+                "cannot rename the default workspace '{}'",
                 DEFAULT_WORKSPACE
             );
         }
 
-        // known 内の名前を置換
+        // Replace the name inside `known`.
         for w in state.known.iter_mut() {
             if w == from {
                 *w = to_trimmed.to_string();
             }
         }
-        // current も更新
+        // Update `current` as well.
         if state.current == from {
             state.current = to_trimmed.to_string();
         }
-        // セッション側の workspace_name も更新
+        // Update `workspace_name` on every session too.
         let mut sessions = self.sessions.lock().await;
         for session in sessions.values_mut() {
             if session.workspace_name == from {
                 session.workspace_name = to_trimmed.to_string();
             }
         }
-        info!(
-            "ワークスペース '{}' を '{}' にリネームしました",
-            from, to_trimmed
-        );
+        info!("renamed workspace '{}' to '{}'", from, to_trimmed);
         Ok(())
     }
 
-    /// ワークスペースを削除する
+    /// Delete a workspace.
     ///
-    /// `default` は削除不可。配下にセッションがある場合は `force=true` で default に
-    /// 退避させて削除を強行する。削除したワークスペースが current の場合、
-    /// current は default に戻る。
+    /// `default` cannot be deleted. If sessions still belong to it, pass `force=true` to migrate
+    /// them to `default` and force the deletion. When the deleted workspace was current, current
+    /// reverts to `default`.
     pub async fn delete_workspace(&self, name: &str, force: bool) -> Result<()> {
         if name == DEFAULT_WORKSPACE {
             bail!(
-                "デフォルトワークスペース '{}' は削除できません",
+                "cannot delete the default workspace '{}'",
                 DEFAULT_WORKSPACE
             );
         }
         let mut state = self.workspace_state.lock().await;
         if !state.known.iter().any(|w| w == name) {
-            bail!("ワークスペース '{}' が見つかりません", name);
+            bail!("workspace '{}' not found", name);
         }
-        // 配下セッション数チェック
+        // Check the number of sessions belonging to it.
         let mut sessions = self.sessions.lock().await;
         let session_count = sessions
             .values()
@@ -955,12 +952,12 @@ impl SessionManager {
             .count();
         if session_count > 0 && !force {
             bail!(
-                "ワークスペース '{}' にはセッションが {} 件残っています。force=true で再試行してください",
+                "workspace '{}' still has {} session(s); retry with force=true",
                 name,
                 session_count
             );
         }
-        // force=true: セッションを default に退避
+        // force=true: migrate sessions to default.
         if force {
             for session in sessions.values_mut() {
                 if session.workspace_name == name {
@@ -968,22 +965,19 @@ impl SessionManager {
                 }
             }
         }
-        // known から除去
+        // Remove from `known`.
         state.known.retain(|w| w != name);
-        // current だった場合は default に戻す
+        // If it was current, revert to default.
         if state.current == name {
             state.current = DEFAULT_WORKSPACE.to_string();
         }
-        info!(
-            "ワークスペース '{}' を削除しました（force={}）",
-            name, force
-        );
+        info!("deleted workspace '{}' (force={})", name, force);
         Ok(())
     }
 
-    // ---- スナップショット ----
+    // ---- Snapshot ----
 
-    /// 全セッションをスナップショットに変換する
+    /// Convert every session into a snapshot.
     pub async fn to_snapshot(&self) -> ServerSnapshot {
         let sessions = self.sessions.lock().await;
         let current_workspace = self.workspace_state.lock().await.current.clone();
@@ -996,22 +990,23 @@ impl SessionManager {
             sessions: sessions.values().map(|s| s.to_snapshot()).collect(),
             saved_at,
             current_workspace,
-            // OS Window 配置はクライアント側状態のため、サーバー側 to_snapshot では
-            // 空 Vec を返す。実際の配置は IPC 経由でクライアントから受信して埋める
-            // （現状は空配列で v4 互換のみ確保。専用 IPC は将来実装）。
+            // OS window placement is client-side state, so server-side `to_snapshot` returns an
+            // empty Vec. Actual placement should be filled in by the IPC layer using values
+            // received from the client (for now an empty array preserves v4 compatibility; a
+            // dedicated IPC for this will land later).
             client_os_windows: Vec::new(),
         }
     }
 
-    /// スナップショットから全セッションを復元する
+    /// Restore every session from a snapshot.
     ///
-    /// バージョン不一致や復元エラーのセッションは警告を出してスキップする。
-    /// 復元に成功したセッション名のリストを返す。
+    /// Sessions with a version mismatch or restore error are logged as warnings and skipped.
+    /// Returns the names of sessions that were restored successfully.
     pub async fn restore_from_snapshot(&self, snap: &ServerSnapshot) -> Vec<String> {
-        // persist::load_snapshot() でマイグレーション済みのため、ここでは MIN〜MAX の範囲チェックのみ
+        // `persist::load_snapshot()` already migrates, so only check the MIN..MAX range here.
         if snap.version < SNAPSHOT_VERSION_MIN || snap.version > SNAPSHOT_VERSION {
             warn!(
-                "スナップショットのバージョンがサポート範囲外（got={}, supported={}〜{}）。復元をスキップします",
+                "snapshot version out of supported range (got={}, supported={}..{}); skipping restore",
                 snap.version, SNAPSHOT_VERSION_MIN, SNAPSHOT_VERSION
             );
             return Vec::new();
@@ -1019,15 +1014,12 @@ impl SessionManager {
 
         let mut sessions = self.sessions.lock().await;
         let mut restored = Vec::new();
-        // 復元したセッションのワークスペース集合（既知集合に追加するため）
+        // Workspaces from restored sessions (added to the known set later).
         let mut restored_workspaces: Vec<String> = Vec::new();
 
         for sess_snap in &snap.sessions {
             if sessions.contains_key(&sess_snap.name) {
-                info!(
-                    "セッション '{}' は既に存在するためスキップします",
-                    sess_snap.name
-                );
+                info!("session '{}' already exists; skipping", sess_snap.name);
                 continue;
             }
             match Session::restore_from_snapshot(sess_snap) {
@@ -1038,26 +1030,23 @@ impl SessionManager {
                     }
                     sessions.insert(sess_snap.name.clone(), session);
                     restored.push(sess_snap.name.clone());
-                    info!("セッション '{}' を復元しました", sess_snap.name);
+                    info!("restored session '{}'", sess_snap.name);
                 }
                 Err(e) => {
-                    warn!(
-                        "セッション '{}' の復元に失敗しました: {}",
-                        sess_snap.name, e
-                    );
+                    warn!("failed to restore session '{}': {}", sess_snap.name, e);
                 }
             }
         }
         drop(sessions);
 
-        // ワークスペース状態を復元
+        // Restore workspace state.
         let mut state = self.workspace_state.lock().await;
         for ws in restored_workspaces {
             if !state.known.iter().any(|w| w == &ws) {
                 state.known.push(ws);
             }
         }
-        // current_workspace を復元（既知集合にあれば採用、なければ default のまま）
+        // Restore `current_workspace` (use the value if it's in the known set; otherwise keep `default`).
         if !snap.current_workspace.is_empty()
             && state.known.iter().any(|w| w == &snap.current_workspace)
         {
@@ -1073,21 +1062,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shell_configデフォルトが空でない() {
+    fn shell_config_default_is_non_empty() {
         let cfg = nexterm_config::ShellConfig::default();
         assert!(!cfg.program.is_empty());
     }
 
     #[tokio::test]
-    async fn セッション一覧が空で始まる() {
+    async fn session_list_starts_empty() {
         let manager = SessionManager::new(nexterm_config::ShellConfig::default());
         let list = manager.list_sessions().await;
         assert!(list.is_empty());
     }
 
     #[tokio::test]
-    #[allow(non_snake_case)]
-    async fn セッション取得で存在しない名前はNone() {
+    async fn session_lookup_for_missing_name_returns_none() {
         let manager = SessionManager::new(nexterm_config::ShellConfig::default());
         let arc = manager.sessions();
         let sessions = arc.lock().await;
@@ -1095,27 +1083,26 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(non_snake_case)]
-    async fn セッション削除で存在しない名前はErr() {
+    async fn kill_session_for_missing_name_returns_err() {
         let manager = SessionManager::new(nexterm_config::ShellConfig::default());
         let result = manager.kill_session("nonexistent").await;
         assert!(
             result.is_err(),
-            "存在しないセッションの kill は Err を返すべき"
+            "killing a nonexistent session should return Err"
         );
     }
 
     #[tokio::test]
-    async fn セッション一覧が初期状態では空() {
+    async fn session_list_starts_empty_at_init() {
         let manager = SessionManager::new(nexterm_config::ShellConfig::default());
         let list = manager.list_sessions().await;
-        assert_eq!(list.len(), 0, "初期状態では空のリストを返すべき");
+        assert_eq!(list.len(), 0, "the list must be empty at init");
     }
 
-    // ---- ワークスペース API ユニットテスト（PTY 不要） ----
+    // ---- Workspace API unit tests (no PTY required) ----
 
     #[tokio::test]
-    async fn ワークスペース初期状態() {
+    async fn workspace_initial_state() {
         let manager = SessionManager::new(nexterm_config::ShellConfig::default());
         assert_eq!(manager.current_workspace().await, DEFAULT_WORKSPACE);
         let (current, list) = manager.list_workspaces().await;
@@ -1127,7 +1114,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ワークスペース作成と切替() {
+    async fn workspace_create_and_switch() {
         let manager = SessionManager::new(nexterm_config::ShellConfig::default());
         manager.create_workspace("dev").await.unwrap();
 
@@ -1138,12 +1125,12 @@ mod tests {
         manager.switch_workspace("dev").await.unwrap();
         assert_eq!(manager.current_workspace().await, "dev");
 
-        // 存在しないワークスペースへの切替はエラー
+        // Switching to a nonexistent workspace returns an error.
         assert!(manager.switch_workspace("unknown").await.is_err());
     }
 
     #[tokio::test]
-    async fn ワークスペース重複作成はエラー() {
+    async fn workspace_duplicate_create_is_error() {
         let manager = SessionManager::new(nexterm_config::ShellConfig::default());
         manager.create_workspace("dev").await.unwrap();
         assert!(manager.create_workspace("dev").await.is_err());
@@ -1152,14 +1139,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ワークスペース削除() {
+    async fn workspace_delete() {
         let manager = SessionManager::new(nexterm_config::ShellConfig::default());
         manager.create_workspace("tmp").await.unwrap();
         manager.delete_workspace("tmp", false).await.unwrap();
         let (_, list) = manager.list_workspaces().await;
         assert_eq!(list.len(), 1);
 
-        // default は削除不可
+        // Default cannot be deleted.
         assert!(
             manager
                 .delete_workspace(DEFAULT_WORKSPACE, true)
@@ -1167,12 +1154,12 @@ mod tests {
                 .is_err()
         );
 
-        // 存在しないワークスペース削除はエラー
+        // Deleting a nonexistent workspace returns an error.
         assert!(manager.delete_workspace("ghost", false).await.is_err());
     }
 
     #[tokio::test]
-    async fn ワークスペース削除でアクティブが_default_に戻る() {
+    async fn workspace_delete_reverts_active_to_default() {
         let manager = SessionManager::new(nexterm_config::ShellConfig::default());
         manager.create_workspace("dev").await.unwrap();
         manager.switch_workspace("dev").await.unwrap();
@@ -1181,7 +1168,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ワークスペースリネーム() {
+    async fn workspace_rename() {
         let manager = SessionManager::new(nexterm_config::ShellConfig::default());
         manager.create_workspace("old").await.unwrap();
         manager.switch_workspace("old").await.unwrap();
@@ -1191,7 +1178,7 @@ mod tests {
         assert!(list.iter().any(|w| w.name == "new"));
         assert!(!list.iter().any(|w| w.name == "old"));
 
-        // default のリネームは禁止
+        // Renaming default is forbidden.
         assert!(
             manager
                 .rename_workspace(DEFAULT_WORKSPACE, "x")
@@ -1199,32 +1186,33 @@ mod tests {
                 .is_err()
         );
 
-        // 存在しない名前のリネームはエラー
+        // Renaming a nonexistent name returns an error.
         assert!(manager.rename_workspace("ghost", "y").await.is_err());
 
-        // 既存名との衝突はエラー
+        // Collision with an existing name returns an error.
         manager.create_workspace("a").await.unwrap();
         manager.create_workspace("b").await.unwrap();
         assert!(manager.rename_workspace("a", "b").await.is_err());
     }
-    // ── 実 PTY を spawn するテスト ────────────────────────────────────────────
+    // ── Tests that spawn an actual PTY ─────────────────────────────────────────
     //
-    // 以下 4 つのテストは実際にシェル (PowerShell / $SHELL) を spawn し、
-    // テスト終了時に `Pane` の Drop が `MasterPty` を閉じる。
+    // The following 4 tests actually spawn a shell (PowerShell / $SHELL); when the test ends,
+    // `Pane::Drop` closes the `MasterPty`.
     //
-    // 対話モードのシェルは終了コマンドを受け取らないため close 待ちが永遠に
-    // 続き、`#[tokio::test]` の runtime が blocking task を待つ間にテストが
-    // ハングする (Windows ConPTY / Linux pty 共に観測済み、macOS のみ偶然
-    // EOF が早く伝播して通る環境がある)。
+    // Interactive shells do not receive a termination command, so the close wait loops forever
+    // and the `#[tokio::test]` runtime hangs while waiting on the blocking task. (Observed on
+    // Windows ConPTY and Linux PTY; only on macOS does EOF occasionally propagate fast enough
+    // that the test happens to pass.)
     //
-    // CI を緑にする目的では `#[ignore]` で除外し、ローカル/手動検証時のみ
-    // `cargo test --workspace --all-targets -- --include-ignored` で走らせる。
+    // To keep CI green, these are marked `#[ignore]` and skipped from the default run. For
+    // local/manual verification use:
+    //   `cargo test --workspace --all-targets -- --include-ignored`.
     //
-    // 抜本対策は portable-pty の Drop ハングを回避する仕組み (e.g. 明示的
-    // kill_child API の導入や別プロセス分離) を入れた後で `#[ignore]` を外す。
+    // A proper fix requires avoiding the portable-pty Drop hang (e.g. introducing an explicit
+    // `kill_child` API or process isolation). Once that is in place we can drop `#[ignore]`.
 
     #[tokio::test]
-    #[ignore = "PTY を spawn する。対話シェルの close 待ちでハングするため通常 CI では skip"]
+    #[ignore = "spawns a PTY; hangs on interactive shell close in regular CI"]
     async fn session_new_creates_valid_session() {
         let shell = nexterm_config::ShellConfig::default();
         let session = Session::new(
@@ -1244,7 +1232,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "PTY を spawn する。対話シェルの close 待ちでハングするため通常 CI では skip"]
+    #[ignore = "spawns a PTY; hangs on interactive shell close in regular CI"]
     async fn session_info_returns_correct_metadata() {
         let shell = nexterm_config::ShellConfig::default();
         let session = Session::new("test".to_string(), 80, 24, shell.program, shell.args).unwrap();
@@ -1257,7 +1245,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "PTY を spawn する。対話シェルの close 待ちでハングするため通常 CI では skip"]
+    #[ignore = "spawns a PTY; hangs on interactive shell close in regular CI"]
     async fn session_manager_create_new_session() {
         let manager = SessionManager::new(nexterm_config::ShellConfig::default());
 
@@ -1272,7 +1260,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "PTY を spawn する。対話シェルの close 待ちでハングするため通常 CI では skip"]
+    #[ignore = "spawns a PTY; hangs on interactive shell close in regular CI"]
     async fn session_manager_kill_existing_session() {
         let manager = SessionManager::new(nexterm_config::ShellConfig::default());
         manager
