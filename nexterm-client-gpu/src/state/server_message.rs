@@ -1,11 +1,11 @@
-//! サーバーメッセージ適用とスクロールバック / プロンプトジャンプ操作
+//! Server message dispatch and scrollback / prompt-jump operations
 //!
-//! `state/mod.rs` から抽出した:
-//! - `impl ClientState { apply_server_message }` — サーバーから受信した全
-//!   `ServerToClient` メッセージのディスパッチと状態反映
+//! Extracted from `state/mod.rs`:
+//! - `impl ClientState { apply_server_message }` — dispatch every received
+//!   `ServerToClient` message and apply it to the state
 //! - `impl ClientState { scroll_up / scroll_down / jump_prev_prompt / jump_next_prompt }` —
-//!   スクロールバックのオフセット操作および OSC 133 PromptStart anchor ベースのプロンプトジャンプ
-//! - 単体テスト群（FullRefresh / GridDiff / 検索のライフサイクル / Quick Select 拡充）
+//!   scrollback offset manipulation and prompt jumps based on OSC 133 PromptStart anchors
+//! - Unit tests (FullRefresh / GridDiff / search lifecycle / Quick Select expansion)
 
 use nexterm_proto::ServerToClient;
 
@@ -40,7 +40,7 @@ impl ClientState {
             } => {
                 if let Some(pane) = self.panes.get_mut(&pane_id) {
                     pane.apply_diff(dirty_rows, cursor_col, cursor_row);
-                    // 非フォーカスペインへの出力はアクティビティとしてマーク
+                    // Output to a non-focused pane is marked as activity
                     if self.focused_pane_id != Some(pane_id) {
                         pane.has_activity = true;
                     }
@@ -52,16 +52,16 @@ impl ClientState {
                 server_version,
             } => {
                 tracing::info!(
-                    "サーバー HelloAck 受信: proto={}, server_version={}",
+                    "received HelloAck from server: proto={}, server_version={}",
                     proto_version,
                     server_version
                 );
             }
             ServerToClient::Error { message } => {
-                tracing::error!("サーバーエラー: {}", message);
-                // Sprint 5-12 Phase 1: UI バナーへ反映してユーザーに可視化する。
-                // 例: PTY spawn 失敗（PowerShell 起動失敗等）、設定ロードエラー、
-                // ペイン分割失敗。バナーは Esc キーで閉じられる。
+                tracing::error!("server error: {}", message);
+                // Sprint 5-12 Phase 1: reflect on the UI banner so the user can see it.
+                // E.g. PTY spawn failure (PowerShell spawn failure etc.), config-load
+                // error, pane-split failure. Dismissed via the Esc key.
                 self.error_banner = Some(message);
             }
             ServerToClient::SessionList { .. } => {}
@@ -91,29 +91,30 @@ impl ClientState {
                 }
             }
             ServerToClient::Bell { pane_id } => {
-                // OS のウィンドウ注目要求をトリガーするためフラグを立てる
+                // Set the flag to trigger the OS user-attention request
                 self.pending_bell = true;
-                // Sprint 5-11-5: SR にも通知するため Role::Alert キューに追加
-                self.add_alert(AlertKind::Bell, pane_id, "ベル".to_string(), String::new());
+                // Sprint 5-11-5: also push to the Role::Alert queue so SRs get notified
+                self.add_alert(AlertKind::Bell, pane_id, "Bell".to_string(), String::new());
             }
             ServerToClient::RecordingStarted { .. } | ServerToClient::RecordingStopped { .. } => {}
-            // Sprint 5-8 Phase 4-4: WindowListChanged で focused Window ID を追跡する。
-            // タブ外ドロップ判定（`handle_tab_drag_drop_outside` の `OtherWindowTabBar` 分岐）で
-            // 主 OS Window がターゲットの場合の `target_window_id` 解決に使用する。
+            // Sprint 5-8 Phase 4-4: track the focused Window ID via WindowListChanged.
+            // Used to resolve `target_window_id` when the primary OS Window is the
+            // target in the out-of-tab drop path (`OtherWindowTabBar` branch of
+            // `handle_tab_drag_drop_outside`).
             ServerToClient::WindowListChanged { windows } => {
                 if let Some(focused) = windows.iter().find(|w| w.is_focused) {
                     self.focused_server_window_id = focused.window_id;
                 }
             }
             ServerToClient::PaneClosed { .. } => {}
-            // OSC 0/2 タイトル変更 — ペインのタイトルフィールドを更新する
+            // OSC 0/2 title change — update the pane's title field
             ServerToClient::TitleChanged { pane_id, title } => {
                 if let Some(pane) = self.panes.get_mut(&pane_id) {
                     pane.title = title;
                 }
             }
-            // DesktopNotification と ClipboardWriteRequest は event_handler 側で
-            // SecurityConfig ポリシーに従って処理する（state.rs では何もしない）
+            // DesktopNotification and ClipboardWriteRequest are handled by event_handler
+            // according to the SecurityConfig policy (state.rs does nothing).
             ServerToClient::DesktopNotification { .. } => {}
             ServerToClient::ClipboardWriteRequest { .. } => {}
             ServerToClient::BroadcastModeChanged { enabled } => {
@@ -126,9 +127,9 @@ impl ClientState {
             ServerToClient::ZoomChanged { is_zoomed } => {
                 self.is_zoomed = is_zoomed;
             }
-            // ペイン分離・シリアル接続はサーバーから LayoutChanged / WindowListChanged が後続するため状態更新不要
+            // Pane detach / serial connect are followed by LayoutChanged / WindowListChanged from the server, so no state update is needed here
             ServerToClient::PaneBroken { .. } | ServerToClient::SerialConnected { .. } => {}
-            // SFTP 転送進捗・完了はステータスバーに表示する
+            // SFTP transfer progress / completion is shown in the status bar
             ServerToClient::SftpProgress {
                 path,
                 transferred,
@@ -144,8 +145,8 @@ impl ClientState {
                     self.status_bar_text = format!("SFTP OK: {}", path);
                 }
             }
-            // OSC 133 セマンティックゾーンマーク — ステータスバーに最新コマンド終了コードを表示
-            //   + A (PromptStart) で jump-to-prompt 用の anchor を記録（Sprint 5-2 / B1）
+            // OSC 133 semantic zone marks — show the latest command's exit code in the status bar,
+            //   and on A (PromptStart) record an anchor for jump-to-prompt (Sprint 5-2 / B1).
             ServerToClient::SemanticMark {
                 pane_id,
                 kind,
@@ -155,12 +156,12 @@ impl ClientState {
                 if kind == "A"
                     && let Some(pane) = self.panes.get_mut(&pane_id)
                 {
-                    // 重複登録防止: 最後の anchor と同一なら追加しない
+                    // Deduplicate: skip when identical to the most recent anchor
                     let next_idx = pane.scrollback.len();
                     if pane.prompt_anchors.last().copied() != Some(next_idx) {
                         pane.prompt_anchors.push(next_idx);
                     }
-                    // anchor の保持上限（メモリ DoS 防止）。古いものから削除。
+                    // Cap on retained anchors (memory DoS guard). Drop the oldest.
                     const MAX_PROMPT_ANCHORS: usize = 1024;
                     if pane.prompt_anchors.len() > MAX_PROMPT_ANCHORS {
                         let excess = pane.prompt_anchors.len() - MAX_PROMPT_ANCHORS;
@@ -178,8 +179,8 @@ impl ClientState {
                     }
                 }
             }
-            // フローティングペインイベント — 位置情報をキャッシュするが、
-            // レンダラー側での描画は renderer.rs で別途実装する
+            // Floating pane events — cache the position info, but the actual
+            // rendering is implemented separately in renderer.rs.
             ServerToClient::FloatingPaneOpened {
                 pane_id,
                 col_off,
@@ -222,7 +223,7 @@ impl ClientState {
                 focused_pane_id,
             } => {
                 let prev_focused = self.focused_pane_id;
-                // Sprint 5-7 / Phase 3-2: 新規追加されたペインを検出してフェードインアニメーションを記録
+                // Sprint 5-7 / Phase 3-2: detect newly added panes and record the fade-in animation
                 let now = std::time::Instant::now();
                 let prev_pane_ids: std::collections::HashSet<u32> =
                     self.pane_layouts.keys().copied().collect();
@@ -231,40 +232,40 @@ impl ClientState {
                         self.animations.record_pane_added(layout.pane_id, now);
                     }
                 }
-                // 消えたペインの状態をクリーンアップ
+                // Clean up state for panes that disappeared
                 let new_pane_ids: std::collections::HashSet<u32> =
                     panes.iter().map(|l| l.pane_id).collect();
                 for removed_id in prev_pane_ids.difference(&new_pane_ids) {
                     self.animations.record_pane_removed(*removed_id);
                 }
 
-                // レイアウトを全更新する
+                // Refresh the whole layout
                 self.pane_layouts.clear();
-                // Sprint 5-7 / Phase 2-3: panes 配列の登場順を tab_order に反映
-                // （サーバーが Window.pane_order に従って並べているため、これが論理タブ順）
+                // Sprint 5-7 / Phase 2-3: reflect the order panes appear in the array into tab_order
+                // (the server orders them by Window.pane_order, so that is the logical tab order).
                 self.tab_order = panes.iter().map(|l| l.pane_id).collect();
                 for layout in panes {
                     self.pane_layouts.insert(layout.pane_id, layout);
                 }
-                // フォーカスペインを更新してアクティビティフラグをクリアする
+                // Update the focused pane and clear its activity flag
                 self.focused_pane_id = Some(focused_pane_id);
                 if let Some(pane) = self.panes.get_mut(&focused_pane_id) {
                     pane.has_activity = false;
                 }
-                // Sprint 5-7 / Phase 3-2: タブ切替アニメーションを記録（変化があった場合のみ）
+                // Sprint 5-7 / Phase 3-2: record the tab-switch animation (only when it actually changed)
                 if prev_focused != Some(focused_pane_id) {
                     self.animations.record_tab_switch(focused_pane_id, now);
                 }
             }
-            // プラグイン操作応答は GPU クライアントでは無視する
+            // Plugin operation responses are ignored in the GPU client
             ServerToClient::PluginList { .. } | ServerToClient::PluginOk { .. } => {}
-            // Sprint 5-2 / B2: OSC 7 CWD 通知 — PaneState に保存（UI 表示は今後拡張）
+            // Sprint 5-2 / B2: OSC 7 CWD notification — store on PaneState (UI display to come later)
             ServerToClient::CwdChanged { pane_id, cwd } => {
                 if let Some(pane) = self.panes.get_mut(&pane_id) {
                     pane.cwd = Some(cwd);
                 }
             }
-            // Sprint 5-7 / Phase 2-1: ワークスペース一覧 / 切替通知
+            // Sprint 5-7 / Phase 2-1: workspace list / switch notification
             ServerToClient::WorkspaceList {
                 current,
                 workspaces: _,
@@ -274,17 +275,18 @@ impl ClientState {
             ServerToClient::WorkspaceSwitched { name } => {
                 self.current_workspace = name;
             }
-            // Sprint 5-7 / Phase 2-2: Quake モード トグル要求
+            // Sprint 5-7 / Phase 2-2: Quake mode toggle request.
             //
-            // nexterm-ctl などから IPC 経由でトグル要求が来た場合、ここでは
-            // 「保留中の Quake アクション」だけを記録し、実際のウィンドウ操作は
-            // lifecycle 側で winit Window への mutable アクセスを持って実行する。
+            // When a toggle request comes in over IPC (e.g. from nexterm-ctl), we only
+            // record the "pending Quake action" here. The actual window manipulation
+            // runs on the lifecycle side, which holds mutable access to the winit Window.
             ServerToClient::QuakeToggleRequest { action } => {
                 self.pending_quake_action = Some(action);
             }
-            // Phase 4-5: QueryForegroundProcess の応答。
-            // pending_close_request が該当 window_id の応答を待っている場合のみ
-            // 反映し、確認ダイアログ表示 / 即時 detach の判定材料にする。
+            // Phase 4-5: response to QueryForegroundProcess.
+            // Only reflected when `pending_close_request` is waiting on this `window_id`'s
+            // response; the result drives the "show confirmation dialog vs. detach
+            // immediately" decision.
             ServerToClient::ForegroundProcessStatus {
                 window_id,
                 has_foreground,
@@ -297,7 +299,7 @@ impl ClientState {
         }
     }
 
-    /// スクロールバックを1画面分上にスクロールする
+    /// Scroll the scrollback up by one screen
     pub fn scroll_up(&mut self, lines: usize) {
         if let Some(pane) = self.focused_pane_mut() {
             let max_offset = pane.scrollback.len().saturating_sub(1);
@@ -305,26 +307,26 @@ impl ClientState {
         }
     }
 
-    /// スクロールバックを1画面分下にスクロールする
+    /// Scroll the scrollback down by one screen
     pub fn scroll_down(&mut self, lines: usize) {
         if let Some(pane) = self.focused_pane_mut() {
             pane.scroll_offset = pane.scroll_offset.saturating_sub(lines);
         }
     }
 
-    /// 直前のシェルプロンプトへスクロールバックジャンプする（Sprint 5-2 / B1）
+    /// Jump in scrollback to the previous shell prompt (Sprint 5-2 / B1).
     ///
-    /// `prompt_anchors` を新しいものから順に走査し、現在の `scroll_offset` より大きい
-    /// 最小の anchor へジャンプする（= 画面上で1つ前の prompt）。
-    /// anchor がない or 最古に到達済みの場合は no-op。
-    /// 戻り値: ジャンプに成功したら `true`。
+    /// Walk `prompt_anchors` from newest to oldest and jump to the smallest anchor
+    /// greater than the current `scroll_offset` (= the prompt one screen earlier).
+    /// No-op if there are no anchors or we've already reached the oldest one.
+    /// Returns `true` on a successful jump.
     pub fn jump_prev_prompt(&mut self) -> bool {
         let Some(pane) = self.focused_pane_mut() else {
             return false;
         };
         let current = pane.scroll_offset;
         let max_offset = pane.scrollback.len().saturating_sub(1);
-        // anchor は scrollback の len ベースなので、scroll_offset との比較を直接行う
+        // Anchors are expressed in the same scrollback-length space, so compare against scroll_offset directly
         let target = pane
             .prompt_anchors
             .iter()
@@ -339,11 +341,12 @@ impl ClientState {
         }
     }
 
-    /// 次のシェルプロンプトへスクロールバックジャンプする（Sprint 5-2 / B1）
+    /// Jump in scrollback to the next shell prompt (Sprint 5-2 / B1).
     ///
-    /// 現在の `scroll_offset` より小さい最大の anchor へジャンプする（= 画面上で1つ後の prompt）。
-    /// anchor がない場合は no-op。最新の prompt より新しい位置にいる場合は `scroll_offset = 0` で
-    /// ライブ画面へ戻る。戻り値: ジャンプに成功したら `true`。
+    /// Jump to the largest anchor smaller than the current `scroll_offset`
+    /// (= the prompt one screen later). No-op if there are no anchors.
+    /// If we're past the newest prompt, snap back to the live screen by setting
+    /// `scroll_offset = 0`. Returns `true` on a successful jump.
     pub fn jump_next_prompt(&mut self) -> bool {
         let Some(pane) = self.focused_pane_mut() else {
             return false;
@@ -359,7 +362,7 @@ impl ClientState {
             pane.scroll_offset = idx;
             true
         } else if current > 0 && !pane.prompt_anchors.is_empty() {
-            // 全ての anchor より下にいる場合はライブ画面に戻す
+            // If we are below every anchor, snap back to the live screen
             pane.scroll_offset = 0;
             true
         } else {
@@ -375,7 +378,7 @@ mod tests {
     use nexterm_proto::{Cell, DirtyRow, Grid};
 
     #[test]
-    fn full_refreshでペインが登録される() {
+    fn full_refresh_registers_pane() {
         let mut state = ClientState::new(80, 24, 1000);
         state.apply_server_message(ServerToClient::FullRefresh {
             pane_id: 1,
@@ -386,7 +389,7 @@ mod tests {
     }
 
     #[test]
-    fn grid_diffで差分が適用される() {
+    fn grid_diff_applies_diff() {
         let mut state = ClientState::new(80, 24, 1000);
         state.apply_server_message(ServerToClient::FullRefresh {
             pane_id: 1,
@@ -405,7 +408,7 @@ mod tests {
     }
 
     #[test]
-    fn 検索のライフサイクル() {
+    fn search_lifecycle() {
         let mut state = ClientState::new(80, 24, 1000);
         state.start_search();
         assert!(state.search.is_active);
@@ -416,9 +419,9 @@ mod tests {
         assert!(state.search.query.is_empty());
     }
 
-    // ---- Sprint 5-4 / D1: Quick Select 拡充テスト ----
+    // ---- Sprint 5-4 / D1: Quick Select expansion tests ----
 
-    /// テキストを `Vec<Vec<Cell>>` に変換するヘルパー
+    /// Helper that converts text into `Vec<Vec<Cell>>`
     fn text_to_rows(lines: &[&str]) -> Vec<Vec<nexterm_proto::Cell>> {
         lines
             .iter()
@@ -488,18 +491,18 @@ mod tests {
 
     #[test]
     fn quick_select_url_priority_over_path() {
-        // URL に // 含まれるので path パターンとも重複しうるが、URL を優先すること
+        // URLs contain `//`, so they can overlap the path pattern, but URL must win
         let rows = text_to_rows(&["url: https://github.com/foo/bar"]);
         let matches = find_quick_select_matches(&rows);
         let url_match = matches
             .iter()
             .find(|m| m.text.starts_with("https://"))
-            .expect("URL を検出できなかった");
-        // path パターンが「/foo/bar」を奪っていないこと（URL に内包されている）
+            .expect("failed to detect URL");
+        // The path pattern must not steal `/foo/bar` (it is contained within the URL)
         assert!(url_match.text.contains("github.com/foo/bar"));
-        // URL マッチが path マッチと完全重複していないこと
+        // The URL match must not completely duplicate a path match
         let path_count = matches.iter().filter(|m| m.text == "/foo/bar").count();
-        assert_eq!(path_count, 0, "URL に含まれる path はマッチしないこと");
+        assert_eq!(path_count, 0, "path contained inside a URL must not match");
     }
 
     #[test]

@@ -1,11 +1,11 @@
-//! テキスト選択関連 — URL 検出、マウスドラッグ選択、コピーモード
+//! Text selection — URL detection, mouse drag selection, copy mode
 //!
-//! `state/mod.rs` から抽出した:
-//! - `DetectedUrl` + `detect_urls_in_row` — グリッド行から URL を検出
-//! - `MouseSelection` — マウスドラッグによるテキスト選択状態
-//! - `CopyModeState` — tmux 互換の Vim 風コピーモード
+//! Extracted from `state/mod.rs`:
+//! - `DetectedUrl` + `detect_urls_in_row` — detect URLs in a grid row
+//! - `MouseSelection` — text selection state driven by mouse drag
+//! - `CopyModeState` — tmux-compatible Vim-style copy mode
 
-/// グリッド上の URL とその範囲（アンダーライン描画・クリック判定に使用）
+/// URL on the grid with its range (used for underline rendering and click hit-testing)
 #[derive(Debug, Clone)]
 pub struct DetectedUrl {
     pub row: u16,
@@ -15,24 +15,24 @@ pub struct DetectedUrl {
 }
 
 impl DetectedUrl {
-    /// 指定のグリッドセルがこの URL の範囲内にあるかどうかを返す
+    /// Returns whether the given grid cell falls inside this URL's range
     pub fn contains(&self, col: u16, row: u16) -> bool {
         row == self.row && col >= self.col_start && col < self.col_end
     }
 }
 
-/// グリッドの行テキストから URL を検出して返す
+/// Detect URLs in the row text of a grid
 pub fn detect_urls_in_row(row_idx: u16, cells: &[nexterm_proto::Cell]) -> Vec<DetectedUrl> {
     let text: String = cells.iter().map(|c| c.ch).collect();
     let mut urls = Vec::new();
 
-    // https:// または http:// から始まる URL を検出する
+    // Detect URLs starting with https:// or http://
     let prefixes = ["https://", "http://"];
     for prefix in prefixes {
         let mut search_from = 0;
         while let Some(start) = text[search_from..].find(prefix) {
             let abs_start = search_from + start;
-            // URL の終端はスペース・制御文字・括弧で区切られる
+            // The URL terminates at whitespace, control chars, or brackets
             let end = text[abs_start..]
                 .find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | ')'))
                 .map(|i| abs_start + i)
@@ -51,13 +51,13 @@ pub fn detect_urls_in_row(row_idx: u16, cells: &[nexterm_proto::Cell]) -> Vec<De
     urls
 }
 
-/// マウスドラッグによるテキスト選択状態
+/// Mouse drag text selection state
 pub struct MouseSelection {
-    /// ドラッグ中かどうか
+    /// Whether a drag is in progress
     pub is_dragging: bool,
-    /// 選択開始セル（グリッド座標）
+    /// Selection start cell (grid coordinates)
     pub start: (u16, u16),
-    /// 選択終了セル（グリッド座標、ドラッグ中は随時更新）
+    /// Selection end cell (grid coordinates, updated continuously while dragging)
     pub end: (u16, u16),
 }
 
@@ -70,27 +70,27 @@ impl MouseSelection {
         }
     }
 
-    /// ドラッグ開始
+    /// Begin a drag
     pub fn begin(&mut self, col: u16, row: u16) {
         self.is_dragging = true;
         self.start = (col, row);
         self.end = (col, row);
     }
 
-    /// ドラッグ中の終端更新
+    /// Update the end point while dragging
     pub fn update(&mut self, col: u16, row: u16) {
         if self.is_dragging {
             self.end = (col, row);
         }
     }
 
-    /// ドラッグ終了
+    /// Finish the drag
     pub fn finish(&mut self) {
         self.is_dragging = false;
     }
 
-    /// 選択範囲を正規化して返す（start <= end を保証）
-    /// 何も選択されていない（start == end）場合は None を返す
+    /// Returns the normalized selection range (guarantees start <= end).
+    /// Returns None if nothing is selected (start == end).
     pub fn normalized(&self) -> Option<((u16, u16), (u16, u16))> {
         let (sc, sr) = self.start;
         let (ec, er) = self.end;
@@ -104,7 +104,7 @@ impl MouseSelection {
         }
     }
 
-    /// 指定セルが選択範囲内かどうかを返す
+    /// Returns whether the given cell is inside the selection range
     pub fn contains(&self, col: u16, row: u16) -> bool {
         if let Some(((sc, sr), (ec, er))) = self.normalized() {
             if row < sr || row > er {
@@ -126,17 +126,17 @@ impl MouseSelection {
     }
 }
 
-/// コピーモード（Vim 風テキスト選択）の状態
+/// Copy mode (Vim-style text selection) state
 pub struct CopyModeState {
-    /// コピーモードが有効かどうか
+    /// Whether copy mode is active
     pub is_active: bool,
-    /// カーソル列（グリッド座標、0始まり）
+    /// Cursor column (grid coordinates, 0-based)
     pub cursor_col: u16,
-    /// カーソル行（グリッド座標、0始まり）
+    /// Cursor row (grid coordinates, 0-based)
     pub cursor_row: u16,
-    /// 選択開始位置（v を押した時点のカーソル位置）
+    /// Selection start position (cursor position when `v` was pressed)
     pub selection_start: Option<(u16, u16)>,
-    /// インクリメンタル検索クエリ（Some の間は検索入力中）
+    /// Incremental search query (active while `Some`)
     pub search_query: Option<String>,
 }
 
@@ -151,7 +151,7 @@ impl CopyModeState {
         }
     }
 
-    /// コピーモードを開始してカーソルを現在のペインカーソルに合わせる
+    /// Enter copy mode and align the cursor to the current pane cursor
     pub fn enter(&mut self, pane_cursor_col: u16, pane_cursor_row: u16) {
         self.is_active = true;
         self.cursor_col = pane_cursor_col;
@@ -159,14 +159,14 @@ impl CopyModeState {
         self.selection_start = None;
     }
 
-    /// コピーモードを終了する
+    /// Exit copy mode
     pub fn exit(&mut self) {
         self.is_active = false;
         self.selection_start = None;
         self.search_query = None;
     }
 
-    /// 選択開始/終了をトグルする（v キー）
+    /// Toggle the start/end of the selection (the `v` key)
     pub fn toggle_selection(&mut self) {
         if self.selection_start.is_some() {
             self.selection_start = None;
@@ -175,7 +175,7 @@ impl CopyModeState {
         }
     }
 
-    /// 選択範囲を正規化して返す（開始 ≤ 終了 を保証する）
+    /// Returns the normalized selection range (guarantees start <= end)
     pub fn normalized_selection(&self) -> Option<((u16, u16), (u16, u16))> {
         let (sc, sr) = self.selection_start?;
         let (ec, er) = (self.cursor_col, self.cursor_row);

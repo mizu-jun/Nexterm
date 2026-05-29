@@ -1,17 +1,17 @@
-//! スクロールバック検索 — `SearchState` と `ClientState` 上のインクリメンタル検索メソッド
+//! Scrollback search — `SearchState` and the incremental search methods on `ClientState`
 //!
-//! `state/mod.rs` から抽出した:
-//! - `SearchState` — 検索クエリと現在マッチ位置の状態
-//! - `impl ClientState` — `start_search` / `push_search_char` / `pop_search_char` /
-//!   `search_next` / `search_prev` / `end_search` などのインクリメンタル検索操作
+//! Extracted from `state/mod.rs`:
+//! - `SearchState` — state of the search query and the current match position
+//! - `impl ClientState` — incremental search operations such as `start_search` /
+//!   `push_search_char` / `pop_search_char` / `search_next` / `search_prev` / `end_search`
 
 use super::ClientState;
 
-/// インクリメンタル検索の状態
+/// Incremental search state
 pub struct SearchState {
     pub query: String,
     pub is_active: bool,
-    /// 現在ハイライト中の行インデックス（スクロールバック内）
+    /// Currently highlighted row index (inside the scrollback)
     pub current_match: Option<usize>,
 }
 
@@ -26,32 +26,32 @@ impl SearchState {
 }
 
 impl ClientState {
-    /// スクロールバック検索を開始する
+    /// Start a scrollback search
     pub fn start_search(&mut self) {
         self.search.is_active = true;
         self.search.query.clear();
         self.search.current_match = None;
     }
 
-    /// 検索クエリに文字を追加してインクリメンタルに検索する
+    /// Append a char to the query and re-run the incremental search
     pub fn push_search_char(&mut self, ch: char) {
         self.search.query.push(ch);
         self.search_next_from(0);
     }
 
-    /// 検索クエリの末尾を削除する
+    /// Pop the last char off the search query
     pub fn pop_search_char(&mut self) {
         self.search.query.pop();
         self.search_next_from(0);
     }
 
-    /// 次のマッチへ移動する
+    /// Move to the next match
     pub fn search_next(&mut self) {
         let from = self.search.current_match.map(|m| m + 1).unwrap_or(0);
         self.search_next_from(from);
     }
 
-    /// 前のマッチへ移動する
+    /// Move to the previous match
     pub fn search_prev(&mut self) {
         let query = self.search.query.clone();
         let current = self.search.current_match.unwrap_or(0);
@@ -68,7 +68,7 @@ impl ClientState {
 
     pub(super) fn search_next_from(&mut self, from: usize) {
         let query = self.search.query.clone();
-        // 先に検索結果を取得してからボローを解放する
+        // Compute the result first so the borrow is released before we re-borrow
         let result = self
             .focused_pane_mut()
             .and_then(|pane| pane.scrollback.search_next(&query, from));
@@ -80,7 +80,7 @@ impl ClientState {
         }
     }
 
-    /// 検索を終了する
+    /// End the search
     pub fn end_search(&mut self) {
         self.search.is_active = false;
         self.search.query.clear();

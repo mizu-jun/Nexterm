@@ -1,14 +1,14 @@
-//! 機密操作の同意ダイアログ（Sprint 4-1）
+//! Consent dialogs for sensitive operations (Sprint 4-1)
 //!
-//! `state/mod.rs` から抽出した:
-//! - `ConsentKind` — 同意要求の種別（OpenUrl / ClipboardWrite / Notification）
-//! - `ConsentDialog` — ダイアログの状態（種別と選択中ボタンインデックス）
-//! - `SessionConsentOverrides` — セッション中の「常に許可 / 拒否」オーバーライド
+//! Extracted from `state/mod.rs`:
+//! - `ConsentKind` — kind of consent request (OpenUrl / ClipboardWrite / Notification)
+//! - `ConsentDialog` — dialog state (kind and selected button index)
+//! - `SessionConsentOverrides` — session-wide "always allow / deny" overrides
 
-/// 同意ダイアログの種別ごとに「セッション内で常に許可/拒否」を保持する
+/// Holds "always allow/deny within the session" per consent dialog kind.
 ///
-/// `None` のままならポリシーに従う（つまり再びダイアログが出る）。
-/// ユーザーが [Always Allow] / [Always Deny] を選んだ場合のみ書き込まれる。
+/// While `None`, fall back to the policy (i.e. the dialog will be shown again).
+/// Only written when the user picks [Always Allow] / [Always Deny].
 #[derive(Default)]
 pub struct SessionConsentOverrides {
     pub external_url: Option<bool>,
@@ -16,35 +16,35 @@ pub struct SessionConsentOverrides {
     pub osc_notification: Option<bool>,
 }
 
-/// 同意ダイアログの種別
+/// Consent dialog kind
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConsentKind {
-    /// 外部 URL を開こうとしている
+    /// Attempting to open an external URL
     OpenUrl(String),
-    /// OSC 52 クリップボード書き込み要求
+    /// OSC 52 clipboard write request
     ClipboardWrite {
-        /// 要求元ペイン ID（None = ローカル発行）
+        /// Requesting pane ID (None = locally issued)
         source_pane: Option<u32>,
-        /// 書き込みテキスト
+        /// Text to write
         text: String,
     },
-    /// OSC 9 / 777 デスクトップ通知要求
+    /// OSC 9 / 777 desktop notification request
     Notification {
-        /// 要求元ペイン ID
+        /// Requesting pane ID
         source_pane: u32,
-        /// 通知タイトル
+        /// Notification title
         title: String,
-        /// 通知本文
+        /// Notification body
         body: String,
     },
 }
 
-/// 同意ダイアログの状態
+/// Consent dialog state
 #[derive(Clone, Debug)]
 pub struct ConsentDialog {
-    /// 同意要求の種別
+    /// Kind of consent request
     pub kind: ConsentKind,
-    /// 選択中のボタンインデックス (0=Allow, 1=Deny, 2=Always Allow, 3=Always Deny)
+    /// Selected button index (0=Allow, 1=Deny, 2=Always Allow, 3=Always Deny)
     pub selected: usize,
 }
 

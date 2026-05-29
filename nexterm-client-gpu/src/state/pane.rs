@@ -1,9 +1,9 @@
-//! ペインの描画状態 — `PaneState`、配置済み画像、フローティングペイン位置情報
+//! Pane rendering state — `PaneState`, placed images, floating pane geometry
 //!
-//! `state/mod.rs` から抽出した:
-//! - `FloatRect` — フローティングペインの位置・サイズ
-//! - `PlacedImage` — Sixel / Kitty で配置された画像のメタデータ + RGBA
-//! - `PaneState` — グリッド / カーソル / スクロールバック / 画像 / プロンプトアンカーを束ねるペイン単位の状態
+//! Extracted from `state/mod.rs`:
+//! - `FloatRect` — floating pane position and size
+//! - `PlacedImage` — Sixel / Kitty placed image metadata + RGBA
+//! - `PaneState` — per-pane state bundling grid / cursor / scrollback / images / prompt anchors
 
 use std::collections::HashMap;
 
@@ -11,7 +11,7 @@ use nexterm_proto::Grid;
 
 use crate::scrollback::Scrollback;
 
-/// フローティングペインの位置・サイズ情報
+/// Floating pane position and size information
 #[derive(Clone, Debug)]
 pub struct FloatRect {
     #[allow(dead_code)]
@@ -24,7 +24,7 @@ pub struct FloatRect {
     pub rows: u16,
 }
 
-/// 配置済み画像
+/// Placed image
 pub struct PlacedImage {
     pub col: u16,
     pub row: u16,
@@ -33,38 +33,38 @@ pub struct PlacedImage {
     pub rgba: Vec<u8>,
 }
 
-/// ペインの描画状態
+/// Pane rendering state
 pub struct PaneState {
     pub grid: Grid,
     pub cursor_col: u16,
     pub cursor_row: u16,
     pub scrollback: Scrollback,
-    /// スクロールバックのオフセット（0 = 最新画面）
+    /// Scrollback offset (0 = latest screen)
     pub scroll_offset: usize,
-    /// 配置済み画像（image_id → PlacedImage）
+    /// Placed images (image_id → PlacedImage)
     pub images: HashMap<u32, PlacedImage>,
-    /// バックグラウンドアクティビティフラグ（非フォーカス時に出力があると true）
+    /// Background activity flag (true when output arrives while not focused)
     pub has_activity: bool,
-    /// OSC 0/2 で設定されたタイトル（シェルや vim がウィンドウタイトルを設定する）
+    /// Title set via OSC 0/2 (shells and vim set the window title)
     pub title: String,
-    /// OSC 7 で報告された現在の作業ディレクトリ（Sprint 5-2 / B2）
+    /// Current working directory reported via OSC 7 (Sprint 5-2 / B2)
     ///
-    /// シェルが `printf '\\033]7;file://...' "$PWD"` 等を出力したときに更新される。
-    /// タブのツールチップ表示・新規ペイン作成時の親 CWD 継承に利用する。
-    /// 一度も OSC 7 が来ていない場合は `None`。
+    /// Updated when the shell emits `printf '\\033]7;file://...' "$PWD"` or similar.
+    /// Used for tab tooltips and inheriting the parent CWD when creating a new pane.
+    /// `None` if OSC 7 has never been received.
     pub cwd: Option<String>,
-    /// OSC 133 A (PromptStart) マークが届いた時点の scrollback 長を保持する（Sprint 5-2 / B1）
+    /// Records the scrollback length at the moment an OSC 133 A (PromptStart) mark arrives (Sprint 5-2 / B1)
     ///
-    /// `scroll_offset` と同じ「scrollback 内の行インデックス」空間で表現する。
-    /// `jump_prev_prompt` / `jump_next_prompt` でこのリストを辿って前後のプロンプトへジャンプする。
-    /// 概算であり、画面再描画やリサイズで多少ズレる可能性がある。
+    /// Expressed in the same "row index inside scrollback" space as `scroll_offset`.
+    /// `jump_prev_prompt` / `jump_next_prompt` traverse this list to jump between prompts.
+    /// This is approximate and can drift slightly across redraws and resizes.
     pub prompt_anchors: Vec<usize>,
 }
 
 impl PaneState {
-    // Sprint 5-11-2 Step 2-1: `accessibility::tests` から手動でペインを構築するため
-    // `pub(super)` → `pub(crate)` に拡大。プロダクションコードからの呼び出しは
-    // `apply_server_message` 経由（state/server_message.rs）のみ。
+    // Sprint 5-11-2 Step 2-1: widened from `pub(super)` to `pub(crate)` so that
+    // `accessibility::tests` can build panes manually. Production code only
+    // invokes this via `apply_server_message` (state/server_message.rs).
     pub(crate) fn new(cols: u16, rows: u16, scrollback_capacity: usize) -> Self {
         Self {
             grid: Grid::new(cols, rows),
@@ -88,14 +88,14 @@ impl PaneState {
     ) {
         for dirty in dirty_rows {
             if let Some(row) = self.grid.rows.get_mut(dirty.row as usize) {
-                // スクロールアウト前の行をスクロールバックに積む
+                // Push the pre-scrollout row onto the scrollback
                 self.scrollback.push_line(row.clone());
                 *row = dirty.cells;
             }
         }
         self.cursor_col = cursor_col;
         self.cursor_row = cursor_row;
-        // 新しい出力が来たら最新画面にスクロールバックする
+        // New output arrived, so snap back to the latest screen
         self.scroll_offset = 0;
     }
 }

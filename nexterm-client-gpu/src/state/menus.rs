@@ -1,17 +1,18 @@
-//! メニュー / ダイアログ系 — コンテキストメニュー、ファイル転送、Quick Select
+//! Menus / dialogs — context menu, file transfer, Quick Select
 //!
-//! `state/mod.rs` から抽出した:
-//! - `ContextMenuAction` / `ContextMenuItem` / `ContextMenu` — 右クリックメニュー
-//! - `FileTransferDialog` — SFTP アップロード / ダウンロードダイアログ
-//! - `QuickSelectMatch` / `QuickSelectState` — グリッド上の URL / Email / Path 等を
-//!   ラベル付きでハイライトして高速選択する Quick Select モード
-//! - `find_quick_select_matches` — 正規表現でグリッド全体からマッチを抽出（優先度重複制御あり）
+//! Extracted from `state/mod.rs`:
+//! - `ContextMenuAction` / `ContextMenuItem` / `ContextMenu` — right-click menu
+//! - `FileTransferDialog` — SFTP upload / download dialog
+//! - `QuickSelectMatch` / `QuickSelectState` — Quick Select mode that highlights URL /
+//!   Email / Path etc. on the grid with labels for fast selection
+//! - `find_quick_select_matches` — extract matches from the entire grid via regex
+//!   (with priority-based overlap control)
 
 use nexterm_i18n::fl;
 
-// ---- コンテキストメニュー ----
+// ---- Context menu ----
 
-/// コンテキストメニューの各項目が実行するアクション
+/// Action executed by each context menu entry
 #[derive(Debug, Clone, PartialEq)]
 pub enum ContextMenuAction {
     Copy,
@@ -22,23 +23,23 @@ pub enum ContextMenuAction {
     ClosePane,
     InlineSearch,
     OpenSettings,
-    /// プロファイル名を指定してシェルを開く
+    /// Open a shell using the named profile
     OpenProfile {
         profile_name: String,
     },
-    /// セパレーター（クリック不可）
+    /// Separator (not clickable)
     Separator,
-    /// 現在のペインを新規 OS Window に分離する（Sprint 5-8 Phase 4-5、Wayland 代替 UX #1）
+    /// Detach the current pane into a new OS Window (Sprint 5-8 Phase 4-5, Wayland alt UX #1)
     DetachToNewWindow,
-    /// 現在の OS Window だけを閉じる（Sprint 5-8 Phase 4-5、CloseOsWindow 経路 #1）
+    /// Close only the current OS Window (Sprint 5-8 Phase 4-5, CloseOsWindow path #1)
     CloseOsWindow,
 }
 
-/// コンテキストメニューの1項目
+/// A single entry in the context menu
 #[derive(Debug, Clone)]
 pub struct ContextMenuItem {
     pub label: String,
-    /// キーヒント（右端に薄く表示）
+    /// Key hint (shown faintly on the right)
     pub hint: String,
     pub action: ContextMenuAction,
 }
@@ -73,36 +74,40 @@ impl ContextMenuItem {
     }
 }
 
-/// 右クリックで表示するコンテキストメニュー
+/// Context menu shown via right-click
 #[derive(Debug, Clone)]
 pub struct ContextMenu {
-    /// メニューを表示するピクセル座標（左上）
+    /// Pixel coordinates where the menu is displayed (top-left)
     pub x: f32,
     pub y: f32,
     pub items: Vec<ContextMenuItem>,
-    /// 現在ホバー中の項目インデックス
+    /// Currently hovered item index
     pub hovered: Option<usize>,
 }
 
 impl ContextMenu {
-    /// 標準メニュー項目を持つコンテキストメニューを生成する
-    /// profiles: プロファイル名とアイコンのペア一覧
+    /// Build a context menu populated with the default entries.
+    /// `profiles`: list of (profile name, icon) pairs
     pub fn new_default(x: f32, y: f32, profiles: &[(String, String)]) -> Self {
         let mut items = vec![
-            ContextMenuItem::with_hint("コピー", "Ctrl+C", ContextMenuAction::Copy),
-            ContextMenuItem::with_hint("貼り付け", "Ctrl+V", ContextMenuAction::Paste),
-            ContextMenuItem::with_hint("すべて選択", "Ctrl+A", ContextMenuAction::SelectAll),
+            ContextMenuItem::with_hint("Copy", "Ctrl+C", ContextMenuAction::Copy),
+            ContextMenuItem::with_hint("Paste", "Ctrl+V", ContextMenuAction::Paste),
+            ContextMenuItem::with_hint("Select All", "Ctrl+A", ContextMenuAction::SelectAll),
             ContextMenuItem::separator(),
-            ContextMenuItem::with_hint("垂直分割", "Ctrl+B  %", ContextMenuAction::SplitVertical),
             ContextMenuItem::with_hint(
-                "水平分割",
+                "Split Vertical",
+                "Ctrl+B  %",
+                ContextMenuAction::SplitVertical,
+            ),
+            ContextMenuItem::with_hint(
+                "Split Horizontal",
                 "Ctrl+B  \"",
                 ContextMenuAction::SplitHorizontal,
             ),
-            ContextMenuItem::with_hint("ペインを閉じる", "Ctrl+B  x", ContextMenuAction::ClosePane),
+            ContextMenuItem::with_hint("Close Pane", "Ctrl+B  x", ContextMenuAction::ClosePane),
         ];
 
-        // プロファイルが登録されていればサブセクションを追加する
+        // Append a sub-section if any profiles are registered.
         if !profiles.is_empty() {
             items.push(ContextMenuItem::separator());
             for (name, icon) in profiles {
@@ -122,18 +127,18 @@ impl ContextMenu {
 
         items.push(ContextMenuItem::separator());
         items.push(ContextMenuItem::with_hint(
-            "検索...",
+            "Search...",
             "Ctrl+F",
             ContextMenuAction::InlineSearch,
         ));
         items.push(ContextMenuItem::with_hint(
-            "設定...",
+            "Settings...",
             "Ctrl+,",
             ContextMenuAction::OpenSettings,
         ));
 
-        // Sprint 5-8 / Phase 4-5: tab tearing 関連項目（Wayland 代替 UX）
-        // i18n キー経由で 8 言語対応。ヒントなし（キーバインド未割当）。
+        // Sprint 5-8 / Phase 4-5: tab-tearing-related entries (Wayland alternative UX).
+        // 8-language support via the i18n keys; no hint (no key binding assigned).
         items.push(ContextMenuItem::separator());
         items.push(ContextMenuItem::new(
             fl!("context-menu-detach-to-new-window"),
@@ -153,14 +158,14 @@ impl ContextMenu {
     }
 }
 
-// ---- ファイル転送ダイアログ ----
+// ---- File transfer dialog ----
 
-/// ファイル転送ダイアログの状態
+/// State of the file transfer dialog
 pub struct FileTransferDialog {
     pub is_open: bool,
-    /// "upload" または "download"
+    /// "upload" or "download"
     pub mode: String,
-    /// 入力フィールドのインデックス（0 = ホスト名, 1 = ローカルパス, 2 = リモートパス）
+    /// Input field index (0 = host name, 1 = local path, 2 = remote path)
     pub field: usize,
     pub host_name: String,
     pub local_path: String,
@@ -220,22 +225,22 @@ impl FileTransferDialog {
 
 // ---- Quick Select ----
 
-/// Quick Select モードのマッチ結果
+/// Match result in Quick Select mode
 #[derive(Debug, Clone)]
 pub struct QuickSelectMatch {
     pub row: u16,
     pub col_start: u16,
     pub col_end: u16,
     pub text: String,
-    /// 選択ラベル（a, b, c, ... / aa, ab, ...）
+    /// Selection label (a, b, c, ... / aa, ab, ...)
     pub label: String,
 }
 
-/// Quick Select モードの状態
+/// State of Quick Select mode
 pub struct QuickSelectState {
     pub is_active: bool,
     pub matches: Vec<QuickSelectMatch>,
-    /// 現在タイプ中のラベル
+    /// Label currently being typed
     pub typed_label: String,
 }
 
@@ -260,7 +265,7 @@ impl QuickSelectState {
         self.typed_label.clear();
     }
 
-    /// タイプされたラベルが一致するマッチを返す
+    /// Returns the match whose label equals the typed label
     pub fn accept(&self) -> Option<&QuickSelectMatch> {
         if self.typed_label.is_empty() {
             return None;
@@ -269,50 +274,50 @@ impl QuickSelectState {
     }
 }
 
-/// グリッドから Quick Select マッチを検索する。
+/// Find Quick Select matches in the grid.
 ///
-/// パターンは Sprint 5-4 / D1 で拡充済み。マッチ範囲が重複した場合は、
-/// 先頭にあるパターン（より具体的なもの）を優先して残す。
+/// The pattern set was expanded in Sprint 5-4 / D1. When match ranges overlap,
+/// the earlier (more specific) pattern wins.
 pub(super) fn find_quick_select_matches(
     rows: &[Vec<nexterm_proto::Cell>],
 ) -> Vec<QuickSelectMatch> {
-    // 優先順位順（先頭ほど高優先）:
-    //   1. URL（必ず先に取り、後段の path/IPv4 にマッチを奪われないようにする）
+    // In priority order (earliest = highest):
+    //   1. URL (taken first so later path/IPv4 patterns don't steal matches)
     //   2. Email
     //   3. UUID
-    //   4. file:line:col 形式（行番号付き、エディタジャンプ用）
-    //   5. Jira チケット (`PROJ-123`)
+    //   4. file:line:col form (with line number, for editor jump)
+    //   5. Jira ticket (`PROJ-123`)
     //   6. Unix path
     //   7. Windows path (`C:\foo\bar`)
     //   8. IPv4 / IPv6
-    //   9. SHA / Git ハッシュ
-    //  10. 単独数字（最後 — 他のどれにも引っかからなかったもののみ）
+    //   9. SHA / Git hash
+    //  10. Standalone number (last — only when nothing else matched)
     let patterns: &[&str] = &[
         // URL (http/https/ftp)
         r#"\b(?:https?|ftp)://[^\s<>"'\]]+"#,
         // Email
         r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b",
-        // UUID v1〜v5 (8-4-4-4-12 hex)
+        // UUID v1-v5 (8-4-4-4-12 hex)
         r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b",
-        // file:line[:col] 形式 (例: src/main.rs:42 or src/main.rs:42:10)
+        // file:line[:col] form (e.g. src/main.rs:42 or src/main.rs:42:10)
         r"[A-Za-z0-9_./\\-]+\.[A-Za-z0-9]+:\d+(?::\d+)?",
-        // Jira / 課題チケット ID (例: PROJ-123, ABC-9999)
+        // Jira / issue ticket ID (e.g. PROJ-123, ABC-9999)
         r"\b[A-Z][A-Z0-9]{1,9}-\d+\b",
-        // Unix パス
+        // Unix path
         r"(?:^|[\s(])((?:/[^\s/:]+)+/?)",
-        // Windows パス (例: C:\foo\bar)
+        // Windows path (e.g. C:\foo\bar)
         r#"\b[A-Za-z]:\\[^\s<>:"|?*]+"#,
-        // IPv4 アドレス（ポート省略可）
+        // IPv4 address (port optional)
         r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b",
-        // IPv6 アドレス（簡易: 16 進グループ 2 個以上 + コロン区切り）
+        // IPv6 address (loose: at least two hex groups separated by colons)
         r"\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}\b",
-        // SHA / Git ハッシュ (7-40 hex)
+        // SHA / Git hash (7-40 hex)
         r"\b[0-9a-f]{7,40}\b",
-        // 単独数字
+        // Standalone number
         r"\b\d+\b",
     ];
 
-    // 正規表現は一度だけコンパイルする（パターン件数 × 行数の重複コンパイルを防ぐ）
+    // Compile the regexes once (avoid pattern-count x row-count recompilation).
     let compiled: Vec<regex::Regex> = patterns
         .iter()
         .filter_map(|p| regex::Regex::new(p).ok())
@@ -322,14 +327,14 @@ pub(super) fn find_quick_select_matches(
 
     for (row_idx, cells) in rows.iter().enumerate() {
         let line: String = cells.iter().map(|c| c.ch).collect();
-        // 行ごとに「占有済み列範囲」を管理し、優先順位の高いパターンが取った範囲を
-        // 後段のパターンが奪わないようにする。
+        // Track "occupied column ranges" per row so a later pattern does not steal
+        // a range already claimed by an earlier, higher-priority pattern.
         let mut occupied: Vec<(usize, usize)> = Vec::new();
 
         for re in &compiled {
             for m in re.find_iter(&line) {
                 let (start, end) = (m.start(), m.end());
-                // 既存マッチと重複したらスキップ（より高優先のパターンを優先）
+                // Skip if it overlaps an existing match (prefer higher-priority pattern)
                 let overlaps = occupied.iter().any(|(s, e)| !(end <= *s || start >= *e));
                 if overlaps {
                     continue;
@@ -340,13 +345,13 @@ pub(super) fn find_quick_select_matches(
                     col_start: start as u16,
                     col_end: end as u16,
                     text: m.as_str().to_string(),
-                    label: String::new(), // 後段で割り当てる
+                    label: String::new(), // assigned later
                 });
             }
         }
     }
 
-    // ラベルを割り当てる（a, b, ..., z, aa, ab, ...）
+    // Assign labels (a, b, ..., z, aa, ab, ...)
     let label_chars: Vec<char> = "abcdefghijklmnopqrstuvwxyz".chars().collect();
     let n = all_matches.len();
     for (i, m) in all_matches.iter_mut().enumerate() {
