@@ -1,4 +1,4 @@
-//! Web ターミナルのルーター構築 + HTTP/HTTPS サーバー起動。
+//! Web terminal router construction and HTTP/HTTPS server startup.
 
 use std::net::SocketAddr;
 
@@ -12,7 +12,7 @@ use tracing::warn;
 use super::AppState;
 use super::handlers;
 
-/// ルーターを構築する
+/// Build the router.
 pub(in crate::web) fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/", get(handlers::page::serve_index))
@@ -31,21 +31,21 @@ pub(in crate::web) fn build_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// 平文 HTTP サーバーを起動する
+/// Start a plain HTTP server.
 pub(in crate::web) async fn start_plain_http(addr: SocketAddr, app: Router) {
     match TcpListener::bind(&addr).await {
         Ok(listener) => {
             if let Err(e) = axum::serve(listener, app).await {
-                warn!("Web サーバーエラー: {}", e);
+                warn!("web server error: {}", e);
             }
         }
         Err(e) => {
-            warn!("Web サーバーのバインドに失敗: {}: {}", addr, e);
+            warn!("failed to bind web server: {}: {}", addr, e);
         }
     }
 }
 
-/// TLS (HTTPS) サーバーを起動する
+/// Start a TLS (HTTPS) server.
 pub(in crate::web) async fn start_tls_server(
     addr: SocketAddr,
     app: Router,
@@ -59,7 +59,7 @@ pub(in crate::web) async fn start_tls_server(
     };
     use std::sync::Arc;
 
-    // PEM 証明書を解析する
+    // Parse the PEM certificate.
     let certs: Vec<rustls::pki_types::CertificateDer<'static>> = {
         let mut reader = std::io::BufReader::new(cert_pem.as_slice());
         rustls_pemfile::certs(&mut reader)
@@ -71,7 +71,7 @@ pub(in crate::web) async fn start_tls_server(
         match rustls_pemfile::private_key(&mut reader) {
             Ok(Some(k)) => k,
             _ => {
-                warn!("TLS: 秘密鍵の解析に失敗しました。HTTP にフォールバックします。");
+                warn!("TLS: failed to parse private key; falling back to HTTP.");
                 start_plain_http(addr, app).await;
                 return;
             }
@@ -84,7 +84,7 @@ pub(in crate::web) async fn start_tls_server(
     {
         Ok(c) => Arc::new(c),
         Err(e) => {
-            warn!("TLS 設定エラー: {}。HTTP にフォールバックします。", e);
+            warn!("TLS config error: {}; falling back to HTTP.", e);
             start_plain_http(addr, app).await;
             return;
         }
@@ -94,7 +94,7 @@ pub(in crate::web) async fn start_tls_server(
     let listener = match TcpListener::bind(&addr).await {
         Ok(l) => l,
         Err(e) => {
-            warn!("TLS バインドに失敗: {}: {}", addr, e);
+            warn!("failed to bind TLS: {}: {}", addr, e);
             return;
         }
     };
@@ -103,7 +103,7 @@ pub(in crate::web) async fn start_tls_server(
         let (tcp_stream, _remote_addr) = match listener.accept().await {
             Ok(v) => v,
             Err(e) => {
-                warn!("TCP accept エラー: {}", e);
+                warn!("TCP accept error: {}", e);
                 continue;
             }
         };
@@ -115,7 +115,7 @@ pub(in crate::web) async fn start_tls_server(
             let tls_stream = match acceptor.accept(tcp_stream).await {
                 Ok(s) => s,
                 Err(e) => {
-                    tracing::debug!("TLS ハンドシェイクエラー: {}", e);
+                    tracing::debug!("TLS handshake error: {}", e);
                     return;
                 }
             };
@@ -125,7 +125,7 @@ pub(in crate::web) async fn start_tls_server(
                 .serve_connection_with_upgrades(io, service)
                 .await
             {
-                tracing::debug!("HTTP 接続エラー: {}", e);
+                tracing::debug!("HTTP connection error: {}", e);
             }
         });
     }

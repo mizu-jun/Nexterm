@@ -1,8 +1,8 @@
-//! セッション管理 — Cookie ベースのセッショントークン
+//! Session management — cookie-based session tokens.
 //!
-//! - 設定可能な TTL（デフォルト 24 時間）
-//! - 同時セッション数の上限制限
-//! - セッション作成者の識別子（認証方式・ユーザー ID）を記録
+//! - Configurable TTL (default: 24 hours).
+//! - Concurrent session count limit.
+//! - Records the session creator identifier (auth method + user ID).
 
 use std::{
     collections::HashMap,
@@ -12,29 +12,29 @@ use std::{
 
 use rand::Rng;
 
-/// セッションエントリ
+/// Session entry.
 struct SessionEntry {
-    /// セッション有効期限
+    /// Session expiry timestamp.
     expiry: Instant,
-    /// 認証方式（例: "totp", "oauth:github", "token"）
+    /// Authentication method (e.g. "totp", "oauth:github", "token").
     auth_method: String,
-    /// 認証したユーザー識別子（OAuth ユーザー名等。匿名は空文字列）
+    /// Authenticated user identifier (OAuth username, etc.; empty string when anonymous).
     user_id: String,
 }
 
-/// 認証マネージャー（Router の AppState に保持）
+/// Authentication manager (held inside the router's `AppState`).
 #[derive(Clone)]
 pub struct AuthManager {
-    /// token → セッションエントリ
+    /// token -> session entry.
     sessions: Arc<Mutex<HashMap<String, SessionEntry>>>,
-    /// セッション有効期限（秒）
+    /// Session lifetime (seconds).
     ttl: Duration,
-    /// 同時セッション数の上限（0 = 無制限）
+    /// Concurrent session limit (0 = unlimited).
     max_sessions: usize,
 }
 
 impl AuthManager {
-    /// 新しい AuthManager を生成する
+    /// Construct a new `AuthManager`.
     pub fn new(session_timeout_secs: u64, max_sessions: usize) -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -43,9 +43,9 @@ impl AuthManager {
         }
     }
 
-    /// 認証成功後に新しいセッショントークンを生成する
+    /// Issue a new session token after a successful authentication.
     ///
-    /// `max_sessions` を超える場合は最も古いセッションを削除する。
+    /// When `max_sessions` is exceeded, the oldest session is evicted.
     pub fn create_session(&self, auth_method: &str, user_id: &str) -> Option<String> {
         let token: String = rand::rng()
             .sample_iter(rand::distr::Alphanumeric)
@@ -56,12 +56,12 @@ impl AuthManager {
         let expiry = Instant::now() + self.ttl;
         let mut sessions = self.sessions.lock().expect("session store mutex poisoned");
 
-        // 期限切れセッションを事前に掃除する
+        // Purge expired sessions up front.
         sessions.retain(|_, v| Instant::now() < v.expiry);
 
-        // 上限チェック
+        // Enforce the limit.
         if self.max_sessions > 0 && sessions.len() >= self.max_sessions {
-            // 最も早く期限切れになるセッションを削除する
+            // Evict the session with the earliest expiry.
             if let Some(oldest_key) = sessions
                 .iter()
                 .min_by_key(|(_, v)| v.expiry)
@@ -82,7 +82,7 @@ impl AuthManager {
         Some(token)
     }
 
-    /// セッショントークンが有効か確認する
+    /// Check whether a session token is still valid.
     pub fn is_valid(&self, token: &str) -> bool {
         let sessions = self.sessions.lock().expect("session store mutex poisoned");
         sessions
@@ -91,7 +91,7 @@ impl AuthManager {
             .unwrap_or(false)
     }
 
-    /// セッションのメタ情報を取得する（アクセスログ用）
+    /// Return session metadata (for the access log).
     pub fn session_info(&self, token: &str) -> Option<(String, String)> {
         let sessions = self.sessions.lock().expect("session store mutex poisoned");
         sessions.get(token).and_then(|entry| {
@@ -103,7 +103,7 @@ impl AuthManager {
         })
     }
 
-    /// 明示的にセッションを削除する（ログアウト用）
+    /// Explicitly remove a session (used for logout).
     pub fn revoke_session(&self, token: &str) {
         self.sessions
             .lock()
@@ -111,7 +111,7 @@ impl AuthManager {
             .remove(token);
     }
 
-    /// アクティブなセッション数を返す（期限切れを除く）
+    /// Return the number of active sessions (excluding expired ones).
     #[allow(dead_code)]
     pub fn active_count(&self) -> usize {
         let sessions = self.sessions.lock().expect("session store mutex poisoned");
@@ -122,7 +122,7 @@ impl AuthManager {
     }
 }
 
-/// リクエストヘッダーから `nexterm_session` Cookie を抽出する
+/// Extract the `nexterm_session` cookie from request headers.
 pub fn extract_session_cookie(headers: &axum::http::HeaderMap) -> Option<String> {
     let cookie_str = headers.get("cookie")?.to_str().ok()?;
     cookie_str.split(';').find_map(|part| {
@@ -132,7 +132,7 @@ pub fn extract_session_cookie(headers: &axum::http::HeaderMap) -> Option<String>
     })
 }
 
-/// Set-Cookie ヘッダー値を生成する（HTTPS 時は Secure フラグを追加）
+/// Build a Set-Cookie header value (adds the `Secure` flag when HTTPS is in use).
 pub fn make_session_cookie(token: &str, secure: bool) -> String {
     let secure_flag = if secure { "; Secure" } else { "" };
     format!(
@@ -141,7 +141,7 @@ pub fn make_session_cookie(token: &str, secure: bool) -> String {
     )
 }
 
-/// セッション削除用の Set-Cookie ヘッダー値を生成する
+/// Build the Set-Cookie header value used to delete the session cookie.
 pub fn make_logout_cookie() -> String {
     "nexterm_session=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0".to_string()
 }
@@ -209,10 +209,10 @@ mod tests {
         let manager = AuthManager::new(3600, 2);
         let _token1 = manager.create_session("totp", "user1").unwrap();
         let _token2 = manager.create_session("totp", "user2").unwrap();
-        // 3つ目を作成すると最も古いものが削除される
+        // Creating a third session evicts the oldest one.
         let _token3 = manager.create_session("totp", "user3").unwrap();
         assert_eq!(manager.active_count(), 2);
-        // 最初のトークンは削除されている可能性がある
+        // The first token may have been evicted.
     }
 
     #[test]

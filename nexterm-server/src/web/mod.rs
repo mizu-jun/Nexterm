@@ -1,44 +1,44 @@
-//! Web ターミナル — axum WebSocket + xterm.js + TOTP / OAuth2 認証 + HTTPS/TLS
+//! Web terminal — axum WebSocket + xterm.js + TOTP / OAuth2 authentication + HTTPS/TLS.
 //!
-//! # 設定例（nexterm.toml）
+//! # Configuration example (nexterm.toml)
 //! ```toml
 //! [web]
 //! enabled = true
 //! port = 7681
-//! force_https = true   # HTTP アクセスを HTTPS へリダイレクト
-//! max_sessions = 10    # 同時セッション数上限
+//! force_https = true   # redirect HTTP requests to HTTPS
+//! max_sessions = 10    # max simultaneous sessions
 //!
 //! [web.auth]
-//! session_timeout_secs = 86400  # セッション有効期限（秒）
+//! session_timeout_secs = 86400  # session lifetime (seconds)
 //!
-//! # ── TOTP 認証 ──────────────────────────────────────────
+//! # ── TOTP authentication ──────────────────────────────────────
 //! totp_enabled = true
 //!
-//! # ── OAuth2 認証 ────────────────────────────────────────
+//! # ── OAuth2 authentication ────────────────────────────────────
 //! [web.auth.oauth]
 //! enabled = true
 //! provider = "github"        # "github" | "google" | "azure" | "oidc"
 //! client_id = "xxx"
-//! # client_secret は環境変数 NEXTERM_OAUTH_CLIENT_SECRET を推奨
+//! # client_secret: prefer the NEXTERM_OAUTH_CLIENT_SECRET environment variable.
 //! allowed_emails = ["admin@example.com"]
-//! # allowed_orgs = ["my-org"]  # GitHub のみ
+//! # allowed_orgs = ["my-org"]  # GitHub only
 //!
-//! # ── アクセスログ ────────────────────────────────────────
+//! # ── Access log ───────────────────────────────────────────────
 //! [web.access_log]
 //! enabled = true
-//! file = "/var/log/nexterm/access.csv"  # 省略時はサーバーログへ出力
+//! file = "/var/log/nexterm/access.csv"  # falls back to server log when omitted
 //!
 //! [web.tls]
 //! enabled = true
-//! # cert_file / key_file を省略すると自己署名証明書を自動生成
+//! # Omitting cert_file / key_file auto-generates a self-signed certificate.
 //! ```
 //!
-//! # 内部構成（Sprint 5-4 / A3）
+//! # Internal layout (Sprint 5-4 / A3)
 //!
-//! 旧 `web/mod.rs` (1,088 行) を以下に再分割した:
-//! - [`router`] — ルーター構築 + HTTP/TLS サーバー起動
-//! - [`middleware`] — 認証確認 + クライアント IP + HTTPS リダイレクト
-//! - [`handlers`] — HTTP / WebSocket ハンドラ群（page / login / oauth / ws / assets）
+//! Splits the old `web/mod.rs` (1,088 lines) into:
+//! - [`router`] — router build + HTTP/TLS server startup.
+//! - [`middleware`] — auth check + client IP + HTTPS redirect.
+//! - [`handlers`] — HTTP / WebSocket handlers (page / login / oauth / ws / assets).
 
 mod access_log;
 mod auth;
@@ -58,15 +58,15 @@ use tracing::{info, warn};
 
 use crate::session::SessionManager;
 
-// ── 静的ファイル埋め込み ─────────────────────────────────────────────────────
+// ── Embedded static files ────────────────────────────────────────────────────
 
 #[derive(Embed)]
 #[folder = "static/"]
 pub(in crate::web) struct Assets;
 
-// ── 共有状態 ─────────────────────────────────────────────────────────────────
+// ── Shared state ─────────────────────────────────────────────────────────────
 
-/// セットアップ未完了時の一時シークレット
+/// Temporary secret used while setup is pending.
 pub(in crate::web) struct PendingSetup {
     pub(in crate::web) secret: String,
     pub(in crate::web) totp: otp::TotpManager,
@@ -75,56 +75,53 @@ pub(in crate::web) struct PendingSetup {
 #[derive(Clone)]
 pub(in crate::web) struct AppState {
     pub(in crate::web) manager: Arc<SessionManager>,
-    /// 後方互換: URL クエリパラメータによるトークン認証
+    /// Backward compatibility: token-based authentication via URL query parameter.
     pub(in crate::web) legacy_token: Option<String>,
-    /// アクティブな TOTP マネージャー（セットアップ完了後に設定）
+    /// Active TOTP manager (set after setup completes).
     pub(in crate::web) totp: Arc<tokio::sync::RwLock<Option<otp::TotpManager>>>,
-    /// セッション管理（TTL・同時接続数管理）
+    /// Session management (TTL, concurrent connection limit).
     pub(in crate::web) auth_mgr: Arc<auth::AuthManager>,
-    /// 初回セットアップ待ちシークレット（未設定時のみ Some）
+    /// Pending initial-setup secret (`Some` only when not yet configured).
     pub(in crate::web) pending_setup: Arc<Mutex<Option<PendingSetup>>>,
     pub(in crate::web) totp_enabled: bool,
-    /// OAuth2 マネージャー（OAuth 有効時のみ Some）
+    /// OAuth2 manager (`Some` only when OAuth is enabled).
     pub(in crate::web) oauth_mgr: Option<Arc<oauth::OAuthManager>>,
     pub(in crate::web) tls_enabled: bool,
     pub(in crate::web) force_https: bool,
     pub(in crate::web) issuer: String,
-    /// アクセスログライター
+    /// Access log writer.
     pub(in crate::web) access_logger: Arc<access_log::AccessLogger>,
-    /// TOTP ログインのレート制限（IP ベース、5 試行/分）
+    /// Rate limit on TOTP login (IP-based, 5 attempts/min).
     pub(in crate::web) totp_rate_limiter: Arc<rate_limit::RateLimiter>,
 }
 
-// ── エントリポイント ──────────────────────────────────────────────────────────
+// ── Entry point ───────────────────────────────────────────────────────────────
 
-/// Web サーバーを起動する
+/// Start the web server.
 pub async fn start_web_server(config: WebConfig, manager: Arc<SessionManager>) {
     let totp_enabled = config.auth.totp_enabled;
     let tls_enabled = config.tls.enabled;
     let force_https = config.force_https;
     let issuer = config.auth.issuer.clone();
 
-    // TOTP マネージャーの初期化
+    // Initialize the TOTP manager.
     let (active_totp, pending_setup) = if totp_enabled {
         match &config.auth.totp_secret {
             Some(secret) => match otp::TotpManager::from_secret(secret, &issuer) {
                 Ok(mgr) => {
-                    info!("TOTP 認証が有効です");
+                    info!("TOTP authentication is enabled");
                     (Some(mgr), None)
                 }
                 Err(e) => {
-                    warn!(
-                        "TOTP シークレットが不正です: {}。TOTP 認証を無効化します。",
-                        e
-                    );
+                    warn!("invalid TOTP secret: {}; disabling TOTP authentication.", e);
                     (None, None)
                 }
             },
             None => {
                 let secret = otp::TotpManager::generate_secret();
                 info!(
-                    "TOTP 認証が有効ですが、シークレットが未設定です。\
-                    ブラウザで http(s)://localhost:{}/setup を開いてセットアップしてください。",
+                    "TOTP authentication is enabled but no secret is configured. \
+                    Open http(s)://localhost:{}/setup in a browser to complete setup.",
                     config.port
                 );
                 match otp::TotpManager::from_secret(&secret, &issuer) {
@@ -137,7 +134,7 @@ pub async fn start_web_server(config: WebConfig, manager: Arc<SessionManager>) {
                     }
                     Err(e) => {
                         warn!(
-                            "セットアップ用 TOTP の生成に失敗: {}。TOTP 認証を無効化します。",
+                            "failed to generate setup TOTP: {}; disabling TOTP authentication.",
                             e
                         );
                         (None, None)
@@ -149,7 +146,7 @@ pub async fn start_web_server(config: WebConfig, manager: Arc<SessionManager>) {
         (None, None)
     };
 
-    // OAuth2 マネージャーの初期化
+    // Initialize the OAuth2 manager.
     let oauth_mgr = if config.auth.oauth.enabled {
         let scheme = if tls_enabled { "https" } else { "http" };
         let redirect_base = config
@@ -159,14 +156,14 @@ pub async fn start_web_server(config: WebConfig, manager: Arc<SessionManager>) {
             .clone()
             .unwrap_or_else(|| format!("{}://localhost:{}", scheme, config.port));
         let redirect_base = if redirect_base.contains("/auth/callback") {
-            // redirect_url が完全な callback URL の場合はベースを抽出する
+            // When redirect_url is a full callback URL, extract the base.
             redirect_base.trim_end_matches("/auth/callback").to_string()
         } else {
             redirect_base
         };
 
         info!(
-            "OAuth2 認証が有効です（プロバイダー: {}）",
+            "OAuth2 authentication is enabled (provider: {})",
             config.auth.oauth.provider
         );
         Some(Arc::new(oauth::OAuthManager::new(
@@ -177,7 +174,7 @@ pub async fn start_web_server(config: WebConfig, manager: Arc<SessionManager>) {
         None
     };
 
-    // アクセスログライターの初期化
+    // Initialize the access log writer.
     let access_logger = Arc::new(access_log::AccessLogger::new(&config.access_log));
 
     let state = AppState {
@@ -211,37 +208,34 @@ pub async fn start_web_server(config: WebConfig, manager: Arc<SessionManager>) {
         ) {
             Ok((cert_pem, key_pem)) => {
                 info!(
-                    "Web ターミナルを起動します (HTTPS): https://localhost:{}",
+                    "starting web terminal (HTTPS): https://localhost:{}",
                     config.port
                 );
                 router::start_tls_server(addr, app, cert_pem, key_pem).await;
             }
             Err(e) => {
-                // CRITICAL #3: TLS 失敗時の平文 HTTP フォールバックは
-                // セッショントークン・TOTP コード・パスワード等の漏洩リスクが
-                // あるため、明示的なオプトインがない限り起動を中止する。
+                // CRITICAL #3: falling back to plain HTTP on TLS failure risks leaking session
+                // tokens, TOTP codes, passwords, and other secrets. Abort startup unless the
+                // operator explicitly opts in.
                 if config.allow_http_fallback {
                     warn!(
-                        "証明書の読み込みに失敗: {}。allow_http_fallback=true のため HTTP にフォールバックします（推奨されない）。",
+                        "failed to load certificate: {}; falling back to HTTP because allow_http_fallback=true (not recommended).",
                         e
                     );
                     router::start_plain_http(addr, app).await;
                 } else {
                     tracing::error!(
-                        "証明書の読み込みに失敗: {}。Web サーバーの起動を中止します。\n\
-                         HTTP フォールバックを許可するには [web] allow_http_fallback = true を設定してください（テスト・開発時のみ推奨）。",
+                        "failed to load certificate: {}; aborting web server startup.\n\
+                         To allow HTTP fallback set [web] allow_http_fallback = true (recommended only for testing/development).",
                         e
                     );
-                    // 起動中止: caller (start_web_server) は spawn された task のため
-                    // ここで関数から抜ければ Web サーバーは起動しない（メインの IPC は継続）
+                    // Abort startup: this function runs inside a spawned task, so returning here
+                    // leaves the web server unstarted (the main IPC continues to run).
                 }
             }
         }
     } else {
-        info!(
-            "Web ターミナルを起動します: http://localhost:{}",
-            config.port
-        );
+        info!("starting web terminal: http://localhost:{}", config.port);
         router::start_plain_http(addr, app).await;
     }
 }

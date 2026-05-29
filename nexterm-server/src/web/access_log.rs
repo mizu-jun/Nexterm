@@ -1,22 +1,22 @@
-//! アクセスログ記録モジュール
+//! Access log module.
 //!
-//! 各リクエストのアクセス情報を構造化ログとして記録する。
-//! ログファイルが設定されている場合は CSV 形式で追記し、
-//! 未設定の場合は tracing を通じてサーバーログに出力する。
+//! Records per-request access info as a structured log.
+//! When a log file is configured, entries are appended in CSV form.
+//! Otherwise they are emitted to the server log via tracing.
 //!
-//! # 出力フォーマット（CSV）
+//! # Output format (CSV)
 //! ```csv
 //! timestamp,remote_addr,method,path,status,auth_method,user_id
 //! 2024-01-01T12:00:00Z,192.168.1.1,GET,/ws,101,totp,
 //! 2024-01-01T12:00:01Z,192.168.1.2,POST,/auth/login,302,oauth:github,octocat
 //! ```
 //!
-//! # ローテーション（Sprint 3-3 後半）
+//! # Rotation (Sprint 3-3 second half)
 //!
-//! `AccessLogConfig.max_size_mib` と `max_generations` を設定するとサイズベースの
-//! ローテーションが有効になる。書き込み前にファイルサイズをチェックし、閾値を
-//! 超えていれば `<file>.1`, `<file>.2`, ... `<file>.{max_generations}` の順に
-//! ローテーションする。`compress = true` の場合は世代ファイルを `.gz` 圧縮する。
+//! Setting `AccessLogConfig.max_size_mib` and `max_generations` enables size-based rotation.
+//! The file size is checked before each write and, when the threshold is exceeded,
+//! rotated as `<file>.1`, `<file>.2`, ... `<file>.{max_generations}`.
+//! With `compress = true`, generation files are gzip-compressed.
 
 use std::{
     fs::OpenOptions,
@@ -29,10 +29,10 @@ use flate2::{Compression, write::GzEncoder};
 use nexterm_config::AccessLogConfig;
 use tracing::{info, warn};
 
-/// CSV ヘッダー行
+/// CSV header line.
 const CSV_HEADER: &str = "timestamp,remote_addr,method,path,status,auth_method,user_id";
 
-/// アクセスログエントリ
+/// Access log entry.
 #[derive(Debug, Clone)]
 pub struct AccessLogEntry {
     pub remote_addr: String,
@@ -43,29 +43,29 @@ pub struct AccessLogEntry {
     pub user_id: String,
 }
 
-/// アクセスログライター（共有可能）
+/// Access log writer (cloneable).
 #[derive(Clone)]
 pub struct AccessLogger {
-    /// ログファイルパス（None = tracing のみ）
+    /// Log file path (`None` = tracing only).
     file_path: Option<PathBuf>,
-    /// ファイル書き込みの排他制御
+    /// Exclusive control for file writes.
     file_lock: Arc<Mutex<()>>,
     enabled: bool,
-    /// ローテーション閾値（バイト単位）。0 = ローテーション無効
+    /// Rotation threshold in bytes. `0` = rotation disabled.
     max_size_bytes: u64,
-    /// 保持する世代数（0 = ローテーション無効）
+    /// Number of generations to keep (`0` = rotation disabled).
     max_generations: u32,
-    /// gzip 圧縮を有効化するか
+    /// Whether to enable gzip compression.
     compress: bool,
 }
 
 impl AccessLogger {
-    /// 設定からアクセスログライターを生成する
+    /// Construct the access log writer from configuration.
     pub fn new(config: &AccessLogConfig) -> Self {
         let file_path = config.file.as_ref().map(PathBuf::from);
         let max_size_bytes = config.max_size_mib.saturating_mul(1024 * 1024);
 
-        // ファイルが設定されている場合はヘッダー行を書き込む（ファイルが新規の場合のみ）
+        // Write the header line when the file is configured (only when it does not exist yet).
         if config.enabled
             && let Some(ref path) = file_path
             && !path.exists()
@@ -83,21 +83,20 @@ impl AccessLogger {
         }
     }
 
-    /// アクセスログエントリを記録する
+    /// Record an access log entry.
     ///
-    /// HIGH H-7 対策: `path` のクエリ文字列（`?...`）は除去する。
-    /// OAuth コールバックの `?code=...&state=...` や TOTP リダイレクトの
-    /// `?token=...` 等の機密情報がログに残るのを防ぐ。
+    /// HIGH H-7: strip the query string (`?...`) from `path` so that the OAuth callback
+    /// (`?code=...&state=...`) or TOTP redirect (`?token=...`) does not leak secrets into the log.
     pub fn log(&self, entry: &AccessLogEntry) {
         if !self.enabled {
             return;
         }
 
         let timestamp = chrono_now();
-        // クエリ文字列を除去（OAuth code / state / token 等の機密漏れ防止）
+        // Strip the query string (prevents leaking OAuth code / state / token).
         let safe_path = strip_query_string(&entry.path);
 
-        // tracing には常に出力する
+        // Always emit via tracing.
         info!(
             target: "nexterm::access",
             remote_addr = %entry.remote_addr,
@@ -106,27 +105,24 @@ impl AccessLogger {
             status = entry.status,
             auth_method = %entry.auth_method,
             user_id = %entry.user_id,
-            "アクセスログ"
+            "access log"
         );
 
-        // ファイルへの追記
+        // Append to file.
         if let Some(ref path) = self.file_path {
             let Ok(_lock) = self.file_lock.lock() else {
                 return;
             };
             let _lock = _lock;
 
-            // ローテーション判定（サイズ超過時のみ）
+            // Decide rotation (only when the size threshold is exceeded).
             if self.rotation_enabled()
                 && let Err(e) = self.rotate_if_needed(path)
             {
-                warn!(
-                    "アクセスログのローテーションに失敗しました（処理は継続）: {}",
-                    e
-                );
+                warn!("access log rotation failed (continuing): {}", e);
             }
 
-            // ローテーション後にファイルが消えていればヘッダーを再書き込み
+            // If the file disappeared after rotation, rewrite the header.
             if !path.exists() {
                 ensure_header(path);
             }
@@ -147,12 +143,12 @@ impl AccessLogger {
         }
     }
 
-    /// ローテーションが有効か
+    /// Whether rotation is enabled.
     fn rotation_enabled(&self) -> bool {
         self.max_size_bytes > 0 && self.max_generations > 0
     }
 
-    /// ファイルサイズが閾値を超えていればローテーションを実行する
+    /// Rotate when the file size exceeds the threshold.
     fn rotate_if_needed(&self, path: &Path) -> std::io::Result<()> {
         let metadata = match std::fs::metadata(path) {
             Ok(m) => m,
@@ -166,28 +162,28 @@ impl AccessLogger {
     }
 }
 
-/// ローテーション本体（テスト容易性のため AccessLogger から分離）
+/// Rotation core (split out of `AccessLogger` for testability).
 ///
-/// 1. 最古の世代ファイル（`.{N}` または `.{N}.gz`）を削除
-/// 2. 古いものから順に `.{i}` → `.{i+1}` にリネーム
-/// 3. 元ファイルを `.1`（または gzip 圧縮して `.1.gz`）に移動
+/// 1. Delete the oldest generation file (`.{N}` or `.{N}.gz`).
+/// 2. Rename older generations in order: `.{i}` -> `.{i+1}`.
+/// 3. Move the original file to `.1` (gzip-compressed to `.1.gz` when enabled).
 fn rotate_files(path: &Path, max_generations: u32, compress: bool) -> std::io::Result<()> {
     if max_generations == 0 {
         return Ok(());
     }
 
-    // 最古の世代を削除（圧縮/非圧縮両方の可能性を考慮）
+    // Delete the oldest generation (account for both compressed and uncompressed forms).
     let oldest = generation_path(path, max_generations, compress);
     if oldest.exists() {
         std::fs::remove_file(&oldest)?;
     }
-    // 圧縮設定切り替え時の古い拡張子も掃除する
+    // Also clean up the other extension in case the compress setting was toggled.
     let oldest_alt = generation_path(path, max_generations, !compress);
     if oldest_alt.exists() {
         std::fs::remove_file(&oldest_alt)?;
     }
 
-    // .{N-1} → .{N}, ..., .1 → .2 へ順次リネーム（圧縮/非圧縮両方を移動）
+    // Rename in sequence: `.{N-1}` -> `.{N}`, ..., `.1` -> `.2` (move both compressed and uncompressed).
     for i in (1..max_generations).rev() {
         for ext_compress in [compress, !compress] {
             let from = generation_path(path, i, ext_compress);
@@ -201,7 +197,7 @@ fn rotate_files(path: &Path, max_generations: u32, compress: bool) -> std::io::R
         }
     }
 
-    // 元ファイルを .1 に移動（必要なら gzip 圧縮）
+    // Move the original file to `.1` (gzip-compress if requested).
     let dest = generation_path(path, 1, compress);
     if dest.exists() {
         let _ = std::fs::remove_file(&dest);
@@ -215,7 +211,7 @@ fn rotate_files(path: &Path, max_generations: u32, compress: bool) -> std::io::R
     Ok(())
 }
 
-/// 世代番号 `n` に対応するファイルパスを返す
+/// Return the file path that corresponds to generation number `n`.
 fn generation_path(base: &Path, n: u32, compress: bool) -> PathBuf {
     let mut s = base.as_os_str().to_owned();
     s.push(format!(".{n}"));
@@ -225,7 +221,7 @@ fn generation_path(base: &Path, n: u32, compress: bool) -> PathBuf {
     PathBuf::from(s)
 }
 
-/// `src` を gzip 圧縮して `dest` に書き出す（src は呼び出し側で削除）
+/// Gzip-compress `src` to `dest` (the caller deletes `src`).
 fn gzip_file(src: &Path, dest: &Path) -> std::io::Result<()> {
     let input = std::fs::read(src)?;
     let out = std::fs::File::create(dest)?;
@@ -235,17 +231,16 @@ fn gzip_file(src: &Path, dest: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// CSV ヘッダー行を作成する（既存ファイルが空 or 不在の場合）
+/// Create the CSV header line (when the existing file is empty or absent).
 fn ensure_header(path: &Path) {
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(f, "{CSV_HEADER}");
     }
 }
 
-/// パスからクエリ文字列（`?...`）とフラグメント（`#...`）を除去する。
+/// Strip the query string (`?...`) and fragment (`#...`) from a path.
 ///
-/// HIGH H-7: OAuth コールバック・TOTP リダイレクト等の機密情報が
-/// アクセスログに残るのを防ぐ。
+/// HIGH H-7: prevents OAuth callback / TOTP redirect secrets from leaking into the access log.
 fn strip_query_string(path: &str) -> String {
     let without_fragment = path.split('#').next().unwrap_or(path);
     let without_query = without_fragment
@@ -255,7 +250,7 @@ fn strip_query_string(path: &str) -> String {
     without_query.to_string()
 }
 
-/// CSV フィールドのエスケープ（カンマや改行を含む場合はクォートで囲む）
+/// Escape a CSV field (wraps in quotes when commas or newlines are present).
 fn csv_escape(s: &str) -> String {
     if s.contains(',') || s.contains('"') || s.contains('\n') {
         format!("\"{}\"", s.replace('"', "\"\""))
@@ -264,7 +259,7 @@ fn csv_escape(s: &str) -> String {
     }
 }
 
-/// 現在時刻を ISO 8601 形式で返す（外部クレートなしの簡易実装）
+/// Return the current time in ISO 8601 format (simple implementation, no external crate).
 fn chrono_now() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -273,13 +268,13 @@ fn chrono_now() -> String {
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    // Unix timestamp → UTC 日時に変換（うるう秒は無視）
+    // Unix timestamp -> UTC date/time conversion (ignores leap seconds).
     let s = secs % 60;
     let m = (secs / 60) % 60;
     let h = (secs / 3600) % 24;
     let days = secs / 86400;
 
-    // グレゴリオ暦への簡易変換（1970-01-01 起点）
+    // Simple conversion into the Gregorian calendar (starting from 1970-01-01).
     let (year, month, day) = days_to_ymd(days);
 
     format!(
@@ -288,9 +283,9 @@ fn chrono_now() -> String {
     )
 }
 
-/// Unix エポックからの日数を (年, 月, 日) に変換する
+/// Convert days since the Unix epoch into a (year, month, day) tuple.
 fn days_to_ymd(days: u64) -> (u64, u64, u64) {
-    // アルゴリズム: http://howardhinnant.github.io/date_algorithms.html
+    // Algorithm: http://howardhinnant.github.io/date_algorithms.html
     let z = days + 719468;
     let era = z / 146097;
     let doe = z % 146097;
@@ -365,7 +360,7 @@ mod tests {
         assert_eq!(csv_escape(""), "");
     }
 
-    // ---- days_to_ymd テスト ----
+    // ---- days_to_ymd tests ----
 
     #[test]
     fn days_to_ymd_epoch_day_0() {
@@ -399,7 +394,7 @@ mod tests {
         assert_eq!(d, 1);
     }
 
-    // ---- AccessLogger テスト ----
+    // ---- AccessLogger tests ----
 
     #[test]
     fn access_logger_disabled_does_not_create_file() {
@@ -425,38 +420,38 @@ mod tests {
         assert_eq!(entry.status, 101);
     }
 
-    // ---- HIGH H-7: クエリ文字列除去テスト ----
+    // ---- HIGH H-7: query-string stripping tests ----
 
     #[test]
-    fn strip_query_string_は通常パスをそのまま返す() {
+    fn strip_query_string_returns_plain_path_unchanged() {
         assert_eq!(strip_query_string("/ws"), "/ws");
         assert_eq!(strip_query_string("/auth/login"), "/auth/login");
     }
 
     #[test]
-    fn strip_query_string_は_oauth_code_を除去する() {
+    fn strip_query_string_removes_oauth_code() {
         let input = "/auth/callback?code=abc123secret&state=xyz789";
         assert_eq!(strip_query_string(input), "/auth/callback");
     }
 
     #[test]
-    fn strip_query_string_は_token_クエリを除去する() {
+    fn strip_query_string_removes_token_query() {
         let input = "/ws?session=main&token=verysecretvalue";
         assert_eq!(strip_query_string(input), "/ws");
     }
 
     #[test]
-    fn strip_query_string_はフラグメントも除去する() {
+    fn strip_query_string_removes_fragment_too() {
         let input = "/page#section";
         assert_eq!(strip_query_string(input), "/page");
     }
 
     #[test]
-    fn strip_query_string_は空文字列を許容する() {
+    fn strip_query_string_accepts_empty_string() {
         assert_eq!(strip_query_string(""), "");
     }
 
-    // ---- ローテーション機能（Sprint 3-3 後半）テスト ----
+    // ---- Rotation (Sprint 3-3 second half) tests ----
 
     #[test]
     fn rotation_disabled_when_max_size_is_zero() {
@@ -477,44 +472,44 @@ mod tests {
     }
 
     #[test]
-    fn generation_path_適用_拡張子なし() {
+    fn generation_path_applies_without_extension() {
         let p = generation_path(Path::new("/var/log/access.log"), 1, false);
         assert_eq!(p, PathBuf::from("/var/log/access.log.1"));
     }
 
     #[test]
-    fn generation_path_適用_gzip拡張子付き() {
+    fn generation_path_applies_with_gzip_extension() {
         let p = generation_path(Path::new("/var/log/access.log"), 3, true);
         assert_eq!(p, PathBuf::from("/var/log/access.log.3.gz"));
     }
 
     #[test]
-    fn rotate_files_は元ファイルを_1_に移動する_非圧縮() {
+    fn rotate_files_moves_original_to_dot_one_uncompressed() {
         let dir = TempDir::new().unwrap();
         let base = dir.path().join("access.log");
         std::fs::write(&base, b"old content").unwrap();
 
         rotate_files(&base, 3, false).unwrap();
 
-        assert!(!base.exists(), "元ファイルは消えるはず");
+        assert!(!base.exists(), "the original file should disappear");
         let gen1 = generation_path(&base, 1, false);
-        assert!(gen1.exists(), ".1 が作成されるはず");
+        assert!(gen1.exists(), ".1 should be created");
         assert_eq!(std::fs::read(&gen1).unwrap(), b"old content");
     }
 
     #[test]
-    fn rotate_files_は古い世代を順送りする() {
+    fn rotate_files_shifts_older_generations() {
         let dir = TempDir::new().unwrap();
         let base = dir.path().join("access.log");
-        // 既存の世代ファイルを作成
+        // Create existing generation files.
         std::fs::write(generation_path(&base, 1, false), b"gen1").unwrap();
         std::fs::write(generation_path(&base, 2, false), b"gen2").unwrap();
-        // 元ファイル
+        // Original file.
         std::fs::write(&base, b"current").unwrap();
 
         rotate_files(&base, 3, false).unwrap();
 
-        // 順送り後: .1 = current, .2 = gen1, .3 = gen2
+        // After shifting: .1 = current, .2 = gen1, .3 = gen2.
         assert_eq!(
             std::fs::read(generation_path(&base, 1, false)).unwrap(),
             b"current"
@@ -530,10 +525,10 @@ mod tests {
     }
 
     #[test]
-    fn rotate_files_は_max_generations_を超えた古い世代を削除する() {
+    fn rotate_files_deletes_generations_beyond_max() {
         let dir = TempDir::new().unwrap();
         let base = dir.path().join("access.log");
-        // 既に .3 まで存在（max_generations = 3）
+        // Already have files up to .3 (max_generations = 3).
         std::fs::write(generation_path(&base, 1, false), b"gen1").unwrap();
         std::fs::write(generation_path(&base, 2, false), b"gen2").unwrap();
         std::fs::write(generation_path(&base, 3, false), b"gen3-oldest").unwrap();
@@ -541,7 +536,7 @@ mod tests {
 
         rotate_files(&base, 3, false).unwrap();
 
-        // .3 (最古 gen3) は削除、.1 = current, .2 = 旧 gen1, .3 = 旧 gen2
+        // .3 (oldest gen3) is deleted; .1 = current, .2 = old gen1, .3 = old gen2.
         assert_eq!(
             std::fs::read(generation_path(&base, 1, false)).unwrap(),
             b"current"
@@ -557,7 +552,7 @@ mod tests {
     }
 
     #[test]
-    fn rotate_files_は_gzip_圧縮を適用する() {
+    fn rotate_files_applies_gzip_compression() {
         let dir = TempDir::new().unwrap();
         let base = dir.path().join("access.log");
         let content = b"hello world this is access log content";
@@ -565,11 +560,11 @@ mod tests {
 
         rotate_files(&base, 3, true).unwrap();
 
-        assert!(!base.exists(), "元ファイルは消えるはず");
+        assert!(!base.exists(), "the original file should disappear");
         let gen1_gz = generation_path(&base, 1, true);
-        assert!(gen1_gz.exists(), ".1.gz が作成されるはず");
+        assert!(gen1_gz.exists(), ".1.gz should be created");
 
-        // gzip ファイルをデコードして元のバイト列と一致することを確認
+        // Decode the gzip file and verify it matches the original bytes.
         let raw = std::fs::read(&gen1_gz).unwrap();
         let mut decoder = flate2::read::GzDecoder::new(&raw[..]);
         let mut decoded = Vec::new();
@@ -578,42 +573,42 @@ mod tests {
     }
 
     #[test]
-    fn log_は閾値超過時にローテーションを実行する() {
+    fn log_triggers_rotation_when_threshold_exceeded() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("access.log");
 
-        // 1 MiB 閾値・2 世代保持・非圧縮
+        // 1 MiB threshold, keep 2 generations, no compression.
         let cfg = config_with(&path, 1, 2, false);
         let logger = AccessLogger::new(&cfg);
 
-        // ファイルを 1 MiB 超のサイズにする
+        // Inflate the file beyond 1 MiB.
         let large = vec![b'x'; 1024 * 1024 + 100];
         std::fs::write(&path, &large).unwrap();
 
-        // log() 1 回でローテーションが発動する
+        // A single `log()` call should trigger rotation.
         logger.log(&sample_entry());
 
         let gen1 = generation_path(&path, 1, false);
-        assert!(gen1.exists(), ".1 にローテーションされているはず");
-        // 元ファイルは新規作成されてヘッダー + 1 行のみ
+        assert!(gen1.exists(), ".1 should have been rotated");
+        // The original file is recreated with the header + one entry.
         let new_content = std::fs::read_to_string(&path).unwrap();
         assert!(new_content.starts_with(CSV_HEADER));
         assert!(new_content.contains("/ws"));
     }
 
     #[test]
-    fn log_は閾値未満ではローテーションしない() {
+    fn log_does_not_rotate_below_threshold() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("access.log");
         let cfg = config_with(&path, 1, 2, false);
         let logger = AccessLogger::new(&cfg);
 
-        // 小さい既存ファイル
+        // Small existing file.
         std::fs::write(&path, b"existing\n").unwrap();
         logger.log(&sample_entry());
 
         let gen1 = generation_path(&path, 1, false);
-        assert!(!gen1.exists(), "ローテーションされないはず");
+        assert!(!gen1.exists(), "should not have rotated");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("existing"));
         assert!(content.contains("/ws"));

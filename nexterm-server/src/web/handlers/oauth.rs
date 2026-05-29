@@ -1,4 +1,4 @@
-//! OAuth2 認証ハンドラ: リダイレクト開始 + コールバック処理。
+//! OAuth2 authentication handlers: redirect start + callback handling.
 
 use axum::{
     extract::{Query, State},
@@ -14,7 +14,7 @@ use crate::web::access_log;
 use crate::web::auth;
 use crate::web::middleware::client_ip;
 
-/// GET /auth/oauth — OAuth プロバイダーの認証ページへリダイレクト
+/// GET /auth/oauth — redirect to the OAuth provider's authorization page.
 pub(in crate::web) async fn handle_oauth_redirect(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -27,17 +27,17 @@ pub(in crate::web) async fn handle_oauth_redirect(
 
     match oauth_mgr.authorization_url() {
         Ok(url) => {
-            info!("OAuth 認証開始（{}）", addr);
+            info!("OAuth authorization start ({})", addr);
             redirect(&url)
         }
         Err(e) => {
-            warn!("OAuth URL 生成エラー: {}", e);
+            warn!("OAuth URL generation error: {}", e);
             redirect("/login?error=oauth_config")
         }
     }
 }
 
-/// OAuth2 コールバッククエリパラメータ
+/// OAuth2 callback query parameters.
 #[derive(Deserialize)]
 pub(in crate::web) struct OAuthCallback {
     code: Option<String>,
@@ -46,7 +46,7 @@ pub(in crate::web) struct OAuthCallback {
     error_description: Option<String>,
 }
 
-/// GET /auth/callback — OAuth2 コールバック処理
+/// GET /auth/callback — OAuth2 callback handler.
 pub(in crate::web) async fn handle_oauth_callback(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -58,10 +58,10 @@ pub(in crate::web) async fn handle_oauth_callback(
         None => return StatusCode::NOT_FOUND.into_response(),
     };
 
-    // プロバイダーからのエラーを処理する
+    // Handle errors from the provider.
     if let Some(err) = query.error {
         warn!(
-            "OAuth エラー: {} — {} （{}）",
+            "OAuth error: {} — {} ({})",
             err,
             query.error_description.as_deref().unwrap_or(""),
             addr
@@ -78,12 +78,12 @@ pub(in crate::web) async fn handle_oauth_callback(
         None => return redirect("/login?error=oauth_no_state"),
     };
 
-    // コードを access_token に交換してユーザー情報を取得する
-    // access_token は GitHub Org メンバーシップ検証で必要なので一緒に受け取る
+    // Exchange the code for an access token and fetch user info.
+    // The access token is also required for GitHub org membership verification.
     let (user, access_token) = match oauth_mgr.exchange_code(code, oauth_state).await {
         Ok(pair) => pair,
         Err(e) => {
-            warn!("OAuth コード交換失敗: {} （{}）", e, addr);
+            warn!("OAuth code exchange failed: {} ({})", e, addr);
             state.access_logger.log(&access_log::AccessLogEntry {
                 remote_addr: addr.clone(),
                 method: "GET".to_string(),
@@ -96,9 +96,9 @@ pub(in crate::web) async fn handle_oauth_callback(
         }
     };
 
-    // アクセス許可チェック（access_token は Org メンバーシップ API で使用）
+    // Access permission check (access_token is used by the org-membership API).
     if !oauth_mgr.is_user_allowed(&user, &access_token).await {
-        warn!("OAuth アクセス拒否: user_id={} （{}）", user.user_id, addr);
+        warn!("OAuth access denied: user_id={} ({})", user.user_id, addr);
         state.access_logger.log(&access_log::AccessLogEntry {
             remote_addr: addr.clone(),
             method: "GET".to_string(),
@@ -120,7 +120,7 @@ pub(in crate::web) async fn handle_oauth_callback(
     let cookie = auth::make_session_cookie(&token, state.tls_enabled);
 
     info!(
-        "OAuth ログイン成功: {} ({}) （{}）",
+        "OAuth login succeeded: {} ({}) ({})",
         user_id, user.provider, addr
     );
     state.access_logger.log(&access_log::AccessLogEntry {
@@ -137,5 +137,5 @@ pub(in crate::web) async fn handle_oauth_callback(
         .header("Location", "/")
         .header("Set-Cookie", cookie)
         .body(axum::body::Body::empty())
-        .expect("Response::builder への無効なヘッダー値")
+        .expect("invalid header value for Response::builder")
 }

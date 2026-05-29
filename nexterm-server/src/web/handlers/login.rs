@@ -1,4 +1,4 @@
-//! TOTP ログイン / ログアウト / 初回 TOTP セットアップハンドラ。
+//! TOTP login / logout / initial TOTP setup handlers.
 
 use axum::{
     Form, Json,
@@ -16,13 +16,13 @@ use crate::web::auth;
 use crate::web::middleware::client_ip;
 use crate::web::otp;
 
-/// ログインフォームのフィールド
+/// Fields of the login form.
 #[derive(Deserialize)]
 pub(in crate::web) struct LoginForm {
     code: String,
 }
 
-/// POST /auth/login — TOTP コードを検証してセッションを発行する
+/// POST /auth/login — verify a TOTP code and issue a session.
 pub(in crate::web) async fn handle_login(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -30,10 +30,10 @@ pub(in crate::web) async fn handle_login(
 ) -> Response {
     let addr = client_ip(&headers);
 
-    // レート制限: 同一 IP から 60 秒に 5 回までしか試行を許さない
-    // （TOTP ブルートフォース対策、CRITICAL #2）
+    // Rate limit: allow only 5 attempts per 60 seconds from the same IP
+    // (TOTP brute-force defense, CRITICAL #2).
     if !state.totp_rate_limiter.check_and_record(&addr) {
-        warn!("TOTP ログインレート制限超過（{}）", addr);
+        warn!("TOTP login rate limit exceeded ({})", addr);
         state.access_logger.log(&access_log::AccessLogEntry {
             remote_addr: addr.clone(),
             method: "POST".to_string(),
@@ -68,7 +68,7 @@ pub(in crate::web) async fn handle_login(
     };
 
     if !totp.verify(&form.code) {
-        warn!("TOTP ログイン失敗: 無効なコード（{}）", addr);
+        warn!("TOTP login failure: invalid code ({})", addr);
         state.access_logger.log(&access_log::AccessLogEntry {
             remote_addr: addr.clone(),
             method: "POST".to_string(),
@@ -80,7 +80,7 @@ pub(in crate::web) async fn handle_login(
         return redirect("/login?error=invalid_code");
     }
 
-    // 認証成功: レート制限カウンタをリセット（正規ユーザーをペナルティから解放）
+    // Authentication succeeded: reset the rate-limit counter (free legitimate users from penalties).
     state.totp_rate_limiter.reset(&addr);
 
     let token = match state.auth_mgr.create_session("totp", "") {
@@ -89,7 +89,7 @@ pub(in crate::web) async fn handle_login(
     };
     let cookie = auth::make_session_cookie(&token, state.tls_enabled);
 
-    info!("TOTP ログイン成功（{}）", addr);
+    info!("TOTP login succeeded ({})", addr);
     state.access_logger.log(&access_log::AccessLogEntry {
         remote_addr: addr,
         method: "POST".to_string(),
@@ -104,10 +104,10 @@ pub(in crate::web) async fn handle_login(
         .header("Location", "/")
         .header("Set-Cookie", cookie)
         .body(axum::body::Body::empty())
-        .expect("Response::builder への無効なヘッダー値")
+        .expect("invalid header value for Response::builder")
 }
 
-/// POST /auth/logout — セッションを破棄してログインページへリダイレクト
+/// POST /auth/logout — revoke the session and redirect to the login page.
 pub(in crate::web) async fn handle_logout(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -120,17 +120,17 @@ pub(in crate::web) async fn handle_logout(
         .header("Location", "/login")
         .header("Set-Cookie", auth::make_logout_cookie())
         .body(axum::body::Body::empty())
-        .expect("logout redirect レスポンスの構築に失敗")
+        .expect("failed to build logout redirect response")
 }
 
-/// セットアップ URL レスポンス
+/// Setup URL response payload.
 #[derive(Serialize)]
 struct SetupUrlResponse {
     url: String,
     secret: String,
 }
 
-/// GET /auth/setup-url — セットアップ用の otpauth:// URL とシークレットを返す
+/// GET /auth/setup-url — return the otpauth:// URL and the secret for setup.
 pub(in crate::web) async fn handle_setup_url(State(state): State<AppState>) -> Response {
     let guard = state
         .pending_setup
@@ -146,7 +146,7 @@ pub(in crate::web) async fn handle_setup_url(State(state): State<AppState>) -> R
     }
 }
 
-/// POST /setup/verify — 初回 TOTP コードを検証してシークレットを保存する
+/// POST /setup/verify — verify the first TOTP code and persist the secret.
 pub(in crate::web) async fn handle_setup_verify(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -170,7 +170,7 @@ pub(in crate::web) async fn handle_setup_verify(
 
     if let Err(e) = otp::save_secret_to_config(&secret_clone) {
         warn!(
-            "TOTP シークレットの保存に失敗: {}。インメモリのみで動作します。",
+            "failed to save TOTP secret: {}. continuing with in-memory state only.",
             e
         );
     }
@@ -182,10 +182,10 @@ pub(in crate::web) async fn handle_setup_verify(
                 .pending_setup
                 .lock()
                 .expect("pending_setup mutex poisoned") = None;
-            info!("TOTP セットアップが完了しました（{}）", addr);
+            info!("TOTP setup completed ({})", addr);
         }
         Err(e) => {
-            warn!("TOTP マネージャーの作成に失敗: {}", e);
+            warn!("failed to create TOTP manager: {}", e);
             return redirect("/setup?error=internal");
         }
     }
@@ -200,5 +200,5 @@ pub(in crate::web) async fn handle_setup_verify(
         .header("Location", "/")
         .header("Set-Cookie", cookie)
         .body(axum::body::Body::empty())
-        .expect("Response::builder への無効なヘッダー値")
+        .expect("invalid header value for Response::builder")
 }

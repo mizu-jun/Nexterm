@@ -1,10 +1,10 @@
-//! TLS 証明書の読み込みと自己署名証明書の自動生成
+//! TLS certificate loading and self-signed certificate auto-generation.
 
 use std::path::PathBuf;
 
 use tracing::info;
 
-/// nexterm 設定ディレクトリを返す（nexterm.toml の親ディレクトリ）
+/// Return the nexterm config directory (the parent of `nexterm.toml`).
 fn config_dir() -> PathBuf {
     nexterm_config::toml_path()
         .parent()
@@ -12,27 +12,25 @@ fn config_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// (cert_pem_bytes, key_pem_bytes) を返す。
+/// Return `(cert_pem_bytes, key_pem_bytes)`.
 ///
-/// - `cert_file` / `key_file` が指定されている場合: そのファイルを読み込む。
-/// - 未指定の場合: `~/.config/nexterm/tls/` に自己署名証明書を生成または再利用する。
+/// - When `cert_file` / `key_file` are specified: read the files.
+/// - When unspecified: generate or reuse a self-signed certificate in `~/.config/nexterm/tls/`.
 pub fn load_or_generate(
     cert_file: Option<&str>,
     key_file: Option<&str>,
 ) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
     if let (Some(cert_path), Some(key_path)) = (cert_file, key_file) {
-        let cert = std::fs::read(cert_path)
-            .map_err(|e| anyhow::anyhow!("証明書ファイルの読み込みに失敗: {}: {}", cert_path, e))?;
+        let cert = std::fs::read(cert_path).map_err(|e| {
+            anyhow::anyhow!("failed to read certificate file: {}: {}", cert_path, e)
+        })?;
         let key = std::fs::read(key_path)
-            .map_err(|e| anyhow::anyhow!("秘密鍵ファイルの読み込みに失敗: {}: {}", key_path, e))?;
-        info!(
-            "TLS: {} / {} から証明書を読み込みました",
-            cert_path, key_path
-        );
+            .map_err(|e| anyhow::anyhow!("failed to read private key file: {}: {}", key_path, e))?;
+        info!("TLS: loaded certificate from {} / {}", cert_path, key_path);
         return Ok((cert, key));
     }
 
-    // 自動生成パス
+    // Auto-generation path.
     let tls_dir = config_dir().join("tls");
     let cert_path = tls_dir.join("cert.pem");
     let key_path = tls_dir.join("key.pem");
@@ -40,12 +38,15 @@ pub fn load_or_generate(
     if cert_path.exists() && key_path.exists() {
         let cert = std::fs::read(&cert_path)?;
         let key = std::fs::read(&key_path)?;
-        info!("TLS: 既存の自己署名証明書を再利用します ({:?})", tls_dir);
+        info!(
+            "TLS: reusing existing self-signed certificate ({:?})",
+            tls_dir
+        );
         return Ok((cert, key));
     }
 
-    // 新しい自己署名証明書を生成する
-    info!("TLS: 自己署名証明書を生成します");
+    // Generate a fresh self-signed certificate.
+    info!("TLS: generating a self-signed certificate");
     let certified =
         rcgen::generate_simple_self_signed(vec!["localhost".to_string(), "127.0.0.1".to_string()])?;
 
@@ -54,22 +55,22 @@ pub fn load_or_generate(
 
     std::fs::create_dir_all(&tls_dir)?;
     std::fs::write(&cert_path, &cert_pem)?;
-    // HIGH H-3: TLS 秘密鍵は 0600 で書き込む（同一サーバーの他ユーザーから読み取り不可）
+    // HIGH H-3: write the TLS private key with mode 0600 (unreadable by other users on the host).
     write_key_file_secure(&key_path, key_pem.as_bytes())?;
 
     info!(
-        "TLS: 自己署名証明書を {:?} に保存しました。\
-        ブラウザの警告を解消するにはこの証明書をシステム/ブラウザの信頼ストアに追加してください。",
+        "TLS: saved self-signed certificate to {:?}. \
+        To silence browser warnings, add the certificate to your system/browser trust store.",
         tls_dir
     );
 
     Ok((cert_pem.into_bytes(), key_pem.into_bytes()))
 }
 
-/// TLS 秘密鍵ファイルを所有者限定（0600）で書き込む。
+/// Write the TLS private key file with owner-only permissions (0600).
 ///
-/// HIGH H-3 対策: umask に依存せず確実にパーミッションを 0600 に設定する。
-/// Windows では NTFS ACL がデフォルトでユーザー固有のためそのまま書き込む。
+/// HIGH H-3 mitigation: do not rely on umask; explicitly set 0600 permissions.
+/// On Windows, NTFS ACLs default to per-user access, so writes proceed as-is.
 fn write_key_file_secure(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
 
@@ -106,48 +107,48 @@ mod tests {
     #[test]
     fn config_dir_returns_path() {
         let dir = config_dir();
-        // config_dirは必ず有効なパスを返す
+        // config_dir must always return a valid path.
         assert!(!dir.as_os_str().is_empty());
     }
 
     #[test]
     fn load_or_generate_creates_self_signed_when_no_files() {
-        // 既存の証明書がない場合、自己署名証明書が生成される
-        // 一時ディレクトリを使用
+        // When no existing certificate is found, a self-signed certificate must be generated.
+        // Use a temp directory.
         let temp_dir = std::env::temp_dir().join("nexterm_tls_test");
         let cert_path = temp_dir.join("test_cert.pem");
         let key_path = temp_dir.join("test_key.pem");
 
-        // 事前にクリーンアップ
+        // Clean up beforehand.
         let _ = std::fs::remove_file(&cert_path);
         let _ = std::fs::remove_file(&key_path);
 
-        // 証明書を生成
+        // Generate the certificate.
         let result = load_or_generate(None, None);
 
-        // 自己署名証明書の生成に成功する
+        // Self-signed certificate generation must succeed.
         assert!(result.is_ok());
 
         let (cert, key) = result.unwrap();
-        // PEM形式であることを確認（先頭にPEMヘッダーがある）
+        // Verify they are PEM-formatted (PEM header appears at the start).
         let cert_str = String::from_utf8_lossy(&cert);
         let key_str = String::from_utf8_lossy(&key);
         assert!(cert_str.contains("BEGIN CERTIFICATE"));
-        assert!(key_str.contains("BEGIN")); // RSA PRIVATE KEY または PRIVATE KEY
+        assert!(key_str.contains("BEGIN")); // Either "RSA PRIVATE KEY" or "PRIVATE KEY".
     }
 
     #[test]
     fn load_or_generate_with_explicit_files() {
-        // 明示的な証明書ファイルパスを指定
+        // Provide explicit certificate file paths.
         let temp_dir = std::env::temp_dir().join("nexterm_tls_test_explicit");
         let cert_path = temp_dir.join("custom_cert.pem");
         let key_path = temp_dir.join("custom_key.pem");
 
-        // 事前にクリーンアップ
+        // Clean up beforehand.
         let _ = std::fs::remove_dir_all(&temp_dir);
         let _ = std::fs::create_dir_all(&temp_dir);
 
-        // ダミーの証明書と鍵を書き込む
+        // Write dummy certificate and key.
         let dummy_cert = b"-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----";
         let dummy_key = b"-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----";
 
@@ -164,13 +165,13 @@ mod tests {
         assert_eq!(cert, dummy_cert);
         assert_eq!(key, dummy_key);
 
-        // クリーンアップ
+        // Cleanup.
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     #[test]
     fn load_or_generate_fails_with_missing_file() {
-        // 存在しないファイルを指定した場合はエラー
+        // An explicit but missing file path must error.
         let result = load_or_generate(
             Some("/nonexistent/path/cert.pem"),
             Some("/nonexistent/path/key.pem"),
@@ -180,18 +181,17 @@ mod tests {
 
     #[test]
     fn load_or_generate_single_path_falls_back_to_auto() {
-        // 証明書のみ指定、鍵が未指定の場合は自動生成パスにフォールバック
-        // 明示的パスが存在しない場合も自己署名証明書が生成される
+        // When only the certificate path is given (no key), fall back to the auto-generation path.
+        // The explicit path being missing still ends up generating a self-signed certificate.
         let result = load_or_generate(Some("/nonexistent/cert.pem"), None);
-        // 片方だけ指定の場合は自動生成パスにフォールバック
-        // 存在しない場合は自己署名証明書が生成される
+        // Falling back to auto-generation succeeds.
         assert!(result.is_ok());
     }
 
     #[cfg(unix)]
     #[test]
-    fn write_key_file_secure_は_0600_で書き込む() {
-        // HIGH H-3: TLS 秘密鍵が 0600 パーミッションで保存されることを保証
+    fn write_key_file_secure_uses_0600() {
+        // HIGH H-3: the TLS private key must be stored with 0600 permissions.
         use std::os::unix::fs::PermissionsExt;
         let tmp =
             std::env::temp_dir().join(format!("nexterm_test_tls_key_{}.pem", std::process::id()));
@@ -202,7 +202,7 @@ mod tests {
         assert_eq!(
             mode & 0o777,
             0o600,
-            "TLS 秘密鍵が 0600 ではない: {:o}",
+            "TLS private key is not 0600: {:o}",
             mode & 0o777
         );
 

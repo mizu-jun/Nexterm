@@ -1,20 +1,20 @@
-//! OAuth2 / OIDC 認証モジュール
+//! OAuth2 / OIDC authentication module.
 //!
-//! 対応プロバイダー:
-//! - GitHub (OAuth2)
-//! - Google (OIDC)
-//! - Azure AD (OIDC)
-//! - 汎用 OIDC プロバイダー
+//! Supported providers:
+//! - GitHub (OAuth2).
+//! - Google (OIDC).
+//! - Azure AD (OIDC).
+//! - Generic OIDC provider.
 //!
-//! # フロー
-//! 1. `GET /auth/oauth?provider=github` → プロバイダーの認証ページへリダイレクト
-//! 2. プロバイダーが `GET /auth/callback?code=...&state=...` へリダイレクト
-//! 3. code を access_token に交換してユーザー情報を取得
-//! 4. allowed_emails / allowed_orgs チェック → セッション発行
+//! # Flow
+//! 1. `GET /auth/oauth?provider=github` -> redirect to the provider's authorization page.
+//! 2. The provider redirects to `GET /auth/callback?code=...&state=...`.
+//! 3. Exchange the code for an access token and fetch user info.
+//! 4. Check `allowed_emails` / `allowed_orgs` -> issue a session.
 //!
-//! # セキュリティ
-//! - CSRF 対策として state パラメータを使用（一時マップに保存、10 分で有効期限切れ）
-//! - PKCE は使用しない（サーバーサイドシークレットのみ）
+//! # Security
+//! - CSRF defense via the `state` parameter (stored in a temporary map, expires in 10 minutes).
+//! - PKCE is not used (server-side secret only).
 
 use std::{
     collections::HashMap,
@@ -31,7 +31,7 @@ use oauth2::{
 use serde::Deserialize;
 use tracing::{info, warn};
 
-/// `build_client` の戻り値型エイリアス（型複雑度 lint 回避）
+/// Return-type alias for `build_client` (avoids the type-complexity lint).
 type OAuthClient = oauth2::Client<
     oauth2::basic::BasicErrorResponse,
     BasicTokenResponse,
@@ -45,10 +45,10 @@ type OAuthClient = oauth2::Client<
     EndpointSet,
 >;
 
-/// CSRF state エントリ（10 分で期限切れ）
+/// CSRF state entry (expires after 10 minutes).
 const STATE_TTL: Duration = Duration::from_secs(600);
 
-/// OAuth ユーザー情報
+/// OAuth user info.
 #[derive(Debug, Clone)]
 pub struct OAuthUser {
     pub provider: String,
@@ -57,19 +57,19 @@ pub struct OAuthUser {
     pub login: Option<String>,
 }
 
-/// CSRF state マップ（state_token → 有効期限）
+/// CSRF state map (state_token -> expiry).
 #[derive(Clone)]
 pub struct OAuthManager {
     config: OAuthConfig,
-    /// state トークン → 有効期限
+    /// state token -> expiry.
     pending_states: Arc<Mutex<HashMap<String, Instant>>>,
     redirect_base: String,
 }
 
 impl OAuthManager {
-    /// 設定と callback ベース URL から OAuthManager を生成する
+    /// Build an `OAuthManager` from the config and the callback base URL.
     ///
-    /// `redirect_base`: 例 `"https://example.com"` または `"http://localhost:7681"`
+    /// `redirect_base`: e.g. `"https://example.com"` or `"http://localhost:7681"`.
     pub fn new(config: OAuthConfig, redirect_base: String) -> Self {
         Self {
             config,
@@ -78,12 +78,12 @@ impl OAuthManager {
         }
     }
 
-    /// プロバイダーの認証 URL を生成して返す（state を発行して保存する）
+    /// Generate and return the provider's authorization URL (issues and stores a state token).
     pub fn authorization_url(&self) -> anyhow::Result<String> {
         let client = self.build_client()?;
         let mut request = client.authorize_url(CsrfToken::new_random);
 
-        // プロバイダーごとのスコープ追加
+        // Add the per-provider scopes.
         let scopes = self.required_scopes();
         for scope in scopes {
             request = request.add_scope(Scope::new(scope));
@@ -91,30 +91,31 @@ impl OAuthManager {
 
         let (url, csrf_token): (_, CsrfToken) = request.url();
 
-        // state を保存する（10 分で自動期限切れ）
+        // Persist the state token (auto-expires in 10 minutes).
         let expiry = Instant::now() + STATE_TTL;
         let mut states = self
             .pending_states
             .lock()
             .expect("OAuth pending_states mutex poisoned");
-        // 古いエントリを掃除する
+        // Sweep stale entries.
         states.retain(|_, v| Instant::now() < *v);
         states.insert(csrf_token.secret().clone(), expiry);
 
         Ok(url.to_string())
     }
 
-    /// コールバックの code と state を検証してユーザー情報と access_token を返す。
+    /// Validate the callback `code` and `state`, then return the user info and access token.
     ///
-    /// 戻り値の `String` は access_token で、続く `is_user_allowed` の Org メンバーシップ
-    /// 検証で必要となる。`Zeroizing` ではなく素の `String` を返すが、Org チェック後に
-    /// drop される短寿命の値であり、ログ出力もしない。
+    /// The returned `String` is the access token, which is required for the subsequent
+    /// `is_user_allowed` Org membership check. It is returned as a plain `String` (not
+    /// `Zeroizing`) because it is a short-lived value dropped after the Org check and is never
+    /// logged.
     pub async fn exchange_code(
         &self,
         code: String,
         state: String,
     ) -> anyhow::Result<(OAuthUser, String)> {
-        // state 検証（CSRF 対策）
+        // Validate state (CSRF defense).
         {
             let mut states = self
                 .pending_states
@@ -122,13 +123,13 @@ impl OAuthManager {
                 .expect("OAuth pending_states mutex poisoned");
             match states.remove(&state) {
                 Some(expiry) if Instant::now() < expiry => {
-                    // 有効な state
+                    // Valid state.
                 }
                 Some(_) => {
-                    anyhow::bail!("OAuth state が期限切れです");
+                    anyhow::bail!("OAuth state has expired");
                 }
                 None => {
-                    anyhow::bail!("OAuth state が無効です（CSRF の可能性）");
+                    anyhow::bail!("OAuth state is invalid (possible CSRF)");
                 }
             }
         }
@@ -139,27 +140,27 @@ impl OAuthManager {
             .exchange_code(AuthorizationCode::new(code))
             .request_async(&http_client)
             .await
-            .map_err(|e| anyhow::anyhow!("トークン交換失敗: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("token exchange failed: {}", e))?;
 
         let access_token = token_result.access_token().secret().to_string();
 
-        // ユーザー情報を取得する
+        // Fetch user info.
         let user = self.fetch_user_info(&access_token).await?;
         Ok((user, access_token))
     }
 
-    /// プロバイダー固有のユーザー情報 API を呼び出す
+    /// Call the provider-specific user-info API.
     async fn fetch_user_info(&self, access_token: &str) -> anyhow::Result<OAuthUser> {
         match self.config.provider.as_str() {
             "github" => self.fetch_github_user(access_token).await,
             "google" => self.fetch_google_user(access_token).await,
             "azure" => self.fetch_azure_user(access_token).await,
             "oidc" => self.fetch_oidc_user(access_token).await,
-            other => anyhow::bail!("未対応の OAuth プロバイダー: {}", other),
+            other => anyhow::bail!("unsupported OAuth provider: {}", other),
         }
     }
 
-    /// GitHub ユーザー情報を取得する
+    /// Fetch GitHub user info.
     async fn fetch_github_user(&self, access_token: &str) -> anyhow::Result<OAuthUser> {
         #[derive(Deserialize)]
         struct GithubUser {
@@ -179,7 +180,7 @@ impl OAuthManager {
             .json()
             .await?;
 
-        // email が非公開の場合は emails エンドポイントから取得する
+        // When `email` is private, fetch it from the `emails` endpoint instead.
         let email = if user.email.is_some() {
             user.email
         } else {
@@ -194,7 +195,7 @@ impl OAuthManager {
         })
     }
 
-    /// GitHub のプライマリメールアドレスを取得する
+    /// Fetch the primary email address from GitHub.
     async fn fetch_github_primary_email(
         &self,
         access_token: &str,
@@ -224,7 +225,7 @@ impl OAuthManager {
             .map(|e| e.email)
     }
 
-    /// Google userinfo エンドポイントからユーザー情報を取得する
+    /// Fetch user info from the Google userinfo endpoint.
     async fn fetch_google_user(&self, access_token: &str) -> anyhow::Result<OAuthUser> {
         #[derive(Deserialize)]
         struct GoogleUser {
@@ -250,7 +251,7 @@ impl OAuthManager {
         })
     }
 
-    /// Azure AD userinfo エンドポイントからユーザー情報を取得する
+    /// Fetch user info from the Azure AD userinfo endpoint.
     async fn fetch_azure_user(&self, access_token: &str) -> anyhow::Result<OAuthUser> {
         #[derive(Deserialize)]
         struct AzureUser {
@@ -263,7 +264,7 @@ impl OAuthManager {
             display_name: Option<String>,
         }
 
-        // Microsoft Graph API を使用する
+        // Use the Microsoft Graph API.
         let user: AzureUser = reqwest::Client::new()
             .get("https://graph.microsoft.com/v1.0/me")
             .bearer_auth(access_token)
@@ -287,15 +288,15 @@ impl OAuthManager {
         })
     }
 
-    /// 汎用 OIDC userinfo エンドポイントからユーザー情報を取得する
+    /// Fetch user info from a generic OIDC userinfo endpoint.
     async fn fetch_oidc_user(&self, access_token: &str) -> anyhow::Result<OAuthUser> {
         let issuer_url = self
             .config
             .issuer_url
             .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("oidc プロバイダーには issuer_url が必要です"))?;
+            .ok_or_else(|| anyhow::anyhow!("the oidc provider requires issuer_url"))?;
 
-        // ディスカバリードキュメントから userinfo_endpoint を取得する
+        // Fetch `userinfo_endpoint` from the discovery document.
         let discovery_url = format!(
             "{}/.well-known/openid-configuration",
             issuer_url.trim_end_matches('/')
@@ -322,12 +323,12 @@ impl OAuthManager {
             .json()
             .await?;
 
-        let userinfo_endpoint = discovery.userinfo_endpoint.ok_or_else(|| {
-            anyhow::anyhow!("OIDC ディスカバリーに userinfo_endpoint がありません")
-        })?;
+        let userinfo_endpoint = discovery
+            .userinfo_endpoint
+            .ok_or_else(|| anyhow::anyhow!("OIDC discovery does not contain userinfo_endpoint"))?;
 
-        // SSRF 対策（HIGH H-1）: userinfo_endpoint が discovery_url と同じドメインで
-        // かつ HTTPS スキームに限定する。
+        // SSRF mitigation (HIGH H-1): restrict `userinfo_endpoint` to the same domain as
+        // `discovery_url` and to the HTTPS scheme only.
         validate_userinfo_endpoint(&userinfo_endpoint, issuer_url)?;
 
         let user: OidcUser = client
@@ -347,26 +348,26 @@ impl OAuthManager {
         })
     }
 
-    /// ユーザーが許可リストに含まれているか確認する。
+    /// Check whether the user is on an allow-list.
     ///
-    /// 認可ロジック:
-    /// - 両リスト空 → 全員許可
-    /// - `allowed_emails` 一致 → 許可
-    /// - `allowed_orgs` 一致（GitHub のみ、メンバーシップ API で検証）→ 許可
-    /// - どれにも該当しない → 拒否
+    /// Authorization logic:
+    /// - Both lists empty -> allow everyone.
+    /// - `allowed_emails` match -> allow.
+    /// - `allowed_orgs` match (GitHub only, validated via the membership API) -> allow.
+    /// - Neither matches -> reject.
     ///
-    /// `access_token` は GitHub Organization メンバーシップ検証で必須。
-    /// 旧実装では `get_current_token()` が常に `None` を返すバグで Org チェックが
-    /// 実行されず、`allowed_orgs` 単独設定では誰もログインできない機能不全だった
-    /// （CRITICAL #1）。
+    /// `access_token` is required for the GitHub organization membership check.
+    /// In the previous implementation `get_current_token()` always returned `None`, so the Org
+    /// check never ran and configuring only `allowed_orgs` resulted in nobody being able to log
+    /// in (CRITICAL #1).
     pub async fn is_user_allowed(&self, user: &OAuthUser, access_token: &str) -> bool {
-        // 両方の許可リストが空 → 全員許可
+        // Both lists empty -> allow everyone.
         if self.config.allowed_emails.is_empty() && self.config.allowed_orgs.is_empty() {
-            info!("OAuth: 許可リスト未設定のため全ユーザーを許可");
+            info!("OAuth: allow list unset; permitting all users");
             return true;
         }
 
-        // メールアドレスチェック
+        // Email check.
         if !self.config.allowed_emails.is_empty()
             && let Some(email) = &user.email
             && self.config.allowed_emails.contains(email)
@@ -374,7 +375,7 @@ impl OAuthManager {
             return true;
         }
 
-        // GitHub Organization チェック（access_token 経由で確実に実行）
+        // GitHub Organization check (reliably runs because access_token is passed through).
         if !self.config.allowed_orgs.is_empty()
             && self.config.provider == "github"
             && let Some(login) = &user.login
@@ -384,13 +385,13 @@ impl OAuthManager {
         }
 
         warn!(
-            "OAuth: ユーザー '{}' はアクセス拒否されました",
+            "OAuth: access denied for user '{}'",
             user.login.as_deref().unwrap_or(&user.user_id)
         );
         false
     }
 
-    /// GitHub Organization メンバーシップを確認する
+    /// Check GitHub Organization membership.
     async fn check_github_org(&self, access_token: &str, _login: &str) -> bool {
         let client = reqwest::Client::new();
         for org in &self.config.allowed_orgs {
@@ -409,24 +410,24 @@ impl OAuthManager {
         false
     }
 
-    // ── プライベートヘルパー ──────────────────────────────────────────────────
+    // ── Private helpers ──────────────────────────────────────────────────────
 
     fn build_client(&self) -> anyhow::Result<OAuthClient> {
         let client_id = ClientId::new(
             self.config
                 .client_id
                 .clone()
-                .ok_or_else(|| anyhow::anyhow!("OAuth client_id が未設定です"))?,
+                .ok_or_else(|| anyhow::anyhow!("OAuth client_id is not configured"))?,
         );
 
-        // クライアントシークレットは環境変数で上書き可能
+        // The client secret can be overridden via environment variable.
         let client_secret = std::env::var("NEXTERM_OAUTH_CLIENT_SECRET")
             .ok()
             .or_else(|| self.config.client_secret.clone())
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "OAuth client_secret が未設定です（\
-                    NEXTERM_OAUTH_CLIENT_SECRET 環境変数または設定ファイルで指定）"
+                    "OAuth client_secret is not configured (set the \
+                    NEXTERM_OAUTH_CLIENT_SECRET environment variable or the config file)"
                 )
             })?;
 
@@ -438,26 +439,26 @@ impl OAuthManager {
             .clone()
             .unwrap_or_else(|| format!("{}/auth/callback", self.redirect_base));
 
-        // oauth2 v5: BasicClient::new は client_id のみ受け取り、他はメソッドチェーンで設定する
+        // oauth2 v5: `BasicClient::new` only takes `client_id`; everything else is set via method chaining.
         let client = BasicClient::new(client_id)
             .set_client_secret(ClientSecret::new(client_secret))
             .set_auth_uri(
                 AuthUrl::new(auth_url)
-                    .map_err(|e| anyhow::anyhow!("OAuth auth_url が不正です: {}", e))?,
+                    .map_err(|e| anyhow::anyhow!("invalid OAuth auth_url: {}", e))?,
             )
             .set_token_uri(
                 TokenUrl::new(token_url)
-                    .map_err(|e| anyhow::anyhow!("OAuth token_url が不正です: {}", e))?,
+                    .map_err(|e| anyhow::anyhow!("invalid OAuth token_url: {}", e))?,
             )
             .set_redirect_uri(
                 RedirectUrl::new(redirect_url)
-                    .map_err(|e| anyhow::anyhow!("OAuth redirect_url が不正です: {}", e))?,
+                    .map_err(|e| anyhow::anyhow!("invalid OAuth redirect_url: {}", e))?,
             );
 
         Ok(client)
     }
 
-    /// プロバイダーごとの認証 URL とトークン URL を返す
+    /// Return the per-provider authorization URL and token URL.
     fn provider_urls(&self) -> anyhow::Result<(String, String)> {
         match self.config.provider.as_str() {
             "github" => Ok((
@@ -470,7 +471,7 @@ impl OAuthManager {
             )),
             "azure" => {
                 let tenant = self.config.issuer_url.as_deref().unwrap_or("common");
-                // tenant が完全な URL かテナント ID かを判定する
+                // Decide whether `tenant` is a full URL or just a tenant ID.
                 let base = if tenant.starts_with("http") {
                     tenant.trim_end_matches('/').to_string()
                 } else {
@@ -479,21 +480,21 @@ impl OAuthManager {
                 Ok((format!("{}/authorize", base), format!("{}/token", base)))
             }
             "oidc" => {
-                // 事前にディスカバリーから取得した URL を使う
-                // ここでは issuer_url をベースに仮の URL を組み立てる
+                // Uses URLs previously obtained from discovery.
+                // Here we assemble tentative URLs based on `issuer_url`.
                 let base = self
                     .config
                     .issuer_url
                     .as_deref()
-                    .ok_or_else(|| anyhow::anyhow!("oidc プロバイダーには issuer_url が必要です"))?
+                    .ok_or_else(|| anyhow::anyhow!("the oidc provider requires issuer_url"))?
                     .trim_end_matches('/');
                 Ok((format!("{}/authorize", base), format!("{}/token", base)))
             }
-            other => anyhow::bail!("未対応の OAuth プロバイダー: {}", other),
+            other => anyhow::bail!("unsupported OAuth provider: {}", other),
         }
     }
 
-    /// プロバイダーごとに必要なスコープを返す
+    /// Return the scopes required for each provider.
     fn required_scopes(&self) -> Vec<String> {
         match self.config.provider.as_str() {
             "github" => vec!["read:user".to_string(), "user:email".to_string()],
@@ -518,49 +519,46 @@ impl OAuthManager {
     }
 }
 
-/// OIDC userinfo_endpoint URL を SSRF 観点で検証する（HIGH H-1）。
+/// Validate an OIDC `userinfo_endpoint` URL against SSRF (HIGH H-1).
 ///
-/// - HTTPS スキームのみ許可（HTTP では平文で access_token が漏れるリスク）
-/// - ホストが `issuer_url` と同じドメインに属していることを検証
-/// - 内部 IP アドレス（127/8、10/8、172.16/12、192.168/16、169.254/16）は拒否
+/// - Only the HTTPS scheme is allowed (HTTP risks leaking the access token in plain text).
+/// - The host must belong to the same domain as `issuer_url`.
+/// - Internal IP ranges (127/8, 10/8, 172.16/12, 192.168/16, 169.254/16) are rejected.
 ///
-/// 旧実装はディスカバリードキュメントの `userinfo_endpoint` を無検証で
-/// `reqwest::get()` に渡していたため、攻撃者が制御する OIDC プロバイダー
-/// （または DNS hijacking）で `userinfo_endpoint` をクラウドメタデータ API
-/// (`http://169.254.169.254/...`) に誘導すると、サーバーが内部ネットワークに
-/// 認証済みリクエストを発行する SSRF が成立した。
+/// The previous implementation passed `userinfo_endpoint` from the discovery document straight
+/// into `reqwest::get()` without validation. As a result, an attacker-controlled OIDC provider
+/// (or DNS hijacking) could redirect `userinfo_endpoint` to the cloud metadata API
+/// (`http://169.254.169.254/...`), letting the server issue an authenticated request into the
+/// internal network — a working SSRF.
 fn validate_userinfo_endpoint(userinfo: &str, issuer_url: &str) -> anyhow::Result<()> {
-    // HTTPS 強制
+    // Enforce HTTPS.
     if !userinfo.to_lowercase().starts_with("https://") {
-        anyhow::bail!(
-            "OIDC userinfo_endpoint は HTTPS でなければなりません: {}",
-            userinfo
-        );
+        anyhow::bail!("OIDC userinfo_endpoint must use HTTPS: {}", userinfo);
     }
 
-    // URL パース（簡易: スキーム除去後の最初の '/' までをホストとする）
+    // Parse the URL (simple: treat everything before the first '/' after the scheme as the host).
     let host = extract_host(userinfo).ok_or_else(|| {
         anyhow::anyhow!(
-            "OIDC userinfo_endpoint からホストを抽出できません: {}",
+            "cannot extract host from OIDC userinfo_endpoint: {}",
             userinfo
         )
     })?;
 
-    // 内部 IP / リンクローカルへのアクセスを拒否
+    // Reject access to internal IPs / link-local addresses.
     if is_disallowed_host(&host) {
         anyhow::bail!(
-            "OIDC userinfo_endpoint が内部ネットワークを指しています（SSRF 防止）: host={}",
+            "OIDC userinfo_endpoint targets the internal network (SSRF defense): host={}",
             host
         );
     }
 
-    // issuer_url のドメインと一致するか検証（subdomain 含む）
+    // Validate that the host matches `issuer_url`'s domain (including subdomains).
     let issuer_host = extract_host(issuer_url).ok_or_else(|| {
-        anyhow::anyhow!("OIDC issuer_url からホストを抽出できません: {}", issuer_url)
+        anyhow::anyhow!("cannot extract host from OIDC issuer_url: {}", issuer_url)
     })?;
     if !is_same_or_subdomain(&host, &issuer_host) {
         anyhow::bail!(
-            "OIDC userinfo_endpoint のホスト '{}' が issuer_url '{}' と異なります（SSRF 防止）",
+            "OIDC userinfo_endpoint host '{}' differs from issuer_url '{}' (SSRF defense)",
             host,
             issuer_host
         );
@@ -569,7 +567,7 @@ fn validate_userinfo_endpoint(userinfo: &str, issuer_url: &str) -> anyhow::Resul
     Ok(())
 }
 
-/// URL からホスト部分を抽出する（ポート番号付きの場合は除去）
+/// Extract the host portion from a URL (strip any port number).
 fn extract_host(url: &str) -> Option<String> {
     let after_scheme = url.split("://").nth(1)?;
     let host_with_port = after_scheme.split('/').next()?;
@@ -581,9 +579,9 @@ fn extract_host(url: &str) -> Option<String> {
     }
 }
 
-/// 内部 IP / リンクローカルアドレスへのアクセスを拒否する
+/// Reject access to internal IPs / link-local addresses.
 fn is_disallowed_host(host: &str) -> bool {
-    // localhost / 169.254 / 10.x / 192.168 / 172.16-31 / IPv6 リンクローカル
+    // localhost / 169.254 / 10.x / 192.168 / 172.16-31 / IPv6 link-local.
     let lower = host.to_lowercase();
     if lower == "localhost"
         || lower == "127.0.0.1"
@@ -610,12 +608,12 @@ fn is_disallowed_host(host: &str) -> bool {
     false
 }
 
-/// host が issuer_host と同一、または同じドメインのサブドメインか検証する
+/// Check whether `host` is identical to `issuer_host` or a subdomain of the same domain.
 fn is_same_or_subdomain(host: &str, issuer_host: &str) -> bool {
     if host == issuer_host {
         return true;
     }
-    // subdomain.example.com と example.com を許可（末尾一致 + ドット境界）
+    // Accept `subdomain.example.com` against `example.com` (suffix match + dot boundary).
     if host.ends_with(issuer_host)
         && host.len() > issuer_host.len()
         && host.as_bytes()[host.len() - issuer_host.len() - 1] == b'.'
@@ -752,8 +750,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn allowリスト_両方空_は全員許可() {
-        // 旧実装でも正常動作していたケース。後方互換性確認。
+    async fn allow_lists_both_empty_permit_everyone() {
+        // Case that already worked in the old implementation. Backward-compatibility check.
         let mut config = test_config("github");
         config.allowed_emails = vec![];
         config.allowed_orgs = vec![];
@@ -762,12 +760,12 @@ mod tests {
         let user = make_user("alice", Some("alice@example.com"));
         assert!(
             mgr.is_user_allowed(&user, "ignored_token").await,
-            "両リスト空なら全員許可されるべき"
+            "both lists empty should allow everyone"
         );
     }
 
     #[tokio::test]
-    async fn allowed_emails_一致で許可される() {
+    async fn allowed_emails_matching_user_is_permitted() {
         let mut config = test_config("github");
         config.allowed_emails = vec!["alice@example.com".to_string()];
         let mgr = OAuthManager::new(config, "http://localhost:7681".to_string());
@@ -777,7 +775,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn allowed_emails_設定でメール不一致は拒否される() {
+    async fn allowed_emails_configured_but_mismatched_user_is_rejected() {
         let mut config = test_config("github");
         config.allowed_emails = vec!["alice@example.com".to_string()];
         let mgr = OAuthManager::new(config, "http://localhost:7681".to_string());
@@ -785,36 +783,35 @@ mod tests {
         let user = make_user("eve", Some("eve@evil.example"));
         assert!(
             !mgr.is_user_allowed(&user, "ignored_token").await,
-            "allowed_emails が設定されていてメール不一致なら拒否されるべき"
+            "with allowed_emails set, a mismatch should be rejected"
         );
     }
 
     #[tokio::test]
-    #[allow(non_snake_case)]
-    async fn allowed_orgs_のみ_設定_かつ_GitHub_API_到達不可は拒否される() {
-        // CRITICAL #1 の核心テスト:
-        // 旧実装では get_current_token() が None を返すため Org チェックが
-        // 絶対実行されず、is_user_allowed が必ず false を返した（誰もログイン不能）。
-        // 修正後は access_token を渡せば実 API 経由で検証される。
-        // テスト環境では実 API 到達不可なので "ログインできない" が期待だが、
-        // **実 API が呼ばれること** (= access_token が伝播されていること) を保証する。
+    async fn allowed_orgs_only_set_with_unreachable_github_api_rejects() {
+        // Core test for CRITICAL #1:
+        // The old implementation returned `None` from `get_current_token()` so the Org check
+        // never ran and `is_user_allowed` always returned `false` (nobody could log in).
+        // After the fix, passing `access_token` lets the real API actually be invoked.
+        // The real API is unreachable in tests, so "cannot log in" is expected; what we assert
+        // here is that **the real API is invoked** (i.e. the access token is propagated).
         let mut config = test_config("github");
         config.allowed_orgs = vec!["nexterm-team".to_string()];
         let mgr = OAuthManager::new(config, "http://localhost:7681".to_string());
 
         let user = make_user("alice", Some("alice@example.com"));
-        // 無効トークンなので check_github_org の HTTP は失敗 → false 期待
+        // With an invalid token the HTTP in `check_github_org` fails -> expect false.
         let allowed = mgr.is_user_allowed(&user, "invalid_token_xxx").await;
         assert!(
             !allowed,
-            "無効 access_token では Org メンバーシップが確認できず拒否されるべき"
+            "with an invalid access_token, Org membership cannot be confirmed and should be rejected"
         );
     }
 
     #[tokio::test]
-    async fn allowed_emails_と_allowed_orgs_両方設定_メール一致で許可() {
-        // 併用時にメール一致で短絡許可されることを確認
-        // （旧実装でも動作していたパス、回帰テストとして保護）
+    async fn allowed_emails_and_allowed_orgs_both_set_short_circuit_on_email_match() {
+        // Verifies that when both are set, an email match short-circuits to allow.
+        // (This path already worked in the old implementation; we keep a regression guard for it.)
         let mut config = test_config("github");
         config.allowed_emails = vec!["alice@example.com".to_string()];
         config.allowed_orgs = vec!["nexterm-team".to_string()];
@@ -823,14 +820,14 @@ mod tests {
         let user = make_user("alice", Some("alice@example.com"));
         assert!(
             mgr.is_user_allowed(&user, "any_token").await,
-            "メール一致で Org チェック前に許可されるべき"
+            "an email match should allow before the Org check is consulted"
         );
     }
 
-    // ---- SSRF 対策テスト（HIGH H-1）----
+    // ---- SSRF defense tests (HIGH H-1) ----
 
     #[test]
-    fn extract_host_は通常_url_からホスト名を取得する() {
+    fn extract_host_returns_host_from_typical_url() {
         assert_eq!(
             extract_host("https://example.com/path"),
             Some("example.com".to_string())
@@ -842,8 +839,8 @@ mod tests {
     }
 
     #[test]
-    fn is_disallowed_host_は内部_ip_を拒否する() {
-        // CRITICAL/H-1 核心: クラウドメタデータ API への到達を防ぐ
+    fn is_disallowed_host_rejects_internal_ips() {
+        // Core of CRITICAL/H-1: prevent reaching the cloud metadata API.
         assert!(is_disallowed_host("169.254.169.254"));
         assert!(is_disallowed_host("127.0.0.1"));
         assert!(is_disallowed_host("localhost"));
@@ -856,24 +853,24 @@ mod tests {
     }
 
     #[test]
-    fn is_disallowed_host_は通常_ip_を許可する() {
+    fn is_disallowed_host_permits_normal_ips() {
         assert!(!is_disallowed_host("example.com"));
         assert!(!is_disallowed_host("8.8.8.8"));
-        assert!(!is_disallowed_host("172.32.0.1")); // 172.16/12 範囲外
+        assert!(!is_disallowed_host("172.32.0.1")); // outside the 172.16/12 range
         assert!(!is_disallowed_host("172.15.0.1"));
         assert!(!is_disallowed_host("login.microsoftonline.com"));
     }
 
     #[test]
-    fn is_same_or_subdomain_は同一ドメインを許可する() {
+    fn is_same_or_subdomain_permits_same_domain() {
         assert!(is_same_or_subdomain("example.com", "example.com"));
         assert!(is_same_or_subdomain("auth.example.com", "example.com"));
         assert!(is_same_or_subdomain("a.b.example.com", "example.com"));
     }
 
     #[test]
-    fn is_same_or_subdomain_は別ドメインを拒否する() {
-        // CRITICAL/H-1 核心: 攻撃者制御ドメインを拒否
+    fn is_same_or_subdomain_rejects_other_domains() {
+        // Core of CRITICAL/H-1: reject attacker-controlled domains.
         assert!(!is_same_or_subdomain("attacker.com", "example.com"));
         assert!(!is_same_or_subdomain("evilexample.com", "example.com"));
         assert!(!is_same_or_subdomain(
@@ -883,21 +880,21 @@ mod tests {
     }
 
     #[test]
-    fn validate_userinfo_endpoint_は_https_と一致ドメインを許可する() {
+    fn validate_userinfo_endpoint_permits_https_with_matching_domain() {
         let r =
             validate_userinfo_endpoint("https://idp.example.com/userinfo", "https://example.com");
         assert!(r.is_ok());
     }
 
     #[test]
-    fn validate_userinfo_endpoint_は_http_を拒否する() {
+    fn validate_userinfo_endpoint_rejects_http() {
         let r = validate_userinfo_endpoint("http://example.com/userinfo", "https://example.com");
         assert!(r.is_err());
     }
 
     #[test]
-    fn validate_userinfo_endpoint_は内部_ip_を拒否する() {
-        // 旧 SSRF 攻撃ベクター: クラウドメタデータ API 到達を防ぐ
+    fn validate_userinfo_endpoint_rejects_internal_ips() {
+        // Old SSRF attack vector: prevent reaching the cloud metadata API.
         let r = validate_userinfo_endpoint(
             "https://169.254.169.254/latest/meta-data/",
             "https://example.com",
@@ -906,7 +903,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_userinfo_endpoint_は別ドメインを拒否する() {
+    fn validate_userinfo_endpoint_rejects_other_domains() {
         let r = validate_userinfo_endpoint("https://attacker.com/userinfo", "https://example.com");
         assert!(r.is_err());
     }

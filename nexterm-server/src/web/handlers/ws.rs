@@ -1,4 +1,4 @@
-//! WebSocket ハンドラ — PTY セッションへのブリッジ。
+//! WebSocket handler — bridge to a PTY session.
 
 use std::sync::Arc;
 
@@ -19,7 +19,7 @@ use crate::web::access_log;
 use crate::web::auth;
 use crate::web::middleware::{client_ip, has_valid_session};
 
-/// WebSocket クエリパラメータ
+/// WebSocket query parameters.
 #[derive(Deserialize)]
 pub(in crate::web) struct WsQuery {
     #[serde(default = "default_session_name")]
@@ -32,7 +32,7 @@ fn default_session_name() -> String {
     "main".to_string()
 }
 
-/// GET /ws — WebSocket ハンドラ（PTY セッションへのブリッジ）
+/// GET /ws — WebSocket handler (bridges to a PTY session).
 pub(in crate::web) async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(query): Query<WsQuery>,
@@ -41,7 +41,7 @@ pub(in crate::web) async fn ws_handler(
 ) -> Response {
     let addr = client_ip(&headers);
 
-    // セッション確認
+    // Session check.
     if !has_valid_session(&state, &headers) {
         state.access_logger.log(&access_log::AccessLogEntry {
             remote_addr: addr.clone(),
@@ -54,30 +54,30 @@ pub(in crate::web) async fn ws_handler(
         return StatusCode::UNAUTHORIZED.into_response();
     }
 
-    // 後方互換: クエリパラメータのトークン確認（HIGH H-2 対策: 定数時間比較）
+    // Backward compatibility: validate the legacy query-parameter token (HIGH H-2: constant-time compare).
     if let Some(ref expected) = state.legacy_token {
         use subtle::ConstantTimeEq;
-        // 長さも含めて定数時間比較する（短絡比較によるサイドチャネル防止）
+        // Compare in constant time including the length (prevents side-channel via short-circuit).
         let provided_bytes = query.token.as_bytes();
         let expected_bytes = expected.as_bytes();
-        // ct_eq は同じ長さの場合のみ意味があるが、長さ不一致でも常にバイト比較を実行
-        // して長さ漏洩を最小化する
+        // `ct_eq` is only meaningful when the lengths match, but we still perform a byte compare
+        // even on length mismatch to minimize length leakage.
         let len_match = provided_bytes.len() == expected_bytes.len();
         let bytes_match = if len_match {
             provided_bytes.ct_eq(expected_bytes).unwrap_u8() == 1
         } else {
-            // 長さが違っても同じ計算量を費やすために expected と同じ長さで比較
+            // Even on length mismatch, run the same amount of work using a buffer of the expected length.
             let dummy = vec![0u8; expected_bytes.len()];
             let _ = dummy.ct_eq(expected_bytes).unwrap_u8();
             false
         };
         if !(len_match && bytes_match) {
-            warn!("WebSocket 認証失敗: 無効なトークン（{}）", addr);
+            warn!("WebSocket auth failure: invalid token ({})", addr);
             return StatusCode::UNAUTHORIZED.into_response();
         }
     }
 
-    // アクセスログに WebSocket 接続を記録する
+    // Record the WebSocket connection in the access log.
     let (auth_method, user_id) = auth::extract_session_cookie(&headers)
         .and_then(|t| state.auth_mgr.session_info(&t))
         .unwrap_or_default();
@@ -95,7 +95,7 @@ pub(in crate::web) async fn ws_handler(
     ws.on_upgrade(move |socket| handle_socket(socket, state.manager, session_name))
 }
 
-/// WebSocket 接続ごとの処理 — PTY 出力をブラウザに転送し、キー入力を PTY に転送する
+/// Per-connection handler — forward PTY output to the browser and key input to the PTY.
 async fn handle_socket(mut socket: WebSocket, manager: Arc<SessionManager>, session_name: String) {
     let _ = manager
         .get_or_create_and_attach(&session_name, 80, 24)
@@ -107,7 +107,7 @@ async fn handle_socket(mut socket: WebSocket, manager: Arc<SessionManager>, sess
         if let Some(session) = sessions.get(&session_name) {
             session.attach()
         } else {
-            warn!("WebSocket: セッション '{}' が見つかりません", session_name);
+            warn!("WebSocket: session '{}' not found", session_name);
             return;
         }
     };
@@ -148,10 +148,10 @@ async fn handle_socket(mut socket: WebSocket, manager: Arc<SessionManager>, sess
         }
     }
 
-    info!("WebSocket 切断: セッション '{}'", session_name);
+    info!("WebSocket disconnected: session '{}'", session_name);
 }
 
-/// ServerToClient メッセージからテキスト出力を抽出する
+/// Extract text output from a `ServerToClient` message.
 fn pty_message_to_text(msg: &nexterm_proto::ServerToClient) -> Option<String> {
     use nexterm_proto::ServerToClient;
     match msg {

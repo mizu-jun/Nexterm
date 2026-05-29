@@ -1,4 +1,4 @@
-//! Web ターミナルの認証ヘルパー / クライアント IP 抽出 / HTTPS リダイレクト。
+//! Web terminal auth helpers / client IP extraction / HTTPS redirect.
 
 use axum::{
     http::HeaderMap,
@@ -8,9 +8,9 @@ use axum::{
 use super::AppState;
 use super::auth;
 
-/// 認証が必要な状況でセッションが有効かを確認する
+/// Check whether the request session is valid when authentication is required.
 ///
-/// TOTP と OAuth の両方が無効の場合は認証不要として true を返す。
+/// Returns `true` (no auth required) when both TOTP and OAuth are disabled.
 pub(in crate::web) fn has_valid_session(state: &AppState, headers: &HeaderMap) -> bool {
     let auth_required = state.totp_enabled || state.oauth_mgr.is_some();
     if !auth_required {
@@ -21,12 +21,12 @@ pub(in crate::web) fn has_valid_session(state: &AppState, headers: &HeaderMap) -
         .unwrap_or(false)
 }
 
-/// リクエストヘッダーからクライアント IP を取得する
+/// Extract the client IP from request headers.
 ///
-/// X-Forwarded-For → X-Real-IP → "unknown" の順で試みる。
+/// Tries X-Forwarded-For, then X-Real-IP, then `"unknown"`.
 pub(in crate::web) fn client_ip(headers: &HeaderMap) -> String {
     if let Some(v) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
-        // X-Forwarded-For は "IP1, IP2, ..." の形式なので最初のエントリを使う
+        // X-Forwarded-For has the form "IP1, IP2, ..."; use the first entry.
         return v.split(',').next().unwrap_or(v).trim().to_string();
     }
     if let Some(v) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
@@ -35,20 +35,20 @@ pub(in crate::web) fn client_ip(headers: &HeaderMap) -> String {
     "unknown".to_string()
 }
 
-/// HTTP リクエストを HTTPS へリダイレクトするレスポンスを返す
+/// Return a response that redirects an HTTP request to HTTPS.
 pub(in crate::web) fn https_redirect(headers: &HeaderMap, port: u16) -> Response {
     let host = headers
         .get("host")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("localhost");
-    // ポート部分を除去して HTTPS ポートに置き換える
+    // Strip the port portion and replace it with the HTTPS port.
     let host_no_port = host.split(':').next().unwrap_or(host);
     let location = format!("https://{}:{}/", host_no_port, port);
     Response::builder()
         .status(301)
         .header("Location", location)
         .body(axum::body::Body::empty())
-        .expect("Response::builder への無効なヘッダー値")
+        .expect("invalid header value for Response::builder")
         .into_response()
 }
 
@@ -57,7 +57,7 @@ mod tests {
     use super::*;
     use axum::http::HeaderMap;
 
-    // ---- client_ip テスト ----
+    // ---- client_ip tests ----
 
     #[test]
     fn client_ip_from_x_forwarded_for() {
@@ -78,7 +78,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "10.0.0.1".parse().unwrap());
         headers.insert("x-real-ip", "192.168.1.1".parse().unwrap());
-        // X-Forwarded-For が優先される
+        // X-Forwarded-For wins.
         assert_eq!(client_ip(&headers), "10.0.0.1");
     }
 
@@ -95,7 +95,7 @@ mod tests {
         assert_eq!(client_ip(&headers), "192.168.1.1");
     }
 
-    // ---- https_redirect テスト ----
+    // ---- https_redirect tests ----
 
     #[test]
     fn https_redirect_uses_host_header() {
@@ -124,7 +124,7 @@ mod tests {
             .unwrap()
             .to_str()
             .unwrap();
-        // 元のポートが削除され、HTTPSポートに置き換えられる
+        // The original port is removed and replaced with the HTTPS port.
         assert!(!location.contains(":8080"));
         assert!(location.contains(":8443"));
     }

@@ -1,29 +1,30 @@
-//! 簡易レート制限ヘルパー — 認証エンドポイントのブルートフォース対策
+//! Simple rate limit helper — defense against brute force on authentication endpoints.
 //!
-//! IP アドレス（または同等のキー）ごとに一定時間内の試行数を制限する。
-//! TOTP / legacy_token / OAuth コールバック等、認証関連エンドポイントに適用する。
+//! Limits the number of attempts per IP address (or equivalent key) within a sliding window.
+//! Applied to authentication-related endpoints such as TOTP / legacy_token / OAuth callback.
 //!
-//! # CRITICAL #2 対応
+//! # CRITICAL #2
 //!
-//! TOTP は 6 桁数字の有効ウィンドウが 30 秒。レート制限なしだと 1 ウィンドウ内で
-//! 数十万回の試行が可能であり、ネットワーク到達可能な攻撃者が現実的な時間で総当たり
-//! できる。本モジュールでデフォルト 5 試行/分 に制限し、ブルートフォースを抑制する。
+//! TOTP codes are 6 digits with a 30-second validity window. Without a rate limit, an attacker
+//! can perform hundreds of thousands of attempts per window, making brute force feasible in
+//! practice from a network-reachable position. This module limits attempts to 5/min by default
+//! and suppresses brute force.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// レート制限設定
+/// Rate-limit configuration.
 #[derive(Clone, Copy)]
 pub struct RateLimitConfig {
-    /// 計測ウィンドウ
+    /// Measurement window.
     pub window: Duration,
-    /// ウィンドウ内の最大試行数
+    /// Maximum number of attempts inside the window.
     pub max_attempts: usize,
 }
 
 impl RateLimitConfig {
-    /// TOTP ログイン用デフォルト設定（5 試行 / 60 秒）
+    /// Default configuration for TOTP login (5 attempts / 60 seconds).
     pub const fn totp_default() -> Self {
         Self {
             window: Duration::from_secs(60),
@@ -32,10 +33,10 @@ impl RateLimitConfig {
     }
 }
 
-/// シンプルな IP ベースレート制限器
+/// Simple IP-based rate limiter.
 pub struct RateLimiter {
     config: RateLimitConfig,
-    /// (キー → 試行時刻のリスト)
+    /// (key -> list of attempt timestamps).
     attempts: Mutex<HashMap<String, Vec<Instant>>>,
 }
 
@@ -47,17 +48,17 @@ impl RateLimiter {
         }
     }
 
-    /// 試行を記録し、許可するか拒否するかを返す。
+    /// Record an attempt and return whether to allow or reject it.
     ///
-    /// `true`: 許可（ウィンドウ内の試行数が上限以下）
-    /// `false`: 拒否（上限超過）
+    /// `true`: allowed (attempts in the window are within the limit).
+    /// `false`: rejected (limit exceeded).
     ///
-    /// 過去ウィンドウより古いエントリは自動 GC される。
+    /// Entries older than the window are garbage-collected automatically.
     pub fn check_and_record(&self, key: &str) -> bool {
         let mut guard = match self.attempts.lock() {
             Ok(g) => g,
             Err(poisoned) => {
-                tracing::warn!("RateLimiter mutex がポイズン状態。回復して継続します");
+                tracing::warn!("RateLimiter mutex is poisoned; recovering and continuing");
                 poisoned.into_inner()
             }
         };
@@ -65,7 +66,7 @@ impl RateLimiter {
         let now = Instant::now();
         let entry = guard.entry(key.to_string()).or_default();
 
-        // ウィンドウ外のエントリを削除
+        // Drop entries outside the window.
         entry.retain(|t| now.duration_since(*t) < self.config.window);
 
         if entry.len() >= self.config.max_attempts {
@@ -74,8 +75,8 @@ impl RateLimiter {
 
         entry.push(now);
 
-        // 全体のサイズが大きくなりすぎないよう、空エントリを定期的に削除
-        // （アクティブキーが少ない場合のクリーンアップ）
+        // Periodically purge empty entries to keep the overall size bounded
+        // (cleanup is cheap when only a few keys are active).
         if guard.len() > 1024 {
             guard.retain(|_, v| !v.is_empty());
         }
@@ -83,7 +84,7 @@ impl RateLimiter {
         true
     }
 
-    /// 成功時に記録をリセットする（成功した正規ユーザーをペナルティから解放）
+    /// Reset the record on success (free legitimate users from penalties after a successful auth).
     pub fn reset(&self, key: &str) {
         if let Ok(mut guard) = self.attempts.lock() {
             guard.remove(key);
@@ -96,7 +97,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn 上限以下の試行は許可される() {
+    fn attempts_within_limit_are_allowed() {
         let cfg = RateLimitConfig {
             window: Duration::from_secs(60),
             max_attempts: 3,
@@ -109,7 +110,7 @@ mod tests {
     }
 
     #[test]
-    fn 上限超過は拒否される() {
+    fn attempts_over_limit_are_rejected() {
         let cfg = RateLimitConfig {
             window: Duration::from_secs(60),
             max_attempts: 3,
@@ -119,15 +120,15 @@ mod tests {
         assert!(limiter.check_and_record("1.2.3.4"));
         assert!(limiter.check_and_record("1.2.3.4"));
         assert!(limiter.check_and_record("1.2.3.4"));
-        // 4 回目は拒否
+        // The 4th attempt is rejected.
         assert!(
             !limiter.check_and_record("1.2.3.4"),
-            "4 回目は上限超過で拒否されるべき"
+            "the 4th attempt should be rejected for exceeding the limit"
         );
     }
 
     #[test]
-    fn 異なるキーは独立にカウントされる() {
+    fn different_keys_are_counted_independently() {
         let cfg = RateLimitConfig {
             window: Duration::from_secs(60),
             max_attempts: 2,
@@ -136,16 +137,16 @@ mod tests {
 
         assert!(limiter.check_and_record("1.2.3.4"));
         assert!(limiter.check_and_record("1.2.3.4"));
-        // 別 IP は独立
+        // A different IP is independent.
         assert!(limiter.check_and_record("5.6.7.8"));
         assert!(limiter.check_and_record("5.6.7.8"));
-        // 各々上限超過
+        // Each hits its own limit.
         assert!(!limiter.check_and_record("1.2.3.4"));
         assert!(!limiter.check_and_record("5.6.7.8"));
     }
 
     #[test]
-    fn ウィンドウ経過で再度許可される() {
+    fn allowed_again_after_window_passes() {
         let cfg = RateLimitConfig {
             window: Duration::from_millis(50),
             max_attempts: 2,
@@ -160,12 +161,12 @@ mod tests {
 
         assert!(
             limiter.check_and_record("1.2.3.4"),
-            "ウィンドウ経過後は再度許可されるべき"
+            "should be allowed again after the window passes"
         );
     }
 
     #[test]
-    fn reset_は記録をクリアする() {
+    fn reset_clears_record() {
         let cfg = RateLimitConfig {
             window: Duration::from_secs(60),
             max_attempts: 2,
@@ -180,12 +181,12 @@ mod tests {
 
         assert!(
             limiter.check_and_record("1.2.3.4"),
-            "reset 後は再度許可されるべき"
+            "should be allowed again after reset"
         );
     }
 
     #[test]
-    fn totp_default_は_5_試行_60秒() {
+    fn totp_default_is_5_attempts_per_60s() {
         let cfg = RateLimitConfig::totp_default();
         assert_eq!(cfg.max_attempts, 5);
         assert_eq!(cfg.window, Duration::from_secs(60));
