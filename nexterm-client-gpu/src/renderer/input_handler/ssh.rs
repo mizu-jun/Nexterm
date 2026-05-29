@@ -1,16 +1,16 @@
-//! SSH 接続関連のヘルパー
+//! SSH connection helpers
 //!
-//! `input_handler.rs` から抽出した:
-//! - `connect_ssh_host` — 現在のペインで接続（未使用）
-//! - `connect_ssh_host_new_tab` — 新しいタブで接続（公開鍵 / agent 認証ホスト用）
-//! - `connect_ssh_host_with_password` — Sprint 5-1 / G1: パスワードを OS キーリング経由で渡す
+//! Extracted from `input_handler.rs`:
+//! - `connect_ssh_host` — connect in the current pane (unused)
+//! - `connect_ssh_host_new_tab` — connect in a new tab (for public-key / agent auth hosts)
+//! - `connect_ssh_host_with_password` — Sprint 5-1 / G1: pass the password via the OS keyring
 
 use nexterm_proto::ClientToServer;
 
 use super::EventHandler;
 
 impl EventHandler {
-    /// HostConfig から ConnectSsh メッセージを送信する（現在のペインに接続）
+    /// Send a ConnectSsh message from a HostConfig (connects in the current pane)
     #[allow(dead_code)]
     pub(super) fn connect_ssh_host(&self, host: &nexterm_config::HostConfig) {
         let Some(conn) = &self.connection else { return };
@@ -28,13 +28,13 @@ impl EventHandler {
         });
     }
 
-    /// HostConfig から新しいタブを開いて ConnectSsh メッセージを送信する
+    /// Open a new tab from a HostConfig and send a ConnectSsh message
     ///
-    /// Phase 5-11-6 #2: `event_handler::accessibility` の HostItem Click 経路からも
-    /// 呼び出すため `pub(in crate::renderer)` に拡大している。
+    /// Phase 5-11-6 #2: widened to `pub(in crate::renderer)` so the HostItem
+    /// Click path in `event_handler::accessibility` can also call it.
     pub(in crate::renderer) fn connect_ssh_host_new_tab(&self, host: &nexterm_config::HostConfig) {
         let Some(conn) = &self.connection else { return };
-        // 先に新しいウィンドウ（タブ）を作成してから SSH 接続を要求する
+        // First create a new window (tab), then request the SSH connection.
         let _ = conn.send_tx.try_send(ClientToServer::NewWindow);
         let _ = conn.send_tx.try_send(ClientToServer::ConnectSsh {
             host: host.host.clone(),
@@ -50,17 +50,20 @@ impl EventHandler {
         });
     }
 
-    /// パスワード付きで新しいタブを開いて ConnectSsh メッセージを送信する（パスワード認証ホスト用）
+    /// Open a new tab with a password and send a ConnectSsh message (for password-auth hosts)
     ///
-    /// **Sprint 5-1 / G1**: IPC 経路にパスワード平文を流さない。
-    /// クライアントが事前に OS キーリング（Service="nexterm-ssh", Account="<user>@<host>"）
-    /// に保存し、IPC では account 名のみ送る。サーバーは keyring から取得する。
+    /// **Sprint 5-1 / G1**: never send the plaintext password over IPC.
+    /// The client stores it in advance in the OS keyring
+    /// (Service="nexterm-ssh", Account="<user>@<host>") and only the account
+    /// name is sent over IPC; the server fetches it from the keyring.
     ///
-    /// `remember=false`（PasswordModal でユーザーが「保存しない」を選んだ場合）でも、
-    /// `take_password()` 側で永続保存していない場合はここで一時保存する。
-    /// `ephemeral_password=true` をサーバーに通知し、認証完了後に keyring エントリを削除させる。
+    /// Even with `remember=false` (the user chose "do not save" in the
+    /// PasswordModal), if `take_password()` did not persist it, we store it
+    /// here temporarily. `ephemeral_password=true` tells the server to delete
+    /// the keyring entry once authentication completes.
     ///
-    /// パスワード文字列は `Zeroizing<String>` で受け取り、関数終了時にゼロクリアされる。
+    /// The password is received as `Zeroizing<String>`, so it is zeroed when
+    /// the function returns.
     pub(super) fn connect_ssh_host_with_password(
         &self,
         host: &nexterm_config::HostConfig,
@@ -73,14 +76,15 @@ impl EventHandler {
         let password_keyring_account = if password.is_empty() {
             None
         } else {
-            // remember=true の場合は PasswordModal::take_password() 内で既に保存済み。
-            // remember=false の場合のみ一時的に keyring に書き込む（サーバーが認証後に削除）。
+            // With remember=true the PasswordModal::take_password() already
+            // saved the password. Only when remember=false do we temporarily
+            // write to the keyring here (the server removes it after auth).
             if !remember
                 && let Err(e) =
                     nexterm_config::keyring::store_password(&host.name, &host.username, &password)
             {
                 tracing::error!(
-                    "OS キーリングへの一時保存に失敗したため SSH 接続を中止します: host={} user={} err={}",
+                    "aborting SSH connect: failed to store password temporarily in OS keyring: host={} user={} err={}",
                     host.name,
                     host.username,
                     e

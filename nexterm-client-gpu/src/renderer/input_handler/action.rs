@@ -1,8 +1,8 @@
-//! キーバインド・コンテキストメニューのアクション実行
+//! Action execution for key bindings and the context menu
 //!
-//! `input_handler.rs` から抽出した:
-//! - `execute_action` — config.keys からのアクション文字列ディスパッチ
-//! - `execute_context_menu_action` — 右クリックメニュー項目の実行
+//! Extracted from `input_handler.rs`:
+//! - `execute_action` — dispatch action strings from `config.keys`
+//! - `execute_context_menu_action` — execute right-click menu entries
 
 use nexterm_proto::ClientToServer;
 use tracing::{debug, info};
@@ -13,10 +13,10 @@ use crate::state::ContextMenuAction;
 use crate::vertex_util::grid_to_text;
 
 impl EventHandler {
-    /// 設定ファイルのキーバインドや CommandPalette から渡されるアクション文字列を実行する。
+    /// Execute the action string coming from a key binding or CommandPalette.
     ///
-    /// Sprint 5-11-2 Step 2-4: AccessKit ActionRequested から `event_handler` 経由で呼べるよう
-    /// `pub(in crate::renderer)` に可視性を拡大。
+    /// Sprint 5-11-2 Step 2-4: widened visibility to `pub(in crate::renderer)`
+    /// so AccessKit ActionRequested can call it via `event_handler`.
     pub(in crate::renderer) fn execute_action(
         &mut self,
         action: &str,
@@ -89,13 +89,13 @@ impl EventHandler {
                 }
             }
             "SwapPaneNext" => {
-                // フォーカスペインの次のペイン ID を取得してスワップする
+                // Get the next pane ID after the focused pane and swap with it
                 if let Some(conn) = &self.connection {
-                    // 現在フォーカスペインの隣ペインを pane_layouts から探す
+                    // Find the neighbour of the focused pane in pane_layouts
                     let layouts: Vec<_> = self.app.state.pane_layouts.values().collect();
                     if layouts.len() >= 2 {
                         let focused = self.app.state.focused_pane_id.unwrap_or(0);
-                        // focused 以外で pane_id が最も近い（次の）ペインを選ぶ
+                        // Pick the non-focused pane whose pane_id is closest (next)
                         let target = layouts
                             .iter()
                             .filter(|l| l.pane_id != focused)
@@ -162,8 +162,8 @@ impl EventHandler {
                 self.app.state.file_transfer.open_download();
             }
             "ConnectSerialPrompt" => {
-                // 設定ファイルのシリアルポート一覧からデフォルト（先頭）エントリで接続する
-                // 設定がない場合は一般的なデフォルト値を使用する
+                // Connect using the first serial-port entry in the config.
+                // Fall back to common defaults when no entry exists.
                 if let Some(conn) = &self.connection {
                     let serial_cfg = self.app.config.serial_ports.first().cloned();
                     let (port, baud_rate, data_bits, stop_bits, parity) =
@@ -176,7 +176,7 @@ impl EventHandler {
                                 cfg.parity,
                             )
                         } else {
-                            // プラットフォームデフォルト
+                            // Platform defaults
                             #[cfg(unix)]
                             let default_port = "/dev/ttyUSB0".to_string();
                             #[cfg(windows)]
@@ -192,46 +192,50 @@ impl EventHandler {
                     });
                 }
             }
-            // Sprint 5-2 / B1: OSC 133 セマンティックマークによるプロンプトジャンプ
+            // Sprint 5-2 / B1: prompt jumps via OSC 133 semantic marks
             "JumpPrevPrompt" => {
                 self.app.state.jump_prev_prompt();
             }
             "JumpNextPrompt" => {
                 self.app.state.jump_next_prompt();
             }
-            // Sprint 5-8 / Phase 4-5: tab tearing 関連アクション（Wayland 代替 UX）
+            // Sprint 5-8 / Phase 4-5: tab-tearing actions (Wayland alternative UX)
             //
-            // **`DetachToNewWindow`** — 現在フォーカスペインを新規 OS Window に分離する。
-            // タブ外ドロップで自動発火する Phase 4-2 経路と同じ `BreakPane` を起点に、
-            // `pending_new_window_drop_pos` を `None` でセットすることで「マウス座標非依存の
-            // detach」として扱う。Wayland ではグローバル座標が取れずドラッグ判定ができないため、
-            // このアクション経由が代替経路になる。
+            // **`DetachToNewWindow`** — detach the currently focused pane into
+            // a new OS Window. Starts from the same `BreakPane` used by the
+            // Phase 4-2 out-of-tab-drop path, and sets
+            // `pending_new_window_drop_pos` to `None` to indicate a
+            // "mouse-coordinate-independent detach". On Wayland, global
+            // coordinates are unavailable and drag detection is impossible,
+            // so this action is the alternative entry point.
             //
-            // 補足: `BreakPane` 送信後、サーバーから `WindowListChanged` が返ってきた時点で
-            // `lifecycle::on_about_to_wait` の new_ids 検出ロジックが `SpawnOsWindow` を送る。
-            // `pending_new_window_drop_pos` が `Some(None)` のときも `take()` で `Some(_)` が
-            // 返るため判定は維持される（Wayland 等で `pos = None` の場合、winit にウィンドウ
-            // 位置決定を委ねる）。
+            // Note: after `BreakPane` is sent and the server responds with
+            // `WindowListChanged`, the new_ids detection logic in
+            // `lifecycle::on_about_to_wait` sends `SpawnOsWindow`. Even when
+            // `pending_new_window_drop_pos` is `Some(None)`, `take()` still
+            // returns `Some(_)`, so the decision stands (on Wayland with
+            // `pos = None` we let winit place the window).
             "DetachToNewWindow" => {
-                info!("DetachToNewWindow: BreakPane + 新規 OS Window スポーン要求");
-                // pos = None で記録（Wayland でも動作可能なように画面外ヒントなし）
+                info!("DetachToNewWindow: BreakPane + new OS Window spawn request");
+                // Record pos = None (no off-screen hint, so Wayland works too)
                 self.pending_new_window_drop_pos = Some(winit::dpi::PhysicalPosition::new(0, 0));
                 if let Some(conn) = &self.connection {
                     let _ = conn.send_tx.try_send(ClientToServer::BreakPane);
                 }
             }
-            // **`CloseOsWindow`** — 現在の OS Window だけを閉じる（プロセス全体は終了しない）。
-            // `CloseOsWindow` UserEvent を送信し、`EventHandler::close_os_window` が
-            // 実行する。最後の OS Window だった場合のみ `event_loop.exit()` に到達する。
+            // **`CloseOsWindow`** — close only the current OS Window (does
+            // not terminate the process). Emit the `CloseOsWindow` UserEvent;
+            // `EventHandler::close_os_window` performs the close.
+            // `event_loop.exit()` is only reached if this was the last OS Window.
             "CloseOsWindow" => {
-                info!("CloseOsWindow: 現在の OS Window を閉じる UserEvent 送出");
+                info!("CloseOsWindow: emitting UserEvent to close the current OS Window");
                 if let Some(w) = &self.window {
                     let wid = w.id();
                     if let Err(e) = self
                         .proxy
                         .send_event(crate::renderer::UserEvent::CloseOsWindow { window_id: wid })
                     {
-                        tracing::warn!("CloseOsWindow UserEvent 送信失敗: {}", e);
+                        tracing::warn!("failed to send CloseOsWindow UserEvent: {}", e);
                     }
                 }
             }
@@ -239,11 +243,11 @@ impl EventHandler {
         }
     }
 
-    /// コンテキストメニューのアクションを実行する
+    /// Execute a context-menu action
     pub(in crate::renderer) fn execute_context_menu_action(&mut self, action: &ContextMenuAction) {
         match action {
             ContextMenuAction::Copy => {
-                // フォーカスペインの可視グリッドをクリップボードにコピーする
+                // Copy the visible grid of the focused pane to the clipboard
                 if let Some(pane) = self.app.state.focused_pane() {
                     let text = grid_to_text(pane);
                     if let Ok(mut clipboard) = arboard::Clipboard::new() {
@@ -260,7 +264,7 @@ impl EventHandler {
                 }
             }
             ContextMenuAction::SelectAll => {
-                // グリッド全体のテキストをクリップボードにコピーする
+                // Copy the entire grid text to the clipboard
                 if let Some(pane) = self.app.state.focused_pane() {
                     let text = grid_to_text(pane);
                     if let Ok(mut clipboard) = arboard::Clipboard::new() {
@@ -290,7 +294,7 @@ impl EventHandler {
                 self.app.state.settings_panel.open();
             }
             ContextMenuAction::OpenProfile { profile_name } => {
-                // プロファイルのシェル設定でペインを新規分割する
+                // Split a new pane using the profile's shell config
                 if let Some(prof) = self
                     .app
                     .config
@@ -300,23 +304,23 @@ impl EventHandler {
                     && let Some(shell) = &prof.shell
                     && let Some(conn) = &self.connection
                 {
-                    // まず垂直分割してから ConnectSsh の代わりにシェルパスを環境変数で渡す
-                    // （現時点では SplitVertical で新ペインを開き、プロファイル設定はログとして記録）
+                    // First split vertically, then pass the shell path through env vars
+                    // instead of ConnectSsh (today we just SplitVertical and log the profile config).
                     let _ = conn.send_tx.try_send(ClientToServer::SplitVertical);
                     info!(
-                        "プロファイル '{}' のシェル '{}' で起動を要求",
+                        "requested launch of profile '{}' shell '{}'",
                         profile_name, shell.program
                     );
                 }
             }
             ContextMenuAction::Separator => {
-                // セパレーターはクリック不可のため何もしない
+                // Separators are not clickable, so do nothing
             }
-            // Sprint 5-8 / Phase 4-5: tab tearing 関連 (Wayland 代替 UX)
-            // `execute_action` の同名アクションに委譲して経路を一元化する。
+            // Sprint 5-8 / Phase 4-5: tab-tearing entries (Wayland alternative UX).
+            // Delegate to the same-named action on `execute_action` to centralize the path.
             ContextMenuAction::DetachToNewWindow => {
                 info!("ContextMenu: DetachToNewWindow");
-                // pos = (0,0) で記録（Wayland でも動作可能、winit が画面位置を決定）
+                // Record pos = (0,0) (works on Wayland too; winit picks the position)
                 self.pending_new_window_drop_pos = Some(winit::dpi::PhysicalPosition::new(0, 0));
                 if let Some(conn) = &self.connection {
                     let _ = conn.send_tx.try_send(ClientToServer::BreakPane);
@@ -330,7 +334,7 @@ impl EventHandler {
                         .proxy
                         .send_event(crate::renderer::UserEvent::CloseOsWindow { window_id: wid })
                     {
-                        tracing::warn!("CloseOsWindow UserEvent 送信失敗: {}", e);
+                        tracing::warn!("failed to send CloseOsWindow UserEvent: {}", e);
                     }
                 }
             }

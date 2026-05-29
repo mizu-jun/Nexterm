@@ -1,8 +1,8 @@
-//! Quick Select モードと同意ダイアログのキー入力
+//! Key input for Quick Select mode and consent dialogs
 //!
-//! `input_handler.rs` から抽出した:
-//! - `handle_quick_select_key` — Quick Select ラベル入力
-//! - `handle_consent_dialog_key` — Sprint 4-1 同意ダイアログのキー操作
+//! Extracted from `input_handler.rs`:
+//! - `handle_quick_select_key` — Quick Select label input
+//! - `handle_consent_dialog_key` — Sprint 4-1 consent dialog key operations
 
 use winit::keyboard::KeyCode as WKeyCode;
 
@@ -10,7 +10,7 @@ use super::EventHandler;
 use crate::key_map::winit_code_to_char;
 
 impl EventHandler {
-    /// Quick Select モードのキー入力を処理する（true = 消費済み）
+    /// Handle key input in Quick Select mode (true = consumed)
     pub(super) fn handle_quick_select_key(&mut self, code: WKeyCode) -> bool {
         match code {
             WKeyCode::Escape => {
@@ -24,11 +24,11 @@ impl EventHandler {
             _ => {}
         }
 
-        // アルファベットキーをラベル入力として受け取る
+        // Accept alphabetic keys as label input
         if let Some(ch) = winit_code_to_char(code) {
             self.app.state.quick_select.typed_label.push(ch);
 
-            // マッチが確定したらクリップボードにコピーして終了
+            // On a confirmed match, copy to the clipboard and exit
             if let Some(m) = self.app.state.quick_select.accept() {
                 let text = m.text.clone();
                 if let Ok(mut clipboard) = arboard::Clipboard::new() {
@@ -41,14 +41,14 @@ impl EventHandler {
         true
     }
 
-    /// 同意ダイアログのキーボード処理（Sprint 4-1）
+    /// Keyboard handling for the consent dialog (Sprint 4-1)
     ///
-    /// キー割当:
-    /// - Y / Enter: 1 度許可
-    /// - N / Esc:   1 度拒否
-    /// - A:         セッション中常に許可
-    /// - D:         セッション中常に拒否
-    /// - 矢印 / Tab: 選択ボタン移動
+    /// Key bindings:
+    /// - Y / Enter: allow once
+    /// - N / Esc:   deny once
+    /// - A:         always allow for this session
+    /// - D:         always deny for this session
+    /// - Arrows / Tab: move the selected button
     pub(super) fn handle_consent_dialog_key(&mut self, code: WKeyCode) -> bool {
         match code {
             WKeyCode::KeyY | WKeyCode::Enter => {
@@ -70,51 +70,51 @@ impl EventHandler {
                 }
             }
             _ => {
-                // 他のキーは消費するが何もしない（誤入力で予期せぬ操作を防ぐ）
+                // Consume other keys without doing anything (prevent accidental actions)
             }
         }
         true
     }
 
-    /// Window 閉じ確認ダイアログのキーボード処理（Sprint 5-9 Phase 4-6）
+    /// Keyboard handling for the Window-close confirmation dialog (Sprint 5-9 Phase 4-6)
     ///
-    /// キー割当:
-    /// - Enter / Y: 現在の選択を確定（selected_button = 0 なら Kill、1 なら Cancel）
-    /// - Esc / N:   キャンセル（selected_button を 0xFF に書き込んで poll が消費）
-    /// - ←:        Kill ボタンにフォーカス（selected_button = 0）
-    /// - → / Tab:  Cancel ボタンにフォーカス（selected_button = 1）
+    /// Key bindings:
+    /// - Enter / Y: confirm the current selection (selected_button = 0 → Kill, 1 → Cancel)
+    /// - Esc / N:   cancel (writes 0xFF to selected_button so the poll consumes it)
+    /// - ←:         focus the Kill button (selected_button = 0)
+    /// - → / Tab:   focus the Cancel button (selected_button = 1)
     ///
-    /// 確定シグナル値:
-    /// - `0xFE` = Kill 確定（poll_pending_close_request が次フレームで KillSession + exit）
-    /// - `0xFF` = Cancel 確定（poll_pending_close_request が次フレームで pending クリア）
+    /// Confirmation signal values:
+    /// - `0xFE` = Kill confirmed (`poll_pending_close_request` runs KillSession + exit on the next frame)
+    /// - `0xFF` = Cancel confirmed (`poll_pending_close_request` clears the pending state on the next frame)
     pub(super) fn handle_close_window_dialog_key(&mut self, code: WKeyCode) -> bool {
         let Some(dialog) = self.app.state.close_window_dialog.as_mut() else {
             return false;
         };
         match code {
             WKeyCode::Enter | WKeyCode::KeyY => {
-                // 現在の選択ボタンに応じて確定 / キャンセル
+                // Confirm or cancel based on the currently selected button
                 dialog.selected_button = if dialog.selected_button == 0 {
-                    0xFE // Kill 確定
+                    0xFE // Kill confirmed
                 } else {
-                    0xFF // Cancel 確定
+                    0xFF // Cancel confirmed
                 };
             }
             WKeyCode::Escape | WKeyCode::KeyN => {
-                // 強制キャンセル（安全側のデフォルト）
+                // Force cancel (safe default)
                 dialog.selected_button = 0xFF;
             }
             WKeyCode::ArrowLeft => {
-                dialog.selected_button = 0; // Kill にフォーカス
+                dialog.selected_button = 0; // Focus Kill
             }
             WKeyCode::ArrowRight | WKeyCode::Tab => {
-                dialog.selected_button = 1; // Cancel にフォーカス
+                dialog.selected_button = 1; // Focus Cancel
             }
             _ => {
-                // 他のキーは消費するが何もしない（誤入力で意図せず閉じないため）
+                // Consume other keys without doing anything (avoid closing accidentally)
             }
         }
-        // 描画更新
+        // Trigger a redraw
         if let Some(w) = &self.window {
             w.request_redraw();
         }

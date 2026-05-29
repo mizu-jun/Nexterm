@@ -1,17 +1,17 @@
-//! 入力処理ハンドラ
+//! Input handler
 //!
-//! Sprint 5-6 で旧 `input_handler.rs`（1,377 行）を 6 サブモジュールに分割：
-//! - `copy_mode` — コピーモード（tmux 互換）のキー入力
-//! - `action` — config.keys / コンテキストメニューのアクション実行
-//! - `ssh` — SSH 接続ヘルパー
-//! - `font` — フォントサイズ変更（Ctrl++/-, Ctrl+0）
-//! - `special_modes` — Quick Select / 同意ダイアログのキー入力
+//! Sprint 5-6 split the original `input_handler.rs` (1,377 lines) into 6 sub-modules:
+//! - `copy_mode` — copy-mode (tmux-compatible) key input
+//! - `action` — action dispatch for `config.keys` / context menu
+//! - `ssh` — SSH connection helpers
+//! - `font` — font-size changes (Ctrl++/-, Ctrl+0)
+//! - `special_modes` — key input for Quick Select / consent dialogs
 //!
-//! 本ファイルはトップレベルディスパッチ:
-//! - `handle_key` — winit キーイベントを解釈してローカル消費判定する
-//! - `find_url_at` — クリック位置の URL を返す
-//! - `forward_key_to_server` — PTY 転送（特殊キー / Ctrl シーケンス）
-//! - `check_config_keybindings` — config.keys のカスタムバインドチェック
+//! This file is the top-level dispatcher:
+//! - `handle_key` — interpret a winit key event and decide whether to consume it locally
+//! - `find_url_at` — return the URL at a click position
+//! - `forward_key_to_server` — forward to the PTY (special keys / Ctrl sequences)
+//! - `check_config_keybindings` — check custom bindings from `config.keys`
 
 use nexterm_proto::ClientToServer;
 use nexterm_proto::KeyCode as ProtoKeyCode;
@@ -28,7 +28,7 @@ use crate::vertex_util::grid_to_text;
 
 use super::EventHandler;
 
-// ---- サブモジュール ----
+// ---- Submodules ----
 mod action;
 mod copy_mode;
 mod font;
@@ -36,23 +36,23 @@ mod special_modes;
 mod ssh;
 
 impl EventHandler {
-    /// キーを処理してローカルで消費した場合は true を返す
+    /// Handle a key; return true if it was consumed locally
     pub(super) fn handle_key(&mut self, code: WKeyCode, event_loop: &ActiveEventLoop) -> bool {
         let ctrl = self.modifiers.control_key();
         let shift = self.modifiers.shift_key();
 
-        // Sprint 4-1: 同意ダイアログが開いている間はすべてのキーをダイアログが消費する
+        // Sprint 4-1: while the consent dialog is open it consumes every key
         if self.app.state.pending_consent.is_some() {
             return self.handle_consent_dialog_key(code);
         }
 
-        // Sprint 5-9 Phase 4-6: Window 閉じ確認ダイアログが開いている間も
-        // すべてのキーをダイアログが消費する。consent ダイアログと同じ優先度。
+        // Sprint 5-9 Phase 4-6: while the close-window confirmation dialog is
+        // open it also consumes every key (same priority as the consent dialog).
         if self.app.state.close_window_dialog.is_some() {
             return self.handle_close_window_dialog_key(code);
         }
 
-        // Ctrl+Shift+V: クリップボードからペーストする
+        // Ctrl+Shift+V: paste from the clipboard
         if ctrl && shift && code == WKeyCode::KeyV {
             if let Ok(mut clipboard) = arboard::Clipboard::new()
                 && let Ok(text) = clipboard.get_text()
@@ -63,7 +63,7 @@ impl EventHandler {
             return true;
         }
 
-        // Ctrl+Shift+C: フォーカスペインの可視グリッドをクリップボードにコピーする
+        // Ctrl+Shift+C: copy the visible grid of the focused pane to the clipboard
         if ctrl && shift && code == WKeyCode::KeyC {
             if let Some(pane) = self.app.state.focused_pane() {
                 let text = grid_to_text(pane);
@@ -74,7 +74,7 @@ impl EventHandler {
             return true;
         }
 
-        // Ctrl+Shift+P: コマンドパレットのトグル
+        // Ctrl+Shift+P: toggle the command palette
         if ctrl && shift && code == WKeyCode::KeyP {
             if self.app.state.palette.is_open {
                 self.app.state.palette.close();
@@ -84,19 +84,19 @@ impl EventHandler {
             return true;
         }
 
-        // Ctrl+Shift+U: SFTP アップロードダイアログを開く
+        // Ctrl+Shift+U: open the SFTP upload dialog
         if ctrl && shift && code == WKeyCode::KeyU {
             self.app.state.file_transfer.open_upload();
             return true;
         }
 
-        // Ctrl+Shift+D: SFTP ダウンロードダイアログを開く
+        // Ctrl+Shift+D: open the SFTP download dialog
         if ctrl && shift && code == WKeyCode::KeyD {
             self.app.state.file_transfer.open_download();
             return true;
         }
 
-        // Ctrl+Shift+M: Lua マクロピッカーのトグル
+        // Ctrl+Shift+M: toggle the Lua macro picker
         if ctrl && shift && code == WKeyCode::KeyM {
             if self.app.state.macro_picker.is_open {
                 self.app.state.macro_picker.close();
@@ -110,12 +110,12 @@ impl EventHandler {
             return true;
         }
 
-        // Ctrl+Shift+H: ホストマネージャのトグル
+        // Ctrl+Shift+H: toggle the host manager
         if ctrl && shift && code == WKeyCode::KeyH {
             if self.app.state.host_manager.is_open {
                 self.app.state.host_manager.close();
             } else {
-                // 設定ホスト一覧を最新にリロードしてから開く
+                // Reload the configured host list before opening
                 self.app
                     .state
                     .host_manager
@@ -125,7 +125,7 @@ impl EventHandler {
             return true;
         }
 
-        // Ctrl+,: 設定パネルをトグルする
+        // Ctrl+,: toggle the settings panel
         if ctrl && code == WKeyCode::Comma {
             if self.app.state.settings_panel.is_open {
                 self.app.state.settings_panel.close();
@@ -135,13 +135,13 @@ impl EventHandler {
             return true;
         }
 
-        // Ctrl+F: スクロールバック検索を開始する
+        // Ctrl+F: start a scrollback search
         if ctrl && code == WKeyCode::KeyF {
             self.app.state.start_search();
             return true;
         }
 
-        // Ctrl+[ : コピーモードを開始する（tmux 互換）
+        // Ctrl+[ : enter copy mode (tmux-compatible)
         if ctrl && code == WKeyCode::BracketLeft {
             if !self.app.state.copy_mode.is_active {
                 let (col, row) = self
@@ -155,17 +155,17 @@ impl EventHandler {
             return true;
         }
 
-        // コピーモード中のキー処理
+        // Key handling while in copy mode
         if self.app.state.copy_mode.is_active {
             return self.handle_copy_mode_key(code);
         }
 
-        // Quick Select モード中のキー処理
+        // Key handling while in Quick Select mode
         if self.app.state.quick_select.is_active {
             return self.handle_quick_select_key(code);
         }
 
-        // ファイル転送ダイアログが開いているときのキー処理（全キーを消費）
+        // Key handling while the file-transfer dialog is open (consumes every key)
         if self.app.state.file_transfer.is_open {
             match code {
                 WKeyCode::Escape => self.app.state.file_transfer.close(),
@@ -208,7 +208,7 @@ impl EventHandler {
             return true;
         }
 
-        // タブ名変更モード中のキー処理（全キーを消費）
+        // Key handling while in tab-rename mode (consumes every key)
         if self.app.state.settings_panel.tab_rename_editing.is_some() {
             match code {
                 WKeyCode::Escape => {
@@ -231,7 +231,7 @@ impl EventHandler {
                     self.app.state.settings_panel.pop_tab_rename_char();
                 }
                 _ => {
-                    // 英字・数字・記号を入力する
+                    // Accept letter / digit / symbol input
                     if let Some(ch) = winit_code_to_char(code) {
                         let ch = if self.modifiers.shift_key() {
                             ch.to_uppercase().next().unwrap_or(ch)
@@ -245,7 +245,7 @@ impl EventHandler {
             return true;
         }
 
-        // マクロピッカーが開いているときのナビゲーション（全キーを消費）
+        // Navigation while the macro picker is open (consumes every key)
         if self.app.state.macro_picker.is_open {
             match code {
                 WKeyCode::ArrowDown => self.app.state.macro_picker.select_next(),
@@ -274,7 +274,7 @@ impl EventHandler {
             return true;
         }
 
-        // PageUp / PageDown: スクロールバックをスクロールする
+        // PageUp / PageDown: scroll the scrollback
         if code == WKeyCode::PageUp {
             let scroll_lines = self.app.state.rows as usize / 2;
             self.app.state.scroll_up(scroll_lines);
@@ -286,8 +286,8 @@ impl EventHandler {
             return true;
         }
 
-        // Ctrl+Shift+ArrowUp / ArrowDown: 前後のシェルプロンプトへジャンプ（Sprint 5-2 / B1）
-        // OSC 133 A (PromptStart) で記録した anchor を辿る
+        // Ctrl+Shift+ArrowUp / ArrowDown: jump to the previous/next shell prompt (Sprint 5-2 / B1)
+        // Follows the anchors recorded by OSC 133 A (PromptStart)
         if ctrl && shift && code == WKeyCode::ArrowUp {
             self.app.state.jump_prev_prompt();
             return true;
@@ -297,7 +297,7 @@ impl EventHandler {
             return true;
         }
 
-        // Escape: 検索・パレット・ホストマネージャを閉じる
+        // Escape: close search / palette / host manager
         if code == WKeyCode::Escape {
             if self.app.state.settings_panel.is_open {
                 self.app.state.settings_panel.close();
@@ -318,22 +318,23 @@ impl EventHandler {
                 self.app.state.end_search();
                 return true;
             }
-            // パレット・検索が開いていなければ PTY に転送する
+            // If neither palette nor search is open, forward to the PTY
             return false;
         }
 
-        // 設定パネルが開いているときのナビゲーション（全キーを消費）
+        // Navigation while the settings panel is open (consumes every key)
         if self.app.state.settings_panel.is_open {
             let font_editing = self.app.state.settings_panel.font_family_editing;
-            // Phase 5-11-8 Step 8-3 (Sub-phase A): SSH フィールド編集モード
+            // Phase 5-11-8 Step 8-3 (Sub-phase A): SSH field-edit mode
             let ssh_editing = self.app.state.settings_panel.ssh_field_editing.is_some();
-            // Phase 5-11-8 Step 8-3 (Sub-phase D): SSH 削除確認ダイアログ表示中
-            //   ダイアログ中はすべてのキーを吸収しダイアログ操作に専念する。
-            //   editing よりも上位の優先度で扱う（編集中にダイアログは開けない設計）。
+            // Phase 5-11-8 Step 8-3 (Sub-phase D): the SSH delete confirmation dialog.
+            //   While it is open we absorb every key so dialog operations have
+            //   exclusive focus. Treated as higher priority than the editing
+            //   flags (you cannot open the dialog while editing by design).
             let dialog_open = self.app.state.settings_panel.ssh_delete_dialog_open;
             let editing = font_editing || ssh_editing || dialog_open;
             match code {
-                // ===== Sub-phase D: 削除確認ダイアログ中の専用処理（最優先） =====
+                // ===== Sub-phase D: dedicated handling while the delete dialog is open (highest priority) =====
                 WKeyCode::Escape if dialog_open => {
                     self.app.state.settings_panel.cancel_ssh_delete_dialog();
                 }
@@ -353,10 +354,10 @@ impl EventHandler {
                 }
                 WKeyCode::Escape => {
                     if font_editing {
-                        // 編集モードを終了する（変更を破棄せず入力モードだけ終了）
+                        // Exit edit mode (do not discard changes, just leave input mode)
                         self.app.state.settings_panel.font_family_editing = false;
                     } else if ssh_editing {
-                        // Sub-phase A: SSH フィールド編集をキャンセル（バッファ破棄）
+                        // Sub-phase A: cancel SSH field editing (discard buffer)
                         self.app.state.settings_panel.cancel_ssh_field_edit();
                     } else {
                         self.app.state.settings_panel.close();
@@ -364,34 +365,35 @@ impl EventHandler {
                 }
                 WKeyCode::Enter => {
                     if font_editing {
-                        // 編集モードを確定する
+                        // Commit edit mode
                         self.app.state.settings_panel.font_family_editing = false;
                     } else if ssh_editing {
-                        // Sub-phase A: SSH フィールド編集を確定（バッファを host へ書き戻し）
+                        // Sub-phase A: commit SSH field editing (write the buffer back into host)
                         self.app.state.settings_panel.commit_ssh_field_edit();
                     } else {
-                        // Sub-phase A: SSH カテゴリでフィールド (1/2/4) フォーカス時は編集モードへ
-                        // Sub-phase D: focus=6 (Add) は add_ssh_host (内部で edit 自動開始)
-                        // Sub-phase D: focus=7 (Delete) は削除確認ダイアログを開く
+                        // Sub-phase A: in the SSH category, focus on fields (1/2/4) enters edit mode.
+                        // Sub-phase D: focus=6 (Add) calls add_ssh_host (which starts editing internally).
+                        // Sub-phase D: focus=7 (Delete) opens the delete confirmation dialog.
                         use crate::settings_panel::SettingsCategory;
                         let sp = &mut self.app.state.settings_panel;
                         if sp.category == SettingsCategory::Ssh
                             && matches!(sp.ssh_field_focus, 1 | 2 | 4)
                             && sp.begin_ssh_field_edit()
                         {
-                            // Phase 5-11-8 Step 8-3 (Sub-phase B): 編集モード開始時に
-                            // IME カーソルエリアを SSH フィールド行へ移動
+                            // Phase 5-11-8 Step 8-3 (Sub-phase B): when entering edit mode,
+                            // move the IME cursor area onto the SSH field row.
                             self.update_ime_cursor_area_for_ssh_field();
                         } else if sp.category == SettingsCategory::Ssh && sp.ssh_field_focus == 6 {
-                            // Sub-phase D: Add ボタン → 新規ホスト追加 + name 編集モード自動開始
+                            // Sub-phase D: Add button → add a new host + auto-start name editing
                             sp.add_ssh_host();
                             self.update_ime_cursor_area_for_ssh_field();
                         } else if sp.category == SettingsCategory::Ssh
                             && sp.ssh_field_focus == 7
                             && !sp.ssh_hosts.is_empty()
                         {
-                            // Sub-phase D: Delete ボタン → 削除確認ダイアログを開く
-                            //   空リスト時は disabled 扱いで何もしない（誤操作防止）
+                            // Sub-phase D: Delete button → open the delete confirmation dialog.
+                            //   When the list is empty, treat as disabled and do nothing
+                            //   (to prevent accidental presses).
                             sp.open_ssh_delete_dialog();
                         } else {
                             let _ = sp.save_to_toml();
@@ -414,7 +416,7 @@ impl EventHandler {
                 WKeyCode::End if ssh_editing => {
                     self.app.state.settings_panel.ssh_field_move_end();
                 }
-                // F キーで Font カテゴリのフォントファミリー編集モードをトグルする
+                // F key toggles font-family edit mode in the Font category
                 WKeyCode::KeyF if !editing => {
                     use crate::settings_panel::SettingsCategory;
                     if self.app.state.settings_panel.category == SettingsCategory::Font {
@@ -423,10 +425,10 @@ impl EventHandler {
                 }
                 WKeyCode::Tab | WKeyCode::ArrowDown if !editing => {
                     use crate::settings_panel::SettingsCategory;
-                    // Phase 5-11-6 #6: Window カテゴリでは ↓ をフィールド移動に再解釈する。
-                    // 最後のフィールドまで来たら次カテゴリへフォールバックする。
-                    // Phase 5-11-8 Step 8-3 (Sub-phase A): Ssh カテゴリも同様に ↓ を
-                    // `ssh_field_focus` 0→1→2→3→4→5 移動として再解釈する。
+                    // Phase 5-11-6 #6: in the Window category, reinterpret ↓ as field navigation.
+                    // Once past the last field, fall through to the next category.
+                    // Phase 5-11-8 Step 8-3 (Sub-phase A): the Ssh category similarly reinterprets ↓
+                    // as moving `ssh_field_focus` 0 → 1 → 2 → 3 → 4 → 5.
                     let sp = &mut self.app.state.settings_panel;
                     if sp.category == SettingsCategory::Window && code == WKeyCode::ArrowDown {
                         if !sp.next_window_field() {
@@ -434,9 +436,9 @@ impl EventHandler {
                             sp.window_field_focus = 0;
                         }
                     } else if sp.category == SettingsCategory::Ssh && code == WKeyCode::ArrowDown {
-                        // Phase 5-11-8 Step 8-3 (Sub-phase D): 0..=7 に拡張
-                        //   6=Add, 7=Delete。空リスト時は Delete (7) を disabled としてスキップし、
-                        //   6 (Add) で打ち止め（次は次カテゴリへ）。
+                        // Phase 5-11-8 Step 8-3 (Sub-phase D): widened to 0..=7
+                        //   6=Add, 7=Delete. With an empty list, Delete (7) is treated as
+                        //   disabled and skipped, stopping at 6 (Add) (next press → next category).
                         let max_focus = if sp.ssh_hosts.is_empty() { 6 } else { 7 };
                         if sp.ssh_field_focus < max_focus {
                             sp.ssh_field_focus += 1;
@@ -456,14 +458,14 @@ impl EventHandler {
                     match &sp.category {
                         SettingsCategory::Font => sp.increase_font_size(),
                         SettingsCategory::Window => {
-                            // Phase 5-11-6 #6: ↑ はフィールド間移動。先頭で前カテゴリへフォールバック。
+                            // Phase 5-11-6 #6: ↑ navigates between fields. At the top, fall back to the previous category.
                             if !sp.prev_window_field() {
                                 sp.prev_category();
                                 sp.window_field_focus = 0;
                             }
                         }
                         SettingsCategory::Ssh => {
-                            // Phase 5-11-8 Step 8-3 (Sub-phase A): ↑ で ssh_field_focus を 1 つ戻す
+                            // Phase 5-11-8 Step 8-3 (Sub-phase A): ↑ moves ssh_field_focus back by one
                             if sp.ssh_field_focus > 0 {
                                 sp.ssh_field_focus -= 1;
                             } else {
@@ -482,12 +484,12 @@ impl EventHandler {
                     match &self.app.state.settings_panel.category {
                         SettingsCategory::Theme => self.app.state.settings_panel.next_scheme(),
                         SettingsCategory::Startup => self.app.state.settings_panel.next_language(),
-                        // Phase 5-11-6 #6: Window カテゴリでフォーカス中フィールドの値を増加
+                        // Phase 5-11-6 #6: Window category — increment the value of the focused field
                         SettingsCategory::Window => {
                             self.app.state.settings_panel.window_field_increase()
                         }
-                        // Phase 5-11-8 Step 8-3 (Sub-phase C): SSH の port (SpinButton)
-                        // と auth_type (ComboBox) を →/← で増減/サイクル可能にする
+                        // Phase 5-11-8 Step 8-3 (Sub-phase C): allow → / ← to inc-dec / cycle
+                        // SSH `port` (SpinButton) and `auth_type` (ComboBox).
                         SettingsCategory::Ssh => {
                             let sp = &mut self.app.state.settings_panel;
                             match sp.ssh_field_focus {
@@ -507,12 +509,12 @@ impl EventHandler {
                     match &self.app.state.settings_panel.category {
                         SettingsCategory::Theme => self.app.state.settings_panel.prev_scheme(),
                         SettingsCategory::Startup => self.app.state.settings_panel.prev_language(),
-                        // Phase 5-11-6 #6: Window カテゴリでフォーカス中フィールドの値を減少
+                        // Phase 5-11-6 #6: Window category — decrement the value of the focused field
                         SettingsCategory::Window => {
                             self.app.state.settings_panel.window_field_decrease()
                         }
-                        // Phase 5-11-8 Step 8-3 (Sub-phase C): SSH の port (SpinButton)
-                        // と auth_type (ComboBox) を ← で減少/逆サイクルさせる
+                        // Phase 5-11-8 Step 8-3 (Sub-phase C): allow ← to decrement / reverse-cycle
+                        // SSH `port` (SpinButton) and `auth_type` (ComboBox).
                         SettingsCategory::Ssh => {
                             let sp = &mut self.app.state.settings_panel;
                             match sp.ssh_field_focus {
@@ -524,7 +526,7 @@ impl EventHandler {
                         _ => {}
                     }
                 }
-                // Space: Startup カテゴリの auto_check_update トグル
+                // Space: toggle auto_check_update in the Startup category
                 WKeyCode::Space if !editing => {
                     use crate::settings_panel::SettingsCategory;
                     if self.app.state.settings_panel.category == SettingsCategory::Startup {
@@ -549,7 +551,7 @@ impl EventHandler {
             return true;
         }
 
-        // パレットが開いているときのナビゲーション（全キーを消費）
+        // Navigation while the palette is open (consumes every key)
         if self.app.state.palette.is_open {
             match code {
                 WKeyCode::ArrowDown => self.app.state.palette.select_next(),
@@ -558,7 +560,7 @@ impl EventHandler {
                     if let Some(action) = self.app.state.palette.selected_action() {
                         let action_id = action.action.clone();
                         self.app.state.palette.close();
-                        // Sprint 5-7 / Phase 3-3: 使用履歴を記録して永続化
+                        // Sprint 5-7 / Phase 3-3: record usage history and persist it
                         self.app.state.palette.record_use(&action_id);
                         self.execute_action(&action_id, event_loop);
                     }
@@ -568,8 +570,8 @@ impl EventHandler {
             return true;
         }
 
-        // サーバーエラーバナーが表示中のとき: Esc で閉じる（Sprint 5-12 Phase 1）
-        // update_banner より優先して処理する（重なって表示されているとき先に消えるべき）
+        // When the server-error banner is visible: Esc closes it (Sprint 5-12 Phase 1).
+        // Processed before update_banner so the overlapping banner clears first.
         if self.app.state.error_banner.is_some()
             && let WKeyCode::Escape = code
         {
@@ -577,7 +579,7 @@ impl EventHandler {
             return true;
         }
 
-        // 更新通知バナーが表示中のとき: Esc で閉じる、Enter でブラウザを開く
+        // While the update-notification banner is visible: Esc closes it, Enter opens the browser
         if self.app.state.update_banner.is_some() {
             match code {
                 WKeyCode::Escape => {
@@ -593,15 +595,15 @@ impl EventHandler {
             }
         }
 
-        // ホストマネージャが開いているときのナビゲーション（全キーを消費）
-        // パスワードモーダルが開いている場合は専用処理
+        // Navigation while the host manager is open (consumes every key).
+        // When the password modal is open, use its dedicated handling.
         if self.app.state.host_manager.password_modal.is_some() {
             match code {
                 WKeyCode::Escape => {
                     self.app.state.host_manager.password_modal = None;
                 }
                 WKeyCode::Tab => {
-                    // OS キーチェーン保存フラグの切り替え（Sprint 3-2 後半）
+                    // Toggle the "save to OS keychain" flag (later half of Sprint 3-2)
                     if let Some(m) = &mut self.app.state.host_manager.password_modal {
                         m.toggle_remember();
                     }
@@ -614,8 +616,8 @@ impl EventHandler {
                 WKeyCode::Enter => {
                     if let Some(m) = &mut self.app.state.host_manager.password_modal {
                         let host = m.host.clone();
-                        // Sprint 5-1 / G1: take_password() の前に remember を読み出す
-                        // （IPC で ephemeral_password = !remember として送信するため）
+                        // Sprint 5-1 / G1: read `remember` before `take_password()`
+                        // (sent over IPC as `ephemeral_password = !remember`).
                         let remember = m.remember;
                         let password = m.take_password();
                         self.app.state.host_manager.password_modal = None;
@@ -645,7 +647,7 @@ impl EventHandler {
                         let host = host.clone();
                         self.app.state.host_manager.close();
                         if host.auth_type == "password" {
-                            // パスワード認証ホストはモーダルを開いてから接続する
+                            // For password-auth hosts, open the modal first, then connect
                             self.app.state.host_manager.password_modal =
                                 Some(crate::host_manager::PasswordModal::new(host));
                         } else {
@@ -663,10 +665,10 @@ impl EventHandler {
             return true;
         }
 
-        // 検索モードの特殊キー
+        // Special keys for search mode
         if self.app.state.search.is_active {
             match code {
-                // Enter: 次のマッチへ / Shift+Enter: 前のマッチへ
+                // Enter: next match / Shift+Enter: previous match
                 WKeyCode::Enter => {
                     if shift {
                         self.app.state.search_prev();
@@ -675,7 +677,7 @@ impl EventHandler {
                     }
                     return true;
                 }
-                // N: 前のマッチへ（vim 慣習）
+                // N: previous match (vim convention)
                 WKeyCode::KeyN if shift => {
                     self.app.state.search_prev();
                     return true;
@@ -684,29 +686,30 @@ impl EventHandler {
             }
         }
 
-        // Ctrl++（Equal / Plus）: フォントサイズを大きくする
+        // Ctrl+= (Equal / Plus): increase font size
         if ctrl && (code == WKeyCode::Equal || code == WKeyCode::NumpadAdd) {
             self.change_font_size(1.0);
             return true;
         }
 
-        // Ctrl+- : フォントサイズを小さくする
+        // Ctrl+- : decrease font size
         if ctrl && (code == WKeyCode::Minus || code == WKeyCode::NumpadSubtract) {
             self.change_font_size(-1.0);
             return true;
         }
 
-        // Ctrl+0 : フォントサイズをデフォルトに戻す
+        // Ctrl+0 : reset font size to the default
         if ctrl && code == WKeyCode::Digit0 {
             self.reset_font_size();
             return true;
         }
 
-        // Sprint 5-7 / UI-1-4 + bug fix: Leader 単独押下を検知して prefix モードに突入する
-        // leader_key（例: "ctrl+b"）が現在の修飾子+キーと一致し、かつ `<leader> X` 形式の
-        // バインドが 1 つ以上設定されている場合のみ prefix モード突入＋ PTY に送らない。
-        // prefix バインドが設定されていない場合は素通りで通常の Ctrl+B 等として PTY に流す
-        // （ユーザーの既存ワークフロー破壊を避けるため）。
+        // Sprint 5-7 / UI-1-4 + bug fix: detect a lone Leader press and enter prefix mode.
+        // We only enter prefix mode (and suppress PTY forwarding) when `leader_key`
+        // (e.g. "ctrl+b") matches the current modifier+key AND at least one
+        // `<leader> X` style binding is configured. With no prefix bindings,
+        // pass through as a normal Ctrl+B etc. to the PTY (to avoid breaking
+        // existing user workflows).
         let leader_str = self.app.config.leader_key.clone();
         if !leader_str.is_empty()
             && config_key_matches(&leader_str, code, self.modifiers)
@@ -719,10 +722,10 @@ impl EventHandler {
             if let Some(w) = &self.window {
                 w.request_redraw();
             }
-            return true; // PTY へは送らない（prefix モード突入を消費）
+            return true; // Do not forward to the PTY (consume the prefix-mode entry)
         }
 
-        // 設定ファイルのカスタムキーバインドをチェックする
+        // Check the custom key bindings from the config file
         if self.check_config_keybindings(code, event_loop) {
             return true;
         }
@@ -730,8 +733,8 @@ impl EventHandler {
         false
     }
 
-    /// 設定に `<leader> X` 形式のプレフィックスバインドが 1 つでも存在するかを返す。
-    /// Leader 単独押下時に prefix モード突入するかどうかの判定に使う。
+    /// Return true if any `<leader> X` style prefix binding is configured.
+    /// Used to decide whether to enter prefix mode on a lone Leader press.
     fn has_prefix_bindings(&self) -> bool {
         let leader = &self.app.config.leader_key;
         if leader.is_empty() {
@@ -741,24 +744,24 @@ impl EventHandler {
             let expanded = self.app.config.expand_leader(&b.key);
             let mut tokens = expanded.split_whitespace();
             let first = tokens.next();
-            // 2 トークン以上 + 先頭が leader と一致する
+            // At least two tokens, and the first matches the leader
             first.is_some_and(|t| t.eq_ignore_ascii_case(leader)) && tokens.next().is_some()
         })
     }
 
-    /// クリック座標 (col, row) に URL があれば返す
+    /// Return the URL at click coordinates (col, row), if any
     pub(super) fn find_url_at(&self, col: u16, row: u16) -> Option<String> {
         use crate::state::detect_urls_in_row;
         let pane = self.app.state.focused_pane()?;
 
-        // OSC 8 ハイパーリンクを優先チェックする
+        // Check OSC 8 hyperlinks first
         for span in &pane.grid.hyperlinks {
             if span.row == row && col >= span.col_start && col < span.col_end {
                 return Some(span.url.clone());
             }
         }
 
-        // テキストパターンから URL を動的検出する
+        // Then detect URLs dynamically from text patterns
         let cells = pane.grid.rows.get(row as usize)?;
         let urls = detect_urls_in_row(row, cells);
         urls.into_iter()
@@ -766,15 +769,17 @@ impl EventHandler {
             .map(|u| u.url)
     }
 
-    /// 設定のキーバインド一覧から一致するものを探してアクションを実行する。
-    /// 消費した場合は true を返す。
+    /// Search the configured key bindings for a match and execute the action.
+    /// Returns true if the key was consumed.
     ///
-    /// Sprint 5-7 / UI-1-3 + bug fix: 2 経路でディスパッチする:
-    /// - **prefix モード中** (`prefix_pending_until` が有効): `<leader> X` 形式のバインドのみ
-    ///   照合し、第 1 トークンが leader と一致するエントリの残り token を本キー入力と比較する。
-    ///   マッチで実行＆ prefix モード解除。未マッチでも prefix モード解除して単発バインド照合に
-    ///   フォールスルーする（後続のキーが通常入力として動作するようにするため、本キーは消費しない）。
-    /// - **prefix モード外**: スペース区切りのバインドはスキップし、単発バインドのみ照合する。
+    /// Sprint 5-7 / UI-1-3 + bug fix: dispatches via two paths:
+    /// - **In prefix mode** (`prefix_pending_until` active): only match
+    ///   `<leader> X` style bindings. For entries whose first token equals the
+    ///   leader, compare the remaining tokens against the incoming key.
+    ///   On a match, execute and exit prefix mode. Even on no match, exit
+    ///   prefix mode and fall through to single-binding matching (so the next
+    ///   key still works as normal input; this key is not consumed).
+    /// - **Outside prefix mode**: skip space-separated bindings and only match single-token ones.
     fn check_config_keybindings(&mut self, code: WKeyCode, event_loop: &ActiveEventLoop) -> bool {
         let bindings = self.app.config.keys.clone();
         let leader = self.app.config.leader_key.clone();
@@ -786,18 +791,18 @@ impl EventHandler {
         );
 
         if in_prefix {
-            // prefix モード中: <leader> X 形式のバインドのみ照合
+            // In prefix mode: only match `<leader> X` style bindings
             for binding in &bindings {
                 let expanded = self.app.config.expand_leader(&binding.key);
                 let tokens: Vec<&str> = expanded.split_whitespace().collect();
                 if tokens.len() < 2 {
                     continue;
                 }
-                // 第 1 トークンは leader と一致する必要あり
+                // The first token must match the leader
                 if !tokens[0].eq_ignore_ascii_case(leader.as_str()) {
                     continue;
                 }
-                // 残り token を結合（将来の多段 prefix に備える。現状は単一 token 想定）
+                // Concatenate the remaining tokens (future-proof for multi-step prefixes; today single-token)
                 let rest = tokens[1..].join(" ");
                 if config_key_matches_token(&rest, code, self.modifiers) {
                     let action = binding.action.clone();
@@ -807,16 +812,16 @@ impl EventHandler {
                     return true;
                 }
             }
-            // prefix モード中にマッチしなかった: モード解除して通常バインド照合へフォールスルー
-            // （本キーは消費せず、未マッチなら最終的に PTY 入力として処理される）
+            // No match in prefix mode: exit the mode and fall through to single-binding matching.
+            // (We do not consume this key; if there is no match downstream, it ends up as PTY input.)
             self.app.state.prefix_pending_until = None;
             self.app.state.key_hint_visible_until = None;
         }
 
-        // 単発バインド照合（prefix モード外、または prefix モード未マッチ時のフォールスルー）
+        // Single-binding matching (outside prefix mode, or as fall-through after no prefix match)
         for binding in &bindings {
             let expanded = self.app.config.expand_leader(&binding.key);
-            // スペース区切り（prefix 系）は本経路ではスキップ
+            // Skip space-separated bindings (prefix-style) on this path
             if expanded.split_whitespace().count() > 1 {
                 continue;
             }
@@ -829,13 +834,13 @@ impl EventHandler {
         false
     }
 
-    /// キー入力をサーバーの PTY に転送する
+    /// Forward a key input to the server-side PTY
     pub(super) fn forward_key_to_server(&self, physical_key: PhysicalKey, text: Option<&str>) {
         let Some(conn) = &self.connection else { return };
         let mods = proto_modifiers(self.modifiers);
         let ctrl = self.modifiers.control_key();
 
-        // Ctrl 非押下でテキストがある場合はテキスト入力として送信する
+        // When Ctrl is not held and text is present, send it as text input
         if !ctrl
             && let Some(text_str) = text
             && !text_str.is_empty()
@@ -849,7 +854,7 @@ impl EventHandler {
             return;
         }
 
-        // 特殊キーおよび Ctrl キーシーケンス
+        // Special keys and Ctrl key sequences
         if let Some(key_code) = physical_to_proto_key(physical_key, self.modifiers) {
             let _ = conn.send_tx.try_send(ClientToServer::KeyEvent {
                 code: key_code,

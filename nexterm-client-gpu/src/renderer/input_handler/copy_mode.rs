@@ -1,20 +1,20 @@
-//! コピーモード（tmux 互換）のキー入力処理
+//! Copy-mode (tmux-compatible) key input handling
 //!
-//! `input_handler.rs` から抽出した:
-//! - `handle_copy_mode_key` — 通常モードのキー入力
-//! - `handle_copy_mode_search_key` — `/` で開く検索入力モード
-//! - 単語境界ナビゲーション（w / b）
-//! - インクリメンタル検索（n キー / Enter 確定）
-//! - ヤンク（y / Y）— クリップボードへコピー
+//! Extracted from `input_handler.rs`:
+//! - `handle_copy_mode_key` — key input in the normal mode
+//! - `handle_copy_mode_search_key` — search input mode opened with `/`
+//! - Word-boundary navigation (w / b)
+//! - Incremental search (n / Enter to commit)
+//! - Yank (y / Y) — copy to the clipboard
 
 use winit::keyboard::KeyCode as WKeyCode;
 
 use super::EventHandler;
 
 impl EventHandler {
-    /// コピーモードのキー入力を処理する（true = 消費済み）
+    /// Handle key input in copy mode (true = consumed)
     pub(super) fn handle_copy_mode_key(&mut self, code: WKeyCode) -> bool {
-        // 検索入力中は専用ハンドラに委譲する
+        // While in search input, delegate to the dedicated handler
         if self.app.state.copy_mode.search_query.is_some() {
             return self.handle_copy_mode_search_key(code);
         }
@@ -24,40 +24,40 @@ impl EventHandler {
         let max_row = self.app.state.rows.saturating_sub(1);
 
         match code {
-            // q / Escape: コピーモードを終了する
+            // q / Escape: exit copy mode
             WKeyCode::KeyQ | WKeyCode::Escape => {
                 cm.exit();
             }
-            // h / Left: 左移動
+            // h / Left: move left
             WKeyCode::KeyH | WKeyCode::ArrowLeft => {
                 cm.cursor_col = cm.cursor_col.saturating_sub(1);
             }
-            // l / Right: 右移動
+            // l / Right: move right
             WKeyCode::KeyL | WKeyCode::ArrowRight => {
                 if cm.cursor_col < max_col {
                     cm.cursor_col += 1;
                 }
             }
-            // j / Down: 下移動
+            // j / Down: move down
             WKeyCode::KeyJ | WKeyCode::ArrowDown => {
                 if cm.cursor_row < max_row {
                     cm.cursor_row += 1;
                 }
             }
-            // k / Up: 上移動
+            // k / Up: move up
             WKeyCode::KeyK | WKeyCode::ArrowUp => {
                 cm.cursor_row = cm.cursor_row.saturating_sub(1);
             }
-            // 0: 行頭へ移動
+            // 0: jump to start of line
             WKeyCode::Digit0 => {
                 cm.cursor_col = 0;
             }
-            // $: 行末へ移動
+            // $: jump to end of line
             WKeyCode::Digit4 => {
-                // Shift+4 = '$' として扱う（WKeyCode には Dollar がないため）
+                // Treat Shift+4 as '$' (WKeyCode has no Dollar variant)
                 cm.cursor_col = max_col;
             }
-            // w: 次の単語の先頭へ移動
+            // w: move to the start of the next word
             WKeyCode::KeyW => {
                 let (col, row) = (cm.cursor_col, cm.cursor_row);
                 if let Some((nc, nr)) = self.find_next_word_start(col, row, max_col, max_row) {
@@ -66,7 +66,7 @@ impl EventHandler {
                     cm.cursor_row = nr;
                 }
             }
-            // b: 前の単語の先頭へ移動
+            // b: move to the start of the previous word
             WKeyCode::KeyB => {
                 let (col, row) = (cm.cursor_col, cm.cursor_row);
                 if let Some((nc, nr)) = self.find_prev_word_start(col, row) {
@@ -75,11 +75,11 @@ impl EventHandler {
                     cm.cursor_row = nr;
                 }
             }
-            // v: 選択開始/終了をトグル
+            // v: toggle selection start/end
             WKeyCode::KeyV => {
                 cm.toggle_selection();
             }
-            // y / Y: y=選択テキストをヤンク、Y=行全体をヤンク
+            // y / Y: y = yank selection; Y = yank the entire line
             WKeyCode::KeyY => {
                 if self.modifiers.shift_key() {
                     self.yank_current_line();
@@ -87,11 +87,11 @@ impl EventHandler {
                     self.yank_selection();
                 }
             }
-            // /: インクリメンタル検索モードへ
+            // /: enter incremental search mode
             WKeyCode::Slash => {
                 self.app.state.copy_mode.search_query = Some(String::new());
             }
-            // n: 次の検索結果へ
+            // n: jump to the next search match
             WKeyCode::KeyN => {
                 let q = self
                     .app
@@ -117,14 +117,14 @@ impl EventHandler {
         true
     }
 
-    /// 検索入力中のキー処理（true = 消費済み）
+    /// Handle keys while typing the search query (true = consumed)
     fn handle_copy_mode_search_key(&mut self, code: WKeyCode) -> bool {
         match code {
-            // Escape: 検索をキャンセルして通常コピーモードへ
+            // Escape: cancel the search and return to normal copy mode
             WKeyCode::Escape => {
                 self.app.state.copy_mode.search_query = None;
             }
-            // Enter: 検索確定して最初のマッチへジャンプ
+            // Enter: commit the search and jump to the first match
             WKeyCode::Enter => {
                 let q = self
                     .app
@@ -144,12 +144,12 @@ impl EventHandler {
                     if let Some((nc, nr)) = self.search_forward(&q, col, row, max_col, max_row) {
                         self.app.state.copy_mode.cursor_col = nc;
                         self.app.state.copy_mode.cursor_row = nr;
-                        // 最後の検索クエリを保存して n キーで再利用できるようにする
+                        // Save the last search query so the `n` key can reuse it
                         self.app.state.copy_mode.search_query = Some(q);
                     }
                 }
             }
-            // Backspace: クエリの末尾を削除
+            // Backspace: pop the last char off the query
             WKeyCode::Backspace => {
                 if let Some(ref mut q) = self.app.state.copy_mode.search_query {
                     q.pop();
@@ -160,7 +160,7 @@ impl EventHandler {
         true
     }
 
-    /// 次の単語の先頭位置を返す（見つからなければ None）
+    /// Return the start position of the next word (None if not found)
     fn find_next_word_start(
         &self,
         col: u16,
@@ -172,13 +172,13 @@ impl EventHandler {
         let mut c = col as usize;
         let mut r = row as usize;
 
-        // 現在位置が単語文字なら単語の終わりまでスキップ
+        // If we're on a word char, skip to the end of the word
         if let Some(cells) = pane.grid.rows.get(r) {
             while c < cells.len() && !cells[c].ch.is_whitespace() {
                 c += 1;
             }
         }
-        // 次の単語の先頭（空白をスキップ）
+        // Start of the next word (skip whitespace)
         loop {
             if let Some(cells) = pane.grid.rows.get(r) {
                 while c < cells.len() {
@@ -188,7 +188,7 @@ impl EventHandler {
                     c += 1;
                 }
             }
-            // 次の行へ
+            // Next row
             if r >= max_row as usize {
                 break;
             }
@@ -198,13 +198,13 @@ impl EventHandler {
         Some((max_col, max_row))
     }
 
-    /// 前の単語の先頭位置を返す（見つからなければ None）
+    /// Return the start position of the previous word (None if not found)
     fn find_prev_word_start(&self, col: u16, row: u16) -> Option<(u16, u16)> {
         let pane = self.app.state.focused_pane()?;
         let mut c = col as isize - 1;
         let mut r = row as isize;
 
-        // 現在位置の直前が空白ならスキップ
+        // Skip whitespace immediately before the current position
         loop {
             if c < 0 {
                 if r <= 0 {
@@ -226,7 +226,7 @@ impl EventHandler {
             }
             c -= 1;
         }
-        // 単語の先頭までスキップ
+        // Skip back to the start of the word
         loop {
             if c <= 0 {
                 return Some((0, r as u16));
@@ -243,7 +243,7 @@ impl EventHandler {
         Some((c as u16, r as u16))
     }
 
-    /// 前方検索: クエリに最初にマッチする (col, row) を返す
+    /// Forward search: return the first (col, row) that matches the query
     fn search_forward(
         &self,
         query: &str,
@@ -273,11 +273,11 @@ impl EventHandler {
         None
     }
 
-    /// 選択範囲のテキストをクリップボードにコピーしてコピーモードを終了する
+    /// Copy the selected text to the clipboard and exit copy mode
     fn yank_selection(&mut self) {
         let cm = &self.app.state.copy_mode;
         if let Some(((sc, sr), (ec, er))) = cm.normalized_selection() {
-            // グリッドから選択テキストを抽出する
+            // Extract the selected text from the grid
             let text = if let Some(pane) = self.app.state.focused_pane() {
                 let mut lines = Vec::new();
                 for row_idx in sr..=er {
@@ -309,7 +309,7 @@ impl EventHandler {
         self.app.state.copy_mode.exit();
     }
 
-    /// カーソル行全体をクリップボードにコピーしてコピーモードを終了する（Y キー）
+    /// Copy the entire cursor row to the clipboard and exit copy mode (Y key)
     fn yank_current_line(&mut self) {
         let row_idx = self.app.state.copy_mode.cursor_row as usize;
         let text = if let Some(pane) = self.app.state.focused_pane() {
