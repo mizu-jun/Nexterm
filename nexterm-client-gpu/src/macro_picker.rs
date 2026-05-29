@@ -1,27 +1,27 @@
-//! Lua マクロピッカー UI — Ctrl+Shift+M でフローティングリストを表示する
+//! Lua macro picker UI — Ctrl+Shift+M opens a floating list.
 //!
-//! 設定ファイルの `[[macros]]` エントリを一覧表示し、
-//! Enter で選択したマクロを実行する（RunMacro メッセージをサーバーに送信する）。
+//! Lists every `[[macros]]` entry from the config file; pressing Enter executes
+//! the selected macro (sends `RunMacro` to the server).
 
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use nexterm_config::MacroConfig;
 
-/// マクロピッカーの表示/操作状態
+/// Display / interaction state of the macro picker.
 pub struct MacroPicker {
-    /// 登録済みマクロ一覧（設定ファイルから読み込む）
+    /// Registered macros (loaded from the config file).
     macros: Vec<MacroConfig>,
-    /// 現在の検索クエリ
+    /// Current search query.
     pub query: String,
-    /// パネルが開いているか
+    /// Whether the panel is open.
     pub is_open: bool,
-    /// 選択中のインデックス（フィルタ後リスト上）
+    /// Selected index (relative to the filtered list).
     pub selected: usize,
-    /// Fuzzy マッチャー
+    /// Fuzzy matcher.
     matcher: SkimMatcherV2,
 }
 
 impl MacroPicker {
-    /// 設定からマクロ一覧を受け取ってピッカーを生成する
+    /// Build a picker from a list of macro configs.
     pub fn new(macros: Vec<MacroConfig>) -> Self {
         Self {
             macros,
@@ -32,32 +32,32 @@ impl MacroPicker {
         }
     }
 
-    /// パネルを開いてクエリ・選択をリセットする
+    /// Open the panel and reset the query / selection.
     pub fn open(&mut self) {
         self.query.clear();
         self.selected = 0;
         self.is_open = true;
     }
 
-    /// パネルを閉じる
+    /// Close the panel.
     pub fn close(&mut self) {
         self.is_open = false;
         self.query.clear();
     }
 
-    /// 検索クエリに文字を追加する
+    /// Append a character to the search query.
     pub fn push_char(&mut self, ch: char) {
         self.query.push(ch);
         self.selected = 0;
     }
 
-    /// 検索クエリの末尾を削除する
+    /// Pop the last character from the search query.
     pub fn pop_char(&mut self) {
         self.query.pop();
         self.selected = 0;
     }
 
-    /// 選択を下に移動する（循環）
+    /// Move the selection down (wraps around).
     pub fn select_next(&mut self) {
         let count = self.filtered().len();
         if count > 0 {
@@ -65,7 +65,7 @@ impl MacroPicker {
         }
     }
 
-    /// 選択を上に移動する（循環）
+    /// Move the selection up (wraps around).
     pub fn select_prev(&mut self) {
         let count = self.filtered().len();
         if count > 0 {
@@ -77,12 +77,12 @@ impl MacroPicker {
         }
     }
 
-    /// 現在選択中のマクロ設定を返す
+    /// Return the currently selected macro config.
     pub fn selected_macro(&self) -> Option<&MacroConfig> {
         self.filtered().into_iter().nth(self.selected)
     }
 
-    /// クエリにマッチするマクロをスコア降順で返す
+    /// Return macros matching the query, sorted by descending fuzzy score.
     pub fn filtered(&self) -> Vec<&MacroConfig> {
         if self.query.is_empty() {
             return self.macros.iter().collect();
@@ -103,7 +103,7 @@ impl MacroPicker {
         scored.into_iter().map(|(_, m)| m).collect()
     }
 
-    /// マクロ一覧を更新する（設定ファイルリロード時に使用）
+    /// Replace the macro list (used when the config file is reloaded).
     pub fn reload(&mut self, macros: Vec<MacroConfig>) {
         self.macros = macros;
         self.selected = 0;

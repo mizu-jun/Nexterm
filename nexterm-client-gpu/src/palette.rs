@@ -1,12 +1,12 @@
-//! コマンドパレット — Ctrl+Shift+P でフローティング UI を表示する
+//! Command palette — Ctrl+Shift+P shows a floating UI.
 //!
-//! Sprint 5-7 / Phase 3-3: 履歴永続化（`palette_history.json`）と「最近使った
-//! アクションを優先表示」ロジックを追加。
+//! Sprint 5-7 / Phase 3-3: adds history persistence (`palette_history.json`)
+//! and "most-recently-used actions float to the top" ranking.
 //!
-//! - クエリ空: 履歴の `last_used` 降順 → `use_count` 降順 → 元の登録順
-//! - クエリ有: Fuzzy スコア + 履歴ボーナス（最大 +200）でソート
-//! - 履歴は `~/.local/state/nexterm/palette_history.json`（Unix）/
-//!   `%APPDATA%\nexterm\palette_history.json`（Windows）に atomic write + 0600
+//! - Empty query: sort by history (`last_used` desc → `use_count` desc → original registration order).
+//! - Non-empty query: fuzzy score + history bonus (up to +200), sorted descending.
+//! - History is persisted at `~/.local/state/nexterm/palette_history.json` on Unix
+//!   (`%APPDATA%\nexterm\palette_history.json` on Windows) with atomic-write + mode 0600.
 
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use nexterm_i18n::fl;
@@ -16,45 +16,45 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::warn;
 
-/// パレットに登録できるアクション
+/// A single action that can be registered in the palette.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaletteAction {
-    /// 表示ラベル（現在のロケールで翻訳済み）
+    /// Display label (already translated for the current locale).
     pub label: String,
-    /// 実行アクション識別子
+    /// Action identifier (used for dispatch).
     pub action: String,
 }
 
-/// 履歴 1 件あたりのエントリ
+/// A single history entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaletteHistoryEntry {
-    /// 最終使用時刻（UNIX 秒）
+    /// Most recent use time (UNIX seconds).
     pub last_used: u64,
-    /// 累計使用回数
+    /// Cumulative use count.
     pub use_count: u32,
 }
 
-/// アクション履歴（`action 識別子` → 履歴エントリ）
+/// Action history (`action identifier` → entry).
 pub type PaletteHistory = HashMap<String, PaletteHistoryEntry>;
 
-/// コマンドパレットの状態
+/// Command-palette state.
 pub struct CommandPalette {
-    /// 登録済みアクション一覧
+    /// Registered actions.
     actions: Vec<PaletteAction>,
-    /// 現在の検索クエリ
+    /// Current search query.
     pub query: String,
-    /// パレットが開いているか
+    /// Whether the palette is open.
     pub is_open: bool,
-    /// 選択中のインデックス
+    /// Selected index (within the filtered list).
     pub selected: usize,
-    /// Fuzzy マッチャー
+    /// Fuzzy matcher.
     matcher: SkimMatcherV2,
-    /// アクション履歴（永続化対象）
+    /// Action history (persisted to disk).
     history: PaletteHistory,
 }
 
 impl CommandPalette {
-    /// デフォルトアクション付きでパレットを生成する（現在のロケールで翻訳する）
+    /// Build a palette with the default actions (translated for the current locale).
     pub fn new() -> Self {
         let actions = default_actions();
         Self {
@@ -67,43 +67,44 @@ impl CommandPalette {
         }
     }
 
-    /// 永続化された履歴をロードしてマージしたパレットを返す。
+    /// Build a palette and merge the persisted history.
     ///
-    /// 履歴ファイルが存在しない・破損している場合は空履歴で起動する（クラッシュなし）。
+    /// Starts with an empty history if the file is missing or unparseable
+    /// (the constructor never crashes).
     pub fn new_with_history() -> Self {
         let mut palette = Self::new();
         palette.history = load_history();
         palette
     }
 
-    /// パレットを開く
+    /// Open the palette.
     pub fn open(&mut self) {
         self.query.clear();
         self.selected = 0;
         self.is_open = true;
     }
 
-    /// パレットを閉じる
+    /// Close the palette.
     pub fn close(&mut self) {
         self.is_open = false;
         self.query.clear();
     }
 
-    /// クエリ文字を追加する
+    /// Append a character to the query.
     #[allow(dead_code)]
     pub fn push_char(&mut self, ch: char) {
         self.query.push(ch);
         self.selected = 0;
     }
 
-    /// クエリの末尾を削除する
+    /// Pop the last character from the query.
     #[allow(dead_code)]
     pub fn pop_char(&mut self) {
         self.query.pop();
         self.selected = 0;
     }
 
-    /// 選択を下に移動する
+    /// Move the selection down (wraps).
     pub fn select_next(&mut self) {
         let count = self.filtered().len();
         if count > 0 {
@@ -111,7 +112,7 @@ impl CommandPalette {
         }
     }
 
-    /// 選択を上に移動する
+    /// Move the selection up (wraps).
     pub fn select_prev(&mut self) {
         let count = self.filtered().len();
         if count > 0 {
@@ -123,20 +124,20 @@ impl CommandPalette {
         }
     }
 
-    /// 現在選択中のアクションを返す
+    /// Return the currently selected action.
     pub fn selected_action(&self) -> Option<&PaletteAction> {
         self.filtered().into_iter().nth(self.selected)
     }
 
-    /// クエリにマッチするアクションをスコア降順で返す。
+    /// Return actions matching the query, sorted by descending score.
     ///
-    /// - クエリ空: 履歴順（last_used 降順 → use_count 降順）→ 元の登録順
-    /// - クエリ有: Fuzzy スコア + 履歴ボーナスで降順ソート
+    /// - Empty query: history order (`last_used` desc → `use_count` desc) → original registration order.
+    /// - Non-empty query: fuzzy score + history bonus, sorted descending.
     pub fn filtered(&self) -> Vec<&PaletteAction> {
         rank_actions(&self.actions, &self.query, &self.history, &self.matcher)
     }
 
-    /// 履歴に「使った」記録を追加し、ファイルへ保存する（Sprint 5-7 / Phase 3-3）。
+    /// Record a "used" event and persist the history (Sprint 5-7 / Phase 3-3).
     pub fn record_use(&mut self, action: &str) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -154,17 +155,17 @@ impl CommandPalette {
         save_history(&self.history);
     }
 
-    /// カスタムアクションを登録する
+    /// Register a custom action.
     #[allow(dead_code)]
     pub fn register(&mut self, action: PaletteAction) {
         self.actions.push(action);
     }
 }
 
-/// パレットのデフォルトアクション一覧を返す（i18n 翻訳済み）。
+/// Return the default action list (already translated via i18n).
 ///
-/// Sprint 5-7 / Phase 3-3: `execute_action` でディスパッチ済みの全アクションを
-/// 網羅する（ClosePane / NewWindow / QuickSelect / SetBroadcastOn/Off / Quit を追加）。
+/// Sprint 5-7 / Phase 3-3: covers every action wired into `execute_action`
+/// (added ClosePane / NewWindow / QuickSelect / SetBroadcastOn/Off / Quit).
 fn default_actions() -> Vec<PaletteAction> {
     vec![
         PaletteAction {
@@ -183,7 +184,8 @@ fn default_actions() -> Vec<PaletteAction> {
             label: fl!("palette-focus-prev"),
             action: "FocusPrevPane".to_string(),
         },
-        // Sprint 5-7 / Phase 3-3: 追加分（execute_action にはあったがパレット未登録）
+        // Sprint 5-7 / Phase 3-3: added entries (already wired into execute_action
+        // but missing from the palette).
         PaletteAction {
             label: fl!("palette-close-pane"),
             action: "ClosePane".to_string(),
@@ -256,7 +258,7 @@ fn default_actions() -> Vec<PaletteAction> {
             label: fl!("palette-show-settings"),
             action: "ShowSettings".to_string(),
         },
-        // Sprint 5-2 / B1: OSC 133 セマンティックマークによるプロンプトジャンプ
+        // Sprint 5-2 / B1: prompt jumps via OSC 133 semantic marks.
         PaletteAction {
             label: fl!("palette-jump-prev-prompt"),
             action: "JumpPrevPrompt".to_string(),
@@ -265,7 +267,7 @@ fn default_actions() -> Vec<PaletteAction> {
             label: fl!("palette-jump-next-prompt"),
             action: "JumpNextPrompt".to_string(),
         },
-        // Sprint 5-8 / Phase 4-5: tab tearing 関連（Wayland 代替 UX 含む）
+        // Sprint 5-8 / Phase 4-5: tab tearing (includes the Wayland-alternative UX).
         PaletteAction {
             label: fl!("palette-detach-to-new-window"),
             action: "DetachToNewWindow".to_string(),
@@ -281,11 +283,12 @@ fn default_actions() -> Vec<PaletteAction> {
     ]
 }
 
-/// パレットの並び替えロジックを純関数として切り出したもの（テスト容易性のため）。
+/// Palette ranking extracted as a pure function (easier to test).
 ///
-/// - クエリ空: 履歴順（`last_used` 降順 → `use_count` 降順）→ 履歴なしは末尾に登録順で残す
-/// - クエリ有: Fuzzy スコア + `history_bonus` を加算してから降順ソート
-///   - `history_bonus` = `use_count * 10 + (last_used が新しいほど +200 まで)`
+/// - Empty query: history order (`last_used` desc → `use_count` desc); actions
+///   without history retain their registration order at the tail.
+/// - Non-empty query: fuzzy score + `history_bonus`, sorted descending.
+///   - `history_bonus` = `use_count * 10 + (recency bonus up to +200)`.
 pub fn rank_actions<'a>(
     actions: &'a [PaletteAction],
     query: &str,
@@ -293,7 +296,7 @@ pub fn rank_actions<'a>(
     matcher: &SkimMatcherV2,
 ) -> Vec<&'a PaletteAction> {
     if query.is_empty() {
-        // クエリ空: 履歴順 → 履歴なしは元順
+        // Empty query: history order → original order for un-recorded actions.
         let mut indexed: Vec<(usize, &PaletteAction)> = actions.iter().enumerate().collect();
         indexed.sort_by(|a, b| {
             let ha = history.get(&a.1.action);
@@ -327,10 +330,10 @@ pub fn rank_actions<'a>(
     scored.into_iter().map(|(_, _, a)| a).collect()
 }
 
-/// 履歴エントリから fuzzy スコアに加算するボーナスを計算する。
+/// Compute the bonus to add to the fuzzy score from a history entry.
 ///
-/// - 使用回数による加点: `use_count * 10`（上限 100）
-/// - 最近性による加点: `last_used` が直近（1 日以内）なら +100、1 週間以内なら +50、それ以前は 0
+/// - Use-count bonus: `use_count * 10` (capped at 100).
+/// - Recency bonus: +100 if last used within 1 day; +50 within 1 week; 0 otherwise.
 fn history_bonus(entry: Option<&PaletteHistoryEntry>) -> i64 {
     let Some(e) = entry else { return 0 };
     let now = SystemTime::now()
@@ -349,9 +352,9 @@ fn history_bonus(entry: Option<&PaletteHistoryEntry>) -> i64 {
     use_bonus + recency_bonus
 }
 
-// ---- 履歴の永続化 ----
+// ---- History persistence ----
 
-/// 履歴ファイルパスを返す
+/// Return the history file path.
 ///
 /// Unix: `~/.local/state/nexterm/palette_history.json`
 /// Windows: `%APPDATA%\nexterm\palette_history.json`
@@ -384,7 +387,7 @@ fn history_path() -> PathBuf {
     }
 }
 
-/// 履歴を JSON ファイルから読み込む（ファイルがなければ空マップを返す）
+/// Load the history from the JSON file (empty map if absent).
 fn load_history() -> PaletteHistory {
     let path = history_path();
     if !path.exists() {
@@ -393,41 +396,41 @@ fn load_history() -> PaletteHistory {
     let json = match std::fs::read_to_string(&path) {
         Ok(j) => j,
         Err(e) => {
-            warn!("コマンドパレット履歴の読み込みに失敗しました: {}", e);
+            warn!("failed to read command-palette history: {}", e);
             return PaletteHistory::new();
         }
     };
     match serde_json::from_str(&json) {
         Ok(map) => map,
         Err(e) => {
-            warn!("コマンドパレット履歴のパースに失敗しました: {}", e);
+            warn!("failed to parse command-palette history: {}", e);
             PaletteHistory::new()
         }
     }
 }
 
-/// 履歴を JSON ファイルに保存する（atomic write、Unix では 0600）
+/// Save the history to the JSON file (atomic write; mode 0600 on Unix).
 fn save_history(history: &PaletteHistory) {
     let path = history_path();
     let json = match serde_json::to_string_pretty(history) {
         Ok(j) => j,
         Err(e) => {
-            warn!("コマンドパレット履歴のシリアライズに失敗しました: {}", e);
+            warn!("failed to serialise command-palette history: {}", e);
             return;
         }
     };
     if let Err(e) = write_atomic_secure(&path, json.as_bytes()) {
-        warn!("コマンドパレット履歴の保存に失敗しました: {}", e);
+        warn!("failed to save command-palette history: {}", e);
     }
 }
 
-/// ファイルをアトミックに書き込み、Unix では 0600 パーミッションを強制する。
+/// Write a file atomically; enforce mode 0600 on Unix.
 fn write_atomic_secure(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let parent = path.parent().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            format!("親ディレクトリが取得できません: {:?}", path),
+            format!("could not obtain parent directory: {:?}", path),
         )
     })?;
     std::fs::create_dir_all(parent)?;
@@ -466,7 +469,7 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    /// ロケール変更テストの排他制御（グローバルロケールのレース防止）
+    /// Mutex used by locale-changing tests to avoid racing the global locale.
     static LOCALE_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
@@ -476,8 +479,8 @@ mod tests {
     }
 
     #[test]
-    fn default_actions_网羅性_新規追加分が含まれる() {
-        // Sprint 5-7 / Phase 3-3 で追加した 6 アクションが全て登録されていること
+    fn default_actions_include_recently_added_entries() {
+        // All six actions added in Sprint 5-7 / Phase 3-3 must be registered.
         let palette = CommandPalette::new();
         let ids: Vec<&str> = palette.actions.iter().map(|a| a.action.as_str()).collect();
         for expected in [
@@ -490,7 +493,7 @@ mod tests {
         ] {
             assert!(
                 ids.contains(&expected),
-                "action {} がパレットに登録されていない",
+                "action {} should be registered in the palette",
                 expected
             );
         }
@@ -504,7 +507,7 @@ mod tests {
 
     #[test]
     fn fuzzy_match_works() {
-        // "split" は Split Vertical / Split Horizontal にマッチする（英語ロケール）
+        // "split" matches both Split Vertical and Split Horizontal (en locale).
         let _guard = LOCALE_MUTEX.lock().unwrap();
         nexterm_i18n::set_locale("en");
         let mut p = CommandPalette::new();
@@ -517,13 +520,13 @@ mod tests {
 
     #[test]
     fn fuzzy_match_works_with_japanese_locale() {
-        // 日本語ロケールで "分割" がマッチすることを確認する
+        // Verify that the Japanese word for "split" matches in the ja locale.
         let _guard = LOCALE_MUTEX.lock().unwrap();
         nexterm_i18n::set_locale("ja");
         let mut p = CommandPalette::new();
         p.query = "分割".to_string();
         let results = p.filtered();
-        nexterm_i18n::set_locale("en"); // テスト後にリセット
+        nexterm_i18n::set_locale("en"); // Reset after the test.
         assert!(results.len() >= 2);
         assert!(results.iter().any(|a| a.action == "SplitVertical"));
         assert!(results.iter().any(|a| a.action == "SplitHorizontal"));
@@ -533,11 +536,11 @@ mod tests {
     fn selection_wraps_around() {
         let mut p = CommandPalette::new();
         let total = p.filtered().len();
-        // 末尾から次へ → 先頭に戻る
+        // From the tail, "next" wraps to the head.
         p.selected = total - 1;
         p.select_next();
         assert_eq!(p.selected, 0);
-        // 先頭から前へ → 末尾に戻る
+        // From the head, "previous" wraps to the tail.
         p.select_prev();
         assert_eq!(p.selected, total - 1);
     }
@@ -553,7 +556,7 @@ mod tests {
         assert_eq!(p.actions.len(), before + 1);
     }
 
-    // ---- Sprint 5-7 / Phase 3-3: 履歴ロジックのテスト ----
+    // ---- Sprint 5-7 / Phase 3-3: history-ranking tests ----
 
     fn dummy_actions() -> Vec<PaletteAction> {
         vec![
@@ -573,7 +576,7 @@ mod tests {
     }
 
     #[test]
-    fn rank_actions_クエリ空_履歴なしは登録順() {
+    fn rank_actions_empty_query_no_history_uses_registration_order() {
         let actions = dummy_actions();
         let history = PaletteHistory::new();
         let matcher = SkimMatcherV2::default();
@@ -585,10 +588,10 @@ mod tests {
     }
 
     #[test]
-    fn rank_actions_クエリ空_履歴ありは履歴順() {
+    fn rank_actions_empty_query_with_history_uses_history_order() {
         let actions = dummy_actions();
         let mut history = PaletteHistory::new();
-        // Beta を最近 1 回、Gamma を昔 5 回使った想定
+        // Pretend Beta was used recently (once) and Gamma was used five times long ago.
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -603,22 +606,22 @@ mod tests {
         history.insert(
             "Gamma".to_string(),
             PaletteHistoryEntry {
-                last_used: now - 3600 * 24 * 30, // 30 日前
+                last_used: now - 3600 * 24 * 30, // 30 days ago
                 use_count: 5,
             },
         );
         let matcher = SkimMatcherV2::default();
         let ranked = rank_actions(&actions, "", &history, &matcher);
-        assert_eq!(ranked[0].action, "Beta", "最新使用が先頭");
-        assert_eq!(ranked[1].action, "Gamma", "次に履歴のある Gamma");
-        assert_eq!(ranked[2].action, "Alpha", "履歴なしは末尾");
+        assert_eq!(ranked[0].action, "Beta", "most recent use comes first");
+        assert_eq!(ranked[1].action, "Gamma", "Gamma is next (has history)");
+        assert_eq!(ranked[2].action, "Alpha", "no-history entries come last");
     }
 
     #[test]
-    fn rank_actions_クエリ有_履歴ボーナスでブースト() {
+    fn rank_actions_with_query_history_bonus_boosts() {
         let actions = dummy_actions();
         let matcher = SkimMatcherV2::default();
-        // クエリ "a" で Alpha / Gamma がマッチする想定
+        // Query "a" matches Alpha and Gamma.
         let no_hist = PaletteHistory::new();
         let ranked_no = rank_actions(&actions, "a", &no_hist, &matcher);
 
@@ -627,7 +630,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        // Gamma を最近 10 回使った
+        // Gamma was used 10 times recently.
         hist.insert(
             "Gamma".to_string(),
             PaletteHistoryEntry {
@@ -637,27 +640,27 @@ mod tests {
         );
         let ranked_h = rank_actions(&actions, "a", &hist, &matcher);
 
-        // 両方とも Gamma を含むが、履歴ありの場合 Gamma が上位に来る
+        // Both runs include Gamma, but the run with history ranks Gamma higher.
         assert!(ranked_no.iter().any(|a| a.action == "Gamma"));
         assert!(ranked_h.iter().any(|a| a.action == "Gamma"));
-        // 履歴ありで Gamma の方が Alpha より上に来ること
+        // With history, Gamma must rank above Alpha.
         let pos_gamma = ranked_h.iter().position(|a| a.action == "Gamma").unwrap();
         let pos_alpha = ranked_h.iter().position(|a| a.action == "Alpha").unwrap();
         assert!(
             pos_gamma < pos_alpha,
-            "履歴あり Gamma が Alpha より上に来るべき (pos_gamma={}, pos_alpha={})",
+            "with history Gamma should rank above Alpha (pos_gamma={}, pos_alpha={})",
             pos_gamma,
             pos_alpha
         );
     }
 
     #[test]
-    fn history_bonus_なしエントリは_0() {
+    fn history_bonus_for_missing_entry_is_0() {
         assert_eq!(history_bonus(None), 0);
     }
 
     #[test]
-    fn history_bonus_最近使用_use_count_反映() {
+    fn history_bonus_reflects_recent_use_count() {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -666,12 +669,12 @@ mod tests {
             last_used: now,
             use_count: 3,
         };
-        // 1 日以内: recency=100, use_count*10=30 → 130
+        // Within a day: recency=100, use_count*10=30 → 130.
         assert_eq!(history_bonus(Some(&entry)), 130);
     }
 
     #[test]
-    fn history_bonus_use_count_は_100_でクランプ() {
+    fn history_bonus_clamps_use_count_at_100() {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -680,27 +683,27 @@ mod tests {
             last_used: now,
             use_count: 100,
         };
-        // use_count*10 = 1000 だが 100 でクランプ + recency 100 = 200
+        // use_count*10 = 1000, clamped to 100 + recency 100 = 200.
         assert_eq!(history_bonus(Some(&entry)), 200);
     }
 
     #[test]
-    fn history_bonus_古い使用は_recency_ゼロ() {
+    fn history_bonus_for_old_use_has_zero_recency() {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
         let entry = PaletteHistoryEntry {
-            last_used: now.saturating_sub(86_400 * 30), // 30 日前
+            last_used: now.saturating_sub(86_400 * 30), // 30 days ago
             use_count: 5,
         };
-        // recency=0, use_count*10=50 → 50
+        // recency=0, use_count*10=50 → 50.
         assert_eq!(history_bonus(Some(&entry)), 50);
     }
 
     #[test]
-    fn record_use_は_use_count_と_last_used_を更新() {
-        // record_use はファイル IO を伴うため、tempdir を用意して環境変数で差し替える
+    fn record_use_updates_use_count_and_last_used() {
+        // `record_use` performs file I/O, so swap in a temp file via env var.
         let tmp = std::env::temp_dir().join(format!(
             "nexterm-test-palette-{}-{}.json",
             std::process::id(),
@@ -709,8 +712,9 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        // SAFETY: 環境変数の操作は本テスト固有のキーで他テストに干渉しない（パスは uniq）。
-        // unsafe 必要なのは Rust 2024 / std 仕様変更による
+        // SAFETY: This env var name is test-specific; the path is unique so it
+        // cannot interfere with other tests. The `unsafe` block is required
+        // because of the Rust 2024 / std API change.
         unsafe {
             std::env::set_var(
                 "__NEXTERM_TEST_PALETTE_HISTORY_PATH__",
@@ -720,20 +724,20 @@ mod tests {
 
         let mut p = CommandPalette::new();
         p.record_use("Alpha");
-        let entry_a = p.history.get("Alpha").expect("Alpha が記録されること");
+        let entry_a = p.history.get("Alpha").expect("Alpha should be recorded");
         assert_eq!(entry_a.use_count, 1);
         let last_used_first = entry_a.last_used;
 
-        // 2 回目: use_count が増えること
+        // Second call: use_count must increase.
         p.record_use("Alpha");
         let entry_a2 = p.history.get("Alpha").unwrap();
         assert_eq!(entry_a2.use_count, 2);
         assert!(entry_a2.last_used >= last_used_first);
 
-        // ファイルが書き込まれていること
-        assert!(tmp.exists(), "履歴ファイルが書き込まれていない");
+        // The history file must have been written.
+        assert!(tmp.exists(), "history file should have been written");
 
-        // クリーンアップ
+        // Clean up.
         let _ = std::fs::remove_file(&tmp);
         unsafe {
             std::env::remove_var("__NEXTERM_TEST_PALETTE_HISTORY_PATH__");

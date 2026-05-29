@@ -1,29 +1,32 @@
-//! Quake モード (Sprint 5-7 / Phase 2-2)
+//! Quake mode (Sprint 5-7 / Phase 2-2).
 //!
-//! グローバルホットキーで画面端からスライド表示するトグル機能。
-//! Tilix / Guake / iTerm2 の "Hotkey Window" 相当。
+//! A global-hotkey toggle that slides a window in from one screen edge.
+//! Equivalent to the "hotkey window" feature in Tilix / Guake / iTerm2.
 //!
-//! # 設計
+//! # Design
 //!
-//! - **ホットキー登録**: `global-hotkey` クレートを使用し、Windows / macOS / X11 に対応。
-//!   Wayland は本クレートが未対応のため、`nexterm-ctl quake toggle` から IPC 経由で
-//!   `ServerToClient::QuakeToggleRequest` を受信してトグルする経路を併用する。
-//! - **ホットキーイベント連携**: `global-hotkey` の `GlobalHotKeyEvent::receiver()` は
-//!   crossbeam_channel ベース。winit イベントループへの転送は `lifecycle` 側の
-//!   `about_to_wait` でポーリングする方式を採用（spawn 不要・winit 0.30 と相性が良い）。
-//! - **ウィンドウ制御**: トグル状態を `ClientState.quake_visible` で保持し、表示時は
-//!   モニタの作業領域から `edge` + `height_pct` / `width_pct` を計算してウィンドウ位置と
-//!   サイズを設定する。装飾は隠す（borderless）が、戻すための旧状態を `QuakeState` に
-//!   退避させる。
+//! - **Hotkey registration**: uses the `global-hotkey` crate, which supports
+//!   Windows / macOS / X11. Wayland is not supported by that crate, so we
+//!   complement it with an IPC path: `nexterm-ctl quake toggle` triggers a
+//!   `ServerToClient::QuakeToggleRequest` that this module reacts to.
+//! - **Hotkey event delivery**: `global-hotkey`'s `GlobalHotKeyEvent::receiver()`
+//!   is crossbeam-channel based. Forwarding into the winit event loop is done
+//!   by polling in `lifecycle::about_to_wait` (no `spawn` needed, plays nicely
+//!   with winit 0.30).
+//! - **Window control**: the toggle state lives in `ClientState.quake_visible`.
+//!   When showing, the window position and size are computed from the monitor
+//!   work area + `edge` + `height_pct` / `width_pct`. Decorations are hidden
+//!   (borderless); the previous state is saved in `QuakeState` so we can restore it.
 //!
-//! # プラットフォーム別注意点
+//! # Platform-specific notes
 //!
-//! - **Linux Wayland**: グローバルホットキー登録は失敗する（warn ログのみ）。
-//!   ユーザーは compositor の `bindsym` 経由で `nexterm-ctl quake toggle` を実行する。
-//! - **macOS**: `set_window_level(AlwaysOnTop)` は通常のアプリケーション層を超えるため
-//!   フルスクリーンアプリより前面に来るとは限らない（OS 制約）。
-//! - **Windows**: マルチモニタ環境ではプライマリモニタを基準に配置する。
-//!   特定モニタ固定の要件は将来 `monitor_name` 設定で対応する。
+//! - **Linux Wayland**: global hotkey registration fails (warn log only). Users
+//!   are expected to bind `nexterm-ctl quake toggle` through their compositor
+//!   (e.g. Sway's `bindsym`).
+//! - **macOS**: `set_window_level(AlwaysOnTop)` may still not appear above
+//!   fullscreen apps (OS restriction).
+//! - **Windows**: multi-monitor setups anchor to the primary monitor. Targeting
+//!   a specific monitor is a future enhancement via a `monitor_name` option.
 
 use anyhow::{Context, Result};
 use global_hotkey::{
@@ -37,7 +40,7 @@ use winit::{
     window::{Window, WindowId},
 };
 
-/// 通常モード（非 Quake）時のウィンドウ位置・サイズ・装飾状態を保存する
+/// Saved window position / size / decoration state for the non-Quake (normal) mode.
 #[derive(Debug, Clone)]
 pub(crate) struct NormalWindowState {
     pub position: Option<PhysicalPosition<i32>>,
@@ -45,40 +48,41 @@ pub(crate) struct NormalWindowState {
     pub decorations: bool,
 }
 
-/// Quake モード ランタイム状態
+/// Quake-mode runtime state.
 ///
-/// `GlobalHotKeyManager` は drop 時にホットキーを解除するため、ライフタイムの管理として
-/// クライアントの上位構造体に長期保持する必要がある。
+/// `GlobalHotKeyManager` unregisters the hotkey on drop, so the client must keep
+/// it alive for the lifetime of the runtime.
 pub(crate) struct QuakeRuntime {
-    /// global-hotkey クレートのマネージャ（drop でホットキー解除）
+    /// Manager from the `global-hotkey` crate (unregisters on drop).
     _manager: Option<GlobalHotKeyManager>,
-    /// 登録したホットキーの ID（イベントマッチ用）
+    /// ID of the registered hotkey (used to match incoming events).
     hotkey_id: Option<u32>,
-    /// 表示状態（true=Quake 表示中）
+    /// Visible state (true = Quake window is showing).
     pub visible: bool,
-    /// 通常モード時のウィンドウ状態（最初に表示する直前にスナップショット）
+    /// Saved normal-mode window state (captured the first time we go visible).
     pub saved: Option<NormalWindowState>,
-    /// Quake モードの対象 OS Window（Sprint 5-8 Phase 4-1 Step 1.5）。
+    /// Target OS Window for Quake mode (Sprint 5-8 Phase 4-1 Step 1.5).
     ///
-    /// 複数 OS Window 対応（Phase 4-2 以降）に向けて、Quake モードは
-    /// **主 Window 1 個に固定** する設計とする。`on_resumed` で主 Window が初期化された
-    /// 時点で `Some(window_id)` が設定され、以降の `handle_quake_tick` はこの WindowId
-    /// 経由でのみウィンドウを操作する。
+    /// With multi-OS-window support (Phase 4-2 onwards) we keep Quake mode
+    /// **pinned to a single main window**. `on_resumed` sets this to
+    /// `Some(window_id)` once the primary window is initialized; from then on
+    /// `handle_quake_tick` only operates on that WindowId.
     ///
-    /// 現状は `None`（`handle_quake_tick` が `self.window` 経由でフォールバック）。
-    /// Phase 4-2 以降は `windows[target_window_id]` を参照する。
+    /// Currently `None` (`handle_quake_tick` falls back to `self.window`).
+    /// Phase 4-2 onwards references `windows[target_window_id]` directly.
     #[allow(dead_code)]
     pub target_window_id: Option<WindowId>,
 }
 
 impl QuakeRuntime {
-    /// Quake モード設定に従って `GlobalHotKeyManager` を初期化する。
+    /// Initialise a `GlobalHotKeyManager` per the Quake-mode config.
     ///
-    /// `enabled=false` または hotkey パース失敗時はホットキーを登録せず、IPC 経由の
-    /// トグルだけが利用可能な状態で返す（エラーにはしない）。
+    /// Returns a runtime with no hotkey registered (but still functional via the
+    /// IPC toggle path) when `enabled = false` or the hotkey fails to parse.
+    /// These cases do not produce an error.
     pub fn new(cfg: &QuakeModeConfig) -> Self {
         if !cfg.enabled {
-            debug!("Quake モードは無効化されています（[quake_mode] enabled=false）");
+            debug!("Quake mode is disabled ([quake_mode] enabled=false)");
             return Self {
                 _manager: None,
                 hotkey_id: None,
@@ -88,13 +92,13 @@ impl QuakeRuntime {
             };
         }
 
-        // global-hotkey マネージャの初期化（Wayland 等の未対応環境では失敗し得る）
+        // Initialise the global-hotkey manager (may fail on Wayland and similar).
         let manager = match GlobalHotKeyManager::new() {
             Ok(m) => m,
             Err(e) => {
                 warn!(
-                    "GlobalHotKeyManager の初期化に失敗しました（Wayland 等？）: {}。\
-                     `nexterm-ctl quake toggle` 経由でのみ動作します",
+                    "failed to initialise GlobalHotKeyManager (Wayland?): {}. \
+                     Quake mode is only available through `nexterm-ctl quake toggle`",
                     e
                 );
                 return Self {
@@ -111,8 +115,8 @@ impl QuakeRuntime {
             Ok(h) => h,
             Err(e) => {
                 warn!(
-                    "Quake hotkey '{}' のパースに失敗しました: {}。\
-                     `nexterm-ctl quake toggle` 経由でのみ動作します",
+                    "failed to parse Quake hotkey '{}': {}. \
+                     Quake mode is only available through `nexterm-ctl quake toggle`",
                     cfg.hotkey, e
                 );
                 return Self {
@@ -128,8 +132,8 @@ impl QuakeRuntime {
         let id = hotkey.id();
         if let Err(e) = manager.register(hotkey) {
             warn!(
-                "Quake hotkey '{}' の登録に失敗しました: {}。\
-                 別アプリで既に登録されている可能性があります",
+                "failed to register Quake hotkey '{}': {}. \
+                 Another application may already own it",
                 cfg.hotkey, e
             );
             return Self {
@@ -142,7 +146,7 @@ impl QuakeRuntime {
         }
 
         info!(
-            "Quake モード有効。ホットキー '{}' を登録しました (id={})",
+            "Quake mode enabled; registered hotkey '{}' (id={})",
             cfg.hotkey, id
         );
         Self {
@@ -154,9 +158,9 @@ impl QuakeRuntime {
         }
     }
 
-    /// ホットキーイベントが本ランタイムの登録 ID と一致するか判定する。
+    /// Decide whether a hotkey event matches this runtime's registered ID.
     ///
-    /// `Pressed` 状態のみ true を返す（リリース時は無視）。
+    /// Only returns true for `Pressed` events (releases are ignored).
     pub fn matches(&self, event: &GlobalHotKeyEvent) -> bool {
         if event.state != global_hotkey::HotKeyState::Pressed {
             return false;
@@ -164,10 +168,11 @@ impl QuakeRuntime {
         self.hotkey_id == Some(event.id)
     }
 
-    /// 累積したホットキーイベントを排出して、Pressed が 1 回以上あったかを返す。
+    /// Drain accumulated hotkey events and return whether at least one `Pressed`
+    /// event was seen.
     ///
-    /// global-hotkey はチャネルベースなので、winit の `about_to_wait` で本関数を呼んで
-    /// 連続押下があった場合でも 1 トグルにまとめる。
+    /// `global-hotkey` is channel-based, so calling this from winit's
+    /// `about_to_wait` collapses repeated presses into a single toggle.
     pub fn drain_pressed(&self) -> bool {
         let receiver = GlobalHotKeyEvent::receiver();
         let mut pressed = false;
@@ -180,10 +185,10 @@ impl QuakeRuntime {
     }
 }
 
-/// hotkey 文字列を `global_hotkey::hotkey::HotKey` に変換する。
+/// Convert a hotkey string into a `global_hotkey::hotkey::HotKey`.
 ///
-/// 修飾子は `ctrl` / `alt` / `shift` / `super` (`meta` / `cmd` / `win` も同義) を
-/// `+` 区切りで連結する。最後のトークンが主キー。例:
+/// Modifiers (`ctrl` / `alt` / `shift` / `super` — `meta` / `cmd` / `win` are
+/// synonyms) are joined with `+`. The final token is the main key. Examples:
 /// - `"ctrl+`"` → Ctrl + Backquote
 /// - `"alt+space"` → Alt + Space
 /// - `"super+shift+t"` → Super + Shift + T
@@ -202,28 +207,29 @@ pub fn parse_hotkey(s: &str) -> Result<HotKey> {
             }
             other => {
                 if main_code.is_some() {
-                    anyhow::bail!("ホットキー文字列に主キーが複数指定されています: '{}'", s);
+                    anyhow::bail!("hotkey string specifies multiple main keys: '{}'", s);
                 }
-                main_code =
-                    Some(parse_code(other).with_context(|| {
-                        format!("ホットキーの主キー '{}' を解釈できません", other)
-                    })?);
+                main_code = Some(
+                    parse_code(other)
+                        .with_context(|| format!("cannot interpret main hotkey '{}'", other))?,
+                );
             }
         }
     }
 
-    let code = main_code
-        .ok_or_else(|| anyhow::anyhow!("ホットキー文字列に主キーがありません: '{}'", s))?;
+    let code =
+        main_code.ok_or_else(|| anyhow::anyhow!("hotkey string has no main key: '{}'", s))?;
     Ok(HotKey::new(Some(modifiers), code))
 }
 
-/// 主キー文字列を `Code` に変換する（小文字前提）。
+/// Convert a main-key string into a `Code` (lowercase assumed).
 ///
-/// 単一文字（a-z, 0-9）と一般的な名前付きキーをサポートする。
-/// 全 `Code` バリアントを網羅するわけではなく、Quake モードでよく使われるキーに絞る。
+/// Covers single characters (a–z, 0–9) and the common named keys; does not
+/// enumerate every `Code` variant — we focus on the keys commonly used for
+/// Quake-mode bindings.
 fn parse_code(name: &str) -> Result<Code> {
     let code = match name {
-        // 数字
+        // Digits.
         "0" => Code::Digit0,
         "1" => Code::Digit1,
         "2" => Code::Digit2,
@@ -234,7 +240,7 @@ fn parse_code(name: &str) -> Result<Code> {
         "7" => Code::Digit7,
         "8" => Code::Digit8,
         "9" => Code::Digit9,
-        // アルファベット
+        // Letters.
         "a" => Code::KeyA,
         "b" => Code::KeyB,
         "c" => Code::KeyC,
@@ -261,7 +267,7 @@ fn parse_code(name: &str) -> Result<Code> {
         "x" => Code::KeyX,
         "y" => Code::KeyY,
         "z" => Code::KeyZ,
-        // 特殊キー
+        // Special keys.
         "space" => Code::Space,
         "tab" => Code::Tab,
         "enter" | "return" => Code::Enter,
@@ -276,7 +282,7 @@ fn parse_code(name: &str) -> Result<Code> {
         "end" => Code::End,
         "pageup" | "pgup" => Code::PageUp,
         "pagedown" | "pgdn" => Code::PageDown,
-        // 記号
+        // Symbols.
         "`" | "backquote" | "grave" => Code::Backquote,
         "-" | "minus" => Code::Minus,
         "=" | "equal" => Code::Equal,
@@ -288,7 +294,7 @@ fn parse_code(name: &str) -> Result<Code> {
         "," | "comma" => Code::Comma,
         "." | "period" => Code::Period,
         "/" | "slash" => Code::Slash,
-        // F キー
+        // Function keys.
         "f1" => Code::F1,
         "f2" => Code::F2,
         "f3" => Code::F3,
@@ -301,31 +307,32 @@ fn parse_code(name: &str) -> Result<Code> {
         "f10" => Code::F10,
         "f11" => Code::F11,
         "f12" => Code::F12,
-        _ => anyhow::bail!("未知の主キー: '{}'", name),
+        _ => anyhow::bail!("unknown main key: '{}'", name),
     };
     Ok(code)
 }
 
-/// Quake モードでウィンドウを「表示」する。
+/// Show the window in Quake mode.
 ///
-/// 現在のウィンドウ位置・サイズ・装飾を `NormalWindowState` に退避し、
-/// モニタ作業領域から `edge` + `height_pct` / `width_pct` でサイズを計算して
-/// アンカー位置に配置する。装飾は隠す（borderless）。
+/// Saves the current window position / size / decorations into
+/// `NormalWindowState`, then computes the target size from the monitor's work
+/// area combined with `edge` + `height_pct` / `width_pct` and snaps the window
+/// to that anchor. Decorations are hidden (borderless).
 pub fn show_window(window: &Window, cfg: &QuakeModeConfig) -> Option<NormalWindowState> {
     let saved = NormalWindowState {
         position: window.outer_position().ok(),
         size: window.outer_size(),
-        decorations: true, // 通常モードは装飾あり前提
+        decorations: true, // normal mode assumes decorations are on
     };
 
-    // 配置先モニタ（プライマリ優先）
+    // Target monitor (prefer the primary).
     let monitor = window
         .current_monitor()
         .or_else(|| window.primary_monitor())
         .or_else(|| window.available_monitors().next());
 
     let Some(monitor) = monitor else {
-        warn!("Quake モード: モニタ情報を取得できないため通常表示します");
+        warn!("Quake mode: monitor info unavailable, falling back to normal display");
         window.set_visible(true);
         window.focus_window();
         return Some(saved);
@@ -340,7 +347,7 @@ pub fn show_window(window: &Window, cfg: &QuakeModeConfig) -> Option<NormalWindo
         QuakeEdge::Top => {
             let w = mon_size.width * width_pct / 100;
             let h = mon_size.height * height_pct / 100;
-            // 横方向は中央寄せ
+            // Center horizontally.
             let x = mon_pos.x + ((mon_size.width - w) / 2) as i32;
             let y = mon_pos.y;
             (PhysicalPosition::new(x, y), PhysicalSize::new(w, h))
@@ -368,10 +375,11 @@ pub fn show_window(window: &Window, cfg: &QuakeModeConfig) -> Option<NormalWindo
         }
     };
 
-    // 表示状態を整える
+    // Apply the visible state.
     window.set_decorations(false);
     window.set_outer_position(target_pos);
-    // winit 0.30: request_inner_size は Option<PhysicalSize<u32>> を返すが本実装では結果不要
+    // winit 0.30: `request_inner_size` returns `Option<PhysicalSize<u32>>`; we
+    // do not need the result here.
     let _ = window.request_inner_size(target_size);
     if cfg.always_on_top {
         window.set_window_level(winit::window::WindowLevel::AlwaysOnTop);
@@ -380,16 +388,17 @@ pub fn show_window(window: &Window, cfg: &QuakeModeConfig) -> Option<NormalWindo
     window.focus_window();
 
     info!(
-        "Quake モード表示: edge={:?} pos=({},{}) size={}x{}",
+        "Quake mode shown: edge={:?} pos=({},{}) size={}x{}",
         cfg.edge, target_pos.x, target_pos.y, target_size.width, target_size.height
     );
     Some(saved)
 }
 
-/// Quake モードでウィンドウを「非表示」にする。
+/// Hide the Quake-mode window.
 ///
-/// `saved` がある場合は通常モードの装飾・位置・サイズを復元する。
-/// `minimize_on_hide=true` の場合は最小化、それ以外は `set_visible(false)`。
+/// When `saved` is provided, restores the normal-mode decorations, position,
+/// and size. With `minimize_on_hide = true` the window is minimised; otherwise
+/// `set_visible(false)` is used.
 pub fn hide_window(window: &Window, cfg: &QuakeModeConfig, saved: Option<&NormalWindowState>) {
     if cfg.minimize_on_hide {
         window.set_minimized(true);
@@ -406,7 +415,7 @@ pub fn hide_window(window: &Window, cfg: &QuakeModeConfig, saved: Option<&Normal
         }
         let _ = window.request_inner_size(state.size);
     }
-    info!("Quake モード非表示");
+    info!("Quake mode hidden");
 }
 
 #[cfg(test)]
@@ -414,28 +423,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_hotkey_単一修飾子() {
+    fn parse_hotkey_single_modifier() {
         let h = parse_hotkey("ctrl+`").unwrap();
-        // global-hotkey の HotKey はフィールド public ではないので equality 確認のみ
+        // global-hotkey's `HotKey` fields are not public; only equality is checked here.
         assert_eq!(h.mods, Modifiers::CONTROL);
         assert_eq!(h.key, Code::Backquote);
     }
 
     #[test]
-    fn parse_hotkey_複数修飾子() {
+    fn parse_hotkey_multiple_modifiers() {
         let h = parse_hotkey("ctrl+shift+t").unwrap();
         assert_eq!(h.mods, Modifiers::CONTROL | Modifiers::SHIFT);
         assert_eq!(h.key, Code::KeyT);
     }
 
     #[test]
-    fn parse_hotkey_super_別名() {
+    fn parse_hotkey_super_aliases() {
         for alias in ["super+space", "meta+space", "cmd+space", "win+space"] {
             let h = parse_hotkey(alias).unwrap();
             assert_eq!(
                 h.mods,
                 Modifiers::SUPER,
-                "alias='{}' で SUPER 認識されるべき",
+                "alias='{}' should resolve to SUPER",
                 alias
             );
             assert_eq!(h.key, Code::Space);
@@ -443,42 +452,42 @@ mod tests {
     }
 
     #[test]
-    fn parse_hotkey_主キーなしはエラー() {
+    fn parse_hotkey_without_main_key_errors() {
         assert!(parse_hotkey("ctrl+shift").is_err());
     }
 
     #[test]
-    fn parse_hotkey_主キー複数はエラー() {
+    fn parse_hotkey_with_multiple_main_keys_errors() {
         assert!(parse_hotkey("ctrl+a+b").is_err());
     }
 
     #[test]
-    fn parse_hotkey_未知のキーはエラー() {
+    fn parse_hotkey_with_unknown_key_errors() {
         assert!(parse_hotkey("ctrl+xx").is_err());
     }
 
     #[test]
-    fn parse_hotkey_空白を許容() {
+    fn parse_hotkey_allows_whitespace() {
         let h = parse_hotkey(" ctrl + a ").unwrap();
         assert_eq!(h.mods, Modifiers::CONTROL);
         assert_eq!(h.key, Code::KeyA);
     }
 
     #[test]
-    fn parse_hotkey_記号類() {
+    fn parse_hotkey_symbol_keys() {
         assert_eq!(parse_hotkey("ctrl+`").unwrap().key, Code::Backquote);
         assert_eq!(parse_hotkey("alt+space").unwrap().key, Code::Space);
         assert_eq!(parse_hotkey("ctrl+slash").unwrap().key, Code::Slash);
     }
 
     #[test]
-    fn parse_hotkey_fキー() {
+    fn parse_hotkey_function_keys() {
         assert_eq!(parse_hotkey("f1").unwrap().key, Code::F1);
         assert_eq!(parse_hotkey("alt+f12").unwrap().key, Code::F12);
     }
 
     #[test]
-    fn quake_runtime_disabled_状態() {
+    fn quake_runtime_disabled_state() {
         let cfg = QuakeModeConfig::default();
         let rt = QuakeRuntime::new(&cfg);
         assert!(rt.hotkey_id.is_none());

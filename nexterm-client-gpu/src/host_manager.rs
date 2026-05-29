@@ -1,8 +1,8 @@
-//! ホストマネージャ UI — Ctrl+Shift+H でフローティングリストを表示する
+//! Host-manager UI — Ctrl+Shift+H shows a floating list.
 //!
-//! 設定ファイルの `[[hosts]]` エントリと ~/.ssh/config のエントリを一覧表示し、
-//! Enter で選択したホストへ SSH 接続を開始する。
-//! タグ・グループフィルター・接続履歴による並び替えに対応する。
+//! Lists `[[hosts]]` entries from the config file and entries from `~/.ssh/config`;
+//! pressing Enter opens an SSH connection to the selected host. Supports tag /
+//! group filters and history-based sorting.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -12,10 +12,10 @@ use nexterm_config::HostConfig;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-/// ~/.ssh/config を解析して HostConfig の一覧を返す
+/// Parse `~/.ssh/config` and return the resulting `HostConfig` entries.
 ///
-/// ワイルドカード（`Host *`）は無視する。
-/// `Hostname` が省略された場合は `Host` エイリアスをそのまま使う。
+/// Wildcard hosts (`Host *`) are ignored.
+/// If `Hostname` is omitted, the `Host` alias is used as the hostname.
 pub fn load_ssh_config() -> Vec<HostConfig> {
     let path = {
         #[cfg(windows)]
@@ -44,10 +44,10 @@ pub fn load_ssh_config() -> Vec<HostConfig> {
     parse_ssh_config(&content)
 }
 
-/// SSH config テキストを解析する
+/// Parse the SSH config text.
 fn parse_ssh_config(content: &str) -> Vec<HostConfig> {
     let mut hosts: Vec<HostConfig> = Vec::new();
-    // 現在処理中のブロック
+    // The block currently being parsed.
     let mut current_alias: Option<String> = None;
     let mut current_hostname: Option<String> = None;
     let mut current_user: Option<String> = None;
@@ -63,7 +63,7 @@ fn parse_ssh_config(content: &str) -> Vec<HostConfig> {
         let Some(alias) = alias.clone() else {
             return;
         };
-        // ワイルドカードは除外する
+        // Skip wildcards.
         if alias.contains('*') || alias.contains('?') {
             return;
         }
@@ -74,7 +74,7 @@ fn parse_ssh_config(content: &str) -> Vec<HostConfig> {
         } else {
             "agent".to_string()
         };
-        // ~/.ssh/ プレフィックスを展開する
+        // Expand the `~/.ssh/` prefix.
         let key_path = key.as_ref().map(|k| {
             if k.starts_with("~/") {
                 #[cfg(windows)]
@@ -109,7 +109,7 @@ fn parse_ssh_config(content: &str) -> Vec<HostConfig> {
             continue;
         }
 
-        // `keyword value` または `keyword=value` 形式を解析する
+        // Parse `keyword value` or `keyword=value`.
         let (keyword, value) = if let Some(eq) = trimmed.find('=') {
             let k = trimmed[..eq].trim();
             let v = trimmed[eq + 1..].trim();
@@ -124,7 +124,7 @@ fn parse_ssh_config(content: &str) -> Vec<HostConfig> {
 
         match keyword.to_lowercase().as_str() {
             "host" => {
-                // 前のブロックを確定する
+                // Finalise the previous block.
                 flush(
                     &mut hosts,
                     &current_alias,
@@ -155,7 +155,7 @@ fn parse_ssh_config(content: &str) -> Vec<HostConfig> {
         }
     }
 
-    // 最後のブロックを確定する
+    // Finalise the last block.
     flush(
         &mut hosts,
         &current_alias,
@@ -168,25 +168,25 @@ fn parse_ssh_config(content: &str) -> Vec<HostConfig> {
     hosts
 }
 
-/// 接続履歴エントリ
+/// Connection history entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryEntry {
-    /// ホストの一意キー（"username@host:port"）
+    /// Unique host key (`"username@host:port"`).
     pub key: String,
-    /// 接続回数
+    /// Number of connections.
     pub count: u32,
-    /// 最終接続時刻（Unix エポック秒）
+    /// Most recent connection time (UNIX epoch seconds).
     pub last_connected: u64,
 }
 
-// ---- 接続履歴の永続化 ----
+// ---- History persistence ----
 
-/// 接続履歴の保存先パスを返す
+/// Return the history file path.
 ///
 /// Unix: `~/.local/state/nexterm/host_history.json`
 /// Windows: `%APPDATA%\nexterm\host_history.json`
 fn history_path() -> PathBuf {
-    // テスト環境では環境変数でパスを上書き可能にする
+    // Allow tests to override the path via an environment variable.
     if let Ok(test_path) = std::env::var("__NEXTERM_TEST_HOST_HISTORY_PATH__") {
         return PathBuf::from(test_path);
     }
@@ -213,7 +213,7 @@ fn history_path() -> PathBuf {
     }
 }
 
-/// 接続履歴を JSON ファイルから読み込む（ファイルがなければ空マップを返す）
+/// Load the connection history from the JSON file (empty map if absent).
 pub fn load_history() -> HashMap<String, HistoryEntry> {
     let path = history_path();
     if !path.exists() {
@@ -222,48 +222,48 @@ pub fn load_history() -> HashMap<String, HistoryEntry> {
     let json = match std::fs::read_to_string(&path) {
         Ok(j) => j,
         Err(e) => {
-            warn!("接続履歴の読み込みに失敗しました: {}", e);
+            warn!("failed to read connection history: {}", e);
             return HashMap::new();
         }
     };
     match serde_json::from_str(&json) {
         Ok(map) => map,
         Err(e) => {
-            warn!("接続履歴のパースに失敗しました: {}", e);
+            warn!("failed to parse connection history: {}", e);
             HashMap::new()
         }
     }
 }
 
-/// 接続履歴を JSON ファイルに保存する
+/// Save the connection history to the JSON file.
 ///
-/// atomic write（一時ファイル → rename）で書き込み、Unix では 0600 パーミッションを
-/// 強制する。ホスト名・ユーザー名は機密性のある情報のため、共有ホストで他ユーザー
-/// から読み取られないよう保護する。
+/// Atomic write (temp file → rename); enforces mode 0600 on Unix. Hostnames
+/// and usernames are sensitive, so we protect them from other users on a
+/// shared machine.
 pub fn save_history(history: &HashMap<String, HistoryEntry>) {
     let path = history_path();
     let json = match serde_json::to_string_pretty(history) {
         Ok(j) => j,
         Err(e) => {
-            warn!("接続履歴のシリアライズに失敗しました: {}", e);
+            warn!("failed to serialise connection history: {}", e);
             return;
         }
     };
     if let Err(e) = write_atomic_secure(&path, json.as_bytes()) {
-        warn!("接続履歴の保存に失敗しました: {}", e);
+        warn!("failed to save connection history: {}", e);
     }
 }
 
-/// ファイルをアトミックに書き込み、Unix では 0600 パーミッションを強制する。
+/// Write a file atomically and enforce mode 0600 on Unix.
 ///
-/// nexterm-server/src/persist.rs::write_atomic_secure と同等の実装。
-/// クレート間依存を避けるためローカルに複製している。
+/// Equivalent to `nexterm-server/src/persist.rs::write_atomic_secure`.
+/// Duplicated here to avoid a cross-crate dependency.
 fn write_atomic_secure(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let parent = path.parent().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            format!("親ディレクトリが取得できません: {:?}", path),
+            format!("could not obtain parent directory: {:?}", path),
         )
     })?;
     std::fs::create_dir_all(parent)?;
@@ -312,35 +312,35 @@ fn write_atomic_secure(path: &std::path::Path, content: &[u8]) -> std::io::Resul
     Ok(())
 }
 
-/// パスワード入力モーダルの状態
+/// Password input modal state.
 ///
-/// HIGH H-6 対策: 入力中のパスワード文字列を `Zeroizing<String>` でラップし、
-/// drop 時に確実にメモリ上の内容をゼロクリアする。これによりキーロガー
-/// やメモリスクレイプによるパスワード漏洩のリスクを低減する。
+/// HIGH H-6 mitigation: the in-flight password string is wrapped in
+/// `Zeroizing<String>` so the memory is reliably zeroed on drop. This
+/// reduces the risk of password leakage via keyloggers or memory scraping.
 ///
-/// Sprint 3-2 後半: OS キーチェーン統合
-/// - `new()` 時に `nexterm_config::keyring::get_password()` で既存パスワードを
-///   プリフィル（無ければ空文字のまま）
-/// - `remember` フラグが true で `take_password()` 呼出時に
-///   `keyring::store_password()` で保存（失敗してもログのみで処理続行）
-/// - host_history.json には引き続きパスワードを書き込まない（HistoryEntry に
-///   password フィールドが無いことで保証）
+/// Sprint 3-2 (latter half): OS keychain integration.
+/// - `new()` prefills the password via `nexterm_config::keyring::get_password()`
+///   (leaves an empty string when none is stored).
+/// - When `remember` is true and `take_password()` is called, the password is
+///   stored with `keyring::store_password()` (failures only log a warning).
+/// - The password is intentionally never written to `host_history.json` (the
+///   `HistoryEntry` struct has no `password` field, which guarantees this).
 pub struct PasswordModal {
-    /// 対象ホスト設定
+    /// Target host config.
     pub host: HostConfig,
-    /// 入力中のパスワード（表示しない、drop 時にゼロクリア）
+    /// In-flight password (not rendered; zeroed on drop).
     input: zeroize::Zeroizing<String>,
-    /// エラーメッセージ（認証失敗時）
+    /// Error message (set on authentication failure).
     pub error: Option<String>,
-    /// keyring から事前に取得できたか（プリフィル状態の表示用）
+    /// Whether the keyring lookup pre-filled the input (used for UI display).
     pub prefilled: bool,
-    /// パスワードを OS キーチェーンに保存するか（Tab キーでトグル）
+    /// Whether to remember the password in the OS keychain (toggled with Tab).
     pub remember: bool,
 }
 
 impl PasswordModal {
     pub fn new(host: HostConfig) -> Self {
-        // 起動時に keyring からパスワード取得を試行する。失敗しても無視する。
+        // Try to fetch a stored password on startup. Failures are ignored.
         let (input, prefilled) =
             match nexterm_config::keyring::get_password(&host.name, &host.username) {
                 Ok(stored) => (zeroize::Zeroizing::new((*stored).clone()), true),
@@ -351,7 +351,8 @@ impl PasswordModal {
             input,
             error: None,
             prefilled,
-            // プリフィル成功時は remember=true をデフォルトに（既存利用継続）
+            // When a stored password was found, default `remember` to true to
+            // keep the existing entry in sync.
             remember: prefilled,
         }
     }
@@ -364,24 +365,25 @@ impl PasswordModal {
         self.input.pop();
     }
 
-    /// 現在の入力長を取得する（マスク表示用）
+    /// Return the current input length (used for mask rendering).
     pub fn input_len(&self) -> usize {
         self.input.chars().count()
     }
 
-    /// remember フラグをトグルする（UI から Tab キーで呼ぶ）
+    /// Toggle the `remember` flag (called from the UI on the Tab key).
     pub fn toggle_remember(&mut self) {
         self.remember = !self.remember;
     }
 
-    /// 入力済みパスワードを取り出してクリアする（接続送信後に呼ぶ）
+    /// Take the entered password and clear the input (called after the
+    /// password has been forwarded to the connection).
     ///
-    /// 戻り値も `Zeroizing<String>` として返し、呼び出し側でも drop 時
-    /// ゼロクリアされるようにする。
+    /// The return value is also a `Zeroizing<String>`, so the caller's memory
+    /// is zeroed on drop.
     ///
-    /// `remember` が true の場合は OS キーチェーンへの保存を試みる。
-    /// 保存失敗時は `tracing::warn!` でログのみ出して処理を続行する
-    /// （keyring サービスが利用できない環境への配慮）。
+    /// When `remember` is true the password is stored in the OS keychain.
+    /// Storage failures only emit a `tracing::warn!` and processing continues
+    /// (accommodates environments where the keyring service is unavailable).
     pub fn take_password(&mut self) -> zeroize::Zeroizing<String> {
         let taken = std::mem::take(&mut *self.input);
 
@@ -392,17 +394,17 @@ impl PasswordModal {
                 &taken,
             ) {
                 warn!(
-                    "OS キーチェーンへのパスワード保存に失敗しました（host={}, user={}）: {}",
+                    "failed to store password in OS keychain (host={}, user={}): {}",
                     self.host.name, self.host.username, e
                 );
             }
         } else if !self.remember && self.prefilled {
-            // remember を OFF にした場合は既存の保存パスワードを削除する
+            // When the user disables `remember`, delete the existing stored password.
             if let Err(e) =
                 nexterm_config::keyring::delete_password(&self.host.name, &self.host.username)
             {
                 warn!(
-                    "OS キーチェーンからのパスワード削除に失敗しました（host={}, user={}）: {}",
+                    "failed to delete password from OS keychain (host={}, user={}): {}",
                     self.host.name, self.host.username, e
                 );
             }
@@ -412,36 +414,36 @@ impl PasswordModal {
     }
 }
 
-/// ホストマネージャの表示/操作状態
+/// Display / interaction state of the host manager.
 pub struct HostManager {
-    /// 登録済みホスト一覧（設定ファイルから読み込む）
+    /// Registered hosts (loaded from the config file).
     hosts: Vec<HostConfig>,
-    /// 現在の検索クエリ
+    /// Current search query.
     pub query: String,
-    /// パネルが開いているか
+    /// Whether the panel is open.
     pub is_open: bool,
-    /// 選択中のインデックス（フィルタ後リスト上）
+    /// Selected index (within the filtered list).
     pub selected: usize,
-    /// アクティブなタグフィルター（空 = フィルターなし）
+    /// Active tag filter (None = no filter).
     pub tag_filter: Option<String>,
-    /// アクティブなグループフィルター（空 = フィルターなし）
+    /// Active group filter (None = no filter).
     pub group_filter: Option<String>,
-    /// 接続履歴（ホストキー → エントリ）
+    /// Connection history (host key → entry).
     history: HashMap<String, HistoryEntry>,
-    /// Fuzzy マッチャー
+    /// Fuzzy matcher.
     matcher: SkimMatcherV2,
-    /// パスワード入力モーダル（auth_type=="password" のホスト選択時に開く）
+    /// Password modal (opened when an `auth_type == "password"` host is selected).
     pub password_modal: Option<PasswordModal>,
 }
 
 impl HostManager {
-    /// 設定からホスト一覧を受け取ってマネージャを生成する
+    /// Build a host manager from a list of host configs.
     ///
-    /// nexterm.toml の `[[hosts]]` に加えて ~/.ssh/config のエントリも取り込む。
+    /// Merges `[[hosts]]` entries from `nexterm.toml` with entries from `~/.ssh/config`.
     pub fn new(hosts: Vec<HostConfig>) -> Self {
         let mut merged = hosts;
         let ssh_hosts = load_ssh_config();
-        // nexterm.toml に同名ホストがなければ追加する
+        // Append SSH-config hosts that aren't already in nexterm.toml.
         for ssh_host in ssh_hosts {
             let already = merged
                 .iter()
@@ -463,32 +465,32 @@ impl HostManager {
         }
     }
 
-    /// パネルを開いてクエリ・選択をリセットする
+    /// Open the panel and reset the query / selection.
     pub fn open(&mut self) {
         self.query.clear();
         self.selected = 0;
         self.is_open = true;
     }
 
-    /// パネルを閉じる
+    /// Close the panel.
     pub fn close(&mut self) {
         self.is_open = false;
         self.query.clear();
     }
 
-    /// 検索クエリに文字を追加する
+    /// Append a character to the search query.
     pub fn push_char(&mut self, ch: char) {
         self.query.push(ch);
         self.selected = 0;
     }
 
-    /// 検索クエリの末尾を削除する
+    /// Pop the last character from the search query.
     pub fn pop_char(&mut self) {
         self.query.pop();
         self.selected = 0;
     }
 
-    /// 選択を下に移動する（循環）
+    /// Move the selection down (wraps).
     pub fn select_next(&mut self) {
         let count = self.filtered().len();
         if count > 0 {
@@ -496,7 +498,7 @@ impl HostManager {
         }
     }
 
-    /// 選択を上に移動する（循環）
+    /// Move the selection up (wraps).
     pub fn select_prev(&mut self) {
         let count = self.filtered().len();
         if count > 0 {
@@ -508,12 +510,12 @@ impl HostManager {
         }
     }
 
-    /// 現在選択中のホスト設定を返す
+    /// Return the currently selected host config.
     pub fn selected_host(&self) -> Option<&HostConfig> {
         self.filtered().into_iter().nth(self.selected)
     }
 
-    /// ホストへの接続を記録する（接続回数・最終接続時刻を更新し、ファイルに保存する）
+    /// Record a connection (updates count / last connection time and persists).
     pub fn record_connection(&mut self, host: &HostConfig) {
         let key = format!("{}@{}:{}", host.username, host.host, host.port);
         let now = std::time::SystemTime::now()
@@ -530,13 +532,13 @@ impl HostManager {
         save_history(&self.history);
     }
 
-    /// 指定ホストの接続履歴エントリを返す
+    /// Return the connection-history entry for a host.
     pub fn history_for(&self, host: &HostConfig) -> Option<&HistoryEntry> {
         let key = format!("{}@{}:{}", host.username, host.host, host.port);
         self.history.get(&key)
     }
 
-    /// 登録済みタグの重複なし一覧を返す（タグフィルター UI 用）
+    /// Return the unique sorted list of registered tags (for the tag-filter UI).
     #[allow(dead_code)]
     pub fn all_tags(&self) -> Vec<String> {
         let mut tags: Vec<String> = self
@@ -549,7 +551,7 @@ impl HostManager {
         tags
     }
 
-    /// 登録済みグループの重複なし一覧を返す（グループフィルター UI 用）
+    /// Return the unique sorted list of registered groups (for the group-filter UI).
     #[allow(dead_code)]
     pub fn all_groups(&self) -> Vec<String> {
         let mut groups: Vec<String> = self
@@ -563,25 +565,26 @@ impl HostManager {
         groups
     }
 
-    /// タグフィルターを設定する（None でフィルター解除）
+    /// Set the tag filter (`None` clears it).
     #[allow(dead_code)]
     pub fn set_tag_filter(&mut self, tag: Option<String>) {
         self.tag_filter = tag;
         self.selected = 0;
     }
 
-    /// グループフィルターを設定する（None でフィルター解除）
+    /// Set the group filter (`None` clears it).
     #[allow(dead_code)]
     pub fn set_group_filter(&mut self, group: Option<String>) {
         self.group_filter = group;
         self.selected = 0;
     }
 
-    /// クエリ・タグ・グループにマッチするホストを返す
+    /// Return hosts matching the query plus tag / group filters.
     ///
-    /// 並び順: 接続頻度の高い順（接続履歴あり） → アルファベット順
+    /// Sort order: most frequently connected first (when history is available),
+    /// then alphabetical.
     pub fn filtered(&self) -> Vec<&HostConfig> {
-        // タグフィルターを適用する
+        // Apply the tag filter.
         let tag_filtered: Vec<&HostConfig> = self
             .hosts
             .iter()
@@ -601,7 +604,7 @@ impl HostManager {
             })
             .collect();
 
-        // Fuzzy クエリフィルターを適用する
+        // Apply the fuzzy query filter.
         let mut scored: Vec<(i64, u32, &HostConfig)> = if self.query.is_empty() {
             tag_filtered
                 .into_iter()
@@ -614,7 +617,7 @@ impl HostManager {
             tag_filtered
                 .into_iter()
                 .filter_map(|h| {
-                    // 表示名・ホスト名・ユーザー名・タグ・グループをまとめてマッチする
+                    // Match against display name, hostname, username, tags, and group.
                     let haystack = format!(
                         "{} {}@{} {} {}",
                         h.name,
@@ -633,7 +636,7 @@ impl HostManager {
                 .collect()
         };
 
-        // スコア降順 → 接続頻度降順 → 名前昇順 でソートする
+        // Sort: score desc → connection frequency desc → name asc.
         scored.sort_by(|a, b| {
             b.0.cmp(&a.0)
                 .then(b.1.cmp(&a.1))
@@ -642,7 +645,7 @@ impl HostManager {
         scored.into_iter().map(|(_, _, h)| h).collect()
     }
 
-    /// ホスト一覧を更新する（設定ファイルリロード時に使用）
+    /// Replace the host list (used when the config file is reloaded).
     pub fn reload(&mut self, hosts: Vec<HostConfig>) {
         let mut merged = hosts;
         let ssh_hosts = load_ssh_config();
@@ -734,7 +737,7 @@ mod tests {
     }
 
     #[test]
-    fn タグフィルターが機能する() {
+    fn tag_filter_works() {
         let mut mgr = HostManager::new(vec![
             make_host_with_tags("web", "web.example.com", "prod", &["web", "prod"]),
             make_host_with_tags("db", "db.example.com", "prod", &["db", "prod"]),
@@ -750,7 +753,7 @@ mod tests {
     }
 
     #[test]
-    fn グループフィルターが機能する() {
+    fn group_filter_works() {
         let mut mgr = HostManager::new(vec![
             make_host_with_tags("web", "web.example.com", "production", &[]),
             make_host_with_tags("db", "db.example.com", "production", &[]),
@@ -763,18 +766,18 @@ mod tests {
     }
 
     #[test]
-    fn all_tags_が重複なしで返る() {
+    fn all_tags_are_unique_and_sorted() {
         let mgr = HostManager::new(vec![
             make_host_with_tags("a", "a.example.com", "", &["web", "prod"]),
             make_host_with_tags("b", "b.example.com", "", &["db", "prod"]),
         ]);
         let tags = mgr.all_tags();
-        // "db", "prod", "web" の 3 件（ソート済み・重複なし）
+        // Expected: ["db", "prod", "web"] (sorted, deduped).
         assert_eq!(tags, vec!["db", "prod", "web"]);
     }
 
     #[test]
-    fn all_groups_が重複なしで返る() {
+    fn all_groups_are_unique_and_sorted() {
         let mgr = HostManager::new(vec![
             make_host_with_tags("a", "a.example.com", "prod", &[]),
             make_host_with_tags("b", "b.example.com", "prod", &[]),
@@ -785,8 +788,8 @@ mod tests {
     }
 
     #[test]
-    fn 接続履歴が記録される() {
-        // テスト用に一時ファイルパスを設定 (リークを避けるため明示的削除)
+    fn connection_history_is_recorded() {
+        // Use a temp file path to avoid clobbering production history.
         let temp_file =
             std::env::temp_dir().join(format!("host_history_{}.json", std::process::id()));
         unsafe {
@@ -805,7 +808,7 @@ mod tests {
             assert_eq!(entry.count, 2);
         }
 
-        // クリーンアップ
+        // Cleanup.
         let _ = std::fs::remove_file(&temp_file);
         unsafe {
             std::env::remove_var("__NEXTERM_TEST_HOST_HISTORY_PATH__");
@@ -813,24 +816,24 @@ mod tests {
     }
 
     #[test]
-    fn 接続頻度が高いホストが上位に並ぶ() {
+    fn frequently_used_hosts_rank_higher() {
         let host_a = make_host("alpha", "alpha.example.com", "user");
         let host_b = make_host("beta", "beta.example.com", "user");
         let mut mgr = HostManager::new(vec![host_a.clone(), host_b.clone()]);
-        // beta を 3 回接続する
+        // Connect to beta three times.
         for _ in 0..3 {
             mgr.record_connection(&host_b);
         }
-        // alpha を 1 回接続する
+        // Connect to alpha once.
         mgr.record_connection(&host_a);
-        // クエリなしのフィルターで beta が先頭に来るはず
+        // With no query, beta should rank first.
         let results = mgr.filtered();
         assert_eq!(results[0].name, "beta");
         assert_eq!(results[1].name, "alpha");
     }
 
     #[test]
-    fn タグ検索がfuzzyクエリと組み合わせられる() {
+    fn tag_search_combines_with_fuzzy_query() {
         let mut mgr = HostManager::new(vec![
             make_host_with_tags("web-prod", "web.example.com", "prod", &["web", "prod"]),
             make_host_with_tags("db-prod", "db.example.com", "prod", &["db", "prod"]),
@@ -843,7 +846,7 @@ mod tests {
     }
 
     #[test]
-    fn ssh_config_基本的なホストを解析できる() {
+    fn ssh_config_parses_a_basic_host() {
         let config = r#"
 Host myserver
     Hostname 192.168.1.100
@@ -860,7 +863,7 @@ Host myserver
     }
 
     #[test]
-    fn ssh_config_hostnameなしはaliasをhostに使う() {
+    fn ssh_config_without_hostname_uses_alias() {
         let config = r#"
 Host myalias
     User alice
@@ -871,7 +874,7 @@ Host myalias
     }
 
     #[test]
-    fn ssh_config_ワイルドカードは除外される() {
+    fn ssh_config_excludes_wildcards() {
         let config = r#"
 Host *
     ServerAliveInterval 60
@@ -885,7 +888,7 @@ Host real-server
     }
 
     #[test]
-    fn ssh_config_複数ホストを解析できる() {
+    fn ssh_config_parses_multiple_hosts() {
         let config = r#"
 Host web
     Hostname web.example.com
@@ -903,11 +906,11 @@ Host db
     }
 
     #[test]
-    fn ssh_config_コメント行は無視される() {
+    fn ssh_config_ignores_comments() {
         let config = r#"
-# これはコメント
+# This is a comment.
 Host myhost
-    # ホスト名コメント
+    # Hostname comment.
     Hostname 10.0.0.1
 "#;
         let hosts = parse_ssh_config(config);
@@ -915,13 +918,13 @@ Host myhost
         assert_eq!(hosts[0].host, "10.0.0.1");
     }
 
-    // ---- PasswordModal: keyring 統合（Sprint 3-2 後半）----
+    // ---- PasswordModal: keyring integration (Sprint 3-2, latter half) ----
     //
-    // 注: keyring は OS キーチェーンに依存するため、本番のキーチェーンへの
-    // 副作用を避けるためにテスト用ホスト名は他テストと衝突しない一意の
-    // 名前を使い、テスト終了時に delete_password で必ず後始末する。
-    // CI 環境で keyring が利用できない場合は new() 時に prefilled=false に
-    // フォールバックするだけで panic しない設計のため、テストは安全に通る。
+    // Note: keyring depends on the OS keychain, so to avoid side effects on the
+    // real keychain we use unique test host names that do not collide with other
+    // tests and clean up via `delete_password` at the end. The design falls back
+    // to `prefilled = false` (without panicking) when the keyring service is
+    // unavailable in CI, so the tests run safely there as well.
 
     fn make_test_host_for_modal(name: &str) -> HostConfig {
         HostConfig {
@@ -942,10 +945,10 @@ Host myhost
     }
 
     #[test]
-    fn password_modal_新規生成は空入力で開始する() {
-        // 衝突しない一意のホスト名（テスト名のハッシュ的な接尾辞）
+    fn password_modal_starts_with_empty_input() {
+        // Unique host name so this test does not collide with others.
         let host = make_test_host_for_modal("__pm_test_init__");
-        // 事前削除（前のテスト失敗の影響を排除する）
+        // Pre-delete to clear any leftover from a previous failed test.
         let _ = nexterm_config::keyring::delete_password(&host.name, &host.username);
 
         let modal = PasswordModal::new(host.clone());
@@ -955,7 +958,7 @@ Host myhost
     }
 
     #[test]
-    fn password_modal_push_pop_と入力長が一貫している() {
+    fn password_modal_push_pop_and_input_length_are_consistent() {
         let host = make_test_host_for_modal("__pm_test_input__");
         let _ = nexterm_config::keyring::delete_password(&host.name, &host.username);
 
@@ -969,7 +972,7 @@ Host myhost
     }
 
     #[test]
-    fn password_modal_toggle_remember_でフラグが反転する() {
+    fn password_modal_toggle_remember_inverts_flag() {
         let host = make_test_host_for_modal("__pm_test_toggle__");
         let _ = nexterm_config::keyring::delete_password(&host.name, &host.username);
 
@@ -982,14 +985,14 @@ Host myhost
     }
 
     #[test]
-    fn password_modal_take_password_で入力がクリアされる() {
+    fn password_modal_take_password_clears_input() {
         let host = make_test_host_for_modal("__pm_test_take__");
         let _ = nexterm_config::keyring::delete_password(&host.name, &host.username);
 
         let mut modal = PasswordModal::new(host);
         modal.push_char('p');
         modal.push_char('w');
-        // remember=false なので keyring 副作用なし
+        // `remember = false`, so there is no keyring side effect.
         let pw = modal.take_password();
         assert_eq!(&*pw, "pw");
         assert_eq!(modal.input_len(), 0);
