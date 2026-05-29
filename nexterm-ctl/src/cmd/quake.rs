@@ -1,11 +1,11 @@
-//! Quake モード制御コマンド (Sprint 5-7 / Phase 2-2): `quake toggle / show / hide`。
+//! Quake mode control commands (Sprint 5-7 / Phase 2-2): `quake toggle / show / hide`.
 //!
-//! Wayland など `global-hotkey` クレートが動作しない環境向けのワークアラウンドとして
-//! 用意されている。サーバーに `ClientToServer::QuakeToggle { action }` を送信すると、
-//! サーバーが接続中の全 GPU クライアントに `ServerToClient::QuakeToggleRequest` を
-//! ブロードキャストして実際のウィンドウ操作を依頼する。
+//! Acts as a workaround for environments where the `global-hotkey` crate does not work
+//! (most notably Wayland). Sending `ClientToServer::QuakeToggle { action }` causes the
+//! server to broadcast `ServerToClient::QuakeToggleRequest` to every connected GPU client,
+//! which then performs the actual window operation.
 //!
-//! 想定運用（Wayland 上の Sway / Hyprland）:
+//! Intended usage (Sway / Hyprland on Wayland):
 //!
 //! ```text
 //! # ~/.config/sway/config
@@ -23,23 +23,23 @@ async fn send_action(action: &str) -> Result<()> {
         action: action.to_string(),
     })
     .await?;
-    // サーバーは応答メッセージを返さない（全クライアントへのブロードキャストのみ）。
-    // 送信できれば成功とみなす。
-    println!("Quake モードに '{}' を送信しました", action);
+    // The server does not send a response message (it only broadcasts to clients).
+    // A successful send is treated as success.
+    println!("sent '{}' to quake mode", action);
     Ok(())
 }
 
-/// Quake モード表示状態をトグルする
+/// Toggle the visibility of the quake window.
 pub(crate) async fn cmd_quake_toggle() -> Result<()> {
     send_action("toggle").await
 }
 
-/// Quake モードを表示する（既に表示中なら no-op）
+/// Show the quake window (no-op if already visible).
 pub(crate) async fn cmd_quake_show() -> Result<()> {
     send_action("show").await
 }
 
-/// Quake モードを非表示にする（既に非表示なら no-op）
+/// Hide the quake window (no-op if already hidden).
 pub(crate) async fn cmd_quake_hide() -> Result<()> {
     send_action("hide").await
 }

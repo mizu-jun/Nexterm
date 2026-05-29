@@ -1,4 +1,4 @@
-//! 録画コマンド: record start / record stop。
+//! Recording commands: `record start` / `record stop`.
 
 use anyhow::{Result, bail};
 use nexterm_i18n::fl;
@@ -6,7 +6,7 @@ use nexterm_proto::{ClientToServer, ServerToClient};
 
 use crate::ipc::IpcConn;
 
-/// セッションのフォーカスペインで録音を開始する
+/// Start recording the focused pane of the given session.
 pub(crate) async fn cmd_record_start(session: String, file: String) -> Result<()> {
     let mut conn = IpcConn::connect().await?;
     conn.send(ClientToServer::StartRecording {
@@ -32,7 +32,7 @@ pub(crate) async fn cmd_record_start(session: String, file: String) -> Result<()
     Ok(())
 }
 
-/// セッションのフォーカスペインの録音を停止する
+/// Stop recording the focused pane of the given session.
 pub(crate) async fn cmd_record_stop(session: String) -> Result<()> {
     let mut conn = IpcConn::connect().await?;
     conn.send(ClientToServer::StopRecording {

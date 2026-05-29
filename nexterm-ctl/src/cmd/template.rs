@@ -1,19 +1,19 @@
-//! テンプレート管理コマンド: template save / load / list。
+//! Template management commands: `template save / load / list`.
 
 use anyhow::{Result, bail};
 use nexterm_proto::{ClientToServer, ServerToClient};
 
 use crate::ipc::IpcConn;
 
-/// 現在のセッションレイアウトをテンプレートとして保存する
+/// Save the current session layout as a template.
 pub(crate) async fn cmd_template_save(name: String, session: String) -> Result<()> {
     let mut conn = IpcConn::connect().await?;
-    // セッションにアタッチしてから SaveTemplate を送信する
+    // Attach to the session first, then send SaveTemplate.
     conn.send(ClientToServer::Attach {
         session_name: session.clone(),
     })
     .await?;
-    // Attach の応答（FullRefresh, LayoutChanged, SessionList）を読み飛ばす
+    // Drop the Attach responses (FullRefresh, LayoutChanged, SessionList).
     for _ in 0..8 {
         match conn.recv().await? {
             ServerToClient::SessionList { .. } => break,
@@ -28,7 +28,7 @@ pub(crate) async fn cmd_template_save(name: String, session: String) -> Result<(
             name: saved_name,
             path,
         } => {
-            println!("テンプレート '{}' を保存しました: {}", saved_name, path);
+            println!("saved template '{}' to {}", saved_name, path);
         }
         ServerToClient::Error { message } => bail!("{}", message),
         _ => {}
@@ -37,7 +37,7 @@ pub(crate) async fn cmd_template_save(name: String, session: String) -> Result<(
     Ok(())
 }
 
-/// 保存済みテンプレートを読み込む
+/// Load a saved template.
 pub(crate) async fn cmd_template_load(name: String, session: String) -> Result<()> {
     let mut conn = IpcConn::connect().await?;
     conn.send(ClientToServer::Attach {
@@ -55,7 +55,7 @@ pub(crate) async fn cmd_template_load(name: String, session: String) -> Result<(
         .await?;
     match conn.recv().await? {
         ServerToClient::TemplateLoaded { name: loaded_name } => {
-            println!("テンプレート '{}' を読み込みました", loaded_name);
+            println!("loaded template '{}'", loaded_name);
         }
         ServerToClient::Error { message } => bail!("{}", message),
         _ => {}
@@ -64,16 +64,16 @@ pub(crate) async fn cmd_template_load(name: String, session: String) -> Result<(
     Ok(())
 }
 
-/// 保存済みテンプレート一覧を表示する
+/// Display the list of saved templates.
 pub(crate) async fn cmd_template_list() -> Result<()> {
     let mut conn = IpcConn::connect().await?;
     conn.send(ClientToServer::ListTemplates).await?;
     match conn.recv().await? {
         ServerToClient::TemplateList { names } => {
             if names.is_empty() {
-                println!("保存済みテンプレートはありません");
+                println!("no saved templates");
             } else {
-                println!("保存済みテンプレート:");
+                println!("saved templates:");
                 for name in &names {
                     println!("  {}", name);
                 }

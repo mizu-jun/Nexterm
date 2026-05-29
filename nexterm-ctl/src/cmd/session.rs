@@ -1,4 +1,4 @@
-//! セッション基本操作コマンド: list / new / attach / kill。
+//! Basic session commands: list / new / attach / kill.
 
 use anyhow::{Result, bail};
 use nexterm_i18n::fl;
@@ -6,7 +6,7 @@ use nexterm_proto::{ClientToServer, ServerToClient};
 
 use crate::ipc::IpcConn;
 
-/// セッション一覧を取得して表示する
+/// Fetch and display the session list.
 pub(crate) async fn cmd_list() -> Result<()> {
     let mut conn = IpcConn::connect().await?;
     conn.send(ClientToServer::ListSessions).await?;
@@ -42,7 +42,7 @@ pub(crate) async fn cmd_list() -> Result<()> {
     Ok(())
 }
 
-/// 新規セッションを作成してすぐデタッチする
+/// Create a new session and detach immediately.
 pub(crate) async fn cmd_new(name: String) -> Result<()> {
     let mut conn = IpcConn::connect().await?;
     conn.send(ClientToServer::Attach {
@@ -50,7 +50,7 @@ pub(crate) async fn cmd_new(name: String) -> Result<()> {
     })
     .await?;
 
-    // SessionList を受け取るまで最大 8 メッセージ読み飛ばす
+    // Read up to 8 messages while waiting for the SessionList.
     let mut created = false;
     for _ in 0..8 {
         match conn.recv().await? {
@@ -76,7 +76,7 @@ pub(crate) async fn cmd_new(name: String) -> Result<()> {
     Ok(())
 }
 
-/// セッションへのアタッチ方法を案内する（ctl 自体はインタラクティブ端末ではない）
+/// Print attach instructions (`ctl` itself is not an interactive terminal).
 pub(crate) fn cmd_attach(name: &str) -> Result<()> {
     println!("{}", fl!("ctl-attach-guide", name = name));
     println!("{}", fl!("ctl-attach-tui", name = name));
@@ -84,7 +84,7 @@ pub(crate) fn cmd_attach(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// セッションを強制終了する
+/// Forcibly kill a session.
 pub(crate) async fn cmd_kill(name: String) -> Result<()> {
     let mut conn = IpcConn::connect().await?;
     conn.send(ClientToServer::KillSession { name: name.clone() })

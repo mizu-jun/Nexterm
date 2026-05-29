@@ -1,6 +1,6 @@
-//! cmd/ 内のサブモジュール間で共有するユーティリティ。
+//! Utilities shared between the submodules in `cmd/`.
 
-/// TOML テキストから指定されたセクション `[section_name]` を削除する
+/// Remove the `[section_name]` section from a TOML string.
 pub(crate) fn remove_toml_section(content: &str, section_name: &str) -> String {
     let search = format!("[{}]", section_name);
     let mut result = Vec::new();
@@ -12,7 +12,7 @@ pub(crate) fn remove_toml_section(content: &str, section_name: &str) -> String {
             skip = true;
             continue;
         }
-        // 次のセクション見出しが来たらスキップ終了
+        // Stop skipping when the next section heading appears.
         if skip && trimmed.starts_with('[') && !trimmed.starts_with("[[") {
             skip = false;
         }

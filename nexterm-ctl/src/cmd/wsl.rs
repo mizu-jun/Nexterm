@@ -1,28 +1,28 @@
-//! WSL ディストロインポートコマンド（Sprint 5-4 / E1）。
+//! WSL distro import command (Sprint 5-4 / E1).
 //!
-//! Windows 上で `wsl.exe -l -q` を実行して利用可能な WSL ディストロを検出し、
-//! それぞれを `[[profiles]]` セクションとして `config.toml` に追記する。
+//! On Windows, this runs `wsl.exe -l -q` to detect installed WSL distros and
+//! appends each one to `config.toml` as a `[[profiles]]` entry.
 
 use anyhow::{Context, Result, bail};
 use std::path::Path;
 
-/// `nexterm-ctl wsl import-profiles` の実装
+/// Implementation of `nexterm-ctl wsl import-profiles`.
 pub(crate) fn cmd_wsl_import_profiles(dry_run: bool) -> Result<()> {
     let distros = nexterm_config::wsl::detect_distros();
 
     if distros.is_empty() {
         if cfg!(windows) {
             bail!(
-                "WSL ディストロが見つかりませんでした。\n\
-                 wsl.exe がインストールされ、`wsl --list --quiet` でディストロが\n\
-                 表示されることを確認してください。"
+                "no WSL distros were found.\n\
+                 Verify that wsl.exe is installed and that `wsl --list --quiet`\n\
+                 lists at least one distro."
             );
         } else {
-            bail!("WSL ディストロインポートは Windows でのみサポートされています。");
+            bail!("WSL distro import is only supported on Windows.");
         }
     }
 
-    println!("検出された WSL ディストロ ({} 件):", distros.len());
+    println!("detected WSL distros ({}):", distros.len());
     for p in &distros {
         let prog = p.shell.as_ref().map(|s| s.program.as_str()).unwrap_or("?");
         let args = p
@@ -34,41 +34,41 @@ pub(crate) fn cmd_wsl_import_profiles(dry_run: bool) -> Result<()> {
     }
 
     if dry_run {
-        println!("\n(--dry-run 指定のため、設定ファイルへの書き込みは行いません)");
+        println!("\n(--dry-run was specified; the config file is not modified)");
         return Ok(());
     }
 
-    // 設定ファイルパス
+    // Config file path.
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_else(|_| ".".to_string());
     let config_path = format!("{}/.config/nexterm/config.toml", home);
 
     write_profiles_to_config(&config_path, &distros)?;
-    println!("\n設定ファイルに書き込みました: {}", config_path);
-    println!("反映するには nexterm-server を再起動してください。");
+    println!("\nwrote to config file: {}", config_path);
+    println!("restart nexterm-server for the change to take effect.");
 
     Ok(())
 }
 
-/// 既存の config.toml に Profile を追記する。
+/// Append profiles to an existing `config.toml`.
 ///
-/// 同名 Profile が既に存在する場合はスキップする（重複追加防止）。
+/// Profiles whose name already exists are skipped (to prevent duplicates).
 fn write_profiles_to_config(config_path: &str, profiles: &[nexterm_config::Profile]) -> Result<()> {
     let existing = if Path::new(config_path).exists() {
         std::fs::read_to_string(config_path)
-            .with_context(|| format!("設定ファイルの読み込みに失敗しました: {}", config_path))?
+            .with_context(|| format!("failed to read config file: {}", config_path))?
     } else {
-        // 親ディレクトリを作成
+        // Create the parent directory if necessary.
         if let Some(parent) = Path::new(config_path).parent() {
             std::fs::create_dir_all(parent).with_context(|| {
-                format!("設定ディレクトリの作成に失敗しました: {}", parent.display())
+                format!("failed to create config directory: {}", parent.display())
             })?;
         }
         String::new()
     };
 
-    // 既存 Profile 名を抽出（重複検出）
+    // Extract the existing profile names (used for duplicate detection).
     let existing_names = extract_existing_profile_names(&existing);
     let mut added = 0;
     let mut skipped = 0;
@@ -76,7 +76,7 @@ fn write_profiles_to_config(config_path: &str, profiles: &[nexterm_config::Profi
 
     for p in profiles {
         if existing_names.contains(&p.name) {
-            println!("  スキップ（既存）: {}", p.name);
+            println!("  skipped (already present): {}", p.name);
             skipped += 1;
             continue;
         }
@@ -85,7 +85,7 @@ fn write_profiles_to_config(config_path: &str, profiles: &[nexterm_config::Profi
     }
 
     if to_append.is_empty() {
-        println!("\n追加対象なし（{} 件全てスキップ）", skipped);
+        println!("\nnothing to add (skipped all {} entries)", skipped);
         return Ok(());
     }
 
@@ -96,13 +96,13 @@ fn write_profiles_to_config(config_path: &str, profiles: &[nexterm_config::Profi
     new_content.push_str(&to_append);
 
     std::fs::write(config_path, new_content)
-        .with_context(|| format!("設定ファイルへの書き込みに失敗しました: {}", config_path))?;
+        .with_context(|| format!("failed to write config file: {}", config_path))?;
 
-    println!("\n追加: {} 件 / スキップ: {} 件", added, skipped);
+    println!("\nadded: {}, skipped: {}", added, skipped);
     Ok(())
 }
 
-/// TOML テキストから既存 Profile 名（`name = "..."` 行）を抽出する。
+/// Extract existing profile names (lines like `name = "..."`) from the TOML text.
 fn extract_existing_profile_names(content: &str) -> Vec<String> {
     let mut names = Vec::new();
     let mut in_profile_section = false;
@@ -124,19 +124,19 @@ fn extract_existing_profile_names(content: &str) -> Vec<String> {
     names
 }
 
-/// `name = "Foo"` の形式から `Foo` を抽出する（簡易パーサ）
+/// Extract `Foo` from a line such as `name = "Foo"` (simple parser).
 fn parse_toml_name_value(line: &str) -> Option<String> {
     let line = line.trim();
     if !line.starts_with("name") {
         return None;
     }
     let after_eq = line.split_once('=')?.1.trim();
-    // 前後の引用符を除去
+    // Strip the surrounding quotes.
     let unquoted = after_eq.trim_matches('"').trim_matches('\'');
     Some(unquoted.to_string())
 }
 
-/// Profile を TOML テーブル形式に変換する
+/// Convert a Profile into a TOML table fragment.
 fn profile_to_toml(p: &nexterm_config::Profile) -> String {
     let mut s = String::new();
     s.push_str("\n[[profiles]]\n");
@@ -158,7 +158,7 @@ fn profile_to_toml(p: &nexterm_config::Profile) -> String {
     s
 }
 
-/// TOML 文字列内のダブルクオート・バックスラッシュをエスケープする
+/// Escape double quotes and backslashes inside a TOML basic string.
 fn escape_toml(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }

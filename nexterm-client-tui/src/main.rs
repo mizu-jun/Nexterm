@@ -1,4 +1,4 @@
-//! nexterm-client-tui エントリーポイント
+//! `nexterm-client-tui` entry point.
 
 mod connection;
 mod input;
@@ -17,10 +17,10 @@ async fn main() -> Result<()> {
         .with_env_filter(EnvFilter::from_env("NEXTERM_LOG"))
         .init();
 
-    // IPC ソケットへ接続する
+    // Connect to the IPC socket.
     let mut conn = Connection::connect_tui().await?;
 
-    // セッションにアタッチしてターミナルサイズを通知する
+    // Attach to the session and report the terminal size to the server.
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
     conn.send(nexterm_proto::ClientToServer::Attach {
         session_name: "main".to_string(),
@@ -29,14 +29,14 @@ async fn main() -> Result<()> {
     conn.send(nexterm_proto::ClientToServer::Resize { cols, rows })
         .await?;
 
-    // クライアント状態を初期化する
+    // Initialize client-side state.
     let mut state = ClientState::new();
 
-    // メインループを実行する
+    // Run the main loop.
     run(conn, &mut state).await
 }
 
-/// イベントループ — 入力処理と描画を交互に実行する
+/// Event loop — interleaves input handling and rendering.
 async fn run(mut conn: Connection, state: &mut ClientState) -> Result<()> {
     use crossterm::{
         execute,
@@ -45,7 +45,7 @@ async fn run(mut conn: Connection, state: &mut ClientState) -> Result<()> {
     use ratatui::prelude::*;
     use std::io;
 
-    // 端末を raw モードに切り替える
+    // Switch the terminal into raw mode.
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -53,17 +53,17 @@ async fn run(mut conn: Connection, state: &mut ClientState) -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // クリーンアップのための defer
+    // Run the event loop and always restore the terminal on the way out.
     let result = event_loop(&mut terminal, &mut conn, state).await;
 
-    // 端末を元に戻す
+    // Restore the terminal state.
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
     result
 }
 
-/// メインイベントループ
+/// Main event loop.
 async fn event_loop(
     terminal: &mut ratatui::Terminal<ratatui::prelude::CrosstermBackend<std::io::Stdout>>,
     conn: &mut Connection,
@@ -71,23 +71,23 @@ async fn event_loop(
 ) -> Result<()> {
     use tokio::time::{Duration, interval};
 
-    let mut tick = interval(Duration::from_millis(16)); // ~60fps
+    let mut tick = interval(Duration::from_millis(16)); // ~60 fps
 
     loop {
-        // サーバーからのメッセージを受信する（non-blocking）
+        // Drain any pending server messages (non-blocking).
         while let Ok(msg) = conn.try_recv() {
             state.apply_server_message(msg);
         }
 
-        // エラートーストの期限チェックをする
+        // Expire any toast notifications whose TTL has elapsed.
         state.tick_toasts();
 
-        // 画面を描画する
+        // Render the frame.
         terminal.draw(|frame| {
             render::draw(frame, state);
         })?;
 
-        // キー入力を処理する（現在のプレフィックスモードを渡す）
+        // Process key input (the current prefix mode is forwarded).
         if let Some(action) = input::poll_input(state.prefix_mode)? {
             use input::Action::*;
             match action {
@@ -102,7 +102,7 @@ async fn event_loop(
                     state.enter_prefix();
                 }
                 PrefixCommand(cmd) => {
-                    // プレフィックスモードを解除してコマンドを送信する
+                    // Leave prefix mode and forward the command.
                     state.exit_prefix();
                     conn.send(cmd).await?;
                 }

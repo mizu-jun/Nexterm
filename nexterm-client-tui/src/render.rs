@@ -1,11 +1,13 @@
-//! ratatui を使った描画処理
+//! ratatui rendering.
 //!
-//! レイアウト:
+//! Layout:
+//! ```text
 //!   ┌──────────────────────────────┐
-//!   │  ペイン群（rows - 1 行）      │
+//!   │  Panes (rows - 1)            │
 //!   ├──────────────────────────────┤
-//!   │  ステータスバー（1 行）        │
+//!   │  Status bar (1 row)          │
 //!   └──────────────────────────────┘
+//! ```
 
 use ratatui::{
     prelude::*,
@@ -16,19 +18,19 @@ use nexterm_proto::Color;
 
 use crate::state::{ClientState, PaneState, PrefixMode};
 
-/// フレームを描画する
+/// Render one frame.
 pub fn draw(frame: &mut Frame, state: &ClientState) {
     let area = frame.area();
 
-    // ステータスバー用に1行確保する
+    // Reserve one row for the status bar.
     let status_height = 1u16;
     let pane_area_rows = area.height.saturating_sub(status_height);
     let pane_area = Rect::new(area.x, area.y, area.width, pane_area_rows);
     let status_area = Rect::new(area.x, area.y + pane_area_rows, area.width, status_height);
 
-    // ペインを描画する
+    // Render the panes.
     if state.pane_layouts.is_empty() {
-        // レイアウト情報未受信：フォーカスペインをフル画面で表示する
+        // No layout information yet: show the focused pane fullscreen.
         match state.focused_pane() {
             Some(pane_state) => {
                 draw_pane(frame, pane_area, pane_state, true);
@@ -38,11 +40,11 @@ pub fn draw(frame: &mut Frame, state: &ClientState) {
             }
         }
     } else {
-        // レイアウト情報あり：各ペインを正確な位置に描画する
+        // Layout information available: render each pane at its exact position.
         for layout in &state.pane_layouts {
             if let Some(pane_state) = state.panes.get(&layout.pane_id) {
-                // サーバー座標をターミナル座標に変換する（ステータスバー分オフセットなし、
-                // pane_area の範囲内に収める）
+                // Convert server coordinates into terminal coordinates (the status bar offset
+                // is already excluded; clamp into `pane_area`).
                 let x = area.x + layout.col_offset;
                 let y = area.y + layout.row_offset;
                 let max_cols = area.width.saturating_sub(layout.col_offset);
@@ -61,21 +63,24 @@ pub fn draw(frame: &mut Frame, state: &ClientState) {
         }
     }
 
-    // ステータスバーを描画する
+    // Render the status bar.
     draw_status_bar(frame, status_area, state);
 
-    // エラートーストを描画する（画面上部に重ねる）
+    // Render the error toast at the top of the screen (overlaid).
     if let Some(toast) = &state.error_toast {
         draw_error_toast(frame, area, &toast.message);
     }
 
-    // ヘルプオーバーレイを描画する
+    // Render the help overlay.
     if state.prefix_mode == PrefixMode::Help {
         draw_help_overlay(frame, area);
     }
 }
 
-/// 接続中プレースホルダーを描画する
+/// Render the "connecting" placeholder.
+//
+// User-facing strings here are intentionally English literals; routing them through
+// `nexterm-i18n` is a follow-up item (see CLAUDE.md "Application-facing strings").
 fn draw_connecting(frame: &mut Frame, area: Rect) {
     let lines = vec![
         Line::from(""),
@@ -87,12 +92,12 @@ fn draw_connecting(frame: &mut Frame, area: Rect) {
         )),
         Line::from(""),
         Line::from(Span::styled(
-            "  サーバーへ接続中...",
+            "  Connecting to server...",
             Style::default().fg(ratatui::style::Color::DarkGray),
         )),
         Line::from(""),
         Line::from(Span::styled(
-            "  Ctrl+Q で終了",
+            "  Press Ctrl+Q to quit",
             Style::default().fg(ratatui::style::Color::DarkGray),
         )),
     ];
@@ -100,13 +105,13 @@ fn draw_connecting(frame: &mut Frame, area: Rect) {
     frame.render_widget(para, area);
 }
 
-/// ペインを描画する
+/// Render a single pane.
 fn draw_pane(frame: &mut Frame, area: Rect, pane: &PaneState, is_focused: bool) {
     let grid = &pane.grid;
     let height = area.height as usize;
     let width = area.width as usize;
 
-    // グリッドの各セルを ratatui の Span に変換して行ごとに描画する
+    // Convert each grid cell into a ratatui `Span` and render line by line.
     for row_idx in 0..height.min(grid.height as usize) {
         let row = &grid.rows[row_idx];
         let mut spans: Vec<Span> = Vec::with_capacity(width);
@@ -126,7 +131,7 @@ fn draw_pane(frame: &mut Frame, area: Rect, pane: &PaneState, is_focused: bool) 
         }
     }
 
-    // カーソルを設定する（フォーカスペインのみ）
+    // Position the cursor (only on the focused pane).
     if is_focused {
         let cursor_x = area.left() + pane.cursor_col.min(area.width.saturating_sub(1));
         let cursor_y = area.top() + pane.cursor_row.min(area.height.saturating_sub(1));
@@ -134,9 +139,9 @@ fn draw_pane(frame: &mut Frame, area: Rect, pane: &PaneState, is_focused: bool) 
     }
 }
 
-/// ステータスバーを描画する（画面下端1行）
+/// Render the status bar (the bottom row of the screen).
 fn draw_status_bar(frame: &mut Frame, area: Rect, state: &ClientState) {
-    // プレフィックスモードに応じて左側テキストを切り替える
+    // Swap out the left-hand text depending on the prefix mode.
     let left = match state.prefix_mode {
         PrefixMode::CtrlB => Span::styled(
             " -- PREFIX -- ",
@@ -165,7 +170,7 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, state: &ClientState) {
                 .unwrap_or(1);
             let text = if pane_count > 1 {
                 format!(
-                    " [{}] ペイン {}/{}",
+                    " [{}] pane {}/{}",
                     state.session_name, pane_index, pane_count
                 )
             } else {
@@ -181,19 +186,19 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, state: &ClientState) {
     };
 
     let hints = Span::styled(
-        " Ctrl+B: % 縦分割  \" 横分割  x 閉じる  ? ヘルプ  q 終了 ",
+        " Ctrl+B: % vsplit  \" hsplit  x close  ? help  q quit ",
         Style::default()
             .fg(ratatui::style::Color::DarkGray)
             .bg(ratatui::style::Color::Reset),
     );
 
-    // 左揃えと右揃えで分けて表示する
+    // Stack the left-justified status and right-aligned hints on the same line.
     let line = Line::from(vec![left, hints]);
     let para = Paragraph::new(line).style(Style::default().bg(ratatui::style::Color::Reset));
     frame.render_widget(para, area);
 }
 
-/// エラートーストを描画する（画面上部に重ねる）
+/// Render the error toast at the top of the screen.
 fn draw_error_toast(frame: &mut Frame, area: Rect, message: &str) {
     let max_width = (area.width.saturating_sub(4)).min(60);
     let toast_width = (message.len() as u16 + 4).min(max_width);
@@ -205,7 +210,7 @@ fn draw_error_toast(frame: &mut Frame, area: Rect, message: &str) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("エラー")
+                .title("Error")
                 .style(Style::default().fg(ratatui::style::Color::Red)),
         )
         .style(
@@ -216,7 +221,7 @@ fn draw_error_toast(frame: &mut Frame, area: Rect, message: &str) {
     frame.render_widget(para, toast_rect);
 }
 
-/// ヘルプオーバーレイを描画する（画面中央）
+/// Render the help overlay (centered on the screen).
 fn draw_help_overlay(frame: &mut Frame, area: Rect) {
     let width = 52u16.min(area.width.saturating_sub(4));
     let height = 20u16.min(area.height.saturating_sub(4));
@@ -228,53 +233,53 @@ fn draw_help_overlay(frame: &mut Frame, area: Rect) {
 
     let lines = vec![
         Line::from(Span::styled(
-            "  nexterm TUI キーバインド",
+            "  nexterm TUI key bindings",
             Style::default().add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         Line::from(Span::styled(
-            "  [ Ctrl+B プレフィックスコマンド ]",
+            "  [ Ctrl+B prefix commands ]",
             Style::default()
                 .fg(ratatui::style::Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         )),
-        Line::from("  Ctrl+B  %   垂直分割（左右）"),
-        Line::from("  Ctrl+B  \"   水平分割（上下）"),
-        Line::from("  Ctrl+B  x   フォーカスペインを閉じる"),
-        Line::from("  Ctrl+B  n   次のペインへフォーカス"),
-        Line::from("  Ctrl+B  p   前のペインへフォーカス"),
-        Line::from("  Ctrl+B  z   ペインズームトグル"),
-        Line::from("  Ctrl+B  ?   このヘルプを表示"),
+        Line::from("  Ctrl+B  %   vertical split (left/right)"),
+        Line::from("  Ctrl+B  \"   horizontal split (top/bottom)"),
+        Line::from("  Ctrl+B  x   close the focused pane"),
+        Line::from("  Ctrl+B  n   focus the next pane"),
+        Line::from("  Ctrl+B  p   focus the previous pane"),
+        Line::from("  Ctrl+B  z   toggle pane zoom"),
+        Line::from("  Ctrl+B  ?   show this help"),
         Line::from(""),
         Line::from(Span::styled(
-            "  [ 直接キーバインド ]",
+            "  [ Direct key bindings ]",
             Style::default()
                 .fg(ratatui::style::Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         )),
-        Line::from("  Ctrl+Q      nexterm を終了"),
-        Line::from("  PageUp/Down スクロール（未実装）"),
+        Line::from("  Ctrl+Q      quit nexterm"),
+        Line::from("  PageUp/Down scroll (not yet implemented)"),
         Line::from(""),
         Line::from(Span::styled(
-            "  [ ナビゲーション ]",
+            "  [ Navigation ]",
             Style::default()
                 .fg(ratatui::style::Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         )),
-        Line::from("  Ctrl+B  ?   このヘルプを閉じる"),
-        Line::from("  Esc         プレフィックスモードを解除"),
+        Line::from("  Ctrl+B  ?   close this help"),
+        Line::from("  Esc         leave prefix mode"),
     ];
 
     let para = Paragraph::new(lines).block(
         Block::default()
             .borders(Borders::ALL)
-            .title("ヘルプ  (Ctrl+B ? または Esc で閉じる)")
+            .title("Help (press Ctrl+B ? or Esc to close)")
             .style(Style::default().fg(ratatui::style::Color::Cyan)),
     );
     frame.render_widget(para, overlay_rect);
 }
 
-/// Cell のスタイルを ratatui の Style に変換する
+/// Convert a `Cell` style into a ratatui `Style`.
 fn cell_to_style(cell: &nexterm_proto::Cell) -> Style {
     let mut style = Style::default()
         .fg(convert_color(cell.fg))
@@ -296,7 +301,7 @@ fn cell_to_style(cell: &nexterm_proto::Cell) -> Style {
     style
 }
 
-/// nexterm の Color を ratatui の Color に変換する
+/// Convert a nexterm `Color` into a ratatui color.
 fn convert_color(color: Color) -> ratatui::style::Color {
     match color {
         Color::Default => ratatui::style::Color::Reset,
@@ -305,7 +310,7 @@ fn convert_color(color: Color) -> ratatui::style::Color {
     }
 }
 
-/// nexterm の Color に ratatui への変換メソッドを追加するトレイト
+/// Trait extension that adds a ratatui conversion method to nexterm `Color`.
 trait IntoRatatui {
     fn into_ratatui(self) -> ratatui::style::Color;
 }
@@ -322,20 +327,19 @@ mod tests {
     use nexterm_proto::Color as NColor;
 
     #[test]
-    #[allow(non_snake_case)]
-    fn デフォルト色がResetに変換される() {
+    fn default_color_maps_to_reset() {
         let c = convert_color(NColor::Default);
         assert_eq!(c, ratatui::style::Color::Reset);
     }
 
     #[test]
-    fn rgb色が正しく変換される() {
+    fn rgb_color_converts() {
         let c = convert_color(NColor::Rgb(255, 128, 0));
         assert_eq!(c, ratatui::style::Color::Rgb(255, 128, 0));
     }
 
     #[test]
-    fn indexed色が正しく変換される() {
+    fn indexed_color_converts() {
         let c = convert_color(NColor::Indexed(42));
         assert_eq!(c, ratatui::style::Color::Indexed(42));
     }

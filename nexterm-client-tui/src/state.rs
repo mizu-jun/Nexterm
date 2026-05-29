@@ -1,10 +1,10 @@
-//! クライアント状態 — サーバーから受信した描画データを保持する
+//! Client-side state — keeps the rendering data received from the server.
 
 use std::collections::HashMap;
 
 use nexterm_proto::{Grid, PaneLayout, ServerToClient};
 
-/// ペインの描画状態
+/// Per-pane rendering state.
 pub struct PaneState {
     pub grid: Grid,
     pub cursor_col: u16,
@@ -20,7 +20,7 @@ impl PaneState {
         }
     }
 
-    /// 差分を適用する
+    /// Apply a grid diff.
     fn apply_diff(
         &mut self,
         dirty_rows: Vec<nexterm_proto::DirtyRow>,
@@ -37,40 +37,40 @@ impl PaneState {
     }
 }
 
-/// Ctrl+B プレフィックスモード
+/// `Ctrl+B` prefix mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrefixMode {
-    /// 通常モード
+    /// Normal mode.
     None,
-    /// Ctrl+B を押した後、次のキーを待っている
+    /// `Ctrl+B` was pressed; waiting for the next key.
     CtrlB,
-    /// ヘルプオーバーレイ表示中
+    /// The help overlay is shown.
     Help,
 }
 
-/// エラートースト（画面上に一定時間表示するエラーメッセージ）
+/// Error toast (an error message that auto-dismisses after a short delay).
 pub struct ErrorToast {
     pub message: String,
-    /// 表示開始時刻（エポック秒）
+    /// When the toast started being shown.
     pub shown_at: std::time::Instant,
 }
 
-/// クライアント全体の状態
+/// Aggregated client state.
 pub struct ClientState {
-    /// ペイン ID → 描画状態
+    /// Pane id → render state.
     pub panes: HashMap<u32, PaneState>,
-    /// 現在フォーカス中のペイン ID
+    /// Currently focused pane id.
     pub focused_pane_id: Option<u32>,
-    /// サーバーから受信したペインレイアウト一覧
+    /// Pane layouts as published by the server.
     pub pane_layouts: Vec<PaneLayout>,
-    /// 端末サイズ
+    /// Terminal size.
     pub cols: u16,
     pub rows: u16,
-    /// セッション名（サーバーへ Attach した名前）
+    /// Session name (the name used in the Attach request).
     pub session_name: String,
-    /// Ctrl+B プレフィックスモード
+    /// Current `Ctrl+B` prefix mode.
     pub prefix_mode: PrefixMode,
-    /// エラートースト（直近のエラーメッセージ）
+    /// Most recent error toast, if any.
     pub error_toast: Option<ErrorToast>,
 }
 
@@ -89,7 +89,7 @@ impl ClientState {
         }
     }
 
-    /// サーバーからのメッセージをステートに反映する
+    /// Apply a server-sent message to the state.
     pub fn apply_server_message(&mut self, msg: ServerToClient) {
         match msg {
             ServerToClient::FullRefresh { pane_id, grid } => {
@@ -117,32 +117,32 @@ impl ClientState {
                 }
             }
             ServerToClient::Pong => {
-                tracing::debug!("Pong 受信");
+                tracing::debug!("received Pong");
             }
             ServerToClient::HelloAck {
                 proto_version,
                 server_version,
             } => {
                 tracing::info!(
-                    "サーバー HelloAck 受信: proto={}, server_version={}",
+                    "received HelloAck: proto={}, server_version={}",
                     proto_version,
                     server_version
                 );
             }
             ServerToClient::Error { message } => {
-                tracing::error!("サーバーエラー: {}", message);
-                // エラートーストとして表示する
+                tracing::error!("server error: {}", message);
+                // Show the error as a toast notification.
                 self.error_toast = Some(ErrorToast {
                     message,
                     shown_at: std::time::Instant::now(),
                 });
             }
             ServerToClient::SessionList { sessions } => {
-                tracing::info!("セッション一覧: {:?}", sessions);
+                tracing::info!("session list: {:?}", sessions);
             }
-            // TUI クライアントは画像プロトコル非対応のため無視する
+            // The TUI client does not support the image protocol; ignore it.
             ServerToClient::ImagePlaced { .. } => {}
-            // レイアウト変更：ペイン位置情報を更新する
+            // Layout change: refresh the pane positions.
             ServerToClient::LayoutChanged {
                 panes,
                 focused_pane_id,
@@ -150,61 +150,62 @@ impl ClientState {
                 self.pane_layouts = panes;
                 self.focused_pane_id = Some(focused_pane_id);
             }
-            // TUI ではベル通知は無視する
+            // The TUI ignores bell notifications.
             ServerToClient::Bell { .. } => {}
-            // 録音状態通知は TUI では無視する
+            // Recording state notifications are ignored by the TUI.
             ServerToClient::RecordingStarted { .. } | ServerToClient::RecordingStopped { .. } => {}
-            // ウィンドウ一覧変更・ペイン閉鎖通知は TUI では無視する
+            // Window list changes and pane-closed notifications are ignored by the TUI.
             ServerToClient::WindowListChanged { .. } | ServerToClient::PaneClosed { .. } => {}
-            // タイトル変更・デスクトップ通知は TUI では無視する
+            // Title changes and desktop notifications are ignored by the TUI.
             ServerToClient::TitleChanged { .. } | ServerToClient::DesktopNotification { .. } => {}
-            // ブロードキャストモード変更は TUI では無視する
+            // Broadcast mode changes are ignored by the TUI.
             ServerToClient::BroadcastModeChanged { .. } => {}
-            // asciicast 録音状態通知は TUI では無視する
+            // asciicast recording state notifications are ignored by the TUI.
             ServerToClient::AsciicastStarted { .. } | ServerToClient::AsciicastStopped { .. } => {}
-            // テンプレート操作結果は TUI では無視する
+            // Template operation responses are ignored by the TUI.
             ServerToClient::TemplateSaved { .. }
             | ServerToClient::TemplateLoaded { .. }
             | ServerToClient::TemplateList { .. } => {}
-            // ズーム・ペイン分離・シリアル接続は TUI では無視する
+            // Zoom / pane-break / serial connection events are ignored by the TUI.
             ServerToClient::ZoomChanged { .. }
             | ServerToClient::PaneBroken { .. }
             | ServerToClient::SerialConnected { .. }
             | ServerToClient::SftpProgress { .. }
             | ServerToClient::SftpDone { .. }
             | ServerToClient::SemanticMark { .. } => {}
-            // フローティングペインイベントは TUI では無視する（GPU クライアント専用）
+            // Floating pane events are GPU-client only; ignore them in the TUI.
             ServerToClient::FloatingPaneOpened { .. }
             | ServerToClient::FloatingPaneMoved { .. }
             | ServerToClient::FloatingPaneClosed { .. } => {}
-            // プラグイン操作応答は TUI では無視する
+            // Plugin operation responses are ignored by the TUI.
             ServerToClient::PluginList { .. } | ServerToClient::PluginOk { .. } => {}
-            // Sprint 4-1: TUI には同意ダイアログ UI がないため OSC 52 要求は無視する
+            // Sprint 4-1: the TUI lacks a consent dialog, so OSC 52 requests are ignored.
             ServerToClient::ClipboardWriteRequest { .. } => {}
-            // Sprint 5-2: TUI にはタブ/CWD 表示 UI がないため OSC 7 CWD 通知は無視する
+            // Sprint 5-2: the TUI has no tab/CWD UI, so OSC 7 CWD notifications are ignored.
             ServerToClient::CwdChanged { .. } => {}
-            // Sprint 5-7 / Phase 2-1: TUI にはワークスペース UI がないため一覧/切替通知は無視する
+            // Sprint 5-7 / Phase 2-1: the TUI has no workspace UI, so list/switch events are ignored.
             ServerToClient::WorkspaceList { .. } | ServerToClient::WorkspaceSwitched { .. } => {}
-            // Sprint 5-7 / Phase 2-2: TUI には Quake モードがないため無視する
+            // Sprint 5-7 / Phase 2-2: the TUI has no Quake mode, so this is ignored.
             ServerToClient::QuakeToggleRequest { .. } => {}
-            // Sprint 5-8 / Phase 4-5: TUI には OS Window 閉じ確認ダイアログがないため無視する
-            // （TUI は単一プロセス1端末で動作するため tab tearing 自体が無効）
+            // Sprint 5-8 / Phase 4-5: the TUI has no OS-window close confirmation dialog,
+            // so this is ignored (the TUI is single-process / single-terminal, so tab tearing
+            // is disabled altogether).
             ServerToClient::ForegroundProcessStatus { .. } => {}
         }
     }
 
-    /// 端末リサイズ時に状態を更新する
+    /// Update state after a terminal resize.
     pub fn resize(&mut self, cols: u16, rows: u16) {
         self.cols = cols;
         self.rows = rows;
     }
 
-    /// フォーカス中のペイン状態を返す
+    /// Return the focused pane state, if any.
     pub fn focused_pane(&self) -> Option<&PaneState> {
         self.focused_pane_id.and_then(|id| self.panes.get(&id))
     }
 
-    /// 期限切れのエラートーストを消去する（3秒後）
+    /// Dismiss expired error toasts (after 3 seconds).
     pub fn tick_toasts(&mut self) {
         if let Some(toast) = &self.error_toast
             && toast.shown_at.elapsed().as_secs() >= 3
@@ -213,17 +214,17 @@ impl ClientState {
         }
     }
 
-    /// Ctrl+B プレフィックスモードを開始する
+    /// Enter `Ctrl+B` prefix mode.
     pub fn enter_prefix(&mut self) {
         self.prefix_mode = PrefixMode::CtrlB;
     }
 
-    /// プレフィックスモードを解除する
+    /// Leave prefix mode.
     pub fn exit_prefix(&mut self) {
         self.prefix_mode = PrefixMode::None;
     }
 
-    /// ヘルプオーバーレイの表示トグル
+    /// Toggle the help overlay.
     pub fn toggle_help(&mut self) {
         if self.prefix_mode == PrefixMode::Help {
             self.prefix_mode = PrefixMode::None;
@@ -239,7 +240,7 @@ mod tests {
     use nexterm_proto::{Cell, DirtyRow};
 
     #[test]
-    fn full_refreshでペインが登録される() {
+    fn full_refresh_registers_pane() {
         let mut state = ClientState::new();
         let grid = Grid::new(80, 24);
         state.apply_server_message(ServerToClient::FullRefresh { pane_id: 1, grid });
@@ -248,15 +249,15 @@ mod tests {
     }
 
     #[test]
-    fn grid_diffで差分が適用される() {
+    fn grid_diff_applies_diff() {
         let mut state = ClientState::new();
-        // まず Full Refresh でペインを登録する
+        // Register the pane via a FullRefresh first.
         state.apply_server_message(ServerToClient::FullRefresh {
             pane_id: 1,
             grid: Grid::new(80, 24),
         });
 
-        // 差分を適用する
+        // Apply a diff.
         let cell = Cell {
             ch: 'X',
             ..Cell::default()
@@ -281,7 +282,7 @@ mod tests {
     }
 
     #[test]
-    fn resizeで端末サイズが更新される() {
+    fn resize_updates_terminal_size() {
         let mut state = ClientState::new();
         state.resize(120, 40);
         assert_eq!(state.cols, 120);
@@ -289,13 +290,13 @@ mod tests {
     }
 
     #[test]
-    fn focused_pane_ペインなしはnone() {
+    fn focused_pane_returns_none_when_empty() {
         let state = ClientState::new();
         assert!(state.focused_pane().is_none());
     }
 
     #[test]
-    fn 複数ペインの登録と最初のフォーカス() {
+    fn multiple_panes_register_and_focus_first() {
         let mut state = ClientState::new();
         state.apply_server_message(ServerToClient::FullRefresh {
             pane_id: 1,
@@ -305,19 +306,19 @@ mod tests {
             pane_id: 2,
             grid: Grid::new(80, 24),
         });
-        // 最初の FullRefresh のペインがフォーカスされること
+        // The pane from the first FullRefresh must remain focused.
         assert_eq!(state.focused_pane_id, Some(1));
         assert!(state.panes.contains_key(&2));
     }
 
     #[test]
-    fn pong_はパニックしない() {
+    fn pong_does_not_panic() {
         let mut state = ClientState::new();
         state.apply_server_message(ServerToClient::Pong);
     }
 
     #[test]
-    fn error_はエラートーストに設定される() {
+    fn error_message_sets_toast() {
         let mut state = ClientState::new();
         state.apply_server_message(ServerToClient::Error {
             message: "test error".to_string(),
@@ -327,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn layout_changedでpane_layoutsが更新される() {
+    fn layout_changed_updates_pane_layouts() {
         let mut state = ClientState::new();
         let layouts = vec![
             PaneLayout {
@@ -356,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    fn prefix_modeのトグル() {
+    fn prefix_mode_toggles() {
         let mut state = ClientState::new();
         assert_eq!(state.prefix_mode, PrefixMode::None);
         state.enter_prefix();
@@ -366,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    fn floating_pane_events_は無視される() {
+    fn floating_pane_events_are_ignored() {
         let mut state = ClientState::new();
         state.apply_server_message(ServerToClient::FloatingPaneOpened {
             pane_id: 99,

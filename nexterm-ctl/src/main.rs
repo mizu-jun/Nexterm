@@ -15,9 +15,9 @@
 //! nexterm-ctl template list                 # List all saved templates
 //! ```
 //!
-//! 内部構成（Sprint 5-4 / A1）:
-//! - `cmd/` — サブコマンド実装（list/new/attach/kill/record/template/service/...）
-//! - `ipc.rs` — IPC 接続ラッパー (`IpcConn`)
+//! Module layout (Sprint 5-4 / A1):
+//! - `cmd/` — subcommand implementations (list/new/attach/kill/record/template/service/...)
+//! - `ipc.rs` — IPC connection wrapper (`IpcConn`)
 
 use anyhow::Result;
 use clap::{Arg, Command};
@@ -29,7 +29,7 @@ use tracing_subscriber::EnvFilter;
 mod cmd;
 mod ipc;
 
-// ---- CLI 定義（ビルダー形式でロケール対応） ----
+// ---- CLI definition (builder form with locale support) ----
 
 fn build_cli() -> Command {
     Command::new("nexterm-ctl")
@@ -251,7 +251,7 @@ fn build_cli() -> Command {
         )
 }
 
-// ---- エントリーポイント ----
+// ---- Entry point ----
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -259,7 +259,7 @@ async fn main() -> Result<()> {
         .with_env_filter(EnvFilter::from_env("NEXTERM_LOG"))
         .init();
 
-    // ロケールを検出してから CLI を構築する
+    // Detect the locale before building the CLI.
     nexterm_i18n::init();
 
     let matches = build_cli().get_matches();

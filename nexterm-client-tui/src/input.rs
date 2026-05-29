@@ -1,4 +1,4 @@
-//! キー入力処理 — crossterm イベントを nexterm-proto のメッセージに変換する
+//! Key input handling — converts crossterm events into `nexterm-proto` messages.
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode as CKC, KeyEventKind, KeyModifiers};
@@ -7,25 +7,25 @@ use nexterm_proto::{ClientToServer, KeyCode, Modifiers};
 
 use crate::state::PrefixMode;
 
-/// UI アクション（イベントループへ返す）
+/// UI action returned to the event loop.
 pub enum Action {
-    /// アプリケーション終了
+    /// Quit the application.
     Quit,
-    /// サーバーへ送るキーイベント
+    /// Key event to forward to the server.
     SendKey(ClientToServer),
-    /// 端末リサイズ
+    /// Terminal resize.
     Resize(u16, u16),
-    /// Ctrl+B プレフィックスモードを開始する
+    /// Enter the `Ctrl+B` prefix mode.
     EnterPrefix,
-    /// プレフィックスモードのセカンドキーを処理してアクションを返す
+    /// Second key while in prefix mode produced an action.
     PrefixCommand(ClientToServer),
-    /// ヘルプオーバーレイのトグル
+    /// Toggle the help overlay.
     ToggleHelp,
-    /// プレフィックスモードをキャンセルする（Esc）
+    /// Cancel prefix mode (Esc).
     CancelPrefix,
 }
 
-/// キー入力を non-blocking でポーリングする（プレフィックスモードを考慮する）
+/// Non-blocking poll of the next key event (the current prefix mode is honored).
 pub fn poll_input(prefix_mode: PrefixMode) -> Result<Option<Action>> {
     if !event::poll(std::time::Duration::from_millis(0))? {
         return Ok(None);
@@ -33,7 +33,7 @@ pub fn poll_input(prefix_mode: PrefixMode) -> Result<Option<Action>> {
 
     match event::read()? {
         Event::Key(key_event) => {
-            // key press のみ処理する（release/repeat は無視）
+            // Handle key presses only (ignore release/repeat events).
             if key_event.kind != KeyEventKind::Press {
                 return Ok(None);
             }
@@ -42,35 +42,35 @@ pub fn poll_input(prefix_mode: PrefixMode) -> Result<Option<Action>> {
 
             match prefix_mode {
                 PrefixMode::Help => {
-                    // ヘルプ表示中は任意のキーで閉じる
+                    // Any key closes the help overlay.
                     return Ok(Some(Action::ToggleHelp));
                 }
                 PrefixMode::CtrlB => {
-                    // プレフィックスモード：セカンドキーを処理する
+                    // Prefix mode: process the second keystroke.
                     return handle_prefix_key(key_event.code, modifiers);
                 }
                 PrefixMode::None => {
-                    // 通常モード
+                    // Normal mode.
                 }
             }
 
-            // Ctrl+Q で終了
+            // Ctrl+Q quits.
             if modifiers.is_ctrl() {
                 if let CKC::Char('q') = key_event.code {
                     return Ok(Some(Action::Quit));
                 }
-                // Ctrl+B でプレフィックスモードへ
+                // Ctrl+B enters prefix mode.
                 if let CKC::Char('b') = key_event.code {
                     return Ok(Some(Action::EnterPrefix));
                 }
             }
 
-            // Esc でヘルプ/プレフィックスキャンセル（通常モードでは無視）
+            // Esc cancels help/prefix mode (ignored in normal mode here).
             if key_event.code == CKC::Esc {
                 return Ok(None);
             }
 
-            // キーコードを変換してサーバーへ送る
+            // Convert and forward the key event to the server.
             if let Some(code) = convert_key_code(key_event.code) {
                 return Ok(Some(Action::SendKey(ClientToServer::KeyEvent {
                     code,
@@ -87,32 +87,32 @@ pub fn poll_input(prefix_mode: PrefixMode) -> Result<Option<Action>> {
     Ok(None)
 }
 
-/// Ctrl+B プレフィックス後のセカンドキーを処理する
+/// Handle the second keystroke following the `Ctrl+B` prefix.
 fn handle_prefix_key(code: CKC, _modifiers: Modifiers) -> Result<Option<Action>> {
     let action = match code {
-        // % → 垂直分割
+        // % → vertical split
         CKC::Char('%') => Action::PrefixCommand(ClientToServer::SplitVertical),
-        // " → 水平分割
+        // " → horizontal split
         CKC::Char('"') => Action::PrefixCommand(ClientToServer::SplitHorizontal),
-        // x → フォーカスペインを閉じる
+        // x → close focused pane
         CKC::Char('x') => Action::PrefixCommand(ClientToServer::ClosePane),
-        // n → 次のペイン
+        // n → next pane
         CKC::Char('n') => Action::PrefixCommand(ClientToServer::FocusNextPane),
-        // p → 前のペイン
+        // p → previous pane
         CKC::Char('p') => Action::PrefixCommand(ClientToServer::FocusPrevPane),
-        // z → ズームトグル
+        // z → toggle zoom
         CKC::Char('z') => Action::PrefixCommand(ClientToServer::ToggleZoom),
-        // ? → ヘルプ
+        // ? → toggle help
         CKC::Char('?') => Action::ToggleHelp,
-        // Esc → プレフィックスキャンセル
+        // Esc → cancel prefix mode
         CKC::Esc => Action::CancelPrefix,
-        // それ以外 → プレフィックスキャンセル（不明なキーは無視）
+        // Anything else → cancel prefix mode (unknown keys are ignored).
         _ => Action::CancelPrefix,
     };
     Ok(Some(action))
 }
 
-/// crossterm の KeyModifiers を nexterm の Modifiers に変換する
+/// Convert crossterm `KeyModifiers` into nexterm `Modifiers`.
 fn convert_modifiers(m: KeyModifiers) -> Modifiers {
     let mut bits: u8 = 0;
     if m.contains(KeyModifiers::SHIFT) {
@@ -127,7 +127,7 @@ fn convert_modifiers(m: KeyModifiers) -> Modifiers {
     Modifiers(bits)
 }
 
-/// crossterm の KeyCode を nexterm の KeyCode に変換する
+/// Convert a crossterm `KeyCode` into a nexterm `KeyCode`.
 fn convert_key_code(code: CKC) -> Option<KeyCode> {
     let k = match code {
         CKC::Char(c) => KeyCode::Char(c),
@@ -157,7 +157,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ctrl修飾キーが正しく変換される() {
+    fn ctrl_modifier_converts_correctly() {
         let m = KeyModifiers::CONTROL;
         let converted = convert_modifiers(m);
         assert!(converted.is_ctrl());
@@ -165,19 +165,19 @@ mod tests {
     }
 
     #[test]
-    fn エンターキーが変換される() {
+    fn enter_key_converts() {
         let code = convert_key_code(CKC::Enter);
         assert!(matches!(code, Some(KeyCode::Enter)));
     }
 
     #[test]
-    fn 通常文字が変換される() {
+    fn regular_char_converts() {
         let code = convert_key_code(CKC::Char('a'));
         assert!(matches!(code, Some(KeyCode::Char('a'))));
     }
 
     #[test]
-    fn プレフィックスキー_縦分割() {
+    fn prefix_key_vertical_split() {
         let result = handle_prefix_key(CKC::Char('%'), Modifiers(0)).unwrap();
         assert!(matches!(
             result,
@@ -186,7 +186,7 @@ mod tests {
     }
 
     #[test]
-    fn プレフィックスキー_横分割() {
+    fn prefix_key_horizontal_split() {
         let result = handle_prefix_key(CKC::Char('"'), Modifiers(0)).unwrap();
         assert!(matches!(
             result,
@@ -195,7 +195,7 @@ mod tests {
     }
 
     #[test]
-    fn プレフィックスキー_閉じる() {
+    fn prefix_key_close() {
         let result = handle_prefix_key(CKC::Char('x'), Modifiers(0)).unwrap();
         assert!(matches!(
             result,
@@ -204,19 +204,19 @@ mod tests {
     }
 
     #[test]
-    fn プレフィックスキー_ヘルプ() {
+    fn prefix_key_help() {
         let result = handle_prefix_key(CKC::Char('?'), Modifiers(0)).unwrap();
         assert!(matches!(result, Some(Action::ToggleHelp)));
     }
 
     #[test]
-    fn プレフィックスキー_esc_キャンセル() {
+    fn prefix_key_esc_cancels() {
         let result = handle_prefix_key(CKC::Esc, Modifiers(0)).unwrap();
         assert!(matches!(result, Some(Action::CancelPrefix)));
     }
 
     #[test]
-    fn プレフィックスキー_未知はキャンセル() {
+    fn prefix_key_unknown_cancels() {
         let result = handle_prefix_key(CKC::Char('Z'), Modifiers(0)).unwrap();
         assert!(matches!(result, Some(Action::CancelPrefix)));
     }

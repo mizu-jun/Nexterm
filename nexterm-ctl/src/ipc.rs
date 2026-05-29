@@ -1,21 +1,21 @@
-//! IPC 接続ラッパー（Sprint 5-4 / A1: main.rs から抽出）。
+//! IPC connection wrapper (Sprint 5-4 / A1: extracted from `main.rs`).
 //!
-//! プラットフォーム非依存の read/write 半分割で、Unix ソケット / Windows
-//! 名前付きパイプの両方を扱える。ハンドシェイクとメッセージ送受信を提供する。
+//! A platform-agnostic read/write split that handles both Unix sockets and Windows
+//! named pipes. Provides the handshake plus message send/receive helpers.
 
 use anyhow::Result;
 use nexterm_i18n::fl;
 use nexterm_proto::{ClientToServer, ServerToClient};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-/// IPC 接続ラッパー（プラットフォーム非依存の read/write 半）
+/// IPC connection wrapper (platform-agnostic read/write halves).
 pub(crate) struct IpcConn {
     reader: Box<dyn AsyncRead + Unpin + Send>,
     writer: Box<dyn AsyncWrite + Unpin + Send>,
 }
 
 impl IpcConn {
-    /// プラットフォームに応じて IPC に接続する
+    /// Connect to the IPC socket appropriate for the current platform.
     pub(crate) async fn connect() -> Result<Self> {
         let mut conn: Self = {
             #[cfg(windows)]
@@ -50,7 +50,7 @@ impl IpcConn {
             }
         };
 
-        // ハンドシェイク: 接続直後にプロトコルバージョンを送信し、HelloAck を受信する
+        // Handshake: send the protocol version immediately after connecting and wait for HelloAck.
         conn.send(ClientToServer::Hello {
             proto_version: nexterm_proto::PROTOCOL_VERSION,
             client_kind: nexterm_proto::ClientKind::Ctl,
@@ -60,11 +60,11 @@ impl IpcConn {
         match conn.recv().await? {
             ServerToClient::HelloAck { .. } => {}
             ServerToClient::Error { message } => {
-                anyhow::bail!("サーバーからハンドシェイクエラー: {}", message);
+                anyhow::bail!("handshake error from server: {}", message);
             }
             other => {
                 anyhow::bail!(
-                    "予期しないハンドシェイク応答: {:?} （HelloAck を期待）",
+                    "unexpected handshake response: {:?} (expected HelloAck)",
                     other
                 );
             }
@@ -73,7 +73,7 @@ impl IpcConn {
         Ok(conn)
     }
 
-    /// メッセージを送信する（4B LE 長さプレフィックス + postcard）
+    /// Send a message (4-byte LE length prefix + postcard payload).
     pub(crate) async fn send(&mut self, msg: ClientToServer) -> Result<()> {
         let payload = postcard::to_stdvec(&msg)?;
         let len = payload.len() as u32;
@@ -82,12 +82,12 @@ impl IpcConn {
         Ok(())
     }
 
-    /// メッセージを受信する
+    /// Receive a message.
     pub(crate) async fn recv(&mut self) -> Result<ServerToClient> {
         let mut len_buf = [0u8; 4];
         self.reader.read_exact(&mut len_buf).await?;
         let msg_len = u32::from_le_bytes(len_buf) as usize;
-        // 巨大な長さプレフィックスによる OOM 攻撃を防ぐ
+        // Guard against OOM attacks with a huge length prefix.
         nexterm_proto::validate_msg_len(msg_len).map_err(|e| anyhow::anyhow!("{}", e))?;
         let mut payload = vec![0u8; msg_len];
         self.reader.read_exact(&mut payload).await?;

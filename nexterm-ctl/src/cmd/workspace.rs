@@ -1,16 +1,16 @@
-//! ワークスペース管理コマンド (Sprint 5-7 / Phase 2-1):
-//! `workspace list / create / switch / rename / delete`。
+//! Workspace management commands (Sprint 5-7 / Phase 2-1):
+//! `workspace list / create / switch / rename / delete`.
 //!
-//! IPC `ListWorkspaces` / `CreateWorkspace` / `SwitchWorkspace` /
-//! `RenameWorkspace` / `DeleteWorkspace` を送信し、サーバーから
-//! `WorkspaceList` / `WorkspaceSwitched` / `Error` のいずれかを受け取って表示する。
+//! Sends one of `ListWorkspaces` / `CreateWorkspace` / `SwitchWorkspace` /
+//! `RenameWorkspace` / `DeleteWorkspace` over IPC and renders the matching
+//! `WorkspaceList` / `WorkspaceSwitched` / `Error` response.
 
 use anyhow::{Result, bail};
 use nexterm_proto::{ClientToServer, ServerToClient};
 
 use crate::ipc::IpcConn;
 
-/// ワークスペース一覧を表示する
+/// Display the workspace list.
 pub(crate) async fn cmd_workspace_list() -> Result<()> {
     let mut conn = IpcConn::connect().await?;
     conn.send(ClientToServer::ListWorkspaces).await?;
@@ -35,7 +35,7 @@ pub(crate) async fn cmd_workspace_list() -> Result<()> {
                 );
             }
             println!();
-            println!("現在のワークスペース: {}", current);
+            println!("current workspace: {}", current);
         }
         ServerToClient::Error { message } => bail!("{}", message),
         _ => {}
@@ -43,15 +43,15 @@ pub(crate) async fn cmd_workspace_list() -> Result<()> {
     Ok(())
 }
 
-/// 新規ワークスペースを作成する
+/// Create a new workspace.
 pub(crate) async fn cmd_workspace_create(name: String) -> Result<()> {
     let mut conn = IpcConn::connect().await?;
     conn.send(ClientToServer::CreateWorkspace { name: name.clone() })
         .await?;
     match conn.recv().await? {
         ServerToClient::WorkspaceList { workspaces, .. } => {
-            println!("ワークスペース '{}' を作成しました", name);
-            println!("既知のワークスペース数: {}", workspaces.len());
+            println!("created workspace '{}'", name);
+            println!("total workspaces: {}", workspaces.len());
         }
         ServerToClient::Error { message } => bail!("{}", message),
         _ => {}
@@ -59,19 +59,20 @@ pub(crate) async fn cmd_workspace_create(name: String) -> Result<()> {
     Ok(())
 }
 
-/// アクティブなワークスペースを切り替える
+/// Switch the active workspace.
 pub(crate) async fn cmd_workspace_switch(name: String) -> Result<()> {
     let mut conn = IpcConn::connect().await?;
     conn.send(ClientToServer::SwitchWorkspace { name: name.clone() })
         .await?;
-    // 最初の応答が WorkspaceSwitched、続いて WorkspaceList が送られる想定だが、
-    // 順序保証を厳密化したくないので最初の有効な応答だけを見て成否を判定する。
+    // The first response is expected to be `WorkspaceSwitched` followed by
+    // `WorkspaceList`, but rather than asserting on the order we just inspect the
+    // first useful response to decide success/failure.
     match conn.recv().await? {
         ServerToClient::WorkspaceSwitched { name: switched } => {
-            println!("ワークスペースを '{}' に切り替えました", switched);
+            println!("switched to workspace '{}'", switched);
         }
         ServerToClient::WorkspaceList { current, .. } => {
-            println!("ワークスペースを '{}' に切り替えました", current);
+            println!("switched to workspace '{}'", current);
         }
         ServerToClient::Error { message } => bail!("{}", message),
         _ => {}
@@ -79,7 +80,7 @@ pub(crate) async fn cmd_workspace_switch(name: String) -> Result<()> {
     Ok(())
 }
 
-/// ワークスペースをリネームする
+/// Rename a workspace.
 pub(crate) async fn cmd_workspace_rename(from: String, to: String) -> Result<()> {
     let mut conn = IpcConn::connect().await?;
     conn.send(ClientToServer::RenameWorkspace {
@@ -89,7 +90,7 @@ pub(crate) async fn cmd_workspace_rename(from: String, to: String) -> Result<()>
     .await?;
     match conn.recv().await? {
         ServerToClient::WorkspaceList { .. } => {
-            println!("ワークスペース '{}' を '{}' にリネームしました", from, to);
+            println!("renamed workspace '{}' to '{}'", from, to);
         }
         ServerToClient::Error { message } => bail!("{}", message),
         _ => {}
@@ -97,9 +98,10 @@ pub(crate) async fn cmd_workspace_rename(from: String, to: String) -> Result<()>
     Ok(())
 }
 
-/// ワークスペースを削除する
+/// Delete a workspace.
 ///
-/// `force=true` の場合、配下のセッションを default ワークスペースに退避させる。
+/// When `force=true`, the sessions still under that workspace are migrated to
+/// the `default` workspace before deletion.
 pub(crate) async fn cmd_workspace_delete(name: String, force: bool) -> Result<()> {
     let mut conn = IpcConn::connect().await?;
     conn.send(ClientToServer::DeleteWorkspace {
@@ -109,7 +111,7 @@ pub(crate) async fn cmd_workspace_delete(name: String, force: bool) -> Result<()
     .await?;
     match conn.recv().await? {
         ServerToClient::WorkspaceList { .. } => {
-            println!("ワークスペース '{}' を削除しました (force={})", name, force);
+            println!("deleted workspace '{}' (force={})", name, force);
         }
         ServerToClient::Error { message } => bail!("{}", message),
         _ => {}

@@ -1,12 +1,12 @@
-//! サービス管理コマンド (systemd / launchd / Windows SCM)。
+//! Service management commands (systemd / launchd / Windows SCM).
 
-// `Context` は Linux/macOS の cfg ブロック内でのみ使用するため、Windows
-// ビルドでは未使用となる。プラットフォーム横断のビルドエラーを避けるため
-// `unused_imports` 警告を許容する。
+// `Context` is only used inside the Linux/macOS `cfg` blocks, so on Windows it would
+// otherwise be flagged as unused. Allow the unused-import warning to keep the
+// cross-platform build clean.
 #[allow(unused_imports)]
 use anyhow::{Context, Result, bail};
 
-/// nexterm-server を自動起動サービスとして登録する
+/// Register `nexterm-server` as an auto-start service.
 pub(crate) fn cmd_service_install() -> Result<()> {
     #[cfg(target_os = "linux")]
     return service_install_systemd();
@@ -18,10 +18,10 @@ pub(crate) fn cmd_service_install() -> Result<()> {
     return service_install_windows();
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-    bail!("このプラットフォームはサービス登録に非対応です")
+    bail!("service registration is not supported on this platform")
 }
 
-/// サービス登録を解除する
+/// Unregister the service.
 pub(crate) fn cmd_service_uninstall() -> Result<()> {
     #[cfg(target_os = "linux")]
     return service_uninstall_systemd();
@@ -33,17 +33,17 @@ pub(crate) fn cmd_service_uninstall() -> Result<()> {
     return service_uninstall_windows();
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-    bail!("このプラットフォームはサービス登録に非対応です")
+    bail!("service registration is not supported on this platform")
 }
 
-/// サービス登録状態を表示する
+/// Show the registration status of the service.
 pub(crate) fn cmd_service_status() -> Result<()> {
     #[cfg(target_os = "linux")]
     {
         let unit_path = systemd_unit_path()?;
         if unit_path.exists() {
-            println!("サービス: インストール済み ({})", unit_path.display());
-            // systemctl is-active の結果を確認する
+            println!("service: installed ({})", unit_path.display());
+            // Check `systemctl is-active`.
             let status = std::process::Command::new("systemctl")
                 .args(["--user", "is-active", "nexterm-server.service"])
                 .output();
@@ -51,19 +51,15 @@ pub(crate) fn cmd_service_status() -> Result<()> {
                 Ok(o) => {
                     let state = String::from_utf8_lossy(&o.stdout).trim().to_string();
                     println!(
-                        "状態: {}",
-                        if state == "active" {
-                            "実行中"
-                        } else {
-                            &state
-                        }
+                        "state: {}",
+                        if state == "active" { "running" } else { &state }
                     );
                 }
-                Err(_) => println!("状態: 不明（systemctl が見つかりません）"),
+                Err(_) => println!("state: unknown (systemctl not found)"),
             }
         } else {
-            println!("サービス: 未インストール");
-            println!("インストールするには: nexterm-ctl service install");
+            println!("service: not installed");
+            println!("to install: nexterm-ctl service install");
         }
         Ok(())
     }
@@ -72,29 +68,29 @@ pub(crate) fn cmd_service_status() -> Result<()> {
     {
         let plist_path = launchd_plist_path()?;
         if plist_path.exists() {
-            println!("サービス: インストール済み ({})", plist_path.display());
+            println!("service: installed ({})", plist_path.display());
             let status = std::process::Command::new("launchctl")
                 .args(["list", "io.github.nexterm.server"])
                 .output();
             match status {
-                Ok(o) if o.status.success() => println!("状態: 実行中"),
-                _ => println!("状態: 停止中"),
+                Ok(o) if o.status.success() => println!("state: running"),
+                _ => println!("state: stopped"),
             }
         } else {
-            println!("サービス: 未インストール");
-            println!("インストールするには: nexterm-ctl service install");
+            println!("service: not installed");
+            println!("to install: nexterm-ctl service install");
         }
         Ok(())
     }
 
     #[cfg(windows)]
     {
-        println!("Windows サービス管理は準備中です。");
+        println!("Windows service management is not yet implemented.");
         Ok(())
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-    bail!("このプラットフォームはサービス管理に非対応です")
+    bail!("service management is not supported on this platform")
 }
 
 // ---- Linux (systemd) ----
@@ -110,16 +106,16 @@ fn systemd_unit_path() -> Result<std::path::PathBuf> {
 
 #[cfg(target_os = "linux")]
 fn nexterm_server_bin() -> Result<String> {
-    // 自分自身（nexterm-ctl）と同じディレクトリにある nexterm-server を探す
-    let exe = std::env::current_exe().context("実行ファイルパスの取得に失敗しました")?;
+    // Look for `nexterm-server` in the same directory as ourselves (`nexterm-ctl`).
+    let exe = std::env::current_exe().context("failed to obtain the executable path")?;
     let dir = exe
         .parent()
-        .context("実行ファイルのディレクトリ取得に失敗しました")?;
+        .context("failed to obtain the executable's directory")?;
     let server = dir.join("nexterm-server");
     if server.exists() {
         Ok(server.to_string_lossy().to_string())
     } else {
-        // PATH から探す
+        // Fall back to looking in $PATH.
         Ok("nexterm-server".to_string())
     }
 }
@@ -129,10 +125,10 @@ fn service_install_systemd() -> Result<()> {
     let unit_path = systemd_unit_path()?;
     let server_bin = nexterm_server_bin()?;
 
-    // ユニットディレクトリを作成する
+    // Create the unit directory.
     if let Some(parent) = unit_path.parent() {
         std::fs::create_dir_all(parent)
-            .with_context(|| format!("ディレクトリの作成に失敗しました: {}", parent.display()))?;
+            .with_context(|| format!("failed to create directory: {}", parent.display()))?;
     }
 
     let unit = format!(
@@ -154,14 +150,10 @@ WantedBy=default.target
         server_bin = server_bin
     );
 
-    std::fs::write(&unit_path, &unit).with_context(|| {
-        format!(
-            "ユニットファイルの書き込みに失敗しました: {}",
-            unit_path.display()
-        )
-    })?;
+    std::fs::write(&unit_path, &unit)
+        .with_context(|| format!("failed to write unit file: {}", unit_path.display()))?;
 
-    // systemctl --user daemon-reload && enable && start
+    // `systemctl --user daemon-reload && enable && start`.
     let cmds: &[&[&str]] = &[
         &["systemctl", "--user", "daemon-reload"],
         &["systemctl", "--user", "enable", "nexterm-server.service"],
@@ -171,15 +163,15 @@ WantedBy=default.target
         let status = std::process::Command::new(cmd[0])
             .args(&cmd[1..])
             .status()
-            .with_context(|| format!("コマンド実行に失敗しました: {}", cmd[0]))?;
+            .with_context(|| format!("failed to run command: {}", cmd[0]))?;
         if !status.success() {
-            bail!("コマンドが失敗しました: {}", cmd.join(" "));
+            bail!("command failed: {}", cmd.join(" "));
         }
     }
 
-    println!("nexterm-server を systemd ユーザーサービスとして登録しました");
-    println!("ユニットファイル: {}", unit_path.display());
-    println!("サービスを開始しました。ログ: journalctl --user -u nexterm-server -f");
+    println!("registered nexterm-server as a systemd user service");
+    println!("unit file: {}", unit_path.display());
+    println!("service started. follow the log with: journalctl --user -u nexterm-server -f");
     Ok(())
 }
 
@@ -187,7 +179,7 @@ WantedBy=default.target
 fn service_uninstall_systemd() -> Result<()> {
     let unit_path = systemd_unit_path()?;
 
-    // 停止 → 無効化 → ファイル削除
+    // Stop → disable → remove file.
     let _ = std::process::Command::new("systemctl")
         .args(["--user", "stop", "nexterm-server.service"])
         .status();
@@ -196,19 +188,15 @@ fn service_uninstall_systemd() -> Result<()> {
         .status();
 
     if unit_path.exists() {
-        std::fs::remove_file(&unit_path).with_context(|| {
-            format!(
-                "ユニットファイルの削除に失敗しました: {}",
-                unit_path.display()
-            )
-        })?;
+        std::fs::remove_file(&unit_path)
+            .with_context(|| format!("failed to remove unit file: {}", unit_path.display()))?;
     }
 
     let _ = std::process::Command::new("systemctl")
         .args(["--user", "daemon-reload"])
         .status();
 
-    println!("nexterm-server サービスを削除しました");
+    println!("removed the nexterm-server service");
     Ok(())
 }
 
@@ -225,10 +213,10 @@ fn launchd_plist_path() -> Result<std::path::PathBuf> {
 
 #[cfg(target_os = "macos")]
 fn nexterm_server_bin() -> Result<String> {
-    let exe = std::env::current_exe().context("実行ファイルパスの取得に失敗しました")?;
+    let exe = std::env::current_exe().context("failed to obtain the executable path")?;
     let dir = exe
         .parent()
-        .context("実行ファイルのディレクトリ取得に失敗しました")?;
+        .context("failed to obtain the executable's directory")?;
     let server = dir.join("nexterm-server");
     if server.exists() {
         Ok(server.to_string_lossy().to_string())
@@ -245,7 +233,7 @@ fn service_install_launchd() -> Result<()> {
 
     if let Some(parent) = plist_path.parent() {
         std::fs::create_dir_all(parent)
-            .with_context(|| format!("ディレクトリの作成に失敗しました: {}", parent.display()))?;
+            .with_context(|| format!("failed to create directory: {}", parent.display()))?;
     }
 
     let plist = format!(
@@ -275,25 +263,21 @@ fn service_install_launchd() -> Result<()> {
         home = home
     );
 
-    std::fs::write(&plist_path, &plist).with_context(|| {
-        format!(
-            "plist ファイルの書き込みに失敗しました: {}",
-            plist_path.display()
-        )
-    })?;
+    std::fs::write(&plist_path, &plist)
+        .with_context(|| format!("failed to write plist file: {}", plist_path.display()))?;
 
     let status = std::process::Command::new("launchctl")
         .args(["load", "-w", &plist_path.to_string_lossy()])
         .status()
-        .context("launchctl load に失敗しました")?;
+        .context("`launchctl load` failed")?;
 
     if !status.success() {
-        bail!("launchctl load が失敗しました");
+        bail!("`launchctl load` returned a non-zero status");
     }
 
-    println!("nexterm-server を launchd に登録しました");
+    println!("registered nexterm-server with launchd");
     println!("plist: {}", plist_path.display());
-    println!("ログ: {}/Library/Logs/nexterm-server.log", home);
+    println!("log: {}/Library/Logs/nexterm-server.log", home);
     Ok(())
 }
 
@@ -305,15 +289,11 @@ fn service_uninstall_launchd() -> Result<()> {
         let _ = std::process::Command::new("launchctl")
             .args(["unload", "-w", &plist_path.to_string_lossy()])
             .status();
-        std::fs::remove_file(&plist_path).with_context(|| {
-            format!(
-                "plist ファイルの削除に失敗しました: {}",
-                plist_path.display()
-            )
-        })?;
-        println!("nexterm-server サービスを削除しました");
+        std::fs::remove_file(&plist_path)
+            .with_context(|| format!("failed to remove plist file: {}", plist_path.display()))?;
+        println!("removed the nexterm-server service");
     } else {
-        println!("サービスはインストールされていません");
+        println!("service is not installed");
     }
     Ok(())
 }
@@ -323,11 +303,11 @@ fn service_uninstall_launchd() -> Result<()> {
 #[cfg(windows)]
 fn service_install_windows() -> Result<()> {
     bail!(
-        "Windows サービス登録は現在準備中です。\nタスクスケジューラでの自動起動を代替として使用してください。"
+        "Windows service registration is not yet implemented.\nUse Task Scheduler for auto-start as a workaround."
     )
 }
 
 #[cfg(windows)]
 fn service_uninstall_windows() -> Result<()> {
-    bail!("Windows サービス削除は現在準備中です。")
+    bail!("Windows service removal is not yet implemented.")
 }

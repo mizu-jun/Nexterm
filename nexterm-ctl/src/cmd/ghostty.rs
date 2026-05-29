@@ -1,13 +1,13 @@
-//! Ghostty 設定インポートコマンド + パーサ。
+//! Ghostty config import command + parser.
 
 use anyhow::{Context, Result, bail};
 use std::path::Path;
 
 use crate::cmd::util::remove_toml_section;
 
-/// Ghostty 設定ファイルを読み込んで nexterm の config.toml に変換する
+/// Read a Ghostty config file and convert it to nexterm's `config.toml`.
 pub(crate) fn cmd_import_ghostty(path: Option<String>, output: Option<String>) -> Result<()> {
-    // 入力パスのデフォルト: ~/.config/ghostty/config
+    // Default input path: ~/.config/ghostty/config
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_else(|_| ".".to_string());
@@ -16,34 +16,30 @@ pub(crate) fn cmd_import_ghostty(path: Option<String>, output: Option<String>) -
 
     if !Path::new(&input_path).exists() {
         bail!(
-            "Ghostty 設定ファイルが見つかりません: {}\n\
-             パスを明示的に指定してください: nexterm-ctl import-ghostty <path>",
+            "Ghostty config file not found: {}\n\
+             Pass the path explicitly: nexterm-ctl import-ghostty <path>",
             input_path
         );
     }
 
-    let content = std::fs::read_to_string(&input_path).with_context(|| {
-        format!(
-            "Ghostty 設定ファイルの読み込みに失敗しました: {}",
-            input_path
-        )
-    })?;
+    let content = std::fs::read_to_string(&input_path)
+        .with_context(|| format!("failed to read Ghostty config file: {}", input_path))?;
 
     let converted = parse_ghostty_config(&content)?;
 
-    // 出力パスのデフォルト: ~/.config/nexterm/config.toml
+    // Default output path: ~/.config/nexterm/config.toml
     let output_path = output.unwrap_or_else(|| format!("{}/.config/nexterm/config.toml", home));
 
-    // 出力ディレクトリを作成する
+    // Create the output directory.
     if let Some(parent) = Path::new(&output_path).parent() {
         std::fs::create_dir_all(parent)
-            .with_context(|| format!("ディレクトリの作成に失敗しました: {}", parent.display()))?;
+            .with_context(|| format!("failed to create directory: {}", parent.display()))?;
     }
 
-    // 既存の config.toml に Ghostty から変換した設定をマージする
+    // Merge the converted Ghostty settings into any existing `config.toml`.
     let existing = if Path::new(&output_path).exists() {
         std::fs::read_to_string(&output_path)
-            .with_context(|| format!("既存設定ファイルの読み込みに失敗しました: {}", output_path))?
+            .with_context(|| format!("failed to read existing config file: {}", output_path))?
     } else {
         String::new()
     };
@@ -51,36 +47,36 @@ pub(crate) fn cmd_import_ghostty(path: Option<String>, output: Option<String>) -
     let merged = merge_ghostty_config(&existing, &converted);
 
     std::fs::write(&output_path, &merged)
-        .with_context(|| format!("設定ファイルの書き込みに失敗しました: {}", output_path))?;
+        .with_context(|| format!("failed to write config file: {}", output_path))?;
 
-    println!("Ghostty 設定をインポートしました");
-    println!("  入力: {}", input_path);
-    println!("  出力: {}", output_path);
+    println!("imported Ghostty config");
+    println!("  input:  {}", input_path);
+    println!("  output: {}", output_path);
     if !converted.notes.is_empty() {
-        println!("\n変換メモ（手動確認が必要な項目）:");
+        println!("\nconversion notes (require manual review):");
         for note in &converted.notes {
-            println!("  ⚠ {}", note);
+            println!("  ! {}", note);
         }
     }
 
     Ok(())
 }
 
-/// Ghostty 設定の変換結果
+/// Conversion result for a Ghostty config.
 struct GhosttyConverted {
-    /// [font] セクションの TOML フラグメント
+    /// TOML fragment for the `[font]` section.
     font_toml: Option<String>,
-    /// [color-scheme.custom] セクションの TOML フラグメント（パレット設定時）
+    /// TOML fragment for the `[color-scheme.custom]` section (when a palette is set).
     palette_toml: Option<String>,
-    /// [window] セクションの TOML フラグメント
+    /// TOML fragment for the `[window]` section.
     window_toml: Option<String>,
-    /// 手動確認が必要な項目
+    /// Items that require manual review.
     notes: Vec<String>,
 }
 
-/// Ghostty の設定ファイルをパースして nexterm 互換の設定に変換する
+/// Parse a Ghostty config file and convert it to a nexterm-compatible config.
 fn parse_ghostty_config(content: &str) -> Result<GhosttyConverted> {
-    // Ghostty の設定フォーマット: `key = value` （TOML に近いが独自形式）
+    // Ghostty's format is `key = value` (TOML-like but custom).
     let mut font_family: Option<String> = None;
     let mut font_size: Option<f32> = None;
     let mut background: Option<String> = None;
@@ -92,12 +88,12 @@ fn parse_ghostty_config(content: &str) -> Result<GhosttyConverted> {
 
     for line in content.lines() {
         let trimmed = line.trim();
-        // コメント行とブランク行をスキップ
+        // Skip comments and blank lines.
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
 
-        // `key = value` を分割する
+        // Split on `=`.
         let Some(eq_pos) = trimmed.find('=') else {
             continue;
         };
@@ -114,7 +110,7 @@ fn parse_ghostty_config(content: &str) -> Result<GhosttyConverted> {
             "foreground" => foreground = Some(normalize_color(value)),
             "cursor-color" => cursor_color = Some(normalize_color(value)),
             "background-opacity" => background_opacity = value.parse::<f32>().ok(),
-            // ANSI パレット: palette = N=#RRGGBB 形式
+            // ANSI palette: `palette = N=#RRGGBB`
             "palette" => {
                 if let Some((idx_str, color)) = value.split_once('=')
                     && let Ok(idx) = idx_str.trim().parse::<usize>()
@@ -123,24 +119,24 @@ fn parse_ghostty_config(content: &str) -> Result<GhosttyConverted> {
                     ansi[idx] = Some(normalize_color(color.trim()));
                 }
             }
-            // 未対応キーはメモに追記する
+            // Unsupported keys: emit a note.
             "theme" => notes.push(format!(
-                "theme = \"{}\" は手動で nexterm の color-scheme に変換してください",
+                "theme = \"{}\" must be converted manually to a nexterm color-scheme",
                 value
             )),
             "keybind" => notes.push(format!(
-                "keybind = {} は nexterm の [keybindings] に手動でマッピングしてください",
+                "keybind = {} must be mapped manually into nexterm's [keybindings]",
                 value
             )),
             "shell-integration" | "shell-integration-features" => {
-                notes.push(format!("{} は nexterm では自動的に統合されます", key))
+                notes.push(format!("{} is integrated automatically by nexterm", key))
             }
             "window-decoration" => {
-                // Ghostty の window-decoration → nexterm の window.decorations
-                // "false" = none, "true"/"client"/"server" = full
+                // Ghostty's `window-decoration` → nexterm's `window.decorations`.
+                // "false" = none, "true"/"client"/"server" = full.
             }
             _ => {
-                // 重要そうなキーのみメモ（細かいものは無視）
+                // Only the more impactful keys are noted; minor keys are silently ignored.
                 if !matches!(
                     key,
                     "cursor-style"
@@ -154,13 +150,13 @@ fn parse_ghostty_config(content: &str) -> Result<GhosttyConverted> {
                     && !key.starts_with("linux-")
                     && !key.starts_with("windows-")
                 {
-                    // 未対応のキーは無視（警告しすぎるとユーザーが混乱する）
+                    // Unsupported keys are ignored (warning on every one would be noisy).
                 }
             }
         }
     }
 
-    // [font] セクションの生成
+    // Build the `[font]` section.
     let font_toml = if font_family.is_some() || font_size.is_some() {
         let mut s = String::from("[font]\n");
         if let Some(family) = &font_family {
@@ -174,7 +170,7 @@ fn parse_ghostty_config(content: &str) -> Result<GhosttyConverted> {
         None
     };
 
-    // [color-scheme.custom] セクションの生成
+    // Build the `[color-scheme.custom]` section.
     let palette_toml = if background.is_some()
         || foreground.is_some()
         || ansi.iter().any(|a| a.is_some())
@@ -187,7 +183,7 @@ fn parse_ghostty_config(content: &str) -> Result<GhosttyConverted> {
             .enumerate()
             .map(|(i, a)| {
                 a.clone().unwrap_or_else(|| {
-                    // デフォルト ANSI カラー
+                    // Default ANSI color.
                     DEFAULT_ANSI_COLORS[i % 16].to_string()
                 })
             })
@@ -205,7 +201,7 @@ fn parse_ghostty_config(content: &str) -> Result<GhosttyConverted> {
         None
     };
 
-    // [window] セクションの生成
+    // Build the `[window]` section.
     let window_toml = background_opacity
         .map(|opacity| format!("[window]\nbackground_opacity = {:.2}\n", opacity));
 
@@ -217,7 +213,7 @@ fn parse_ghostty_config(content: &str) -> Result<GhosttyConverted> {
     })
 }
 
-/// カラー文字列を正規化する（"RRGGBB" → "#RRGGBB"、既に "#" がある場合はそのまま）
+/// Normalize a color string ("RRGGBB" → "#RRGGBB"; pass through if already prefixed with "#").
 fn normalize_color(s: &str) -> String {
     let s = s.trim_matches('"').trim_matches('\'');
     if s.starts_with('#') {
@@ -227,15 +223,16 @@ fn normalize_color(s: &str) -> String {
     }
 }
 
-/// デフォルト ANSI 16色（フォールバック用）
+/// Default ANSI 16-color palette (used as a fallback).
 const DEFAULT_ANSI_COLORS: &[&str] = &[
     "#2E3440", "#BF616A", "#A3BE8C", "#EBCB8B", "#81A1C1", "#B48EAD", "#88C0D0", "#E5E9F0",
     "#4C566A", "#BF616A", "#A3BE8C", "#EBCB8B", "#81A1C1", "#B48EAD", "#8FBCBB", "#ECEFF4",
 ];
 
-/// 既存の config.toml に Ghostty から変換した設定をマージする
+/// Merge the converted Ghostty settings into an existing `config.toml`.
 ///
-/// 各セクションが既に存在する場合は上書き、存在しない場合は末尾に追加する。
+/// If a section already exists in the existing file it is replaced; otherwise the
+/// section is appended at the end.
 fn merge_ghostty_config(existing: &str, converted: &GhosttyConverted) -> String {
     let mut result = existing.to_string();
 
