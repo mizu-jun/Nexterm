@@ -1,26 +1,26 @@
-//! 設定パネル — Ctrl+, でフローティング UI を表示する（左サイドバー付き多カテゴリ設計）
+//! Settings panel — Ctrl+, opens the floating UI (multi-category layout with left sidebar).
 
 use anyhow::Result;
 use nexterm_config::toml_path;
 
-/// Phase 5-11-8 Step 8-3 (Sub-phase A): インラインテキスト入力状態
+/// Phase 5-11-8 Step 8-3 (Sub-phase A): inline text-input state.
 ///
-/// 設定パネル内の TextInput フィールドの編集中状態を保持する。
-/// SSH ホストの name / host / username フィールド編集に使用する。
-/// IME preedit（Sub-phase B）は `preedit` フィールドで保持する。
+/// Holds the in-flight edit state for `TextInput` fields inside the settings
+/// panel. Used to edit the SSH host name / host / username fields.
+/// IME preedit text (Sub-phase B) is stored in the `preedit` field.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TextInputState {
-    /// 編集中バッファ
+    /// Edit buffer.
     pub buffer: String,
-    /// カーソル位置（`buffer` 内のバイトインデックス）
-    /// 不変条件: `buffer.is_char_boundary(cursor) == true`
+    /// Cursor position (byte index inside `buffer`).
+    /// Invariant: `buffer.is_char_boundary(cursor) == true`.
     pub cursor: usize,
-    /// IME 変換中テキスト（Sub-phase B で使用）。`None` は変換中でないことを示す。
+    /// IME preedit text (used in Sub-phase B). `None` means no preedit in flight.
     pub preedit: Option<String>,
 }
 
 impl TextInputState {
-    /// 初期文字列で TextInputState を作る。カーソルは末尾。
+    /// Build a `TextInputState` from an initial string; cursor goes to the end.
     pub fn new(initial: String) -> Self {
         let cursor = initial.len();
         Self {
@@ -30,26 +30,26 @@ impl TextInputState {
         }
     }
 
-    /// カーソル位置に文字を 1 つ挿入し、カーソルをその文字の直後に進める。
+    /// Insert a single character at the cursor and advance past it.
     pub fn insert_char(&mut self, ch: char) {
         self.buffer.insert(self.cursor, ch);
         self.cursor += ch.len_utf8();
     }
 
-    /// カーソル位置に文字列を挿入し、カーソルをその末尾に進める。
-    /// IME `Commit` 経路で複数文字を一括挿入する際にも使う。
+    /// Insert a string at the cursor and advance past it.
+    /// Also used to commit multiple characters at once via the IME `Commit` path.
     pub fn insert_str(&mut self, s: &str) {
         self.buffer.insert_str(self.cursor, s);
         self.cursor += s.len();
     }
 
-    /// カーソル直前の 1 文字を削除する（Backspace）。
-    /// マルチバイト境界を尊重するため `floor_char_boundary` 相当の手動探索を行う。
+    /// Delete the character immediately before the cursor (Backspace).
+    /// Honours multibyte boundaries by doing a manual `floor_char_boundary`-style scan.
     pub fn backspace(&mut self) {
         if self.cursor == 0 {
             return;
         }
-        // カーソル直前の文字境界を探す
+        // Find the character boundary immediately before the cursor.
         let mut prev = self.cursor - 1;
         while prev > 0 && !self.buffer.is_char_boundary(prev) {
             prev -= 1;
@@ -58,7 +58,7 @@ impl TextInputState {
         self.cursor = prev;
     }
 
-    /// カーソル直後の 1 文字を削除する（Delete）。
+    /// Delete the character immediately after the cursor (Delete).
     pub fn delete_forward(&mut self) {
         if self.cursor >= self.buffer.len() {
             return;
@@ -70,7 +70,7 @@ impl TextInputState {
         self.buffer.replace_range(self.cursor..next, "");
     }
 
-    /// カーソルを 1 文字左へ移動する。
+    /// Move the cursor one character left.
     pub fn move_left(&mut self) {
         if self.cursor == 0 {
             return;
@@ -82,7 +82,7 @@ impl TextInputState {
         self.cursor = prev;
     }
 
-    /// カーソルを 1 文字右へ移動する。
+    /// Move the cursor one character right.
     pub fn move_right(&mut self) {
         if self.cursor >= self.buffer.len() {
             return;
@@ -94,18 +94,19 @@ impl TextInputState {
         self.cursor = next;
     }
 
-    /// カーソルを先頭へ移動する。
+    /// Move the cursor to the start of the buffer.
     pub fn move_home(&mut self) {
         self.cursor = 0;
     }
 
-    /// カーソルを末尾へ移動する。
+    /// Move the cursor to the end of the buffer.
     pub fn move_end(&mut self) {
         self.cursor = self.buffer.len();
     }
 
-    /// 表示用文字列を返す。preedit が None なら buffer をそのまま、
-    /// Some(pe) ならカーソル位置に挿入された文字列を返す。
+    /// Return the display string. With `preedit == None`, returns the buffer
+    /// as-is; with `Some(pe)`, returns the string with the preedit inserted at
+    /// the cursor.
     pub fn display_string(&self) -> String {
         match &self.preedit {
             None => self.buffer.clone(),
@@ -117,8 +118,9 @@ impl TextInputState {
         }
     }
 
-    /// 表示用文字列上のカーソル位置（バイト単位）を返す。
-    /// preedit がある場合は preedit の末尾を指す（IME 確定前の見た目に合わせる）。
+    /// Return the cursor position (in bytes) inside the display string.
+    /// When a preedit is present, points to the end of the preedit (matches
+    /// the visual cursor before IME commit).
     pub fn display_cursor(&self) -> usize {
         match &self.preedit {
             None => self.cursor,
@@ -127,35 +129,35 @@ impl TextInputState {
     }
 }
 
-/// スライダーの種別
+/// Slider variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SliderType {
     FontSize,
     WindowOpacity,
-    /// Phase 5-11-6 #6: ウィンドウ内水平パディング (0〜32 px)
+    /// Phase 5-11-6 #6: horizontal window padding (0–32 px).
     WindowPaddingX,
-    /// Phase 5-11-6 #6: ウィンドウ内垂直パディング (0〜32 px)
+    /// Phase 5-11-6 #6: vertical window padding (0–32 px).
     WindowPaddingY,
 }
 
-/// マウスドラッグ中のスライダー状態
+/// State of an in-flight slider drag.
 #[derive(Debug, Clone)]
 pub struct SliderDrag {
-    /// どのスライダーをドラッグしているか
+    /// Which slider is being dragged.
     pub slider_type: SliderType,
-    /// スライダートラックの開始 X 座標（ピクセル）
+    /// Slider track start X (pixels).
     pub track_x: f32,
-    /// スライダートラックの幅（ピクセル）
+    /// Slider track width (pixels).
     pub track_w: f32,
-    /// スライダーの最小値
+    /// Slider minimum value.
     #[allow(dead_code)]
     pub min_val: f32,
-    /// スライダーの最大値
+    /// Slider maximum value.
     #[allow(dead_code)]
     pub max_val: f32,
 }
 
-/// サイドバーのカテゴリ
+/// Sidebar category.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingsCategory {
     Startup,
@@ -180,13 +182,13 @@ impl SettingsCategory {
 
     pub fn label(&self) -> &str {
         match self {
-            SettingsCategory::Startup => "スタートアップ",
-            SettingsCategory::Font => "フォント",
-            SettingsCategory::Theme => "テーマ",
-            SettingsCategory::Window => "ウィンドウ",
+            SettingsCategory::Startup => "Startup",
+            SettingsCategory::Font => "Font",
+            SettingsCategory::Theme => "Theme",
+            SettingsCategory::Window => "Window",
             SettingsCategory::Ssh => "SSH",
-            SettingsCategory::Keybindings => "キーバインド",
-            SettingsCategory::Profiles => "プロファイル",
+            SettingsCategory::Keybindings => "Keybindings",
+            SettingsCategory::Profiles => "Profiles",
         }
     }
 
@@ -203,7 +205,7 @@ impl SettingsCategory {
     }
 }
 
-/// プロファイルエントリ（設定パネル内で編集可能）
+/// Profile entry (editable inside the settings panel).
 #[derive(Debug, Clone)]
 pub struct ProfileEntry {
     pub name: String,
@@ -225,28 +227,28 @@ impl Default for ProfileEntry {
     }
 }
 
-/// SSH ホストエントリ（Phase 5-11-8 Step 8-1: 設定パネル内で表示専用）
+/// SSH host entry (Phase 5-11-8 Step 8-1: display-only inside the settings panel).
 ///
-/// `nexterm-config::HostConfig` のうち SR / 設定パネルでの表示に必要な
-/// フィールドだけを抜き出した軽量な構造。
-/// Step 8-2 / 8-3 で編集機能を追加する際にフィールドを増やす予定。
+/// A lightweight subset of `nexterm-config::HostConfig` that keeps only the
+/// fields needed for SR / settings-panel display. Step 8-2 / 8-3 will extend
+/// the struct when edit functionality lands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SshHostEntry {
-    /// 表示名（`HostConfig.name`）
+    /// Display name (`HostConfig.name`).
     pub name: String,
-    /// ホスト名または IP アドレス
+    /// Hostname or IP address.
     pub host: String,
-    /// SSH ポート
+    /// SSH port.
     pub port: u16,
-    /// ユーザー名
+    /// Username.
     pub username: String,
-    /// 認証方式（"password" / "key" / "agent"）
+    /// Authentication type (`"password"` / `"key"` / `"agent"`).
     pub auth_type: String,
 }
 
 impl SshHostEntry {
-    /// SR / UI で読み上げ / 描画する 1 行ラベルを生成する。
-    /// 例: `"myhost (alice@example.com:2222)"`
+    /// Build the one-line label rendered / announced by the UI / SR.
+    /// Example: `"myhost (alice@example.com:2222)"`.
     pub fn label(&self) -> String {
         let user_part = if self.username.is_empty() {
             self.host.clone()
@@ -266,78 +268,80 @@ impl SshHostEntry {
     }
 }
 
-/// 設定パネルの状態
+/// Settings-panel state.
 pub struct SettingsPanel {
     pub is_open: bool,
-    /// 開閉アニメーションの進行度（0.0 = 完全に閉じた状態, 1.0 = 完全に開いた状態）
-    /// 毎フレーム renderer 側で加算される
+    /// Open/close animation progress (0.0 = fully closed, 1.0 = fully open).
+    /// Incremented every frame by the renderer.
     pub open_progress: f32,
-    /// マウスドラッグ中のスライダー（None = ドラッグ中でない）
+    /// Slider currently being dragged with the mouse (`None` when no drag).
     pub drag_slider: Option<SliderDrag>,
-    /// 選択中のカテゴリ
+    /// Currently selected category.
     pub category: SettingsCategory,
-    /// フォントサイズ（スライダー値）
+    /// Font size (slider value).
     pub font_size: f32,
-    /// カラースキーム選択インデックス
+    /// Selected color-scheme index.
     pub scheme_index: usize,
-    /// 不透明度
+    /// Window opacity.
     pub opacity: f32,
-    /// 変更があるか
+    /// Whether the panel has unsaved changes.
     pub dirty: bool,
-    /// フォントファミリー名（編集可能）
+    /// Font family name (editable).
     pub font_family: String,
-    /// フォントファミリー入力フィールドがフォーカスされているか
+    /// Whether the font-family input is focused.
     pub font_family_editing: bool,
-    /// プロファイル一覧
+    /// Profile list.
     pub profiles: Vec<ProfileEntry>,
-    /// 選択中のプロファイルインデックス
+    /// Selected profile index.
     pub selected_profile: usize,
-    /// SSH ホスト一覧（Phase 5-11-8 Step 8-1: 表示専用、`config.hosts` から生成）
+    /// SSH host list (Phase 5-11-8 Step 8-1: display-only, generated from `config.hosts`).
     pub ssh_hosts: Vec<SshHostEntry>,
-    /// 選択中の SSH ホストインデックス（`ssh_hosts` 内）
+    /// Currently selected SSH host index (into `ssh_hosts`).
     pub selected_host_index: usize,
-    /// 起動時セッション名
+    /// Startup session name.
     #[allow(dead_code)]
     pub startup_session: String,
-    /// タブ名変更中のウィンドウ ID（None = 変更なし）
+    /// Window ID whose tab name is being edited (`None` = no edit in flight).
     pub tab_rename_editing: Option<u32>,
-    /// タブ名変更中のテキスト
+    /// In-flight tab-rename text.
     pub tab_rename_text: String,
-    /// 言語選択インデックス（LANGUAGE_OPTIONS の位置）
+    /// Selected language index (position within `LANGUAGE_OPTIONS`).
     pub language_index: usize,
-    /// 起動時に更新確認を行うか
+    /// Whether to check for updates at startup.
     pub auto_check_update: bool,
-    /// カーソル形状（Phase 5-11-6 #6）。block / beam / underline。
-    /// 保存時は TOML の top-level `cursor_style` に書き戻す。
+    /// Cursor shape (Phase 5-11-6 #6). `block` / `beam` / `underline`.
+    /// On save we write back to the top-level `cursor_style` key in the TOML.
     pub cursor_style: nexterm_config::CursorStyle,
-    /// ウィンドウ内の水平パディング（ピクセル、0〜32）。
-    /// 保存時は TOML の `[window].padding_x` に書き戻す。
+    /// Horizontal window padding (pixels, 0–32).
+    /// On save we write back to `[window].padding_x`.
     pub padding_x: u32,
-    /// ウィンドウ内の垂直パディング（ピクセル、0〜32）。
+    /// Vertical window padding (pixels, 0–32).
     pub padding_y: u32,
-    /// GPU プレゼンテーションモード（fifo / mailbox / auto）。
-    /// 保存時は TOML の `[gpu].present_mode` に書き戻す。
+    /// GPU presentation mode (`fifo` / `mailbox` / `auto`).
+    /// On save we write back to `[gpu].present_mode`.
     pub present_mode: nexterm_config::PresentModeConfig,
-    /// Phase 5-11-6 #6: Window カテゴリ内のフォーカス中フィールド。
-    /// 0=opacity / 1=cursor_style / 2=padding_x / 3=padding_y / 4=present_mode
+    /// Phase 5-11-6 #6: focused field index inside the Window category.
+    /// 0=opacity / 1=cursor_style / 2=padding_x / 3=padding_y / 4=present_mode.
     pub window_field_focus: u8,
-    /// Phase 5-11-8 Step 8-2: Ssh カテゴリ内のフォーカス中フィールド。
-    /// 0=ListBox（ホスト選択） / 1=name / 2=host / 3=port / 4=username / 5=auth_type
-    /// 範囲: 0..=5。AccessKit Focus / 上下キーで更新する。
+    /// Phase 5-11-8 Step 8-2: focused field index inside the SSH category.
+    /// 0=ListBox (host selection) / 1=name / 2=host / 3=port / 4=username / 5=auth_type.
+    /// Range: 0..=5. Updated via AccessKit Focus or the arrow keys.
     pub ssh_field_focus: u8,
-    /// Phase 5-11-8 Step 8-3 (Sub-phase A): SSH ホストフィールドの編集中状態。
-    /// `Some(state)` で編集モード ON、`None` で OFF。`ssh_field_focus` が 1/2/4
-    /// （name/host/username）のフィールドに対応する。Enter で開始、Enter で確定、
-    /// Esc でキャンセル。port / auth_type は Sub-phase C で別の UI（SpinButton /
-    /// ComboBox）を使うため Option には入らない。
+    /// Phase 5-11-8 Step 8-3 (Sub-phase A): in-flight SSH host field edit state.
+    /// `Some(state)` = edit mode is on; `None` = off. Corresponds to
+    /// `ssh_field_focus` values 1/2/4 (name/host/username). Enter starts the
+    /// edit, Enter commits, Esc cancels. `port` / `auth_type` use separate UI
+    /// (SpinButton / ComboBox) in Sub-phase C and do not flow through this option.
     pub ssh_field_editing: Option<TextInputState>,
-    /// Phase 5-11-8 Step 8-3 (Sub-phase D): SSH 削除確認ダイアログが開いているか。
-    /// `true` のとき `Role::AlertDialog` のモーダル（NodeId 47）を表示し、
-    /// Confirm（48） / Cancel（49）ボタンで操作する。Esc キーは Cancel に等しい。
+    /// Phase 5-11-8 Step 8-3 (Sub-phase D): whether the SSH delete-confirmation
+    /// dialog is open. When `true`, the `Role::AlertDialog` modal (NodeId 47) is
+    /// shown; the user operates the Confirm (48) / Cancel (49) buttons. Esc
+    /// acts as Cancel.
     pub ssh_delete_dialog_open: bool,
-    /// Phase 5-11-8 Step 8-3 (Sub-phase D): 削除確認ダイアログでフォーカスされて
-    /// いるボタン。`false` = Cancel（49、デフォルト・誤削除防止）、`true` = Confirm（48）。
-    /// ←/→ で切り替え、Enter で実行。
+    /// Phase 5-11-8 Step 8-3 (Sub-phase D): which button has focus in the
+    /// delete-confirmation dialog. `false` = Cancel (49, default; prevents
+    /// accidental deletion); `true` = Confirm (48). Left/Right toggles; Enter
+    /// executes.
     pub ssh_delete_dialog_confirm_focused: bool,
 }
 
@@ -351,7 +355,7 @@ impl Default for SettingsPanel {
 impl SettingsPanel {
     pub fn new(config: &nexterm_config::Config) -> Self {
         let scheme_index = scheme_name_to_index(&config.colors);
-        // config.profiles から ProfileEntry を生成する
+        // Build `ProfileEntry` items from `config.profiles`.
         let profiles: Vec<ProfileEntry> = config
             .profiles
             .iter()
@@ -366,7 +370,7 @@ impl SettingsPanel {
                 working_dir: p.working_dir.clone().unwrap_or_default(),
             })
             .collect();
-        // Phase 5-11-8 Step 8-1: config.hosts から SshHostEntry を生成する
+        // Phase 5-11-8 Step 8-1: build `SshHostEntry` items from `config.hosts`.
         let ssh_hosts: Vec<SshHostEntry> = config
             .hosts
             .iter()
@@ -407,7 +411,8 @@ impl SettingsPanel {
             language_index,
             auto_check_update: config.auto_check_update,
             cursor_style: config.cursor_style.clone(),
-            // padding_x / padding_y は config では u32 だが UI 上は 0〜32 にクランプ
+            // `padding_x` / `padding_y` are `u32` in the config but the UI
+            // clamps them to 0..=32.
             padding_x: config.window.padding_x.min(32),
             padding_y: config.window.padding_y.min(32),
             present_mode: config.gpu.present_mode.clone(),
@@ -417,7 +422,7 @@ impl SettingsPanel {
 
     pub fn open(&mut self) {
         self.is_open = true;
-        // open_progress は 0 から始めてアニメーションを再生する
+        // Start the animation from 0 to replay the open transition.
         self.open_progress = 0.0;
     }
 
@@ -428,59 +433,59 @@ impl SettingsPanel {
         self.dirty = false;
         self.font_family_editing = false;
         self.tab_rename_editing = None;
-        // Phase 5-11-8 Step 8-3 (Sub-phase A): SSH フィールド編集モードも解除
+        // Phase 5-11-8 Step 8-3 (Sub-phase A): also leave SSH field-edit mode.
         self.ssh_field_editing = None;
-        // Phase 5-11-8 Step 8-3 (Sub-phase D): 削除確認ダイアログも閉じる
+        // Phase 5-11-8 Step 8-3 (Sub-phase D): also close the delete dialog.
         self.ssh_delete_dialog_open = false;
         self.ssh_delete_dialog_confirm_focused = false;
     }
 
-    /// スライダー X 座標からフォントサイズを設定する（マウスクリック/ドラッグ用）
+    /// Set the font size from a slider X coordinate (used by mouse clicks/drags).
     pub fn set_font_size_from_slider(&mut self, cursor_x: f32, track_x: f32, track_w: f32) {
         let ratio = ((cursor_x - track_x) / track_w).clamp(0.0, 1.0);
-        // フォントサイズ範囲: 8.0〜32.0 (24.0 の範囲、0.5 単位に丸める)
+        // Font size range: 8.0..=32.0 (a 24-wide range, snapped to 0.5 steps).
         let raw = 8.0 + ratio * 24.0;
         self.font_size = (raw * 2.0).round() / 2.0;
         self.dirty = true;
     }
 
-    /// スライダー X 座標から不透明度を設定する（マウスクリック/ドラッグ用）
+    /// Set the opacity from a slider X coordinate (used by mouse clicks/drags).
     pub fn set_opacity_from_slider(&mut self, cursor_x: f32, track_x: f32, track_w: f32) {
         let ratio = ((cursor_x - track_x) / track_w).clamp(0.0, 1.0);
-        // 不透明度範囲: 0.1〜1.0 (5% 単位に丸める)
+        // Opacity range: 0.1..=1.0 (snapped to 5% steps).
         let raw = 0.1 + ratio * 0.9;
         self.opacity = (raw * 20.0).round() / 20.0;
         self.dirty = true;
     }
 
-    /// Phase 5-11-6 #6: スライダー X 座標から padding_x (0〜32 px) を設定する
+    /// Phase 5-11-6 #6: set `padding_x` (0–32 px) from a slider X coordinate.
     pub fn set_padding_x_from_slider(&mut self, cursor_x: f32, track_x: f32, track_w: f32) {
         let ratio = ((cursor_x - track_x) / track_w).clamp(0.0, 1.0);
         self.padding_x = (ratio * 32.0).round() as u32;
         self.dirty = true;
     }
 
-    /// Phase 5-11-6 #6: スライダー X 座標から padding_y (0〜32 px) を設定する
+    /// Phase 5-11-6 #6: set `padding_y` (0–32 px) from a slider X coordinate.
     pub fn set_padding_y_from_slider(&mut self, cursor_x: f32, track_x: f32, track_w: f32) {
         let ratio = ((cursor_x - track_x) / track_w).clamp(0.0, 1.0);
         self.padding_y = (ratio * 32.0).round() as u32;
         self.dirty = true;
     }
 
-    /// イーズアウトキュービック: t^3 の逆関数でスムーズな減速を表現する
+    /// Ease-out cubic: smooth deceleration via `1 - (1-t)^3`.
     pub fn eased_progress(&self) -> f32 {
         let t = self.open_progress.clamp(0.0, 1.0);
         1.0 - (1.0 - t).powi(3)
     }
 
-    /// 左サイドバーの前のカテゴリへ移動する
+    /// Move to the previous category in the sidebar.
     pub fn prev_category(&mut self) {
         let idx = Self::category_index(&self.category);
         let len = SettingsCategory::ALL.len();
         self.category = SettingsCategory::ALL[(idx + len - 1) % len].clone();
     }
 
-    /// 左サイドバーの次のカテゴリへ移動する
+    /// Move to the next category in the sidebar.
     pub fn next_category(&mut self) {
         let idx = Self::category_index(&self.category);
         self.category = SettingsCategory::ALL[(idx + 1) % SettingsCategory::ALL.len()].clone();
@@ -493,7 +498,7 @@ impl SettingsPanel {
             .unwrap_or(0)
     }
 
-    /// 後方互換: tab インデックスでカテゴリを設定する（旧 API）
+    /// Backward-compat alias for setting the category by tab index (old API).
     #[allow(dead_code)]
     pub fn next_tab(&mut self) {
         self.next_category();
@@ -504,7 +509,7 @@ impl SettingsPanel {
         self.prev_category();
     }
 
-    /// フォントファミリー入力フィールドに文字を追加する
+    /// Append a character to the font-family input field.
     pub fn push_font_family_char(&mut self, ch: char) {
         if self.font_family_editing {
             self.font_family.push(ch);
@@ -512,7 +517,7 @@ impl SettingsPanel {
         }
     }
 
-    /// フォントファミリー入力フィールドの末尾を削除する
+    /// Pop the trailing character from the font-family input field.
     pub fn pop_font_family_char(&mut self) {
         if self.font_family_editing {
             self.font_family.pop();
@@ -556,36 +561,37 @@ impl SettingsPanel {
         self.dirty = true;
     }
 
-    /// SR の `Action::SetValue(NumericValue)` 経路用: f64 値を 0.5 単位に丸めて
-    /// 8.0〜32.0 にクランプしてフォントサイズに設定する。
+    /// Used by SR via `Action::SetValue(NumericValue)`: clamp the f64 value to
+    /// `8.0..=32.0`, snap to 0.5 steps, and store it as the font size.
     ///
-    /// マウスドラッグ経路（`set_font_size_from_slider`）とは入力（ピクセル座標 vs 直接値）が
-    /// 異なるが、丸めと clamp の幅は共通。
+    /// The mouse-drag path (`set_font_size_from_slider`) takes a pixel X
+    /// coordinate instead of a direct value, but the rounding and clamp ranges
+    /// are identical.
     pub fn set_font_size_value(&mut self, v: f64) {
         let raw = (v as f32).clamp(8.0, 32.0);
         self.font_size = (raw * 2.0).round() / 2.0;
         self.dirty = true;
     }
 
-    /// SR の `Action::SetValue(NumericValue)` 経路用: f64 値を 0.05 単位に丸めて
-    /// 0.1〜1.0 にクランプして不透明度に設定する。
+    /// Used by SR via `Action::SetValue(NumericValue)`: clamp the f64 value to
+    /// `0.1..=1.0`, snap to 0.05 steps, and store it as the opacity.
     pub fn set_opacity_value(&mut self, v: f64) {
         let raw = (v as f32).clamp(0.1, 1.0);
         self.opacity = (raw * 20.0).round() / 20.0;
         self.dirty = true;
     }
 
-    /// SR の `Action::Click` 経路用: 自動更新確認チェックボックスをトグル。
+    /// Used by SR via `Action::Click`: toggle the "check for updates at startup" box.
     pub fn toggle_auto_check_update(&mut self) {
         self.auto_check_update = !self.auto_check_update;
         self.dirty = true;
     }
 
-    // ===== Phase 5-11-6 #6: カーソルスタイル =====
+    // ===== Phase 5-11-6 #6: cursor style =====
     //
-    // Block / Beam / Underline の 3 値を循環させる。
-    // 保存時は TOML の `cursor_style = "block" | "beam" | "underline"` に書き戻す。
-    //
+    // Cycles through Block / Beam / Underline.
+    // On save the TOML stores `cursor_style = "block" | "beam" | "underline"`.
+
     pub fn next_cursor_style(&mut self) {
         use nexterm_config::CursorStyle::*;
         self.cursor_style = match self.cursor_style {
@@ -606,8 +612,8 @@ impl SettingsPanel {
         self.dirty = true;
     }
 
-    /// 列挙順序のインデックス（0=Block, 1=Beam, 2=Underline）。UI 描画と AccessKit
-    /// `Action::SetValue` 経路で使う（現状はテスト経由のみ）。
+    /// Enumeration index (0=Block, 1=Beam, 2=Underline). Used for UI drawing
+    /// and the AccessKit `Action::SetValue` path (currently only via tests).
     #[allow(dead_code)]
     pub fn cursor_style_index(&self) -> usize {
         use nexterm_config::CursorStyle::*;
@@ -618,17 +624,17 @@ impl SettingsPanel {
         }
     }
 
-    /// UI に表示するラベル（日本語 + 英語併記）。
+    /// UI display label.
     pub fn cursor_style_label(&self) -> &'static str {
         use nexterm_config::CursorStyle::*;
         match self.cursor_style {
-            Block => "ブロック / Block",
-            Beam => "ビーム / Beam",
-            Underline => "アンダーライン / Underline",
+            Block => "Block",
+            Beam => "Beam",
+            Underline => "Underline",
         }
     }
 
-    /// TOML 書き戻し用の小文字キー（serde の `rename_all = "lowercase"` に揃える）。
+    /// Lowercase TOML key for write-back (matches `serde`'s `rename_all = "lowercase"`).
     pub fn cursor_style_toml_key(&self) -> &'static str {
         use nexterm_config::CursorStyle::*;
         match self.cursor_style {
@@ -638,10 +644,10 @@ impl SettingsPanel {
         }
     }
 
-    // ===== Phase 5-11-6 #6: ウィンドウパディング =====
+    // ===== Phase 5-11-6 #6: window padding =====
     //
-    // 0〜32 ピクセル。1 px 単位で増減できる。SR の `Action::SetValue(NumericValue)`
-    // 経路は f64 を u32 に丸めて clamp する。
+    // 0–32 pixels; adjustable in 1-pixel steps. The SR
+    // `Action::SetValue(NumericValue)` path rounds the f64 to u32 and clamps.
 
     pub fn set_padding_x_value(&mut self, v: f64) {
         self.padding_x = (v.round().clamp(0.0, 32.0)) as u32;
@@ -673,10 +679,10 @@ impl SettingsPanel {
         self.dirty = true;
     }
 
-    // ===== Phase 5-11-6 #6: プレゼンテーションモード =====
+    // ===== Phase 5-11-6 #6: presentation mode =====
     //
-    // Fifo / Mailbox / Auto の 3 値を循環させる。
-    // 保存時は TOML の `[gpu].present_mode` に書き戻す。
+    // Cycles through Fifo / Mailbox / Auto.
+    // On save the TOML stores `[gpu].present_mode`.
 
     pub fn next_present_mode(&mut self) {
         use nexterm_config::PresentModeConfig::*;
@@ -711,9 +717,9 @@ impl SettingsPanel {
     pub fn present_mode_label(&self) -> &'static str {
         use nexterm_config::PresentModeConfig::*;
         match self.present_mode {
-            Fifo => "Fifo (垂直同期 / 高互換性)",
-            Mailbox => "Mailbox (低遅延 / 推奨)",
-            Auto => "Auto (環境依存)",
+            Fifo => "Fifo (VSync / high compatibility)",
+            Mailbox => "Mailbox (low latency / recommended)",
+            Auto => "Auto (environment-dependent)",
         }
     }
 
@@ -726,16 +732,17 @@ impl SettingsPanel {
         }
     }
 
-    // ===== Phase 5-11-6 #6: Window カテゴリ内フィールドフォーカス =====
+    // ===== Phase 5-11-6 #6: focused field inside the Window category =====
     //
-    // 0=opacity / 1=cursor_style / 2=padding_x / 3=padding_y / 4=present_mode
-    // ↑/↓ でフィールド間移動、←/→ でフォーカス中フィールドの値を変更する。
+    // 0=opacity / 1=cursor_style / 2=padding_x / 3=padding_y / 4=present_mode.
+    // Up/Down moves between fields; Left/Right changes the focused field's value.
 
-    /// Window カテゴリ内のフィールド総数
+    /// Total number of fields in the Window category.
     pub const WINDOW_FIELD_COUNT: u8 = 5;
 
-    /// 次のフィールドにフォーカスを移す（最後で停止）。
-    /// 戻り値: 移動できたら true、すでに最後なら false（カテゴリ移動の判断に使う）。
+    /// Move focus to the next field (stops at the last one).
+    /// Returns `true` if focus moved; `false` if already on the last field
+    /// (used by the category-navigation fallback).
     pub fn next_window_field(&mut self) -> bool {
         if self.window_field_focus + 1 < Self::WINDOW_FIELD_COUNT {
             self.window_field_focus += 1;
@@ -745,7 +752,7 @@ impl SettingsPanel {
         }
     }
 
-    /// 前のフィールドにフォーカスを移す（先頭で停止）。
+    /// Move focus to the previous field (stops at the first one).
     pub fn prev_window_field(&mut self) -> bool {
         if self.window_field_focus > 0 {
             self.window_field_focus -= 1;
@@ -755,7 +762,8 @@ impl SettingsPanel {
         }
     }
 
-    /// フォーカス中フィールドの値を増加させる（←/→ の右、または ↑ の Window カテゴリ補助）。
+    /// Increment the focused field's value (Right arrow, or the Up arrow's
+    /// fallback inside the Window category).
     pub fn window_field_increase(&mut self) {
         match self.window_field_focus {
             0 => self.increase_opacity(),
@@ -767,7 +775,7 @@ impl SettingsPanel {
         }
     }
 
-    /// フォーカス中フィールドの値を減少させる。
+    /// Decrement the focused field's value.
     pub fn window_field_decrease(&mut self) {
         match self.window_field_focus {
             0 => self.decrease_opacity(),
@@ -779,7 +787,7 @@ impl SettingsPanel {
         }
     }
 
-    /// scheme_index からスキーム名を返す
+    /// Return the scheme name for the current `scheme_index`.
     pub fn scheme_name(&self) -> &str {
         const SCHEMES: [&str; 9] = [
             "dark",
@@ -795,7 +803,7 @@ impl SettingsPanel {
         SCHEMES[self.scheme_index % 9]
     }
 
-    /// 現在選択中の言語コードを返す
+    /// Return the currently selected language code.
     pub fn language_code(&self) -> &str {
         LANGUAGE_OPTIONS
             .get(self.language_index)
@@ -803,34 +811,35 @@ impl SettingsPanel {
             .unwrap_or("auto")
     }
 
-    /// 次の言語に切り替える
+    /// Switch to the next language.
     pub fn next_language(&mut self) {
         self.language_index = (self.language_index + 1) % LANGUAGE_OPTIONS.len();
         self.dirty = true;
     }
 
-    /// 前の言語に切り替える
+    /// Switch to the previous language.
     pub fn prev_language(&mut self) {
         let len = LANGUAGE_OPTIONS.len();
         self.language_index = (self.language_index + len - 1) % len;
         self.dirty = true;
     }
 
-    // ===== Phase 5-11-8 Step 8-2: SSH ホストフィールド編集 =====
+    // ===== Phase 5-11-8 Step 8-2: SSH host field editing =====
     //
-    // 選択中ホスト（`ssh_hosts[selected_host_index]`）の 5 フィールドを編集する。
-    // AccessKit `Action::SetValue` 経路（TextInput / SpinButton）と `Action::Click`
-    // 経路（ComboBox サイクル）の両方をサポートする。すべての変更は `dirty = true`。
+    // Edits the 5 fields of the currently-selected host
+    // (`ssh_hosts[selected_host_index]`). Supports both the AccessKit
+    // `Action::SetValue` path (TextInput / SpinButton) and the
+    // `Action::Click` path (ComboBox cycling). Every change sets `dirty = true`.
 
-    /// 認証方式の選択肢（auth_type の値）。`HostConfig` の serde 仕様に揃える。
+    /// Allowed auth_type values (matches the `HostConfig` serde spec).
     pub const SSH_AUTH_TYPES: &'static [&'static str] = &["password", "key", "agent"];
 
-    /// 選択中ホストが存在すれば可変参照を返す。
+    /// Return a mutable reference to the currently-selected host (if any).
     fn selected_ssh_host_mut(&mut self) -> Option<&mut SshHostEntry> {
         self.ssh_hosts.get_mut(self.selected_host_index)
     }
 
-    /// name フィールドを更新する（TextInput SetValue 経路）。
+    /// Update the `name` field (TextInput SetValue path).
     pub fn set_ssh_host_name(&mut self, text: String) {
         if let Some(host) = self.selected_ssh_host_mut() {
             host.name = text;
@@ -838,7 +847,7 @@ impl SettingsPanel {
         }
     }
 
-    /// host フィールドを更新する（TextInput SetValue 経路）。
+    /// Update the `host` field (TextInput SetValue path).
     pub fn set_ssh_host_host(&mut self, text: String) {
         if let Some(host) = self.selected_ssh_host_mut() {
             host.host = text;
@@ -846,7 +855,7 @@ impl SettingsPanel {
         }
     }
 
-    /// username フィールドを更新する（TextInput SetValue 経路）。
+    /// Update the `username` field (TextInput SetValue path).
     pub fn set_ssh_host_username(&mut self, text: String) {
         if let Some(host) = self.selected_ssh_host_mut() {
             host.username = text;
@@ -854,8 +863,8 @@ impl SettingsPanel {
         }
     }
 
-    /// port フィールドを更新する（SpinButton SetValue 経路）。
-    /// f64 を u16 にクランプ（1〜65535）。
+    /// Update the `port` field (SpinButton SetValue path).
+    /// Clamps f64 to u16 (1..=65535).
     pub fn set_ssh_host_port_value(&mut self, v: f64) {
         let clamped = v.round().clamp(1.0, 65535.0) as u16;
         if let Some(host) = self.selected_ssh_host_mut() {
@@ -864,8 +873,8 @@ impl SettingsPanel {
         }
     }
 
-    /// port を +1 する（SpinButton Increment 経路、65535 で上限クランプ）。
-    /// `u16::saturating_add` が 65535 で自動的に飽和するため明示的な `.min()` は不要。
+    /// Increment `port` by 1 (SpinButton Increment path; saturates at 65535).
+    /// `u16::saturating_add` saturates at 65535 automatically, so `.min()` is unnecessary.
     pub fn increase_ssh_host_port(&mut self) {
         if let Some(host) = self.selected_ssh_host_mut() {
             host.port = host.port.saturating_add(1);
@@ -873,7 +882,7 @@ impl SettingsPanel {
         }
     }
 
-    /// port を -1 する（SpinButton Decrement 経路、1 で下限クランプ）。
+    /// Decrement `port` by 1 (SpinButton Decrement path; saturates at 1).
     pub fn decrease_ssh_host_port(&mut self) {
         if let Some(host) = self.selected_ssh_host_mut() {
             host.port = host.port.saturating_sub(1).max(1);
@@ -881,8 +890,9 @@ impl SettingsPanel {
         }
     }
 
-    /// auth_type を次の値に切り替える（ComboBox Click / Increment 経路）。
-    /// `SSH_AUTH_TYPES` を循環する。未知の値が入っていた場合は先頭にリセット。
+    /// Advance `auth_type` to the next value (ComboBox Click / Increment path).
+    /// Cycles through `SSH_AUTH_TYPES`. If the current value is unknown, resets
+    /// to the first entry.
     pub fn next_ssh_auth_type(&mut self) {
         let types = Self::SSH_AUTH_TYPES;
         if let Some(host) = self.selected_ssh_host_mut() {
@@ -892,7 +902,7 @@ impl SettingsPanel {
         }
     }
 
-    /// auth_type を前の値に切り替える（ComboBox Decrement 経路）。
+    /// Move `auth_type` to the previous value (ComboBox Decrement path).
     pub fn prev_ssh_auth_type(&mut self) {
         let types = Self::SSH_AUTH_TYPES;
         if let Some(host) = self.selected_ssh_host_mut() {
@@ -902,22 +912,25 @@ impl SettingsPanel {
         }
     }
 
-    // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): Add / Delete + 削除確認ダイアログ =====
+    // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): Add / Delete + delete-confirmation dialog =====
     //
-    // - `add_ssh_host`: 全空 + port=22 + auth_type="password" の新規ホストを末尾に追加し、
-    //   選択を新規ホストへ移動、name フィールド（field_id=1）の編集モードを即時開始する。
-    // - `open_ssh_delete_dialog`: 削除確認ダイアログを開く。デフォルトのフォーカスは
-    //   Cancel ボタン（誤削除防止）。
-    // - `cancel_ssh_delete_dialog`: ダイアログを閉じる（削除実行なし）。
-    // - `confirm_ssh_delete_dialog`: 選択中ホストを削除し、ダイアログを閉じる。
-    //   削除後の選択行は n クランプ（リストが詰まる、末尾なら n-1）。
+    // - `add_ssh_host`: append a host with all-empty strings + port=22 +
+    //   auth_type="password", move the selection to the new entry, and
+    //   immediately enter edit mode on the name field (field_id=1).
+    // - `open_ssh_delete_dialog`: open the delete-confirmation dialog. The
+    //   default focus is on the Cancel button (prevents accidental deletion).
+    // - `cancel_ssh_delete_dialog`: close the dialog without deleting.
+    // - `confirm_ssh_delete_dialog`: delete the selected host and close the
+    //   dialog. The post-deletion selection clamps to n (list shifts up; uses
+    //   n-1 when the deleted index was the last entry).
 
-    /// 新規 SSH ホストを末尾に追加し、編集を開始する（Add ボタン経路）。
+    /// Append a new SSH host and start editing it (the Add button path).
     ///
-    /// デフォルト値: `name=""`, `host=""`, `port=22`, `username=""`, `auth_type="password"`。
-    /// 追加直後は `selected_host_index = ssh_hosts.len() - 1` で新規ホストを選択、
-    /// `ssh_field_focus = 1`（name）に移動し、`begin_ssh_field_edit()` で即時編集モード
-    /// 開始する。これにより SR ユーザーは Add 押下直後から名前入力を始められる。
+    /// Default values: `name=""`, `host=""`, `port=22`, `username=""`,
+    /// `auth_type="password"`. After appending, the selection moves to
+    /// `selected_host_index = ssh_hosts.len() - 1`, `ssh_field_focus` becomes
+    /// 1 (name), and `begin_ssh_field_edit()` is called so SR users can start
+    /// typing the name immediately.
     pub fn add_ssh_host(&mut self) {
         let new_host = SshHostEntry {
             name: String::new(),
@@ -929,15 +942,16 @@ impl SettingsPanel {
         self.ssh_hosts.push(new_host);
         self.selected_host_index = self.ssh_hosts.len() - 1;
         self.ssh_field_focus = 1;
-        // 即時編集モード開始（name フィールド）
+        // Immediately enter edit mode on the name field.
         self.ssh_field_editing = Some(TextInputState::new(String::new()));
         self.dirty = true;
     }
 
-    /// 削除確認ダイアログを開く（Delete ボタン経路）。
+    /// Open the delete-confirmation dialog (the Delete button path).
     ///
-    /// 空リスト時は何もしない（disabled 扱い）。デフォルトフォーカスは
-    /// Cancel ボタンで、誤削除を防ぐ標準的な UX。
+    /// No-op when the host list is empty (treated as disabled). The default
+    /// focus is on the Cancel button — the standard UX guard against
+    /// accidental deletions.
     pub fn open_ssh_delete_dialog(&mut self) {
         if self.ssh_hosts.is_empty() {
             return;
@@ -946,28 +960,30 @@ impl SettingsPanel {
         self.ssh_delete_dialog_confirm_focused = false;
     }
 
-    /// 削除確認ダイアログを閉じる（Cancel ボタン or Esc キー経路）。
-    /// ホストには変更を加えない。
+    /// Close the delete-confirmation dialog (the Cancel button or Esc path).
+    /// Leaves the host unchanged.
     pub fn cancel_ssh_delete_dialog(&mut self) {
         self.ssh_delete_dialog_open = false;
         self.ssh_delete_dialog_confirm_focused = false;
     }
 
-    /// 削除確認ダイアログで「削除」を確定する（Confirm ボタン or Enter キー経路）。
+    /// Confirm "delete" in the delete-confirmation dialog (Confirm button or Enter).
     ///
-    /// 選択中ホストを削除し、ダイアログを閉じる。削除後の選択行は n クランプ:
-    /// - 削除前 selected_host_index=n、ssh_hosts.len()=L とすると
-    /// - 削除後の有効インデックス上限は L-1 → 0 にクランプ
-    /// - n が末尾だった場合は n-1 が新しい選択行
-    /// - リストが空になった場合は selected_host_index=0 に戻し、ssh_field_focus=0
+    /// Deletes the selected host and closes the dialog. Post-deletion selection
+    /// clamps to n:
+    /// - With `selected_host_index = n` before the delete and `ssh_hosts.len() = L`,
+    ///   the new upper bound is `L - 1`; clamp to 0 otherwise.
+    /// - When `n` was the last entry, the new selection is `n - 1`.
+    /// - When the list becomes empty, reset `selected_host_index = 0` and
+    ///   `ssh_field_focus = 0`.
     pub fn confirm_ssh_delete_dialog(&mut self) {
         if self.selected_host_index < self.ssh_hosts.len() {
             self.ssh_hosts.remove(self.selected_host_index);
-            // n クランプ: 末尾を削除した場合は n-1 にする
+            // n clamp: when the deleted index was the tail, fall back to n-1.
             if !self.ssh_hosts.is_empty() && self.selected_host_index >= self.ssh_hosts.len() {
                 self.selected_host_index = self.ssh_hosts.len() - 1;
             }
-            // 空になった場合は ListBox にフォーカスを戻す
+            // When the list is empty, return focus to the ListBox.
             if self.ssh_hosts.is_empty() {
                 self.selected_host_index = 0;
                 self.ssh_field_focus = 0;
@@ -978,21 +994,23 @@ impl SettingsPanel {
         self.ssh_delete_dialog_confirm_focused = false;
     }
 
-    /// 削除確認ダイアログの ←/→ キーでフォーカスを切り替える（Confirm ↔ Cancel）。
+    /// Toggle focus in the delete-confirmation dialog (Confirm ↔ Cancel)
+    /// via Left/Right.
     pub fn toggle_ssh_delete_dialog_focus(&mut self) {
         self.ssh_delete_dialog_confirm_focused = !self.ssh_delete_dialog_confirm_focused;
     }
 
-    // ===== Phase 5-11-8 Step 8-3 (Sub-phase A): SSH フィールド インライン編集 =====
+    // ===== Phase 5-11-8 Step 8-3 (Sub-phase A): SSH field inline editing =====
     //
-    // `ssh_field_focus` が 1 (name) / 2 (host) / 4 (username) のときに Enter キーで
-    // 編集モードを開始し、`ssh_field_editing = Some(TextInputState::new(current))` で
-    // バッファを初期化する。再度 Enter で `set_ssh_host_*` 経由でホストに書き戻す。
+    // When `ssh_field_focus` is 1 (name), 2 (host), or 4 (username), pressing
+    // Enter starts edit mode and initialises the buffer with
+    // `ssh_field_editing = Some(TextInputState::new(current))`. Enter again
+    // writes back via `set_ssh_host_*`.
 
-    /// 現在の `ssh_field_focus` に対応する TextInput 編集モードを開始する。
+    /// Start TextInput edit mode for the current `ssh_field_focus` value.
     ///
-    /// 戻り値: 編集モード開始に成功したら `true`、対応するフィールドが TextInput
-    /// でない（port/auth_type/ListBox）か、選択ホストが存在しない場合は `false`。
+    /// Returns `true` if edit mode actually started; `false` when the field
+    /// is not a TextInput (port / auth_type / ListBox) or no host is selected.
     pub fn begin_ssh_field_edit(&mut self) -> bool {
         let initial = {
             let Some(host) = self.ssh_hosts.get(self.selected_host_index) else {
@@ -1009,8 +1027,8 @@ impl SettingsPanel {
         true
     }
 
-    /// 編集中のバッファをホストフィールドに書き戻し、編集モードを終了する。
-    /// 戻り値: 書き戻しが行われたら `true`。
+    /// Commit the in-flight buffer back to the host field and leave edit mode.
+    /// Returns `true` when a write-back happened.
     pub fn commit_ssh_field_edit(&mut self) -> bool {
         let Some(state) = self.ssh_field_editing.take() else {
             return false;
@@ -1025,100 +1043,100 @@ impl SettingsPanel {
         true
     }
 
-    /// 編集中のバッファを破棄して編集モードを終了する。
-    /// 戻り値: 編集モードが有効だったら `true`。
+    /// Discard the in-flight buffer and leave edit mode.
+    /// Returns `true` if edit mode was active.
     pub fn cancel_ssh_field_edit(&mut self) -> bool {
         self.ssh_field_editing.take().is_some()
     }
 
-    /// 編集中バッファのカーソル位置に文字を 1 つ挿入する。
-    /// 編集モードでない場合は何もしない。
+    /// Insert one character at the cursor inside the in-flight buffer.
+    /// No-op when not in edit mode.
     pub fn ssh_field_insert_char(&mut self, ch: char) {
         if let Some(state) = self.ssh_field_editing.as_mut() {
             state.insert_char(ch);
         }
     }
 
-    /// 編集中バッファのカーソル位置に文字列を挿入する（IME Commit 経路）。
+    /// Insert a string at the cursor inside the in-flight buffer (IME Commit path).
     pub fn ssh_field_insert_str(&mut self, s: &str) {
         if let Some(state) = self.ssh_field_editing.as_mut() {
             state.insert_str(s);
         }
     }
 
-    /// 編集中バッファのカーソル直前の 1 文字を削除する（Backspace）。
+    /// Delete the character immediately before the cursor (Backspace).
     pub fn ssh_field_backspace(&mut self) {
         if let Some(state) = self.ssh_field_editing.as_mut() {
             state.backspace();
         }
     }
 
-    /// 編集中バッファのカーソル直後の 1 文字を削除する（Delete）。
+    /// Delete the character immediately after the cursor (Delete).
     pub fn ssh_field_delete(&mut self) {
         if let Some(state) = self.ssh_field_editing.as_mut() {
             state.delete_forward();
         }
     }
 
-    /// 編集中バッファのカーソルを 1 文字左へ動かす。
+    /// Move the in-flight cursor one character left.
     pub fn ssh_field_move_left(&mut self) {
         if let Some(state) = self.ssh_field_editing.as_mut() {
             state.move_left();
         }
     }
 
-    /// 編集中バッファのカーソルを 1 文字右へ動かす。
+    /// Move the in-flight cursor one character right.
     pub fn ssh_field_move_right(&mut self) {
         if let Some(state) = self.ssh_field_editing.as_mut() {
             state.move_right();
         }
     }
 
-    /// 編集中バッファのカーソルを先頭へ動かす。
+    /// Move the in-flight cursor to the start of the buffer.
     pub fn ssh_field_move_home(&mut self) {
         if let Some(state) = self.ssh_field_editing.as_mut() {
             state.move_home();
         }
     }
 
-    /// 編集中バッファのカーソルを末尾へ動かす。
+    /// Move the in-flight cursor to the end of the buffer.
     pub fn ssh_field_move_end(&mut self) {
         if let Some(state) = self.ssh_field_editing.as_mut() {
             state.move_end();
         }
     }
 
-    /// タブ名変更を開始する
+    /// Begin a tab-rename operation.
     pub fn begin_tab_rename(&mut self, window_id: u32, current_name: &str) {
         self.tab_rename_editing = Some(window_id);
         self.tab_rename_text = current_name.to_string();
     }
 
-    /// タブ名変更をキャンセルする
+    /// Cancel an in-flight tab rename.
     pub fn cancel_tab_rename(&mut self) {
         self.tab_rename_editing = None;
         self.tab_rename_text.clear();
     }
 
-    /// タブ名変更中に文字を追加する
+    /// Append a character while editing the tab name.
     pub fn push_tab_rename_char(&mut self, ch: char) {
         if self.tab_rename_editing.is_some() {
             self.tab_rename_text.push(ch);
         }
     }
 
-    /// タブ名変更中に末尾を削除する
+    /// Pop the trailing character while editing the tab name.
     pub fn pop_tab_rename_char(&mut self) {
         if self.tab_rename_editing.is_some() {
             self.tab_rename_text.pop();
         }
     }
 
-    /// 現在の設定を nexterm.toml に書き込む
+    /// Save the current settings to `nexterm.toml`.
     pub fn save_to_toml(&self) -> Result<()> {
         let path = toml_path();
 
-        // 既存 TOML を読む（なければ空文字列から始める）
+        // Read the existing TOML (start from an empty string if missing).
         let existing = if path.exists() {
             std::fs::read_to_string(&path)?
         } else {
@@ -1141,14 +1159,14 @@ impl SettingsPanel {
         // [window].background_opacity
         doc["window"]["background_opacity"] = toml_edit::value(self.opacity as f64);
 
-        // [window].padding_x / padding_y（Phase 5-11-6 #6）
+        // [window].padding_x / padding_y (Phase 5-11-6 #6).
         doc["window"]["padding_x"] = toml_edit::value(self.padding_x as i64);
         doc["window"]["padding_y"] = toml_edit::value(self.padding_y as i64);
 
-        // [gpu].present_mode（Phase 5-11-6 #6）
+        // [gpu].present_mode (Phase 5-11-6 #6).
         doc["gpu"]["present_mode"] = toml_edit::value(self.present_mode_toml_key());
 
-        // cursor_style（Phase 5-11-6 #6）
+        // cursor_style (Phase 5-11-6 #6).
         doc["cursor_style"] = toml_edit::value(self.cursor_style_toml_key());
 
         // language
@@ -1157,15 +1175,16 @@ impl SettingsPanel {
         // auto_check_update
         doc["auto_check_update"] = toml_edit::value(self.auto_check_update);
 
-        // Phase 5-11-8 Step 8-2: [[hosts]] への in-place 書き戻し。
+        // Phase 5-11-8 Step 8-2: in-place write-back to `[[hosts]]`.
         //
-        // 既存の `ArrayOfTables` がある場合はインデックス単位でフィールドだけ更新し、
-        // `key_path` / `forward_local` / `proxy_jump` 等の未管理フィールドを保持する。
-        // 配列長が `self.ssh_hosts` と一致しない（Step 8-3 の Add/Delete 後）場合は
-        // 末尾の差分のみ調整する。
+        // When the existing `ArrayOfTables` is present we update only the
+        // managed fields per index, preserving unmanaged fields such as
+        // `key_path` / `forward_local` / `proxy_jump`. When the array length
+        // diverges from `self.ssh_hosts` (after Step 8-3 Add/Delete) we
+        // adjust the tail diff only.
         write_ssh_hosts_back(&mut doc, &self.ssh_hosts);
 
-        // 親ディレクトリを作成する
+        // Create the parent directory if necessary.
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -1175,24 +1194,27 @@ impl SettingsPanel {
     }
 }
 
-/// `[[hosts]]` 配列を in-place 更新する（Phase 5-11-8 Step 8-2）。
+/// Update the `[[hosts]]` array in place (Phase 5-11-8 Step 8-2).
 ///
-/// 既存の `ArrayOfTables` を保持し、SettingsPanel が管理する 5 フィールド
-/// (name / host / port / username / auth_type) のみを上書きする。
-/// `key_path` / `forward_local` / `proxy_jump` / `tags` 等の未管理フィールドは
-/// そのままの形を保持する（ユーザーが TOML で手動設定した値を失わない）。
+/// Keeps the existing `ArrayOfTables` and overwrites only the 5 fields
+/// managed by `SettingsPanel` (name / host / port / username / auth_type).
+/// Unmanaged fields such as `key_path` / `forward_local` / `proxy_jump` /
+/// `tags` are left untouched (so user-edited TOML values are not lost).
 ///
-/// 配列長の調整:
-/// - `ssh_hosts.len() > arr.len()`: 末尾に新規 Table を追加（Step 8-3 で Add から呼ばれる）
-/// - `ssh_hosts.len() < arr.len()`: 末尾の Table を削除（Step 8-3 で Delete から呼ばれる）
-/// - 等しい: in-place 更新のみ
+/// Length adjustments:
+/// - `ssh_hosts.len() > arr.len()`: append a new Table at the tail (used by
+///   Step 8-3 Add).
+/// - `ssh_hosts.len() < arr.len()`: remove the trailing Table(s) (used by
+///   Step 8-3 Delete).
+/// - Equal: in-place updates only.
 pub(crate) fn write_ssh_hosts_back(doc: &mut toml_edit::DocumentMut, hosts: &[SshHostEntry]) {
-    // 既存の hosts エントリを ArrayOfTables として取得（なければ作る）。
+    // Get the existing hosts entry as `ArrayOfTables` (create one if absent).
     let entry = doc
         .entry("hosts")
         .or_insert_with(|| toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()));
 
-    // 既存 Item が ArrayOfTables でない（手動編集で壊れた）場合は再作成。
+    // If the existing item is not an `ArrayOfTables` (broken by manual
+    // editing), rebuild it.
     if !entry.is_array_of_tables() {
         *entry = toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new());
     }
@@ -1201,17 +1223,17 @@ pub(crate) fn write_ssh_hosts_back(doc: &mut toml_edit::DocumentMut, hosts: &[Ss
         return;
     };
 
-    // インデックス単位で 5 フィールドを上書き。
+    // Overwrite the 5 managed fields per index.
     for (i, host) in hosts.iter().enumerate() {
         if i < arr.len() {
-            let t = arr.get_mut(i).expect("既に長さチェック済み");
+            let t = arr.get_mut(i).expect("length was already checked");
             t.insert("name", toml_edit::value(host.name.as_str()));
             t.insert("host", toml_edit::value(host.host.as_str()));
             t.insert("port", toml_edit::value(host.port as i64));
             t.insert("username", toml_edit::value(host.username.as_str()));
             t.insert("auth_type", toml_edit::value(host.auth_type.as_str()));
         } else {
-            // 新規エントリ追加（Step 8-3 で発火）
+            // Append a new entry (used by Step 8-3 Add).
             let mut t = toml_edit::Table::new();
             t.insert("name", toml_edit::value(host.name.as_str()));
             t.insert("host", toml_edit::value(host.host.as_str()));
@@ -1221,13 +1243,16 @@ pub(crate) fn write_ssh_hosts_back(doc: &mut toml_edit::DocumentMut, hosts: &[Ss
             arr.push(t);
         }
     }
-    // 余剰エントリを末尾から削除（Step 8-3 の Delete で発火）
+    // Pop surplus entries from the tail (used by Step 8-3 Delete).
     while arr.len() > hosts.len() {
         arr.remove(arr.len() - 1);
     }
 }
 
-/// 言語選択肢: (表示名, コード)
+/// Language choices: (display name, language code).
+///
+/// The display names are intentionally written in each language's native script
+/// so the picker shows them in their own form.
 pub const LANGUAGE_OPTIONS: &[(&str, &str)] = &[
     ("Auto (OS)", "auto"),
     ("English", "en"),
@@ -1240,7 +1265,7 @@ pub const LANGUAGE_OPTIONS: &[(&str, &str)] = &[
     ("한국어", "ko"),
 ];
 
-/// カラースキームをインデックスに変換する
+/// Convert a color scheme into its index.
 fn scheme_name_to_index(colors: &nexterm_config::ColorScheme) -> usize {
     use nexterm_config::{BuiltinScheme, ColorScheme};
     match colors {
@@ -1281,11 +1306,17 @@ mod tests {
         let mut panel = SettingsPanel::new(&config);
         panel.font_size = 32.0;
         panel.increase_font_size();
-        assert_eq!(panel.font_size, 32.0, "上限 32.0 を超えてはいけない");
+        assert_eq!(
+            panel.font_size, 32.0,
+            "must not exceed the 32.0 upper bound"
+        );
 
         panel.font_size = 8.0;
         panel.decrease_font_size();
-        assert_eq!(panel.font_size, 8.0, "下限 8.0 を下回ってはいけない");
+        assert_eq!(
+            panel.font_size, 8.0,
+            "must not fall below the 8.0 lower bound"
+        );
 
         panel.font_size = 14.0;
         panel.increase_font_size();
@@ -1299,17 +1330,11 @@ mod tests {
         let mut panel = SettingsPanel::new(&config);
         panel.scheme_index = 8;
         panel.next_scheme();
-        assert_eq!(
-            panel.scheme_index, 0,
-            "インデックス 8 の次は 0 にラップする"
-        );
+        assert_eq!(panel.scheme_index, 0, "the slot after index 8 wraps to 0");
 
         panel.scheme_index = 0;
         panel.prev_scheme();
-        assert_eq!(
-            panel.scheme_index, 8,
-            "インデックス 0 の前は 8 にラップする"
-        );
+        assert_eq!(panel.scheme_index, 8, "the slot before index 0 wraps to 8");
     }
 
     #[test]
@@ -1351,7 +1376,7 @@ mod tests {
         use nexterm_config::CursorStyle::*;
         let config = Config::default();
         let mut panel = SettingsPanel::new(&config);
-        // Default は Block
+        // Default is Block.
         assert_eq!(panel.cursor_style, Block);
         assert_eq!(panel.cursor_style_index(), 0);
         assert_eq!(panel.cursor_style_toml_key(), "block");
@@ -1366,11 +1391,17 @@ mod tests {
         assert_eq!(panel.cursor_style_toml_key(), "underline");
 
         panel.next_cursor_style();
-        assert_eq!(panel.cursor_style, Block, "Underline の次は Block にラップ");
+        assert_eq!(
+            panel.cursor_style, Block,
+            "the slot after Underline wraps to Block"
+        );
 
-        // 逆方向
+        // Reverse direction.
         panel.prev_cursor_style();
-        assert_eq!(panel.cursor_style, Underline, "Block の前は Underline");
+        assert_eq!(
+            panel.cursor_style, Underline,
+            "the slot before Block is Underline"
+        );
         panel.prev_cursor_style();
         assert_eq!(panel.cursor_style, Beam);
         panel.prev_cursor_style();
@@ -1396,15 +1427,15 @@ mod tests {
     fn padding_x_increase_decrease_clamps() {
         let config = Config::default();
         let mut panel = SettingsPanel::new(&config);
-        assert_eq!(panel.padding_x, 0, "デフォルトは 0");
+        assert_eq!(panel.padding_x, 0, "the default is 0");
 
-        // 上限 32 でクランプ
+        // Clamps at the upper bound 32.
         for _ in 0..40 {
             panel.increase_padding_x();
         }
         assert_eq!(panel.padding_x, 32);
 
-        // 下限 0 でクランプ
+        // Clamps at the lower bound 0.
         for _ in 0..40 {
             panel.decrease_padding_x();
         }
@@ -1420,11 +1451,11 @@ mod tests {
         for _ in 0..50 {
             panel.increase_padding_y();
         }
-        assert_eq!(panel.padding_y, 32, "上限");
+        assert_eq!(panel.padding_y, 32, "upper bound");
         for _ in 0..50 {
             panel.decrease_padding_y();
         }
-        assert_eq!(panel.padding_y, 0, "下限");
+        assert_eq!(panel.padding_y, 0, "lower bound");
     }
 
     #[test]
@@ -1432,18 +1463,21 @@ mod tests {
         let config = Config::default();
         let mut panel = SettingsPanel::new(&config);
         panel.set_padding_x_value(-5.0);
-        assert_eq!(panel.padding_x, 0, "負値は 0 にクランプ");
+        assert_eq!(panel.padding_x, 0, "negative values clamp to 0");
         panel.set_padding_x_value(100.0);
-        assert_eq!(panel.padding_x, 32, "上限超は 32 にクランプ");
+        assert_eq!(
+            panel.padding_x, 32,
+            "values above the upper bound clamp to 32"
+        );
         panel.set_padding_x_value(15.7);
-        assert_eq!(panel.padding_x, 16, "0.5 以上は切り上げ丸め");
+        assert_eq!(panel.padding_x, 16, "values at or above .5 round up");
         panel.set_padding_x_value(15.3);
-        assert_eq!(panel.padding_x, 15, "0.5 未満は切り捨て丸め");
+        assert_eq!(panel.padding_x, 15, "values below .5 round down");
 
         panel.set_padding_y_value(7.5);
         assert_eq!(
             panel.padding_y, 8,
-            "0.5 はバンカーズか四捨五入のいずれか（実装依存）"
+            ".5 may round either bankers/half-up depending on the implementation"
         );
     }
 
@@ -1452,7 +1486,7 @@ mod tests {
         use nexterm_config::PresentModeConfig::*;
         let config = Config::default();
         let mut panel = SettingsPanel::new(&config);
-        // Default は Mailbox（Sprint 5-3 / C3 で変更済み）
+        // The default is Mailbox (changed in Sprint 5-3 / C3).
         assert_eq!(panel.present_mode, Mailbox);
         assert_eq!(panel.present_mode_index(), 1);
         assert_eq!(panel.present_mode_toml_key(), "mailbox");
@@ -1464,7 +1498,7 @@ mod tests {
         panel.next_present_mode();
         assert_eq!(panel.present_mode, Mailbox);
 
-        // 逆方向
+        // Reverse direction.
         panel.prev_present_mode();
         assert_eq!(panel.present_mode, Fifo);
 
@@ -1506,12 +1540,12 @@ mod tests {
         let panel = SettingsPanel::new(&config);
         assert_eq!(
             panel.padding_x, 32,
-            "config 側の異常値は new で 32 にクランプ"
+            "out-of-range config values are clamped to 32 in `new`"
         );
     }
 
     // ============================================================
-    // Sprint 5-11-8 Step 8-3 Sub-phase E: TextInputState 単体テスト
+    // Sprint 5-11-8 Step 8-3 Sub-phase E: TextInputState unit tests
     // ============================================================
 
     #[test]
@@ -1537,7 +1571,8 @@ mod tests {
 
     #[test]
     fn text_input_state_insert_char_advances_cursor_cjk() {
-        // 日本語 1 文字 = UTF-8 3 バイト。カーソルもバイト単位で進むこと。
+        // One Japanese character = 3 bytes in UTF-8; the cursor must advance
+        // in bytes too.
         let mut s = TextInputState::new(String::new());
         s.insert_char('あ');
         assert_eq!(s.buffer, "あ");
@@ -1549,7 +1584,7 @@ mod tests {
 
     #[test]
     fn text_input_state_backspace_respects_utf8_boundary() {
-        // "あい" のバックスペースで "あ" になり、カーソルは 3 バイト目（境界）に置かれる。
+        // Backspace on "あい" yields "あ" with the cursor at byte 3 (boundary).
         let mut s = TextInputState::new("あい".to_string());
         assert_eq!(s.cursor, 6);
         s.backspace();
@@ -1558,7 +1593,7 @@ mod tests {
         s.backspace();
         assert_eq!(s.buffer, "");
         assert_eq!(s.cursor, 0);
-        // 空文字でのバックスペースは no-op
+        // Backspace on an empty buffer is a no-op.
         s.backspace();
         assert_eq!(s.cursor, 0);
     }
@@ -1566,25 +1601,28 @@ mod tests {
     #[test]
     fn text_input_state_move_left_right_clamps_and_respects_boundary() {
         let mut s = TextInputState::new("aあb".to_string());
-        // 末尾 (5 = 1 + 3 + 1)
+        // Tail (5 = 1 + 3 + 1).
         assert_eq!(s.cursor, 5);
         s.move_left();
-        assert_eq!(s.cursor, 4, "b の手前へ");
+        assert_eq!(s.cursor, 4, "right before 'b'");
         s.move_left();
-        assert_eq!(s.cursor, 1, "あ の手前（UTF-8 境界を尊重）");
+        assert_eq!(
+            s.cursor, 1,
+            "right before 'あ' (honours the UTF-8 boundary)"
+        );
         s.move_left();
         assert_eq!(s.cursor, 0);
-        // 先頭でのさらなる左移動は no-op
+        // Moving further left at the head is a no-op.
         s.move_left();
         assert_eq!(s.cursor, 0);
 
         s.move_right();
         assert_eq!(s.cursor, 1);
         s.move_right();
-        assert_eq!(s.cursor, 4, "あ を跨ぐ");
+        assert_eq!(s.cursor, 4, "steps past 'あ'");
         s.move_right();
         assert_eq!(s.cursor, 5);
-        // 末尾でのさらなる右移動は no-op
+        // Moving further right at the tail is a no-op.
         s.move_right();
         assert_eq!(s.cursor, 5);
     }
@@ -1592,22 +1630,22 @@ mod tests {
     #[test]
     fn text_input_state_display_string_with_preedit() {
         let mut s = TextInputState::new("ab".to_string());
-        s.move_left(); // カーソルを 1 へ
+        s.move_left(); // cursor to 1
         assert_eq!(s.cursor, 1);
         s.preedit = Some("X".to_string());
 
-        // 表示文字列はカーソル位置に preedit が挿入される
+        // The display string inserts the preedit at the cursor.
         assert_eq!(s.display_string(), "aXb");
-        assert_eq!(s.display_cursor(), 2, "preedit の末尾を指す");
+        assert_eq!(s.display_cursor(), 2, "points to the end of the preedit");
 
-        // preedit クリアで元に戻る
+        // Clearing the preedit restores the original.
         s.preedit = None;
         assert_eq!(s.display_string(), "ab");
         assert_eq!(s.display_cursor(), 1);
     }
 
     // ============================================================
-    // Sprint 5-11-8 Step 8-3 Sub-phase E: SSH フィールド編集ライフサイクル
+    // Sprint 5-11-8 Step 8-3 Sub-phase E: SSH field edit lifecycle
     // ============================================================
 
     fn panel_with_one_host() -> SettingsPanel {
@@ -1633,11 +1671,11 @@ mod tests {
         let state = panel.ssh_field_editing.as_ref().unwrap();
         assert_eq!(state.buffer, "myhost");
 
-        // 文字を編集
+        // Edit a character.
         panel.ssh_field_insert_char('!');
         assert_eq!(panel.ssh_field_editing.as_ref().unwrap().buffer, "myhost!");
 
-        // コミットでホストに反映
+        // Commit writes back to the host.
         assert!(panel.commit_ssh_field_edit());
         assert!(panel.ssh_field_editing.is_none());
         assert_eq!(panel.ssh_hosts[0].name, "myhost!");
@@ -1653,26 +1691,27 @@ mod tests {
 
         assert!(panel.cancel_ssh_field_edit());
         assert!(panel.ssh_field_editing.is_none());
-        // ホストは変わらない
+        // The host is unchanged.
         assert_eq!(panel.ssh_hosts[0].host, "example.com");
     }
 
     #[test]
     fn ssh_field_edit_begin_returns_false_for_non_text_fields() {
         let mut panel = panel_with_one_host();
-        // port (3) / auth_type (5) / ListBox (0) は TextInput でないため false
+        // port (3) / auth_type (5) / ListBox (0) are not TextInputs, so begin
+        // must return false.
         for focus in [0u8, 3, 5, 6, 7] {
             panel.ssh_field_focus = focus;
             assert!(
                 !panel.begin_ssh_field_edit(),
-                "focus={focus} は TextInput でないため begin_ssh_field_edit は false を返すべき"
+                "focus={focus} is not a TextInput, so begin_ssh_field_edit should return false"
             );
             assert!(panel.ssh_field_editing.is_none());
         }
     }
 
     // ============================================================
-    // Sprint 5-11-8 Step 8-3 Sub-phase E: Add / Delete + 確認ダイアログ
+    // Sprint 5-11-8 Step 8-3 Sub-phase E: Add / Delete + confirmation dialog
     // ============================================================
 
     #[test]
@@ -1690,15 +1729,15 @@ mod tests {
         assert_eq!(new_host.auth_type, "password");
 
         assert_eq!(panel.selected_host_index, 0);
-        assert_eq!(panel.ssh_field_focus, 1, "name フィールドにフォーカス");
+        assert_eq!(panel.ssh_field_focus, 1, "focus moves to the name field");
         assert!(
             panel.ssh_field_editing.is_some(),
-            "name 編集モードが即時開始されているべき"
+            "name edit mode should start immediately"
         );
         assert_eq!(
             panel.ssh_field_editing.as_ref().unwrap().buffer,
             "",
-            "新規ホストの name は空文字で初期化"
+            "the name of a new host is initialised to an empty string"
         );
         assert!(panel.dirty);
     }
@@ -1710,7 +1749,7 @@ mod tests {
         assert_eq!(panel.ssh_hosts.len(), 2);
         assert_eq!(
             panel.selected_host_index, 1,
-            "末尾の新規ホストが選択されている"
+            "the newly added trailing host is selected"
         );
     }
 
@@ -1721,7 +1760,7 @@ mod tests {
         panel.open_ssh_delete_dialog();
         assert!(
             !panel.ssh_delete_dialog_open,
-            "空リスト時はダイアログは開かない"
+            "no dialog opens when the list is empty"
         );
     }
 
@@ -1732,7 +1771,7 @@ mod tests {
         assert!(panel.ssh_delete_dialog_open);
         assert!(
             !panel.ssh_delete_dialog_confirm_focused,
-            "誤削除防止: Cancel ボタンがデフォルトフォーカス"
+            "accidental-deletion guard: Cancel is the default focused button"
         );
     }
 
@@ -1745,13 +1784,13 @@ mod tests {
 
         assert!(!panel.ssh_delete_dialog_open);
         assert!(!panel.ssh_delete_dialog_confirm_focused);
-        assert_eq!(panel.ssh_hosts.len(), 1, "削除されないこと");
+        assert_eq!(panel.ssh_hosts.len(), 1, "nothing is deleted");
     }
 
     #[test]
     fn confirm_ssh_delete_dialog_removes_at_end_clamps_to_prev() {
         let mut panel = panel_with_one_host();
-        // 2 ホスト用意して末尾を削除
+        // Set up 2 hosts and delete the tail.
         panel.add_ssh_host();
         assert_eq!(panel.ssh_hosts.len(), 2);
         assert_eq!(panel.selected_host_index, 1);
@@ -1762,7 +1801,7 @@ mod tests {
         assert_eq!(panel.ssh_hosts.len(), 1);
         assert_eq!(
             panel.selected_host_index, 0,
-            "末尾を削除したので n クランプで n-1=0 へ"
+            "deleting the tail clamps the index to n-1=0"
         );
         assert!(!panel.ssh_delete_dialog_open);
         assert!(panel.dirty);
@@ -1772,8 +1811,8 @@ mod tests {
     fn confirm_ssh_delete_dialog_middle_index_keeps_position() {
         let mut panel = panel_with_one_host();
         panel.add_ssh_host();
-        panel.add_ssh_host(); // 計 3 ホスト
-        panel.selected_host_index = 1; // 中央を選択
+        panel.add_ssh_host(); // 3 hosts in total
+        panel.selected_host_index = 1; // select the middle one
 
         panel.open_ssh_delete_dialog();
         panel.confirm_ssh_delete_dialog();
@@ -1781,14 +1820,14 @@ mod tests {
         assert_eq!(panel.ssh_hosts.len(), 2);
         assert_eq!(
             panel.selected_host_index, 1,
-            "中央を削除したので末尾が詰まって index=1 のまま"
+            "deleting the middle entry shifts the tail and leaves index=1 unchanged"
         );
     }
 
     #[test]
     fn confirm_ssh_delete_dialog_empty_after_resets_focus() {
         let mut panel = panel_with_one_host();
-        panel.ssh_field_focus = 3; // 何でもよい非ゼロ値
+        panel.ssh_field_focus = 3; // any non-zero value
 
         panel.open_ssh_delete_dialog();
         panel.confirm_ssh_delete_dialog();
@@ -1797,7 +1836,7 @@ mod tests {
         assert_eq!(panel.selected_host_index, 0);
         assert_eq!(
             panel.ssh_field_focus, 0,
-            "空になったら ListBox にフォーカスを戻す"
+            "the focus returns to the ListBox once the list is empty"
         );
     }
 
