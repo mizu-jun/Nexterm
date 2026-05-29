@@ -1,20 +1,20 @@
-//! デスクトップ通知ラッパー（Sprint 4-1）
+//! Desktop notification wrapper (Sprint 4-1).
 //!
-//! OSC 9 / 777 経由で要求された通知を、ユーザー同意後にプラットフォーム
-//! ネイティブの通知 API（notify-rust 経由）で送信する。
+//! Notifications requested via OSC 9 / 777 are forwarded — after user consent —
+//! to the platform's native notification API (through `notify-rust`).
 //!
-//! 送信失敗（D-Bus 不在・通知権限なし等）は警告ログのみで、アプリ全体は
-//! クラッシュさせない。
+//! Send failures (no D-Bus, missing notification permissions, etc.) are logged as
+//! warnings only; the app never crashes on them.
 
 use tracing::warn;
 
-/// デスクトップ通知を送信する
+/// Send a desktop notification.
 ///
 /// # Arguments
-/// - `title`: 通知タイトル（先頭に "Nexterm: " を付ける）
-/// - `body`: 通知本文
+/// - `title`: notification title (prefixed with "Nexterm: ")
+/// - `body`: notification body
 ///
-/// 失敗した場合は warn ログのみ出力する。
+/// Failures only produce a `warn` log entry.
 pub fn send_notification(title: &str, body: &str) {
     let summary = format!("Nexterm: {title}");
     let result = notify_rust::Notification::new()
@@ -23,6 +23,6 @@ pub fn send_notification(title: &str, body: &str) {
         .appname("Nexterm")
         .show();
     if let Err(e) = result {
-        warn!("デスクトップ通知の送信に失敗しました: {}", e);
+        warn!("failed to send desktop notification: {}", e);
     }
 }

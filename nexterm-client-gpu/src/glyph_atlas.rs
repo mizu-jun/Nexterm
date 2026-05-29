@@ -1,23 +1,23 @@
-//! グリフアトラス — GPU テキスト描画用テクスチャキャッシュ
+//! Glyph atlas — texture cache for GPU text rendering.
 
 use std::num::NonZeroUsize;
 
 use bytemuck::{Pod, Zeroable};
 use lru::LruCache;
 
-// ---- 頂点型 ----
+// ---- Vertex types ----
 
-/// 背景矩形用の頂点（位置 + 色）
+/// Background-quad vertex (position + color).
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub(crate) struct BgVertex {
-    /// NDC 座標 [-1, 1]
+    /// NDC coordinates in [-1, 1].
     pub position: [f32; 2],
-    /// RGBA 色 [0, 1]
+    /// RGBA color in [0, 1].
     pub color: [f32; 4],
 }
 
-/// テキスト用の頂点（位置 + UV + 色）
+/// Text vertex (position + UV + color).
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub(crate) struct TextVertex {
@@ -26,9 +26,9 @@ pub(crate) struct TextVertex {
     pub color: [f32; 4],
 }
 
-// ---- グリフアトラス ----
+// ---- Glyph atlas ----
 
-/// グリフキャッシュのキー（1文字単位）
+/// Cache key for a single-character glyph.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct GlyphKey {
     pub ch: char,
@@ -37,67 +37,68 @@ pub(crate) struct GlyphKey {
     pub wide: bool,
 }
 
-/// リガチャグリフキャッシュのキー（行単位シェーピング用）
+/// Cache key for a ligature glyph (per-row shaping).
 ///
-/// `col` はグリッド列インデックス、`text` はチャンク全体の文字列。
-/// リガチャは文脈依存のため、前後の文字列も含めてキャッシュキーにする。
+/// `col` is the grid column, `text` is the entire chunk text. Ligatures are
+/// context-dependent, so the surrounding text is part of the cache key too.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct LigatureKey {
     pub col: usize,
     pub text: String,
     pub bold: bool,
     pub italic: bool,
-    /// fg 色を u32 にパックして比較する（[r,g,b,a] → u32）
+    /// fg color packed into a u32 for hashing ([r, g, b, a] → u32).
     pub fg_packed: u32,
 }
 
-/// グリフアトラス内の矩形
+/// A rectangle inside the glyph atlas.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct GlyphRect {
-    /// アトラス内の UV 座標（左上・右下）
+    /// UV coordinates inside the atlas (top-left and bottom-right).
     pub uv_min: [f32; 2],
     pub uv_max: [f32; 2],
-    /// グリフのピクセルサイズ
+    /// Glyph size in pixels.
     #[allow(dead_code)]
     pub width: u32,
     #[allow(dead_code)]
     pub height: u32,
 }
 
-/// グリフアトラス（全グリフを 1 枚のテクスチャに詰め込む）
+/// Glyph atlas (packs every glyph into a single texture).
 pub(crate) struct GlyphAtlas {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
-    /// アトラスの現在の寸法（正方形）
+    /// Current atlas dimensions (square).
     pub size: u32,
-    /// アトラスの最大サイズ（設定値から決定）
+    /// Maximum atlas size (resolved from the config).
     size_max: u32,
-    /// 次に書き込む列
+    /// Next column to write to.
     cursor_x: u32,
-    /// 次に書き込む行の Y 座標
+    /// Y coordinate of the next row to write to.
     cursor_y: u32,
-    /// 現在行の最大高さ
+    /// Maximum height in the current row.
     row_height: u32,
-    /// キャッシュ済みグリフ（1文字単位）— LRU で古いエントリを自動削除
+    /// Cached single-glyphs — LRU evicts stale entries.
     pub cache: LruCache<GlyphKey, GlyphRect>,
-    /// キャッシュ済みリガチャグリフ（行単位シェーピング）— LRU で古いエントリを自動削除
+    /// Cached ligature glyphs (per-row shaping) — LRU evicts stale entries.
     pub ligature_cache: LruCache<LigatureKey, GlyphRect>,
-    /// フレーム内でアトラスをリセットした場合 true
-    /// 次フレームで再描画が必要なことを示す（UV 不整合防止）
+    /// True if the atlas was reset within this frame.
+    /// Indicates that a redraw is required next frame (prevents UV mismatch).
     pub cleared_this_frame: bool,
-    /// サイズアップが必要な場合 true（次フレームで grow() を呼ぶ）
+    /// True when the atlas needs to grow (the next frame calls `grow()`).
     pub needs_grow: bool,
 }
 
 impl GlyphAtlas {
-    /// 起動時の初期テクスチャサイズ: 1024×1024 = 4MB
+    /// Initial texture size at startup: 1024×1024 = 4 MB.
     const SIZE_INIT: u32 = 1024;
-    /// テクスチャのデフォルト最大サイズ: 2048×2048 = 16MB
+    /// Default maximum texture size: 2048×2048 = 16 MB.
     const SIZE_MAX_DEFAULT: u32 = 2048;
 
-    /// atlas_size 設定値を使って初期化する
-    /// - `atlas_size` を最大サイズとして使用し、初期サイズはその半分（最低 1024）
+    /// Build using the configured `atlas_size`.
+    /// - `atlas_size` becomes the maximum; the initial size is half of it
+    ///   (clamped to at least 1024).
     pub fn new_with_config(device: &wgpu::Device, atlas_size: u32) -> Self {
         let max = atlas_size.max(Self::SIZE_INIT);
         let init = (max / 2).max(Self::SIZE_INIT);
@@ -110,7 +111,7 @@ impl GlyphAtlas {
         atlas
     }
 
-    /// 指定サイズでアトラスを生成する（動的拡張用）
+    /// Construct the atlas at the requested size (used for dynamic growth).
     pub fn with_size(device: &wgpu::Device, size: u32) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("glyph_atlas"),
@@ -138,7 +139,7 @@ impl GlyphAtlas {
             ..Default::default()
         });
 
-        // LRU キャパシティ: size*size を最小グリフ面積 (8×8) で割った値を上限とする
+        // LRU capacity upper bound: size*size divided by the smallest glyph area (8×8).
         let lru_cap = NonZeroUsize::new(((size * size) / 64).max(256) as usize)
             .expect("lru capacity is non-zero");
 
@@ -158,22 +159,22 @@ impl GlyphAtlas {
         }
     }
 
-    /// アトラスを拡張する（サイズを 2 倍にするか、最大サイズですでにあればリセット）。
-    /// 呼び出し後は UV キャッシュが無効になるため cleared_this_frame が true になる。
+    /// Grow the atlas (double the size, or reset if it is already at the max).
+    /// After this call the UV cache is invalid, so `cleared_this_frame` becomes true.
     pub fn grow(self, device: &wgpu::Device) -> Self {
         let size_max = self.size_max;
         let new_size = (self.size * 2).min(size_max);
         if new_size > self.size {
-            tracing::debug!("GlyphAtlas 拡張: {}→{}", self.size, new_size);
+            tracing::debug!("growing GlyphAtlas: {}→{}", self.size, new_size);
         }
-        // キャッシュは無効化されるため新しいアトラスを作成する
+        // The cache is invalidated, so build a fresh atlas.
         let mut atlas = Self::with_size(device, new_size);
         atlas.size_max = size_max;
         atlas.cleared_this_frame = true;
         atlas
     }
 
-    /// グリフをアトラスに追加する（既存なら再利用）
+    /// Add a glyph to the atlas (returns the existing entry when cached).
     pub fn get_or_insert(
         &mut self,
         key: GlyphKey,
@@ -186,18 +187,17 @@ impl GlyphAtlas {
             return *rect;
         }
 
-        // 行末で折り返し
+        // Wrap to the next row when we hit the right edge.
         if self.cursor_x + width > self.size {
             self.cursor_y += self.row_height + 1;
             self.cursor_x = 0;
             self.row_height = 0;
         }
 
-        // アトラスが満杯の場合: サイズが MAX 未満なら拡張シグナルを立てる。
-        // 最大サイズの場合はキャッシュをリセットして原点から再開する。
-        // cleared_this_frame = true をセットし、次フレームでの再描画を促す。
-        // これにより「クリア前に書いたUV」と「クリア後に上書きされた内容」の
-        // 不整合（グリフ化け）を防ぐ。
+        // Atlas full: if below the max, signal growth; otherwise reset the cache
+        // and restart from the origin. Setting `cleared_this_frame = true` forces
+        // a redraw next frame to avoid the "wrote a UV, then overwrote the slot"
+        // mismatch that would otherwise produce garbled glyphs.
         if self.cursor_y + height > self.size {
             self.cursor_x = 0;
             self.cursor_y = 0;
@@ -205,12 +205,12 @@ impl GlyphAtlas {
             self.cache.clear();
             self.cleared_this_frame = true;
             if self.size < self.size_max {
-                // 次フレームで grow() を呼んでテクスチャを拡張する
+                // Call `grow()` next frame to expand the texture.
                 self.needs_grow = true;
             }
         }
 
-        // テクスチャへ書き込む
+        // Write the glyph into the texture.
         queue.write_texture(
             wgpu::ImageCopyTexture {
                 texture: &self.texture,
@@ -252,7 +252,7 @@ impl GlyphAtlas {
         rect
     }
 
-    /// リガチャグリフをアトラスに追加する（既存なら再利用）
+    /// Add a ligature glyph to the atlas (returns the existing entry when cached).
     pub fn get_or_insert_ligature(
         &mut self,
         key: LigatureKey,

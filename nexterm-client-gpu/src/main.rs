@@ -1,10 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-//! nexterm エントリーポイント — wgpu + winit デスクトップクライアント（シングルバイナリ）
+//! nexterm entry point — single-binary wgpu + winit desktop client.
 //!
-//! nexterm-server のロジックを Tokio タスクとして内部起動し、
-//! 単一プロセスで全機能を提供する。
+//! Runs nexterm-server's logic as an internal Tokio task so the full feature
+//! set is available in one process.
 
-// Sprint 5-11-1 / H1 PoC: スクリーンリーダー対応の足場（accesskit ノードツリー生成）
+// Sprint 5-11-1 / H1 PoC: scaffolding for screen-reader support (accesskit node tree).
 mod accessibility;
 mod animations;
 mod color_util;
@@ -41,17 +41,17 @@ use crate::renderer::UserEvent;
 async fn main() -> Result<()> {
     let _log_guard = init_tracing();
 
-    // サーバーを Tokio タスクとして内部起動する（別プロセス不要）
-    // IPC ソケットは同じプロトコルをそのまま使用する
+    // Start the server as an internal Tokio task (no separate process needed).
+    // The IPC socket uses the same protocol regardless.
     let server_handle = tokio::spawn(async {
         if let Err(e) = nexterm_server::run_server().await {
-            tracing::error!("nexterm-server エラー: {}", e);
+            tracing::error!("nexterm-server error: {}", e);
         }
     });
 
-    // 設定ロード（TOML → Lua）
+    // Load the config (TOML → Lua).
     let config = ConfigLoader::load()?;
-    // config の language 設定を優先し、"auto" の場合は OS ロケールを検出する
+    // The config's `language` field wins; "auto" falls back to OS locale detection.
     if config.language == "auto" {
         nexterm_i18n::init();
     } else {
@@ -63,27 +63,28 @@ async fn main() -> Result<()> {
         config.font.family, config.font.size
     );
 
-    // 設定ホットリロードウォッチャーを起動する
+    // Start the hot-reload config watcher.
     let (config_tx, config_rx) = mpsc::channel(8);
     let config_watcher = watch_config(config_tx).ok();
 
-    // Lua ステータスバー評価器（status_bar.enabled のときだけ生成する）
+    // Lua status-bar evaluator (only constructed when status_bar.enabled is true).
     let status_eval = if config.status_bar.enabled {
         Some(StatusBarEvaluator::new())
     } else {
         None
     };
 
-    // バックグラウンド更新チェッカーを起動する（5 秒後に GitHub Releases API を確認）
+    // Start the background update checker (polls the GitHub Releases API after 5 s).
     let update_rx = update_checker::start(env!("CARGO_PKG_VERSION"), config.auto_check_update);
 
-    // winit イベントループを UserEvent 付きで作成する（Sprint 5-8 Phase 4-4）。
-    // `EventLoopProxy<UserEvent>` 経由で、マウスハンドラやネットワーク受信スレッドから
-    // `&ActiveEventLoop` を持たない文脈でも OS Window 操作要求を発火できる。
+    // Build the winit event loop with the UserEvent type (Sprint 5-8 Phase 4-4).
+    // `EventLoopProxy<UserEvent>` lets contexts without a `&ActiveEventLoop`
+    // (e.g. mouse handlers or the network receive thread) request OS-window
+    // operations.
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
 
-    // GPU アプリケーションを起動する
+    // Start the GPU application.
     let app = renderer::NextermApp::new(config).await?;
     event_loop.run_app(&mut app.into_event_handler(
         proxy,
@@ -97,8 +98,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// ログ初期化。Windows リリースビルドではファイル出力（%LOCALAPPDATA%\nexterm\nexterm-client.log）。
-/// 他の環境では標準出力に出力する。
+/// Initialize logging. Windows release builds log to a file
+/// (`%LOCALAPPDATA%\nexterm\nexterm-client.log`); all other configurations log to stdout.
 #[cfg(all(windows, not(debug_assertions)))]
 fn init_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
     let log_dir = dirs::data_local_dir()

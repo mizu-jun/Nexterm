@@ -1,12 +1,14 @@
-//! バックグラウンド更新チェッカー
+//! Background update checker.
 //!
-//! 起動後 5 秒待機してから GitHub Releases API をポーリングし、
-//! 現在バージョンより新しいリリースがあれば `tokio::sync::watch` 経由で通知する。
+//! Waits 5 s after startup, then polls the GitHub Releases API. If a release
+//! newer than the running version is available, it is published over a
+//! `tokio::sync::watch` channel.
 //!
-//! Sprint 3-4: 自動ダウンロード時のリリースアセット検証は
-//! [`crate::signature_verify`] モジュールの [`verify_minisign`] を使用する。
-//! 通知段階ではアーカイブをダウンロードしないため、検証はダウンロード実行時に
-//! [`download_and_verify_asset`] 経由で行う。
+//! Sprint 3-4: release-asset verification during automatic download relies on
+//! [`verify_minisign`] from the [`crate::signature_verify`] module. The
+//! notification path itself does not download anything, so the verification
+//! happens only inside [`download_and_verify_asset`] when the download is
+//! actually performed.
 //!
 //! [`verify_minisign`]: crate::signature_verify::verify_minisign
 
@@ -14,16 +16,17 @@ use crate::signature_verify;
 use tokio::sync::watch;
 use tracing::{info, warn};
 
-/// GitHub Releases API レスポンスの最小フィールド
+/// Minimal subset of the GitHub Releases API response.
 #[derive(serde::Deserialize)]
 struct GhRelease {
     tag_name: String,
 }
 
-/// バックグラウンド更新チェックを開始する。
+/// Start the background update check.
 ///
-/// 戻り値: 最新バージョン文字列 (例: "0.9.15") を受信する watch::Receiver。
-/// `auto_check_update` が false の場合は即座に None のままの Receiver を返す。
+/// Returns a `watch::Receiver` that receives the latest version string (e.g.
+/// `"0.9.15"`). If `auto_check_update` is false, the channel is left at `None`
+/// and the receiver is returned immediately.
 pub fn start(current_version: &str, enabled: bool) -> watch::Receiver<Option<String>> {
     let (tx, rx) = watch::channel(None);
 
@@ -33,19 +36,22 @@ pub fn start(current_version: &str, enabled: bool) -> watch::Receiver<Option<Str
 
     let current = current_version.to_string();
     tokio::spawn(async move {
-        // 起動直後のリソース競合を避けるため 5 秒待機する
+        // Wait 5 s to avoid competing with the startup-time resource burst.
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
         match fetch_latest_version().await {
             Ok(latest) if is_newer(&latest, &current) => {
-                info!("新しいバージョンが利用可能: v{}", latest);
+                info!("a new version is available: v{}", latest);
                 let _ = tx.send(Some(latest));
             }
             Ok(latest) => {
-                info!("最新バージョン v{} を使用中（更新不要）", latest);
+                info!(
+                    "running the latest version v{} (no update required)",
+                    latest
+                );
             }
             Err(e) => {
-                warn!("更新チェックに失敗しました: {}", e);
+                warn!("update check failed: {}", e);
             }
         }
     });
@@ -53,7 +59,7 @@ pub fn start(current_version: &str, enabled: bool) -> watch::Receiver<Option<Str
     rx
 }
 
-/// GitHub Releases API から最新リリースのタグ名を取得する
+/// Fetch the tag of the most recent release from the GitHub Releases API.
 async fn fetch_latest_version() -> anyhow::Result<String> {
     let client = reqwest::Client::builder()
         .user_agent(concat!("nexterm/", env!("CARGO_PKG_VERSION")))
@@ -68,27 +74,28 @@ async fn fetch_latest_version() -> anyhow::Result<String> {
         .json()
         .await?;
 
-    // タグ名の先頭 "v" を除去して返す（例: "v0.9.15" → "0.9.15"）
+    // Strip the leading "v" (e.g. "v0.9.15" → "0.9.15").
     Ok(release.tag_name.trim_start_matches('v').to_string())
 }
 
-/// 指定 URL のリリースアセットと対応する `.minisig` をダウンロードし、
-/// minisign 署名を検証してバイト列を返す。
+/// Download the release asset at the given URL plus its `.minisig`, verify the
+/// minisign signature, and return the asset bytes.
 ///
-/// 公開鍵が埋め込まれていない開発ビルドでは `Err` を返す
-/// （[`signature_verify::is_signature_verification_enabled`] で事前確認可能）。
+/// Returns `Err` for development builds that do not embed a public key
+/// (use [`signature_verify::is_signature_verification_enabled`] for an upfront check).
 ///
 /// # Arguments
-/// - `asset_url`: リリースアーカイブの直リンク（例: `nexterm-v1.0.0-linux-x86_64.tar.gz`）
+/// - `asset_url`: direct link to the release archive (e.g.
+///   `nexterm-v1.0.0-linux-x86_64.tar.gz`).
 ///
 /// # Returns
-/// - `Ok(bytes)`: 検証済みのアーカイブ本体
-/// - `Err(...)`: ダウンロード失敗 / 公開鍵未設定 / 署名検証失敗
-#[allow(dead_code)] // Sprint 3-4: 将来の自動更新フローで使用予定
+/// - `Ok(bytes)`: the verified archive bytes.
+/// - `Err(...)`: download failure / public key missing / signature verification failed.
+#[allow(dead_code)] // Sprint 3-4: scheduled for use by the future auto-update flow.
 pub async fn download_and_verify_asset(asset_url: &str) -> anyhow::Result<Vec<u8>> {
     if !signature_verify::is_signature_verification_enabled() {
         anyhow::bail!(
-            "minisign 公開鍵が埋め込まれていないため自動更新を中断します（リリースビルドで NEXTERM_MINISIGN_PUBLIC_KEY を設定してください）"
+            "aborting auto-update: minisign public key is not embedded (set NEXTERM_MINISIGN_PUBLIC_KEY for release builds)"
         );
     }
 
@@ -117,15 +124,15 @@ pub async fn download_and_verify_asset(asset_url: &str) -> anyhow::Result<Vec<u8
 
     signature_verify::verify_minisign(&bytes, &signature_text)?;
     info!(
-        "minisign 署名検証 OK: {} ({} bytes)",
+        "minisign signature verified: {} ({} bytes)",
         asset_url,
         bytes.len()
     );
     Ok(bytes)
 }
 
-/// `latest` が `current` より新しいかどうかをセマンティックバージョン比較で判定する。
-/// パースできない場合は false を返す（安全側に倒す）。
+/// Decide whether `latest` is semver-newer than `current`.
+/// Returns false on parse failure (fail-safe).
 fn is_newer(latest: &str, current: &str) -> bool {
     let parse = |s: &str| -> Option<(u32, u32, u32)> {
         let parts: Vec<&str> = s.split('.').collect();
@@ -158,13 +165,13 @@ mod tests {
 
     #[test]
     fn test_is_newer_false() {
-        assert!(!is_newer("0.9.14", "0.9.14")); // 同じバージョン
-        assert!(!is_newer("0.9.13", "0.9.14")); // 古いバージョン
+        assert!(!is_newer("0.9.14", "0.9.14")); // identical
+        assert!(!is_newer("0.9.13", "0.9.14")); // older
     }
 
     #[test]
     fn test_is_newer_prerelease_suffix() {
-        // "-beta" など suffix は無視してパッチ番号のみ比較する
+        // Suffixes like "-beta" are ignored; only the patch number is compared.
         assert!(is_newer("0.9.15", "0.9.14-beta"));
         assert!(!is_newer("0.9.14-beta", "0.9.14"));
     }

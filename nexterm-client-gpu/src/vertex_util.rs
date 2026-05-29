@@ -1,4 +1,4 @@
-//! 頂点バッファヘルパー — 矩形・テキスト・画像の頂点生成ユーティリティ
+//! Vertex-buffer helpers — utilities for generating rect/text/image vertices.
 
 use tracing::info;
 use unicode_width::UnicodeWidthChar;
@@ -6,12 +6,12 @@ use unicode_width::UnicodeWidthChar;
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, GlyphKey, TextVertex};
 
-/// 文字列の表示幅をセル単位で返す（CJK 全角文字は 2 として計算）
+/// Return the display width of a string in cells (CJK full-width characters count as 2).
 pub(crate) fn visual_width(s: &str) -> usize {
     s.chars().map(|c| c.width().unwrap_or(1)).sum()
 }
 
-/// NDC 矩形の背景頂点4つを追加する（三角形インデックスも追加）
+/// Push four background vertices for the NDC rectangle (and the corresponding triangle indices).
 pub(crate) fn add_rect_verts(
     x0: f32,
     y0: f32,
@@ -43,7 +43,7 @@ pub(crate) fn add_rect_verts(
     bg_idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
 }
 
-/// ピクセル矩形を NDC に変換して背景頂点バッファに追加する
+/// Convert a pixel rectangle into NDC and push it onto the background vertex buffer.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn add_px_rect(
     px: f32,
@@ -63,7 +63,7 @@ pub(crate) fn add_px_rect(
     add_rect_verts(x0, y0, x1, y1, color, bg_verts, bg_idx);
 }
 
-/// カーソルスタイルに応じた矩形を背景頂点バッファに追加する
+/// Append a cursor rectangle (per the configured cursor style) to the background vertex buffer.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_cursor(
     style: &nexterm_config::CursorStyle,
@@ -91,7 +91,7 @@ pub(crate) fn draw_cursor(
             );
         }
         nexterm_config::CursorStyle::Beam => {
-            // 幅 2px の縦線
+            // 2 px wide vertical bar.
             add_px_rect(
                 cx,
                 cy,
@@ -105,7 +105,7 @@ pub(crate) fn draw_cursor(
             );
         }
         nexterm_config::CursorStyle::Underline => {
-            // 高さ 2px の横線（セル下辺）
+            // 2 px tall underline at the bottom of the cell.
             add_px_rect(
                 cx,
                 cy + cell_h - 2.0,
@@ -121,7 +121,7 @@ pub(crate) fn draw_cursor(
     }
 }
 
-/// 1文字をテキスト頂点バッファに追加する
+/// Append a single character to the text vertex buffer.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn add_char_verts(
     ch: char,
@@ -141,7 +141,7 @@ pub(crate) fn add_char_verts(
     if ch == ' ' {
         return;
     }
-    // 全角文字フラグを正しく設定してグリフアトラスのキャッシュキーを一致させる
+    // Set the wide-character flag correctly so the glyph atlas cache key matches.
     let key = GlyphKey {
         ch,
         bold,
@@ -189,10 +189,11 @@ pub(crate) fn add_char_verts(
     text_idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
 }
 
-/// 文字列をテキスト頂点バッファに追加する
+/// Append a string to the text vertex buffer.
 ///
-/// Unicode 文字幅（全角=2, 半角=1）を考慮して正しいピクセル位置に各グリフを配置する。
-/// 日本語・中国語・韓国語などの全角文字も正しく描画される。
+/// Each glyph is placed at the correct pixel position taking the Unicode column
+/// width (full-width = 2, half-width = 1) into account. CJK full-width characters
+/// (Japanese / Chinese / Korean) are rendered correctly.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn add_string_verts(
     text: &str,
@@ -211,7 +212,7 @@ pub(crate) fn add_string_verts(
 ) {
     let mut x_offset = 0.0f32;
     for ch in text.chars() {
-        // Unicode 幅（全角=2, 半角=1）を取得して文字送り量を決定する
+        // Use the Unicode column width (full-width = 2, half-width = 1) for advance.
         let char_display_width = UnicodeWidthChar::width(ch).unwrap_or(1);
         let is_wide = char_display_width >= 2;
         add_char_verts(
@@ -233,7 +234,7 @@ pub(crate) fn add_string_verts(
     }
 }
 
-/// URL をデフォルトブラウザで開く（プラットフォーム対応）
+/// Open a URL in the default browser (cross-platform).
 pub(crate) fn open_url(url: &str) {
     info!("Opening URL: {}", url);
     #[cfg(target_os = "windows")]
@@ -252,12 +253,12 @@ pub(crate) fn open_url(url: &str) {
     }
 }
 
-/// ペインのグリッド内容をプレーンテキストに変換する（Ctrl+Shift+C コピー用）
+/// Convert a pane's grid contents into plain text (used by Ctrl+Shift+C copy).
 pub(crate) fn grid_to_text(pane: &crate::state::PaneState) -> String {
     let mut lines = Vec::with_capacity(pane.grid.rows.len());
     for row in &pane.grid.rows {
         let line: String = row.iter().map(|c| c.ch).collect();
-        // 行末の空白を除去して返す
+        // Strip trailing spaces from each row.
         lines.push(line.trim_end().to_string());
     }
     lines.join("\n")

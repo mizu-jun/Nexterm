@@ -1,9 +1,9 @@
-//! 色変換ユーティリティ — ANSI 256 色・16 進数カラー文字列の変換
+//! Color-conversion utilities — ANSI 256 colors and hex color strings.
 
-/// `nexterm_proto::Color` を RGBA [0, 1] に変換する
+/// Convert a `nexterm_proto::Color` into RGBA in the [0, 1] range.
 ///
-/// `is_fg` が true の場合は前景色、false の場合は背景色として Default を解決する。
-/// `palette` が指定されている場合はスキームパレットを優先して参照する。
+/// When `is_fg` is true the `Default` color resolves to the foreground; otherwise to
+/// the background. If `palette` is provided, the color scheme palette takes precedence.
 pub(crate) fn resolve_color(
     color: &nexterm_proto::Color,
     is_fg: bool,
@@ -24,7 +24,7 @@ pub(crate) fn resolve_color(
         }
         Color::Rgb(r, g, b) => [u8_to_f32(*r), u8_to_f32(*g), u8_to_f32(*b), 1.0],
         Color::Indexed(n) => {
-            // ANSI 0-15: スキームパレットを優先する
+            // ANSI 0-15: prefer the scheme palette when available.
             if *n < 16
                 && let Some(p) = palette
             {
@@ -36,9 +36,9 @@ pub(crate) fn resolve_color(
     }
 }
 
-/// ANSI 256 色パレット → RGBA [0, 1]
+/// ANSI 256-color palette → RGBA in [0, 1].
 pub(crate) fn ansi_256_to_rgb(n: u8) -> [f32; 4] {
-    // 基本 16 色（簡易実装）
+    // Basic 16 colors (simple implementation).
     const BASIC: [[f32; 3]; 16] = [
         [0.0, 0.0, 0.0],       // 0: black
         [0.502, 0.0, 0.0],     // 1: red
@@ -63,7 +63,7 @@ pub(crate) fn ansi_256_to_rgb(n: u8) -> [f32; 4] {
         return [c[0], c[1], c[2], 1.0];
     }
 
-    // 216 色キューブ（16〜231）
+    // 216-color cube (16–231).
     if (16..=231).contains(&n) {
         let idx = n - 16;
         let b = (idx % 6) as f32 / 5.0;
@@ -72,12 +72,12 @@ pub(crate) fn ansi_256_to_rgb(n: u8) -> [f32; 4] {
         return [r, g, b, 1.0];
     }
 
-    // グレースケール（232〜255）
+    // Grayscale (232–255).
     let grey = (n - 232) as f32 / 23.0;
     [grey, grey, grey, 1.0]
 }
 
-/// `#rrggbb` 形式の16進カラー文字列を `[f32; 4]` RGBA に変換する
+/// Convert a `#rrggbb` hex color string into a `[f32; 4]` RGBA value.
 pub(crate) fn hex_to_rgba(hex: &str, alpha: f32) -> [f32; 4] {
     let hex = hex.trim_start_matches('#');
     let r = u8::from_str_radix(hex.get(0..2).unwrap_or("80"), 16).unwrap_or(128) as f32 / 255.0;
@@ -91,7 +91,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ansi256_基本16色が変換できる() {
+    fn ansi256_basic_16_colors_convert() {
         let black = ansi_256_to_rgb(0);
         assert_eq!(black, [0.0, 0.0, 0.0, 1.0]);
         let white = ansi_256_to_rgb(15);
@@ -99,7 +99,7 @@ mod tests {
     }
 
     #[test]
-    fn ansi256_グレースケールが変換できる() {
+    fn ansi256_grayscale_converts() {
         let grey = ansi_256_to_rgb(232);
         assert_eq!(grey, [0.0, 0.0, 0.0, 1.0]);
         let bright = ansi_256_to_rgb(255);
@@ -107,15 +107,15 @@ mod tests {
     }
 
     #[test]
-    fn デフォルト色の解決() {
+    fn default_color_resolves() {
         let fg = resolve_color(&nexterm_proto::Color::Default, true, None);
-        assert!(fg[0] > 0.5); // 前景は明るい
+        assert!(fg[0] > 0.5); // foreground is bright
         let bg = resolve_color(&nexterm_proto::Color::Default, false, None);
-        assert!(bg[0] < 0.5); // 背景は暗い
+        assert!(bg[0] < 0.5); // background is dark
     }
 
     #[test]
-    fn hex_to_rgba_変換() {
+    fn hex_to_rgba_converts() {
         let c = hex_to_rgba("#ae8b2d", 1.0);
         assert!((c[0] - 0xae as f32 / 255.0).abs() < 1e-3);
         assert!((c[1] - 0x8b as f32 / 255.0).abs() < 1e-3);
@@ -124,7 +124,7 @@ mod tests {
     }
 
     #[test]
-    fn hex_to_rgba_ハッシュなし() {
+    fn hex_to_rgba_without_hash_prefix() {
         let c = hex_to_rgba("ffffff", 0.5);
         assert_eq!(c, [1.0, 1.0, 1.0, 0.5]);
     }

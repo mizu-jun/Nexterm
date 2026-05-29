@@ -1,12 +1,13 @@
-//! キーマッピング — winit キーコードと nexterm_proto キーコードの相互変換
+//! Key mapping — converts between winit key codes and `nexterm_proto` key codes.
 
 use nexterm_proto::KeyCode as ProtoKeyCode;
 use winit::keyboard::{KeyCode as WKeyCode, ModifiersState, PhysicalKey};
 
-/// winit の PhysicalKey を nexterm_proto の KeyCode に変換する
+/// Convert a winit `PhysicalKey` into a `nexterm_proto::KeyCode`.
 ///
-/// テキスト入力のない特殊キー（矢印・Fn・Ctrl+文字）のみ変換する。
-/// 通常の文字入力は IME 経由で処理するため None を返す。
+/// Only special keys without text input (arrows, function keys, Ctrl+letter) are
+/// translated. Regular character input is handled through the IME, so this
+/// returns `None` for it.
 pub(crate) fn physical_to_proto_key(
     key: PhysicalKey,
     mods: ModifiersState,
@@ -49,13 +50,13 @@ pub(crate) fn physical_to_proto_key(
         WKeyCode::F10 => Some(ProtoKeyCode::F(10)),
         WKeyCode::F11 => Some(ProtoKeyCode::F(11)),
         WKeyCode::F12 => Some(ProtoKeyCode::F(12)),
-        // Ctrl+文字: text が None のケース（OS がテキストを生成しない場合）
+        // Ctrl+letter: when `text` is None (the OS does not generate text).
         c if ctrl => winit_code_to_char(c).map(ProtoKeyCode::Char),
         _ => None,
     }
 }
 
-/// winit のキーコードを英小文字に変換する（Ctrl シーケンス用）
+/// Convert a winit key code into a lowercase ASCII letter (for Ctrl sequences).
 pub(crate) fn winit_code_to_char(code: WKeyCode) -> Option<char> {
     match code {
         WKeyCode::KeyA => Some('a'),
@@ -88,7 +89,7 @@ pub(crate) fn winit_code_to_char(code: WKeyCode) -> Option<char> {
     }
 }
 
-/// winit の ModifiersState を nexterm_proto の Modifiers に変換する
+/// Convert winit `ModifiersState` into `nexterm_proto::Modifiers`.
 pub(crate) fn proto_modifiers(state: ModifiersState) -> nexterm_proto::Modifiers {
     let mut bits = 0u8;
     if state.shift_key() {
@@ -106,18 +107,20 @@ pub(crate) fn proto_modifiers(state: ModifiersState) -> nexterm_proto::Modifiers
     nexterm_proto::Modifiers(bits)
 }
 
-/// 設定キー文字列（例: "ctrl+shift+p"）と winit キーイベントを照合する
+/// Match a config keybinding string (e.g. `"ctrl+shift+p"`) against a winit key event.
 ///
-/// フォーマット: 修飾キー（ctrl/shift/alt/meta）と最終キー文字を `+` で区切る。
+/// Format: zero or more modifier names (`ctrl`/`shift`/`alt`/`meta`) followed by a
+/// trailing key, all separated by `+`.
 ///
-/// **重要**: 単発キー専用。スペース区切りのプレフィックスバインド（tmux 風 "ctrl+b d"）は
-/// false を返す。prefix 系バインドは呼び出し側で第1トークン（leader）と残りトークンに
-/// 分解してから本関数を 2 段階で呼ぶこと（[`input_handler::check_config_keybindings`] 参照）。
+/// **Important**: single-binding only. Space-separated prefix bindings (tmux-style
+/// `"ctrl+b d"`) return `false`. Prefix bindings must be split by the caller into
+/// the first token (leader) and the remaining tokens, then matched in two stages
+/// (see [`input_handler::check_config_keybindings`]).
 ///
-/// 過去のバグ: 旧実装は `split_whitespace().last()` で末尾トークンのみ評価していたため、
-/// `"ctrl+b d"` バインド設定下で `d` 単独押下にもマッチして誤発火していた。
+/// Historical bug: the old implementation evaluated only `split_whitespace().last()`,
+/// which meant `"ctrl+b d"` would incorrectly match a bare `d` press.
 pub(crate) fn config_key_matches(key_str: &str, code: WKeyCode, mods: ModifiersState) -> bool {
-    // スペース区切りのプレフィックスバインドは本関数では扱わない（呼び出し側で分解する）
+    // Space-separated prefix bindings are out of scope here (the caller splits them).
     if key_str.split_whitespace().count() > 1 {
         return false;
     }
@@ -128,10 +131,10 @@ pub(crate) fn config_key_matches(key_str: &str, code: WKeyCode, mods: ModifiersS
     config_key_matches_token(token, code, mods)
 }
 
-/// `+` 区切りの単一キー仕様（例: "ctrl+shift+p"）を照合する内部関数。
-/// スペースを含まない前提（呼び出し側で保証）。
+/// Internal helper: match a single `+`-delimited key spec (e.g. `"ctrl+shift+p"`).
+/// Assumes the input does not contain whitespace (the caller guarantees this).
 pub(crate) fn config_key_matches_token(token: &str, code: WKeyCode, mods: ModifiersState) -> bool {
-    // `+` で分割して修飾キーとメインキーを取得する
+    // Split on `+` to separate the modifiers from the main key.
     let parts: Vec<&str> = token.split('+').collect();
     if parts.is_empty() {
         return false;
@@ -143,7 +146,7 @@ pub(crate) fn config_key_matches_token(token: &str, code: WKeyCode, mods: Modifi
     let mut need_meta = false;
     let main_key = parts
         .last()
-        .expect("parts は split() で少なくとも1要素ある");
+        .expect("split() always yields at least one element");
 
     for part in &parts[..parts.len() - 1] {
         match part.to_lowercase().as_str() {
@@ -155,7 +158,7 @@ pub(crate) fn config_key_matches_token(token: &str, code: WKeyCode, mods: Modifi
         }
     }
 
-    // 修飾キーが一致しなければ false
+    // Modifier mismatch → no match.
     if need_ctrl != mods.control_key() {
         return false;
     }
@@ -169,18 +172,18 @@ pub(crate) fn config_key_matches_token(token: &str, code: WKeyCode, mods: Modifi
         return false;
     }
 
-    // メインキー文字列を winit KeyCode に変換して比較する
+    // Compare the main key string against the winit KeyCode.
     key_str_to_keycode(main_key) == Some(code)
 }
 
-/// キー文字列を winit の KeyCode に変換する（簡易実装）
+/// Convert a key name string into a winit `KeyCode` (simple implementation).
 pub(crate) fn key_str_to_keycode(s: &str) -> Option<WKeyCode> {
-    // 1 文字の場合は英数字として処理する
+    // Single-character inputs are treated as alphanumerics.
     if s.len() == 1 {
-        let ch = s.chars().next().expect("s.len() == 1 なので必ず1文字ある");
+        let ch = s.chars().next().expect("s.len() == 1 guarantees one char");
         return char_to_keycode(ch);
     }
-    // 特殊キー名
+    // Special key names.
     match s.to_lowercase().as_str() {
         "enter" | "return" => Some(WKeyCode::Enter),
         "backspace" => Some(WKeyCode::Backspace),
@@ -213,7 +216,7 @@ pub(crate) fn key_str_to_keycode(s: &str) -> Option<WKeyCode> {
     }
 }
 
-/// 1文字を winit の KeyCode に変換する
+/// Convert a single character into a winit `KeyCode`.
 pub(crate) fn char_to_keycode(ch: char) -> Option<WKeyCode> {
     match ch {
         'a' | 'A' => Some(WKeyCode::KeyA),
@@ -286,10 +289,10 @@ mod tests {
         ModifiersState::CONTROL | ModifiersState::SHIFT
     }
 
-    // === 単発バインドの正常系 ===
+    // === Single-binding happy paths ===
 
     #[test]
-    fn 単発_ctrl_shift_p_は_ctrlshift_p_で_true() {
+    fn single_ctrl_shift_p_matches_ctrl_shift_p_press() {
         assert!(config_key_matches(
             "ctrl+shift+p",
             WKeyCode::KeyP,
@@ -298,26 +301,26 @@ mod tests {
     }
 
     #[test]
-    fn 単発_ctrl_b_は_ctrl_b_で_true() {
+    fn single_ctrl_b_matches_ctrl_b_press() {
         assert!(config_key_matches("ctrl+b", WKeyCode::KeyB, mods_ctrl()));
     }
 
     #[test]
-    fn 単発_ctrl_b_は_b_単独_で_false() {
+    fn single_ctrl_b_does_not_match_bare_b_press() {
         assert!(!config_key_matches("ctrl+b", WKeyCode::KeyB, mods_none()));
     }
 
-    // === バグ回帰防止: スペース区切りは常に false ===
+    // === Regression guard: space-separated bindings always return false ===
 
     #[test]
-    fn prefix_バインド_ctrl_b_d_は_d_単独_で_false() {
-        // 旧バグ: split_whitespace().last() で "d" だけ評価して true を返していた
+    fn prefix_binding_ctrl_b_d_does_not_match_bare_d() {
+        // Old bug: split_whitespace().last() evaluated only "d" and returned true.
         assert!(!config_key_matches("ctrl+b d", WKeyCode::KeyD, mods_none()));
     }
 
     #[test]
-    fn prefix_バインド_ctrl_b_pct_は_5_単独_で_false() {
-        // 旧バグ: "%" → Digit5 で 5 単独押下にマッチしていた
+    fn prefix_binding_ctrl_b_pct_does_not_match_bare_5() {
+        // Old bug: '%' → Digit5 matched a bare 5 press.
         assert!(!config_key_matches(
             "ctrl+b %",
             WKeyCode::Digit5,
@@ -326,32 +329,32 @@ mod tests {
     }
 
     #[test]
-    fn prefix_バインド_ctrl_b_d_は_ctrl_b_押下_でも_false() {
-        // prefix モード突入のキーには別ロジックで対応するため、本関数は常に false
+    fn prefix_binding_ctrl_b_d_does_not_match_ctrl_b() {
+        // Entering prefix mode is handled by a separate code path, so this returns false.
         assert!(!config_key_matches("ctrl+b d", WKeyCode::KeyB, mods_ctrl()));
     }
 
     #[test]
-    fn prefix_バインド_leader_d_は_d_単独_で_false() {
-        // <leader> 展開後の文字列も同様
+    fn prefix_binding_leader_d_does_not_match_bare_d() {
+        // The same applies to <leader>-expanded strings.
         assert!(!config_key_matches("ctrl+b d", WKeyCode::KeyD, mods_none()));
     }
 
-    // === エッジケース ===
+    // === Edge cases ===
 
     #[test]
-    fn 空文字列は_false() {
+    fn empty_string_returns_false() {
         assert!(!config_key_matches("", WKeyCode::KeyA, mods_none()));
     }
 
     #[test]
-    fn 空白のみは_false() {
+    fn whitespace_only_returns_false() {
         assert!(!config_key_matches("   ", WKeyCode::KeyA, mods_none()));
     }
 
     #[test]
-    fn 修飾子のミスマッチは_false() {
-        // shift が要求されているが押されていない
+    fn modifier_mismatch_returns_false() {
+        // Shift is required but not pressed.
         assert!(!config_key_matches(
             "ctrl+shift+p",
             WKeyCode::KeyP,
@@ -360,8 +363,8 @@ mod tests {
     }
 
     #[test]
-    fn 余分な修飾子は_false() {
-        // ctrl+p バインドに対して Ctrl+Shift+p を押した場合
+    fn extra_modifier_returns_false() {
+        // Pressing Ctrl+Shift+p when the binding is just `ctrl+p`.
         assert!(!config_key_matches(
             "ctrl+p",
             WKeyCode::KeyP,
@@ -369,10 +372,10 @@ mod tests {
         ));
     }
 
-    // === 内部関数 config_key_matches_token のスペース不可前提を確認 ===
+    // === Verify config_key_matches_token assumes no whitespace ===
 
     #[test]
-    fn token_関数は_p_と_ctrl_p_で_true() {
+    fn token_helper_matches_ctrl_p_when_ctrl_p_pressed() {
         assert!(config_key_matches_token(
             "ctrl+p",
             WKeyCode::KeyP,
@@ -381,8 +384,9 @@ mod tests {
     }
 
     #[test]
-    fn token_関数は_前後空白を含むと_main_key_変換失敗で_false() {
-        // 呼び出し側で trim 済みを前提にしているため、空白入りの token は意図的に通さない
+    fn token_helper_returns_false_when_main_key_has_surrounding_spaces() {
+        // The caller is expected to trim() before invoking; whitespace-laden tokens
+        // are intentionally rejected here.
         assert!(!config_key_matches_token(
             " ctrl+p ",
             WKeyCode::KeyP,

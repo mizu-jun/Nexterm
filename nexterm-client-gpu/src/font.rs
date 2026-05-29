@@ -1,39 +1,39 @@
-//! フォント管理 — cosmic-text によるグリフレンダリング
+//! Font management — glyph rendering via cosmic-text.
 
 use cosmic_text::{Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, SwashCache};
 
-/// リガチャ描画の出力グリフ（行単位ラスタライズ用）
+/// A rasterized glyph produced by ligature-aware rendering (per-row output).
 pub struct RenderedGlyph {
-    /// グリッド上の列インデックス（0 origin）
+    /// Grid column index (0-origin).
     pub col: usize,
-    /// グリフの物理幅（ピクセル）
+    /// Physical glyph width (pixels).
     pub width: u32,
-    /// グリフの物理高さ（ピクセル）
+    /// Physical glyph height (pixels).
     pub height: u32,
-    /// RGBA ピクセルデータ
+    /// RGBA pixel data.
     pub pixels: Vec<u8>,
 }
 
-/// フォントシステムのラッパー
+/// Wrapper around the font system.
 pub struct FontManager {
     pub font_system: FontSystem,
     pub swash_cache: SwashCache,
     pub metrics: Metrics,
-    /// 実計測による1セルの幅（物理ピクセル）
+    /// Measured cell width (physical pixels) per character.
     cell_w: f32,
-    /// 設定されたフォントファミリー名（Attrs に渡す）
+    /// Configured font family name (passed to `Attrs`).
     family: String,
-    /// リガチャを有効にするか
+    /// Whether to enable ligatures.
     pub ligatures: bool,
 }
 
 impl FontManager {
-    /// 指定フォント設定でフォントマネージャーを作成する
+    /// Create a font manager with the given configuration.
     ///
-    /// `family` はプライマリフォントファミリー名。
-    /// `fallbacks` はグリフが見つからない場合に順番に試行するフォントファミリーリスト。
-    /// `scale_factor` は winit の window.scale_factor()（DPI スケール係数）。
-    /// `ligatures` は HarfBuzz リガチャシェーピングを有効にするか。
+    /// `family` is the primary font family name.
+    /// `fallbacks` is a list of font families to try in order when glyphs are missing.
+    /// `scale_factor` is the DPI scale from winit's `window.scale_factor()`.
+    /// `ligatures` enables HarfBuzz ligature shaping.
     pub fn new(
         family: &str,
         size_pt: f32,
@@ -41,37 +41,37 @@ impl FontManager {
         scale_factor: f32,
         ligatures: bool,
     ) -> Self {
-        // FontSystem::new() は全システムフォントをスキャンするため ~30-50MB 消費する。
-        // 代わりに絞り込みロードを使用してメモリを削減する。
+        // `FontSystem::new()` scans every system font and consumes ~30–50 MB.
+        // We use a curated loader instead to keep memory usage down.
         let mut font_system = Self::build_font_system(family, fallbacks);
 
-        // プライマリフォントを monospace ジェネリックとして登録する。
-        // Attrs::new().family(Family::Monospace) で参照される。
+        // Register the primary font under the generic `monospace` name.
+        // `Attrs::new().family(Family::Monospace)` references it.
         font_system.db_mut().set_monospace_family(family);
 
         if !fallbacks.is_empty() {
             tracing::debug!(
-                "フォントフォールバックチェーン: {} -> {}",
+                "font fallback chain: {} -> {}",
                 family,
                 fallbacks.join(" -> ")
             );
         }
 
-        // size_pt × (96dpi/72dpi) × scale_factor = 物理ピクセルでのフォントサイズ
-        // Windows 標準は 96 DPI、scale_factor がディスプレイのスケーリングを表す
+        // size_pt × (96 dpi / 72 dpi) × scale_factor = physical font size in pixels.
+        // Windows defaults to 96 DPI; `scale_factor` represents the display scaling.
         let font_size_px = size_pt * (96.0 / 72.0) * scale_factor;
         let line_height = font_size_px * 1.2;
         let metrics = Metrics::new(font_size_px, line_height);
 
         let mut swash_cache = SwashCache::new();
 
-        // 基準文字 '0' の advance width（アドバンス幅）を layout_runs() で計測する。
-        // Attrs::new() のデフォルトは Family::SansSerif なので Family::Monospace を明示する。
-        // "monospace" 以外の名前が指定された場合は Family::Name で直接指定する。
+        // Measure the advance width of the reference character '0' via `layout_runs()`.
+        // `Attrs::new()` defaults to `Family::SansSerif`, so we explicitly request
+        // `Family::Monospace` (or `Family::Name` when a specific family is configured).
         let cell_w = Self::measure_char_width(&mut font_system, &mut swash_cache, metrics, family);
 
         tracing::debug!(
-            "フォント初期化: family={} {}pt × scale={} → {}px, cell_w={:.1}px, cell_h={:.1}px",
+            "font init: family={} {}pt × scale={} → {}px, cell_w={:.1}px, cell_h={:.1}px",
             family,
             size_pt,
             scale_factor,
@@ -90,33 +90,34 @@ impl FontManager {
         }
     }
 
-    /// フォントシステムを絞り込みロードで初期化する
+    /// Initialise the font system with a curated set of font directories.
     ///
-    /// `FontSystem::new()` は全システムフォントをスキャンするため ~30-50MB 消費する。
-    /// このメソッドではOS別の主要フォントディレクトリのみをロードしてメモリを削減する。
-    /// CJK・絵文字フォールバックに必要なディレクトリは含む。
+    /// `FontSystem::new()` scans every system font and consumes ~30–50 MB.
+    /// This helper only loads the OS-specific main font directories to keep
+    /// memory usage down, while still covering CJK and emoji fallback fonts.
     fn build_font_system(_primary_family: &str, _fallbacks: &[String]) -> FontSystem {
         use cosmic_text::fontdb;
 
         let locale = sys_locale::get_locale().unwrap_or_else(|| "ja-JP".to_string());
         let mut db = fontdb::Database::new();
 
-        // OS 別の主要フォントディレクトリを絞り込んでロードする
-        // フォールバック: load_system_fonts() で全スキャン
+        // OS-specific main font directories (faster than a full scan).
+        // Fallback: `load_system_fonts()` does a full scan.
         #[cfg(target_os = "macos")]
         {
-            // システムフォント（絵文字・CJK 含む）
+            // System fonts (covers emoji and CJK).
             db.load_fonts_dir("/System/Library/Fonts");
-            // ユーザーインストールフォントは省略（主要ターミナルフォントは上記に含まれる）
+            // User-installed fonts are intentionally skipped (the main terminal
+            // fonts ship with the OS).
         }
         #[cfg(target_os = "windows")]
         {
-            // Windows システムフォント
+            // Windows system fonts.
             db.load_fonts_dir("C:\\Windows\\Fonts");
         }
         #[cfg(target_os = "linux")]
         {
-            // Linux 主要フォントディレクトリ（全スキャンより高速）
+            // Main Linux font directories (faster than a full scan).
             for dir in &[
                 "/usr/share/fonts",
                 "/usr/local/share/fonts",
@@ -128,19 +129,20 @@ impl FontManager {
         }
         #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
         {
-            // 未知の OS はフルスキャンにフォールバック
+            // Fall back to a full scan on unknown operating systems.
             db.load_system_fonts();
         }
 
-        tracing::debug!("フォントDB: {} 個のフェイスをロード済み", db.len());
+        tracing::debug!("font DB loaded {} faces", db.len());
 
         FontSystem::new_with_locale_and_db(locale, db)
     }
 
-    /// ASCII 基準文字 '0' のアドバンス幅を計測する
+    /// Measure the advance width of the ASCII reference character '0'.
     ///
-    /// `Buffer::draw()` はインクピクセルのみを提供するため advance width と一致しない。
-    /// `layout_runs()` の `glyph.x + glyph.w` を使って正確なセル幅を取得する。
+    /// `Buffer::draw()` only emits ink pixels, so it does not match the advance
+    /// width. We use `glyph.x + glyph.w` from `layout_runs()` to get the precise
+    /// cell width.
     fn measure_char_width(
         font_system: &mut FontSystem,
         _swash_cache: &mut SwashCache,
@@ -148,10 +150,10 @@ impl FontManager {
         family: &str,
     ) -> f32 {
         let mut buf = Buffer::new(font_system, metrics);
-        // "monospace" ジェネリック名の場合は Family::Monospace、
-        // 具体的なフォント名の場合は Family::Name で直接指定する。
-        // どちらも SansSerif フォールバックを防いで正確なセル幅を計測できる。
-        // family_owned はすべてのパスで有効なライフタイムを持つよう事前宣言する。
+        // Use `Family::Monospace` for the generic "monospace" name; otherwise pass
+        // the family name directly via `Family::Name`. Either path avoids the
+        // SansSerif fallback so we get an accurate cell width.
+        // `family_owned` is declared up front so its lifetime covers every branch.
         let family_owned = family.to_string();
         let attrs = if family.eq_ignore_ascii_case("monospace") || family.is_empty() {
             Attrs::new().family(Family::Monospace)
@@ -166,8 +168,8 @@ impl FontManager {
         );
         buf.shape_until_scroll(font_system, false);
 
-        // layout_runs() のグリフ hitbox（x + w）からアドバンス幅を取得する
-        // これはフォントの正確な advance width（left bearing + ink + right bearing）
+        // Pull the advance width out of each glyph's hit box (x + w) in `layout_runs()`.
+        // That value is the precise font advance width (left bearing + ink + right bearing).
         let mut advance = 0.0f32;
         for run in buf.layout_runs() {
             for glyph in run.glyphs.iter() {
@@ -181,7 +183,7 @@ impl FontManager {
             metrics.font_size
         );
 
-        // 計測失敗の場合は line_height * 0.5 を安全策として返す
+        // Fall back to `line_height * 0.5` if the measurement failed.
         if advance > 1.0 {
             advance
         } else {
@@ -189,10 +191,11 @@ impl FontManager {
         }
     }
 
-    /// 1文字のグリフをラスタライズして RGBA ピクセル列を返す
+    /// Rasterise a single character and return its RGBA pixels.
     ///
-    /// `wide` が true の場合は全角文字（CJK 等）として2セル幅のバッファを使用する。
-    /// 戻り値: `(width, height, rgba_pixels)`
+    /// When `wide` is true we treat the character as full-width (e.g. CJK) and
+    /// allocate a 2-cell-wide buffer.
+    /// Returns `(width, height, rgba_pixels)`.
     pub fn rasterize_char(
         &mut self,
         ch: char,
@@ -203,9 +206,9 @@ impl FontManager {
     ) -> (u32, u32, Vec<u8>) {
         let mut buffer = Buffer::new(&mut self.font_system, self.metrics);
 
-        // "monospace" ジェネリック名の場合は Family::Monospace、
-        // 具体的なフォント名の場合は Family::Name で直接指定する（SansSerif フォールバックを防ぐ）
-        // family_owned はすべてのパスで有効なライフタイムを持つよう事前宣言する。
+        // Use `Family::Monospace` for the generic "monospace" name; otherwise pass
+        // the family name directly via `Family::Name` (prevents the SansSerif fallback).
+        // `family_owned` is declared up front so its lifetime covers every branch.
         let family_owned = self.family.clone();
         let base_attrs = if self.family.eq_ignore_ascii_case("monospace") || self.family.is_empty()
         {
@@ -226,7 +229,7 @@ impl FontManager {
             });
 
         let text = ch.to_string();
-        // 全角文字は 2 セル分の幅でレンダリングする（バッファ幅を 2× に設定）
+        // Full-width characters render with a 2-cell buffer (double the width).
         let display_cols = if wide { 2.0 } else { 1.0 };
         buffer.set_text(
             &mut self.font_system,
@@ -242,7 +245,7 @@ impl FontManager {
         );
         buffer.shape_until_scroll(&mut self.font_system, false);
 
-        // セルサイズ: 全角文字は 2 セル幅
+        // Cell size: full-width characters span two cells.
         let cell_w = (self.cell_w * display_cols).ceil() as u32;
         let cell_h = self.metrics.line_height.ceil() as u32;
         let mut pixels = vec![0u8; (cell_w * cell_h * 4) as usize];
@@ -254,7 +257,7 @@ impl FontManager {
             &mut self.swash_cache,
             color,
             |x, y, _w, _h, c| {
-                // 負の座標（left bearing 等）はスキップ
+                // Skip negative coordinates (e.g. left bearings).
                 if x < 0 || y < 0 {
                     return;
                 }
@@ -263,7 +266,7 @@ impl FontManager {
                 if px < cell_w && py < cell_h {
                     let idx = ((py * cell_w + px) * 4) as usize;
                     if idx + 3 < pixels.len() {
-                        // アルファブレンド（単純上書き）
+                        // Alpha-blend (plain overwrite).
                         pixels[idx] = (c.r() as u32 * c.a() as u32 / 255) as u8;
                         pixels[idx + 1] = (c.g() as u32 * c.a() as u32 / 255) as u8;
                         pixels[idx + 2] = (c.b() as u32 * c.a() as u32 / 255) as u8;
@@ -276,14 +279,14 @@ impl FontManager {
         (cell_w, cell_h, pixels)
     }
 
-    /// 行全体をリガチャ込みでラスタライズし、グリッド列単位のグリフリストを返す。
+    /// Rasterise a full row with ligatures and return per-column glyphs.
     ///
-    /// `chars` は (col, char, bold, italic, fg_rgba) のタプル列。
-    /// HarfBuzz の Advanced シェーピングが有効になるため、「->」「=>」「!=」等の
-    /// リガチャグリフが正しく合成される。
+    /// `chars` is a list of `(col, char, bold, italic, fg_rgba)` tuples.
+    /// HarfBuzz's `Advanced` shaping is enabled, so ligature glyphs (e.g. "->",
+    /// "=>", "!=") are synthesised correctly.
     ///
-    /// リガチャが無効（`self.ligatures == false`）の場合は空リストを返す。
-    /// 呼び出し元は空リストのとき `rasterize_char()` にフォールバックすること。
+    /// Returns an empty list when ligatures are disabled (`self.ligatures == false`).
+    /// Callers should fall back to `rasterize_char()` in that case.
     pub fn rasterize_line_segment(
         &mut self,
         chars: &[(usize, char, bool, bool, [u8; 4])],
@@ -292,8 +295,9 @@ impl FontManager {
             return Vec::new();
         }
 
-        // 同じ fg 色・bold・italic の連続するチャンクに分けてシェーピングする。
-        // 属性が変わる箇所でリガチャは分断される（レンダリング上正しい）。
+        // Split the input into contiguous chunks that share the same fg/bold/italic
+        // attributes and shape each chunk separately. Ligatures break at attribute
+        // boundaries, which is the visually correct behavior.
         let mut result = Vec::new();
         let mut chunk_start = 0;
 
@@ -315,7 +319,7 @@ impl FontManager {
         result
     }
 
-    /// 同属性の文字チャンクを1つのバッファでシェーピングしてグリフリストを返す。
+    /// Shape a single attribute-uniform chunk and return its glyphs.
     fn rasterize_chunk(
         &mut self,
         chunk: &[(usize, char, bool, bool, [u8; 4])],
@@ -343,7 +347,7 @@ impl FontManager {
                 cosmic_text::Style::Normal
             });
 
-        // チャンク全体を1バッファに渡して HarfBuzz でシェーピングする
+        // Shape the whole chunk in one HarfBuzz pass.
         let buf_width = self.cell_w * chunk.len() as f32 * 4.0;
         let mut buffer = Buffer::new(&mut self.font_system, self.metrics);
         buffer.set_text(
@@ -360,8 +364,8 @@ impl FontManager {
         );
         buffer.shape_until_scroll(&mut self.font_system, false);
 
-        // layout_runs() から各グリフの x オフセット・幅を取得する
-        // グリフ x 座標をセル幅で割ってグリッド列にマッピングする
+        // Pull each glyph's x offset and width from `layout_runs()` and map them
+        // back to grid columns by dividing by the cell width.
         let color = Color::rgba(fg[0], fg[1], fg[2], fg[3]);
         let mut glyphs: Vec<(usize, f32, f32)> = Vec::new(); // (col, x_px, w_px)
         for run in buffer.layout_runs() {
@@ -374,12 +378,12 @@ impl FontManager {
             }
         }
 
-        // グリフが取得できなかった場合は空を返してフォールバックさせる
+        // If we couldn't extract any glyphs, return empty so the caller falls back.
         if glyphs.is_empty() {
             return Vec::new();
         }
 
-        // バッファ全体をラスタライズしてグリフ領域ごとに切り出す
+        // Rasterise the whole buffer once, then slice out each glyph region.
         let total_w = (self.cell_w * chunk.len() as f32).ceil() as u32;
         let mut full_pixels = vec![0u8; (total_w * cell_h * 4) as usize];
         buffer.draw(
@@ -404,7 +408,7 @@ impl FontManager {
             },
         );
 
-        // 各グリフ領域を切り出して RenderedGlyph に変換する
+        // Slice each glyph region and convert it into a `RenderedGlyph`.
         glyphs
             .into_iter()
             .map(|(grid_col, glyph_x, glyph_w)| {
@@ -440,17 +444,17 @@ impl FontManager {
             .collect()
     }
 
-    /// 1セルの幅（物理ピクセル）を返す — advance width の実計測値
+    /// Return the cell width (physical pixels) — the measured advance width.
     pub fn cell_width(&self) -> f32 {
         self.cell_w
     }
 
-    /// 1セルの高さ（物理ピクセル）を返す
+    /// Return the cell height (physical pixels).
     pub fn cell_height(&self) -> f32 {
         self.metrics.line_height
     }
 
-    /// 設定されているフォントファミリー名を返す
+    /// Return the configured font family name.
     #[allow(dead_code)]
     pub fn family(&self) -> &str {
         &self.family
@@ -462,21 +466,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn フォントマネージャーが生成できる() {
+    fn font_manager_constructs() {
         let fm = FontManager::new("monospace", 14.0, &[], 1.0, true);
         assert!(fm.cell_width() > 0.0);
         assert!(fm.cell_height() > 0.0);
     }
 
     #[test]
-    fn セルサイズが正の値を持つ() {
+    fn cell_size_is_positive() {
         let fm = FontManager::new("monospace", 16.0, &[], 1.0, true);
         assert!(fm.cell_width() > 5.0);
         assert!(fm.cell_height() > 10.0);
     }
 
     #[test]
-    fn フォールバックチェーン付きで生成できる() {
+    fn constructs_with_a_fallback_chain() {
         let fallbacks = vec![
             "Noto Sans CJK JP".to_string(),
             "Noto Color Emoji".to_string(),
@@ -487,7 +491,7 @@ mod tests {
     }
 
     #[test]
-    fn scale_factor_1_25でセル幅が大きくなる() {
+    fn scale_factor_1_25_grows_the_cell() {
         let fm1 = FontManager::new("monospace", 14.0, &[], 1.0, true);
         let fm125 = FontManager::new("monospace", 14.0, &[], 1.25, true);
         assert!(fm125.cell_width() > fm1.cell_width());
@@ -495,14 +499,15 @@ mod tests {
     }
 
     #[test]
-    fn advance_width_が_ink_width_以上であること() {
-        // layout_runs() 計測は ink width と等しいか大きい（right bearing を含む）
+    fn advance_width_is_at_least_the_ink_width() {
+        // `layout_runs()` measurement is greater than or equal to the ink width
+        // (it includes the right bearing).
         let fm = FontManager::new("monospace", 14.0, &[], 1.0, true);
-        // monospace フォントなのですべての文字が同じ幅のはず
+        // A monospace font has the same width for every glyph.
         let cell_w = fm.cell_width();
         assert!(cell_w > 0.0, "cell_w should be positive: {}", cell_w);
-        // 14pt @ 96dpi = 18.67px, advance ≈ 0.6 × font_size ≈ 11px
-        assert!(cell_w > 5.0, "cell_w should be > 5px: {}", cell_w);
-        assert!(cell_w < 40.0, "cell_w should be < 40px: {}", cell_w);
+        // 14 pt @ 96 dpi = 18.67 px; advance ≈ 0.6 × font_size ≈ 11 px.
+        assert!(cell_w > 5.0, "cell_w should be > 5 px: {}", cell_w);
+        assert!(cell_w < 40.0, "cell_w should be < 40 px: {}", cell_w);
     }
 }

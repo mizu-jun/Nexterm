@@ -1,72 +1,77 @@
-//! リリースアセットの minisign 署名検証（Sprint 3-4）
+//! Release-asset minisign signature verification (Sprint 3-4).
 //!
-//! 自動更新フローでリリースバイナリの完全性を保証するためのモジュール。
-//! 公開鍵はビルド時に `NEXTERM_MINISIGN_PUBLIC_KEY` 環境変数で埋め込まれる。
+//! Guarantees the integrity of release binaries during the auto-update flow.
+//! The public key is embedded at build time via the `NEXTERM_MINISIGN_PUBLIC_KEY`
+//! environment variable.
 //!
-//! # 運用
+//! # Operational flow
 //!
-//! 1. リリース管理者は `minisign -G -s nexterm.key` で鍵ペアを生成し、
-//!    秘密鍵を GitHub Secrets `NEXTERM_MINISIGN_SECRET_KEY` に保存する。
-//! 2. 公開鍵（`minisign.pub` の `untrusted comment` を除いた base64 行）を
-//!    GitHub Variables `NEXTERM_MINISIGN_PUBLIC_KEY` に登録する。
-//! 3. リリースワークフローはビルド時に `NEXTERM_MINISIGN_PUBLIC_KEY` を環境変数として
-//!    渡し、各アーカイブを `minisign -S -s ...` で署名して `.minisig` を添付する。
-//! 4. クライアントは更新ダウンロード後、対応する `.minisig` を取得して
-//!    [`verify_minisign`] で検証する。
+//! 1. The release maintainer generates a key pair with `minisign -G -s nexterm.key`
+//!    and stores the secret key in the `NEXTERM_MINISIGN_SECRET_KEY` GitHub Secret.
+//! 2. The public key (the base64 line from `minisign.pub` excluding the
+//!    `untrusted comment` header) is registered in the
+//!    `NEXTERM_MINISIGN_PUBLIC_KEY` GitHub Variable.
+//! 3. The release workflow passes `NEXTERM_MINISIGN_PUBLIC_KEY` as an environment
+//!    variable at build time and signs each archive with `minisign -S -s ...`,
+//!    attaching the resulting `.minisig`.
+//! 4. After downloading an update, the client fetches the matching `.minisig`
+//!    and validates it via [`verify_minisign`].
 //!
-//! # 検証スキップ
+//! # Skipping verification
 //!
-//! 公開鍵が埋め込まれていないビルド（開発ビルド・公開鍵未公開時）では
-//! [`is_signature_verification_enabled`] が `false` を返す。
-//! 呼び出し側は検証エラーをユーザーに通知し、自動更新を中断すること。
+//! For builds that do not embed a public key (development builds, or when the
+//! public key has not been published yet) [`is_signature_verification_enabled`]
+//! returns `false`. Callers should surface the verification failure to the user
+//! and abort the auto-update.
 //!
-//! # 注意
+//! # Note
 //!
-//! 公開 API は将来の自動更新ダウンロード機能で使用される予定。
-//! 現状は通知のみ行うため `dead_code` を許容する。
+//! The public API is planned for the future auto-update download feature.
+//! For now we only emit notifications, so `dead_code` is allowed.
 
 #![allow(dead_code)]
 
 use minisign_verify::{PublicKey, Signature};
 
-/// ビルド時に埋め込まれる minisign 公開鍵（base64 単一行）
+/// The minisign public key embedded at build time (a single base64 line).
 ///
-/// CI のリリースビルド時のみ `NEXTERM_MINISIGN_PUBLIC_KEY` が設定される想定。
-/// 開発ビルドでは `None` になり、検証関数は適切なエラーを返す。
+/// `NEXTERM_MINISIGN_PUBLIC_KEY` is expected to be set only for CI release builds.
+/// In development builds it is `None`, and the verification function returns an
+/// appropriate error.
 pub const MINISIGN_PUBLIC_KEY: Option<&str> = option_env!("NEXTERM_MINISIGN_PUBLIC_KEY");
 
-/// 署名検証が有効化されているか（公開鍵が埋め込まれているか）
+/// Whether signature verification is enabled (i.e. a public key is embedded).
 pub fn is_signature_verification_enabled() -> bool {
     MINISIGN_PUBLIC_KEY.is_some_and(|s| !s.trim().is_empty())
 }
 
-/// minisign 形式の署名を検証する
+/// Verify a minisign signature.
 ///
 /// # Arguments
-/// - `data`: 署名対象のバイト列（リリースアーカイブの中身）
-/// - `signature_text`: `.minisig` ファイルの内容（テキスト全体）
+/// - `data`: bytes covered by the signature (the contents of the release archive).
+/// - `signature_text`: full text contents of the `.minisig` file.
 ///
 /// # Returns
-/// - `Ok(())`: 検証成功
-/// - `Err(...)`: 公開鍵未埋め込み / 署名形式不正 / 検証失敗
+/// - `Ok(())`: verification succeeded.
+/// - `Err(...)`: public key not embedded / signature format invalid / verification failed.
 pub fn verify_minisign(data: &[u8], signature_text: &str) -> anyhow::Result<()> {
     let pubkey_b64 = MINISIGN_PUBLIC_KEY
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "minisign 公開鍵が埋め込まれていません（リリースビルド時に NEXTERM_MINISIGN_PUBLIC_KEY を設定してください）"
+                "minisign public key is not embedded (set NEXTERM_MINISIGN_PUBLIC_KEY at release build time)"
             )
         })?;
 
     let public_key = PublicKey::from_base64(pubkey_b64)
-        .map_err(|e| anyhow::anyhow!("minisign 公開鍵のデコードに失敗: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("failed to decode minisign public key: {e}"))?;
 
     let signature = Signature::decode(signature_text)
-        .map_err(|e| anyhow::anyhow!("minisign 署名のデコードに失敗: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("failed to decode minisign signature: {e}"))?;
 
     public_key
         .verify(data, &signature, false)
-        .map_err(|e| anyhow::anyhow!("minisign 署名検証に失敗: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("minisign signature verification failed: {e}"))?;
 
     Ok(())
 }
@@ -75,8 +80,8 @@ pub fn verify_minisign(data: &[u8], signature_text: &str) -> anyhow::Result<()> 
 mod tests {
     use super::*;
 
-    // minisign-verify 公式ドキュメントのテストベクトル（lib.rs より）
-    // 信頼された公開鍵・署名・データのトリプルで検証ロジックの正しさを担保する。
+    // Test vectors from the minisign-verify official documentation (lib.rs).
+    // A trusted (public key, signature, data) triple that exercises the verification logic.
     const TEST_PUBKEY: &str = "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3";
     const TEST_SIGNATURE: &str = "untrusted comment: signature from minisign secret key
 RUQf6LRCGA9i559r3g7V1qNyJDApGip8MfqcadIgT9CuhV3EMhHoN1mGTkUidF/z7SrlQgXdy8ofjb7bNJJylDOocrCo8KLzZwo=
@@ -85,48 +90,48 @@ wLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJA
     const TEST_DATA: &[u8] = b"test";
 
     #[test]
-    fn 公式テストベクトルで検証成功する() {
-        let public_key = PublicKey::from_base64(TEST_PUBKEY).expect("公開鍵デコード");
-        let signature = Signature::decode(TEST_SIGNATURE).expect("署名デコード");
+    fn official_test_vector_verifies() {
+        let public_key = PublicKey::from_base64(TEST_PUBKEY).expect("public key decodes");
+        let signature = Signature::decode(TEST_SIGNATURE).expect("signature decodes");
         public_key
             .verify(TEST_DATA, &signature, false)
-            .expect("検証成功");
+            .expect("verification succeeds");
     }
 
     #[test]
-    fn データが改ざんされたら検証失敗する() {
-        let public_key = PublicKey::from_base64(TEST_PUBKEY).expect("公開鍵デコード");
-        let signature = Signature::decode(TEST_SIGNATURE).expect("署名デコード");
+    fn tampered_data_fails_verification() {
+        let public_key = PublicKey::from_base64(TEST_PUBKEY).expect("public key decodes");
+        let signature = Signature::decode(TEST_SIGNATURE).expect("signature decodes");
         let tampered = b"tampered data";
         assert!(public_key.verify(tampered, &signature, false).is_err());
     }
 
     #[test]
-    fn 不正な公開鍵はデコードに失敗する() {
-        // 短すぎる base64 / minisign フォーマット違反
+    fn invalid_public_key_fails_to_decode() {
+        // Too-short base64 / not a minisign-formatted key.
         assert!(PublicKey::from_base64("invalid").is_err());
         assert!(PublicKey::from_base64("").is_err());
     }
 
     #[test]
-    fn 不正な署名はデコードに失敗する() {
+    fn invalid_signature_fails_to_decode() {
         assert!(Signature::decode("not a signature").is_err());
         assert!(Signature::decode("").is_err());
     }
 
     #[test]
-    fn verify_minisign_は不正な署名でエラーを返す() {
-        // 公開鍵が埋め込まれていない場合は「公開鍵未設定」エラー、
-        // 埋め込まれている場合は「署名デコード失敗」エラーになる。
-        // どちらにせよ Err を返すことを確認する。
+    fn verify_minisign_returns_err_for_invalid_signature() {
+        // When the public key is not embedded we get a "public key not set" error;
+        // when it is embedded we get a "signature decode failed" error.
+        // Either way the call must return `Err`.
         let result = verify_minisign(b"data", "not a signature");
-        assert!(result.is_err(), "不正な署名は必ず Err を返すこと");
+        assert!(result.is_err(), "invalid signatures must always return Err");
     }
 
     #[test]
-    fn is_signature_verification_enabled_は環境変数有無で切り替わる() {
-        // ビルド時の `option_env!` 評価結果なので実行時には変えられない。
-        // 「真偽値が決定的に返ること」を確認する（パニックしないこと）。
+    fn is_signature_verification_enabled_switches_on_env_var() {
+        // The result is determined at build time by `option_env!`, so it cannot be
+        // varied at run time. Just confirm the call returns a value without panicking.
         let _ = is_signature_verification_enabled();
     }
 }

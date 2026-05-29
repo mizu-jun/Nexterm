@@ -1,24 +1,27 @@
-//! タブドラッグのドロップ先判定（Sprint 5-8 Phase 4-2）
+//! Tab-drag drop-target detection (Sprint 5-8 Phase 4-2).
 //!
-//! タブドラッグのドロップ位置（screen 座標、ピクセル）と全 OS Window の bounds から、
-//! ドロップ先（同一 Window / 別 Window タブバー / 新規 Window）を決定する純関数。
+//! Given a tab drop location (screen coordinates, pixels) and the bounds of every
+//! OS Window, this module decides where the tab was dropped: same window, another
+//! window's tab bar, or in empty space (new window).
 //!
-//! - `compute_drop_target` 自体は副作用なしの純関数で、winit には直接依存しない
-//!   ジェネリック設計（`Id: Copy + Eq`）。テストで `u32` を直接渡せるようにする
-//!   ため。実運用では `winit::window::WindowId` を `Id` として渡す
-//! - `OsWindowBounds` は呼び出し側（`event_handler/mouse.rs`）が各
-//!   `ClientWindow.window.outer_position()` / `outer_size()` から構築する
-//! - Phase 4-4 で OtherWindowTabBar 経路を `MovePaneToWindow` IPC に接続予定
+//! - `compute_drop_target` itself is a pure, side-effect-free function and does not
+//!   depend directly on winit. It is generic over `Id: Copy + Eq` so tests can pass
+//!   `u32` while production code passes `winit::window::WindowId`.
+//! - `OsWindowBounds` is built by the caller (`event_handler/mouse.rs`) from each
+//!   `ClientWindow.window.outer_position()` / `outer_size()`.
+//! - Phase 4-4 will wire the `OtherWindowTabBar` branch into the
+//!   `MovePaneToWindow` IPC.
 
-/// OS Window の外接矩形（screen 座標、ピクセル）
+/// Outer rectangle of an OS Window in screen coordinates (pixels).
 ///
-/// `position` は `winit::Window::outer_position()` から取得した左上スクリーン座標。
-/// `size` は `winit::Window::outer_size()` から取得した外接サイズ。
-/// `tab_bar_y_range` は **ウィンドウクライアント領域内のローカル座標**（先頭〜末尾、
-/// ピクセル）。タブバー無効時は `(0.0, 0.0)` を渡せばタブバー hit 判定が無効になる。
+/// `position` is the top-left screen coordinate from `winit::Window::outer_position()`.
+/// `size` is the outer size from `winit::Window::outer_size()`.
+/// `tab_bar_y_range` is **local to the window's client area** (top..bottom, pixels).
+/// Pass `(0.0, 0.0)` when the tab bar is disabled so tab-bar hit detection is bypassed.
 ///
-/// Sprint 5-8 Phase 4-2 ではドロップ判定の純関数だけを先行整備するため
-/// `#[allow(dead_code)]` を付ける。実利用は Step 2.5（`on_mouse_left_released` 配線）から。
+/// Sprint 5-8 Phase 4-2 lands only the pure decision function up front, so it is
+/// marked `#[allow(dead_code)]`. Step 2.5 (the `on_mouse_left_released` wiring)
+/// starts using it.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OsWindowBounds<Id> {
@@ -28,40 +31,41 @@ pub struct OsWindowBounds<Id> {
     pub tab_bar_y_range: (f32, f32),
 }
 
-/// ドロップ先判定の結果
+/// Result of drop-target detection.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DropTarget<Id> {
-    /// 同一 OS Window 内にドロップされた（既存の `ReorderPanes` 経路で処理）
+    /// Dropped inside the same OS Window (the existing `ReorderPanes` path handles it).
     SameWindow { window_id: Id },
-    /// 別 OS Window のタブバー上にドロップされた
-    /// （Phase 4-4 で `MovePaneToWindow` を発火、現状はログのみ）
+    /// Dropped on another OS Window's tab bar (Phase 4-4 will fire `MovePaneToWindow`;
+    /// currently logs only).
     OtherWindowTabBar { window_id: Id },
-    /// どの OS Window の bounds にも入らない位置にドロップされた
-    /// → 新規 OS Window 生成（`spawn_os_window`）
+    /// The drop position is not within any window's bounds, so a new OS Window
+    /// should be spawned (`spawn_os_window`).
     NewWindow,
 }
 
-/// ドロップ位置から **どの OS Window** にドロップされたかを判定する純関数。
+/// Pure function that decides **which** OS Window received the drop.
 ///
-/// 判定ルール（先頭から順に評価）:
-/// 1. screen pos が **source_window_id** の Window の **タブバー領域** に hit
-///    → `SameWindow`（呼び出し側で既存の `ReorderPanes` を発火）
-/// 2. screen pos が **他の** Window の **タブバー領域** に hit
-///    → `OtherWindowTabBar`（Phase 4-4 で `MovePaneToWindow` を発火）
-/// 3. screen pos が **source_window_id** の Window 内だが **タブバー外**
-///    → `SameWindow`（呼び出し側で何もしない: ペイン領域へのドロップは reorder 不発）
-/// 4. screen pos が **他の** Window 内だが **タブバー外**
-///    → `OtherWindowTabBar` 扱い（明示的タブバー領域以外への merge は不発、
-///    Phase 4-4 で要件確定）
-/// 5. どの Window の bounds にも hit しない
-///    → `NewWindow`（新規 OS Window 生成）
+/// Decision rules (evaluated in order):
+/// 1. The screen position hits the **source_window_id** window's **tab bar area**
+///    → `SameWindow` (the caller triggers the existing `ReorderPanes`).
+/// 2. The screen position hits **another** window's **tab bar area**
+///    → `OtherWindowTabBar` (Phase 4-4 will trigger `MovePaneToWindow`).
+/// 3. The screen position is inside **source_window_id**'s window but **outside the
+///    tab bar** → `SameWindow` (the caller does nothing; pane-area drops do not
+///    trigger reorder).
+/// 4. The screen position is inside **another** window but **outside the tab bar**
+///    → treated as `OtherWindowTabBar` (anything outside the explicit tab bar does
+///    not merge; Phase 4-4 will finalize the requirement).
+/// 5. The screen position does not hit any window's bounds
+///    → `NewWindow` (spawn a fresh OS Window).
 ///
-/// **設計判断**: 別 Window のペイン領域へのドロップを `NewWindow` ではなく
-/// `OtherWindowTabBar` にしているのは、「画面上に表示されている別 Window 内に
-/// ドロップしたユーザー意図 = 何らかの統合」と解釈する方が自然なため。
-/// Phase 4-4 でこのケースを「タブバーへのドロップのみを merge とみなして無視」
-/// に絞るか「ペイン分割としての merge」を追加するかは別途検討する。
+/// **Design note**: drops on another window's pane area resolve to
+/// `OtherWindowTabBar` rather than `NewWindow` because "the user dropped on a
+/// window that is already visible on screen" is more naturally interpreted as
+/// some form of integration. Phase 4-4 will decide whether to narrow this to
+/// "only tab-bar drops count as a merge" or to add "merge as pane split".
 #[allow(dead_code)]
 pub fn compute_drop_target<Id>(
     drop_pos: (i32, i32),
@@ -93,7 +97,8 @@ where
                 window_id: w.window_id,
             };
         } else {
-            // 別 Window 内だがタブバー外: Phase 4-4 で要件確定（merge 不発の暫定扱い）
+            // Inside another window but outside the tab bar: provisional behavior
+            // pending Phase 4-4 (treat as a no-op merge target).
             return DropTarget::OtherWindowTabBar {
                 window_id: w.window_id,
             };
@@ -116,23 +121,23 @@ mod tests {
     }
 
     #[test]
-    fn 同一window_タブバー上にドロップ() {
-        // タブバーは local_y 0..32 = screen y 100..132
+    fn same_window_drop_on_tab_bar() {
+        // Tab bar is local_y 0..32 = screen y 100..132.
         let windows = [bounds(1, 100, 100, 800, 600)];
         let result = compute_drop_target((200, 110), 1, &windows);
         assert_eq!(result, DropTarget::SameWindow { window_id: 1 });
     }
 
     #[test]
-    fn 同一window_ペイン領域にドロップ() {
+    fn same_window_drop_on_pane_area() {
         let windows = [bounds(1, 100, 100, 800, 600)];
-        // y=200 はタブバー外 → 同一 Window のペイン領域扱い
+        // y=200 is outside the tab bar → still treated as the same window's pane area.
         let result = compute_drop_target((200, 200), 1, &windows);
         assert_eq!(result, DropTarget::SameWindow { window_id: 1 });
     }
 
     #[test]
-    fn 別window_タブバー上にドロップ() {
+    fn other_window_drop_on_tab_bar() {
         let windows = [
             bounds(1, 100, 100, 800, 600),
             bounds(2, 1000, 100, 800, 600),
@@ -142,51 +147,53 @@ mod tests {
     }
 
     #[test]
-    fn どのwindowにもhitしない場合は新規window() {
+    fn no_window_hit_spawns_new_window() {
         let windows = [bounds(1, 100, 100, 800, 600)];
         let result = compute_drop_target((2000, 2000), 1, &windows);
         assert_eq!(result, DropTarget::NewWindow);
     }
 
     #[test]
-    fn os_windows空のときは新規window() {
+    fn empty_os_windows_spawns_new_window() {
         let windows: [OsWindowBounds<u32>; 0] = [];
         let result = compute_drop_target((100, 100), 1, &windows);
         assert_eq!(result, DropTarget::NewWindow);
     }
 
     #[test]
-    fn 左上隅は内側判定() {
+    fn top_left_corner_counts_as_inside() {
         let windows = [bounds(1, 100, 100, 800, 600)];
-        // (100, 100) は左上隅、px >= wx && py >= wy なので in_bounds
+        // (100, 100) is the top-left corner; px >= wx && py >= wy, so it is in_bounds.
         let result = compute_drop_target((100, 100), 1, &windows);
         assert_eq!(result, DropTarget::SameWindow { window_id: 1 });
     }
 
     #[test]
-    fn 右下隅は外側判定() {
+    fn bottom_right_corner_counts_as_outside() {
         let windows = [bounds(1, 100, 100, 800, 600)];
-        // (900, 700) は外接 right=100+800=900, bottom=100+600=700、px < wx+ww (900<900) false
+        // (900, 700) is the outer right=100+800=900 and bottom=100+600=700; px < wx+ww
+        // (900 < 900) is false.
         let result = compute_drop_target((900, 700), 1, &windows);
         assert_eq!(result, DropTarget::NewWindow);
     }
 
     #[test]
-    fn タブバー無効時はペイン領域扱い() {
+    fn tab_bar_disabled_falls_back_to_pane_area() {
         let windows = [OsWindowBounds {
             window_id: 1u32,
             position: (100, 100),
             size: (800, 600),
-            tab_bar_y_range: (0.0, 0.0), // タブバー無効
+            tab_bar_y_range: (0.0, 0.0), // tab bar disabled
         }];
-        // タブバー無効でも in_bounds なら同一 Window 扱い（reorder 不発、no-op）
+        // With the tab bar disabled, in_bounds still resolves to the same window
+        // (reorder is a no-op).
         let result = compute_drop_target((200, 110), 1, &windows);
         assert_eq!(result, DropTarget::SameWindow { window_id: 1 });
     }
 
     #[test]
-    fn 別window_ペイン領域は暫定other_window_tab_bar扱い() {
-        // Phase 4-4 で merge 仕様確定時に見直す
+    fn other_window_pane_area_is_provisional_other_window_tab_bar() {
+        // Phase 4-4 will revisit this once the merge requirements are finalized.
         let windows = [
             bounds(1, 100, 100, 800, 600),
             bounds(2, 1000, 100, 800, 600),
@@ -196,11 +203,11 @@ mod tests {
     }
 
     #[test]
-    fn 重なるwindowは先頭が勝つ() {
-        // Vec の先頭から評価するため、重複領域は先頭の Window が hit する
+    fn overlapping_windows_first_one_wins() {
+        // Evaluation runs from the head of the Vec, so the first window wins on overlap.
         let windows = [
             bounds(1, 100, 100, 800, 600),
-            bounds(2, 100, 100, 800, 600), // 完全に重なる
+            bounds(2, 100, 100, 800, 600), // fully overlapping
         ];
         let result = compute_drop_target((200, 110), 1, &windows);
         assert_eq!(result, DropTarget::SameWindow { window_id: 1 });

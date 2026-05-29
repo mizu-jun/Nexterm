@@ -1,23 +1,23 @@
-//! スクロールバック — 履歴バッファと全文検索
+//! Scrollback — history buffer plus full-text search.
 
 use regex::Regex;
 
 use nexterm_proto::Cell;
 
-/// スクロールバック履歴バッファ（リングバッファ）
+/// Scrollback history buffer (ring buffer).
 pub struct Scrollback {
-    /// 最大保持行数
+    /// Maximum number of retained rows.
     capacity: usize,
-    /// 行データのリング
+    /// Ring of row data.
     lines: Vec<Vec<Cell>>,
-    /// 書き込み先インデックス（次に上書きする位置）
+    /// Write index (the slot the next push will overwrite).
     head: usize,
-    /// 実際に格納されている行数
+    /// Number of rows currently stored.
     len: usize,
 }
 
 impl Scrollback {
-    /// 指定容量でスクロールバックを生成する
+    /// Build a scrollback with the given capacity.
     pub fn new(capacity: usize) -> Self {
         Self {
             capacity,
@@ -27,7 +27,7 @@ impl Scrollback {
         }
     }
 
-    /// 行を追加する（容量を超えたら最古行を上書き）
+    /// Append a row (overwriting the oldest one once capacity is exceeded).
     pub fn push_line(&mut self, line: Vec<Cell>) {
         if self.len < self.capacity {
             if self.lines.len() <= self.head {
@@ -37,7 +37,7 @@ impl Scrollback {
             }
             self.len += 1;
         } else {
-            // 上書き
+            // Overwrite.
             if self.lines.len() <= self.head {
                 self.lines.push(line);
             } else {
@@ -47,23 +47,23 @@ impl Scrollback {
         self.head = (self.head + 1) % self.capacity;
     }
 
-    /// 格納行数を返す
+    /// Return the number of stored rows.
     pub fn len(&self) -> usize {
         self.len
     }
 
-    /// 空かどうかを返す
+    /// Return whether the buffer is empty.
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
-    /// インデックスで行を取得する（0 = 最古）
+    /// Retrieve a row by index (0 = oldest).
     pub fn get(&self, idx: usize) -> Option<&Vec<Cell>> {
         if idx >= self.len {
             return None;
         }
-        // リング内の実際の位置を計算する
+        // Translate the logical index to the ring position.
         let actual = if self.len < self.capacity {
             idx
         } else {
@@ -72,7 +72,7 @@ impl Scrollback {
         self.lines.get(actual)
     }
 
-    /// 行をテキストに変換する（検索用）
+    /// Convert a row into a string (used by search).
     fn line_to_string(line: &[Cell]) -> String {
         line.iter()
             .map(|c| c.ch)
@@ -81,9 +81,9 @@ impl Scrollback {
             .to_string()
     }
 
-    /// 正規表現パターンで全行を検索する
+    /// Search every row with a regex pattern.
     ///
-    /// 戻り値: `(行インデックス, マッチ開始列, マッチ終了列)` のリスト
+    /// Returns a list of `(row index, match start column, match end column)` tuples.
     #[allow(dead_code)]
     pub fn search(&self, pattern: &str) -> Vec<(usize, usize, usize)> {
         let Ok(re) = Regex::new(pattern) else {
@@ -102,9 +102,9 @@ impl Scrollback {
         results
     }
 
-    /// インクリメンタル検索 — パターンにマッチする次の行インデックスを返す
+    /// Incremental search — return the next row index matching the pattern.
     ///
-    /// `from_row` から順方向に検索する。折り返しあり。
+    /// Searches forward starting at `from_row` and wraps around.
     pub fn search_next(&self, pattern: &str, from_row: usize) -> Option<usize> {
         if pattern.is_empty() {
             return None;
@@ -125,9 +125,9 @@ impl Scrollback {
         None
     }
 
-    /// インクリメンタル検索 — パターンにマッチする前の行インデックスを返す
+    /// Incremental search — return the previous row index matching the pattern.
     ///
-    /// `before_row` より前の行を逆方向に検索する。折り返しあり。
+    /// Searches backward from rows preceding `before_row` and wraps around.
     pub fn search_prev(&self, pattern: &str, before_row: usize) -> Option<usize> {
         if pattern.is_empty() || self.len == 0 {
             return None;
@@ -164,7 +164,7 @@ mod tests {
     }
 
     #[test]
-    fn スクロールバックに行を追加できる() {
+    fn scrollback_accepts_pushed_rows() {
         let mut sb = Scrollback::new(100);
         sb.push_line(make_line("hello world"));
         sb.push_line(make_line("foo bar"));
@@ -172,14 +172,14 @@ mod tests {
     }
 
     #[test]
-    fn 容量を超えると古い行が上書きされる() {
+    fn exceeding_capacity_overwrites_oldest_rows() {
         let mut sb = Scrollback::new(3);
         sb.push_line(make_line("line1"));
         sb.push_line(make_line("line2"));
         sb.push_line(make_line("line3"));
-        sb.push_line(make_line("line4")); // line1 が上書きされる
+        sb.push_line(make_line("line4")); // line1 is overwritten
 
-        // 最古行は line2 になっているはず
+        // The oldest row should now be line2.
         let oldest = sb.get(0).unwrap();
         let text: String = oldest.iter().map(|c| c.ch).collect();
         assert_eq!(text.trim(), "line2");
@@ -187,7 +187,7 @@ mod tests {
     }
 
     #[test]
-    fn 正規表現検索が動作する() {
+    fn regex_search_works() {
         let mut sb = Scrollback::new(100);
         sb.push_line(make_line("hello world"));
         sb.push_line(make_line("foo bar baz"));
@@ -195,12 +195,12 @@ mod tests {
 
         let results = sb.search("hello");
         assert_eq!(results.len(), 2);
-        assert_eq!(results[0].0, 0); // 行0
-        assert_eq!(results[1].0, 2); // 行2
+        assert_eq!(results[0].0, 0); // row 0
+        assert_eq!(results[1].0, 2); // row 2
     }
 
     #[test]
-    fn インクリメンタル検索が次のマッチを返す() {
+    fn incremental_search_returns_next_match() {
         let mut sb = Scrollback::new(100);
         sb.push_line(make_line("first match here"));
         sb.push_line(make_line("no hit here"));
@@ -214,7 +214,7 @@ mod tests {
     }
 
     #[test]
-    fn 無効な正規表現は空を返す() {
+    fn invalid_regex_returns_empty() {
         let mut sb = Scrollback::new(10);
         sb.push_line(make_line("test"));
         let results = sb.search("[invalid");

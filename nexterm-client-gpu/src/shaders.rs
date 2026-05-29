@@ -1,6 +1,6 @@
-//! WGSL シェーダー定数 — 背景・テキスト・画像の各レンダリングパス
+//! WGSL shader constants — background, text, and image render passes.
 
-/// 背景矩形描画用シェーダー（頂点色をそのまま出力）
+/// Background-quad shader (passes the vertex color straight through).
 pub(crate) const BG_SHADER: &str = r#"
 struct VertexInput {
     @location(0) position: vec2<f32>,
@@ -26,7 +26,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
-/// 画像レンダリング用シェーダー（テクスチャ RGBA をそのまま出力）
+/// Image-rendering shader (passes the sampled texture RGBA straight through).
 pub(crate) const IMAGE_SHADER: &str = r#"
 struct VertexInput {
     @location(0) position: vec2<f32>,
@@ -54,7 +54,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
-/// グリフアトラスからテキストを描画するシェーダー（アルファチャンネルで前景色をマスク）
+/// Text shader sampling the glyph atlas (the alpha channel masks the foreground color).
 pub(crate) const TEXT_SHADER: &str = r#"
 struct VertexInput {
     @location(0) position: vec2<f32>,
