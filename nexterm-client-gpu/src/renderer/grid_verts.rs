@@ -1,7 +1,7 @@
-//! Sprint 2-1 Phase A: グリッド・スクロールバック頂点ビルダー
+//! Sprint 2-1 Phase A: vertex builders for the grid and scrollback.
 //!
-//! `renderer.rs` から抽出した `build_grid_verts` 系 4 メソッド。
-//! いずれも `&self` レシーバで `self.queue` のみアクセスする。
+//! Extracted from `renderer.rs`: the four `build_grid_verts`-family methods.
+//! All take `&self` and only access `self.queue`.
 
 use unicode_width::UnicodeWidthChar;
 
@@ -13,7 +13,7 @@ use crate::vertex_util::{add_px_rect, draw_cursor};
 use super::WgpuState;
 
 impl WgpuState {
-    /// グリッドコンテンツの頂点を構築する
+    /// Build the vertices for the grid contents.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn build_grid_verts(
         &self,
@@ -33,14 +33,14 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
-        // 選択ハイライト色（半透明の青）
+        // Selection highlight color (semi-transparent blue)
         const SEL_COLOR: [f32; 4] = [0.25, 0.55, 1.0, 0.40];
 
         let grid = &pane.grid;
         for row in 0..grid.height as usize {
             let py = row as f32 * cell_h + y_offset;
 
-            // 背景色・選択ハイライトを先に描画する（リガチャ有無に関わらず）
+            // Draw background colors and selection highlights first (regardless of ligature use)
             for col in 0..grid.width as usize {
                 let Some(cell) = grid.get(col as u16, row as u16) else {
                     continue;
@@ -53,11 +53,12 @@ impl WgpuState {
                 }
             }
 
-            // リガチャが有効な場合: 行全体を行単位シェーピングで描画する
-            // 成功したセルは `ligature_rendered` に記録してフォールバックをスキップする
+            // When ligatures are enabled: draw the whole row using line-level shaping.
+            // Cells rendered this way are tracked in `ligature_rendered`, which skips
+            // the per-cell fallback path.
             let mut ligature_rendered = std::collections::HashSet::new();
             if font.ligatures {
-                // 行の非空白セルを (col, char, bold, italic, fg_u8) にまとめる
+                // Collect non-blank cells in this row as (col, char, bold, italic, fg_u8)
                 let row_chars: Vec<(usize, char, bool, bool, [u8; 4])> = (0..grid.width as usize)
                     .filter_map(|col| {
                         let cell = grid.get(col as u16, row as u16)?;
@@ -82,7 +83,7 @@ impl WgpuState {
                     .collect();
 
                 if !row_chars.is_empty() {
-                    // 行テキストをキャッシュキー用に生成する
+                    // Build the row text for use as a cache key
                     let row_text: String = row_chars.iter().map(|(_, ch, _, _, _)| *ch).collect();
 
                     let rendered = font.rasterize_line_segment(&row_chars);
@@ -157,7 +158,7 @@ impl WgpuState {
                 }
             }
 
-            // リガチャで描画済みでないセルを1文字単位でフォールバック描画する
+            // Fall back to per-cell rendering for cells not yet drawn by ligature shaping
             for col in 0..grid.width as usize {
                 if ligature_rendered.contains(&col) {
                     continue;
@@ -225,7 +226,7 @@ impl WgpuState {
             }
         }
 
-        // カーソル矩形（スタイルに応じた形状で描画）
+        // Cursor rectangle (drawn in the configured shape)
         let cx = pane.cursor_col as f32 * cell_w;
         let cy = pane.cursor_row as f32 * cell_h + y_offset;
         draw_cursor(
@@ -241,7 +242,7 @@ impl WgpuState {
         );
     }
 
-    /// スクロールバックコンテンツの頂点を構築する
+    /// Build the vertices for the scrollback contents.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn build_scrollback_verts(
         &self,
@@ -259,7 +260,7 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
-        // ステータスバー（下部1セル）も除外した有効表示行数
+        // Effective number of display rows, also excluding the status bar (bottom 1 cell)
         let visible_rows = ((sh - y_offset - cell_h) / cell_h).max(0.0) as usize;
         let offset = pane.scroll_offset;
 
@@ -271,7 +272,7 @@ impl WgpuState {
             let py = visual_row as f32 * cell_h + y_offset;
             for (col, cell) in line.iter().enumerate() {
                 let px = col as f32 * cell_w;
-                // スクロールバック行は背景を少し暗くする
+                // Slightly darken the background for scrollback rows
                 let bg = resolve_color(&cell.bg, false, palette);
                 let dim_bg = [bg[0] * 0.75, bg[1] * 0.75, bg[2] * 0.75, 1.0];
                 add_px_rect(px, py, cell_w, cell_h, dim_bg, sw, sh, bg_verts, bg_idx);
@@ -330,7 +331,7 @@ impl WgpuState {
         }
     }
 
-    /// マルチペイン用: レイアウト矩形内にグリッドを描画する
+    /// Multi-pane variant: draw the grid inside the given layout rectangle.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn build_grid_verts_in_rect(
         &self,
@@ -352,13 +353,13 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
-        // 選択ハイライト色（半透明の青）
+        // Selection highlight color (semi-transparent blue)
         const SEL_COLOR: [f32; 4] = [0.25, 0.55, 1.0, 0.40];
 
-        // tab_bar_h には padding_y が含まれる（呼び出し元で grid_offset_y を渡している）
+        // `tab_bar_h` already includes `padding_y` (the caller passes `grid_offset_y`)
         let off_x = layout.col_offset as f32 * cell_w;
         let off_y = layout.row_offset as f32 * cell_h + tab_bar_h;
-        // 非フォーカスペインを少し暗く表示する
+        // Dim non-focused panes slightly
         let dim = if is_focused { 1.0f32 } else { 0.70f32 };
         let grid = &pane.grid;
 
@@ -372,7 +373,7 @@ impl WgpuState {
                 let bg = resolve_color(&cell.bg, false, palette);
                 let bg = [bg[0] * dim, bg[1] * dim, bg[2] * dim, 1.0];
                 add_px_rect(px, py, cell_w, cell_h, bg, sw, sh, bg_verts, bg_idx);
-                // 選択ハイライトオーバーレイ（フォーカスペインのみ）
+                // Selection highlight overlay (focused pane only)
                 if is_focused && mouse_sel.contains(col as u16, row as u16) {
                     add_px_rect(px, py, cell_w, cell_h, SEL_COLOR, sw, sh, bg_verts, bg_idx);
                 }
@@ -387,7 +388,7 @@ impl WgpuState {
                     (fg[2] * 255.0) as u8,
                     (fg[3] * 255.0) as u8,
                 ];
-                // 全角文字（CJK 等、Unicode width = 2）は 2 セル幅でレンダリングする
+                // Full-width characters (CJK etc., Unicode width = 2) are rendered across two cells
                 let is_wide = UnicodeWidthChar::width(cell.ch).unwrap_or(1) >= 2;
                 let key = GlyphKey {
                     ch: cell.ch,
@@ -437,7 +438,7 @@ impl WgpuState {
             }
         }
 
-        // カーソル（フォーカスペインのみ）
+        // Cursor (focused pane only)
         if is_focused {
             let cx = off_x + pane.cursor_col as f32 * cell_w;
             let cy = off_y + pane.cursor_row as f32 * cell_h;
@@ -455,7 +456,7 @@ impl WgpuState {
         }
     }
 
-    /// マルチペイン用: レイアウト矩形内にスクロールバックを描画する
+    /// Multi-pane variant: draw the scrollback inside the given layout rectangle.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn build_scrollback_verts_in_rect(
         &self,

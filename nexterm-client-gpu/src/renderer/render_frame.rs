@@ -1,8 +1,9 @@
-//! 1 フレーム描画の本体
+//! Body of a single-frame render.
 //!
-//! `renderer/mod.rs` から抽出した:
-//! - `impl WgpuState { fn render }` — FPS 制限・surface 取得・グリッド/オーバーレイ
-//!   頂点構築 → アップロード → メインパス（bg + text）→ 画像パスの順に描画する
+//! Extracted from `renderer/mod.rs`:
+//! - `impl WgpuState { fn render }` — FPS limiting, surface acquisition,
+//!   grid/overlay vertex construction → upload → main pass (bg + text)
+//!   → image pass, in that order.
 
 use std::time::{Duration, Instant};
 
@@ -19,7 +20,7 @@ use super::background_pass::build_background_verts;
 use super::image::build_image_verts;
 
 impl WgpuState {
-    /// 1フレームを描画する
+    /// Render a single frame.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn render(
         &mut self,
@@ -33,10 +34,10 @@ impl WgpuState {
         cursor_style: &nexterm_config::CursorStyle,
         padding_x: f32,
         padding_y: f32,
-        // Sprint 5-7 / UI-1-4: キーヒントオーバーレイ用の全設定参照
+        // Sprint 5-7 / UI-1-4: reference to the full config for the key-hint overlay
         config: &nexterm_config::Config,
     ) -> Result<()> {
-        // FPS 制限: 前フレームからの経過時間が 1/fps より短い場合はスキップ
+        // FPS limiting: skip if the time elapsed since the previous frame is less than 1/fps
         if fps_limit > 0 {
             let frame_duration = Duration::from_secs_f64(1.0 / fps_limit as f64);
             if self.last_frame_at.elapsed() < frame_duration {
@@ -45,15 +46,16 @@ impl WgpuState {
         }
         self.last_frame_at = Instant::now();
 
-        // フレーム開始時にアトラスのリセットフラグをクリアする
-        // （前フレームでリセットされていても、このフレームで正しいUVを使って再描画する）
+        // Clear the atlas reset flag at the start of the frame.
+        // Even if the atlas was reset on the previous frame, this frame will redraw
+        // using the correct UVs.
         atlas.cleared_this_frame = false;
 
-        // カラースキームからパレットを導出する（毎フレーム; コストは小さい）
+        // Derive the palette from the color scheme (every frame; cost is small)
         let scheme_palette: Option<nexterm_config::SchemePalette> = match color_scheme {
             nexterm_config::ColorScheme::Builtin(s) => Some(s.palette()),
             nexterm_config::ColorScheme::Custom(p) => {
-                // Custom パレットを SchemePalette に変換
+                // Convert the Custom palette into a SchemePalette
                 let parse_hex = |s: &str| -> [u8; 3] {
                     let s = s.trim_start_matches('#');
                     let v = u32::from_str_radix(s, 16).unwrap_or(0);
@@ -98,13 +100,13 @@ impl WgpuState {
         let cell_w = font.cell_width();
         let cell_h = font.cell_height();
 
-        // タブバー高さ（有効時のみ）: ターミナルコンテンツのy-offsetとして使用
+        // Tab bar height (when enabled): used as the y-offset for the terminal content
         let tab_bar_h = if tab_bar_cfg.enabled {
             tab_bar_cfg.height as f32
         } else {
             0.0
         };
-        // パディングを加味した実効オフセット（グリッド描画の基点）
+        // Effective offset accounting for padding (the origin for grid rendering)
         let _grid_offset_x = padding_x;
         let grid_offset_y = tab_bar_h + padding_y;
 
@@ -113,9 +115,9 @@ impl WgpuState {
         let mut text_verts: Vec<TextVertex> = Vec::new();
         let mut text_idx: Vec<u16> = Vec::new();
 
-        // レイアウト情報がある場合は全ペインを分割表示する
+        // When layout information is available, draw all panes in their split positions
         if !state.pane_layouts.is_empty() {
-            // 各ペインをレイアウト矩形に従って描画する
+            // Render each pane inside its layout rectangle
             let layout_ids: Vec<u32> = state.pane_layouts.keys().copied().collect();
             for pane_id in layout_ids {
                 let is_focused = state.focused_pane_id == Some(pane_id);
@@ -162,7 +164,7 @@ impl WgpuState {
                     }
                 }
             }
-            // ペイン境界線を描画する
+            // Draw the pane border lines
             self.build_border_verts(
                 state,
                 sw,
@@ -174,9 +176,9 @@ impl WgpuState {
                 &mut bg_idx,
             );
         } else if let Some(pane) = state.focused_pane() {
-            // フォールバック: レイアウト情報なし（接続直後など）
+            // Fallback: no layout information yet (e.g. immediately after connect)
             if pane.scroll_offset > 0 {
-                // ---- スクロールバック表示モード ----
+                // ---- Scrollback display mode ----
                 self.build_scrollback_verts(
                     pane,
                     sw,
@@ -193,7 +195,7 @@ impl WgpuState {
                     &mut text_idx,
                 );
             } else {
-                // ---- 通常グリッド表示 ----
+                // ---- Normal grid display ----
                 self.build_grid_verts(
                     pane,
                     &state.mouse_sel,
@@ -214,7 +216,7 @@ impl WgpuState {
             }
         }
 
-        // ---- ペイン番号オーバーレイ（display_panes_mode 有効時） ----
+        // ---- Pane number overlay (when display_panes_mode is enabled) ----
         if state.display_panes_mode {
             let mut sorted_pane_ids: Vec<u32> = state.pane_layouts.keys().copied().collect();
             sorted_pane_ids.sort();
@@ -224,7 +226,7 @@ impl WgpuState {
                     let py = layout.row_offset as f32 * cell_h + tab_bar_h;
                     let badge_w = cell_w * 2.0;
                     let badge_h = cell_h;
-                    // 黄色背景バッジ
+                    // Yellow background badge
                     add_px_rect(
                         px,
                         py,
@@ -236,7 +238,7 @@ impl WgpuState {
                         &mut bg_verts,
                         &mut bg_idx,
                     );
-                    // ペイン番号テキスト（1 始まり）
+                    // Pane number text (1-based)
                     let label = (number + 1).to_string();
                     add_string_verts(
                         &label,
@@ -255,7 +257,7 @@ impl WgpuState {
                     );
                 }
             }
-            // レイアウト情報がない場合（フォールバック: フォーカスペインのみ）
+            // When no layout information is available (fallback: focused pane only)
             if state.pane_layouts.is_empty()
                 && let Some(focused_id) = state.focused_pane_id
             {
@@ -289,9 +291,10 @@ impl WgpuState {
             }
         }
 
-        // ---- ペインフェードインオーバーレイ（Sprint 5-7 / Phase 3-2）----
-        // 新規追加されたペインに半透明の白いオーバーレイを重ね、ease-out でフェードアウトする。
-        // 既存のセル背景の上から alpha blending で重ねるため別途バーテックスを追加。
+        // ---- Pane fade-in overlay (Sprint 5-7 / Phase 3-2) ----
+        // Overlay a translucent white over newly added panes, fading out with ease-out.
+        // Since this is alpha-blended on top of existing cell backgrounds, we append
+        // additional vertices.
         {
             let fade_duration = config.animations.scaled_duration_ms(250);
             if fade_duration > 0 && !state.pane_layouts.is_empty() {
@@ -305,7 +308,7 @@ impl WgpuState {
                         continue;
                     }
                     let eased = crate::animations::ease_out_cubic(raw);
-                    // 初期 alpha=0.35 → 0.0 にフェード
+                    // Fade from initial alpha=0.35 to 0.0
                     let overlay_alpha = 0.35 * (1.0 - eased);
                     if let Some(layout) = state.pane_layouts.get(&pane_id) {
                         let px = layout.col_offset as f32 * cell_w;
@@ -328,7 +331,7 @@ impl WgpuState {
             }
         }
 
-        // ---- タブバー（設定で有効な場合）----
+        // ---- Tab bar (when enabled in the config) ----
         if tab_bar_cfg.enabled {
             self.build_tab_bar_verts(
                 state,
@@ -347,7 +350,7 @@ impl WgpuState {
             );
         }
 
-        // ---- ステータスライン（常時表示） ----
+        // ---- Status line (always shown) ----
         self.build_status_verts(
             state,
             sw,
@@ -362,7 +365,7 @@ impl WgpuState {
             &mut text_idx,
         );
 
-        // ---- 検索バー（アクティブ時） ----
+        // ---- Search bar (when active) ----
         if state.search.is_active {
             self.build_search_verts(
                 state,
@@ -379,7 +382,7 @@ impl WgpuState {
             );
         }
 
-        // ---- Quick Select オーバーレイ（アクティブ時） ----
+        // ---- Quick Select overlay (when active) ----
         if state.quick_select.is_active {
             self.build_quick_select_verts(
                 state,
@@ -396,7 +399,7 @@ impl WgpuState {
             );
         }
 
-        // ---- SFTP ファイル転送ダイアログ(オープン時) ----
+        // ---- SFTP file transfer dialog (when open) ----
         if state.file_transfer.is_open {
             self.build_file_transfer_verts(
                 state,
@@ -413,7 +416,7 @@ impl WgpuState {
             );
         }
 
-        // ---- Lua マクロピッカー(オープン時) ----
+        // ---- Lua macro picker (when open) ----
         if state.macro_picker.is_open {
             self.build_macro_picker_verts(
                 state,
@@ -430,7 +433,7 @@ impl WgpuState {
             );
         }
 
-        // ---- ホストマネージャ(オープン時) ----
+        // ---- Host manager (when open) ----
         if state.host_manager.is_open {
             self.build_host_manager_verts(
                 state,
@@ -462,7 +465,7 @@ impl WgpuState {
             );
         }
 
-        // ---- コマンドパレット(オープン時) ----
+        // ---- Command palette (when open) ----
         if state.palette.is_open {
             self.build_palette_verts(
                 state,
@@ -479,7 +482,7 @@ impl WgpuState {
             );
         }
 
-        // ---- 設定パネル（Ctrl+, でオープン） ----
+        // ---- Settings panel (opened with Ctrl+,) ----
         if state.settings_panel.is_open {
             self.build_settings_panel_verts(
                 state,
@@ -496,7 +499,7 @@ impl WgpuState {
             );
         }
 
-        // ---- コンテキストメニュー（右クリック時） ----
+        // ---- Context menu (on right-click) ----
         if let Some(ref menu) = state.context_menu {
             self.build_context_menu_verts(
                 menu,
@@ -513,7 +516,7 @@ impl WgpuState {
             );
         }
 
-        // ---- 更新通知バナー（画面上部） ----
+        // ---- Update notification banner (top of the screen) ----
         if state.update_banner.is_some() {
             self.build_update_banner_verts(
                 state,
@@ -530,9 +533,9 @@ impl WgpuState {
             );
         }
 
-        // ---- サーバーエラーバナー（Sprint 5-12 Phase 1） ----
-        // PTY 起動失敗（PowerShell が見つからない等）・設定ロードエラーを画面上部に通知。
-        // update_banner と縦に並ぶ。Esc キーで閉じる。
+        // ---- Server error banner (Sprint 5-12 Phase 1) ----
+        // Surfaces PTY launch failures (e.g. PowerShell not found) and config load errors
+        // at the top of the screen. Stacks vertically with `update_banner`. Closed with Esc.
         if state.error_banner.is_some() {
             self.build_error_banner_verts(
                 state,
@@ -549,8 +552,8 @@ impl WgpuState {
             );
         }
 
-        // ---- 同意ダイアログ（Sprint 4-1: 機密操作確認モーダル）----
-        // 最前面表示するため最後に追加する
+        // ---- Consent dialog (Sprint 4-1: sensitive-operation confirmation modal) ----
+        // Appended last so it is rendered on top
         if state.pending_consent.is_some() {
             self.build_consent_dialog_verts(
                 state,
@@ -567,9 +570,9 @@ impl WgpuState {
             );
         }
 
-        // ---- Window 閉じ確認ダイアログ（Sprint 5-9 Phase 4-6）----
-        // close_action = "prompt" で前景プロセス検知時に表示。
-        // 機密操作の同意ダイアログと同じく最前面に重ねる。
+        // ---- Window-close confirmation dialog (Sprint 5-9 Phase 4-6) ----
+        // Shown when `close_action = "prompt"` detects a foreground process.
+        // Like the sensitive-operation consent dialog, it is layered on top.
         if state.close_window_dialog.is_some() {
             self.build_close_window_dialog_verts(
                 state,
@@ -586,8 +589,9 @@ impl WgpuState {
             );
         }
 
-        // ---- キーヒントオーバーレイ（Sprint 5-7 / UI-1-4）----
-        // Leader 単独押下後 2 秒間、画面下部に prefix 系バインドの一覧を表示
+        // ---- Key-hint overlay (Sprint 5-7 / UI-1-4) ----
+        // After the Leader key is pressed alone, show the list of prefix bindings at the
+        // bottom of the screen for 2 seconds.
         self.build_key_hint_verts(
             state,
             config,
@@ -603,13 +607,13 @@ impl WgpuState {
             &mut text_idx,
         );
 
-        // ---- IME プリエディットオーバーレイ（変換中テキスト） ----
+        // ---- IME preedit overlay (text being composed) ----
         if let Some(ref preedit) = state.ime_preedit
             && let Some(pane) = state.focused_pane()
         {
             let px = pane.cursor_col as f32 * cell_w;
             let py = (pane.cursor_row + 1) as f32 * cell_h;
-            // プリエディット背景（やや明るいグレー）
+            // Preedit background (slightly brighter gray)
             let text_width = preedit.chars().count() as f32 * cell_w;
             add_px_rect(
                 px,
@@ -622,7 +626,7 @@ impl WgpuState {
                 &mut bg_verts,
                 &mut bg_idx,
             );
-            // アンダーライン（黄色）
+            // Underline (yellow)
             add_px_rect(
                 px,
                 py + cell_h - 2.0,
@@ -634,7 +638,7 @@ impl WgpuState {
                 &mut bg_verts,
                 &mut bg_idx,
             );
-            // プリエディットテキスト
+            // Preedit text
             add_string_verts(
                 preedit,
                 px,
@@ -652,8 +656,8 @@ impl WgpuState {
             );
         }
 
-        // ---- GPU バッファへアップロード（再利用バッファへ write_buffer で上書き）----
-        // 容量不足の場合のみ新規確保する（2倍に拡張）
+        // ---- Upload to GPU buffers (write_buffer overwrites the reused buffers) ----
+        // Reallocate only when capacity is insufficient (doubling the size)
         self.upload_bg_verts(&bg_verts, &bg_idx);
         self.upload_txt_verts(&text_verts, &text_idx);
 
@@ -672,8 +676,9 @@ impl WgpuState {
             ],
         });
 
-        // ---- クリアパス（パレット背景色で塗りつぶし） ----
-        // 背景画像がある場合は描画の前にクリアを完了させるため、独立パスにする
+        // ---- Clear pass (fill with the palette background color) ----
+        // When there is a background image, complete the clear before drawing,
+        // so this is an independent pass.
         {
             let clear_bg = scheme_palette.as_ref().map(|p| p.bg).unwrap_or([0, 0, 0]);
             let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -686,7 +691,7 @@ impl WgpuState {
                             r: clear_bg[0] as f64 / 255.0,
                             g: clear_bg[1] as f64 / 255.0,
                             b: clear_bg[2] as f64 / 255.0,
-                            // background_opacity 設定値を alpha に反映（透過ターミナル対応）
+                            // Reflect the `background_opacity` setting in alpha (transparent terminal support)
                             a: background_opacity as f64,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -698,9 +703,9 @@ impl WgpuState {
             });
         }
 
-        // ---- 背景画像パス（Sprint 5-7 / Phase 3-1）----
-        // 設定されている場合のみ、clear の後・bg_verts の前に描画する。
-        // image_pipeline を再利用（独自パイプラインは作らない）
+        // ---- Background image pass (Sprint 5-7 / Phase 3-1) ----
+        // Drawn after clear and before bg_verts, only when a background image is configured.
+        // Reuses `image_pipeline` (no dedicated pipeline).
         if let Some(ref bg_img) = self.background {
             let (bg_verts_img, bg_idx_img) = build_background_verts(
                 sw,
@@ -747,7 +752,7 @@ impl WgpuState {
             }
         }
 
-        // ---- メインレンダーパス（セル背景 + テキスト） ----
+        // ---- Main render pass (cell backgrounds + text) ----
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main_render_pass"),
@@ -755,7 +760,7 @@ impl WgpuState {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        // クリア + 背景画像の結果を保持して上にセル背景・テキストを描く
+                        // Preserve the clear + background image results, then draw cell backgrounds and text on top
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     },
@@ -780,7 +785,7 @@ impl WgpuState {
             }
         }
 
-        // ---- 画像レンダーパス（配置済み画像をオーバーレイ） ----
+        // ---- Image render pass (overlay placed images) ----
         if let Some(pane) = state.focused_pane() {
             for (id, img) in &pane.images {
                 self.ensure_image_texture(*id, img);

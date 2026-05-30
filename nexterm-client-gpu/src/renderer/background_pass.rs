@@ -1,16 +1,19 @@
-//! 背景画像レンダリング（Sprint 5-7 / Phase 3-1）
+//! Background image rendering (Sprint 5-7 / Phase 3-1).
 //!
-//! `WindowConfig.background_image` で指定された画像を起動時にロードし、
-//! 毎フレームの最初に全画面背景として描画する。
+//! Loads the image specified by `WindowConfig.background_image` at startup
+//! and draws it as the full-screen background at the start of every frame.
 //!
-//! 提供するもの:
-//! - [`BackgroundTexture`] — GPU テクスチャ + bind_group + 不透明度のキャッシュ
-//! - [`load_background_image`] — 画像ファイル → wgpu::Texture
-//! - [`compute_background_quad`] — fit モードごとの NDC 頂点/UV 計算（純関数・ユニットテスト対象）
-//! - [`build_background_verts`] — `compute_background_quad` の結果から [`TextVertex`] リストを構築
+//! What this module provides:
+//! - [`BackgroundTexture`] — cache of the GPU texture + bind_group + opacity.
+//! - [`load_background_image`] — image file -> `wgpu::Texture`.
+//! - [`compute_background_quad`] — NDC vertex / UV computation per fit mode
+//!   (a pure function, suitable for unit tests).
+//! - [`build_background_verts`] — builds the [`TextVertex`] list from
+//!   `compute_background_quad`'s result.
 //!
-//! 既存の `image_pipeline`（Sixel/Kitty 用）を再利用するため、独自パイプラインは作らない。
-//! テクスチャ自体は最大画面サイズ（4096x4096 ガード付き）にクランプ。
+//! Reuses the existing `image_pipeline` (used for Sixel/Kitty), so no
+//! dedicated pipeline is created here. The texture itself is clamped to a
+//! maximum size (4096x4096) as a safety guard.
 
 use anyhow::{Context, Result};
 use nexterm_config::{BackgroundFit, BackgroundImageConfig};
@@ -20,27 +23,28 @@ use crate::glyph_atlas::TextVertex;
 
 use super::WgpuState;
 
-/// 巨大画像でメモリを食わないための安全上限（4K x 4K）
+/// Safety upper bound (4K x 4K) to avoid memory blowups with huge images.
 const MAX_BACKGROUND_DIMENSION: u32 = 4096;
 
-/// 背景画像のキャッシュエントリ
+/// Cache entry for the background image.
 pub(super) struct BackgroundTexture {
     #[allow(dead_code)]
     pub(super) texture: wgpu::Texture,
     pub(super) bind_group: wgpu::BindGroup,
-    /// 画像の幅（ピクセル、テクスチャに格納されている実寸）
+    /// Image width in pixels (actual size stored in the texture).
     pub(super) width: u32,
-    /// 画像の高さ（ピクセル）
+    /// Image height in pixels.
     pub(super) height: u32,
-    /// 描画時に乗算する不透明度（クランプ済み 0.0〜1.0）
+    /// Opacity multiplied at draw time (clamped to 0.0..=1.0).
     pub(super) opacity: f32,
-    /// fit モード（cover / contain / stretch / center / tile）
+    /// Fit mode (cover / contain / stretch / center / tile).
     pub(super) fit: BackgroundFit,
 }
 
-/// 1 つの矩形（NDC 座標と UV 座標のペア）
+/// One rectangle (paired NDC and UV coordinates).
 ///
-/// pos は左下原点で `[-1, 1]` の範囲、uv は左上原点で `[0, 1]` の範囲。
+/// `pos` uses a bottom-left origin in the range `[-1, 1]`;
+/// `uv` uses a top-left origin in the range `[0, 1]`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct Quad {
     pub pos_x0: f32,
@@ -53,13 +57,13 @@ pub(super) struct Quad {
     pub uv_y1: f32,
 }
 
-/// fit モードごとに描画矩形を計算する（純関数・テスト容易性のために分離）。
+/// Compute the draw rectangle for each fit mode (kept as a pure function for testability).
 ///
-/// 戻り値は `Vec<Quad>`:
-/// - `Cover` / `Contain` / `Stretch` / `Center`: 矩形 1 つ
-/// - `Tile`: 画面を埋めるだけのタイル数
+/// Returns `Vec<Quad>`:
+/// - `Cover` / `Contain` / `Stretch` / `Center`: a single rectangle.
+/// - `Tile`: as many tiles as needed to cover the screen.
 ///
-/// 異常入力（surface = 0 / image = 0）に対しては空 Vec を返す。
+/// Returns an empty `Vec` for invalid input (surface = 0 / image = 0).
 pub(super) fn compute_background_quad(
     surface_w: f32,
     surface_h: f32,
@@ -76,7 +80,7 @@ pub(super) fn compute_background_quad(
 
     match fit {
         BackgroundFit::Stretch => {
-            // アスペクト比無視で画面全体に貼る
+            // Cover the entire screen, ignoring the aspect ratio
             vec![Quad {
                 pos_x0: -1.0,
                 pos_y0: -1.0,
@@ -89,16 +93,16 @@ pub(super) fn compute_background_quad(
             }]
         }
         BackgroundFit::Cover => {
-            // アスペクト比保持・画面を完全に覆う → UV を切り取る
+            // Preserve aspect ratio and fully cover the screen -> crop the UVs
             let surface_aspect = surface_w / surface_h;
             let image_aspect = iw / ih;
             let (uv_x0, uv_y0, uv_x1, uv_y1) = if image_aspect > surface_aspect {
-                // 画像が横長 → 左右を切り取る
+                // Image is wider -> crop the left/right sides
                 let scale = surface_aspect / image_aspect;
                 let margin = (1.0 - scale) / 2.0;
                 (margin, 0.0, 1.0 - margin, 1.0)
             } else {
-                // 画像が縦長 → 上下を切り取る
+                // Image is taller -> crop the top/bottom sides
                 let scale = image_aspect / surface_aspect;
                 let margin = (1.0 - scale) / 2.0;
                 (0.0, margin, 1.0, 1.0 - margin)
@@ -115,15 +119,15 @@ pub(super) fn compute_background_quad(
             }]
         }
         BackgroundFit::Contain => {
-            // アスペクト比保持・画面に収める → 描画矩形を縮小し余白を残す
+            // Preserve aspect ratio and fit inside the screen -> shrink the draw rect, leave margins
             let surface_aspect = surface_w / surface_h;
             let image_aspect = iw / ih;
             let (px0, py0, px1, py1) = if image_aspect > surface_aspect {
-                // 画像が横長 → 横方向はフィット・縦方向に余白
+                // Image is wider -> fit horizontally, margin top/bottom
                 let scale = surface_aspect / image_aspect;
                 (-1.0, -scale, 1.0, scale)
             } else {
-                // 画像が縦長 → 縦方向はフィット・横方向に余白
+                // Image is taller -> fit vertically, margin left/right
                 let scale = image_aspect / surface_aspect;
                 (-scale, -1.0, scale, 1.0)
             };
@@ -139,10 +143,10 @@ pub(super) fn compute_background_quad(
             }]
         }
         BackgroundFit::Center => {
-            // 拡縮なし・画像をピクセル単位で画面中央に配置
-            let scale_x = iw / surface_w; // 画像幅が画面の何割か
+            // No scaling: place the image pixel-aligned at the center of the screen
+            let scale_x = iw / surface_w; // What fraction of the screen width the image occupies
             let scale_y = ih / surface_h;
-            // NDC では半サイズが ±1.0 まで → scale_x がそのまま半分の幅
+            // In NDC, the half-extent goes up to +/- 1.0, so `scale_x` is the half-width directly
             let half_w = scale_x;
             let half_h = scale_y;
             vec![Quad {
@@ -157,17 +161,17 @@ pub(super) fn compute_background_quad(
             }]
         }
         BackgroundFit::Tile => {
-            // 画像をピクセル等倍で画面全体に敷き詰める
-            let scale_x = iw / surface_w * 2.0; // タイル 1 つの NDC 幅
+            // Tile the image at native pixel size across the entire screen
+            let scale_x = iw / surface_w * 2.0; // NDC width of one tile
             let scale_y = ih / surface_h * 2.0;
             if scale_x <= 0.0 || scale_y <= 0.0 {
                 return Vec::new();
             }
-            // ガード: 過剰なタイル数を防ぐ（最大 256 個 = 16x16）
+            // Guard against excessive tile counts (cap at 256 = 16x16)
             let tiles_x = (2.0 / scale_x).ceil() as i32;
             let tiles_y = (2.0 / scale_y).ceil() as i32;
             if tiles_x * tiles_y > 256 {
-                // 過大なタイル数の場合は Stretch にフォールバック（実害回避）
+                // Fall back to Stretch when the tile count is too high (defensive)
                 return compute_background_quad(
                     surface_w,
                     surface_h,
@@ -200,9 +204,9 @@ pub(super) fn compute_background_quad(
     }
 }
 
-/// `compute_background_quad` の結果から TextVertex リストを構築する。
+/// Build the TextVertex list from `compute_background_quad`'s result.
 ///
-/// 戻り値は (verts, indices) のペア。i32::MAX を超える場合は警告ログを出す。
+/// Returns a `(verts, indices)` pair. Logs a warning if the count exceeds `i32::MAX`.
 pub(super) fn build_background_verts(
     surface_w: f32,
     surface_h: f32,
@@ -214,11 +218,11 @@ pub(super) fn build_background_verts(
     let quads = compute_background_quad(surface_w, surface_h, img_w, img_h, fit);
     let mut verts: Vec<TextVertex> = Vec::with_capacity(quads.len() * 4);
     let mut indices: Vec<u16> = Vec::with_capacity(quads.len() * 6);
-    // 色は (1, 1, 1, opacity) を乗算（image_pipeline のシェーダで texture * color）
+    // Multiply color by (1, 1, 1, opacity) (the image_pipeline shader does texture * color)
     let color = [1.0, 1.0, 1.0, opacity];
     for quad in quads {
         let base = verts.len() as u16;
-        // NDC は OpenGL 流で y 上向き
+        // NDC uses OpenGL-style y-up
         verts.push(TextVertex {
             position: [quad.pos_x0, quad.pos_y1],
             uv: [quad.uv_x0, quad.uv_y0],
@@ -244,10 +248,10 @@ pub(super) fn build_background_verts(
     (verts, indices)
 }
 
-/// 画像ファイルをディスクからロードして wgpu::Texture を作成する。
+/// Load an image file from disk and create a `wgpu::Texture`.
 ///
-/// 失敗時は警告ログを出して `None` を返す（クラッシュさせない）。
-/// 過大な画像は警告のうえ `MAX_BACKGROUND_DIMENSION` にダウンスケールする。
+/// On failure, logs a warning and returns `None` (does not crash).
+/// Oversized images are warned about and downscaled to `MAX_BACKGROUND_DIMENSION`.
 pub(super) fn load_background_image(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -262,14 +266,14 @@ pub(super) fn load_background_image(
     let img = match decode_image(&expanded) {
         Ok(img) => img,
         Err(e) => {
-            warn!("背景画像の読み込みに失敗しました: {}: {}", expanded, e);
+            warn!("Failed to load background image: {}: {}", expanded, e);
             return None;
         }
     };
 
     let (width, height, rgba) = img;
     info!(
-        "背景画像を読み込みました: {} ({}x{})",
+        "Loaded background image: {} ({}x{})",
         expanded, width, height
     );
 
@@ -332,19 +336,19 @@ pub(super) fn load_background_image(
     })
 }
 
-/// 画像ファイルをデコードして RGBA8 バイト列を返す。
-/// 過大な画像は MAX_BACKGROUND_DIMENSION にダウンスケールする。
+/// Decode an image file and return an RGBA8 byte buffer.
+/// Oversized images are downscaled to `MAX_BACKGROUND_DIMENSION`.
 fn decode_image(path: &str) -> Result<(u32, u32, Vec<u8>)> {
-    let img = image::open(path).with_context(|| format!("画像を開けませんでした: {}", path))?;
+    let img = image::open(path).with_context(|| format!("failed to open image: {}", path))?;
 
-    // ダウンスケール判定
+    // Decide whether to downscale
     let (orig_w, orig_h) = (img.width(), img.height());
     let img = if orig_w > MAX_BACKGROUND_DIMENSION || orig_h > MAX_BACKGROUND_DIMENSION {
         let scale = (MAX_BACKGROUND_DIMENSION as f32 / orig_w.max(orig_h) as f32).min(1.0);
         let new_w = (orig_w as f32 * scale) as u32;
         let new_h = (orig_h as f32 * scale) as u32;
         warn!(
-            "背景画像が大きすぎるためダウンスケールします: {}x{} → {}x{}",
+            "Background image is too large; downscaling: {}x{} -> {}x{}",
             orig_w, orig_h, new_w, new_h
         );
         img.resize(new_w, new_h, image::imageops::FilterType::Lanczos3)
@@ -358,7 +362,7 @@ fn decode_image(path: &str) -> Result<(u32, u32, Vec<u8>)> {
 }
 
 impl WgpuState {
-    /// 起動時に背景画像をロードしてキャッシュする（成功時のみ）。
+    /// Load and cache the background image at startup (only when successful).
     pub(super) fn load_background(&mut self, cfg: &nexterm_config::WindowConfig) {
         let Some(ref image_cfg) = cfg.background_image else {
             self.background = None;
@@ -379,7 +383,7 @@ mod tests {
     use super::*;
 
     fn extract_quad(quads: &[Quad]) -> Quad {
-        assert_eq!(quads.len(), 1, "1 枚の矩形を返すべき");
+        assert_eq!(quads.len(), 1, "should return exactly one quad");
         quads[0]
     }
 
@@ -388,7 +392,7 @@ mod tests {
     }
 
     #[test]
-    fn stretch_は全画面に貼り付けてuv_を変えない() {
+    fn stretch_covers_full_screen_without_changing_uv() {
         let q = extract_quad(&compute_background_quad(
             800.0,
             600.0,
@@ -403,8 +407,8 @@ mod tests {
     }
 
     #[test]
-    fn cover_の横長画像は左右を切り取る() {
-        // surface 1:1、画像 2:1 → 左右を切り取って中央 50% を使う
+    fn cover_wide_image_crops_left_and_right() {
+        // surface 1:1, image 2:1 -> crop the left/right sides and use the middle 50%
         let q = extract_quad(&compute_background_quad(
             100.0,
             100.0,
@@ -412,10 +416,10 @@ mod tests {
             100,
             &BackgroundFit::Cover,
         ));
-        // pos は全画面
+        // pos covers the full screen
         assert!(approx(q.pos_x0, -1.0) && approx(q.pos_x1, 1.0));
         assert!(approx(q.pos_y0, -1.0) && approx(q.pos_y1, 1.0));
-        // uv は左右各 25% カット → 0.25〜0.75
+        // uv crops 25% from each side -> 0.25..=0.75
         assert!(approx(q.uv_x0, 0.25));
         assert!(approx(q.uv_x1, 0.75));
         assert!(approx(q.uv_y0, 0.0));
@@ -423,8 +427,8 @@ mod tests {
     }
 
     #[test]
-    fn cover_の縦長画像は上下を切り取る() {
-        // surface 2:1、画像 1:1 → 上下を切り取る
+    fn cover_tall_image_crops_top_and_bottom() {
+        // surface 2:1, image 1:1 -> crop the top/bottom sides
         let q = extract_quad(&compute_background_quad(
             200.0,
             100.0,
@@ -432,15 +436,15 @@ mod tests {
             100,
             &BackgroundFit::Cover,
         ));
-        // image_aspect = 1, surface_aspect = 2, image_aspect < surface_aspect なので else 分岐
-        // scale = image_aspect / surface_aspect = 0.5、margin = 0.25
+        // image_aspect = 1, surface_aspect = 2; image_aspect < surface_aspect, so we take the else branch.
+        // scale = image_aspect / surface_aspect = 0.5, margin = 0.25.
         assert!(approx(q.uv_x0, 0.0) && approx(q.uv_x1, 1.0));
         assert!(approx(q.uv_y0, 0.25) && approx(q.uv_y1, 0.75));
     }
 
     #[test]
-    fn contain_の横長画像は縦方向に余白を作る() {
-        // surface 1:1、画像 2:1 → 横はフィット、縦に余白
+    fn contain_wide_image_leaves_vertical_margin() {
+        // surface 1:1, image 2:1 -> fit horizontally, margin top/bottom
         let q = extract_quad(&compute_background_quad(
             100.0,
             100.0,
@@ -456,8 +460,8 @@ mod tests {
     }
 
     #[test]
-    fn contain_の縦長画像は横方向に余白を作る() {
-        // surface 2:1、画像 1:1 → 縦はフィット、横に余白
+    fn contain_tall_image_leaves_horizontal_margin() {
+        // surface 2:1, image 1:1 -> fit vertically, margin left/right
         let q = extract_quad(&compute_background_quad(
             200.0,
             100.0,
@@ -465,15 +469,15 @@ mod tests {
             100,
             &BackgroundFit::Contain,
         ));
-        // image_aspect = 1, surface_aspect = 2, image_aspect <= surface_aspect なので else
+        // image_aspect = 1, surface_aspect = 2; image_aspect <= surface_aspect, so we take the else branch.
         // scale = image_aspect / surface_aspect = 0.5
         assert!(approx(q.pos_x0, -0.5) && approx(q.pos_x1, 0.5));
         assert!(approx(q.pos_y0, -1.0) && approx(q.pos_y1, 1.0));
     }
 
     #[test]
-    fn center_は画像サイズのまま中央配置() {
-        // surface 1000x1000、画像 500x500 → 半サイズ 0.5
+    fn center_places_image_at_native_size_in_the_middle() {
+        // surface 1000x1000, image 500x500 -> half-extent 0.5
         let q = extract_quad(&compute_background_quad(
             1000.0,
             1000.0,
@@ -487,18 +491,18 @@ mod tests {
     }
 
     #[test]
-    fn tile_は複数の矩形を返す() {
-        // surface 200x100、画像 100x100 → 2 タイル横並び
+    fn tile_returns_multiple_quads() {
+        // surface 200x100, image 100x100 -> two tiles side by side
         let quads = compute_background_quad(200.0, 100.0, 100, 100, &BackgroundFit::Tile);
-        assert!(quads.len() >= 2, "タイルが 2 つ以上配置されるべき");
-        // 各タイルの UV は 0〜1
+        assert!(quads.len() >= 2, "expected at least two tiles to be placed");
+        // Each tile uses UV in 0..=1
         for q in &quads {
             assert!(approx(q.uv_x0, 0.0) && approx(q.uv_x1, 1.0));
         }
     }
 
     #[test]
-    fn 異常値は空配列を返す() {
+    fn invalid_input_returns_empty_vec() {
         assert!(compute_background_quad(0.0, 600.0, 100, 100, &BackgroundFit::Cover).is_empty());
         assert!(compute_background_quad(800.0, 0.0, 100, 100, &BackgroundFit::Cover).is_empty());
         assert!(compute_background_quad(800.0, 600.0, 0, 100, &BackgroundFit::Cover).is_empty());
@@ -506,28 +510,32 @@ mod tests {
     }
 
     #[test]
-    fn build_background_verts_は4頂点6インデックスを返す() {
+    fn build_background_verts_returns_four_verts_and_six_indices() {
         let (verts, idx) =
             build_background_verts(800.0, 600.0, 1920, 1080, &BackgroundFit::Stretch, 0.5);
         assert_eq!(verts.len(), 4);
         assert_eq!(idx.len(), 6);
-        // 全頂点の color.a が opacity になる
+        // All vertices should carry the opacity value in color.a
         for v in &verts {
             assert!(approx(v.color[3], 0.5));
         }
     }
 
     #[test]
-    fn build_background_verts_異常値時は空() {
+    fn build_background_verts_is_empty_for_invalid_input() {
         let (verts, idx) =
             build_background_verts(0.0, 600.0, 1920, 1080, &BackgroundFit::Cover, 1.0);
         assert!(verts.is_empty() && idx.is_empty());
     }
 
     #[test]
-    fn tile_過剰タイルは_stretch_にフォールバック() {
-        // 1x1 画像を 100x100 surface に並べると 10000 タイル → 256 を超えてフォールバック
+    fn tile_excessive_tiles_falls_back_to_stretch() {
+        // Tiling a 1x1 image across a 100x100 surface yields 10000 tiles -> exceeds 256, falls back
         let quads = compute_background_quad(100.0, 100.0, 1, 1, &BackgroundFit::Tile);
-        assert_eq!(quads.len(), 1, "フォールバック時は Stretch と同じく 1 矩形");
+        assert_eq!(
+            quads.len(),
+            1,
+            "fallback should produce a single quad like Stretch"
+        );
     }
 }

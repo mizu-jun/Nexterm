@@ -1,11 +1,12 @@
-//! wgpu 初期化・サーフェスリサイズ・PresentMode 選択
+//! wgpu initialization, surface resize, and PresentMode selection.
 //!
-//! `renderer/mod.rs` から抽出した:
-//! - `impl WgpuState { async fn new }` — wgpu インスタンス・adapter・device・
-//!   サーフェス・パイプライン（bg / text / image）・再利用バッファの初期化
-//! - `impl WgpuState { fn resize }` — サーフェスサイズ更新
-//! - `select_present_mode` — `gpu.present_mode` 設定とアダプタ対応モードから決定
-//! - `present_mode_tests` — `select_present_mode` のユニットテスト
+//! Extracted from `renderer/mod.rs`:
+//! - `impl WgpuState { async fn new }` — initializes the wgpu instance,
+//!   adapter, device, surface, pipelines (bg / text / image), and reused buffers.
+//! - `impl WgpuState { fn resize }` — updates the surface size.
+//! - `select_present_mode` — picks the actual mode from `gpu.present_mode`
+//!   and the adapter's supported modes.
+//! - `present_mode_tests` — unit tests for `select_present_mode`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -31,7 +32,7 @@ impl WgpuState {
             ..Default::default()
         });
 
-        // SAFETY: surface は window と同じ Arc で管理されているため安全
+        // SAFETY: the surface is managed by the same `Arc` as the window, so this is safe
         let surface = instance.create_surface(window)?;
 
         let adapter = instance
@@ -63,8 +64,9 @@ impl WgpuState {
             .copied()
             .unwrap_or(surface_caps.formats[0]);
 
-        // Sprint 5-3 / C3: 希望のモードがアダプタ非対応の場合、Fifo にフォールバックする。
-        // Fifo は WebGPU 仕様上すべてのアダプタでサポートが保証されている。
+        // Sprint 5-3 / C3: if the requested mode is not supported by the adapter,
+        // fall back to Fifo. Fifo is guaranteed to be supported by every adapter
+        // by the WebGPU specification.
         let present_mode = select_present_mode(&gpu_cfg.present_mode, &surface_caps.present_modes);
 
         let surface_config = wgpu::SurfaceConfiguration {
@@ -73,7 +75,7 @@ impl WgpuState {
             width: size.width.max(1),
             height: size.height.max(1),
             present_mode,
-            // 透過合成のために PreMultiplied を優先する（非対応時は最初のモードにフォールバック）
+            // Prefer PreMultiplied for transparent compositing (fall back to the first mode if unsupported)
             alpha_mode: surface_caps
                 .alpha_modes
                 .iter()
@@ -85,52 +87,50 @@ impl WgpuState {
         };
         surface.configure(&device, &surface_config);
 
-        // ---- カスタムシェーダーの読み込み ----
-        // gpu.custom_bg_shader / gpu.custom_text_shader が設定されている場合はファイルから読み込む。
-        // 読み込み失敗時はビルトインシェーダーにフォールバックする。
-        let bg_shader_src: std::borrow::Cow<'static, str> = if let Some(ref path) =
-            gpu_cfg.custom_bg_shader
-        {
-            let expanded = shellexpand::tilde(path).into_owned();
-            match std::fs::read_to_string(&expanded) {
-                Ok(s) => {
-                    info!("カスタム背景シェーダーを読み込みました: {}", expanded);
-                    std::borrow::Cow::Owned(s)
+        // ---- Load custom shaders ----
+        // If `gpu.custom_bg_shader` / `gpu.custom_text_shader` is set, load the file.
+        // On read failure, fall back to the built-in shader.
+        let bg_shader_src: std::borrow::Cow<'static, str> =
+            if let Some(ref path) = gpu_cfg.custom_bg_shader {
+                let expanded = shellexpand::tilde(path).into_owned();
+                match std::fs::read_to_string(&expanded) {
+                    Ok(s) => {
+                        info!("Loaded custom background shader: {}", expanded);
+                        std::borrow::Cow::Owned(s)
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to load custom background shader (using built-in): {}: {}",
+                            expanded, e
+                        );
+                        std::borrow::Cow::Borrowed(BG_SHADER)
+                    }
                 }
-                Err(e) => {
-                    warn!(
-                        "カスタム背景シェーダーの読み込みに失敗しました（ビルトインを使用）: {}: {}",
-                        expanded, e
-                    );
-                    std::borrow::Cow::Borrowed(BG_SHADER)
-                }
-            }
-        } else {
-            std::borrow::Cow::Borrowed(BG_SHADER)
-        };
+            } else {
+                std::borrow::Cow::Borrowed(BG_SHADER)
+            };
 
-        let text_shader_src: std::borrow::Cow<'static, str> = if let Some(ref path) =
-            gpu_cfg.custom_text_shader
-        {
-            let expanded = shellexpand::tilde(path).into_owned();
-            match std::fs::read_to_string(&expanded) {
-                Ok(s) => {
-                    info!("カスタムテキストシェーダーを読み込みました: {}", expanded);
-                    std::borrow::Cow::Owned(s)
+        let text_shader_src: std::borrow::Cow<'static, str> =
+            if let Some(ref path) = gpu_cfg.custom_text_shader {
+                let expanded = shellexpand::tilde(path).into_owned();
+                match std::fs::read_to_string(&expanded) {
+                    Ok(s) => {
+                        info!("Loaded custom text shader: {}", expanded);
+                        std::borrow::Cow::Owned(s)
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to load custom text shader (using built-in): {}: {}",
+                            expanded, e
+                        );
+                        std::borrow::Cow::Borrowed(TEXT_SHADER)
+                    }
                 }
-                Err(e) => {
-                    warn!(
-                        "カスタムテキストシェーダーの読み込みに失敗しました（ビルトインを使用）: {}: {}",
-                        expanded, e
-                    );
-                    std::borrow::Cow::Borrowed(TEXT_SHADER)
-                }
-            }
-        } else {
-            std::borrow::Cow::Borrowed(TEXT_SHADER)
-        };
+            } else {
+                std::borrow::Cow::Borrowed(TEXT_SHADER)
+            };
 
-        // ---- 背景矩形パイプライン ----
+        // ---- Background-quad pipeline ----
         let bg_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("bg_shader"),
             source: wgpu::ShaderSource::Wgsl(bg_shader_src),
@@ -160,7 +160,7 @@ impl WgpuState {
                 entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
-                    // アルファブレンディングを有効化してグラスモーフィズム（半透明UI）を実現する
+                    // Enable alpha blending to achieve glassmorphism (translucent UI)
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -176,12 +176,12 @@ impl WgpuState {
             cache: None,
         });
 
-        // ---- テキストパイプライン ----
+        // ---- Text pipeline ----
         let text_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("text_bind_group_layout"),
                 entries: &[
-                    // グリフアトラステクスチャ
+                    // Glyph atlas texture
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -192,7 +192,7 @@ impl WgpuState {
                         },
                         count: None,
                     },
-                    // サンプラー
+                    // Sampler
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
                         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -250,7 +250,7 @@ impl WgpuState {
             cache: None,
         });
 
-        // ---- 画像レンダリングパイプライン ----
+        // ---- Image rendering pipeline ----
         let image_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("image_shader"),
             source: wgpu::ShaderSource::Wgsl(IMAGE_SHADER.into()),
@@ -306,8 +306,9 @@ impl WgpuState {
             ..Default::default()
         });
 
-        // ---- 再利用バッファの初期確保 ----
-        // 初期容量: 背景 8192 頂点・32768 インデックス（典型的な 80x24 ターミナルで十分）
+        // ---- Initial allocation of reusable buffers ----
+        // Initial capacity: 8192 background vertices and 32768 indices
+        // (sufficient for a typical 80x24 terminal)
         const INIT_BG_V: u64 = 8192;
         const INIT_BG_I: u64 = 32768;
         const INIT_TXT_V: u64 = 16384;
@@ -372,13 +373,15 @@ impl WgpuState {
     }
 }
 
-/// Sprint 5-3 / C3: 設定値とアダプタの対応モードから実際の `wgpu::PresentMode` を決定する。
+/// Sprint 5-3 / C3: derive the actual `wgpu::PresentMode` from the config value
+/// and the adapter's supported modes.
 ///
-/// - 希望が `Fifo`: 常に `Fifo`（WebGPU 仕様上必ずサポートされる）
-/// - 希望が `Mailbox`: サポートされていれば `Mailbox`、それ以外は `Fifo` にフォールバック
-/// - 希望が `Auto`: `AutoVsync` がサポートされていればそれ、なければ `Fifo`
+/// - Requested `Fifo`: always `Fifo` (guaranteed to be supported by the WebGPU spec).
+/// - Requested `Mailbox`: `Mailbox` if supported, otherwise fall back to `Fifo`.
+/// - Requested `Auto`: `AutoVsync` if supported, otherwise `Fifo`.
 ///
-/// この関数は単純なため、surface に依存せずスライスを受け取ってユニットテスト可能にしている。
+/// The function is intentionally simple — it takes a slice instead of a surface
+/// so it can be unit-tested without GPU resources.
 fn select_present_mode(
     desired: &nexterm_config::PresentModeConfig,
     supported: &[wgpu::PresentMode],
@@ -390,7 +393,7 @@ fn select_present_mode(
                 wgpu::PresentMode::Mailbox
             } else {
                 tracing::info!(
-                    "present_mode=mailbox は本アダプタでサポートされていません。fifo にフォールバックします。"
+                    "present_mode=mailbox is not supported by this adapter; falling back to fifo."
                 );
                 wgpu::PresentMode::Fifo
             }
@@ -414,7 +417,7 @@ pub(crate) mod present_mode_tests {
 
     #[test]
     fn fifo_is_always_fifo() {
-        // Fifo は supported に関わらず常に Fifo
+        // Fifo always resolves to Fifo, regardless of `supported`
         assert_eq!(
             select_present_mode(&PresentModeConfig::Fifo, &[wgpu::PresentMode::Mailbox]),
             wgpu::PresentMode::Fifo
@@ -442,7 +445,7 @@ pub(crate) mod present_mode_tests {
             select_present_mode(&PresentModeConfig::Mailbox, &[wgpu::PresentMode::Fifo]),
             wgpu::PresentMode::Fifo
         );
-        // supported が空でも Fifo に落ちる
+        // Falls back to Fifo even when `supported` is empty
         assert_eq!(
             select_present_mode(&PresentModeConfig::Mailbox, &[]),
             wgpu::PresentMode::Fifo
@@ -451,7 +454,7 @@ pub(crate) mod present_mode_tests {
 
     #[test]
     fn auto_prefers_auto_vsync_then_mailbox_then_fifo() {
-        // AutoVsync 対応時はそれを優先
+        // Prefer AutoVsync when supported
         assert_eq!(
             select_present_mode(
                 &PresentModeConfig::Auto,
@@ -459,7 +462,7 @@ pub(crate) mod present_mode_tests {
             ),
             wgpu::PresentMode::AutoVsync
         );
-        // AutoVsync なしなら Mailbox
+        // Use Mailbox when AutoVsync is unavailable
         assert_eq!(
             select_present_mode(
                 &PresentModeConfig::Auto,
@@ -467,7 +470,7 @@ pub(crate) mod present_mode_tests {
             ),
             wgpu::PresentMode::Mailbox
         );
-        // どちらもなければ Fifo
+        // Fall back to Fifo when neither is available
         assert_eq!(
             select_present_mode(&PresentModeConfig::Auto, &[wgpu::PresentMode::Fifo]),
             wgpu::PresentMode::Fifo

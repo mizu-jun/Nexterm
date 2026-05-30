@@ -1,26 +1,27 @@
-//! GPU 頂点バッファのアップロード（再利用バッファ + 容量超過時の再確保）
+//! GPU vertex-buffer uploads (reused buffers, reallocated on overflow).
 //!
-//! `renderer/mod.rs` から抽出した:
-//! - `upload_bg_verts` — 背景頂点バッファのアップロード
-//! - `upload_txt_verts` — テキスト頂点バッファのアップロード
+//! Extracted from `renderer/mod.rs`:
+//! - `upload_bg_verts` — upload of the background vertex buffer.
+//! - `upload_txt_verts` — upload of the text vertex buffer.
 //!
-//! 各バッファは初期容量を `new()` 時に確保し、頂点数がそれを超える場合は
-//! 2 倍サイズで再確保する。アップロードは `queue.write_buffer` で行い、
-//! `staging_belt` 等の中間バッファは経由しない。
+//! Each buffer reserves its initial capacity in `new()`; if the vertex count
+//! exceeds it, the buffer is reallocated at double the size. Uploads use
+//! `queue.write_buffer` directly without going through `staging_belt` or
+//! other intermediate buffers.
 
 use crate::glyph_atlas::{BgVertex, TextVertex};
 
 use super::WgpuState;
 
 impl WgpuState {
-    /// 背景頂点・インデックスデータを再利用バッファへアップロードする
+    /// Upload background vertex / index data into the reused buffers.
     ///
-    /// バッファ容量が不足する場合は 2 倍に拡張して再確保する。
+    /// When the buffer capacity is insufficient, double it and reallocate.
     pub(super) fn upload_bg_verts(&mut self, verts: &[BgVertex], idx: &[u16]) {
         let v_bytes = bytemuck::cast_slice(verts);
         let i_bytes = bytemuck::cast_slice(idx);
 
-        // 容量不足なら再確保
+        // Reallocate if capacity is insufficient
         if verts.len() as u64 > self.bg_v_cap {
             self.bg_v_cap = (verts.len() as u64 * 2).max(self.bg_v_cap);
             self.buf_bg_v = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -48,7 +49,7 @@ impl WgpuState {
         }
     }
 
-    /// テキスト頂点・インデックスデータを再利用バッファへアップロードする
+    /// Upload text vertex / index data into the reused buffers.
     pub(super) fn upload_txt_verts(&mut self, verts: &[TextVertex], idx: &[u16]) {
         let v_bytes = bytemuck::cast_slice(verts);
         let i_bytes = bytemuck::cast_slice(idx);

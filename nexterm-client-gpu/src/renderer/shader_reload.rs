@@ -1,7 +1,7 @@
-//! カスタムシェーダーのホットリロード
+//! Hot-reload of custom shaders.
 //!
-//! `renderer/mod.rs` から抽出した:
-//! - `reload_shader_pipelines` — カスタムシェーダーを再読み込みして bg/text パイプラインを再構築
+//! Extracted from `renderer/mod.rs`:
+//! - `reload_shader_pipelines` — reload custom shaders and rebuild the bg / text pipelines.
 
 use tracing::{info, warn};
 
@@ -11,28 +11,28 @@ use crate::shaders::{BG_SHADER, TEXT_SHADER};
 use super::WgpuState;
 
 impl WgpuState {
-    /// カスタムシェーダーを再読み込みし bg/text パイプラインを再構築する。
+    /// Reload custom shaders and rebuild the bg / text pipelines.
     ///
-    /// シェーダーファイルに構文エラーがあっても既存パイプラインは維持され、
-    /// ログに警告を出してフォールバックする。
+    /// If the shader file contains syntax errors, the existing pipelines are kept,
+    /// a warning is logged, and the previous pipelines remain in use.
     pub(super) fn reload_shader_pipelines(&mut self, gpu_cfg: &nexterm_config::GpuConfig) {
         let format = self.surface_config.format;
 
-        // 背景シェーダー読み込み
+        // Load background shader
         let bg_src: std::borrow::Cow<'static, str> =
             if let Some(ref path) = gpu_cfg.custom_bg_shader {
                 let expanded = shellexpand::tilde(path).into_owned();
                 match std::fs::read_to_string(&expanded) {
                     Ok(s) => {
                         info!(
-                            "シェーダーホットリロード: 背景シェーダーを再読み込みしました: {}",
+                            "Shader hot reload: reloaded background shader: {}",
                             expanded
                         );
                         std::borrow::Cow::Owned(s)
                     }
                     Err(e) => {
                         warn!(
-                            "背景シェーダーの再読み込みに失敗しました（既存を維持）: {}",
+                            "Failed to reload background shader (keeping the existing one): {}",
                             e
                         );
                         return;
@@ -42,21 +42,18 @@ impl WgpuState {
                 std::borrow::Cow::Borrowed(BG_SHADER)
             };
 
-        // テキストシェーダー読み込み
+        // Load text shader
         let text_src: std::borrow::Cow<'static, str> =
             if let Some(ref path) = gpu_cfg.custom_text_shader {
                 let expanded = shellexpand::tilde(path).into_owned();
                 match std::fs::read_to_string(&expanded) {
                     Ok(s) => {
-                        info!(
-                            "シェーダーホットリロード: テキストシェーダーを再読み込みしました: {}",
-                            expanded
-                        );
+                        info!("Shader hot reload: reloaded text shader: {}", expanded);
                         std::borrow::Cow::Owned(s)
                     }
                     Err(e) => {
                         warn!(
-                            "テキストシェーダーの再読み込みに失敗しました（既存を維持）: {}",
+                            "Failed to reload text shader (keeping the existing one): {}",
                             e
                         );
                         return;
@@ -66,7 +63,7 @@ impl WgpuState {
                 std::borrow::Cow::Borrowed(TEXT_SHADER)
             };
 
-        // 背景パイプラインを再構築する
+        // Rebuild the background pipeline
         let bg_shader = self
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -100,7 +97,7 @@ impl WgpuState {
                     entry_point: "fs_main",
                     targets: &[Some(wgpu::ColorTargetState {
                         format,
-                        // アルファブレンディングを有効化（画像オーバーレイパイプラインも同様）
+                        // Enable alpha blending (the image overlay pipeline does the same)
                         blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
@@ -116,7 +113,7 @@ impl WgpuState {
                 cache: None,
             });
 
-        // テキストパイプラインを再構築する
+        // Rebuild the text pipeline
         let text_shader = self
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -160,6 +157,6 @@ impl WgpuState {
             cache: None,
         });
 
-        info!("シェーダーホットリロード完了");
+        info!("Shader hot reload complete");
     }
 }

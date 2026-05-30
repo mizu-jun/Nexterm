@@ -1,26 +1,26 @@
-//! wgpu + winit レンダラー
+//! wgpu + winit renderer.
 //!
-//! 描画パイプライン:
-//!   1. ターミナルセルの背景色を頂点バッファで描画（カラーパス）
-//!   2. cosmic-text でグリフをラスタライズし、グリフアトラスに書き込む
-//!   3. グリフアトラスからサンプリングしてテキストを描画（テキストパス）
+//! Rendering pipeline:
+//!   1. Draw terminal cell backgrounds from a vertex buffer (color pass).
+//!   2. Rasterize glyphs with cosmic-text and write them into the glyph atlas.
+//!   3. Sample the glyph atlas to draw text (text pass).
 //!
-//! 頂点ビルダーサブモジュール:
-//! - `grid_verts` — グリッド / スクロールバック / 境界線
-//! - `overlay` — タブバー / ステータス / 検索バー / オーバーレイ各種
-//! - `ui_verts` — コンテキストメニュー / 同意ダイアログ / 更新バナー
+//! Vertex-builder submodules:
+//! - `grid_verts` — grid / scrollback / borders.
+//! - `overlay` — tab bar / status / search bar / various overlays.
+//! - `ui_verts` — context menu / consent dialog / update banner.
 //!
-//! ランタイムサブモジュール:
-//! - `app` — `NextermApp`
-//! - `event_handler` — winit `ApplicationHandler`
-//! - `input_handler` — キー入力ディスパッチ
+//! Runtime submodules:
+//! - `app` — `NextermApp`.
+//! - `event_handler` — winit `ApplicationHandler`.
+//! - `input_handler` — key input dispatch.
 //!
-//! wgpu 内部サブモジュール（Sprint 5-6 で分割）:
-//! - `wgpu_init` — `WgpuState::new` / `resize` / `select_present_mode`
-//! - `render_frame` — `WgpuState::render`
-//! - `gpu_buffers` — 背景・テキスト頂点バッファのアップロード
-//! - `image` — 画像テクスチャと頂点構築
-//! - `shader_reload` — カスタムシェーダーのホットリロード
+//! wgpu internal submodules (split out in Sprint 5-6):
+//! - `wgpu_init` — `WgpuState::new` / `resize` / `select_present_mode`.
+//! - `render_frame` — `WgpuState::render`.
+//! - `gpu_buffers` — upload of background / text vertex buffers.
+//! - `image` — image textures and vertex construction.
+//! - `shader_reload` — hot reload of custom shaders.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -31,18 +31,18 @@ use tracing::{info, warn};
 
 use crate::state::{ContextMenu, CopyModeState, SearchState};
 
-// ---- 頂点ビルダーサブモジュール（Sprint 2-1 Phase A）----
-// Sprint 5-4 / A2: overlay_verts.rs (1,958 行) を overlay/ サブディレクトリに再分割
+// ---- Vertex-builder submodules (Sprint 2-1 Phase A) ----
+// Sprint 5-4 / A2: overlay_verts.rs (1,958 lines) was further split into the overlay/ subdirectory.
 mod grid_verts;
 mod overlay;
 mod ui_verts;
 
-// ---- ランタイムサブモジュール（Sprint 2-1 Phase B/C）----
+// ---- Runtime submodules (Sprint 2-1 Phase B/C) ----
 mod app;
 mod event_handler;
 mod input_handler;
 
-// ---- wgpu 内部サブモジュール（Sprint 5-6 でファイル分割）----
+// ---- wgpu internal submodules (file-level split in Sprint 5-6) ----
 mod background_pass;
 mod gpu_buffers;
 mod image;
@@ -56,12 +56,12 @@ pub use event_handler::{EventHandler, UserEvent};
 use background_pass::BackgroundTexture;
 use image::ImageEntry;
 
-// ---- シェーダーファイル監視 ----
+// ---- Shader file watcher ----
 
-/// カスタムシェーダーファイルを監視するウォッチャーを起動する。
+/// Start a watcher for custom shader files.
 ///
-/// 設定にシェーダーパスがある場合のみ監視を開始する。
-/// ファイルが変更されると `()` を受信チャネルに送信する。
+/// Only starts watching when a shader path is configured. When the file
+/// changes, sends `()` on the receiver channel.
 pub(super) fn start_shader_watcher(
     gpu_cfg: &nexterm_config::GpuConfig,
 ) -> (
@@ -90,42 +90,39 @@ pub(super) fn start_shader_watcher(
         if let Ok(event) = result {
             use notify::EventKind::*;
             if matches!(event.kind, Modify(_) | Create(_)) {
-                info!("シェーダーファイルの変更を検知しました。パイプラインを再構築します。");
+                info!("Detected shader file change. Rebuilding pipelines.");
                 let _ = tx.blocking_send(());
             }
         }
     }) {
         Ok(w) => w,
         Err(e) => {
-            warn!("シェーダーウォッチャーの起動に失敗しました: {}", e);
+            warn!("Failed to start shader watcher: {}", e);
             return (None, None);
         }
     };
 
     for path in &paths {
         if let Err(e) = watcher.watch(path, RecursiveMode::NonRecursive) {
-            warn!(
-                "シェーダーファイルの監視に失敗しました: {}: {}",
-                path.display(),
-                e
-            );
+            warn!("Failed to watch shader file: {}: {}", path.display(), e);
         } else {
-            info!("シェーダーファイルを監視中: {}", path.display());
+            info!("Watching shader file: {}", path.display());
         }
     }
 
     (Some(rx), Some(watcher))
 }
 
-// ---- wgpu コアステート ----
+// ---- wgpu core state ----
 
-/// wgpu の初期化済み状態
+/// Initialized wgpu state.
 ///
-/// 全フィールドは renderer サブモジュール（wgpu_init / render_frame / gpu_buffers /
-/// image / shader_reload）から直接アクセスする。
+/// All fields are accessed directly from the renderer submodules
+/// (`wgpu_init` / `render_frame` / `gpu_buffers` / `image` / `shader_reload`).
 ///
-/// 可視性 `pub(super)` は Sprint 5-8 Phase 4-1 Step 1.2 で `ClientWindow.wgpu` の
-/// 公開可視性に揃えるため。EventHandler 等の親モジュールからも参照可能。
+/// Visibility `pub(super)` is matched to `ClientWindow.wgpu`'s visibility
+/// introduced in Sprint 5-8 Phase 4-1 Step 1.2, so parent modules such as
+/// `EventHandler` can also reference it.
 pub(super) struct WgpuState {
     device: wgpu::Device,
     pub(super) queue: wgpu::Queue,
@@ -134,54 +131,58 @@ pub(super) struct WgpuState {
     bg_pipeline: wgpu::RenderPipeline,
     text_pipeline: wgpu::RenderPipeline,
     text_bind_group_layout: wgpu::BindGroupLayout,
-    /// 画像レンダリングパイプライン
+    /// Image rendering pipeline.
     image_pipeline: wgpu::RenderPipeline,
-    /// 画像用サンプラー
+    /// Sampler used for images.
     image_sampler: wgpu::Sampler,
-    /// 画像テクスチャキャッシュ（image_id → ImageEntry）
+    /// Image texture cache (`image_id` -> `ImageEntry`).
     image_textures: HashMap<u32, ImageEntry>,
-    /// 背景画像（Sprint 5-7 / Phase 3-1）。`WindowConfig.background_image` 設定時のみロード
+    /// Background image (Sprint 5-7 / Phase 3-1). Loaded only when `WindowConfig.background_image` is set.
     background: Option<BackgroundTexture>,
-    // ---- フレーム間再利用バッファ（毎フレームの GPU アロケーションを回避）----
-    /// 背景頂点バッファ（VERTEX | COPY_DST、容量超過時は再確保）
+    // ---- Frame-to-frame reused buffers (avoids per-frame GPU allocations) ----
+    /// Background vertex buffer (VERTEX | COPY_DST; reallocated on overflow).
     buf_bg_v: wgpu::Buffer,
-    /// 背景インデックスバッファ
+    /// Background index buffer.
     buf_bg_i: wgpu::Buffer,
-    /// テキスト頂点バッファ
+    /// Text vertex buffer.
     buf_txt_v: wgpu::Buffer,
-    /// テキストインデックスバッファ
+    /// Text index buffer.
     buf_txt_i: wgpu::Buffer,
-    /// 背景頂点バッファの現在容量（BgVertex 単位）
+    /// Current capacity of the background vertex buffer (in `BgVertex` units).
     bg_v_cap: u64,
-    /// 背景インデックスバッファの現在容量（u16 単位）
+    /// Current capacity of the background index buffer (in `u16` units).
     bg_i_cap: u64,
-    /// テキスト頂点バッファの現在容量（TextVertex 単位）
+    /// Current capacity of the text vertex buffer (in `TextVertex` units).
     txt_v_cap: u64,
-    /// テキストインデックスバッファの現在容量（u16 単位）
+    /// Current capacity of the text index buffer (in `u16` units).
     txt_i_cap: u64,
-    /// 最後にフレームを描画した時刻（FPS 制限用）
+    /// Timestamp of the last frame draw (used for FPS limiting).
     last_frame_at: Instant,
 }
 
-// ---- 複数 OS Window 対応スケルトン（Sprint 5-8 Phase 4-1 Step 1.2）----
+// ---- Multi OS-window skeleton (Sprint 5-8 Phase 4-1 Step 1.2) ----
 
-/// 各 OS Window 固有の表示状態を集約する型（Sprint 5-8 Phase 4-1 Step 1.3）。
+/// Aggregates per-OS-window display state (Sprint 5-8 Phase 4-1 Step 1.3).
 ///
-/// 現在 `ClientState` 内に格納されている **per-OS-Window 化候補フィールド** を
-/// 構造体として並行定義する。実機能配線（イベントハンドラの引数化・`ClientState`
-/// からの移行）は Step 1.4 以降で段階的に行うため、本構造体は現状インスタンス化
-/// されてもどこからも参照されない（`dead_code` allow 維持）。
+/// Defines, in parallel, the fields currently held inside `ClientState` that
+/// are **candidates for per-OS-window scope**. Actual wiring (threading
+/// through the event-handler arguments and migrating fields out of
+/// `ClientState`) is done incrementally from Step 1.4 onward, so this struct
+/// is currently never referenced even when instantiated (`dead_code` allow
+/// is retained).
 ///
-/// 並行定義の理由は計画書（[[project_sprint5_7_phase4_plan]] Sprint 5-8 セクション）
-/// に従い、`ClientState` 責務分割の波及をコンパイル不能期間ゼロで進めるため。
+/// The parallel-definition approach follows the plan
+/// ([[project_sprint5_7_phase4_plan]] Sprint 5-8 section) so that
+/// `ClientState` responsibility splits can land without any
+/// non-compilable interim period.
 ///
-/// 含まれるフィールド（Step 1.4 以降で `ClientState` から段階移行）:
-/// - `focused_server_window_id`: この OS Window がフォーカス中のサーバー Window ID
-/// - `pane_layouts`: 表示中のペインレイアウト情報（per-window 描画用に複製）
-/// - `copy_mode`: コピーモード（Vim 風テキスト選択）状態
-/// - `search`: インクリメンタル検索状態
-/// - `context_menu`: 右クリックで開いたコンテキストメニュー
-/// - `hovered_tab_id`: タブバーでホバー中のタブ ID
+/// Fields (migrated from `ClientState` starting in Step 1.4):
+/// - `focused_server_window_id`: server-window ID this OS window has focused.
+/// - `pane_layouts`: pane layout info shown here (duplicated for per-window rendering).
+/// - `copy_mode`: copy-mode (Vim-style text selection) state.
+/// - `search`: incremental search state.
+/// - `context_menu`: the context menu opened by right-click.
+/// - `hovered_tab_id`: ID of the tab currently hovered in the tab bar.
 #[allow(dead_code)]
 pub(super) struct PerWindowViewState {
     pub(super) focused_server_window_id: u32,
@@ -205,31 +206,35 @@ impl Default for PerWindowViewState {
     }
 }
 
-/// 1 個の OS Window に紐付くペア型（Sprint 5-8 Phase 4-1 Step 1.2 スケルトン）。
+/// Pair type bound to one OS window (Sprint 5-8 Phase 4-1 Step 1.2 skeleton).
 ///
-/// 現状は単一 Window のみだが、Phase 4-2 以降で
-/// `EventHandler.windows: HashMap<WindowId, ClientWindow>` として複数 OS Window を保持する。
+/// Currently only a single window exists, but from Phase 4-2 onward
+/// `EventHandler.windows: HashMap<WindowId, ClientWindow>` will hold
+/// multiple OS windows.
 ///
-/// 移行期間中（Step 1.2〜1.3）は既存の `EventHandler.window` / `EventHandler.wgpu_state`
-/// フィールドと並行して保持され、Step 1.3 以降で段階的に統合していく。
+/// During the transition (Step 1.2..1.3) this is held in parallel with the
+/// existing `EventHandler.window` / `EventHandler.wgpu_state` fields and
+/// will be gradually consolidated from Step 1.3 onward.
 ///
-/// Sprint 5-11-2 Step 2-3: 各 OS Window が独自の AccessKit Adapter を保持する。
-/// プラットフォーム a11y アダプタは Window 単位で管理されるため、追加 Window では
-/// 主 Window と独立したノードツリーが必要になる（現状の Step 2-3 では主 Window 用
-/// `EventHandler::accesskit_adapter` を維持しつつ、追加 Window 用に本フィールドを用意）。
+/// Sprint 5-11-2 Step 2-3: each OS window owns an independent AccessKit
+/// adapter. Platform a11y adapters are managed per window, so additional
+/// windows need a node tree independent from the main window's
+/// (`EventHandler::accesskit_adapter` is still kept for the main window in
+/// Step 2-3, and this field is added for additional windows).
 #[allow(dead_code)]
 pub(super) struct ClientWindow {
-    /// winit ネイティブウィンドウ
+    /// winit native window.
     pub(super) window: Arc<winit::window::Window>,
-    /// wgpu 描画ステート
+    /// wgpu render state.
     pub(super) wgpu: WgpuState,
-    /// per-OS-Window 表示状態（Step 1.3 で詳細フィールド追加予定）
+    /// Per-OS-window display state (detailed fields to be added in Step 1.3).
     pub(super) view_state: PerWindowViewState,
-    /// AccessKit プラットフォームアダプタ（Sprint 5-11-2 Step 2-3）。
+    /// AccessKit platform adapter (Sprint 5-11-2 Step 2-3).
     ///
-    /// 各 OS Window ごとに独立した Adapter を保持。スクリーンリーダーは Window ごとに
-    /// 別ツリーを扱えるため、追加 Window でも `InitialTreeRequested` を受信して
-    /// `build_tree_from_state(&self.app.state)` を返す。
+    /// Each OS window holds its own independent adapter. Screen readers
+    /// can manage a separate tree per window, so additional windows also
+    /// receive `InitialTreeRequested` and return
+    /// `build_tree_from_state(&self.app.state)`.
     pub(super) accesskit_adapter: accesskit_winit::Adapter,
 }
 
@@ -239,14 +244,16 @@ mod client_window_tests {
 
     #[test]
     fn per_window_view_state_default() {
-        // Step 1.3 で `PerWindowViewState` を unit struct から本構造体に拡張した。
-        // Default 実装が ClientState から per-OS-Window 化する候補フィールドを
-        // 既存ロジックと一致する初期値で生成することを検証する。
+        // Step 1.3 expanded `PerWindowViewState` from a unit struct into the
+        // current full struct. Verify that the `Default` impl produces
+        // initial values for the per-OS-window candidate fields that match
+        // the existing behavior in `ClientState`.
         let view = PerWindowViewState::default();
         assert_eq!(view.focused_server_window_id, 0);
         assert!(view.pane_layouts.is_empty());
         assert!(view.context_menu.is_none());
         assert!(view.hovered_tab_id.is_none());
-        // `copy_mode` / `search` 自身の初期状態の不変条件は各モジュールのテストで担保。
+        // Invariants about the initial states of `copy_mode` / `search`
+        // themselves are covered by tests in those modules.
     }
 }

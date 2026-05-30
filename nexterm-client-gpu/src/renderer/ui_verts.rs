@@ -1,6 +1,6 @@
-//! Sprint 2-1 Phase A: ボーダー・タブバー・ステータス UI 頂点ビルダー
+//! Sprint 2-1 Phase A: UI vertex builders for borders, the tab bar, and the status line.
 //!
-//! `renderer.rs` から抽出した UI 系頂点ビルダー 6 メソッド。
+//! Six UI vertex-builder methods extracted from `renderer.rs`.
 
 use crate::color_util::hex_to_rgba;
 use crate::font::FontManager;
@@ -11,7 +11,7 @@ use crate::vertex_util::{add_px_rect, add_string_verts};
 use super::WgpuState;
 
 impl WgpuState {
-    /// ペイン境界線を描画する
+    /// Draw the pane border lines.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn build_border_verts(
         &self,
@@ -27,12 +27,12 @@ impl WgpuState {
         if state.pane_layouts.len() <= 1 {
             return;
         }
-        // Tokyo Night: セパレーター色 #415068、フォーカス枠 #7AA2F7
+        // Tokyo Night: separator color #415068, focused border #7AA2F7
         let border_color = [0.255, 0.286, 0.408, 1.0];
         let focused_border = [0.478, 0.635, 0.969, 1.0];
-        // フォーカスペインの枠線ハイライト（薄い青、アルファ 0.25）
+        // Focused-pane border highlight (light blue, alpha 0.25)
         let focused_highlight = [0.478, 0.635, 0.969, 0.25];
-        // 境界線は 2px で視認性を向上
+        // Border is 2px wide for visibility
         let border_w = 2.0_f32;
 
         for layout in state.pane_layouts.values() {
@@ -42,11 +42,11 @@ impl WgpuState {
             let ph = layout.rows as f32 * cell_h;
             let is_focused = state.focused_pane_id == Some(layout.pane_id);
 
-            // フォーカスペインに薄いハイライト枠（2px）を描画する
+            // Draw a faint highlight border (2px) on the focused pane
             if is_focused && state.pane_layouts.len() > 1 {
-                // 上辺
+                // Top edge
                 add_px_rect(px, py, pw, 2.0, focused_highlight, sw, sh, bg_verts, bg_idx);
-                // 下辺
+                // Bottom edge
                 add_px_rect(
                     px,
                     py + ph - 2.0,
@@ -58,9 +58,9 @@ impl WgpuState {
                     bg_verts,
                     bg_idx,
                 );
-                // 左辺
+                // Left edge
                 add_px_rect(px, py, 2.0, ph, focused_highlight, sw, sh, bg_verts, bg_idx);
-                // 右辺
+                // Right edge
                 add_px_rect(
                     px + pw - 2.0,
                     py,
@@ -74,7 +74,7 @@ impl WgpuState {
                 );
             }
 
-            // 右隣にペインがあれば 1px の垂直境界線を描画する
+            // If a pane sits to the right, draw a 1px vertical border
             let right_col = layout.col_offset + layout.cols + 1;
             let color = if is_focused {
                 focused_border
@@ -89,7 +89,7 @@ impl WgpuState {
                 add_px_rect(px + pw, py, border_w, ph, color, sw, sh, bg_verts, bg_idx);
             }
 
-            // 下隣にペインがあれば 1px の水平境界線を描画する
+            // If a pane sits below, draw a 1px horizontal border
             let bottom_row = layout.row_offset + layout.rows + 1;
             if state
                 .pane_layouts
@@ -101,7 +101,7 @@ impl WgpuState {
         }
     }
 
-    /// タブバー頂点を構築する（ウィンドウ最上行、WezTerm スタイル）
+    /// Build the tab-bar vertices (top row of the window, WezTerm-style).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn build_tab_bar_verts(
         &mut self,
@@ -121,13 +121,13 @@ impl WgpuState {
     ) {
         let bar_h = cfg.height as f32;
         let bar_y = 0.0_f32;
-        // アクティブタブのアクセントライン高さ（3px でより視認性を高める）
+        // Height of the active-tab accent line (3px for better visibility)
         let accent_h = 3.0_f32;
 
-        // タブバー全体の背景（非アクティブ色）
+        // Full-width tab-bar background (inactive color)
         let inactive_bg = hex_to_rgba(&cfg.inactive_tab_bg, 1.0);
         add_px_rect(0.0, bar_y, sw, bar_h, inactive_bg, sw, sh, bg_verts, bg_idx);
-        // タブバー下端の区切り線（境界色と統一）
+        // Divider line at the bottom of the tab bar (matches the border color)
         add_px_rect(
             0.0,
             bar_y + bar_h - 1.0,
@@ -140,12 +140,12 @@ impl WgpuState {
             bg_idx,
         );
 
-        // フォーカスペインの ID で「アクティブタブ」を表示する
+        // Render the "active tab" based on the focused pane ID
         let focused_id = state.focused_pane_id.unwrap_or(0);
         let active_bg = hex_to_rgba(&cfg.active_tab_bg, 1.0);
         let activity_bg = hex_to_rgba(&cfg.activity_tab_bg, 1.0);
         let accent_color = hex_to_rgba(&cfg.active_accent_color, 1.0);
-        // テキスト色: アクティブは白に近い、非アクティブは設定値でミュート化（Sprint 5-7 / UI-1-1）
+        // Text colors: active uses near-white; inactive is muted via the config value (Sprint 5-7 / UI-1-1)
         let text_fg = [0.97, 0.97, 0.97, 1.0];
         let dim = cfg.inactive_text_brightness.clamp(0.2, 1.0);
         let inactive_fg = [dim, dim, dim, 1.0];
@@ -153,14 +153,15 @@ impl WgpuState {
         let padding = cell_w;
         let sep = cfg.separator.clone();
 
-        // 右端の設定ボタン幅を先に確保する（固定幅で絵文字の幅計算ズレを防ぐ）
+        // Reserve the right-edge settings-button width first (fixed width to avoid emoji width drift)
         let settings_label = " * Settings ";
         let settings_w = 12.0 * cell_w;
         let tab_area_w = sw - settings_w;
 
-        // Sprint 5-7 / Phase 2-3: タブ表示順序は ClientState.tab_order に従う
-        // （サーバーが Window.pane_order に従って並べた論理タブ順）。
-        // tab_order が空の場合（接続直後など）は pane_layouts のキー昇順にフォールバック。
+        // Sprint 5-7 / Phase 2-3: tab display order follows `ClientState.tab_order`
+        // (the logical tab order produced by the server from `Window.pane_order`).
+        // When `tab_order` is empty (e.g. immediately after connect), fall back to
+        // ascending `pane_layouts` keys.
         let pane_ids: Vec<u32> = if state.tab_order.is_empty() {
             let mut v: Vec<u32> = state.pane_layouts.keys().copied().collect();
             v.sort();
@@ -174,9 +175,9 @@ impl WgpuState {
                 .collect()
         };
 
-        // クリック判定テーブルを毎フレーム更新する
+        // Refresh the click-hit table every frame
         state.tab_hit_rects.clear();
-        // Sprint 5-9 Phase 4-6: タブ分離 `[↗]` ボタンの hit 領域も毎フレームクリア
+        // Sprint 5-9 Phase 4-6: clear the tab tear-out `[↗]` button hit regions every frame, too
         state.tab_tearout_hit_rects.clear();
 
         let mut x_offset = 0.0_f32;
@@ -185,18 +186,18 @@ impl WgpuState {
         for (i, &pane_id) in pane_ids.iter().enumerate() {
             let is_active = pane_id == focused_id;
             let is_hovered = state.hovered_tab_id == Some(pane_id);
-            // アクティビティフラグ・タイトルを取得する
+            // Pick up the activity flag and the title
             let (has_activity, raw_title) = state
                 .panes
                 .get(&pane_id)
                 .map(|p| (p.has_activity, p.title.clone()))
                 .unwrap_or((false, String::new()));
 
-            // タブラベル: OSC タイトルがあれば表示、なければペイン番号
+            // Tab label: show the OSC title if any; otherwise the pane number
             let base_label = if raw_title.is_empty() {
                 format!("pane:{}", pane_id)
             } else {
-                // 長すぎるタイトルは末尾を省略する（最大 24 文字）
+                // Trim titles that are too long (max 24 chars)
                 let truncated: String = raw_title.chars().take(24).collect();
                 if raw_title.chars().count() > 24 {
                     format!("{}…", truncated)
@@ -204,7 +205,7 @@ impl WgpuState {
                     truncated
                 }
             };
-            // タブ番号プレフィックス（Windows Terminal 風）: 設定 ON で [N] を前置
+            // Tab number prefix (Windows Terminal style): prepends `[N]` when the option is on
             let numbered = if cfg.show_tab_number {
                 format!("[{}] {}", i + 1, base_label)
             } else {
@@ -216,17 +217,17 @@ impl WgpuState {
                 format!(" {} ", numbered)
             };
             let label_w =
-                (label.chars().count() as f32 * cell_w + padding * 2.0).min(tab_area_w - x_offset); // タブエリアをはみ出さない
+                (label.chars().count() as f32 * cell_w + padding * 2.0).min(tab_area_w - x_offset); // don't spill out of the tab area
 
             if label_w < cell_w * 2.0 {
-                break; // これ以上タブを描画するスペースがない
+                break; // no more room to draw additional tabs
             }
 
-            // タブ背景色を決定する:
-            //   1. アクティブ → active_bg
-            //   2. アクティビティあり非アクティブ → activity_bg（設定）
-            //   3. ホバー中 → inactive_bg を明るく
-            //   4. 通常 → inactive_bg
+            // Decide the tab background color:
+            //   1. Active -> active_bg
+            //   2. Inactive but has activity -> activity_bg (from config)
+            //   3. Hovered -> brightened inactive_bg
+            //   4. Normal -> inactive_bg
             let tab_bg = if is_active {
                 active_bg
             } else if has_activity {
@@ -242,13 +243,14 @@ impl WgpuState {
                 inactive_bg
             };
 
-            // タブ背景
+            // Tab background
             add_px_rect(
                 x_offset, bar_y, label_w, bar_h, tab_bg, sw, sh, bg_verts, bg_idx,
             );
-            // アクティブタブの下部にアクセントライン（設定色）を描画する。
-            // Sprint 5-7 / Phase 3-2: タブ切替直後はアクセントラインを ease-out で
-            // フェードイン + 横方向に伸びる演出を付与する（reduced motion 設定で抑制可能）。
+            // Draw the accent line (config color) under the active tab.
+            // Sprint 5-7 / Phase 3-2: just after a tab switch, fade the accent line in
+            // with ease-out and expand it horizontally (can be suppressed by reduced-motion
+            // settings).
             if is_active {
                 let tab_switch_duration = animations_cfg.scaled_duration_ms(200);
                 let progress = if tab_switch_duration == 0
@@ -263,7 +265,7 @@ impl WgpuState {
                 };
                 let mut accent = accent_color;
                 accent[3] = accent_color[3] * progress;
-                // アンダーラインは中央から両端に伸びる演出
+                // The underline grows outward from the center toward both ends
                 let accent_w = label_w * progress;
                 let accent_x = x_offset + (label_w - accent_w) / 2.0;
                 add_px_rect(
@@ -279,7 +281,7 @@ impl WgpuState {
                 );
             }
 
-            // タブラベル（垂直中央揃え）
+            // Tab label (vertically centered)
             let fg = if is_active { text_fg } else { inactive_fg };
             add_string_verts(
                 &label,
@@ -297,25 +299,26 @@ impl WgpuState {
                 text_idx,
             );
 
-            // クリック判定範囲を記録する
+            // Record the click-hit range
             state
                 .tab_hit_rects
                 .insert(pane_id, (x_offset, x_offset + label_w));
 
-            // Sprint 5-9 Phase 4-6: タブホバー中に `[↗]` 分離ボタンを描画する。
-            // 条件:
-            //   - hover 中である
-            //   - タブドラッグ中でない（ドラッグ中はゴーストタブ描画と競合するため）
-            //   - タブ幅が最低限の表示余地を持つ（cell_w * 4 以上）
+            // Sprint 5-9 Phase 4-6: while the tab is hovered, draw the `[↗]` tear-out button.
+            // Conditions:
+            //   - hovered
+            //   - not currently dragging a tab (drag conflicts with the ghost-tab render)
+            //   - the tab is at least minimally wide (>= cell_w * 4)
             //
-            // ボタン領域: タブ右端から padding 分内側の正方形（cell_w × cell_w 程度）。
-            // クリックで `DetachToNewWindow` 経路を発火する（mouse.rs で hit 検出）。
+            // Button area: a square (about cell_w x cell_w) inset from the tab's right edge
+            // by `padding`. A click fires the `DetachToNewWindow` path (hit-detected in
+            // `mouse.rs`).
             let tearout_min_width = cell_w * 4.0;
             if is_hovered && state.tab_drag.is_none() && label_w >= tearout_min_width {
-                let btn_size = cell_w; // 1 セル幅の正方形
+                let btn_size = cell_w; // a 1-cell-wide square
                 let btn_x = x_offset + label_w - padding - btn_size;
                 let btn_y = bar_y + (bar_h - cell_h) / 2.0;
-                // ↗ U+2197 NORTH EAST ARROW を描画（フォントによってはフォールバックされる）
+                // Draw the U+2197 NORTH EAST ARROW (some fonts will substitute it)
                 add_string_verts(
                     "↗",
                     btn_x,
@@ -331,7 +334,7 @@ impl WgpuState {
                     text_verts,
                     text_idx,
                 );
-                // hit 領域はボタン中央周辺に少し広めに取る（クリックしやすさ優先）
+                // Make the hit region slightly larger around the button center (favors clickability)
                 let hit_x0 = btn_x - cell_w * 0.25;
                 let hit_x1 = btn_x + btn_size + cell_w * 0.25;
                 state
@@ -341,11 +344,11 @@ impl WgpuState {
 
             x_offset += label_w;
 
-            // タブ間の縦区切り線（1px、薄いアクセント色）
+            // Vertical divider between tabs (1px, light accent color)
             if i + 1 < pane_ids.len() {
-                // アクティブタブの隣は区切り線を非表示にする（アクセント線で十分）
+                // Hide the divider next to the active tab (the accent line is enough)
                 if !is_active && pane_ids[i + 1] != focused_id {
-                    let line_h = bar_h * 0.6; // タブバー高さの60%
+                    let line_h = bar_h * 0.6; // 60% of the tab-bar height
                     let line_y = bar_y + (bar_h - line_h) / 2.0;
                     add_px_rect(
                         x_offset,
@@ -359,7 +362,7 @@ impl WgpuState {
                         bg_idx,
                     );
                 }
-                // セパレーター文字列が設定されている場合は互換のために残す（空文字列がデフォルト）
+                // Keep the separator-string rendering for backward compatibility (default is empty)
                 if !sep.trim().is_empty() {
                     let sep_w = cell_w;
                     let sep_bg = if is_active { active_bg } else { inactive_bg };
@@ -386,11 +389,11 @@ impl WgpuState {
             }
         }
 
-        // Sprint 5-7 / Phase 2-3: タブドラッグ中のオーバーレイ描画
-        //   1. ドラッグ中ターゲットタブの左端に縦インジケータ線（挿入位置）
-        //   2. マウスカーソル位置に半透明のゴーストタブ
+        // Sprint 5-7 / Phase 2-3: overlays drawn while a tab is being dragged
+        //   1. A vertical indicator line at the left edge of the drag target (insertion position)
+        //   2. A translucent ghost tab at the mouse cursor position
         if let Some(drag) = state.tab_drag.as_ref().filter(|d| d.committed) {
-            // 挿入インジケータ: hover_target が存在し、ドラッグ中タブと異なる場合のみ
+            // Insertion indicator: only when `hover_target` exists and differs from the dragged tab
             if let Some(target_id) = drag.hover_target
                 && target_id != drag.pane_id
                 && let Some(&(tx0, _tx1)) = state.tab_hit_rects.get(&target_id)
@@ -408,18 +411,18 @@ impl WgpuState {
                     bg_idx,
                 );
             }
-            // ゴーストタブ: ドラッグ中のラベルをカーソル位置に半透明で
+            // Ghost tab: draw the dragged tab's label translucently at the cursor position
             if let Some(&(orig_x0, orig_x1)) = state.tab_hit_rects.get(&drag.pane_id) {
                 let ghost_w = orig_x1 - orig_x0;
                 let ghost_x = (drag.current_x - ghost_w / 2.0)
                     .max(0.0)
                     .min(tab_area_w - ghost_w);
-                // 半透明の active 色（α=0.65 でドロップ先の下のタブが見える）
+                // Translucent active color (alpha=0.65 so the tab beneath the drop target is visible)
                 let ghost_bg = [active_bg[0], active_bg[1], active_bg[2], 0.65];
                 add_px_rect(
                     ghost_x, bar_y, ghost_w, bar_h, ghost_bg, sw, sh, bg_verts, bg_idx,
                 );
-                // ゴーストラベル（元のタブ名）
+                // Ghost label (the original tab name)
                 let ghost_title = state
                     .panes
                     .get(&drag.pane_id)
@@ -446,13 +449,13 @@ impl WgpuState {
             }
         }
 
-        // 右端: 設定ボタン
+        // Right edge: settings button
         let settings_x = sw - settings_w;
         let settings_open = state.settings_panel.is_open;
         let settings_bg = if settings_open {
             active_bg
         } else {
-            // 少し明るい非アクティブ色で識別しやすくする
+            // Slightly brighter than the inactive color to make it stand out
             [
                 inactive_bg[0] + 0.05,
                 inactive_bg[1] + 0.05,
@@ -491,15 +494,15 @@ impl WgpuState {
             text_verts,
             text_idx,
         );
-        // 設定ボタンのクリック範囲を記録する
+        // Record the click rectangle of the settings button.
         state.settings_tab_rect = Some((settings_x, sw));
 
-        // タブ名変更中の場合: 対象タブの位置にインライン編集フィールドを表示する
+        // When renaming a tab, display an inline edit field at the tab's position.
         if let Some(rename_id) = state.settings_panel.tab_rename_editing
             && let Some(&(tx0, tx1)) = state.tab_hit_rects.get(&rename_id)
         {
             let edit_w = (tx1 - tx0).min(tab_area_w - tx0);
-            // 編集フィールド背景（濃いアクセント色）
+            // Edit field background (dark accent color).
             add_px_rect(
                 tx0,
                 bar_y,
@@ -511,7 +514,7 @@ impl WgpuState {
                 bg_verts,
                 bg_idx,
             );
-            // 下部アクセントラインは太くして編集状態を示す
+            // Thicken the bottom accent line to indicate edit mode.
             add_px_rect(
                 tx0,
                 bar_y + bar_h - accent_h * 2.0,
@@ -523,7 +526,7 @@ impl WgpuState {
                 bg_verts,
                 bg_idx,
             );
-            // テキスト + カーソル（末尾に | を表示）
+            // Text + cursor (append `|` at the end).
             let edit_text = format!(" {}|", state.settings_panel.tab_rename_text);
             add_string_verts(
                 &edit_text,
@@ -543,7 +546,7 @@ impl WgpuState {
         }
     }
 
-    /// ステータスライン頂点を構築する（ウィンドウ最下行）
+    /// Build the status line vertices (bottom row of the window).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn build_status_verts(
         &self,
@@ -560,7 +563,7 @@ impl WgpuState {
         text_idx: &mut Vec<u16>,
     ) {
         let py = sh - cell_h;
-        // ステータスライン背景（Tokyo Night: #1E2030）
+        // Status line background (Tokyo Night: #1E2030).
         add_px_rect(
             0.0,
             py,
@@ -572,7 +575,7 @@ impl WgpuState {
             bg_verts,
             bg_idx,
         );
-        // ステータスライン上部に 1px の区切り線（#2D3149）
+        // 1px divider line at the top of the status line (#2D3149).
         add_px_rect(
             0.0,
             py,
@@ -585,7 +588,7 @@ impl WgpuState {
             bg_idx,
         );
 
-        // テキスト: N アイコン + セッション名 + ペイン情報
+        // Text: N icon + session name + pane info.
         let pane_id = state.focused_pane_id.unwrap_or(0);
         let activity_ids = state.active_pane_ids();
         let pane_count = state.pane_layouts.len();
@@ -601,7 +604,7 @@ impl WgpuState {
             )
         };
 
-        // Tokyo Night テキスト色 #A9B1D6
+        // Tokyo Night text color #A9B1D6.
         add_string_verts(
             &status,
             0.0,
@@ -618,7 +621,7 @@ impl WgpuState {
             text_idx,
         );
 
-        // 右側ウィジェット（status_bar_right_text または旧 status_bar_text）を右端に表示する
+        // Show the right-side widget (status_bar_right_text or legacy status_bar_text) at the far right.
         let right_widget_src = if !state.status_bar_right_text.is_empty() {
             &state.status_bar_right_text
         } else {
@@ -647,12 +650,12 @@ impl WgpuState {
             );
         }
 
-        // 左側ウィジェット（status_bar_text）が別途設定されていれば表示する
-        // （right_widgets と独立して左寄せ表示）
+        // Display the left-side widget (status_bar_text) if it is also set.
+        // (Shown left-aligned, independent of right_widgets.)
         if !state.status_bar_right_text.is_empty() && !state.status_bar_text.is_empty() {
             let left_text = format!(" {} ", state.status_bar_text);
             let left_end = left_text.chars().count() as f32 * cell_w;
-            // 左側ウィジェットは nexterm | pane: テキストの右に表示する
+            // The left-side widget is rendered to the right of the `nexterm | pane:` text.
             let base_left = {
                 let pane_id = state.focused_pane_id.unwrap_or(0);
                 let activity_ids = state.active_pane_ids();
@@ -666,12 +669,12 @@ impl WgpuState {
             };
             let _ = left_end;
             let _ = base_left;
-            // TODO: 左ウィジェットのオフセット計算は将来拡張
+            // TODO: Extend the left-widget offset computation in the future.
         }
 
-        // 右端インジケーター群（右から左へ積み上げる）
+        // Right-edge indicators (stacked from right to left).
 
-        // ズームインジケーター（[Z] ラベルを黄色で表示）
+        // Zoom indicator (yellow `[Z]` label).
         if state.is_zoomed {
             let zoom_text = " [Z] ";
             right_offset += zoom_text.chars().count() as f32 * cell_w;
@@ -693,7 +696,7 @@ impl WgpuState {
             );
         }
 
-        // スクロールバック中はインジケーターをウィジェットの左に表示する
+        // While in scrollback, show the indicator to the left of the widgets.
         if let Some(pane) = state.focused_pane()
             && pane.scroll_offset > 0
         {
@@ -717,7 +720,7 @@ impl WgpuState {
         }
     }
 
-    /// 検索バー頂点を構築する（ウィンドウ下部のオーバーレイ）
+    /// Build the search bar vertices (overlay at the bottom of the window).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn build_search_verts(
         &self,
@@ -733,7 +736,7 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
-        // ステータスラインの 1 行上に検索バーを表示する
+        // Display the search bar one row above the status line.
         let py = sh - cell_h * 2.0;
         add_px_rect(
             0.0,
@@ -746,7 +749,7 @@ impl WgpuState {
             bg_verts,
             bg_idx,
         );
-        // 上辺に細いアクセントラインを引く
+        // Draw a thin accent line along the top edge.
         add_px_rect(
             0.0,
             py,
@@ -759,7 +762,7 @@ impl WgpuState {
             bg_idx,
         );
 
-        // 検索クエリとカーソル（点滅の代わりに常時 `|` を表示）
+        // Search query and cursor (always show `|` instead of blinking).
         let query_with_cursor = format!("{}|", state.search.query);
         let match_text = if let Some(idx) = state.search.current_match {
             format!("  ↑↓:{}", idx)
@@ -785,7 +788,7 @@ impl WgpuState {
             text_idx,
         );
 
-        // 右端にキー操作ヒントを表示する
+        // Show key hint text at the far right.
         let hint = "Enter/↑ next  Shift+Enter/↑ prev  Esc close ";
         let hint_x = sw - hint.chars().count() as f32 * cell_w;
         add_string_verts(
@@ -805,7 +808,7 @@ impl WgpuState {
         );
     }
 
-    /// 更新通知バナー頂点を構築する（画面上部の 1 行バー）
+    /// Build the update-notification banner vertices (one-line bar at the top of the screen).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn build_update_banner_verts(
         &self,
@@ -825,11 +828,11 @@ impl WgpuState {
             return;
         };
 
-        // バナーは画面幅全体・1 行分の高さ
+        // The banner spans the full screen width and is one row tall.
         let bar_h = cell_h * 1.4;
         let bar_y = 0.0;
 
-        // 背景（深緑）
+        // Background (dark green).
         add_px_rect(
             0.0,
             bar_y,
@@ -841,7 +844,7 @@ impl WgpuState {
             bg_verts,
             bg_idx,
         );
-        // 左端アクセントライン（明緑）
+        // Left-edge accent line (bright green).
         add_px_rect(
             0.0,
             bar_y,
@@ -854,7 +857,7 @@ impl WgpuState {
             bg_idx,
         );
 
-        // 通知テキスト（i18n キー "update-available" を使用、{version} を置換）
+        // Notification text (uses the i18n key "update-available", substituting {version}).
         let raw = nexterm_i18n::fl!("update-available");
         let msg = raw.replace("{version}", version);
         add_string_verts(
@@ -873,7 +876,7 @@ impl WgpuState {
             text_idx,
         );
 
-        // 右側ヒント（Esc で閉じる）
+        // Right-side hint (press Esc to close).
         let hint = "  [Esc]";
         let hint_x = sw - hint.len() as f32 * cell_w - cell_w;
         add_string_verts(
@@ -893,11 +896,12 @@ impl WgpuState {
         );
     }
 
-    /// サーバーエラーバナー頂点を構築する（画面上部 1 行バー、`update_banner` の直下）。
+    /// Build the server error banner vertices (one-line bar at the top of the screen, just
+    /// below `update_banner`).
     ///
-    /// Sprint 5-12 Phase 1: PTY 起動失敗（PowerShell が見つからない等）・設定ロードエラー・
-    /// ペイン分割失敗などの `ServerToClient::Error` をユーザーが即座に把握できるよう
-    /// 赤いバーで通知する。`Esc` キーで閉じる。
+    /// Sprint 5-12 Phase 1: surfaces `ServerToClient::Error` events such as PTY launch
+    /// failures (e.g. PowerShell not found), config load errors, and pane split failures so
+    /// the user notices them immediately, via a red bar. Dismissed with `Esc`.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn build_error_banner_verts(
         &self,
@@ -917,7 +921,8 @@ impl WgpuState {
             return;
         };
 
-        // バナーは画面幅全体・1 行分の高さ。update_banner がある場合はその下に積む。
+        // The banner spans the full screen width and is one row tall. If update_banner is
+        // present, stack this banner below it.
         let bar_h = cell_h * 1.4;
         let bar_y = if state.update_banner.is_some() {
             bar_h
@@ -925,7 +930,7 @@ impl WgpuState {
             0.0
         };
 
-        // 背景（深紅）
+        // Background (dark red).
         add_px_rect(
             0.0,
             bar_y,
@@ -937,7 +942,7 @@ impl WgpuState {
             bg_verts,
             bg_idx,
         );
-        // 左端アクセントライン（明るい赤）
+        // Left-edge accent line (bright red).
         add_px_rect(
             0.0,
             bar_y,
@@ -950,10 +955,10 @@ impl WgpuState {
             bg_idx,
         );
 
-        // 「エラー: {message}」を表示（i18n キー "error-banner-prefix"）
+        // Show "Error: {message}" (uses the i18n key "error-banner-prefix").
         let prefix = nexterm_i18n::fl!("error-banner-prefix");
         let full = format!("{} {}", prefix, message);
-        // 画面幅に収まる範囲で切り詰める（右側 [Esc] ヒント分は余白として確保）
+        // Truncate to what fits in the screen width (reserve space for the [Esc] hint on the right).
         let hint = "  [Esc]";
         let max_chars = ((sw / cell_w) as usize)
             .saturating_sub(hint.chars().count() + 4)
@@ -975,7 +980,7 @@ impl WgpuState {
             text_idx,
         );
 
-        // 右側ヒント（Esc で閉じる）
+        // Right-side hint (press Esc to close).
         let hint_x = sw - hint.len() as f32 * cell_w - cell_w;
         add_string_verts(
             hint,
@@ -994,9 +999,9 @@ impl WgpuState {
         );
     }
 
-    /// Quick Select オーバーレイ頂点を構築する
+    /// Build the Quick Select overlay vertices.
     ///
-    /// 各マッチ位置にラベル（a, b, ..., aa, ...）を黄色背景で描画する。
+    /// At each match position, draw a label (a, b, ..., aa, ...) over a yellow background.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn build_quick_select_verts(
         &self,
@@ -1017,7 +1022,7 @@ impl WgpuState {
             return;
         }
 
-        // フォーカスペインのオフセットを取得する
+        // Fetch the offset of the focused pane.
         let (pane_x, pane_y) = if let Some(pid) = state.focused_pane_id {
             if let Some(layout) = state.pane_layouts.get(&pid) {
                 (
@@ -1036,7 +1041,7 @@ impl WgpuState {
             let ly = pane_y + m.row as f32 * cell_h;
             let label_w = m.label.len() as f32 * cell_w;
 
-            // マッチ全体をセミ透明ハイライト
+            // Semi-transparent highlight covering the entire match.
             let match_w = (m.col_end - m.col_start) as f32 * cell_w;
             add_px_rect(
                 lx,
@@ -1050,7 +1055,7 @@ impl WgpuState {
                 bg_idx,
             );
 
-            // ラベル背景（黄色）
+            // Label background (yellow).
             let is_partial_match =
                 !qs.typed_label.is_empty() && m.label.starts_with(&qs.typed_label);
             let bg_color = if is_partial_match {
@@ -1060,7 +1065,7 @@ impl WgpuState {
             };
             add_px_rect(lx, ly, label_w, cell_h, bg_color, sw, sh, bg_verts, bg_idx);
 
-            // ラベルテキスト（黒）
+            // Label text (black).
             add_string_verts(
                 &m.label,
                 lx,
@@ -1078,7 +1083,7 @@ impl WgpuState {
             );
         }
 
-        // 入力中ラベルを画面上部に表示する
+        // Show the in-progress label at the top of the screen.
         let typed = format!("Quick Select: {}_", qs.typed_label);
         add_px_rect(
             0.0,

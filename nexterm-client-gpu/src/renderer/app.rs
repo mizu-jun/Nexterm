@@ -1,7 +1,7 @@
-//! Sprint 2-1 Phase B: GPU アプリケーション本体
+//! Sprint 2-1 Phase B: the GPU application root.
 //!
-//! `renderer/mod.rs` から抽出した `NextermApp` 構造体と
-//! `into_event_handler()` メソッド。
+//! Extracted from `renderer/mod.rs`: the `NextermApp` struct and its
+//! `into_event_handler()` method.
 
 use anyhow::Result;
 use nexterm_config::{Config, StatusBarEvaluator};
@@ -17,9 +17,9 @@ use crate::state::ClientState;
 use super::event_handler::UserEvent;
 use super::{EventHandler, start_shader_watcher};
 
-// ---- アプリケーション本体 ----
+// ---- Application root ----
 
-/// GPU アプリケーション（winit EventLoop に渡す）
+/// The GPU application (handed to the winit EventLoop).
 pub struct NextermApp {
     pub(super) config: Config,
     pub(super) state: ClientState,
@@ -36,11 +36,11 @@ impl NextermApp {
             config.font.ligatures,
         );
         let mut state = ClientState::new(80, 24, config.scrollback_lines);
-        // 設定ファイルのホスト一覧をホストマネージャに渡す
+        // Hand the host list from the config file to the host manager
         state.host_manager = crate::host_manager::HostManager::new(config.hosts.clone());
-        // 設定ファイルの Lua マクロ一覧をマクロピッカーに渡す
+        // Hand the Lua macro list from the config file to the macro picker
         state.macro_picker = crate::macro_picker::MacroPicker::new(config.macros.clone());
-        // 設定パネルを設定値で初期化する
+        // Initialize the settings panel from the config values
         state.settings_panel = crate::settings_panel::SettingsPanel::new(&config);
         Ok(Self {
             config,
@@ -58,10 +58,10 @@ impl NextermApp {
         server_handle: tokio::task::JoinHandle<()>,
         update_rx: tokio::sync::watch::Receiver<Option<String>>,
     ) -> EventHandler {
-        // カスタムシェーダーファイルが設定されていれば監視を開始する
+        // Start watching the custom shader file if one is configured
         let (shader_reload_rx, _shader_watcher) = start_shader_watcher(&self.config.gpu);
 
-        // Sprint 5-7 / Phase 2-2: Quake モードランタイム初期化（global-hotkey 登録）
+        // Sprint 5-7 / Phase 2-2: initialize the Quake-mode runtime (registers a global hotkey)
         let quake = crate::quake::QuakeRuntime::new(&self.config.quake_mode);
 
         EventHandler {
@@ -84,18 +84,18 @@ impl NextermApp {
             pixel_scroll_accumulator: 0.0,
             update_rx,
             quake,
-            // Sprint 5-8 Phase 4-1 Step 1.2 〜 Phase 4-4: 複数 OS Window 対応
+            // Sprint 5-8 Phase 4-1 Step 1.2 .. Phase 4-4: multi OS-window support
             windows: HashMap::new(),
-            // Sprint 5-8 Phase 4-4: UserEvent 経由の OS Window スポーン用 proxy
+            // Sprint 5-8 Phase 4-4: proxy used to spawn OS windows via UserEvent
             proxy,
             known_server_window_ids: HashSet::new(),
             pending_new_window_drop_pos: None,
-            // Sprint 5-11-1 / H1 PoC: `on_resumed` で実 Window 作成時に初期化する
+            // Sprint 5-11-1 / H1 PoC: initialized when the actual Window is created in `on_resumed`
             accesskit_adapter: None,
-            // Sprint 5-11-2 Step 2-5: ライブ更新のスロットリング + ハッシュ比較用
+            // Sprint 5-11-2 Step 2-5: throttle + hash comparison for live updates
             last_tree_update_at: None,
             last_tree_hash: None,
-            // Sprint 5-11-3: 各ペインのグリッド行ハッシュキャッシュ
+            // Sprint 5-11-3: per-pane grid row hash cache
             last_grid_row_hashes: HashMap::new(),
         }
     }

@@ -1,22 +1,22 @@
-//! 画像レンダリング（Sixel / Kitty Graphics プロトコルで配置された画像）
+//! Image rendering (images placed via the Sixel / Kitty Graphics protocols).
 //!
-//! `renderer/mod.rs` から抽出した:
-//! - `ImageEntry` — GPU 画像テクスチャのキャッシュエントリ
-//! - `build_image_verts` — 配置済み画像の TextVertex リスト構築
-//! - `ensure_image_texture` — 画像テクスチャをキャッシュに登録（初回のみ）
+//! Extracted from `renderer/mod.rs`:
+//! - `ImageEntry` — cache entry for a GPU image texture.
+//! - `build_image_verts` — builds the TextVertex list for a placed image.
+//! - `ensure_image_texture` — registers an image texture in the cache (first time only).
 
 use crate::glyph_atlas::TextVertex;
 
 use super::WgpuState;
 
-/// GPU 画像テクスチャのキャッシュエントリ
+/// Cache entry for a GPU image texture.
 pub(super) struct ImageEntry {
     #[allow(dead_code)]
     pub(super) texture: wgpu::Texture,
     pub(super) bind_group: wgpu::BindGroup,
 }
 
-/// 配置済み画像の TextVertex リストを構築する
+/// Build the TextVertex list for a placed image.
 pub(super) fn build_image_verts(
     img: &crate::state::PlacedImage,
     sw: f32,
@@ -62,7 +62,7 @@ pub(super) fn build_image_verts(
 }
 
 impl WgpuState {
-    /// 画像テクスチャをキャッシュに登録する（初回のみ作成）
+    /// Register the image texture in the cache (creates it only on first use).
     pub(super) fn ensure_image_texture(&mut self, id: u32, img: &crate::state::PlacedImage) {
         if self.image_textures.contains_key(&id) {
             return;
