@@ -1,25 +1,26 @@
-//! Sprint 5-11-1〜5-11-2 / H1: スクリーンリーダー対応のノードツリー生成
+//! Sprint 5-11-1 to 5-11-2 / H1: Screen reader node tree generation
 //!
-//! 監査ラウンド 2 タスク **H1**（スクリーンリーダー対応）の実装。
-//! 競合 OSS（kitty / WezTerm / Alacritty / Ghostty）はいずれもスクリーンリーダー対応が
-//! 薄いため、本対応が完成すれば明確な差別化ポイントとなる（`project_audit_round2.md` 参照）。
+//! Implementation of audit round 2 task **H1** (screen reader support).
+//! Competing OSS terminals (kitty / WezTerm / Alacritty / Ghostty) all have weak
+//! screen reader support, so completing this work creates a clear differentiation
+//! point (see `project_audit_round2.md`).
 //!
-//! ## このモジュールが提供するもの
+//! ## What this module provides
 //!
-//! - **NodeId 体系**: 固定 ID + ペイン/タブ/オーバーレイ項目の動的 ID
-//! - **動的ツリー生成**: `build_tree_from_state(&ClientState)` でタブ・ペイン + 最前面オーバーレイを反映
-//! - `accesskit_winit::Adapter::update_if_active` に渡すツリー（OS の a11y API に転送される）
+//! - **NodeId scheme**: fixed IDs + dynamic IDs for panes/tabs/overlay items
+//! - **Dynamic tree generation**: `build_tree_from_state(&ClientState)` reflects tabs, panes, and the frontmost overlay
+//! - Tree passed to `accesskit_winit::Adapter::update_if_active` (forwarded to the OS a11y API)
 //!
-//! ## ロードマップ
+//! ## Roadmap
 //!
-//! - Phase 5-11-1 PoC ✅: 固定ツリー + Adapter 統合
-//! - Phase 5-11-2 Step 2-1 ✅: ClientState から動的ツリー生成（タブ・ペイン）
-//! - **Phase 5-11-2 Step 2-2 ⬅️**: オーバーレイ（CommandPalette / ContextMenu / CloseWindowDialog / SettingsPanel / HostManager / MacroPicker / update_banner）
-//! - Phase 5-11-2 Step 2-3: 複数 OS Window 対応
-//! - Phase 5-11-2 Step 2-4: Action 応答（Focus / Click）
-//! - Phase 5-11-3: ターミナル grid 差分通知（100ms スロットリング）
-//! - Phase 5-11-4: OSC 133 連動レビューモード
-//! - Phase 5-11-5: 設定 UI + i18n + ドキュメント
+//! - Phase 5-11-1 PoC ✅: fixed tree + Adapter integration
+//! - Phase 5-11-2 Step 2-1 ✅: dynamic tree generation from ClientState (tabs/panes)
+//! - **Phase 5-11-2 Step 2-2 ⬅️**: overlays (CommandPalette / ContextMenu / CloseWindowDialog / SettingsPanel / HostManager / MacroPicker / update_banner)
+//! - Phase 5-11-2 Step 2-3: multiple OS Window support
+//! - Phase 5-11-2 Step 2-4: Action handling (Focus / Click)
+//! - Phase 5-11-3: terminal grid diff notifications (100ms throttled)
+//! - Phase 5-11-4: OSC 133-linked review mode
+//! - Phase 5-11-5: settings UI + i18n + documentation
 
 use accesskit::{Live, Node, NodeId, Role, TextPosition, TextSelection, Tree, TreeId, TreeUpdate};
 
@@ -31,307 +32,312 @@ use crate::state::{
     AlertEntry, AlertKind, ClientState, CloseWindowDialog, ContextMenu, QuickSelectState,
 };
 
-// ===== 固定 NodeId =====
+// ===== Fixed NodeIds =====
 //
-// プラットフォーム a11y アダプタはノード ID をキャッシュ・追跡するため、
-// **安定** であることが重要。ペイン削除後も同じ ID が再利用されないように
-// オフセット付きで割り当てる。
+// Platform a11y adapters cache and track node IDs, so **stability** is critical.
+// Allocate IDs with offsets so a pane's ID is never reused after deletion.
 
-/// ルートノード（OS ウィンドウ全体）
+/// Root node (the entire OS window).
 pub const ROOT_ID: NodeId = NodeId(1);
 
-/// タブバー（`Role::TabList`）
+/// Tab bar (`Role::TabList`).
 pub const TAB_BAR_ID: NodeId = NodeId(2);
 
-/// ペイン領域コンテナ（`Role::Group`）
+/// Pane area container (`Role::Group`).
 pub const PANE_AREA_ID: NodeId = NodeId(3);
 
-// ===== オーバーレイ固定 NodeId（Step 2-2）=====
+// ===== Overlay fixed NodeIds (Step 2-2) =====
 
-/// 設定パネル（Ctrl+,）のルート
+/// Root of the settings panel (Ctrl+,).
 pub const SETTINGS_PANEL_ID: NodeId = NodeId(4);
 
-/// コマンドパレット（Ctrl+Shift+P）のルート
+/// Root of the command palette (Ctrl+Shift+P).
 pub const PALETTE_ID: NodeId = NodeId(5);
 
-/// ホストマネージャ
+/// Host manager.
 pub const HOST_MANAGER_ID: NodeId = NodeId(6);
 
-/// マクロピッカー
+/// Macro picker.
 pub const MACRO_PICKER_ID: NodeId = NodeId(7);
 
-/// コンテキストメニュー（右クリック）
+/// Context menu (right-click).
 pub const CONTEXT_MENU_ID: NodeId = NodeId(8);
 
-/// 「Window を閉じますか？」確認ダイアログ
+/// "Close window?" confirmation dialog.
 pub const CLOSE_DIALOG_ID: NodeId = NodeId(9);
 
-/// 更新通知バナー
+/// Update notification banner.
 pub const UPDATE_BANNER_ID: NodeId = NodeId(10);
 
-/// Quick Select オーバーレイのルート（Step 2-2-h）
+/// Root of the Quick Select overlay (Step 2-2-h).
 pub const QUICK_SELECT_ID: NodeId = NodeId(11);
 
-/// コマンドパレットの検索入力フィールド
+/// Search input field of the command palette.
 pub const PALETTE_SEARCH_ID: NodeId = NodeId(12);
 
-/// コマンドパレットの候補リスト
+/// Candidate list of the command palette.
 pub const PALETTE_LIST_ID: NodeId = NodeId(13);
 
-/// 確認ダイアログの「閉じる/プロセスを終了」ボタン
+/// "Close / kill process" button of the confirmation dialog.
 pub const CLOSE_DIALOG_KILL_BTN: NodeId = NodeId(14);
 
-/// 確認ダイアログの「キャンセル」ボタン
+/// "Cancel" button of the confirmation dialog.
 pub const CLOSE_DIALOG_CANCEL_BTN: NodeId = NodeId(15);
 
-/// Quick Select マッチ一覧の `ListBox`（Step 2-2-h）
+/// `ListBox` of the Quick Select match list (Step 2-2-h).
 pub const QUICK_SELECT_LIST_ID: NodeId = NodeId(16);
 
-// ===== SettingsPanel フィールド固定 NodeId（Step 2-2-e'）=====
+// ===== SettingsPanel field fixed NodeIds (Step 2-2-e') =====
 
-/// 設定パネルのカテゴリ TabList
+/// Category TabList of the settings panel.
 pub const SETTINGS_TABLIST_ID: NodeId = NodeId(17);
 
-// 18〜24 は `SettingsCategory::ALL` のインデックスに対応するタブ（`settings_tab_id_at` 参照）
+// 18..24 correspond to indexes of `SettingsCategory::ALL` (see `settings_tab_id_at`).
 
-/// 設定パネルの現在カテゴリ内容コンテナ（`Group`）
+/// Content container (`Group`) for the current settings panel category.
 pub const SETTINGS_CONTENT_ID: NodeId = NodeId(25);
 
-/// SR 向けアラート領域のルート（Sprint 5-11-5）。
+/// Root of the SR alert region (Sprint 5-11-5).
 ///
-/// Bell / OSC 9 / OSC 777 を `Role::Alert` で公開するためのコンテナ。
-/// ROOT の子として常に存在し、配下の各 Alert ノードを SR がアナウンスする。
-/// `Live::Assertive` を設定して新規アラートを即時アナウンス対象とする。
+/// Container that exposes Bell / OSC 9 / OSC 777 as `Role::Alert`.
+/// Always present as a child of ROOT; SR announces each Alert node beneath it.
+/// `Live::Assertive` is set so that new alerts are announced immediately.
 pub const ALERT_REGION_ID: NodeId = NodeId(26);
 
-/// ターミナル入力バッファ（Sprint 5-11-7、Phase 5-11-7）。
+/// Terminal input buffer (Sprint 5-11-7, Phase 5-11-7).
 ///
-/// `PANE_AREA_ID` の末尾の子として常に存在する単一の `Role::TextInput` ノード。
-/// SR ユーザーがここに `SetValue` で文字列を書き込むと、フォーカスペインに対して
-/// `PasteText` IPC を送信して PTY へ転送する。書き込み完了後は `value` を空文字列に
-/// 戻して再入力可能にする。
+/// A single `Role::TextInput` node that is always present as the last child of
+/// `PANE_AREA_ID`. When an SR user writes a string here via `SetValue`, a
+/// `PasteText` IPC is sent to the focused pane and forwarded to the PTY.
+/// After the write completes, `value` is reset to an empty string so further
+/// input is possible.
 ///
-/// 設計理由（Q2 (b) 採用）:
-/// - 表示用の TextRun 行（`PaneRow` / `PaneScrollbackRow`）と入力用の TextInput を
-///   セマンティクス的に分離し、AccessKit ツリーの責務を明確化
-/// - `Role::Terminal` の SetValue 動作は AccessKit 0.24 で標準化されていないため、
-///   汎用 `Role::TextInput` で代替
-/// - 改行を含む複数行入力も `\n` をそのまま PTY へ転送可能
+/// Design rationale (Q2 (b) adopted):
+/// - Separate display-side TextRun rows (`PaneRow` / `PaneScrollbackRow`) from
+///   the input-side TextInput so the AccessKit tree's responsibilities are clear.
+/// - `Role::Terminal` SetValue behavior is not standardized in AccessKit 0.24,
+///   so a generic `Role::TextInput` is used instead.
+/// - Multi-line input containing `\n` is forwarded to the PTY verbatim.
 pub const PANE_INPUT_BUFFER_ID: NodeId = NodeId(27);
 
-// 28〜29 は将来のコンテナ（サイドバー等）用に予約
+// 28..29 reserved for future containers (sidebars, etc.).
 
-/// Font カテゴリ: フォントファミリー入力欄
+/// Font category: font family input field.
 pub const SETTINGS_FONT_FAMILY_ID: NodeId = NodeId(30);
 
-/// Font カテゴリ: フォントサイズスライダー
+/// Font category: font size slider.
 pub const SETTINGS_FONT_SIZE_ID: NodeId = NodeId(31);
 
-/// Theme カテゴリ: カラースキーム選択
+/// Theme category: color scheme picker.
 pub const SETTINGS_THEME_SCHEME_ID: NodeId = NodeId(32);
 
-/// Window カテゴリ: 不透明度スライダー
+/// Window category: opacity slider.
 pub const SETTINGS_WINDOW_OPACITY_ID: NodeId = NodeId(33);
 
-/// Startup カテゴリ: 言語選択
+/// Startup category: language picker.
 pub const SETTINGS_STARTUP_LANGUAGE_ID: NodeId = NodeId(34);
 
-/// Startup カテゴリ: 起動時更新確認 CheckBox
+/// Startup category: "check for updates on startup" CheckBox.
 pub const SETTINGS_STARTUP_AUTO_UPDATE_ID: NodeId = NodeId(35);
 
-/// Phase 5-11-6 #6 - Window カテゴリ: カーソル形状（block / beam / underline）
+/// Phase 5-11-6 #6 - Window category: cursor style (block / beam / underline).
 pub const SETTINGS_CURSOR_STYLE_ID: NodeId = NodeId(36);
 
-/// Phase 5-11-6 #6 - Window カテゴリ: 水平パディング (0〜32 px)
+/// Phase 5-11-6 #6 - Window category: horizontal padding (0..32 px).
 pub const SETTINGS_PADDING_X_ID: NodeId = NodeId(37);
 
-/// Phase 5-11-6 #6 - Window カテゴリ: 垂直パディング (0〜32 px)
+/// Phase 5-11-6 #6 - Window category: vertical padding (0..32 px).
 pub const SETTINGS_PADDING_Y_ID: NodeId = NodeId(38);
 
-/// Phase 5-11-6 #6 - Window カテゴリ: GPU プレゼンテーションモード（fifo / mailbox / auto）
+/// Phase 5-11-6 #6 - Window category: GPU presentation mode (fifo / mailbox / auto).
 pub const SETTINGS_PRESENT_MODE_ID: NodeId = NodeId(39);
 
-/// Phase 5-11-8 Step 8-2 - SSH カテゴリ: 選択ホストの name フィールド（TextInput）
+/// Phase 5-11-8 Step 8-2 - SSH category: name field of the selected host (TextInput).
 pub const SETTINGS_SSH_FIELD_NAME_ID: NodeId = NodeId(40);
 
-/// Phase 5-11-8 Step 8-2 - SSH カテゴリ: 選択ホストの host フィールド（TextInput）
+/// Phase 5-11-8 Step 8-2 - SSH category: host field of the selected host (TextInput).
 pub const SETTINGS_SSH_FIELD_HOST_ID: NodeId = NodeId(41);
 
-/// Phase 5-11-8 Step 8-2 - SSH カテゴリ: 選択ホストの port フィールド（SpinButton 1〜65535）
+/// Phase 5-11-8 Step 8-2 - SSH category: port field of the selected host (SpinButton, 1..65535).
 pub const SETTINGS_SSH_FIELD_PORT_ID: NodeId = NodeId(42);
 
-/// Phase 5-11-8 Step 8-2 - SSH カテゴリ: 選択ホストの username フィールド（TextInput）
+/// Phase 5-11-8 Step 8-2 - SSH category: username field of the selected host (TextInput).
 pub const SETTINGS_SSH_FIELD_USERNAME_ID: NodeId = NodeId(43);
 
-/// Phase 5-11-8 Step 8-2 - SSH カテゴリ: 選択ホストの auth_type フィールド（ComboBox）
+/// Phase 5-11-8 Step 8-2 - SSH category: auth_type field of the selected host (ComboBox).
 pub const SETTINGS_SSH_FIELD_AUTH_TYPE_ID: NodeId = NodeId(44);
 
-/// Phase 5-11-8 Step 8-3 Sub-phase D - SSH カテゴリ: 新規ホスト追加ボタン
+/// Phase 5-11-8 Step 8-3 Sub-phase D - SSH category: add-host button.
 pub const SETTINGS_SSH_ADD_BTN_ID: NodeId = NodeId(45);
 
-/// Phase 5-11-8 Step 8-3 Sub-phase D - SSH カテゴリ: 選択ホスト削除ボタン
+/// Phase 5-11-8 Step 8-3 Sub-phase D - SSH category: delete-host button (selected host).
 pub const SETTINGS_SSH_DELETE_BTN_ID: NodeId = NodeId(46);
 
-/// Phase 5-11-8 Step 8-3 Sub-phase D - SSH 削除確認ダイアログ本体（Role::AlertDialog）
+/// Phase 5-11-8 Step 8-3 Sub-phase D - SSH delete confirmation dialog body (Role::AlertDialog).
 pub const SETTINGS_SSH_DELETE_DIALOG_ID: NodeId = NodeId(47);
 
-/// Phase 5-11-8 Step 8-3 Sub-phase D - SSH 削除確認ダイアログの「削除」確定ボタン
+/// Phase 5-11-8 Step 8-3 Sub-phase D - "Delete" confirmation button in the SSH delete dialog.
 pub const SETTINGS_SSH_DELETE_CONFIRM_BTN_ID: NodeId = NodeId(48);
 
-/// Phase 5-11-8 Step 8-3 Sub-phase D - SSH 削除確認ダイアログの「キャンセル」ボタン
+/// Phase 5-11-8 Step 8-3 Sub-phase D - "Cancel" button in the SSH delete dialog.
 pub const SETTINGS_SSH_DELETE_CANCEL_BTN_ID: NodeId = NodeId(49);
 
-// 50〜99 は将来のフィールド（Keybindings 編集など）用に予約
+// 50..99 reserved for future fields (Keybindings editor, etc.).
 
-/// 設定パネルカテゴリタブのベース NodeId。
+/// Base NodeId for settings panel category tabs.
 ///
-/// 値域は `[18, 18 + SettingsCategory::ALL.len()) = [18, 25)`。`SETTINGS_CONTENT_ID = 25` と隣接するが、
-/// `decode_node_id` のレンジマッチで衝突を防ぐ。
+/// Range: `[18, 18 + SettingsCategory::ALL.len()) = [18, 25)`. Adjacent to
+/// `SETTINGS_CONTENT_ID = 25`, but `decode_node_id`'s range match prevents collisions.
 const SETTINGS_TAB_BASE: u64 = 18;
 
-/// `SettingsCategory::ALL` のインデックスから対応するタブの NodeId を計算する。
+/// Compute the NodeId of the tab for the given `SettingsCategory::ALL` index.
 pub fn settings_tab_id_at(idx: usize) -> NodeId {
     NodeId(SETTINGS_TAB_BASE + idx as u64)
 }
 
-// ===== 動的 NodeId オフセット =====
+// ===== Dynamic NodeId offsets =====
 //
-// オーバーレイ内部の繰り返し要素（リスト項目）に割り当てる。
-// タブ範囲 [1e9, 5.3e9] と衝突しないよう、すべて < 999_999_999 に収める。
+// Allocated to repeated elements (list items) inside overlays.
+// Keep all values < 999_999_999 to avoid colliding with the tab range [1e9, 5.3e9].
 
-/// コマンドパレット候補（`100_000_000 + idx`）
+/// Command palette candidate (`100_000_000 + idx`).
 const NODE_ID_PALETTE_ITEM_OFFSET: u64 = 100_000_000;
 
-/// ホスト一覧項目（`200_000_000 + idx`）
+/// Host list item (`200_000_000 + idx`).
 const NODE_ID_HOST_ITEM_OFFSET: u64 = 200_000_000;
 
-/// マクロ一覧項目（`300_000_000 + idx`）
+/// Macro list item (`300_000_000 + idx`).
 const NODE_ID_MACRO_ITEM_OFFSET: u64 = 300_000_000;
 
-/// コンテキストメニュー項目（`400_000_000 + idx`）
+/// Context menu item (`400_000_000 + idx`).
 const NODE_ID_CONTEXT_ITEM_OFFSET: u64 = 400_000_000;
 
-/// Quick Select マッチ項目（`500_000_000 + idx`、Step 2-2-h）。
+/// Quick Select match item (`500_000_000 + idx`, Step 2-2-h).
 const NODE_ID_QUICKSELECT_ITEM_OFFSET: u64 = 500_000_000;
 
-/// SettingsPanel Profiles カテゴリの動的項目（`600_000_000 + idx`、Phase 5-11-7）。
+/// Dynamic items of the SettingsPanel Profiles category (`600_000_000 + idx`, Phase 5-11-7).
 ///
-/// `SettingsPanel.profiles` の各 `ProfileEntry` を `Role::ListBoxOption` として
-/// 公開する。`selected_profile` で選択中の項目を判定する。
+/// Each `ProfileEntry` of `SettingsPanel.profiles` is exposed as `Role::ListBoxOption`.
+/// `selected_profile` identifies the currently selected entry.
 ///
-/// 値域は `[600_000_000, 700_000_000)`。プロファイル数の現実的上限を考えると
-/// 10M 範囲で十分。`NODE_ID_TAB_OFFSET = 1e9` との間に 300M の余裕がある。
+/// Range: `[600_000_000, 700_000_000)`. Given the realistic upper bound for the
+/// number of profiles, 10M of headroom is plenty, and 300M of margin remains
+/// before `NODE_ID_TAB_OFFSET = 1e9`.
 const NODE_ID_SETTINGS_PROFILE_OFFSET: u64 = 600_000_000;
 
-/// SettingsPanel Ssh カテゴリの動的項目（`800_000_000 + idx`、Phase 5-11-8 Step 8-1）。
+/// Dynamic items of the SettingsPanel Ssh category (`800_000_000 + idx`, Phase 5-11-8 Step 8-1).
 ///
-/// `SettingsPanel.ssh_hosts` の各 `SshHostEntry` を `Role::ListBoxOption` として
-/// 公開する。`selected_host_index` で選択中の項目を判定する。
+/// Each `SshHostEntry` of `SettingsPanel.ssh_hosts` is exposed as `Role::ListBoxOption`.
+/// `selected_host_index` identifies the currently selected entry.
 ///
-/// 値域は `[800_000_000, 900_000_000)`。`NODE_ID_TAB_OFFSET = 1e9` との間に 100M の
-/// 余裕がある。700M..800M は将来の SettingsField 動的展開用に予約。
+/// Range: `[800_000_000, 900_000_000)`. 100M of margin before
+/// `NODE_ID_TAB_OFFSET = 1e9`. The range 700M..800M is reserved for future
+/// dynamic expansion of SettingsField.
 const NODE_ID_SETTINGS_SSH_HOST_OFFSET: u64 = 800_000_000;
 
-/// タブノードの NodeId 計算用オフセット。
+/// Offset used to compute a tab node's NodeId.
 ///
-/// 内部表現: `NODE_ID_TAB_OFFSET + pane_id as u64`。pane_id は u32 のため
-/// 値域は `[1_000_000_000, 1_000_000_000 + u32::MAX] ≈ [1e9, 5.3e9]`。
-/// `NODE_ID_PANE_OFFSET` との衝突がないことを保証する（差は 4e9 以上）。
+/// Internal representation: `NODE_ID_TAB_OFFSET + pane_id as u64`. Because `pane_id`
+/// is a u32, the range is `[1_000_000_000, 1_000_000_000 + u32::MAX] ≈ [1e9, 5.3e9]`.
+/// Guaranteed never to collide with `NODE_ID_PANE_OFFSET` (gap of at least 4e9).
 const NODE_ID_TAB_OFFSET: u64 = 1_000_000_000;
 
-/// ペインノードの NodeId 計算用オフセット。
+/// Offset used to compute a pane node's NodeId.
 ///
-/// 値域は `[10_000_000_000, 10_000_000_000 + u32::MAX] ≈ [1e10, 1.43e10]`。
+/// Range: `[10_000_000_000, 10_000_000_000 + u32::MAX] ≈ [1e10, 1.43e10]`.
 const NODE_ID_PANE_OFFSET: u64 = 10_000_000_000;
 
-/// SR 向けアラート個別ノードの NodeId 計算用オフセット（Sprint 5-11-5）。
+/// Offset used to compute the NodeId of an individual SR alert node (Sprint 5-11-5).
 ///
-/// 内部表現: `NODE_ID_ALERT_OFFSET + AlertEntry.seq`。
+/// Internal representation: `NODE_ID_ALERT_OFFSET + AlertEntry.seq`.
 ///
-/// **値域選定の根拠**:
-/// - ペイン行範囲 = `[2e10, 2e10 + u32::MAX × 10000 + 10000] ≈ [2e10, 4.3e13]`
-///   が pane_row / pane_scrollback で連続使用される
-/// - その上限を超えた安全な値域として `50e12` (50 兆) を採用
-/// - `ClientState.next_alert_seq` の現実的な上限は 1 秒間 1000 件発火でも
-///   約 5.84 億年に渡るため、`u64::MAX` まで安全に伸ばせる
+/// **Rationale for the chosen range**:
+/// - The pane row range `[2e10, 2e10 + u32::MAX × 10000 + 10000] ≈ [2e10, 4.3e13]`
+///   is used continuously by pane_row / pane_scrollback.
+/// - `50e12` (50 trillion) sits safely above that upper bound.
+/// - `ClientState.next_alert_seq` would take about 584 million years to overflow
+///   even at 1000 alerts per second, so we can safely extend to `u64::MAX`.
 const NODE_ID_ALERT_OFFSET: u64 = 50_000_000_000_000;
 
-/// `AlertEntry.seq` から Alert ノードの NodeId を計算する（Sprint 5-11-5）。
+/// Compute the NodeId of an Alert node from `AlertEntry.seq` (Sprint 5-11-5).
 pub fn alert_node_id(seq: u64) -> NodeId {
     NodeId(NODE_ID_ALERT_OFFSET + seq)
 }
 
-/// ペイン行ノードの NodeId 計算用オフセット（Sprint 5-11-3 / 5-11-4）。
+/// Offset used to compute the NodeId of a pane row node (Sprint 5-11-3 / 5-11-4).
 ///
-/// ペイン本体ノードの子として、ターミナルグリッドの各行を `Role::TextRun` で公開する。
-/// 内部表現: `NODE_ID_PANE_ROW_OFFSET + pane_id as u64 * MAX_ROWS_PER_PANE + row_offset`。
+/// Each row of the terminal grid is exposed as a `Role::TextRun` child of the pane node.
+/// Internal representation: `NODE_ID_PANE_ROW_OFFSET + pane_id as u64 * MAX_ROWS_PER_PANE + row_offset`.
 ///
-/// `row_offset` 内訳:
-/// - `0..MAX_VIEWPORT_ROWS_PER_PANE` (0..1000): ビューポート行（`pane_row_node_id`）
+/// `row_offset` breakdown:
+/// - `0..MAX_VIEWPORT_ROWS_PER_PANE` (0..1000): viewport rows (`pane_row_node_id`)
 /// - `MAX_VIEWPORT_ROWS_PER_PANE..MAX_ROWS_PER_PANE` (1000..10000):
-///   スクロールバック行（Sprint 5-11-4、`pane_scrollback_row_node_id`）
+///   scrollback rows (Sprint 5-11-4, `pane_scrollback_row_node_id`)
 ///
-/// 値域: `[2e10, 2e10 + u32::MAX * 10000 + 9999] ≈ [2e10, 4.3e13]`。
-/// `NODE_ID_PANE_OFFSET` の上限 ≈ 1.43e10 との間に十分なギャップがある。
+/// Range: `[2e10, 2e10 + u32::MAX * 10000 + 9999] ≈ [2e10, 4.3e13]`.
+/// Plenty of gap before the upper bound of `NODE_ID_PANE_OFFSET` (~1.43e10).
 const NODE_ID_PANE_ROW_OFFSET: u64 = 20_000_000_000;
 
-/// 1 ペインあたりの最大行数（Sprint 5-11-3 → 5-11-4 で 1000 → 10000 に拡張）。
+/// Maximum number of rows exposed per pane (extended 1000 -> 10000 between Sprint 5-11-3 and 5-11-4).
 ///
-/// 内訳:
-/// - `0..MAX_VIEWPORT_ROWS_PER_PANE` (0..1000): ターミナルのビューポート行
-/// - `MAX_VIEWPORT_ROWS_PER_PANE..MAX_ROWS_PER_PANE` (1000..10000): スクロールバック行（Sprint 5-11-4）
+/// Breakdown:
+/// - `0..MAX_VIEWPORT_ROWS_PER_PANE` (0..1000): terminal viewport rows
+/// - `MAX_VIEWPORT_ROWS_PER_PANE..MAX_ROWS_PER_PANE` (1000..10000): scrollback rows (Sprint 5-11-4)
 ///
-/// 実用上のターミナル行数は 200 行程度、スクロールバックは数千行が一般的。
-/// この値を超える行は SR から不可視となるが、現実的な表示行数では発生しない。
+/// Real terminals typically display around 200 rows with a few thousand rows of
+/// scrollback. Rows beyond this cap become invisible to SR, but realistic
+/// displays never reach it.
 pub const MAX_ROWS_PER_PANE: u64 = 10_000;
 
-/// 1 ペインあたりのビューポート（grid）公開行数の上限（Sprint 5-11-4）。
+/// Upper bound for the number of viewport (grid) rows exposed per pane (Sprint 5-11-4).
 ///
-/// `pane_row_node_id` で割り当てられる行 NodeId のうち、
-/// `0..MAX_VIEWPORT_ROWS_PER_PANE` を占める範囲がビューポート行。
+/// Of the row NodeIds assigned by `pane_row_node_id`, the range
+/// `0..MAX_VIEWPORT_ROWS_PER_PANE` is reserved for viewport rows.
 pub const MAX_VIEWPORT_ROWS_PER_PANE: u64 = 1_000;
 
-/// 1 ペインあたりのスクロールバック公開行数の上限（Sprint 5-11-4）。
+/// Upper bound for the number of scrollback rows exposed per pane (Sprint 5-11-4).
 ///
-/// `pane_scrollback_row_node_id` で割り当てられる NodeId が占める範囲。
-/// `MAX_ROWS_PER_PANE - MAX_VIEWPORT_ROWS_PER_PANE` と一致する。
+/// Range occupied by NodeIds returned by `pane_scrollback_row_node_id`.
+/// Equal to `MAX_ROWS_PER_PANE - MAX_VIEWPORT_ROWS_PER_PANE`.
 pub const MAX_SCROLLBACK_ROWS_PER_PANE: u64 = MAX_ROWS_PER_PANE - MAX_VIEWPORT_ROWS_PER_PANE;
 
-/// スクロールバックを SR に公開する窓スライドの半径（Sprint 5-11-4）。
+/// Radius of the sliding window used to expose scrollback to SR (Sprint 5-11-4).
 ///
-/// 現在のスクロール位置を中心に前後 `SCROLLBACK_WINDOW_RADIUS` 行を AccessKit ツリーに含める。
-/// 一般的なターミナルのスクロールバックは数千行に達するため、全行公開はパフォーマンス上不利。
-/// 100 行の窓は SR の矢印キーナビゲーションを違和感なく支える十分な範囲。
+/// `SCROLLBACK_WINDOW_RADIUS` rows on each side of the current scroll position are
+/// included in the AccessKit tree. Real terminal scrollback can grow to thousands
+/// of rows, so exposing every row would hurt performance. A 100-row window is
+/// sufficient for comfortable SR arrow-key navigation.
 pub const SCROLLBACK_WINDOW_RADIUS: usize = 100;
 
-/// pane_id（u32）からタブノードの NodeId を計算する。
+/// Compute the NodeId of a tab node from a `pane_id` (u32).
 pub fn tab_node_id(pane_id: u32) -> NodeId {
     NodeId(NODE_ID_TAB_OFFSET + pane_id as u64)
 }
 
-/// pane_id（u32）からペイン（ターミナル）ノードの NodeId を計算する。
+/// Compute the NodeId of a pane (terminal) node from a `pane_id` (u32).
 pub fn pane_node_id(pane_id: u32) -> NodeId {
     NodeId(NODE_ID_PANE_OFFSET + pane_id as u64)
 }
 
-/// pane_id × row_idx からビューポート行ノードの NodeId を計算する（Sprint 5-11-3）。
+/// Compute the NodeId of a viewport row node from `pane_id × row_idx` (Sprint 5-11-3).
 ///
-/// `row` が [`MAX_VIEWPORT_ROWS_PER_PANE`] 以上の場合は NodeId が衝突する可能性があるため、
-/// 呼び出し側で `row < MAX_VIEWPORT_ROWS_PER_PANE` を保証すること。
+/// The caller must guarantee `row < MAX_VIEWPORT_ROWS_PER_PANE`; otherwise the
+/// resulting NodeId may collide with another row.
 pub fn pane_row_node_id(pane_id: u32, row: u16) -> NodeId {
     debug_assert!((row as u64) < MAX_VIEWPORT_ROWS_PER_PANE);
     NodeId(NODE_ID_PANE_ROW_OFFSET + (pane_id as u64) * MAX_ROWS_PER_PANE + row as u64)
 }
 
-/// pane_id × scrollback_idx からスクロールバック行ノードの NodeId を計算する（Sprint 5-11-4）。
+/// Compute the NodeId of a scrollback row node from `pane_id × scrollback_idx` (Sprint 5-11-4).
 ///
-/// スクロールバック行 NodeId は同一ペインのビューポート行 NodeId と連続した空間に配置される:
-/// `pane_row` 範囲 = `[base, base + MAX_VIEWPORT_ROWS_PER_PANE)`,
-/// `pane_scrollback` 範囲 = `[base + MAX_VIEWPORT_ROWS_PER_PANE, base + MAX_ROWS_PER_PANE)`
-/// （ここで `base = NODE_ID_PANE_ROW_OFFSET + pane_id * MAX_ROWS_PER_PANE`）。
+/// Scrollback row NodeIds occupy a contiguous space adjacent to the same pane's
+/// viewport row NodeIds:
+/// `pane_row` range = `[base, base + MAX_VIEWPORT_ROWS_PER_PANE)`,
+/// `pane_scrollback` range = `[base + MAX_VIEWPORT_ROWS_PER_PANE, base + MAX_ROWS_PER_PANE)`
+/// (where `base = NODE_ID_PANE_ROW_OFFSET + pane_id * MAX_ROWS_PER_PANE`).
 ///
-/// `scrollback_idx` が [`MAX_SCROLLBACK_ROWS_PER_PANE`] 以上の場合は次ペインの行 NodeId と
-/// 衝突する可能性があるため、呼び出し側で `scrollback_idx < MAX_SCROLLBACK_ROWS_PER_PANE` を保証すること。
+/// The caller must guarantee `scrollback_idx < MAX_SCROLLBACK_ROWS_PER_PANE`;
+/// otherwise the resulting NodeId may collide with the row of the next pane.
 pub fn pane_scrollback_row_node_id(pane_id: u32, scrollback_idx: u16) -> NodeId {
     debug_assert!((scrollback_idx as u64) < MAX_SCROLLBACK_ROWS_PER_PANE);
     NodeId(
@@ -342,22 +348,22 @@ pub fn pane_scrollback_row_node_id(pane_id: u32, scrollback_idx: u16) -> NodeId 
     )
 }
 
-/// `Grid` の指定行を SR 向けテキストに変換する純関数（Sprint 5-11-3）。
+/// Pure function that converts a row of `Grid` to SR-oriented text (Sprint 5-11-3).
 ///
-/// 仕様:
-/// - 各セルの `ch` を順次連結する（SGR / 色情報は捨てる、SR には不要）
-/// - 末尾の半角空白は `trim_end()` で除去（SR が「半角空白 60 連続」を読み上げないため）
-/// - 結果が空文字列なら `" "` を返す（SR が「空行」と認識する境界を保つ）
-/// - `row` が範囲外なら `" "` を返す（panic 回避）
+/// Behavior:
+/// - Concatenates each cell's `ch` (drops SGR / color info; SR does not need it).
+/// - Trims trailing ASCII spaces with `trim_end()` (prevents SR from reading "60 spaces").
+/// - Returns `" "` if the result is an empty string (preserves SR's empty-line boundary).
+/// - Returns `" "` if `row` is out of range (panic safe).
 ///
-/// 全角文字（CJK・絵文字）は保持。`trim_end` は半角空白のみ除去するため、
-/// 全角空白（U+3000）が連続している場合は保持される（意図的）。
+/// CJK characters and emoji are preserved. `trim_end` only removes ASCII spaces,
+/// so consecutive ideographic spaces (U+3000) are preserved (intentional).
 pub fn pane_row_text(grid: &nexterm_proto::Grid, row: usize) -> String {
     let Some(cells) = grid.rows.get(row) else {
         return " ".to_string();
     };
     let mut text: String = cells.iter().map(|c| c.ch).collect();
-    // 半角空白の末尾連続を除去（行右側のパディング除去）
+    // Remove the trailing run of ASCII spaces (strips right-side padding).
     let trimmed = text.trim_end_matches(' ');
     if trimmed.is_empty() {
         " ".to_string()
@@ -367,21 +373,22 @@ pub fn pane_row_text(grid: &nexterm_proto::Grid, row: usize) -> String {
     }
 }
 
-/// セル列を SR 向けテキスト + `character_lengths` に変換する内部ヘルパー（Sprint 5-11-4）。
+/// Internal helper that converts a cell row to SR text + `character_lengths` (Sprint 5-11-4).
 ///
-/// 戻り値 `(text, lengths)`:
-/// - `text`: `pane_row_text` と同じロジックで生成（trim_end + 空行は `" "`）
-/// - `lengths`: `text` 中の各 `char` の UTF-8 バイト長配列。
-///   `lengths.iter().map(|&b| b as usize).sum::<usize>() == text.len()` が常に成り立つ。
+/// Return value `(text, lengths)`:
+/// - `text`: built with the same logic as `pane_row_text` (trim_end + `" "` for empty).
+/// - `lengths`: UTF-8 byte length of each `char` in `text`.
+///   `lengths.iter().map(|&b| b as usize).sum::<usize>() == text.len()` always holds.
 ///
-/// AccessKit `Node::set_character_lengths` の仕様に従い「1 文字 = 1 character」とし、
-/// 全角・絵文字も 1 character として扱う（半角と統一）。半角・全角の幅の違いは
-/// `character_widths` で表現すべきだが本実装では省略（SR 動作には十分）。
+/// Following AccessKit's `Node::set_character_lengths` contract, we treat "1 char = 1
+/// character" so CJK and emoji each count as 1 character (consistent with ASCII).
+/// Width differences between half-width and full-width should ideally be expressed
+/// with `character_widths`, but this implementation omits that (still works for SR).
 fn cells_to_row_text_with_lengths(cells: &[nexterm_proto::Cell]) -> (String, Vec<u8>) {
     let mut text: String = cells.iter().map(|c| c.ch).collect();
     let trimmed_len_bytes = text.trim_end_matches(' ').len();
     if trimmed_len_bytes == 0 {
-        // 空行は " " で SR の境界を保つ
+        // Empty rows use " " to preserve the SR boundary.
         return (" ".to_string(), vec![1]);
     }
     text.truncate(trimmed_len_bytes);
@@ -389,10 +396,10 @@ fn cells_to_row_text_with_lengths(cells: &[nexterm_proto::Cell]) -> (String, Vec
     (text, lengths)
 }
 
-/// `Grid` の指定行を SR 向けテキスト + `character_lengths` に変換する（Sprint 5-11-4）。
+/// Convert the specified row of `Grid` to SR text + `character_lengths` (Sprint 5-11-4).
 ///
-/// `pane_row_text` の text 部分と同じ結果になる。AccessKit の `Role::TextRun` ノード
-/// に `set_value` / `set_character_lengths` を設定する際に使用する。
+/// The `text` portion matches `pane_row_text`. Used when setting `set_value` /
+/// `set_character_lengths` on an AccessKit `Role::TextRun` node.
 pub fn pane_row_text_with_lengths(grid: &nexterm_proto::Grid, row: usize) -> (String, Vec<u8>) {
     let Some(cells) = grid.rows.get(row) else {
         return (" ".to_string(), vec![1]);
@@ -400,34 +407,36 @@ pub fn pane_row_text_with_lengths(grid: &nexterm_proto::Grid, row: usize) -> (St
     cells_to_row_text_with_lengths(cells)
 }
 
-/// スクロールバック 1 行を SR 向けテキスト + `character_lengths` に変換する（Sprint 5-11-4）。
+/// Convert one scrollback line to SR text + `character_lengths` (Sprint 5-11-4).
 ///
-/// `pane_row_text_with_lengths` と同じセル → テキスト変換ロジックを使用。
+/// Uses the same cell -> text conversion as `pane_row_text_with_lengths`.
 pub fn scrollback_row_text_with_lengths(line: &[nexterm_proto::Cell]) -> (String, Vec<u8>) {
     cells_to_row_text_with_lengths(line)
 }
 
-/// セル列 `cursor_col` から AccessKit `TextPosition::character_index` を計算する（Sprint 5-11-4）。
+/// Compute an AccessKit `TextPosition::character_index` from cell column `cursor_col` (Sprint 5-11-4).
 ///
-/// 仕様:
-/// - 行テキストはセル列と 1:1 対応で構築される (`cells.iter().map(|c| c.ch).collect()`)。
-/// - `cursor_col` は grid のセル列。`text.chars().count()` を超える場合は末尾位置にクランプ。
-/// - 全角文字の placeholder セル (' ') も 1 文字としてカウントされるため、
-///   grid 上で cursor_col が指すセル列はそのまま character_index として使える。
+/// Behavior:
+/// - The row text is built 1:1 with the cell row (`cells.iter().map(|c| c.ch).collect()`).
+/// - `cursor_col` is the grid cell column. If it exceeds `text.chars().count()`,
+///   clamp to the end-of-text position.
+/// - Placeholder cells for wide characters (' ') also count as 1 character, so the
+///   cell column that `cursor_col` points to can be used as the character_index directly.
 ///
-/// 例:
-/// - text="abc" (chars=3), cursor_col=1 → 1
-/// - text="abc" (chars=3), cursor_col=5 → 3（末尾にクランプ）
-/// - text="あい" (chars=2、placeholder 含めるとセル幅 4), cursor_col=2 → 2
+/// Examples:
+/// - text="abc" (chars=3), cursor_col=1 -> 1
+/// - text="abc" (chars=3), cursor_col=5 -> 3 (clamped to end)
+/// - text="あい" (chars=2, cell width 4 including placeholder), cursor_col=2 -> 2
 pub fn cursor_character_index(text: &str, cursor_col: u16) -> usize {
     let char_count = text.chars().count();
     (cursor_col as usize).min(char_count)
 }
 
-/// 指定ペインの各行テキストハッシュを計算する（Sprint 5-11-3）。
+/// Compute per-row text hashes for the given pane (Sprint 5-11-3).
 ///
-/// `EventHandler::last_grid_row_hashes` のキャッシュ用。各行 [`pane_row_text`] 結果の
-/// `DefaultHasher` ハッシュを `Vec<u64>` で返す。長さは `grid.height` と `grid.rows.len()` の最小値。
+/// Used to populate the cache in `EventHandler::last_grid_row_hashes`. Returns a
+/// `Vec<u64>` of `DefaultHasher` hashes for each row's `pane_row_text` output.
+/// Length equals `min(grid.height, grid.rows.len())`.
 pub fn compute_grid_row_hashes(grid: &nexterm_proto::Grid) -> Vec<u64> {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -443,192 +452,194 @@ pub fn compute_grid_row_hashes(grid: &nexterm_proto::Grid) -> Vec<u64> {
     hashes
 }
 
-/// パレット候補 idx から NodeId を計算する。
+/// Compute the NodeId for a palette candidate from its idx.
 fn palette_item_id(idx: usize) -> NodeId {
     NodeId(NODE_ID_PALETTE_ITEM_OFFSET + idx as u64)
 }
 
-/// ホスト一覧 idx から NodeId を計算する。
+/// Compute the NodeId for a host list entry from its idx.
 fn host_item_id(idx: usize) -> NodeId {
     NodeId(NODE_ID_HOST_ITEM_OFFSET + idx as u64)
 }
 
-/// マクロ一覧 idx から NodeId を計算する。
+/// Compute the NodeId for a macro list entry from its idx.
 fn macro_item_id(idx: usize) -> NodeId {
     NodeId(NODE_ID_MACRO_ITEM_OFFSET + idx as u64)
 }
 
-/// コンテキストメニュー項目 idx から NodeId を計算する。
+/// Compute the NodeId for a context menu item from its idx.
 fn context_item_id(idx: usize) -> NodeId {
     NodeId(NODE_ID_CONTEXT_ITEM_OFFSET + idx as u64)
 }
 
-/// Quick Select マッチ項目 idx から NodeId を計算する（Step 2-2-h）。
+/// Compute the NodeId for a Quick Select match item from its idx (Step 2-2-h).
 fn quickselect_item_id(idx: usize) -> NodeId {
     NodeId(NODE_ID_QUICKSELECT_ITEM_OFFSET + idx as u64)
 }
 
-/// SettingsPanel Profiles カテゴリ項目 idx から NodeId を計算する（Phase 5-11-7）。
+/// Compute the NodeId for a SettingsPanel Profiles category item from its idx (Phase 5-11-7).
 fn settings_profile_item_id(idx: usize) -> NodeId {
     NodeId(NODE_ID_SETTINGS_PROFILE_OFFSET + idx as u64)
 }
 
-/// SettingsPanel Ssh カテゴリ項目 idx から NodeId を計算する（Phase 5-11-8 Step 8-1）。
+/// Compute the NodeId for a SettingsPanel Ssh category item from its idx (Phase 5-11-8 Step 8-1).
 fn settings_ssh_host_item_id(idx: usize) -> NodeId {
     NodeId(NODE_ID_SETTINGS_SSH_HOST_OFFSET + idx as u64)
 }
 
-// ===== NodeId 逆引き（Step 2-4）=====
+// ===== NodeId reverse lookup (Step 2-4) =====
 
-/// `NodeId` の種別（Action 応答のディスパッチに使用）。
+/// `NodeId` kind (used to dispatch Action responses).
 ///
-/// プラットフォーム a11y アダプタから受け取った `ActionRequest::target_node` を
-/// `decode_node_id` で本 enum に変換し、種別に応じて Focus / Click / SetValue を処理する。
+/// The `ActionRequest::target_node` received from the platform a11y adapter is
+/// decoded into this enum via `decode_node_id`, and Focus / Click / SetValue are
+/// handled according to the kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeIdKind {
-    /// ルート（OS Window 全体）
+    /// Root (the entire OS Window).
     Root,
-    /// タブバー（`TabList`）
+    /// Tab bar (`TabList`).
     TabBar,
-    /// ペイン領域（`Group`）
+    /// Pane area (`Group`).
     PaneArea,
-    /// 設定パネルのルート
+    /// Root of the settings panel.
     SettingsPanel,
-    /// コマンドパレットのルート
+    /// Root of the command palette.
     Palette,
-    /// ホストマネージャのルート
+    /// Root of the host manager.
     HostManager,
-    /// マクロピッカーのルート
+    /// Root of the macro picker.
     MacroPicker,
-    /// コンテキストメニューのルート
+    /// Root of the context menu.
     ContextMenu,
-    /// 閉じる確認ダイアログのルート
+    /// Root of the close confirmation dialog.
     CloseDialog,
-    /// 更新通知バナー
+    /// Update notification banner.
     UpdateBanner,
-    /// Quick Select オーバーレイのルート
+    /// Root of the Quick Select overlay.
     QuickSelect,
-    /// パレットの検索入力欄
+    /// Palette search input field.
     PaletteSearch,
-    /// パレットの候補リスト（ListBox）
+    /// Palette candidate list (ListBox).
     PaletteList,
-    /// 閉じる確認ダイアログの「Kill」ボタン
+    /// "Kill" button of the close confirmation dialog.
     CloseDialogKill,
-    /// 閉じる確認ダイアログの「Cancel」ボタン
+    /// "Cancel" button of the close confirmation dialog.
     CloseDialogCancel,
-    /// Quick Select のマッチリスト（ListBox）
+    /// Quick Select match list (ListBox).
     QuickSelectList,
-    /// タブノード（`pane_id` で識別）
+    /// Tab node (identified by `pane_id`).
     Tab { pane_id: u32 },
-    /// ペインノード（`pane_id` で識別）
+    /// Pane node (identified by `pane_id`).
     Pane { pane_id: u32 },
-    /// パレット候補項目（`filtered()` 上の `idx`）
+    /// Palette candidate item (`idx` in `filtered()`).
     PaletteItem { idx: usize },
-    /// ホスト一覧項目（`filtered()` 上の `idx`）
+    /// Host list item (`idx` in `filtered()`).
     HostItem { idx: usize },
-    /// マクロ一覧項目（`filtered()` 上の `idx`）
+    /// Macro list item (`idx` in `filtered()`).
     MacroItem { idx: usize },
-    /// コンテキストメニュー項目（`items` 上の `idx`）
+    /// Context menu item (`idx` in `items`).
     ContextItem { idx: usize },
-    /// Quick Select マッチ項目（`matches` 上の `idx`）
+    /// Quick Select match item (`idx` in `matches`).
     QuickSelectItem { idx: usize },
-    /// 設定パネル: カテゴリ TabList
+    /// Settings panel: category TabList.
     SettingsTabList,
-    /// 設定パネル: 各カテゴリタブ（`SettingsCategory::ALL` の `idx`）
+    /// Settings panel: a category tab (`idx` in `SettingsCategory::ALL`).
     SettingsTab { idx: usize },
-    /// 設定パネル: 現在カテゴリ内容のコンテナ
+    /// Settings panel: content container for the current category.
     SettingsContent,
-    /// 設定パネル: フォントファミリー入力欄
+    /// Settings panel: font family input field.
     SettingsFontFamily,
-    /// 設定パネル: フォントサイズスライダー
+    /// Settings panel: font size slider.
     SettingsFontSize,
-    /// 設定パネル: カラースキーム選択
+    /// Settings panel: color scheme picker.
     SettingsThemeScheme,
-    /// 設定パネル: 不透明度スライダー
+    /// Settings panel: opacity slider.
     SettingsWindowOpacity,
-    /// 設定パネル: 言語選択
+    /// Settings panel: language picker.
     SettingsStartupLanguage,
-    /// 設定パネル: 起動時更新確認 CheckBox
+    /// Settings panel: "check for updates on startup" CheckBox.
     SettingsStartupAutoUpdate,
-    /// Phase 5-11-6 #6: 設定パネル: カーソル形状（block / beam / underline）
+    /// Phase 5-11-6 #6: settings panel cursor style (block / beam / underline).
     SettingsCursorStyle,
-    /// Phase 5-11-6 #6: 設定パネル: 水平パディング (0〜32 px) スライダー
+    /// Phase 5-11-6 #6: settings panel horizontal padding slider (0..32 px).
     SettingsPaddingX,
-    /// Phase 5-11-6 #6: 設定パネル: 垂直パディング (0〜32 px) スライダー
+    /// Phase 5-11-6 #6: settings panel vertical padding slider (0..32 px).
     SettingsPaddingY,
-    /// Phase 5-11-6 #6: 設定パネル: GPU プレゼンテーションモード（fifo / mailbox / auto）
+    /// Phase 5-11-6 #6: settings panel GPU presentation mode (fifo / mailbox / auto).
     SettingsPresentMode,
-    /// ペイン行ノード（Sprint 5-11-3、`pane_id` と `row` で識別）
+    /// Pane row node (Sprint 5-11-3, identified by `pane_id` and `row`).
     PaneRow { pane_id: u32, row: u16 },
-    /// ペインのスクロールバック行ノード（Sprint 5-11-4、`pane_id` と
-    /// `idx`（スクロールバック先頭からのインデックス）で識別）
+    /// Pane scrollback row node (Sprint 5-11-4, identified by `pane_id` and
+    /// `idx` = index from the start of scrollback).
     PaneScrollbackRow { pane_id: u32, idx: u16 },
-    /// SR 向けアラート領域コンテナ（Sprint 5-11-5）
+    /// SR alert region container (Sprint 5-11-5).
     AlertRegion,
-    /// SR 向けアラート個別ノード（Sprint 5-11-5、`AlertEntry.seq` で識別）
+    /// Individual SR alert node (Sprint 5-11-5, identified by `AlertEntry.seq`).
     Alert { seq: u64 },
-    /// Phase 5-11-7: ターミナル入力バッファ（フォーカスペインへの PTY 書き込み用）
+    /// Phase 5-11-7: terminal input buffer (for PTY writes to the focused pane).
     PaneInputBuffer,
-    /// Phase 5-11-7: SettingsPanel Profiles カテゴリの動的項目（`idx` は `SettingsPanel.profiles` のインデックス）
+    /// Phase 5-11-7: dynamic item of the SettingsPanel Profiles category
+    /// (`idx` is the index in `SettingsPanel.profiles`).
     SettingsProfileItem { idx: usize },
-    /// Phase 5-11-8 Step 8-1: SettingsPanel Ssh カテゴリのホスト項目
-    /// （`idx` は `SettingsPanel.ssh_hosts` のインデックス）
+    /// Phase 5-11-8 Step 8-1: SettingsPanel Ssh category host item
+    /// (`idx` is the index in `SettingsPanel.ssh_hosts`).
     SettingsSshHostItem { idx: usize },
-    /// Phase 5-11-8 Step 8-2: 選択ホストの name フィールド（TextInput）
+    /// Phase 5-11-8 Step 8-2: name field of the selected host (TextInput).
     SettingsSshFieldName,
-    /// Phase 5-11-8 Step 8-2: 選択ホストの host フィールド（TextInput）
+    /// Phase 5-11-8 Step 8-2: host field of the selected host (TextInput).
     SettingsSshFieldHost,
-    /// Phase 5-11-8 Step 8-2: 選択ホストの port フィールド（SpinButton 1〜65535）
+    /// Phase 5-11-8 Step 8-2: port field of the selected host (SpinButton 1..65535).
     SettingsSshFieldPort,
-    /// Phase 5-11-8 Step 8-2: 選択ホストの username フィールド（TextInput）
+    /// Phase 5-11-8 Step 8-2: username field of the selected host (TextInput).
     SettingsSshFieldUsername,
-    /// Phase 5-11-8 Step 8-2: 選択ホストの auth_type フィールド（ComboBox password/key/agent）
+    /// Phase 5-11-8 Step 8-2: auth_type field of the selected host (ComboBox password/key/agent).
     SettingsSshFieldAuthType,
-    /// Phase 5-11-8 Step 8-3 Sub-phase D: SSH カテゴリの新規ホスト追加ボタン
+    /// Phase 5-11-8 Step 8-3 Sub-phase D: SSH category add-host button.
     SettingsSshAddBtn,
-    /// Phase 5-11-8 Step 8-3 Sub-phase D: SSH カテゴリの選択ホスト削除ボタン
+    /// Phase 5-11-8 Step 8-3 Sub-phase D: SSH category delete-host button (selected host).
     SettingsSshDeleteBtn,
-    /// Phase 5-11-8 Step 8-3 Sub-phase D: SSH 削除確認ダイアログ本体（Role::AlertDialog）
+    /// Phase 5-11-8 Step 8-3 Sub-phase D: SSH delete confirmation dialog body (Role::AlertDialog).
     SettingsSshDeleteDialog,
-    /// Phase 5-11-8 Step 8-3 Sub-phase D: SSH 削除確認ダイアログの「削除」確定ボタン
+    /// Phase 5-11-8 Step 8-3 Sub-phase D: SSH delete confirmation dialog "Delete" confirm button.
     SettingsSshDeleteConfirmBtn,
-    /// Phase 5-11-8 Step 8-3 Sub-phase D: SSH 削除確認ダイアログの「キャンセル」ボタン
+    /// Phase 5-11-8 Step 8-3 Sub-phase D: SSH delete confirmation dialog "Cancel" button.
     SettingsSshDeleteCancelBtn,
-    /// 未知 / 範囲外の NodeId
+    /// Unknown / out-of-range NodeId.
     Unknown,
 }
 
-/// `NodeId` から `NodeIdKind` を逆引きする（Step 2-4）。
+/// Reverse-decode a `NodeId` into a `NodeIdKind` (Step 2-4).
 ///
-/// オフセット範囲表（`accessibility.rs` 冒頭の定数と整合）:
+/// Offset range table (consistent with the constants at the top of `accessibility.rs`):
 ///
-/// | 範囲 | 種別 |
+/// | Range | Kind |
 /// |---|---|
-/// | 1〜16 | 固定ノード（基本 + オーバーレイルート） |
+/// | 1..16 | Fixed nodes (base + overlay roots) |
 /// | 17 | `SettingsTabList` |
-/// | 18〜24 | `SettingsTab { idx: id - 18 }` |
+/// | 18..24 | `SettingsTab { idx: id - 18 }` |
 /// | 25 | `SettingsContent` |
-/// | 26 | `AlertRegion`（Sprint 5-11-5） |
-/// | 27 | `PaneInputBuffer`（Phase 5-11-7） |
-/// | 28〜29 | 予約 |
-/// | 30〜35 | 設定フィールド（FontFamily / FontSize / ThemeScheme / WindowOpacity / StartupLanguage / StartupAutoUpdate） |
-/// | 36〜39 | 設定フィールド Phase 5-11-6 #6（CursorStyle / PaddingX / PaddingY / PresentMode） |
-/// | 40〜44 | 設定フィールド Phase 5-11-8 Step 8-2（SshFieldName / Host / Port / Username / AuthType） |
-/// | 45〜99 | 予約 |
+/// | 26 | `AlertRegion` (Sprint 5-11-5) |
+/// | 27 | `PaneInputBuffer` (Phase 5-11-7) |
+/// | 28..29 | reserved |
+/// | 30..35 | settings fields (FontFamily / FontSize / ThemeScheme / WindowOpacity / StartupLanguage / StartupAutoUpdate) |
+/// | 36..39 | settings fields Phase 5-11-6 #6 (CursorStyle / PaddingX / PaddingY / PresentMode) |
+/// | 40..44 | settings fields Phase 5-11-8 Step 8-2 (SshFieldName / Host / Port / Username / AuthType) |
+/// | 45..99 | reserved |
 /// | 100M..200M | `PaletteItem { idx: id - 100M }` |
 /// | 200M..300M | `HostItem { idx: id - 200M }` |
 /// | 300M..400M | `MacroItem { idx: id - 300M }` |
 /// | 400M..500M | `ContextItem { idx: id - 400M }` |
 /// | 500M..600M | `QuickSelectItem { idx: id - 500M }` |
-/// | 600M..700M | `SettingsProfileItem { idx: id - 600M }`（Phase 5-11-7） |
-/// | 700M..800M | 予約（将来の SettingsField 動的展開用） |
-/// | 800M..900M | `SettingsSshHostItem { idx: id - 800M }`（Phase 5-11-8 Step 8-1） |
-/// | 900M..1G | 予約（Keybindings 動的展開用、Phase 5-11-8 Step 8-4） |
+/// | 600M..700M | `SettingsProfileItem { idx: id - 600M }` (Phase 5-11-7) |
+/// | 700M..800M | reserved (future dynamic SettingsField expansion) |
+/// | 800M..900M | `SettingsSshHostItem { idx: id - 800M }` (Phase 5-11-8 Step 8-1) |
+/// | 900M..1G | reserved (Keybindings dynamic expansion, Phase 5-11-8 Step 8-4) |
 /// | 1G..1G+u32::MAX | `Tab { pane_id: id - 1G }` |
 /// | 10G..10G+u32::MAX | `Pane { pane_id: id - 10G }` |
-/// | 20G..~4.3T | `PaneRow` / `PaneScrollbackRow`（Sprint 5-11-3 / 5-11-4） |
-/// | 50T..u64::MAX | `Alert { seq: id - 50T }`（Sprint 5-11-5） |
-/// | その他 | `Unknown` |
+/// | 20G..~4.3T | `PaneRow` / `PaneScrollbackRow` (Sprint 5-11-3 / 5-11-4) |
+/// | 50T..u64::MAX | `Alert { seq: id - 50T }` (Sprint 5-11-5) |
+/// | other | `Unknown` |
 pub fn decode_node_id(id: NodeId) -> NodeIdKind {
     let raw = id.0;
     match raw {
@@ -654,7 +665,7 @@ pub fn decode_node_id(id: NodeId) -> NodeIdKind {
         },
         25 => NodeIdKind::SettingsContent,
         26 => NodeIdKind::AlertRegion,
-        // Phase 5-11-7: ターミナル入力バッファ
+        // Phase 5-11-7: terminal input buffer
         27 => NodeIdKind::PaneInputBuffer,
         30 => NodeIdKind::SettingsFontFamily,
         31 => NodeIdKind::SettingsFontSize,
@@ -662,18 +673,18 @@ pub fn decode_node_id(id: NodeId) -> NodeIdKind {
         33 => NodeIdKind::SettingsWindowOpacity,
         34 => NodeIdKind::SettingsStartupLanguage,
         35 => NodeIdKind::SettingsStartupAutoUpdate,
-        // Phase 5-11-6 #6: Window カテゴリの 4 新フィールド
+        // Phase 5-11-6 #6: 4 new Window category fields
         36 => NodeIdKind::SettingsCursorStyle,
         37 => NodeIdKind::SettingsPaddingX,
         38 => NodeIdKind::SettingsPaddingY,
         39 => NodeIdKind::SettingsPresentMode,
-        // Phase 5-11-8 Step 8-2: SSH カテゴリのホストフィールド 5 個
+        // Phase 5-11-8 Step 8-2: 5 SSH category host fields
         40 => NodeIdKind::SettingsSshFieldName,
         41 => NodeIdKind::SettingsSshFieldHost,
         42 => NodeIdKind::SettingsSshFieldPort,
         43 => NodeIdKind::SettingsSshFieldUsername,
         44 => NodeIdKind::SettingsSshFieldAuthType,
-        // Phase 5-11-8 Step 8-3 Sub-phase D: Add/Delete + 削除確認ダイアログ
+        // Phase 5-11-8 Step 8-3 Sub-phase D: Add/Delete + delete confirmation dialog
         45 => NodeIdKind::SettingsSshAddBtn,
         46 => NodeIdKind::SettingsSshDeleteBtn,
         47 => NodeIdKind::SettingsSshDeleteDialog,
@@ -683,9 +694,9 @@ pub fn decode_node_id(id: NodeId) -> NodeIdKind {
     }
 }
 
-/// 動的オフセット範囲の判定（`decode_node_id` の補助）。
+/// Decode dynamic offset ranges (helper for `decode_node_id`).
 fn decode_dynamic(raw: u64) -> NodeIdKind {
-    // 各動的オフセットレンジ幅。次オフセットまでの差分で計算する。
+    // Width of each dynamic offset range. Computed as the gap to the next offset.
     const DYN_RANGE: u64 = 100_000_000;
 
     if (NODE_ID_PALETTE_ITEM_OFFSET..NODE_ID_PALETTE_ITEM_OFFSET + DYN_RANGE).contains(&raw) {
@@ -714,14 +725,14 @@ fn decode_dynamic(raw: u64) -> NodeIdKind {
             idx: (raw - NODE_ID_QUICKSELECT_ITEM_OFFSET) as usize,
         };
     }
-    // Phase 5-11-7: SettingsPanel Profiles 項目範囲: [600M, 700M)
+    // Phase 5-11-7: SettingsPanel Profiles item range: [600M, 700M)
     if (NODE_ID_SETTINGS_PROFILE_OFFSET..NODE_ID_SETTINGS_PROFILE_OFFSET + DYN_RANGE).contains(&raw)
     {
         return NodeIdKind::SettingsProfileItem {
             idx: (raw - NODE_ID_SETTINGS_PROFILE_OFFSET) as usize,
         };
     }
-    // Phase 5-11-8 Step 8-1: SettingsPanel Ssh ホスト項目範囲: [800M, 900M)
+    // Phase 5-11-8 Step 8-1: SettingsPanel Ssh host item range: [800M, 900M)
     if (NODE_ID_SETTINGS_SSH_HOST_OFFSET..NODE_ID_SETTINGS_SSH_HOST_OFFSET + DYN_RANGE)
         .contains(&raw)
     {
@@ -729,24 +740,24 @@ fn decode_dynamic(raw: u64) -> NodeIdKind {
             idx: (raw - NODE_ID_SETTINGS_SSH_HOST_OFFSET) as usize,
         };
     }
-    // タブ範囲: [1e9, 1e9 + u32::MAX] = [1e9, 1e9 + ~4.29e9] ≈ [1e9, 5.3e9]
+    // Tab range: [1e9, 1e9 + u32::MAX] = [1e9, 1e9 + ~4.29e9] ≈ [1e9, 5.3e9]
     if (NODE_ID_TAB_OFFSET..NODE_ID_TAB_OFFSET + (u32::MAX as u64) + 1).contains(&raw) {
         return NodeIdKind::Tab {
             pane_id: (raw - NODE_ID_TAB_OFFSET) as u32,
         };
     }
-    // ペイン範囲: [1e10, 1e10 + u32::MAX]
+    // Pane range: [1e10, 1e10 + u32::MAX]
     if (NODE_ID_PANE_OFFSET..NODE_ID_PANE_OFFSET + (u32::MAX as u64) + 1).contains(&raw) {
         return NodeIdKind::Pane {
             pane_id: (raw - NODE_ID_PANE_OFFSET) as u32,
         };
     }
-    // ペイン行範囲（Sprint 5-11-3 + 5-11-4）:
+    // Pane row range (Sprint 5-11-3 + 5-11-4):
     //   [2e10, 2e10 + u32::MAX * MAX_ROWS_PER_PANE + (MAX_ROWS_PER_PANE - 1)]
-    // 内部レイアウト（pane_id 単位）:
-    //   - offset 0..MAX_VIEWPORT_ROWS_PER_PANE (0..1000): ビューポート行 → PaneRow
+    // Per-pane layout:
+    //   - offset 0..MAX_VIEWPORT_ROWS_PER_PANE (0..1000): viewport row -> PaneRow
     //   - offset MAX_VIEWPORT_ROWS_PER_PANE..MAX_ROWS_PER_PANE (1000..10000):
-    //     スクロールバック行 → PaneScrollbackRow
+    //     scrollback row -> PaneScrollbackRow
     let pane_row_range_end =
         NODE_ID_PANE_ROW_OFFSET + (u32::MAX as u64) * MAX_ROWS_PER_PANE + MAX_ROWS_PER_PANE;
     if (NODE_ID_PANE_ROW_OFFSET..pane_row_range_end).contains(&raw) {
@@ -765,9 +776,10 @@ fn decode_dynamic(raw: u64) -> NodeIdKind {
             };
         }
     }
-    // SR アラート範囲（Sprint 5-11-5）: [50T, u64::MAX]。
-    // `next_alert_seq` の実用上限が遥か上なので、上限は事実上 u64::MAX。
-    // ペイン行範囲の上限 `pane_row_range_end` (~4.3e13) と十分に離れているため衝突なし。
+    // SR alert range (Sprint 5-11-5): [50T, u64::MAX].
+    // The practical upper bound of `next_alert_seq` is far above this, so the upper
+    // bound is effectively u64::MAX. Far enough from the pane row range upper bound
+    // `pane_row_range_end` (~4.3e13) that no collision is possible.
     if raw >= NODE_ID_ALERT_OFFSET {
         return NodeIdKind::Alert {
             seq: raw - NODE_ID_ALERT_OFFSET,
@@ -776,49 +788,50 @@ fn decode_dynamic(raw: u64) -> NodeIdKind {
     NodeIdKind::Unknown
 }
 
-/// `ClientState` から AccessKit ツリーを構築する。
+/// Build an AccessKit tree from `ClientState`.
 ///
-/// ## 構造
+/// ## Structure
 ///
-/// **基本（タブ・ペイン）:**
+/// **Base (tabs and panes):**
 /// ```text
 /// Window "Nexterm"
-///   ├─ TabList "ターミナルタブ"
-///   │    ├─ Tab "タブ 1: <title>"  (selected if focused)
+///   ├─ TabList "Terminal tabs"
+///   │    ├─ Tab "Tab 1: <title>"  (selected if focused)
 ///   │    └─ Tab ...
-///   └─ Group "ペイン"
-///        ├─ Terminal "<title>"  (description: 作業ディレクトリ: <cwd>)
+///   └─ Group "Panes"
+///        ├─ Terminal "<title>"  (description: "Working directory: <cwd>")
 ///        └─ Terminal ...
 /// ```
 ///
-/// **オーバーレイ表示時（最前面 1 つを追加 + フォーカス移動）:**
-/// 優先順位（高 → 低）:
-/// 1. `CloseWindowDialog` (AlertDialog, モーダル)
-/// 2. `ContextMenu` (Menu, モーダル)
+/// **With an overlay visible (one frontmost overlay is added and focus moves to it):**
+/// Priority order (high to low):
+/// 1. `CloseWindowDialog` (AlertDialog, modal)
+/// 2. `ContextMenu` (Menu, modal)
 /// 3. `CommandPalette` (Dialog with SearchInput + ListBox)
 /// 4. `HostManager` (Dialog with ListBox)
 /// 5. `MacroPicker` (Dialog with ListBox)
-/// 6. `SettingsPanel` (Dialog, 詳細実装は Step 2-2-e で展開)
+/// 6. `SettingsPanel` (Dialog; detailed expansion happens in Step 2-2-e)
 ///
-/// **非モーダル**:
-/// - `update_banner`: `Role::Alert`。フォーカスは取らないが ROOT の child に追加されて読み上げ可能になる
+/// **Non-modal**:
+/// - `update_banner`: `Role::Alert`. Does not take focus, but is added as a child
+///   of ROOT so it can be announced.
 ///
-/// ## フォーカス
+/// ## Focus
 ///
-/// - オーバーレイ表示中: そのオーバーレイ内の選択中項目（または検索入力）にフォーカス
-/// - オーバーレイなし: `state.focused_pane_id` のペインノード（未設定なら ROOT）
+/// - With an overlay open: focus the selected item (or search input) inside the overlay.
+/// - No overlay: the pane node for `state.focused_pane_id` (ROOT if unset).
 pub fn build_tree_from_state(state: &ClientState) -> TreeUpdate {
-    // ===== 基本ノード（タブ・ペイン）を構築 =====
+    // ===== Build the base nodes (tabs and panes) =====
     let (mut nodes, mut root_children, default_focus) = build_base_nodes(state);
 
     let mut focus = default_focus;
 
-    // ===== オーバーレイを優先順位順にチェック =====
-    // 一度に表示されるのは 1 つ。最も優先度が高いものだけを追加する。
+    // ===== Check overlays in priority order =====
+    // Only one overlay is visible at a time; add the highest-priority one.
     //
-    // 優先順位 (高 → 低):
-    //   1. CloseWindowDialog (AlertDialog, 最強モーダル)
-    //   2. QuickSelect (ラベルキーが他のキー入力を全消費するため最モーダル相当)
+    // Priority (high to low):
+    //   1. CloseWindowDialog (AlertDialog, strongest modal)
+    //   2. QuickSelect (its label key consumes all other key input, so effectively modal)
     //   3. ContextMenu
     //   4. CommandPalette
     //   5. HostManager
@@ -861,24 +874,24 @@ pub fn build_tree_from_state(state: &ClientState) -> TreeUpdate {
         focus = overlay_focus;
     }
 
-    // ===== 非モーダル: 更新バナー =====
+    // ===== Non-modal: update banner =====
     if let Some(version) = &state.update_banner {
         nodes.push(build_update_banner_node(version));
         root_children.push(UPDATE_BANNER_ID);
     }
 
-    // ===== 非モーダル: SR アラート領域（Sprint 5-11-5） =====
-    // 空のときは含めない（SR の混乱回避）。
-    // Bell / OSC 9 / OSC 777 は `ClientState::add_alert` でキュー追加され、TTL 経過後に
-    // `expire_alerts` で除去されるため、ここでは現在のスナップショットを反映するだけでよい。
+    // ===== Non-modal: SR alert region (Sprint 5-11-5) =====
+    // Omit when empty (avoids confusing SR).
+    // Bell / OSC 9 / OSC 777 are queued via `ClientState::add_alert` and removed
+    // after their TTL by `expire_alerts`, so here we just reflect the current snapshot.
     let alert_nodes = build_alert_region_nodes(&state.alerts);
     if !alert_nodes.is_empty() {
         nodes.extend(alert_nodes);
         root_children.push(ALERT_REGION_ID);
     }
 
-    // ===== ROOT ノードを最終 children で確定 =====
-    // build_base_nodes が tentative な ROOT を入れているので、ここで子要素を上書きする。
+    // ===== Finalize the ROOT node with the final children =====
+    // `build_base_nodes` inserts a tentative ROOT; overwrite its children here.
     let mut root = Node::new(Role::Window);
     root.set_label("Nexterm");
     root.set_children(root_children);
@@ -896,34 +909,34 @@ pub fn build_tree_from_state(state: &ClientState) -> TreeUpdate {
     }
 }
 
-/// タブ・ペインまでの基本ノードを構築する。
+/// Build the base nodes (tabs and panes).
 ///
-/// 戻り値:
-/// - `nodes`: ROOT (tentative) / TAB_BAR / PANE_AREA + 各タブ + 各ペインノード
-/// - `root_children`: 暫定の ROOT 子要素（[TAB_BAR_ID, PANE_AREA_ID]）。
-///   オーバーレイがある場合は呼び出し側が追加して上書きする。
-/// - `focus`: オーバーレイなしの場合のデフォルトフォーカス
+/// Return value:
+/// - `nodes`: ROOT (tentative) / TAB_BAR / PANE_AREA + each tab and pane node.
+/// - `root_children`: tentative ROOT children (`[TAB_BAR_ID, PANE_AREA_ID]`).
+///   If an overlay is present, the caller appends to this list and overwrites the ROOT.
+/// - `focus`: default focus when no overlay is open.
 fn build_base_nodes(state: &ClientState) -> (Vec<(NodeId, Node)>, Vec<NodeId>, NodeId) {
-    // タブ順序を決定（tab_order が空ならフォールバック）
+    // Determine tab order (fallback if `tab_order` is empty).
     let tab_order: Vec<u32> = if state.tab_order.is_empty() {
         state.panes.keys().copied().collect()
     } else {
         state.tab_order.clone()
     };
 
-    // ===== ROOT ノード（tentative） =====
-    // 最終的な children はオーバーレイ判定後に build_tree_from_state が再構築する
+    // ===== ROOT node (tentative) =====
+    // `build_tree_from_state` rebuilds the final children after the overlay check.
     let mut root = Node::new(Role::Window);
     root.set_label("Nexterm");
     root.set_children(vec![TAB_BAR_ID, PANE_AREA_ID]);
 
-    // ===== TAB_BAR ノード =====
+    // ===== TAB_BAR node =====
     let mut tab_bar = Node::new(Role::TabList);
-    tab_bar.set_label("ターミナルタブ");
+    tab_bar.set_label("Terminal tabs");
     let tab_child_ids: Vec<NodeId> = tab_order.iter().copied().map(tab_node_id).collect();
     tab_bar.set_children(tab_child_ids);
 
-    // ===== 各タブノード =====
+    // ===== Per-tab nodes =====
     let mut tab_nodes: Vec<(NodeId, Node)> = Vec::with_capacity(tab_order.len());
     for (idx, &pane_id) in tab_order.iter().enumerate() {
         let title = state
@@ -932,7 +945,7 @@ fn build_base_nodes(state: &ClientState) -> (Vec<(NodeId, Node)>, Vec<NodeId>, N
             .map(|p| p.title.as_str())
             .filter(|s| !s.is_empty())
             .unwrap_or("Untitled");
-        let label = format!("タブ {}: {}", idx + 1, title);
+        let label = format!("Tab {}: {}", idx + 1, title);
         let mut tab = Node::new(Role::Tab);
         tab.set_label(label);
         if state.focused_pane_id == Some(pane_id) {
@@ -941,28 +954,29 @@ fn build_base_nodes(state: &ClientState) -> (Vec<(NodeId, Node)>, Vec<NodeId>, N
         tab_nodes.push((tab_node_id(pane_id), tab));
     }
 
-    // ===== PANE_AREA ノード =====
+    // ===== PANE_AREA node =====
     //
-    // Phase 5-11-7: ペイン本体に加えて末尾に PANE_INPUT_BUFFER_ID を追加し、
-    // SR ユーザーが SetValue で PTY へ書き込めるようにする。
+    // Phase 5-11-7: in addition to the pane bodies, append PANE_INPUT_BUFFER_ID at the
+    // end so SR users can write to the PTY via SetValue.
     let mut pane_area = Node::new(Role::Group);
-    pane_area.set_label("ペイン");
+    pane_area.set_label("Panes");
     let mut pane_child_ids: Vec<NodeId> = tab_order.iter().copied().map(pane_node_id).collect();
     pane_child_ids.push(PANE_INPUT_BUFFER_ID);
     pane_area.set_children(pane_child_ids);
 
-    // ===== 各ペインノード + ペイン行ノード（Sprint 5-11-3 / 5-11-4） =====
+    // ===== Per-pane nodes + pane row nodes (Sprint 5-11-3 / 5-11-4) =====
     //
-    // ペインの子として以下を並べる:
-    //   1. スクロールバック行ノード（Sprint 5-11-4、`Role::TextRun`）
-    //      - 公開範囲: `pane.scroll_offset` 中心の前後 `SCROLLBACK_WINDOW_RADIUS` 行
-    //      - Live::Off（明示せず）: アナウンス対象外
-    //   2. ビューポート行ノード（Sprint 5-11-3 / 5-11-4、`Role::TextRun`）
-    //      - フォーカスペインのカーソル行のみ `Live::Polite`（過剰アナウンス抑止）
+    // Pane children, in order:
+    //   1. Scrollback row nodes (Sprint 5-11-4, `Role::TextRun`)
+    //      - Exposed range: `SCROLLBACK_WINDOW_RADIUS` rows around `pane.scroll_offset`.
+    //      - Live::Off (implicit): not subject to announcement.
+    //   2. Viewport row nodes (Sprint 5-11-3 / 5-11-4, `Role::TextRun`)
+    //      - Only the cursor row of the focused pane gets `Live::Polite`
+    //        (avoids excessive announcement).
     //
-    // ペイン本体ノード（`Role::Terminal`）にはフォーカスペインのカーソル位置を
-    // `TextSelection` で設定する（Sprint 5-11-4）。SR ユーザーはキャレットの位置を
-    // 行 NodeId + character_index で知ることができ、矢印キーで読み上げが進む。
+    // The pane body node (`Role::Terminal`) carries the focused pane's cursor
+    // position as `TextSelection` (Sprint 5-11-4). SR users get the caret position
+    // via row NodeId + character_index and can move through it with arrow keys.
     let mut pane_nodes: Vec<(NodeId, Node)> = Vec::with_capacity(state.panes.len());
     for &pane_id in &tab_order {
         let Some(pane) = state.panes.get(&pane_id) else {
@@ -980,11 +994,11 @@ fn build_base_nodes(state: &ClientState) -> (Vec<(NodeId, Node)>, Vec<NodeId>, N
         let mut child_ids: Vec<NodeId> = Vec::new();
         let mut pane_text_selection: Option<TextSelection> = None;
 
-        // ----- スクロールバック行ノード（窓スライド、Sprint 5-11-4） -----
+        // ----- Scrollback row nodes (sliding window, Sprint 5-11-4) -----
         let scrollback_len = pane.scrollback.len();
         if scrollback_len > 0 {
-            // 窓中心: ビューポート直前のスクロールバック行（最新側）。
-            // `scroll_offset = 0` は最新画面、`scroll_offset = K` は K 行上にスクロール済。
+            // Window center: the scrollback row immediately preceding the viewport (most recent side).
+            // `scroll_offset = 0` is the latest screen; `scroll_offset = K` means scrolled up by K rows.
             let center = scrollback_len.saturating_sub(pane.scroll_offset.saturating_add(1));
             let start = center.saturating_sub(SCROLLBACK_WINDOW_RADIUS);
             let end = (center + SCROLLBACK_WINDOW_RADIUS + 1)
@@ -998,14 +1012,14 @@ fn build_base_nodes(state: &ClientState) -> (Vec<(NodeId, Node)>, Vec<NodeId>, N
                 let mut row_node = Node::new(Role::TextRun);
                 row_node.set_value(text);
                 row_node.set_character_lengths(lengths);
-                // スクロールバック行は Live::Off（デフォルト）でアナウンス対象外
+                // Scrollback rows stay at Live::Off (default) — not announced.
                 let row_id = pane_scrollback_row_node_id(pane_id, idx as u16);
                 child_ids.push(row_id);
                 pane_nodes.push((row_id, row_node));
             }
         }
 
-        // ----- ビューポート行ノード（Sprint 5-11-3 / 5-11-4 Role::TextRun 化） -----
+        // ----- Viewport row nodes (Sprint 5-11-3 / 5-11-4 promoted to Role::TextRun) -----
         let row_count = (pane.grid.height as u64)
             .min(pane.grid.rows.len() as u64)
             .min(MAX_VIEWPORT_ROWS_PER_PANE) as u16;
@@ -1017,14 +1031,14 @@ fn build_base_nodes(state: &ClientState) -> (Vec<(NodeId, Node)>, Vec<NodeId>, N
             let mut row_node = Node::new(Role::TextRun);
             row_node.set_value(text);
             row_node.set_character_lengths(lengths);
-            // Sprint 5-11-4: Live::Polite はフォーカスペインのカーソル行のみに限定。
-            // ビューポート全行を Polite にすると SR が画面再描画ごとに大量アナウンスしてしまう。
+            // Sprint 5-11-4: Restrict Live::Polite to the cursor row of the focused pane.
+            // Marking all viewport rows as Polite would cause SR to announce on every redraw.
             if is_cursor_row {
                 row_node.set_live(Live::Polite);
             }
             let row_id = pane_row_node_id(pane_id, row);
 
-            // フォーカスペインのカーソル行: TextSelection をペイン側に設定するための情報を残す
+            // Cursor row of the focused pane: remember info to set TextSelection on the pane.
             if is_cursor_row {
                 pane_text_selection = Some(TextSelection {
                     anchor: TextPosition {
@@ -1045,7 +1059,7 @@ fn build_base_nodes(state: &ClientState) -> (Vec<(NodeId, Node)>, Vec<NodeId>, N
         let mut pane_node = Node::new(Role::Terminal);
         pane_node.set_label(title);
         if let Some(cwd) = &pane.cwd {
-            pane_node.set_description(format!("作業ディレクトリ: {}", cwd));
+            pane_node.set_description(format!("Working directory: {}", cwd));
         }
         pane_node.set_children(child_ids);
         if let Some(sel) = pane_text_selection {
@@ -1056,12 +1070,13 @@ fn build_base_nodes(state: &ClientState) -> (Vec<(NodeId, Node)>, Vec<NodeId>, N
 
     let default_focus = state.focused_pane_id.map_or(ROOT_ID, pane_node_id);
 
-    // ===== ターミナル入力バッファ（Phase 5-11-7） =====
+    // ===== Terminal input buffer (Phase 5-11-7) =====
     //
-    // フォーカスペインの情報を description に含め、SR ユーザーにどのペインに対する
-    // 入力かを示す。SetValue 受信時に `PasteText` IPC でフォーカスペインへ転送する。
+    // Includes the focused pane's title in the description so SR users know which pane
+    // they are typing into. On SetValue, the text is forwarded to the focused pane
+    // via `PasteText` IPC.
     let mut input_buffer = Node::new(Role::TextInput);
-    input_buffer.set_label("ターミナル入力バッファ");
+    input_buffer.set_label("Terminal input buffer");
     input_buffer.set_value("");
     let pane_hint = state
         .focused_pane_id
@@ -1073,9 +1088,9 @@ fn build_base_nodes(state: &ClientState) -> (Vec<(NodeId, Node)>, Vec<NodeId>, N
                 p.title.clone()
             }
         })
-        .unwrap_or_else(|| "フォーカスペインなし".to_string());
+        .unwrap_or_else(|| "No focused pane".to_string());
     input_buffer.set_description(format!(
-        "現在のペイン: {} — 入力した文字列を確定すると PTY へ送信されます（改行は \\n で送信可能）",
+        "Current pane: {} — committing input sends the text to the PTY (use \\n for newline)",
         pane_hint
     ));
 
@@ -1090,45 +1105,45 @@ fn build_base_nodes(state: &ClientState) -> (Vec<(NodeId, Node)>, Vec<NodeId>, N
     (nodes, vec![TAB_BAR_ID, PANE_AREA_ID], default_focus)
 }
 
-// ===== オーバーレイノードビルダー（Step 2-2-b〜g） =====
+// ===== Overlay node builders (Step 2-2-b to 2-2-g) =====
 
-/// CommandPalette のノード群を構築する（Step 2-2-b）。
+/// Build the nodes for CommandPalette (Step 2-2-b).
 ///
-/// 構造:
+/// Structure:
 /// ```text
-/// Dialog "コマンドパレット"
-///   ├─ SearchInput "検索" (value: query)
-///   └─ ListBox "候補"
+/// Dialog "Command palette"
+///   ├─ SearchInput "Search" (value: query)
+///   └─ ListBox "Candidates"
 ///        ├─ ListBoxOption "<label>"  (selected if idx == palette.selected)
 ///        └─ ...
 /// ```
 ///
-/// フォーカス: 候補が 1 つ以上あれば選択中候補、なければ検索入力欄
+/// Focus: the selected candidate if at least one exists, otherwise the search input.
 fn build_palette_nodes(palette: &CommandPalette) -> (Vec<(NodeId, Node)>, NodeId) {
     let filtered = palette.filtered();
     let mut nodes: Vec<(NodeId, Node)> = Vec::with_capacity(3 + filtered.len());
 
-    // ===== Dialog ルート =====
+    // ===== Dialog root =====
     let mut dialog = Node::new(Role::Dialog);
-    dialog.set_label("コマンドパレット");
+    dialog.set_label("Command palette");
     dialog.set_modal();
     dialog.set_children(vec![PALETTE_SEARCH_ID, PALETTE_LIST_ID]);
     nodes.push((PALETTE_ID, dialog));
 
     // ===== SearchInput =====
     let mut search = Node::new(Role::SearchInput);
-    search.set_label("検索");
+    search.set_label("Search");
     search.set_value(palette.query.clone());
     nodes.push((PALETTE_SEARCH_ID, search));
 
     // ===== ListBox =====
     let mut list = Node::new(Role::ListBox);
-    list.set_label(format!("候補 {} 件", filtered.len()));
+    list.set_label(format!("{} candidate(s)", filtered.len()));
     let item_ids: Vec<NodeId> = (0..filtered.len()).map(palette_item_id).collect();
     list.set_children(item_ids);
     nodes.push((PALETTE_LIST_ID, list));
 
-    // ===== 各候補項目 =====
+    // ===== Each candidate item =====
     for (idx, action) in filtered.iter().enumerate() {
         let mut item = Node::new(Role::ListBoxOption);
         item.set_label(action.label.clone());
@@ -1138,7 +1153,7 @@ fn build_palette_nodes(palette: &CommandPalette) -> (Vec<(NodeId, Node)>, NodeId
         nodes.push((palette_item_id(idx), item));
     }
 
-    // フォーカス: 選択中候補（候補ありなら）または検索入力
+    // Focus: the selected candidate when available, otherwise the search input.
     let focus = if filtered.is_empty() || palette.selected >= filtered.len() {
         PALETTE_SEARCH_ID
     } else {
@@ -1148,28 +1163,28 @@ fn build_palette_nodes(palette: &CommandPalette) -> (Vec<(NodeId, Node)>, NodeId
     (nodes, focus)
 }
 
-/// ContextMenu のノード群を構築する（Step 2-2-c）。
+/// Build the nodes for ContextMenu (Step 2-2-c).
 ///
-/// 構造:
+/// Structure:
 /// ```text
-/// Menu (no label, ItemList で position 0)
+/// Menu (no label, ItemList at position 0)
 ///   ├─ MenuItem "<label>" (description: hint, focused if hovered)
 ///   ├─ Splitter (separator)
 ///   └─ ...
 /// ```
 ///
-/// フォーカス: hover 中項目、なければメニュー自身
+/// Focus: the hovered item, otherwise the menu itself.
 fn build_context_menu_nodes(menu: &ContextMenu) -> (Vec<(NodeId, Node)>, NodeId) {
     let mut nodes: Vec<(NodeId, Node)> = Vec::with_capacity(1 + menu.items.len());
 
-    // ===== Menu ルート =====
+    // ===== Menu root =====
     let mut menu_node = Node::new(Role::Menu);
-    menu_node.set_label("コンテキストメニュー");
+    menu_node.set_label("Context menu");
     let item_ids: Vec<NodeId> = (0..menu.items.len()).map(context_item_id).collect();
     menu_node.set_children(item_ids);
     nodes.push((CONTEXT_MENU_ID, menu_node));
 
-    // ===== 各メニュー項目 =====
+    // ===== Each menu item =====
     for (idx, item) in menu.items.iter().enumerate() {
         let role = if matches!(item.action, crate::state::ContextMenuAction::Separator) {
             Role::Splitter
@@ -1181,13 +1196,13 @@ fn build_context_menu_nodes(menu: &ContextMenu) -> (Vec<(NodeId, Node)>, NodeId)
             node.set_label(item.label.clone());
         }
         if !item.hint.is_empty() {
-            // キーバインド ヒントを description にする（SR で「Ctrl+C」等が補足読み上げされる）
+            // Put the key-binding hint in the description (SR announces "Ctrl+C" etc. as supplement).
             node.set_description(item.hint.clone());
         }
         nodes.push((context_item_id(idx), node));
     }
 
-    // フォーカス: hover 中項目、なければメニュー自身
+    // Focus: the hovered item, otherwise the menu itself.
     let focus = menu
         .hovered
         .filter(|&idx| idx < menu.items.len())
@@ -1197,30 +1212,30 @@ fn build_context_menu_nodes(menu: &ContextMenu) -> (Vec<(NodeId, Node)>, NodeId)
     (nodes, focus)
 }
 
-/// CloseWindowDialog のノード群を構築する（Step 2-2-d）。
+/// Build the nodes for CloseWindowDialog (Step 2-2-d).
 ///
-/// 構造:
+/// Structure:
 /// ```text
-/// AlertDialog "Window を閉じますか？" (modal)
-///   ├─ Label <message>  (Paragraph として組み込み)
+/// AlertDialog "Close window?" (modal)
+///   ├─ Label <message>  (embedded as Paragraph)
 ///   ├─ Button <kill_label>  (selected if selected_button == 0)
 ///   └─ Button <cancel_label>  (selected if selected_button == 1)
 /// ```
 ///
-/// フォーカス: selected_button が示すボタン
+/// Focus: the button indicated by `selected_button`.
 fn build_close_dialog_nodes(dialog: &CloseWindowDialog) -> (Vec<(NodeId, Node)>, NodeId) {
     let mut nodes: Vec<(NodeId, Node)> = Vec::with_capacity(3);
 
-    // ===== AlertDialog ルート =====
+    // ===== AlertDialog root =====
     let mut alert = Node::new(Role::AlertDialog);
-    alert.set_label("Window を閉じますか？");
-    // メッセージ本文を description として埋め込む（SR がダイアログ概要として読み上げる）
+    alert.set_label("Close window?");
+    // Embed the message body as the description (SR reads it as the dialog summary).
     alert.set_description(dialog.message.clone());
     alert.set_modal();
     alert.set_children(vec![CLOSE_DIALOG_KILL_BTN, CLOSE_DIALOG_CANCEL_BTN]);
     nodes.push((CLOSE_DIALOG_ID, alert));
 
-    // ===== Kill (プロセス終了 / 強制クローズ) ボタン =====
+    // ===== Kill (kill process / force close) button =====
     let mut kill_btn = Node::new(Role::Button);
     kill_btn.set_label(dialog.kill_label.clone());
     if dialog.selected_button == 0 {
@@ -1228,7 +1243,7 @@ fn build_close_dialog_nodes(dialog: &CloseWindowDialog) -> (Vec<(NodeId, Node)>,
     }
     nodes.push((CLOSE_DIALOG_KILL_BTN, kill_btn));
 
-    // ===== Cancel ボタン =====
+    // ===== Cancel button =====
     let mut cancel_btn = Node::new(Role::Button);
     cancel_btn.set_label(dialog.cancel_label.clone());
     if dialog.selected_button == 1 {
@@ -1239,27 +1254,27 @@ fn build_close_dialog_nodes(dialog: &CloseWindowDialog) -> (Vec<(NodeId, Node)>,
     let focus = match dialog.selected_button {
         0 => CLOSE_DIALOG_KILL_BTN,
         1 => CLOSE_DIALOG_CANCEL_BTN,
-        // 確定済み (0xFE / 0xFF) は描画タイミングの edge case。Kill にフォーカスを当てる
+        // Confirmed values (0xFE / 0xFF) are a draw-timing edge case. Focus Kill.
         _ => CLOSE_DIALOG_KILL_BTN,
     };
 
     (nodes, focus)
 }
 
-/// HostManager のノード群を構築する（Step 2-2-f）。
+/// Build the nodes for HostManager (Step 2-2-f).
 fn build_host_manager_nodes(manager: &HostManager) -> (Vec<(NodeId, Node)>, NodeId) {
     let filtered = manager.filtered();
     let mut nodes: Vec<(NodeId, Node)> = Vec::with_capacity(1 + filtered.len());
 
-    // ===== Dialog ルート =====
+    // ===== Dialog root =====
     let mut dialog = Node::new(Role::Dialog);
-    dialog.set_label("SSH ホストマネージャ");
+    dialog.set_label("SSH host manager");
     dialog.set_modal();
     let item_ids: Vec<NodeId> = (0..filtered.len()).map(host_item_id).collect();
     dialog.set_children(item_ids);
     nodes.push((HOST_MANAGER_ID, dialog));
 
-    // ===== 各ホスト項目 =====
+    // ===== Each host item =====
     for (idx, host) in filtered.iter().enumerate() {
         let mut item = Node::new(Role::ListBoxOption);
         let label = if host.name.is_empty() {
@@ -1268,9 +1283,9 @@ fn build_host_manager_nodes(manager: &HostManager) -> (Vec<(NodeId, Node)>, Node
             host.name.clone()
         };
         item.set_label(label);
-        // ホスト名・ユーザー名を description で補足
+        // Add host name / username as a supplement in the description.
         let desc = format!(
-            "ホスト: {}, ユーザー: {}, ポート: {}",
+            "Host: {}, user: {}, port: {}",
             host.host, host.username, host.port
         );
         item.set_description(desc);
@@ -1289,36 +1304,37 @@ fn build_host_manager_nodes(manager: &HostManager) -> (Vec<(NodeId, Node)>, Node
     (nodes, focus)
 }
 
-/// Quick Select のノード群を構築する（Step 2-2-h）。
+/// Build the nodes for Quick Select (Step 2-2-h).
 ///
-/// 構造:
+/// Structure:
 /// ```text
 /// Dialog "Quick Select" (modal)
-///   ├─ description: "ラベル入力中: '<typed_label>'" (空なら「ラベルキーで項目を選択」)
-///   └─ ListBox "マッチ {n} 件" (id=16)
+///   ├─ description: "Typing label: '<typed_label>'" (empty -> "Pick an item by label key")
+///   └─ ListBox "{n} match(es)" (id=16)
 ///        ├─ ListBoxOption "[a] <text>"  (selected if matches[idx].label.starts_with(typed_label))
 ///        └─ ...
 /// ```
 ///
-/// **フォーカス戦略**:
-/// - `typed_label` が prefix で 1 件以上に絞られているなら最初の prefix 一致項目
-/// - そうでない場合: マッチがあれば最初の項目、なければ ListBox 自身
+/// **Focus strategy**:
+/// - If `typed_label` narrows down to one or more prefix-matched items, the first prefix match.
+/// - Otherwise: the first match if any, or the ListBox itself.
 ///
-/// **設計メモ**:
-/// - 検索入力欄を別ノードにしない理由: Quick Select はキー押下ごとに即座に確定する
-///   UX なので、AccessKit の `SearchInput` モデルに合わない。`typed_label` は Dialog の
-///   `description` として補足する（SR がダイアログ状態として読み上げる）
+/// **Design notes**:
+/// - Reason for not making the search input a separate node: Quick Select commits
+///   instantly on every key press, which does not fit the AccessKit `SearchInput`
+///   model. `typed_label` is supplied as the Dialog's `description` instead (SR
+///   reads it as the dialog state).
 fn build_quick_select_nodes(qs: &QuickSelectState) -> (Vec<(NodeId, Node)>, NodeId) {
     let mut nodes: Vec<(NodeId, Node)> = Vec::with_capacity(2 + qs.matches.len());
 
-    // ===== Dialog ルート =====
+    // ===== Dialog root =====
     let mut dialog = Node::new(Role::Dialog);
     dialog.set_label("Quick Select");
     dialog.set_modal();
     let desc = if qs.typed_label.is_empty() {
-        "ラベルキーで項目を選択してクリップボードにコピー".to_string()
+        "Press a label key to copy an item to the clipboard".to_string()
     } else {
-        format!("ラベル入力中: '{}'", qs.typed_label)
+        format!("Typing label: '{}'", qs.typed_label)
     };
     dialog.set_description(desc);
     dialog.set_children(vec![QUICK_SELECT_LIST_ID]);
@@ -1326,13 +1342,13 @@ fn build_quick_select_nodes(qs: &QuickSelectState) -> (Vec<(NodeId, Node)>, Node
 
     // ===== ListBox =====
     let mut list = Node::new(Role::ListBox);
-    list.set_label(format!("マッチ {} 件", qs.matches.len()));
+    list.set_label(format!("{} match(es)", qs.matches.len()));
     let item_ids: Vec<NodeId> = (0..qs.matches.len()).map(quickselect_item_id).collect();
     list.set_children(item_ids);
     nodes.push((QUICK_SELECT_LIST_ID, list));
 
-    // ===== 各マッチ項目 =====
-    // typed_label が prefix で一致する最初の項目をフォーカス候補にする
+    // ===== Each match item =====
+    // Use the first prefix-matched item as the focus candidate.
     let mut focus_idx: Option<usize> = None;
     for (idx, m) in qs.matches.iter().enumerate() {
         let mut item = Node::new(Role::ListBoxOption);
@@ -1346,7 +1362,7 @@ fn build_quick_select_nodes(qs: &QuickSelectState) -> (Vec<(NodeId, Node)>, Node
         nodes.push((quickselect_item_id(idx), item));
     }
 
-    // フォーカス: prefix 一致項目 → 最初のマッチ → ListBox 自身（マッチなし時）
+    // Focus: prefix-matched item -> first match -> ListBox itself (no matches).
     let focus = match focus_idx {
         Some(idx) => quickselect_item_id(idx),
         None if !qs.matches.is_empty() => quickselect_item_id(0),
@@ -1356,20 +1372,20 @@ fn build_quick_select_nodes(qs: &QuickSelectState) -> (Vec<(NodeId, Node)>, Node
     (nodes, focus)
 }
 
-/// MacroPicker のノード群を構築する（Step 2-2-f）。
+/// Build the nodes for MacroPicker (Step 2-2-f).
 fn build_macro_picker_nodes(picker: &MacroPicker) -> (Vec<(NodeId, Node)>, NodeId) {
     let filtered = picker.filtered();
     let mut nodes: Vec<(NodeId, Node)> = Vec::with_capacity(1 + filtered.len());
 
-    // ===== Dialog ルート =====
+    // ===== Dialog root =====
     let mut dialog = Node::new(Role::Dialog);
-    dialog.set_label("Lua マクロピッカー");
+    dialog.set_label("Lua macro picker");
     dialog.set_modal();
     let item_ids: Vec<NodeId> = (0..filtered.len()).map(macro_item_id).collect();
     dialog.set_children(item_ids);
     nodes.push((MACRO_PICKER_ID, dialog));
 
-    // ===== 各マクロ項目 =====
+    // ===== Each macro item =====
     for (idx, mac) in filtered.iter().enumerate() {
         let mut item = Node::new(Role::ListBoxOption);
         item.set_label(mac.name.clone());
@@ -1391,35 +1407,35 @@ fn build_macro_picker_nodes(picker: &MacroPicker) -> (Vec<(NodeId, Node)>, NodeI
     (nodes, focus)
 }
 
-/// SettingsPanel のノード群を構築する（Step 2-2-e'、TabList + 各カテゴリ詳細フィールド）。
+/// Build the nodes for SettingsPanel (Step 2-2-e', TabList + each category's detailed fields).
 ///
-/// ## ツリー構造
+/// ## Tree structure
 ///
 /// ```text
-/// Dialog "設定"
-///   ├─ TabList "カテゴリ"
-///   │    ├─ Tab "スタートアップ"
-///   │    ├─ Tab "フォント"  (selected if category == Font)
-///   │    ├─ Tab "テーマ"
-///   │    ├─ Tab "ウィンドウ"
+/// Dialog "Settings"
+///   ├─ TabList "Categories"
+///   │    ├─ Tab "Startup"
+///   │    ├─ Tab "Font"  (selected if category == Font)
+///   │    ├─ Tab "Theme"
+///   │    ├─ Tab "Window"
 ///   │    ├─ Tab "SSH"
-///   │    ├─ Tab "キーバインド"
-///   │    └─ Tab "プロファイル"
-///   └─ Group "<現在カテゴリ名>"
-///        ├─ TextInput "フォントファミリー" (Font カテゴリのみ)
-///        ├─ Slider "フォントサイズ" with numeric_value (Font カテゴリのみ)
-///        ├─ ComboBox "カラースキーム" (Theme カテゴリのみ)
-///        ├─ Slider "不透明度" (Window カテゴリのみ)
-///        ├─ ComboBox "言語" (Startup カテゴリのみ)
-///        ├─ CheckBox "起動時に更新確認" (Startup カテゴリのみ)
-///        ├─ ListBox "プロファイル一覧" (Profiles カテゴリのみ、Phase 5-11-7)
+///   │    ├─ Tab "Keybindings"
+///   │    └─ Tab "Profiles"
+///   └─ Group "<current category name>"
+///        ├─ TextInput "Font family" (Font category only)
+///        ├─ Slider "Font size" with numeric_value (Font category only)
+///        ├─ ComboBox "Color scheme" (Theme category only)
+///        ├─ Slider "Opacity" (Window category only)
+///        ├─ ComboBox "Language" (Startup category only)
+///        ├─ CheckBox "Check for updates on startup" (Startup category only)
+///        ├─ ListBox "Profile list" (Profiles category only, Phase 5-11-7)
 ///        │    └─ ListBoxOption × N
-///        ├─ (Ssh カテゴリのみ、Phase 5-11-7): 案内文を description で公開（フィールドなし）
-///        └─ (Keybindings カテゴリのみ、Phase 5-11-7): 案内文を description で公開（フィールドなし）
+///        ├─ (Ssh category only, Phase 5-11-7): guidance text exposed via description (no fields)
+///        └─ (Keybindings category only, Phase 5-11-7): guidance text exposed via description (no fields)
 /// ```
 ///
-/// フォーカス: font_family_editing 中はそのフィールド、Window カテゴリは
-/// `window_field_focus` に応じて、それ以外は現在カテゴリのタブ。
+/// Focus: the editing field while `font_family_editing` is true; for the Window
+/// category, follows `window_field_focus`; otherwise the current category tab.
 fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, NodeId) {
     use crate::settings_panel::SettingsCategory;
 
@@ -1430,13 +1446,13 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
         .position(|c| c == &panel.category)
         .unwrap_or(0);
 
-    // ===== Dialog (ルート) =====
+    // ===== Dialog (root) =====
     let mut dialog = Node::new(Role::Dialog);
-    dialog.set_label("設定");
+    dialog.set_label("Settings");
     dialog.set_modal();
-    dialog.set_description(format!("カテゴリ: {}", panel.category.label()));
-    // Phase 5-11-8 Step 8-3 (Sub-phase D): SSH 削除確認ダイアログを動的に追加する。
-    // SR からは SettingsPanel のモーダル子として認識される。
+    dialog.set_description(format!("Category: {}", panel.category.label()));
+    // Phase 5-11-8 Step 8-3 (Sub-phase D): dynamically add the SSH delete confirmation
+    // dialog. SR recognizes it as a modal child of SettingsPanel.
     let mut panel_children = vec![SETTINGS_TABLIST_ID, SETTINGS_CONTENT_ID];
     if panel.ssh_delete_dialog_open
         && matches!(panel.category, SettingsCategory::Ssh)
@@ -1447,12 +1463,12 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
     dialog.set_children(panel_children);
     nodes.push((SETTINGS_PANEL_ID, dialog));
 
-    // ===== TabList (カテゴリタブ) =====
+    // ===== TabList (category tabs) =====
     let tab_ids: Vec<NodeId> = (0..SettingsCategory::ALL.len())
         .map(settings_tab_id_at)
         .collect();
     let mut tablist = Node::new(Role::TabList);
-    tablist.set_label("カテゴリ");
+    tablist.set_label("Categories");
     tablist.set_children(tab_ids);
     nodes.push((SETTINGS_TABLIST_ID, tablist));
 
@@ -1465,25 +1481,26 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
         nodes.push((settings_tab_id_at(idx), tab));
     }
 
-    // ===== Content Group (現在カテゴリのフィールド) =====
+    // ===== Content Group (fields of the current category) =====
     let mut content_children: Vec<NodeId> = Vec::new();
-    // SSH / Keybindings 等のフィールドなしカテゴリ向けに、コンテンツ Group の
-    // description に案内文を入れる。デフォルトは None（変更がなければそのまま）。
+    // For field-less categories like SSH / Keybindings, expose guidance text via the
+    // content Group's description. Default is None (leave unchanged when there is
+    // nothing to show).
     let mut content_description: Option<String> = None;
 
     match panel.category {
         SettingsCategory::Font => {
             let mut family = Node::new(Role::TextInput);
-            family.set_label("フォントファミリー");
+            family.set_label("Font family");
             family.set_value(panel.font_family.as_str());
             if panel.font_family_editing {
-                family.set_description("編集中（Tab で確定）");
+                family.set_description("Editing (press Tab to commit)");
             }
             nodes.push((SETTINGS_FONT_FAMILY_ID, family));
             content_children.push(SETTINGS_FONT_FAMILY_ID);
 
             let mut size = Node::new(Role::Slider);
-            size.set_label("フォントサイズ");
+            size.set_label("Font size");
             size.set_value(format!("{:.1}", panel.font_size));
             size.set_numeric_value(panel.font_size as f64);
             size.set_min_numeric_value(8.0);
@@ -1494,17 +1511,17 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
         }
         SettingsCategory::Theme => {
             let mut scheme = Node::new(Role::ComboBox);
-            scheme.set_label("カラースキーム");
+            scheme.set_label("Color scheme");
             scheme.set_value(panel.scheme_name());
-            scheme.set_description("←/→ で切り替え");
+            scheme.set_description("Use Left/Right to cycle");
             nodes.push((SETTINGS_THEME_SCHEME_ID, scheme));
             content_children.push(SETTINGS_THEME_SCHEME_ID);
         }
         SettingsCategory::Window => {
-            // Phase 5-11-6 #6: 5 フィールド構成
+            // Phase 5-11-6 #6: 5 fields
             //   0=opacity / 1=cursor_style / 2=padding_x / 3=padding_y / 4=present_mode
             let mut opacity = Node::new(Role::Slider);
-            opacity.set_label("背景不透明度");
+            opacity.set_label("Background opacity");
             opacity.set_value(format!("{:.0}%", panel.opacity * 100.0));
             opacity.set_numeric_value(panel.opacity as f64);
             opacity.set_min_numeric_value(0.1);
@@ -1514,14 +1531,14 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
             content_children.push(SETTINGS_WINDOW_OPACITY_ID);
 
             let mut cs = Node::new(Role::ComboBox);
-            cs.set_label("カーソル形状");
+            cs.set_label("Cursor style");
             cs.set_value(panel.cursor_style_label());
-            cs.set_description("←/→ で切り替え");
+            cs.set_description("Use Left/Right to cycle");
             nodes.push((SETTINGS_CURSOR_STYLE_ID, cs));
             content_children.push(SETTINGS_CURSOR_STYLE_ID);
 
             let mut px = Node::new(Role::Slider);
-            px.set_label("水平パディング");
+            px.set_label("Horizontal padding");
             px.set_value(format!("{} px", panel.padding_x));
             px.set_numeric_value(panel.padding_x as f64);
             px.set_min_numeric_value(0.0);
@@ -1531,7 +1548,7 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
             content_children.push(SETTINGS_PADDING_X_ID);
 
             let mut py = Node::new(Role::Slider);
-            py.set_label("垂直パディング");
+            py.set_label("Vertical padding");
             py.set_value(format!("{} px", panel.padding_y));
             py.set_numeric_value(panel.padding_y as f64);
             py.set_min_numeric_value(0.0);
@@ -1541,22 +1558,22 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
             content_children.push(SETTINGS_PADDING_Y_ID);
 
             let mut pm = Node::new(Role::ComboBox);
-            pm.set_label("描画モード");
+            pm.set_label("Present mode");
             pm.set_value(panel.present_mode_label());
-            pm.set_description("←/→ で切り替え");
+            pm.set_description("Use Left/Right to cycle");
             nodes.push((SETTINGS_PRESENT_MODE_ID, pm));
             content_children.push(SETTINGS_PRESENT_MODE_ID);
         }
         SettingsCategory::Startup => {
             let mut lang = Node::new(Role::ComboBox);
-            lang.set_label("言語");
+            lang.set_label("Language");
             lang.set_value(panel.language_code());
-            lang.set_description("←/→ で切り替え");
+            lang.set_description("Use Left/Right to cycle");
             nodes.push((SETTINGS_STARTUP_LANGUAGE_ID, lang));
             content_children.push(SETTINGS_STARTUP_LANGUAGE_ID);
 
             let mut auto_update = Node::new(Role::CheckBox);
-            auto_update.set_label("起動時に更新を確認する");
+            auto_update.set_label("Check for updates on startup");
             auto_update.set_toggled(if panel.auto_check_update {
                 accesskit::Toggled::True
             } else {
@@ -1566,13 +1583,12 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
             content_children.push(SETTINGS_STARTUP_AUTO_UPDATE_ID);
         }
         SettingsCategory::Profiles => {
-            // Phase 5-11-7: プロファイル一覧を ListBox + ListBoxOption で公開する。
-            // 各 ProfileEntry は `settings_profile_item_id(idx)` で識別し、
-            // Click / Focus で `selected_profile` を更新する。
+            // Phase 5-11-7: expose the profile list as ListBox + ListBoxOption.
+            // Each ProfileEntry is identified by `settings_profile_item_id(idx)`;
+            // Click / Focus updates `selected_profile`.
             if panel.profiles.is_empty() {
                 content_description = Some(
-                    "プロファイルがありません。nexterm.toml に [[profiles]] を追加してください"
-                        .to_string(),
+                    "No profiles defined. Add a [[profiles]] entry to nexterm.toml.".to_string(),
                 );
             } else {
                 let item_ids: Vec<NodeId> = (0..panel.profiles.len())
@@ -1590,51 +1606,54 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
                         item.set_selected(true);
                     }
                     nodes.push((settings_profile_item_id(idx), item));
-                    // ListBoxOption は item_ids 経由で ListBox の子として配置するが、
-                    // content_children へは ListBox 1 個のみを追加する（下記）。
-                    let _ = idx; // 名前空間整理: 上の `nodes.push` で利用済
+                    // ListBoxOption nodes are placed as ListBox children via item_ids,
+                    // while `content_children` only receives a single ListBox (see below).
+                    let _ = idx; // namespace tidy-up: idx was already used in the `nodes.push` above
                 }
-                // ListBox 親ノード。`content_children` には ListBox を 1 個だけ含める。
-                // ListBox 自体は固定 NodeId を使わず、便宜上 `SETTINGS_CONTENT_ID` の
-                // 子として直接 ListBoxOption 群を並べる代わりに、Group の説明を簡略化する。
+                // Parent ListBox node. `content_children` contains only one ListBox.
+                // Instead of assigning a dedicated NodeId to the ListBox itself, we
+                // simplify the Group description and lay out ListBoxOptions directly
+                // under `SETTINGS_CONTENT_ID`.
                 //
-                // Q: なぜ ListBox 専用の固定 NodeId を割り当てないか？
-                // A: SETTINGS_CONTENT_ID 自体を Group → ListBox に Role 変更したいが、
-                //    現在 Group は他カテゴリでも使うため不可。代わりに各 ListBoxOption を
-                //    SETTINGS_CONTENT_ID の直接の子として並べる（NVDA / Orca 等の SR は
-                //    Group の子の ListBoxOption も適切に読み上げる）。
+                // Q: Why not assign a dedicated NodeId for the ListBox?
+                // A: We would prefer to switch `SETTINGS_CONTENT_ID` itself from Group
+                //    to ListBox, but Group is shared with other categories. As a
+                //    workaround we lay out each ListBoxOption directly under
+                //    `SETTINGS_CONTENT_ID` (SR readers such as NVDA / Orca handle
+                //    ListBoxOption children of a Group correctly).
                 for id in &item_ids {
                     content_children.push(*id);
                 }
                 content_description = Some(format!(
-                    "プロファイル一覧（{} 件）。↑↓ で選択、Enter で適用",
+                    "Profiles ({} entries). Up/Down to select, Enter to apply.",
                     panel.profiles.len()
                 ));
             }
         }
         SettingsCategory::Ssh => {
-            // Phase 5-11-8 Step 8-1: SSH ホスト一覧を ListBox + ListBoxOption で公開する。
-            // Phase 5-11-8 Step 8-2: 選択ホストの 5 フィールド (name / host / port / username
-            // / auth_type) を Role::TextInput / SpinButton / ComboBox で公開する。
-            // Phase 5-11-8 Step 8-3 (Sub-phase D): Add / Delete ボタンを末尾に追加し、
-            // 削除確認ダイアログ (NodeId 47-49) を ssh_delete_dialog_open=true 時に公開する。
+            // Phase 5-11-8 Step 8-1: expose the SSH host list as ListBox + ListBoxOption.
+            // Phase 5-11-8 Step 8-2: expose the selected host's 5 fields (name / host /
+            // port / username / auth_type) as Role::TextInput / SpinButton / ComboBox.
+            // Phase 5-11-8 Step 8-3 (Sub-phase D): add Add / Delete buttons at the end,
+            // and expose the delete confirmation dialog (NodeId 47-49) while
+            // ssh_delete_dialog_open == true.
             if panel.ssh_hosts.is_empty() {
                 content_description = Some(
-                    "SSH ホストが登録されていません。\
-                     新規ホストを追加ボタン (Tab で末尾へ移動) を押してください"
+                    "No SSH hosts are registered. \
+                     Press the Add new host button (Tab to the end of the list)."
                         .to_string(),
                 );
             } else {
-                // ===== ホスト一覧 (Step 8-1) =====
+                // ===== Host list (Step 8-1) =====
                 let item_ids: Vec<NodeId> = (0..panel.ssh_hosts.len())
                     .map(settings_ssh_host_item_id)
                     .collect();
                 for (idx, host) in panel.ssh_hosts.iter().enumerate() {
                     let mut item = Node::new(Role::ListBoxOption);
                     item.set_label(host.label());
-                    // description には認証方式を補足
+                    // The description supplies the authentication method.
                     if !host.auth_type.is_empty() {
-                        item.set_description(format!("認証方式: {}", host.auth_type));
+                        item.set_description(format!("Auth: {}", host.auth_type));
                     }
                     if idx == panel.selected_host_index {
                         item.set_selected(true);
@@ -1645,14 +1664,15 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
                     content_children.push(*id);
                 }
 
-                // ===== 選択ホストのフィールド編集 (Step 8-2 + 8-3 Sub-phase A) =====
-                // インデックスを clamp（万一範囲外でも panic しない）
+                // ===== Field editing for the selected host (Step 8-2 + 8-3 Sub-phase A) =====
+                // Clamp the index (so we never panic even if it goes out of range).
                 let sel = panel.selected_host_index.min(panel.ssh_hosts.len() - 1);
                 let host = &panel.ssh_hosts[sel];
 
-                // Phase 5-11-8 Step 8-3 (Sub-phase A): GUI 編集中はバッファ値を公開する
-                // ことで SR にも GUI 編集の進捗をリアルタイムに伝える。編集対象でない
-                // フィールド（ssh_field_focus != 1/2/4）はホストの現在値を公開する。
+                // Phase 5-11-8 Step 8-3 (Sub-phase A): while GUI editing is active,
+                // expose the buffered value so SR also sees real-time progress.
+                // Fields that are not being edited (`ssh_field_focus != 1/2/4`)
+                // continue to expose the host's current value.
                 let editing_value = |target: u8| -> Option<String> {
                     if panel.ssh_field_focus == target {
                         panel.ssh_field_editing.as_ref().map(|s| s.display_string())
@@ -1663,69 +1683,69 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
 
                 // name (TextInput)
                 let mut name_node = Node::new(Role::TextInput);
-                name_node.set_label("ホスト名 (name)");
+                name_node.set_label("Host name (name)");
                 let name_val = editing_value(1).unwrap_or_else(|| host.name.clone());
                 name_node.set_value(name_val.as_str());
                 name_node.set_description(
-                    "SR の SetValue または Enter キーで GUI 編集を開始できます。Enter で確定 / Esc で取消",
+                    "SR can start GUI editing via SetValue or Enter. Enter to commit / Esc to cancel.",
                 );
                 nodes.push((SETTINGS_SSH_FIELD_NAME_ID, name_node));
                 content_children.push(SETTINGS_SSH_FIELD_NAME_ID);
 
                 // host (TextInput)
                 let mut host_node = Node::new(Role::TextInput);
-                host_node.set_label("接続先ホスト (host)");
+                host_node.set_label("Target host (host)");
                 let host_val = editing_value(2).unwrap_or_else(|| host.host.clone());
                 host_node.set_value(host_val.as_str());
                 host_node.set_description(
-                    "IP アドレスまたは FQDN。SR の SetValue または Enter で GUI 編集",
+                    "IP address or FQDN. Start GUI editing via SR SetValue or Enter.",
                 );
                 nodes.push((SETTINGS_SSH_FIELD_HOST_ID, host_node));
                 content_children.push(SETTINGS_SSH_FIELD_HOST_ID);
 
                 // port (SpinButton)
                 let mut port_node = Node::new(Role::SpinButton);
-                port_node.set_label("ポート (port)");
+                port_node.set_label("Port");
                 port_node.set_numeric_value(host.port as f64);
                 port_node.set_min_numeric_value(1.0);
                 port_node.set_max_numeric_value(65535.0);
                 port_node.set_numeric_value_step(1.0);
-                port_node.set_description("1〜65535。←/→ で増減");
+                port_node.set_description("1..65535. Use Left/Right to adjust.");
                 nodes.push((SETTINGS_SSH_FIELD_PORT_ID, port_node));
                 content_children.push(SETTINGS_SSH_FIELD_PORT_ID);
 
                 // username (TextInput)
                 let mut user_node = Node::new(Role::TextInput);
-                user_node.set_label("ユーザー名 (username)");
+                user_node.set_label("User name (username)");
                 let user_val = editing_value(4).unwrap_or_else(|| host.username.clone());
                 user_node.set_value(user_val.as_str());
-                user_node.set_description("SR の SetValue または Enter で GUI 編集");
+                user_node.set_description("Start GUI editing via SR SetValue or Enter.");
                 nodes.push((SETTINGS_SSH_FIELD_USERNAME_ID, user_node));
                 content_children.push(SETTINGS_SSH_FIELD_USERNAME_ID);
 
                 // auth_type (ComboBox: password / key / agent)
                 let mut auth_node = Node::new(Role::ComboBox);
-                auth_node.set_label("認証方式 (auth_type)");
+                auth_node.set_label("Auth method (auth_type)");
                 auth_node.set_value(host.auth_type.as_str());
-                auth_node.set_description("←/→ で切替: password / key / agent");
+                auth_node.set_description("Use Left/Right to cycle: password / key / agent");
                 nodes.push((SETTINGS_SSH_FIELD_AUTH_TYPE_ID, auth_node));
                 content_children.push(SETTINGS_SSH_FIELD_AUTH_TYPE_ID);
 
                 content_description = Some(format!(
-                    "SSH ホスト {} 件中 {} 番目を編集中。↑↓ で項目移動、Enter で保存",
-                    panel.ssh_hosts.len(),
+                    "Editing host {} of {}. Use Up/Down to move between fields, Enter to save.",
                     sel + 1,
+                    panel.ssh_hosts.len(),
                 ));
             }
 
-            // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): Add / Delete ボタン =====
-            // 常時公開（is_empty 時も Add は active、Delete は label と description で
-            // 無効を明示）。SR ユーザーは ↑/↓ で 0..=7 を機械的に走査し、Add (6) /
-            // Delete (7) ボタンに到達できる。
+            // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): Add / Delete buttons =====
+            // Always exposed (Add is active even when the list is empty; Delete uses its
+            // label and description to indicate the disabled state). SR users can scan
+            // 0..=7 with Up/Down and reach the Add (6) / Delete (7) buttons.
             let mut add_btn = Node::new(Role::Button);
-            add_btn.set_label("新規ホストを追加");
+            add_btn.set_label("Add new host");
             add_btn.set_description(
-                "Enter または Click で新規 SSH ホストを末尾に追加し、名前 (name) の編集を即時開始します",
+                "Enter or Click appends a new SSH host to the end of the list and immediately starts editing its name.",
             );
             if panel.ssh_field_focus == 6 {
                 add_btn.set_selected(true);
@@ -1735,14 +1755,12 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
 
             let mut delete_btn = Node::new(Role::Button);
             if panel.ssh_hosts.is_empty() {
-                delete_btn.set_label("選択ホストを削除 (無効)");
-                delete_btn.set_description(
-                    "削除対象のホストがありません。先に「新規ホストを追加」してください",
-                );
+                delete_btn.set_label("Delete selected host (disabled)");
+                delete_btn.set_description("No host is available to delete. Add a new host first.");
             } else {
-                delete_btn.set_label("選択ホストを削除");
+                delete_btn.set_label("Delete selected host");
                 delete_btn.set_description(
-                    "Enter または Click で削除確認ダイアログを開きます。Esc または「キャンセル」で取消可能",
+                    "Enter or Click opens the delete confirmation dialog. Esc or Cancel dismisses it.",
                 );
                 if panel.ssh_field_focus == 7 {
                     delete_btn.set_selected(true);
@@ -1752,11 +1770,11 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
             content_children.push(SETTINGS_SSH_DELETE_BTN_ID);
         }
         SettingsCategory::Keybindings => {
-            // Phase 5-11-7: キーバインドも nexterm.toml 経由のため、設定パネル内では
-            // 編集できない。SR には案内文として description で公開する。
+            // Phase 5-11-7: keybindings also go through nexterm.toml and cannot be
+            // edited from the settings panel. Expose guidance text via description for SR.
             content_description = Some(
-                "キーバインドは nexterm.toml の [[keys]] セクションで管理します。\
-                 設定パネル内では編集できません"
+                "Keybindings are managed under the [[keys]] section of nexterm.toml \
+                 and cannot be edited from this panel."
                     .to_string(),
             );
         }
@@ -1767,16 +1785,16 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
     if let Some(desc) = content_description {
         content.set_description(desc);
     } else if content_children.is_empty() {
-        content.set_description("このカテゴリの詳細はまだ実装されていません");
+        content.set_description("Details for this category are not implemented yet.");
     }
     content.set_children(content_children);
     nodes.push((SETTINGS_CONTENT_ID, content));
 
-    // ===== フォーカス決定 =====
+    // ===== Focus selection =====
     let focus = if matches!(panel.category, SettingsCategory::Font) && panel.font_family_editing {
         SETTINGS_FONT_FAMILY_ID
     } else if matches!(panel.category, SettingsCategory::Window) {
-        // Phase 5-11-6 #6: Window カテゴリは window_field_focus に応じてフィールドに焦点を当てる。
+        // Phase 5-11-6 #6: For the Window category, focus the field selected by `window_field_focus`.
         match panel.window_field_focus {
             0 => SETTINGS_WINDOW_OPACITY_ID,
             1 => SETTINGS_CURSOR_STYLE_ID,
@@ -1786,32 +1804,32 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
             _ => settings_tab_id_at(current_idx),
         }
     } else if matches!(panel.category, SettingsCategory::Profiles) && !panel.profiles.is_empty() {
-        // Phase 5-11-7: Profiles カテゴリでは selected_profile のノードへフォーカス
+        // Phase 5-11-7: focus the `selected_profile` node in the Profiles category.
         settings_profile_item_id(panel.selected_profile.min(panel.profiles.len() - 1))
     } else if matches!(panel.category, SettingsCategory::Ssh)
         && panel.ssh_delete_dialog_open
         && !panel.ssh_hosts.is_empty()
     {
-        // Phase 5-11-8 Step 8-3 (Sub-phase D): 削除確認ダイアログ表示中は、
-        // フォーカスをダイアログ内のアクティブボタン (Confirm/Cancel) に移す。
+        // Phase 5-11-8 Step 8-3 (Sub-phase D): while the delete confirmation dialog is
+        // open, move focus to the active button (Confirm/Cancel) inside the dialog.
         if panel.ssh_delete_dialog_confirm_focused {
             SETTINGS_SSH_DELETE_CONFIRM_BTN_ID
         } else {
             SETTINGS_SSH_DELETE_CANCEL_BTN_ID
         }
     } else if matches!(panel.category, SettingsCategory::Ssh) && panel.ssh_field_focus == 6 {
-        // Phase 5-11-8 Step 8-3 (Sub-phase D): Add ボタンは ssh_hosts.is_empty() でも有効
+        // Phase 5-11-8 Step 8-3 (Sub-phase D): the Add button is active even when ssh_hosts is empty.
         SETTINGS_SSH_ADD_BTN_ID
     } else if matches!(panel.category, SettingsCategory::Ssh)
         && panel.ssh_field_focus == 7
         && !panel.ssh_hosts.is_empty()
     {
-        // Phase 5-11-8 Step 8-3 (Sub-phase D): Delete ボタンは非空時のみフォーカス可能
+        // Phase 5-11-8 Step 8-3 (Sub-phase D): the Delete button is focusable only when the list is non-empty.
         SETTINGS_SSH_DELETE_BTN_ID
     } else if matches!(panel.category, SettingsCategory::Ssh) && !panel.ssh_hosts.is_empty() {
-        // Phase 5-11-8: Ssh カテゴリのフォーカス決定。
-        // ssh_field_focus = 0 → ホストリストの選択中項目
-        // ssh_field_focus = 1..=5 → 各フィールドノード
+        // Phase 5-11-8: focus selection for the Ssh category.
+        // ssh_field_focus = 0 -> selected item of the host list
+        // ssh_field_focus = 1..=5 -> the corresponding field node
         match panel.ssh_field_focus {
             1 => SETTINGS_SSH_FIELD_NAME_ID,
             2 => SETTINGS_SSH_FIELD_HOST_ID,
@@ -1826,11 +1844,11 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
         settings_tab_id_at(current_idx)
     };
 
-    // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): 削除確認ダイアログのノード追加 =====
-    // panel_children に SETTINGS_SSH_DELETE_DIALOG_ID は既に push 済み。ここでは
-    // AlertDialog + Confirm/Cancel 2 ボタン本体を構築する。空リスト時は
-    // 「削除対象なし」のため、`build_settings_panel_nodes` の冒頭で panel_children
-    // に追加しない設計（dialog_open=false 扱い）になっている。
+    // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): build the delete confirmation dialog nodes =====
+    // `SETTINGS_SSH_DELETE_DIALOG_ID` was already pushed into `panel_children`. Here we
+    // build the AlertDialog + Confirm/Cancel buttons. For empty lists there is nothing to
+    // delete, so the top of `build_settings_panel_nodes` deliberately does not add the
+    // dialog id to `panel_children` (treated as dialog_open=false).
     if panel.ssh_delete_dialog_open
         && matches!(panel.category, SettingsCategory::Ssh)
         && !panel.ssh_hosts.is_empty()
@@ -1844,9 +1862,9 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
         };
 
         let mut alert = Node::new(Role::AlertDialog);
-        alert.set_label("ホストを削除しますか？");
+        alert.set_label("Delete this host?");
         alert.set_description(format!(
-            "「{}」を削除します。この操作は取り消せません。",
+            "Delete \"{}\"? This action cannot be undone.",
             target_name
         ));
         alert.set_modal();
@@ -1857,16 +1875,16 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
         nodes.push((SETTINGS_SSH_DELETE_DIALOG_ID, alert));
 
         let mut cancel_btn = Node::new(Role::Button);
-        cancel_btn.set_label("キャンセル");
-        cancel_btn.set_description("Esc または ← → / Tab でフォーカスを切り替え、Enter で確定");
+        cancel_btn.set_label("Cancel");
+        cancel_btn.set_description("Esc / Left / Right / Tab to switch focus; Enter to confirm.");
         if !panel.ssh_delete_dialog_confirm_focused {
             cancel_btn.set_selected(true);
         }
         nodes.push((SETTINGS_SSH_DELETE_CANCEL_BTN_ID, cancel_btn));
 
         let mut confirm_btn = Node::new(Role::Button);
-        confirm_btn.set_label("削除する");
-        confirm_btn.set_description("選択中のホストを完全に削除します");
+        confirm_btn.set_label("Delete");
+        confirm_btn.set_description("Permanently deletes the selected host.");
         if panel.ssh_delete_dialog_confirm_focused {
             confirm_btn.set_selected(true);
         }
@@ -1876,33 +1894,33 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
     (nodes, focus)
 }
 
-/// 更新通知バナーのノードを構築する（Step 2-2-g）。
+/// Build the update notification banner node (Step 2-2-g).
 fn build_update_banner_node(version: &str) -> (NodeId, Node) {
     let mut alert = Node::new(Role::Alert);
-    alert.set_label(format!("新しいバージョンが利用可能です: {}", version));
+    alert.set_label(format!("A new version is available: {}", version));
     (UPDATE_BANNER_ID, alert)
 }
 
-/// SR 向けアラート領域ノード群を構築する（Sprint 5-11-5）。
+/// Build the SR alert region nodes (Sprint 5-11-5).
 ///
-/// ## ツリー構造
+/// ## Tree structure
 ///
 /// ```text
-/// Group "通知" (id=ALERT_REGION_ID, live=Assertive)
-///   ├─ Alert (id=alert_node_id(seq)) "ベル" / "通知: <title>"
-///   │    - value: "<body>" （Bell は空、Notification は本文）
+/// Group "Notifications" (id=ALERT_REGION_ID, live=Assertive)
+///   ├─ Alert (id=alert_node_id(seq)) "Bell" / "Notification: <title>"
+///   │    - value: "<body>" (empty for Bell, body text for Notification)
 ///   ├─ Alert ...
 /// ```
 ///
-/// **Live::Assertive** は領域コンテナに設定する。子ノードが追加されたタイミングで
-/// SR が即座に読み上げる契約（accesskit の標準的な使い方）。
+/// **Live::Assertive** is set on the region container. The accesskit contract is that
+/// SR announces immediately when child nodes are added (this is the standard usage).
 ///
-/// **空キュー時**: `(nodes, ids)` どちらも空を返す。呼び出し側は ALERT_REGION_ID を
-/// ROOT の child に含めない（空のコンテナで SR を混乱させないため）。
+/// **Empty queue**: both `(nodes, ids)` are empty. The caller must not include
+/// ALERT_REGION_ID as a child of ROOT (an empty container would confuse SR).
 ///
-/// 戻り値:
-/// - `nodes`: ALERT_REGION 自身 + 各 Alert ノードのペア（キューが空の場合は空 Vec）
-/// - `region_child_ids`: ALERT_REGION の children に設定する各 Alert NodeId 列
+/// Return value:
+/// - `nodes`: ALERT_REGION itself + each Alert node pair (empty Vec if queue is empty)
+/// - `region_child_ids`: each Alert NodeId to attach to ALERT_REGION's children
 fn build_alert_region_nodes(
     alerts: &std::collections::VecDeque<AlertEntry>,
 ) -> Vec<(NodeId, Node)> {
@@ -1911,25 +1929,25 @@ fn build_alert_region_nodes(
     }
     let mut nodes: Vec<(NodeId, Node)> = Vec::with_capacity(1 + alerts.len());
 
-    // ===== 領域コンテナ =====
+    // ===== Region container =====
     let mut region = Node::new(Role::Group);
-    region.set_label("通知");
-    // Live::Assertive: 新規 Alert ノード追加時に SR が即時アナウンス
+    region.set_label("Notifications");
+    // Live::Assertive: SR announces as soon as a new Alert child is added.
     region.set_live(Live::Assertive);
     let child_ids: Vec<NodeId> = alerts.iter().map(|a| alert_node_id(a.seq)).collect();
     region.set_children(child_ids);
     nodes.push((ALERT_REGION_ID, region));
 
-    // ===== 各 Alert ノード =====
+    // ===== Each Alert node =====
     for alert in alerts {
         let mut node = Node::new(Role::Alert);
-        // ラベル: 種別 + タイトル
+        // Label: kind + title
         let label = match alert.kind {
             AlertKind::Bell => alert.title.clone(),
-            AlertKind::Notification => format!("通知: {}", alert.title),
+            AlertKind::Notification => format!("Notification: {}", alert.title),
         };
         node.set_label(label);
-        // 本文（空でなければ）: SR は description として補足読み上げ
+        // Body (if non-empty): SR reads it as the supplemental description.
         if !alert.body.is_empty() {
             node.set_description(alert.body.clone());
         }
@@ -1939,33 +1957,35 @@ fn build_alert_region_nodes(
     nodes
 }
 
-// ===== Step 2-5: ライブ更新用ステートハッシュ =====
+// ===== Step 2-5: state hash for live updates =====
 
-/// `build_tree_from_state` が読み取る `ClientState` の各フィールドをハッシュ化する。
+/// Hash every field of `ClientState` that `build_tree_from_state` reads.
 ///
-/// **設計方針**:
-/// - `build_tree_from_state` 内で参照される **全フィールド** を反映する（過不足あると
-///   SR が古い情報のまま停まる/逆に過剰更新で重くなる）
-/// - `filtered()` 系メソッドは呼ばない（毎回 alloc + sort で重い）。代わりに `query` /
-///   `selected` / `is_open` などの **入力側** をハッシュする。`actions` / `hosts` /
-///   `macros` の中身自体は実行中ほぼ変化しないため、入力ハッシュで十分検知できる。
-/// - `panes` の反復順序はタブ順序を尊重して決定論的にする（`HashMap` のままだと
-///   毎回ハッシュが変動する）。
+/// **Design policy**:
+/// - Reflect **every field** referenced inside `build_tree_from_state` (under-
+///   counting leaves SR stuck on stale info; over-counting causes excess updates).
+/// - Do not call the `filtered()` family of methods (each call allocates + sorts).
+///   Instead, hash the **inputs**: `query` / `selected` / `is_open`. The actual
+///   contents of `actions` / `hosts` / `macros` rarely change at runtime, so
+///   hashing the inputs is enough to detect changes.
+/// - Iterate `panes` in a deterministic order that respects the tab order
+///   (raw `HashMap` order would cause the hash to flap each call).
 ///
-/// **コスト**: O(panes + overlay 項目数)。100ms スロットリングと組み合わせて使うこと前提。
+/// **Cost**: O(panes + overlay items). Designed to be used together with 100 ms throttling.
 pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
-    /// 単一ペインの「構造に影響する」フィールドをまとめてハッシュする内部ヘルパー。
+    /// Internal helper that hashes the "structure-affecting" fields of a single pane.
     ///
-    /// Sprint 5-11-4 で追加: `cursor_col` / `cursor_row` / `scrollback.len()` / `scroll_offset`
-    /// は AccessKit ツリー構造（TextSelection 位置 / スクロールバック窓スライド範囲）に
-    /// 直接影響するため、これらが変化したら全体再生成が必要。
+    /// Added in Sprint 5-11-4: `cursor_col` / `cursor_row` / `scrollback.len()` /
+    /// `scroll_offset` directly affect the AccessKit tree structure (TextSelection
+    /// position / scrollback window slide range), so when any of them changes the
+    /// whole tree must be rebuilt.
     fn hash_pane(p: &crate::state::PaneState, h: &mut DefaultHasher) {
         p.title.hash(h);
         p.cwd.hash(h);
-        // Sprint 5-11-4: カーソル位置 / スクロールバック構造
+        // Sprint 5-11-4: cursor position / scrollback structure
         p.grid.cursor_col.hash(h);
         p.grid.cursor_row.hash(h);
         p.scrollback.len().hash(h);
@@ -1974,13 +1994,13 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
 
     let mut h = DefaultHasher::new();
 
-    // === 基本（タブ・ペイン） ===
+    // === Base (tabs and panes) ===
     state.tab_order.hash(&mut h);
     state.focused_pane_id.hash(&mut h);
 
-    // panes はタブ順序を尊重して反復（HashMap の非決定的順序回避）。
-    // tab_order が空の場合のフォールバックは `build_base_nodes` と同じく `panes.keys()` だが、
-    // ハッシュの安定性を優先して **ソートしてから** 反復する。
+    // Iterate panes in tab order to avoid HashMap's nondeterministic order.
+    // If `tab_order` is empty we fall back to `panes.keys()` like `build_base_nodes`,
+    // but we **sort** the keys first to keep the hash stable.
     if state.tab_order.is_empty() {
         let mut keys: Vec<u32> = state.panes.keys().copied().collect();
         keys.sort();
@@ -2024,8 +2044,8 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
     }
 
     // === CommandPalette ===
-    // actions / hosts / macros 本体は実行中ほぼ変化しないため、
-    // query / selected の変化のみで十分（filtered() の中身を間接的に追跡できる）。
+    // The bodies of actions / hosts / macros rarely change at runtime, so tracking
+    // `query` / `selected` is enough (indirectly tracks the contents of `filtered()`).
     state.palette.is_open.hash(&mut h);
     if state.palette.is_open {
         state.palette.query.hash(&mut h);
@@ -2050,36 +2070,37 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
     state.settings_panel.is_open.hash(&mut h);
     if state.settings_panel.is_open {
         let p = &state.settings_panel;
-        // SettingsCategory は Hash 未実装のため label() 文字列で代用
+        // SettingsCategory does not implement Hash; substitute its label() string.
         p.category.label().hash(&mut h);
-        // build_settings_panel_nodes が読む現在カテゴリのフィールドをすべてハッシュする
-        // （カテゴリ切替時にフィールド集合が変わるため全反映）
+        // Hash every field that `build_settings_panel_nodes` reads for the current
+        // category (the field set differs per category, so reflect them all).
         p.font_family.hash(&mut h);
         p.font_family_editing.hash(&mut h);
-        // f32 は Hash 未実装。to_bits() で u32 化してハッシュする
+        // f32 does not implement Hash; convert to u32 via to_bits() and hash that.
         p.font_size.to_bits().hash(&mut h);
         p.opacity.to_bits().hash(&mut h);
         p.scheme_index.hash(&mut h);
         p.language_index.hash(&mut h);
         p.auto_check_update.hash(&mut h);
-        // Phase 5-11-6 #6: Window カテゴリの 4 新フィールド + フィールドフォーカス
-        // window_field_focus はフォーカス変化のみ生じても tree update が必要
+        // Phase 5-11-6 #6: 4 new Window category fields + field focus.
+        // window_field_focus needs a tree update even when only the focus changes.
         p.window_field_focus.hash(&mut h);
-        // CursorStyle / PresentModeConfig は Hash 未実装なので toml_key 文字列で代用
+        // CursorStyle / PresentModeConfig do not implement Hash; use their toml_key strings.
         p.cursor_style_toml_key().hash(&mut h);
         p.present_mode_toml_key().hash(&mut h);
         p.padding_x.hash(&mut h);
         p.padding_y.hash(&mut h);
-        // Phase 5-11-7: Profiles カテゴリ用に selected_profile + profiles の要素数 +
-        // 各 ProfileEntry の name / icon を反映する。
+        // Phase 5-11-7: for the Profiles category, reflect selected_profile + the
+        // number of profiles + each ProfileEntry's name / icon.
         p.selected_profile.hash(&mut h);
         p.profiles.len().hash(&mut h);
         for prof in &p.profiles {
             prof.name.hash(&mut h);
             prof.icon.hash(&mut h);
         }
-        // Phase 5-11-8 Step 8-1 / 8-2: Ssh カテゴリ用に selected_host_index + ssh_hosts の
-        // 要素数 + 各 SshHostEntry の表示ラベルに影響するフィールド + ssh_field_focus を反映。
+        // Phase 5-11-8 Step 8-1 / 8-2: for the Ssh category, reflect
+        // selected_host_index + the number of ssh_hosts + each SshHostEntry's
+        // label-affecting fields + ssh_field_focus.
         p.selected_host_index.hash(&mut h);
         p.ssh_field_focus.hash(&mut h);
         p.ssh_hosts.len().hash(&mut h);
@@ -2090,27 +2111,28 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
             host.username.hash(&mut h);
             host.auth_type.hash(&mut h);
         }
-        // Phase 5-11-8 Step 8-3 (Sub-phase A): GUI 編集中バッファの変化を SR ツリーに
-        // ライブ反映するため、編集中なら buffer / cursor / preedit をハッシュへ。
+        // Phase 5-11-8 Step 8-3 (Sub-phase A): to live-reflect the in-progress GUI
+        // editing buffer in the SR tree, hash buffer / cursor / preedit while editing.
         if let Some(state) = &p.ssh_field_editing {
             state.buffer.hash(&mut h);
             state.cursor.hash(&mut h);
             state.preedit.hash(&mut h);
         } else {
-            // 編集モード OFF → 0 をハッシュ（ON/OFF 変化も検出するため）
+            // Editing mode OFF -> hash 0 (so ON/OFF transitions are also detected).
             0u8.hash(&mut h);
         }
-        // Phase 5-11-8 Step 8-3 (Sub-phase D): 削除確認ダイアログの開閉とボタン
-        // フォーカス変化を SR ツリーへ伝播。Add/Delete ボタンのフォーカス変化は
-        // 既存の `ssh_field_focus` で、ssh_hosts 追加/削除は既存の `ssh_hosts.len()`
-        // と各 host フィールドハッシュで既に反映済み。
+        // Phase 5-11-8 Step 8-3 (Sub-phase D): propagate open/close of the delete
+        // confirmation dialog and the button focus change. Add/Delete button focus
+        // changes are tracked via the existing `ssh_field_focus`; ssh_hosts
+        // additions/removals are already covered by `ssh_hosts.len()` and each
+        // per-host field hash.
         p.ssh_delete_dialog_open.hash(&mut h);
         p.ssh_delete_dialog_confirm_focused.hash(&mut h);
     }
 
-    // === Quick Select（Step 2-2-h）===
-    // typed_label 変化でフォーカス先の選択状態が変わるため必須。
-    // matches.len() + 各 label / text を反映してマッチ集合の変化（enter() 時）も検知する。
+    // === Quick Select (Step 2-2-h) ===
+    // Required because typed_label changes which item is selected.
+    // Reflect matches.len() + each label / text so changes to the match set (on enter()) are detected too.
     state.quick_select.is_active.hash(&mut h);
     if state.quick_select.is_active {
         state.quick_select.typed_label.hash(&mut h);
@@ -2121,13 +2143,13 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
         }
     }
 
-    // === update_banner（非モーダル）===
+    // === update_banner (non-modal) ===
     state.update_banner.hash(&mut h);
 
-    // === SR アラート（Sprint 5-11-5）===
-    // 長さ + 各 seq + kind を反映。kind は `as u8` でハッシュ可能化。
-    // body / title はキュー追加時に固定なので seq の変化だけで十分追跡できる（同じ seq に
-    // 対して title/body が後から書き換わることはない）。
+    // === SR alerts (Sprint 5-11-5) ===
+    // Reflect length + each seq + kind. `kind` becomes hashable via `as u8`.
+    // body / title are immutable once an entry is queued, so tracking `seq` is enough
+    // (title/body for the same seq are never rewritten later).
     state.alerts.len().hash(&mut h);
     for entry in &state.alerts {
         entry.seq.hash(&mut h);
