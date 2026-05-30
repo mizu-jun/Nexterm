@@ -1,15 +1,16 @@
-//! winit イベントハンドラ
+//! winit event handler.
 //!
-//! Sprint 5-6 で旧 `event_handler.rs`（1,318 行）を 7 サブモジュールに分割：
-//! - `consent` — Sprint 4-1 機密操作の同意フロー
-//! - `settings_panel_hit` — 設定パネルのマウスヒットテスト
+//! Sprint 5-6 split the former `event_handler.rs` (1,318 lines) into seven submodules:
+//! - `consent` — Sprint 4-1 consent flow for sensitive operations
+//! - `settings_panel_hit` — settings-panel mouse hit-test
 //! - `lifecycle` — `new_events` / `resumed` / `about_to_wait`
-//! - `window` — ウィンドウ・IME・再描画イベント
-//! - `mouse` — カーソル移動・クリック・ホイール
-//! - `keyboard` — キー入力
+//! - `window` — window / IME / redraw events
+//! - `mouse` — cursor move / click / wheel
+//! - `keyboard` — key input
 //!
-//! 各サブモジュールは `impl EventHandler` ブロックを介して機能を追加する。
-//! 本ファイルは `EventHandler` 構造体と `ApplicationHandler` トレイト実装（dispatch のみ）を保持する。
+//! Each submodule extends behavior via an `impl EventHandler` block. This file
+//! holds the `EventHandler` struct and the `ApplicationHandler` trait
+//! implementation (dispatch only).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -31,53 +32,57 @@ use crate::glyph_atlas::GlyphAtlas;
 
 use super::{ClientWindow, NextermApp, PerWindowViewState, WgpuState};
 
-/// EventLoop に送る非同期ユーザーイベント（Sprint 5-8 Phase 4-4 / Sprint 5-11-1）。
+/// Asynchronous user event sent to the EventLoop (Sprint 5-8 Phase 4-4 / Sprint 5-11-1).
 ///
-/// マウスハンドラやネットワーク受信スレッドから `&ActiveEventLoop` を持たない
-/// コンテキストで「OS Window をスポーン/クローズしたい」要求を出すために使う。
-/// `EventLoopProxy::send_event(...)` で発火すると、次回 winit イベントループが
-/// `user_event` ハンドラを呼び、`&ActiveEventLoop` 付きの安全な文脈で処理できる。
+/// Used to issue "spawn/close an OS window" requests from contexts that do not
+/// hold `&ActiveEventLoop`, such as mouse handlers or the network receive
+/// thread. Firing one via `EventLoopProxy::send_event(...)` causes the next
+/// winit event-loop iteration to invoke `user_event`, where processing can
+/// safely happen with `&ActiveEventLoop` in hand.
 ///
-/// Sprint 5-11-1 で `Accessibility` バリアントを追加。`accesskit_winit::Adapter::new`
-/// は `EventLoopProxy<T: From<accesskit_winit::Event>>` を要求するため、`From` impl
-/// を提供する（後述）。`InitialTreeRequested` / `ActionRequested` / `AccessibilityDeactivated`
-/// の 3 種が `accesskit_winit::WindowEvent` に格納されて届く。
+/// Sprint 5-11-1 added the `Accessibility` variant. Because
+/// `accesskit_winit::Adapter::new` requires
+/// `EventLoopProxy<T: From<accesskit_winit::Event>>`, a `From` impl is provided
+/// below. The three event kinds delivered as `accesskit_winit::WindowEvent`
+/// are `InitialTreeRequested` / `ActionRequested` / `AccessibilityDeactivated`.
 ///
-/// `Clone` は派生しない（`accesskit_winit::Event` がクローン不能で、UserEvent のクローン需要も無い）。
+/// `Clone` is intentionally not derived (`accesskit_winit::Event` is not
+/// clonable, and there is no need to clone UserEvent).
 #[derive(Debug)]
 pub enum UserEvent {
-    /// 新規 OS Window を生成し、サーバー Window ID に紐付ける。
+    /// Spawn a new OS window and tie it to a server-side window ID.
     ///
-    /// - `server_window_id`: アタッチするサーバー側 Window ID
-    /// - `pos`: 新規 Window の希望位置（`None` なら winit のデフォルト配置）
+    /// - `server_window_id`: the server-side window ID to attach to
+    /// - `pos`: desired position for the new window (`None` uses winit's default placement)
     SpawnOsWindow {
         server_window_id: u32,
         pos: Option<PhysicalPosition<i32>>,
     },
-    /// 指定 OS Window を閉じる。最後の 1 個ならアプリ全体を exit する。
+    /// Close the specified OS window. If it is the last one, exit the entire app.
     ///
-    /// Phase 4-4 時点では現状 `on_close_requested` で全 OS Window を一括破棄するため
-    /// 直接の発火経路がない（dead_code 警告抑制）。Phase 4-5 でコンテキストメニュー
-    /// 「この Window だけ閉じる」アクションから発火する予定。
+    /// As of Phase 4-4, `on_close_requested` destroys all OS windows in bulk,
+    /// so there is no direct firing path (suppress the dead_code warning).
+    /// Phase 4-5 plans to fire this from the context-menu "Close this window
+    /// only" action.
     #[allow(dead_code)]
     CloseOsWindow { window_id: WindowId },
-    /// Sprint 5-11-1 / H1 PoC: AccessKit プラットフォームアダプタからのイベント。
+    /// Sprint 5-11-1 / H1 PoC: event from the AccessKit platform adapter.
     ///
-    /// スクリーンリーダーが接続したとき（`InitialTreeRequested`）や、ユーザーが
-    /// スクリーンリーダー側で操作したとき（`ActionRequested`）、または接続が
-    /// 切れたとき（`AccessibilityDeactivated`）に届く。
+    /// Delivered when a screen reader connects (`InitialTreeRequested`), when
+    /// the user acts via the screen reader (`ActionRequested`), or when the
+    /// connection is lost (`AccessibilityDeactivated`).
     Accessibility(accesskit_winit::Event),
 }
 
-/// `accesskit_winit::Adapter::new` の型境界 `T: From<accesskit_winit::Event>` を満たすための impl。
-/// Sprint 5-11-1 で追加。
+/// impl that satisfies the `T: From<accesskit_winit::Event>` bound required by
+/// `accesskit_winit::Adapter::new`. Added in Sprint 5-11-1.
 impl From<accesskit_winit::Event> for UserEvent {
     fn from(event: accesskit_winit::Event) -> Self {
         UserEvent::Accessibility(event)
     }
 }
 
-// ---- サブモジュール ----
+// ---- submodules ----
 mod accessibility;
 mod consent;
 mod keyboard;
@@ -86,107 +91,120 @@ mod mouse;
 mod settings_panel_hit;
 mod window;
 
-/// winit のイベントハンドラ
+/// winit event handler.
 pub struct EventHandler {
     pub(super) app: NextermApp,
     pub(super) wgpu_state: Option<WgpuState>,
     pub(super) atlas: Option<GlyphAtlas>,
     pub(super) window: Option<Arc<Window>>,
     pub(super) modifiers: ModifiersState,
-    /// サーバーとの IPC 接続
+    /// IPC connection to the server.
     pub(super) connection: Option<Connection>,
-    /// マウスカーソル位置（ピクセル）
+    /// Mouse cursor position (in pixels).
     pub(super) cursor_position: Option<(f64, f64)>,
-    /// 設定ホットリロード受信チャネル
+    /// Receive channel for config hot-reload.
     pub(super) config_rx: Option<tokio::sync::mpsc::Receiver<Config>>,
-    /// ファイル監視ウォッチャー（Drop されると停止するため保持する）
+    /// File-watcher handle (held so it is not stopped on drop).
     pub(super) _config_watcher: Option<notify::RecommendedWatcher>,
-    /// Lua ステータスバー評価器
+    /// Lua status-bar evaluator.
     pub(super) status_eval: Option<StatusBarEvaluator>,
-    /// ステータスバーの最終評価時刻
+    /// Last time the status bar was evaluated.
     pub(super) last_status_eval: Instant,
-    /// ディスプレイの DPI スケール係数（winit より取得）
+    /// Display DPI scale factor (obtained from winit).
     pub(super) scale_factor: f32,
-    /// シェーダーファイル変更通知チャネル（Some = カスタムシェーダー監視中）
+    /// Shader-file change notification channel (`Some` = watching custom shaders).
     pub(super) shader_reload_rx: Option<tokio::sync::mpsc::Receiver<()>>,
-    /// シェーダーファイル監視ウォッチャー
+    /// Shader-file watcher handle.
     pub(super) _shader_watcher: Option<notify::RecommendedWatcher>,
-    /// タブのダブルクリック検出用（最終クリック時刻とペイン ID）
+    /// Tab double-click detection (last click time and pane ID).
     pub(super) last_tab_click: Option<(Instant, u32)>,
-    /// 内部サーバータスクのハンドル（ウィンドウ終了時に abort する）
+    /// Handle to the embedded server task (aborted on window exit).
     pub(super) server_handle: tokio::task::JoinHandle<()>,
-    /// タッチパッド精密スクロール（PixelDelta）の積算バッファ
+    /// Accumulator buffer for touchpad precision scroll (PixelDelta).
     pub(super) pixel_scroll_accumulator: f64,
-    /// 更新チェッカーからの通知受信チャネル（Some(version) = 新バージョンあり）
+    /// Receive channel for notifications from the update checker
+    /// (`Some(version)` = new version available).
     pub(super) update_rx: tokio::sync::watch::Receiver<Option<String>>,
-    /// Quake モード ランタイム（Sprint 5-7 / Phase 2-2）。
-    /// global-hotkey マネージャを drop しないように保持する。
-    /// `pending_quake_action` (state) と組み合わせてホットキー押下 / IPC 経由の
-    /// トグル要求を一元処理する。
+    /// Quake-mode runtime (Sprint 5-7 / Phase 2-2).
+    /// Held so the global-hotkey manager is not dropped.
+    /// Combined with `pending_quake_action` (state) to centralize handling of
+    /// hotkey presses and toggle requests via IPC.
     pub(super) quake: crate::quake::QuakeRuntime,
-    /// 複数 OS Window 対応用 HashMap（Sprint 5-8 Phase 4-1 Step 1.2 スケルトン）。
+    /// HashMap for multi-OS-window support (Sprint 5-8 Phase 4-1 Step 1.2 skeleton).
     ///
-    /// 現状は空のまま保持。Step 1.3 以降で `on_resumed` フローを移行し、
-    /// `windows` に登録した `ClientWindow` を一次データソースとする。
-    /// 移行完了までは既存の `window` / `wgpu_state` / `atlas` フィールドが
-    /// 一次データソース。
+    /// Currently kept empty. From Step 1.3 onward the `on_resumed` flow will
+    /// migrate to use `ClientWindow` entries in `windows` as the primary data
+    /// source. Until the migration is complete, the existing `window` /
+    /// `wgpu_state` / `atlas` fields remain the primary data source.
     pub(super) windows: HashMap<WindowId, ClientWindow>,
-    /// EventLoopProxy<UserEvent>（Sprint 5-8 Phase 4-4）。
-    /// マウスハンドラやネットワークスレッドから `UserEvent::SpawnOsWindow` 等を発火する。
+    /// `EventLoopProxy<UserEvent>` (Sprint 5-8 Phase 4-4).
+    /// Used to fire `UserEvent::SpawnOsWindow` and similar from mouse handlers
+    /// or network threads.
     pub(super) proxy: EventLoopProxy<UserEvent>,
-    /// `WindowListChanged` 受信時に「新規 OS Window スポーン要求」を判定するための既知 Window ID 集合
-    /// （Sprint 5-8 Phase 4-4 Step C）。サーバーから通知された Window 集合との差分を取り、
-    /// クライアントが知らない Window があれば `pending_new_window_drop_pos` の位置に OS Window を
-    /// スポーンする。
+    /// Set of known window IDs, used on receipt of `WindowListChanged` to
+    /// decide whether a "spawn new OS window" request should fire
+    /// (Sprint 5-8 Phase 4-4 Step C). Diff against the window set notified by
+    /// the server: if the client does not know about a window, spawn an OS
+    /// window at the position in `pending_new_window_drop_pos`.
     pub(super) known_server_window_ids: std::collections::HashSet<u32>,
-    /// タブ外ドロップで新規 OS Window 生成を要求した際のドロップ位置（Sprint 5-8 Phase 4-4）。
-    /// `WindowListChanged` で新しい Window ID を検出したとき、その位置に OS Window をスポーンする。
-    /// 一度消費したら `None` に戻す。
+    /// Drop position when a drop outside the tab bar requested a new OS window
+    /// (Sprint 5-8 Phase 4-4). When a new window ID is detected via
+    /// `WindowListChanged`, an OS window is spawned at this position. Set back
+    /// to `None` once consumed.
     pub(super) pending_new_window_drop_pos: Option<PhysicalPosition<i32>>,
-    /// Sprint 5-11-1 / H1 PoC: AccessKit プラットフォームアダプタ（主 Window 用）。
+    /// Sprint 5-11-1 / H1 PoC: AccessKit platform adapter (for the primary window).
     ///
-    /// `on_resumed` で主 Window 作成時に初期化する。スクリーンリーダーが接続すると
-    /// `InitialTreeRequested` イベントが `user_event` 経由で届き、`update_if_active` で
-    /// ノードツリーを返す。Phase 5-11-2 以降で全 OS Window 対応に拡張する。
+    /// Initialized in `on_resumed` when the primary window is created. When a
+    /// screen reader connects, the `InitialTreeRequested` event arrives via
+    /// `user_event`, and `update_if_active` returns the node tree. From Phase
+    /// 5-11-2 onward this expands to support all OS windows.
     pub(super) accesskit_adapter: Option<accesskit_winit::Adapter>,
-    /// Sprint 5-11-2 Step 2-5: AccessKit ツリーの最終更新時刻（100ms スロットリング用）。
+    /// Sprint 5-11-2 Step 2-5: timestamp of the last AccessKit tree update
+    /// (for 100 ms throttling).
     ///
-    /// `on_about_to_wait` 末尾の `update_accesskit_tree_if_needed` で参照・更新する。
-    /// `None` の場合は次回の `about_to_wait` で必ず更新を試行する。
+    /// Read and updated by `update_accesskit_tree_if_needed` at the end of
+    /// `on_about_to_wait`. When `None`, the next `about_to_wait` always tries
+    /// to update.
     pub(super) last_tree_update_at: Option<Instant>,
-    /// Sprint 5-11-2 Step 2-5: 直近送出した `ClientState` のステートハッシュ。
+    /// Sprint 5-11-2 Step 2-5: state hash of the most recently sent `ClientState`.
     ///
-    /// `compute_tree_state_hash(&state)` の結果と比較し、変化があったときのみ
-    /// `update_if_active` を呼ぶ。`None` の場合は初回送出を強制する。
+    /// Compared against the result of `compute_tree_state_hash(&state)`; calls
+    /// `update_if_active` only when the value has changed. When `None`, force
+    /// the initial send.
     pub(super) last_tree_hash: Option<u64>,
-    /// Sprint 5-11-3: 各ペインのグリッド行ハッシュキャッシュ。
+    /// Sprint 5-11-3: cache of grid-row hashes per pane.
     ///
-    /// `compute_tree_state_hash` は構造変化（タブ・ペイン・オーバーレイ）のみ追跡するため、
-    /// ターミナル本文の出力差分は本フィールドで別途検知する。`update_accesskit_tree_if_needed`
-    /// 内で毎スロットルごとに `compute_grid_row_hashes` を計算して比較する。
+    /// `compute_tree_state_hash` tracks only structural changes (tabs, panes,
+    /// overlays), so output differences in the terminal body are detected
+    /// separately via this field. `update_accesskit_tree_if_needed` computes
+    /// `compute_grid_row_hashes` on each throttle tick and compares.
     pub(super) last_grid_row_hashes: std::collections::HashMap<u32, Vec<u64>>,
 }
 
 impl EventHandler {
-    /// 新規 OS Window を生成し、`windows` HashMap に登録する（Sprint 5-8 Phase 4-4 本実装）。
+    /// Spawn a new OS window and register it in the `windows` HashMap
+    /// (Sprint 5-8 Phase 4-4 real implementation).
     ///
-    /// `on_resumed` の主 Window 生成フローと同じパターンで:
-    /// 1. winit `Window` を `event_loop.create_window(...)` で生成
-    /// 2. `WgpuState::new` で wgpu パイプラインを初期化（背景画像も同時にロード）
-    /// 3. `PerWindowViewState { focused_server_window_id, .. Default::default() }` を作成
-    /// 4. `ClientWindow` を組み立てて `self.windows.insert(window_id, ...)`
+    /// Same pattern as the primary-window flow in `on_resumed`:
+    /// 1. Create a winit `Window` via `event_loop.create_window(...)`.
+    /// 2. Initialize the wgpu pipeline with `WgpuState::new` (also loads the background image).
+    /// 3. Build a `PerWindowViewState { focused_server_window_id, .. Default::default() }`.
+    /// 4. Assemble a `ClientWindow` and run `self.windows.insert(window_id, ...)`.
     ///
-    /// 引数:
-    /// - `event_loop`: winit `ActiveEventLoop`（Window 生成に必要）
-    /// - `pos`: 新規 Window のスクリーン位置。`None` の場合は winit のデフォルト配置
-    /// - `server_window_id`: 新規 Window が表示するサーバー Window ID（`view_state` に格納）
+    /// Arguments:
+    /// - `event_loop`: winit `ActiveEventLoop` (required to create the window).
+    /// - `pos`: screen position for the new window. When `None`, use winit's default placement.
+    /// - `server_window_id`: server-side window ID this new window will display (stored in `view_state`).
     ///
-    /// 戻り値: 生成された Window の `WindowId`。Window 作成または wgpu 初期化失敗時は `None`。
+    /// Returns: the new window's `WindowId`. Returns `None` on window-creation or wgpu-init failure.
     ///
-    /// **注意**: グリフアトラス・フォント・サーバー接続は EventHandler レベルで共有しているため、
-    /// 新規 OS Window は既存のサーバー接続（`self.connection`）を介してメッセージを受信する。
-    /// `connection.send_tx` でのアタッチ要求は本関数の呼び出し側（[[project_sprint5_8_phase4_3_progress]] の
-    /// `MovePaneToWindow` 経路）でサーバーが既に行っているため、ここでは送らない。
+    /// **Note**: the glyph atlas, font, and server connection are shared at the
+    /// EventHandler level, so the new OS window receives messages over the
+    /// existing server connection (`self.connection`). The attach request via
+    /// `connection.send_tx` is already issued by the call site (the
+    /// `MovePaneToWindow` path in
+    /// [[project_sprint5_8_phase4_3_progress]]), so this function does not
+    /// send it.
     pub(super) fn spawn_os_window(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -199,8 +217,8 @@ impl EventHandler {
         let transparent = win_cfg.background_opacity < 1.0;
         let decorations = !matches!(win_cfg.decorations, WindowDecorations::None);
 
-        // Sprint 5-11-2 Step 2-3: AccessKit Adapter は Window を可視化する **前** に作成する。
-        // `on_resumed` と同じ `with_visible(false)` → Adapter 初期化 → `set_visible(true)` シーケンス。
+        // Sprint 5-11-2 Step 2-3: the AccessKit Adapter must be created **before** the window is made visible.
+        // Same `with_visible(false)` → Adapter init → `set_visible(true)` sequence as `on_resumed`.
         let mut attrs = Window::default_attributes()
             .with_title(format!("Nexterm - Window {}", server_window_id))
             .with_inner_size(PhysicalSize::new(1280u32, 800u32))
@@ -214,37 +232,37 @@ impl EventHandler {
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
             Err(e) => {
-                warn!("新規 OS Window の作成に失敗: {}", e);
+                warn!("Failed to create new OS window: {}", e);
                 return None;
             }
         };
         window.set_ime_allowed(true);
 
-        // Sprint 5-11-2 Step 2-3: 新規 OS Window 用の AccessKit Adapter を初期化（可視化前）。
+        // Sprint 5-11-2 Step 2-3: initialize the AccessKit Adapter for the new OS window (before visibility).
         let accesskit_adapter = accesskit_winit::Adapter::with_event_loop_proxy(
             event_loop,
             &window,
             self.proxy.clone(),
         );
         info!(
-            "新規 OS Window 用 AccessKit Adapter を初期化 (window_id={:?})",
+            "Initialized AccessKit Adapter for new OS window (window_id={:?})",
             window.id()
         );
 
-        // wgpu を非同期で初期化する（tokio runtime が必要）
+        // Initialize wgpu asynchronously (requires a tokio runtime).
         let mut wgpu_state = match tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current()
                 .block_on(WgpuState::new(Arc::clone(&window), &self.app.config.gpu))
         }) {
             Ok(s) => s,
             Err(e) => {
-                warn!("新規 OS Window の wgpu 初期化に失敗: {}", e);
+                warn!("wgpu initialization failed for new OS window: {}", e);
                 return None;
             }
         };
         wgpu_state.load_background(&self.app.config.window);
 
-        // Adapter 初期化が完了したので Window を可視化する
+        // Adapter initialization is complete, so make the window visible.
         window.set_visible(true);
 
         let window_id = window.id();
@@ -264,49 +282,52 @@ impl EventHandler {
         );
 
         info!(
-            "spawn_os_window: 新規 OS Window 生成 (window_id={:?}, server_window_id={}, pos={:?})",
+            "spawn_os_window: created new OS window (window_id={:?}, server_window_id={}, pos={:?})",
             window_id, server_window_id, pos
         );
 
-        // 即時 1 フレーム描画を要求
+        // Request an immediate first-frame redraw.
         window.request_redraw();
         Some(window_id)
     }
 
-    /// 指定 `WindowId` の OS Window を破棄する（Sprint 5-8 Phase 4-4 本実装）。
+    /// Destroy the OS window with the given `WindowId`
+    /// (Sprint 5-8 Phase 4-4 real implementation).
     ///
-    /// 動作:
-    /// 1. `self.windows` から該当 `ClientWindow` を取り出して drop（wgpu surface / Window 解放）
-    /// 2. 主 Window が閉じられたかを判定
-    /// 3. **すべての OS Window が閉じられた**場合のみ、サーバータスクを abort して `event_loop.exit()`
-    ///    （単一の追加 Window 閉鎖ではアプリ継続）
+    /// Behavior:
+    /// 1. Take the matching `ClientWindow` out of `self.windows` and drop it
+    ///    (releasing the wgpu surface and the window).
+    /// 2. Determine whether the primary window was closed.
+    /// 3. Only when **all OS windows have been closed**, abort the server task
+    ///    and call `event_loop.exit()`. The app keeps running when only a
+    ///    single additional window is closed.
     ///
-    /// 引数:
-    /// - `event_loop`: 最後の Window 閉鎖時の `exit()` 呼び出しに使用
-    /// - `window_id`: 破棄する Window の ID
+    /// Arguments:
+    /// - `event_loop`: used to call `exit()` when the last window closes.
+    /// - `window_id`: ID of the window to destroy.
     pub(super) fn close_os_window(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId) {
         let removed = self.windows.remove(&window_id);
         if removed.is_some() {
             info!(
-                "close_os_window: OS Window を破棄 (window_id={:?})",
+                "close_os_window: destroyed OS window (window_id={:?})",
                 window_id
             );
         }
 
-        // 主 Window が閉じられたか
+        // Was the primary window closed?
         let main_closed = self
             .window
             .as_ref()
             .map(|w| w.id() == window_id)
             .unwrap_or(true);
 
-        // 主 Window が閉じられた場合は主 Window 参照もクリア
+        // If the primary window was closed, also clear its reference.
         if main_closed && self.window.as_ref().map(|w| w.id()) == Some(window_id) {
             self.window = None;
             self.wgpu_state = None;
         }
 
-        // 全 OS Window が閉じられたら exit
+        // Exit when all OS windows have been closed.
         if self.windows.is_empty() && self.window.is_none() {
             self.connection = None;
             self.server_handle.abort();
@@ -328,10 +349,11 @@ impl ApplicationHandler<UserEvent> for EventHandler {
         self.on_about_to_wait(event_loop);
     }
 
-    /// `UserEvent` 経由のリクエストを処理する（Sprint 5-8 Phase 4-4）。
+    /// Process requests delivered via `UserEvent` (Sprint 5-8 Phase 4-4).
     ///
-    /// マウスハンドラやネットワーク受信スレッドが `&ActiveEventLoop` を持たない
-    /// 文脈で発火した OS Window 操作要求を、ここで `&ActiveEventLoop` 付きで実行する。
+    /// OS-window operations fired from mouse handlers or the network receive
+    /// thread (which do not hold `&ActiveEventLoop`) are executed here with
+    /// `&ActiveEventLoop` in hand.
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
             UserEvent::SpawnOsWindow {
@@ -343,8 +365,8 @@ impl ApplicationHandler<UserEvent> for EventHandler {
             UserEvent::CloseOsWindow { window_id } => {
                 self.close_os_window(event_loop, window_id);
             }
-            // Sprint 5-11-1 / H1 PoC: AccessKit イベント
-            // Sprint 5-11-2 Step 2-4: ActionRequested ディスパッチのため event_loop を渡す
+            // Sprint 5-11-1 / H1 PoC: AccessKit event.
+            // Sprint 5-11-2 Step 2-4: pass event_loop along to dispatch ActionRequested.
             UserEvent::Accessibility(ak_event) => {
                 self.on_accesskit_event(ak_event, event_loop);
             }
@@ -357,15 +379,16 @@ impl ApplicationHandler<UserEvent> for EventHandler {
         window_id: WindowId,
         event: WindowEvent,
     ) {
-        // Sprint 5-11-1 / H1 PoC + Step 2-3: AccessKit Adapter にウィンドウイベントを転送する。
-        // フォーカス変更・カーソル移動などはアダプタ側でハンドリングされ、
-        // 必要に応じてプラットフォーム a11y イベントとして発火される。
-        // 描画イベントなど accesskit が無視するイベントもあるが、`process_event`
-        // 内で振り分けられるため毎イベントに対して安全に呼び出してよい。
+        // Sprint 5-11-1 / H1 PoC + Step 2-3: forward window events to the AccessKit Adapter.
+        // Focus changes, cursor moves, and similar are handled inside the
+        // adapter and fired as platform a11y events when needed. Some events
+        // such as redraws are ignored by accesskit, but `process_event`
+        // dispatches them appropriately, so it is safe to call on every event.
         //
-        // Step 2-3 で複数 OS Window 対応: window_id から該当 Adapter を引く。
-        // - 主 Window: `self.window` の ID と一致 → `self.accesskit_adapter`
-        // - 追加 Window: `self.windows[window_id].accesskit_adapter`
+        // Step 2-3 added multi-OS-window support: look up the appropriate
+        // Adapter from `window_id`.
+        // - Primary window: matches `self.window`'s ID → `self.accesskit_adapter`.
+        // - Additional windows: `self.windows[window_id].accesskit_adapter`.
         let is_main = self.window.as_ref().map(|w| w.id()) == Some(window_id);
         if is_main {
             if let (Some(adapter), Some(window)) =
@@ -431,7 +454,7 @@ impl ApplicationHandler<UserEvent> for EventHandler {
             _ => {}
         }
 
-        // 毎フレーム再描画をリクエストする
+        // Request a redraw every frame.
         if let Some(w) = &self.window {
             w.request_redraw();
         }

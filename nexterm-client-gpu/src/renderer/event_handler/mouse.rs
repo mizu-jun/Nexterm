@@ -1,10 +1,10 @@
-//! winit `WindowEvent` のうちマウス関連ハンドラ
+//! Mouse-related handlers among `winit::WindowEvent` variants.
 //!
-//! `event_handler.rs` から抽出した:
+//! Extracted from `event_handler.rs`:
 //! - `on_cursor_moved`
-//! - `on_mouse_right_pressed` — コンテキストメニュー表示
-//! - `on_mouse_left_pressed` — タブクリック / 設定パネル / 選択開始
-//! - `on_mouse_left_released` — 選択確定・クリップボードコピー・URL オープン・フォーカス切替
+//! - `on_mouse_right_pressed` — show the context menu
+//! - `on_mouse_left_pressed` — tab clicks / settings panel / start selection
+//! - `on_mouse_left_released` — finalize selection / clipboard copy / open URL / focus switch
 //! - `on_mouse_wheel`
 
 use std::sync::Arc;
@@ -18,21 +18,23 @@ use super::settings_panel_hit::SettingsPanelHit;
 use crate::state::ContextMenu;
 use crate::vertex_util::visual_width;
 
-/// タブドラッグの新順序を計算する（Sprint 5-7 / Phase 2-3）。
+/// Compute the new tab order after a drag (Sprint 5-7 / Phase 2-3).
 ///
-/// `current` から `dragged_id` を取り出し、`target_id` の位置に挿入する。
-/// 挙動: 「ターゲットタブの位置に dragged を押し込む」モデル。
+/// Take `dragged_id` out of `current` and insert it at the position of
+/// `target_id`. Behavior: "push the dragged tab into the target tab's spot."
 ///
-/// - `from < target_pos`（右へ移動）: dragged を取り除くと target が 1 つ左にズレるため、
-///   `insert_at = target_pos - 1` で「元の target_pos」と同じ表示位置に着地する。
-/// - `from > target_pos`（左へ移動）: dragged の削除は target に影響しないため、
-///   `insert_at = target_pos` で target を右に 1 つ押し出す。
+/// - `from < target_pos` (moving right): removing `dragged` shifts `target`
+///   left by one, so `insert_at = target_pos - 1` lands at the same on-screen
+///   position as the original `target_pos`.
+/// - `from > target_pos` (moving left): removing `dragged` does not affect
+///   `target`, so `insert_at = target_pos` pushes `target` one slot to the right.
 ///
-/// 隣接 swap（`|from - target_pos| == 1` のうち右ドラッグ）は本モデルでは結果が元と
-/// 同一になり `None` を返す（往復不要）。左右判定が必要な場合は将来 `hover_target` を
-/// `(pane_id, Before/After)` に拡張すること。
+/// In an adjacent right-drag swap (`|from - target_pos| == 1`), this model
+/// produces a result identical to the original and returns `None` (avoiding a
+/// pointless round trip). If left/right disambiguation is needed in the future,
+/// extend `hover_target` to `(pane_id, Before/After)`.
 ///
-/// `current` に `dragged_id` または `target_id` が含まれない場合は `None`。
+/// Returns `None` when `current` does not contain `dragged_id` or `target_id`.
 pub(super) fn compute_reordered_tab_order(
     current: &[u32],
     dragged_id: u32,
@@ -60,29 +62,36 @@ pub(super) fn compute_reordered_tab_order(
 }
 
 impl EventHandler {
-    /// タブバー外でドロップされた場合の処理（Sprint 5-8 Phase 4-2）。
+    /// Handle a drop that landed outside the tab bar (Sprint 5-8 Phase 4-2).
     ///
-    /// `drag.current_screen_pos` と現在登録されている全 OS Window の bounds から
-    /// `compute_drop_target` を呼んでドロップ先を判定する:
+    /// Call `compute_drop_target` with `drag.current_screen_pos` and the bounds
+    /// of every registered OS window to decide the drop destination:
     ///
-    /// - `SameWindow`: 同一 Window 内ペイン領域 → 何もしない（既存挙動と一致）
-    /// - `OtherWindowTabBar`: 別 Window のタブバー上 → Phase 4-4 で merge 実装、現状はログのみ
-    /// - `NewWindow`: どの Window 外 → `spawn_os_window` 呼び出し（Phase 4-2 はスケルトン）
+    /// - `SameWindow`: dropped inside the same window's pane area → do nothing
+    ///   (matches existing behavior).
+    /// - `OtherWindowTabBar`: dropped on another window's tab bar → merge
+    ///   implementation in Phase 4-4. Currently log only.
+    /// - `NewWindow`: dropped outside every window → call `spawn_os_window`
+    ///   (skeleton in Phase 4-2).
     ///
-    /// `current_screen_pos` が `None`（Wayland 等のフォールバック失敗）の場合は
-    /// 何もしない（決定 #4 の代替 UX が機能パリティを提供）。
+    /// If `current_screen_pos` is `None` (fallback failure on Wayland and
+    /// similar), do nothing (decision #4: the alternative UX provides feature
+    /// parity).
     fn handle_tab_drag_drop_outside(&mut self, drag: &crate::state::TabDragState) {
         let Some(drop_pos) = drag.current_screen_pos else {
-            tracing::debug!("タブ外ドロップ: グローバル座標取得不能（Wayland 等）→ 機能無効化");
+            tracing::debug!(
+                "Drop outside tab bar: global coordinates unavailable (Wayland, etc.) → disabling feature"
+            );
             return;
         };
         let Some(source_id) = drag.source_os_window_id else {
-            tracing::debug!("タブ外ドロップ: source_os_window_id 未設定 → スキップ");
+            tracing::debug!("Drop outside tab bar: source_os_window_id not set → skipping");
             return;
         };
 
-        // 現在登録されている OS Window の bounds を収集する
-        // Phase 4-2 時点では主 Window 1 個のみだが、Phase 4-4 以降で複数 Window 化対応
+        // Collect the bounds of every registered OS window.
+        // As of Phase 4-2 there is only the primary window; multi-window
+        // support arrives from Phase 4-4 onward.
         let tab_bar_h = if self.app.config.tab_bar.enabled {
             self.app.config.tab_bar.height as f32
         } else {
@@ -101,8 +110,9 @@ impl EventHandler {
                 tab_bar_y_range: (0.0, tab_bar_h),
             });
         }
-        // Phase 4-1 で導入した `self.windows` HashMap の OS Window も収集する。
-        // 主 Window と重複しないように id でフィルタする（Phase 4-4 で `self.window` 廃止予定）。
+        // Also collect OS windows from the `self.windows` HashMap introduced in
+        // Phase 4-1. Filter by id to avoid duplicating the primary window
+        // (`self.window` will be retired in Phase 4-4).
         for (id, cw) in &self.windows {
             if Some(*id) == self.window.as_ref().map(|w| w.id()) {
                 continue;
@@ -121,18 +131,21 @@ impl EventHandler {
         let target = crate::drop_target::compute_drop_target(drop_pos, source_id, &bounds_vec);
         match target {
             crate::drop_target::DropTarget::SameWindow { .. } => {
-                // ペイン領域へのドロップ: 既存仕様と整合（何もしない）
+                // Drop into the pane area: matches the existing behavior (do nothing).
             }
             crate::drop_target::DropTarget::OtherWindowTabBar { window_id } => {
-                // Sprint 5-8 Phase 4-4 Step D: 別 OS Window のタブバーにドロップ。
+                // Sprint 5-8 Phase 4-4 Step D: dropped on another OS window's tab bar.
                 //
-                // target の OS Window が表示しているサーバー Window ID (`focused_server_window_id`)
-                // を解決して `MovePaneToWindow { target_window_id }` を送信する。
+                // Resolve the server window ID shown by the target OS window
+                // (`focused_server_window_id`) and send
+                // `MovePaneToWindow { target_window_id }`.
                 //
-                // 解決順序:
-                // 1. `self.windows` に登録された追加 OS Window → `view_state.focused_server_window_id`
-                // 2. 主 Window（`self.window`）→ `self.app.state.focused_server_window_id`
-                //    （`WindowListChanged` で更新される）
+                // Resolution order:
+                // 1. Additional OS windows registered in `self.windows` →
+                //    `view_state.focused_server_window_id`.
+                // 2. Primary window (`self.window`) →
+                //    `self.app.state.focused_server_window_id`
+                //    (kept up to date by `WindowListChanged`).
                 let target_server_id = if let Some(cw) = self.windows.get(&window_id) {
                     Some(cw.view_state.focused_server_window_id)
                 } else if self.window.as_ref().map(|w| w.id()) == Some(window_id) {
@@ -145,7 +158,7 @@ impl EventHandler {
                 match target_server_id {
                     Some(target) => {
                         tracing::info!(
-                            "タブ外ドロップ: 別 OS Window のタブバーにドロップ (os_window={:?}, target_server_window={})",
+                            "Drop outside tab bar: dropped on another OS window's tab bar (os_window={:?}, target_server_window={})",
                             window_id,
                             target
                         );
@@ -154,14 +167,14 @@ impl EventHandler {
                                 nexterm_proto::ClientToServer::MovePaneToWindow {
                                     pane_id: drag.pane_id,
                                     target_window_id: target,
-                                    insert_at: None, // Phase 4-5 でホバー位置に応じた挿入位置指定対応
+                                    insert_at: None, // Phase 4-5 adds position support based on hover.
                                 },
                             );
                         }
                     }
                     None => {
                         tracing::warn!(
-                            "OtherWindowTabBar 分岐: target OS Window の server_window_id を解決できません (window_id={:?})",
+                            "OtherWindowTabBar branch: could not resolve target OS window's server_window_id (window_id={:?})",
                             window_id
                         );
                     }
@@ -169,18 +182,21 @@ impl EventHandler {
             }
             crate::drop_target::DropTarget::NewWindow => {
                 tracing::info!(
-                    "タブ外ドロップ: 新規 Window 生成要求送信（drop_pos={:?}, pane_id={}）",
+                    "Drop outside tab bar: sending new-window creation request (drop_pos={:?}, pane_id={})",
                     drop_pos,
                     drag.pane_id
                 );
                 // Sprint 5-8 Phase 4-3 + 4-4:
-                // 1. サーバーに `MovePaneToWindow { target_window_id: 0 }` を送り、サーバー側で
-                //    新規 Server Window を生成してペインを移動する
-                // 2. クライアント側 OS Window スポーンは「サーバーから WindowListChanged が返って
-                //    新規 Window ID を検出したとき」に `EventLoopProxy<UserEvent::SpawnOsWindow>`
-                //    経由で発火する（Step C で実装）
-                // 3. ドロップ位置を `pending_new_window_drop_pos` に記録しておき、スポーン時の
-                //    Window 位置として使う
+                // 1. Send `MovePaneToWindow { target_window_id: 0 }` to the
+                //    server, which creates a new server window and moves the
+                //    pane.
+                // 2. The client-side OS window is spawned when the server's
+                //    `WindowListChanged` reports a new window ID; the spawn
+                //    fires via `EventLoopProxy<UserEvent::SpawnOsWindow>`
+                //    (implemented in Step C).
+                // 3. Record the drop position in
+                //    `pending_new_window_drop_pos` and use it as the position
+                //    for the spawned window.
                 self.pending_new_window_drop_pos =
                     Some(winit::dpi::PhysicalPosition::new(drop_pos.0, drop_pos.1));
                 if let Some(conn) = &self.connection {
@@ -196,18 +212,20 @@ impl EventHandler {
         }
     }
 
-    /// マウスカーソルのグローバルスクリーン座標を解決する（Sprint 5-8 Phase 4-2）。
+    /// Resolve the mouse cursor's global screen coordinates (Sprint 5-8 Phase 4-2).
     ///
-    /// 優先順位:
-    /// 1. プラットフォーム別 OS API（Windows: `GetCursorPos`）から取得
-    /// 2. winit の `window.outer_position()` + クライアント領域のカーソル座標を加算
-    /// 3. どちらも失敗（Wayland など）→ `None`
+    /// Priority order:
+    /// 1. A platform-specific OS API (Windows: `GetCursorPos`).
+    /// 2. winit's `window.outer_position()` plus the client-area cursor coordinates.
+    /// 3. Both fail (Wayland, etc.) → `None`.
     ///
-    /// `client_x` / `client_y` は winit `CursorMoved` の `position`（ウィンドウ
-    /// クライアント領域の左上原点座標、ピクセル単位）。フォールバック計算で使用する。
+    /// `client_x` / `client_y` are the winit `CursorMoved.position` values
+    /// (origin at the top-left of the window's client area, in pixels). Used
+    /// by the fallback computation.
     ///
-    /// 戻り値 `None` の場合、呼び出し側はタブ外ドロップ判定を実行せず、既存の
-    /// `ReorderPanes` 経路にフォールバックする（決定 #4: Wayland は代替 UX）。
+    /// When the return value is `None`, the caller skips the out-of-tab-bar
+    /// drop test and falls back to the existing `ReorderPanes` path
+    /// (decision #4: Wayland uses the alternative UX).
     fn resolve_screen_pos(
         window: &Option<Arc<winit::window::Window>>,
         client_x: i32,
@@ -220,7 +238,8 @@ impl EventHandler {
         Some((outer.x + client_x, outer.y + client_y))
     }
 
-    /// `WindowEvent::CursorMoved` — マウスカーソル位置を追跡し、ドラッグ中は選択範囲を更新する
+    /// `WindowEvent::CursorMoved` — track the cursor position and update the
+    /// selection while dragging.
     pub(super) fn on_cursor_moved(&mut self, position: winit::dpi::PhysicalPosition<f64>) {
         self.cursor_position = Some((position.x, position.y));
         let cell_w = self.app.font.cell_width() as f64;
@@ -233,9 +252,10 @@ impl EventHandler {
         let col = (position.x / cell_w) as u16;
         let row = ((position.y - tab_bar_h_f64).max(0.0) / cell_h) as u16;
 
-        // Sprint 5-7 / UI-1-1: タブバー上のホバー追跡
-        // カーソルがタブバー領域内（y < tab_bar_h）にあるとき、x 座標で hit テストして
-        // ホバー中のタブ ID を更新する。範囲外なら None。タブバー無効時は常に None。
+        // Sprint 5-7 / UI-1-1: hover tracking over the tab bar.
+        // When the cursor is inside the tab-bar area (y < tab_bar_h), hit-test
+        // by x and update the hovered tab ID. Out of range or tab bar
+        // disabled → always None.
         let prev_hovered = self.app.state.hovered_tab_id;
         let new_hovered = if self.app.config.tab_bar.enabled && position.y < tab_bar_h_f64 {
             let px = position.x as f32;
@@ -255,12 +275,14 @@ impl EventHandler {
             }
         }
 
-        // Sprint 5-7 / Phase 2-3: タブドラッグ中の追跡
-        // タブバー領域内 + 進行中ドラッグがある場合、current_x / hover_target / committed を更新する
+        // Sprint 5-7 / Phase 2-3: track an in-progress tab drag.
+        // While inside the tab-bar area with a drag in progress, update
+        // current_x / hover_target / committed.
         //
-        // Sprint 5-8 Phase 4-2: タブ外ドロップ判定用に `current_screen_pos` も更新する。
-        // Windows は OS API（GetCursorPos）で正確に取得、その他は winit の
-        // outer_position + クライアント座標でフォールバック計算する。
+        // Sprint 5-8 Phase 4-2: also update `current_screen_pos` for the
+        // out-of-tab-bar drop test. On Windows we read it from the OS API
+        // (GetCursorPos); elsewhere we fall back to winit's outer_position +
+        // client coordinates.
         if self.app.state.tab_drag.is_some() {
             let new_screen_pos =
                 Self::resolve_screen_pos(&self.window, position.x as i32, position.y as i32);
@@ -268,12 +290,12 @@ impl EventHandler {
                 let px_f32 = position.x as f32;
                 drag.current_x = px_f32;
                 drag.current_screen_pos = new_screen_pos;
-                // 6px 以上動いたらドラッグ確定
+                // Confirm the drag once the cursor has moved 6 px or more.
                 const DRAG_THRESHOLD: f32 = 6.0;
                 if !drag.committed && (px_f32 - drag.start_x).abs() >= DRAG_THRESHOLD {
                     drag.committed = true;
                 }
-                // 挿入先タブを決定（タブバー領域内のタブにヒットしているか）
+                // Decide the insertion target (any tab hit inside the tab-bar area).
                 let on_tab_bar = position.y < tab_bar_h_f64;
                 drag.hover_target = if on_tab_bar {
                     self.app
@@ -297,7 +319,7 @@ impl EventHandler {
             if let Some(w) = &self.window {
                 w.request_redraw();
             }
-            // ドラッグ中もマウスモーションをレポートする（ボタン0=左ドラッグ）
+            // Report the motion while dragging too (button 0 = left drag).
             if let Some(conn) = &self.connection {
                 let _ = conn.send_tx.try_send(ClientToServer::MouseReport {
                     button: 0,
@@ -309,7 +331,7 @@ impl EventHandler {
             }
         }
 
-        // 設定パネルのスライダーをドラッグ中の場合、値をリアルタイム更新する
+        // While dragging a settings-panel slider, update the value live.
         {
             let fx = position.x as f32;
             let sp = &mut self.app.state.settings_panel;
@@ -335,7 +357,7 @@ impl EventHandler {
             }
         }
 
-        // コンテキストメニューが開いている場合はホバー項目を更新する
+        // When the context menu is open, update the hovered item.
         if let Some(menu) = &mut self.app.state.context_menu {
             let cw = self.app.font.cell_width();
             let ch = self.app.font.cell_height();
@@ -361,7 +383,7 @@ impl EventHandler {
         }
     }
 
-    /// 右ボタン押下: コンテキストメニューを開く
+    /// Right button press: open the context menu.
     pub(super) fn on_mouse_right_pressed(&mut self) {
         if let Some((px, py)) = self.cursor_position {
             let cell_w_ctx = self.app.font.cell_width() as f64;
@@ -375,7 +397,7 @@ impl EventHandler {
                 .collect();
             let tmp = ContextMenu::new_default(0.0, 0.0, &profile_list);
             let item_count = tmp.items.len();
-            // メニュー幅を描画側と同じロジックで計算する
+            // Compute the menu width with the same logic as the renderer.
             let max_label = tmp
                 .items
                 .iter()
@@ -391,7 +413,7 @@ impl EventHandler {
             let menu_w_px = ((max_label + max_hint + 5) as f64).max(16.0) * cell_w_ctx;
             let menu_h_px = item_count as f64 * cell_h_ctx;
 
-            // ウィンドウ内に収まるように位置をクランプする
+            // Clamp the position so the menu fits within the window.
             let win_w = self
                 .window
                 .as_ref()
@@ -413,20 +435,20 @@ impl EventHandler {
         }
     }
 
-    /// 左ボタン押下: タブバークリック判定 + 選択開始 + マウスレポート
+    /// Left button press: handle tab-bar hits + start selection + mouse report.
     pub(super) fn on_mouse_left_pressed(&mut self) {
         if let Some((px, py)) = self.cursor_position {
-            // 設定パネルが開いている場合はヒットテストを先に実行する
+            // When the settings panel is open, run the hit test first.
             if self.app.state.settings_panel.is_open {
                 let hit = self.hit_test_settings_panel(px as f32, py as f32);
                 use crate::settings_panel::SliderType;
                 match hit {
                     SettingsPanelHit::Outside => {
-                        // パネル外クリック → パネルを閉じる
+                        // Click outside the panel → close the panel.
                         self.app.state.settings_panel.close();
                     }
                     SettingsPanelHit::Category(idx) => {
-                        // サイドバーカテゴリをクリック → カテゴリ切り替え
+                        // Click on a sidebar category → switch category.
                         if let Some(cat) = crate::settings_panel::SettingsCategory::ALL.get(idx) {
                             self.app.state.settings_panel.category = cat.clone();
                         }
@@ -438,10 +460,10 @@ impl EventHandler {
                         min: _,
                         max: _,
                     } => {
-                        // スライダーをクリック → 即時値を反映してドラッグ状態を開始する
+                        // Click on a slider → apply the value immediately and start drag state.
                         let fx = px as f32;
                         let sp = &mut self.app.state.settings_panel;
-                        // Phase 5-11-6 #6: Window カテゴリのスライダークリックでフォーカスを揃える
+                        // Phase 5-11-6 #6: align focus when clicking a Window-category slider.
                         match slider_type {
                             SliderType::FontSize => {
                                 sp.set_font_size_from_slider(fx, track_x, track_w)
@@ -473,13 +495,13 @@ impl EventHandler {
                         });
                     }
                     SettingsPanelHit::ThemeColor(idx) => {
-                        // テーマカラードットをクリック → スキーム切り替え
+                        // Click a theme color dot → switch scheme.
                         self.app.state.settings_panel.scheme_index = idx;
                         self.app.state.settings_panel.dirty = true;
                     }
                     SettingsPanelHit::WindowRow(row) => {
-                        // Phase 5-11-6 #6: Window カテゴリ内の行クリック
-                        // フォーカス変更 + 行 1/4 はラベルクリックで値サイクル動作を伴う
+                        // Phase 5-11-6 #6: click on a row inside the Window category.
+                        // Change focus; clicking the label of rows 1/4 also cycles the value.
                         let sp = &mut self.app.state.settings_panel;
                         sp.window_field_focus = row;
                         match row {
@@ -489,13 +511,13 @@ impl EventHandler {
                         }
                     }
                     SettingsPanelHit::TitleBar | SettingsPanelHit::PanelBackground => {
-                        // その他のパネル内クリック → 何もしない
+                        // Other clicks inside the panel → do nothing.
                     }
                 }
                 if let Some(w) = &self.window {
                     w.request_redraw();
                 }
-                return; // 設定パネルが開いている間はターミナルにクリックを伝えない
+                return; // While the settings panel is open, do not pass the click to the terminal.
             }
 
             let cell_w = self.app.font.cell_width() as f64;
@@ -506,10 +528,10 @@ impl EventHandler {
                 0.0_f64
             };
 
-            // タブバーエリア（py < tab_bar_h）のクリックを処理する
+            // Handle clicks in the tab-bar area (py < tab_bar_h).
             if self.app.config.tab_bar.enabled && py < tab_bar_h_f64 {
                 let px_f32 = px as f32;
-                // 設定ボタンのクリック判定
+                // Hit test for the settings button.
                 let hit_settings = self
                     .app
                     .state
@@ -529,23 +551,26 @@ impl EventHandler {
                     .find(|&(_, &(x0, x1))| px_f32 >= x0 && px_f32 < x1)
                     .map(|(&id, _)| id)
                 {
-                    // Sprint 5-9 Phase 4-6: タブホバー `[↗]` ボタンクリックで分離。
-                    // タブクリック判定よりも先に評価することで、タブの範囲内に重なる
-                    // 分離ボタン領域がフォーカス切替を発火させないようにする。
-                    // 経路は `execute_action("DetachToNewWindow")` と同じ
-                    // （BreakPane + pending_new_window_drop_pos セット）。
+                    // Sprint 5-9 Phase 4-6: clicking the tab-hover `[↗]` button
+                    // tears the tab out. Evaluate this before the tab-click
+                    // hit-test so the tear-out region (which overlaps the tab)
+                    // does not also trigger a focus change. The path is
+                    // identical to `execute_action("DetachToNewWindow")` —
+                    // BreakPane + setting `pending_new_window_drop_pos`.
                     tracing::info!(
-                        "[↗] tearout ボタンクリック: pane_id={} を新規 OS Window に分離",
+                        "[↗] tear-out button click: detaching pane_id={} into a new OS window",
                         tearout_pane_id
                     );
-                    // pos = (0, 0) で記録（マウス座標非依存、winit が位置決定）
+                    // Record pos = (0, 0) (no mouse-coordinate dependency; winit decides the position).
                     self.pending_new_window_drop_pos =
                         Some(winit::dpi::PhysicalPosition::new(0, 0));
                     if let Some(conn) = &self.connection {
-                        // 対象ペインを focused にしてから BreakPane を送る方が安全だが、
-                        // `[↗]` は hover 中タブにしか表示されないため、現状のフォーカス
-                        // 以外でクリックされる可能性は低い。将来必要なら FocusPane を先送り。
-                        // 確実性のため pane_id が focused でない場合は FocusPane を挟む。
+                        // It is safer to focus the target pane before sending
+                        // BreakPane, but `[↗]` only appears on the hovered
+                        // tab, so a click on a non-focused tab is unlikely.
+                        // If reliability is needed in the future, send
+                        // FocusPane first. For safety, prepend FocusPane when
+                        // pane_id is not focused.
                         if self.app.state.focused_pane_id != Some(tearout_pane_id) {
                             let _ =
                                 conn.send_tx
@@ -561,7 +586,7 @@ impl EventHandler {
                         w.request_redraw();
                     }
                 } else {
-                    // タブクリックでペインフォーカスを切り替える
+                    // A tab click switches pane focus.
                     let hit_pane = self
                         .app
                         .state
@@ -571,7 +596,7 @@ impl EventHandler {
                         .map(|(&id, _)| id);
                     if let Some(pane_id) = hit_pane {
                         let now = Instant::now();
-                        // ダブルクリック判定（300ms 以内に同一ペインを再クリック）
+                        // Double-click detection (same pane re-clicked within 300 ms).
                         let is_double_click = self
                             .last_tab_click
                             .map(|(t, id)| {
@@ -580,7 +605,7 @@ impl EventHandler {
                             .unwrap_or(false);
 
                         if is_double_click {
-                            // ダブルクリック → タブ名変更モードへ
+                            // Double-click → enter tab-rename mode.
                             let current_name = self
                                 .app
                                 .state
@@ -602,16 +627,22 @@ impl EventHandler {
                                 let _ =
                                     conn.send_tx.try_send(ClientToServer::FocusPane { pane_id });
                             }
-                            // Sprint 5-7 / Phase 2-3: ドラッグ可能性を記録（committed=false）。
-                            // CursorMoved で閾値を超えたら committed=true となり、Released で並べ替えを送信する。
+                            // Sprint 5-7 / Phase 2-3: record drag potential
+                            // (committed=false). CursorMoved sets committed=true
+                            // once the threshold is exceeded, and Released
+                            // sends the reorder.
                             //
-                            // Sprint 5-8 Phase 4-2 追加フィールド:
-                            // - `source_os_window_id`: ドラッグ元 OS Window（主 Window の id を保持）
-                            // - `start_screen_pos` / `current_screen_pos`: グローバル座標
-                            //   Windows は `platform::cursor_screen_pos` で OS から取得。
-                            //   その他は winit の `outer_position` + クライアント座標で
-                            //   フォールバック計算する。Wayland では outer_position が
-                            //   取れず `None` のままになり、タブ外ドロップ判定が無効化される。
+                            // Sprint 5-8 Phase 4-2 added fields:
+                            // - `source_os_window_id`: the source OS window
+                            //   (holds the primary window's id).
+                            // - `start_screen_pos` / `current_screen_pos`:
+                            //   global coordinates. On Windows we obtain them
+                            //   from the OS via `platform::cursor_screen_pos`;
+                            //   elsewhere we fall back to winit's
+                            //   `outer_position` + client coordinates. On
+                            //   Wayland `outer_position` is unavailable and
+                            //   stays `None`, which disables the out-of-tab
+                            //   drop test.
                             let screen_pos =
                                 Self::resolve_screen_pos(&self.window, px as i32, py as i32);
                             self.app.state.tab_drag = Some(crate::state::TabDragState {
@@ -627,13 +658,13 @@ impl EventHandler {
                         }
                     }
                 }
-                return; // タブバー内のクリックはターミナルに伝えない
+                return; // Do not pass tab-bar clicks to the terminal.
             }
 
             let col = (px / cell_w) as u16;
             let row = ((py - tab_bar_h_f64).max(0.0) / cell_h) as u16;
             self.app.state.mouse_sel.begin(col, row);
-            // マウスレポーティングが有効なら PTY にイベントを送信する
+            // When mouse reporting is enabled, send the event to the PTY.
             if let Some(conn) = &self.connection {
                 let _ = conn.send_tx.try_send(ClientToServer::MouseReport {
                     button: 0,
@@ -646,9 +677,9 @@ impl EventHandler {
         }
     }
 
-    /// 左ボタンリリース: 選択確定 → クリップボードコピー or フォーカス切替
+    /// Left button release: finalize selection → copy to clipboard or switch focus.
     pub(super) fn on_mouse_left_released(&mut self) {
-        // 設定パネルのスライダードラッグを終了して設定を保存する
+        // End any settings-panel slider drag and save the settings.
         if self.app.state.settings_panel.drag_slider.take().is_some() {
             let _ = self.app.state.settings_panel.save_to_toml();
             self.app.state.settings_panel.dirty = false;
@@ -657,16 +688,19 @@ impl EventHandler {
             }
         }
 
-        // Sprint 5-7 / Phase 2-3: タブドラッグ終了処理
-        // committed なら新順序を計算して ReorderPanes を送信、未 committed は通常クリック扱い（なにもしない）
+        // Sprint 5-7 / Phase 2-3: end-of-tab-drag handling.
+        // If committed, compute the new order and send ReorderPanes; if not
+        // committed, treat it as a normal click (do nothing).
         //
-        // Sprint 5-8 Phase 4-2: タブバー外（hover_target=None）+ committed の場合、
-        // グローバル座標で `compute_drop_target` を呼び、判定結果に応じて分岐する:
-        // - `SameWindow`: ペイン領域にドロップ → 何もしない（既存挙動）
-        // - `OtherWindowTabBar`: 別 OS Window のタブバーにドロップ → Phase 4-4 で `MovePaneToWindow`
-        //   送信実装予定、現状はログ出力のみ
-        // - `NewWindow`: どの OS Window 外にドロップ → `spawn_os_window` 呼び出し
-        //   （Phase 4-2 時点では本体未実装のスケルトン、ログ出力 + 主 Window フォールバック）
+        // Sprint 5-8 Phase 4-2: if dropped outside the tab bar
+        // (hover_target=None) and committed, call `compute_drop_target` with
+        // global coordinates and branch on the result:
+        // - `SameWindow`: dropped on the pane area → do nothing (existing behavior).
+        // - `OtherWindowTabBar`: dropped on another OS window's tab bar →
+        //   Phase 4-4 will send `MovePaneToWindow`; currently log only.
+        // - `NewWindow`: dropped outside every OS window → call
+        //   `spawn_os_window`. As of Phase 4-2 this is a skeleton without the
+        //   real implementation — log + fall back to the primary window.
         if let Some(drag) = self.app.state.tab_drag.take() {
             if drag.committed
                 && let Some(target_id) = drag.hover_target
@@ -679,7 +713,7 @@ impl EventHandler {
                     pane_ids: new_order,
                 });
             } else if drag.committed && drag.hover_target.is_none() {
-                // タブバー外でリリース → タブ外ドロップ判定（Phase 4-2）
+                // Released outside the tab bar → out-of-tab-bar drop test (Phase 4-2).
                 self.handle_tab_drag_drop_outside(&drag);
             }
             if let Some(w) = &self.window {
@@ -687,13 +721,14 @@ impl EventHandler {
             }
         }
 
-        // コンテキストメニューが開いている場合はクリックで処理する
+        // If a context menu is open, handle the click on it.
         if let Some((px, py)) = self.cursor_position
             && let Some(menu) = self.app.state.context_menu.take()
         {
             let cell_w = self.app.font.cell_width();
             let cell_h = self.app.font.cell_height();
-            // 描画幅と同じ値を使用する（ここを変えると描画とクリック判定がずれる）
+            // Use the same value as the drawn width
+            // (changing this misaligns drawing and click detection).
             let menu_w = 18.0 * cell_w;
             let fx = px as f32;
             let fy = py as f32;
@@ -723,12 +758,12 @@ impl EventHandler {
             let click_col = (px / cell_w) as u16;
             let click_row = ((py - tab_bar_h_f64).max(0.0) / cell_h) as u16;
 
-            // ドラッグ選択を終了して選択テキストをコピーする
+            // Finish the drag selection and copy the selected text.
             self.app.state.mouse_sel.update(click_col, click_row);
             self.app.state.mouse_sel.finish();
 
             if let Some(((sc, sr), (ec, er))) = self.app.state.mouse_sel.normalized() {
-                // 選択範囲があればテキストを抽出してクリップボードにコピーする
+                // When a selection exists, extract the text and copy it to the clipboard.
                 let text = if let Some(pane) = self.app.state.focused_pane() {
                     let mut lines = Vec::new();
                     for row_idx in sr..=er {
@@ -757,12 +792,12 @@ impl EventHandler {
                 {
                     let _ = clipboard.set_text(text);
                 }
-                // 選択後はリターン（ペインフォーカス切替を行わない）
+                // After selecting, return (do not switch pane focus).
                 return;
             }
 
-            // 選択なし（単純クリック）: Ctrl+クリックで URL を開く
-            // SecurityConfig.external_url ポリシーに従って同意フローを経由する
+            // No selection (simple click): Ctrl+click opens a URL.
+            // Goes through the consent flow per the SecurityConfig.external_url policy.
             if self.modifiers.control_key()
                 && let Some(url) = self.find_url_at(click_col, click_row)
             {
@@ -770,7 +805,7 @@ impl EventHandler {
                 return;
             }
 
-            // クリック座標が含まれるペインを探してフォーカスを移動する
+            // Find the pane that contains the click coordinates and move focus to it.
             let target_pane = self
                 .app
                 .state
@@ -792,13 +827,14 @@ impl EventHandler {
         }
     }
 
-    /// `WindowEvent::MouseWheel` — マウスホイールでスクロールバックをスクロールする
+    /// `WindowEvent::MouseWheel` — scroll the scrollback with the mouse wheel.
     pub(super) fn on_mouse_wheel(&mut self, delta: MouseScrollDelta) {
         let lines = match delta {
             MouseScrollDelta::LineDelta(_, y) => (y * 3.0) as i32,
             MouseScrollDelta::PixelDelta(p) => {
-                // Windows タッチパッドは PixelDelta を送る。
-                // 積算してセル高さ分溜まったら1行スクロールし、端数は次回に持ち越す。
+                // Windows touchpads send PixelDelta. Accumulate and scroll one
+                // row per cell height, carrying the remainder into the next
+                // event.
                 self.pixel_scroll_accumulator += p.y;
                 let cell_h = self.app.font.cell_height() as f64;
                 let lines = (self.pixel_scroll_accumulator / cell_h) as i32;
@@ -822,61 +858,63 @@ mod tests {
     use super::compute_reordered_tab_order;
 
     #[test]
-    fn tab_drag_自分自身へのドロップはnone() {
+    fn tab_drag_drop_on_self_returns_none() {
         let current = vec![1, 2, 3];
         assert!(compute_reordered_tab_order(&current, 2, 2).is_none());
     }
 
     #[test]
-    fn tab_drag_右へ移動() {
-        // 1, 2, 3 で 1 を 3 の位置にドロップ → 2, 3 の右に 1 が来るはず
-        // ただし現実装は「target_id の位置に置き換える」挙動なので、
-        // 1 を 3 にドロップ → [2, 1, 3]（target_id=3 の位置に 1 を挿入）
+    fn tab_drag_move_right() {
+        // Drop 1 onto 3 in [1, 2, 3]: the implementation "inserts at target_id's
+        // position", so dropping 1 onto 3 yields [2, 1, 3]
+        // (1 is inserted at the original position of target_id=3).
         let current = vec![1, 2, 3];
         let next = compute_reordered_tab_order(&current, 1, 3).unwrap();
         assert_eq!(next, vec![2, 1, 3]);
     }
 
     #[test]
-    fn tab_drag_左へ移動() {
-        // 1, 2, 3 で 3 を 1 の位置にドロップ → [3, 1, 2]
+    fn tab_drag_move_left() {
+        // Drop 3 onto 1 in [1, 2, 3] → [3, 1, 2].
         let current = vec![1, 2, 3];
         let next = compute_reordered_tab_order(&current, 3, 1).unwrap();
         assert_eq!(next, vec![3, 1, 2]);
     }
 
     #[test]
-    fn tab_drag_隣接右ドロップはno_op() {
-        // [1, 2] で 1 を 2 にドロップしても「target の位置に押し込む」挙動では
-        // 結果が [1, 2] となり current と一致。ネットワーク往復を避けるため None。
+    fn tab_drag_adjacent_right_drop_is_noop() {
+        // Dropping 1 onto 2 in [1, 2] with the "insert at target" model yields
+        // [1, 2], the same as `current`. Return None to avoid a network round
+        // trip.
         let current = vec![1, 2];
         assert!(compute_reordered_tab_order(&current, 1, 2).is_none());
     }
 
     #[test]
-    fn tab_drag_隣接左ドロップはスワップ() {
-        // [1, 2] で 2 を 1 にドロップ: from=1, target_pos=0, from>target_pos
-        // → insert_at=0, new=[1] → [2, 1]。隣接スワップは左ドラッグ方向でのみ実現可能。
+    fn tab_drag_adjacent_left_drop_swaps() {
+        // Drop 2 onto 1 in [1, 2]: from=1, target_pos=0, from > target_pos
+        // → insert_at=0, new=[1] → [2, 1]. Adjacent swaps are only possible in
+        // the left-drag direction.
         let current = vec![1, 2];
         let next = compute_reordered_tab_order(&current, 2, 1).unwrap();
         assert_eq!(next, vec![2, 1]);
     }
 
     #[test]
-    fn tab_drag_存在しないidはnone() {
+    fn tab_drag_unknown_ids_return_none() {
         let current = vec![1, 2, 3];
         assert!(compute_reordered_tab_order(&current, 99, 1).is_none());
         assert!(compute_reordered_tab_order(&current, 1, 99).is_none());
     }
 
     #[test]
-    fn tab_drag_3つの中央への移動() {
-        // 1, 2, 3, 4, 5 で 1 を 3 にドロップ → [2, 1, 3, 4, 5]
+    fn tab_drag_move_to_center_of_three() {
+        // Drop 1 onto 3 in [1, 2, 3, 4, 5] → [2, 1, 3, 4, 5].
         let current = vec![1, 2, 3, 4, 5];
         let next = compute_reordered_tab_order(&current, 1, 3).unwrap();
         assert_eq!(next, vec![2, 1, 3, 4, 5]);
 
-        // 5 を 2 にドロップ → [1, 5, 2, 3, 4]
+        // Drop 5 onto 2 → [1, 5, 2, 3, 4].
         let next = compute_reordered_tab_order(&current, 5, 2).unwrap();
         assert_eq!(next, vec![1, 5, 2, 3, 4]);
     }

@@ -1,6 +1,6 @@
-//! winit `WindowEvent` のうちウィンドウ・IME 関連ハンドラ
+//! Window- and IME-related handlers among `winit::WindowEvent` variants.
 //!
-//! `event_handler.rs` から抽出した:
+//! Extracted from `event_handler.rs`:
 //! - `on_close_requested`
 //! - `on_resized` / `on_scale_factor_changed`
 //! - `on_modifiers_changed`
@@ -18,31 +18,39 @@ use crate::glyph_atlas::GlyphAtlas;
 impl EventHandler {
     /// `WindowEvent::CloseRequested`
     ///
-    /// Sprint 5-8 Phase 4-4 で 3 値分岐を導入、Phase 4-5 で `Prompt` を本実装。
+    /// Sprint 5-8 Phase 4-4 introduced the 3-way branch; Phase 4-5 finalized the
+    /// real implementation of `Prompt`.
     ///
-    /// 挙動:
-    /// - **`Prompt`** (デフォルト): `QueryForegroundProcess` IPC を送信して保留。応答（または
-    ///   ダイアログでの選択）に応じて detach / kill を実行する。応答待ち中は `event_loop.exit()`
-    ///   を呼ばずに `pending_close_request` に状態を保持する。
-    /// - **`Detach`**: Server Window を保持してクライアントのみ切断（tmux 流 detached session）。
-    ///   - シングルバイナリ構成では `server_handle.abort()` で内部サーバータスクも終了するため、
-    ///     実質 Kill と差がない。マルチプロセス（`nexterm-ctl attach`）で本来の意味を持つ枠組み。
-    /// - **`Kill`**: Server Session を `KillSession` IPC で破棄してから exit。
+    /// Behavior:
+    /// - **`Prompt`** (default): send a `QueryForegroundProcess` IPC and defer.
+    ///   Run detach / kill based on the response (or the dialog choice). While
+    ///   waiting for the response, do not call `event_loop.exit()` — keep state
+    ///   in `pending_close_request`.
+    /// - **`Detach`**: keep the server window alive and disconnect only the client
+    ///   (tmux-style detached session).
+    ///   - In the single-binary configuration, `server_handle.abort()` also stops
+    ///     the embedded server task, so the practical effect is the same as Kill.
+    ///     The distinction is meaningful only with multi-process setups (e.g.
+    ///     `nexterm-ctl attach`).
+    /// - **`Kill`**: destroy the server session with `KillSession` IPC and then
+    ///   exit.
     pub(super) fn on_close_requested(&mut self, event_loop: &ActiveEventLoop) {
         let action = self.app.config.window.close_action;
-        // 現状セッション名は固定（`Attach` 時に "main" でアタッチしている）。
-        // 将来マルチセッション対応時は `EventHandler.current_session` から取得する。
+        // The session name is currently fixed ("main" is used for `Attach`).
+        // When multi-session support lands, fetch this from
+        // `EventHandler.current_session`.
         let session_name = "main".to_string();
 
         match action {
             CloseAction::Prompt => {
-                // Phase 4-5: QueryForegroundProcess を送信して応答を待つ。
-                // pending_close_request に記録し、event_loop.exit() を呼ばない（保留）。
-                // 応答は `apply_server_message` で `foreground_process_status` に格納され、
-                // about_to_wait → `poll_pending_close_request` で消費される。
+                // Phase 4-5: send QueryForegroundProcess and wait for the response.
+                // Record the deferral in pending_close_request and do not call
+                // event_loop.exit(). The response lands in
+                // `foreground_process_status` via `apply_server_message` and is
+                // consumed by `poll_pending_close_request` in about_to_wait.
                 let target_window_id = self.app.state.focused_server_window_id;
                 info!(
-                    "CloseRequested: close_action = Prompt。QueryForegroundProcess 送信 window_id={}",
+                    "CloseRequested: close_action = Prompt. Sending QueryForegroundProcess for window_id={}",
                     target_window_id
                 );
                 if let Some(conn) = &self.connection {
@@ -56,18 +64,21 @@ impl EventHandler {
                     server_window_id: target_window_id,
                     close_action: crate::state::CloseActionKind::Prompt,
                 });
-                // 早期 return: 応答受信後に finalize_close を呼ぶ
+                // Early return: finalize_close runs after the response arrives.
                 return;
             }
             CloseAction::Detach => {
                 info!(
-                    "CloseRequested: close_action = Detach。Server Window を保持してクライアントのみ切断"
+                    "CloseRequested: close_action = Detach. Keeping the server window alive and disconnecting the client only"
                 );
-                // KillSession を送らずクライアント側のみ切断。
-                // シングルバイナリ構成では server_handle.abort() で実質終了。
+                // Do not send KillSession; disconnect only on the client side.
+                // In the single-binary configuration, server_handle.abort() ends
+                // things in practice.
             }
             CloseAction::Kill => {
-                info!("CloseRequested: close_action = Kill。Server Session を破棄して exit");
+                info!(
+                    "CloseRequested: close_action = Kill. Destroying the server session and exiting"
+                );
                 if let Some(conn) = &self.connection {
                     let _ = conn.send_tx.try_send(ClientToServer::KillSession {
                         name: session_name.clone(),
@@ -76,29 +87,33 @@ impl EventHandler {
             }
         }
 
-        // 追加 OS Window を破棄 + 接続切断 + サーバータスク abort + exit
+        // Tear down additional OS windows, disconnect, abort the server task, and exit.
         self.windows.clear();
         self.connection = None;
         self.server_handle.abort();
         event_loop.exit();
     }
 
-    /// `pending_close_request` の応答 / ダイアログ確定を処理する（Sprint 5-8 Phase 4-5）。
+    /// Handle the `pending_close_request` response / dialog confirmation
+    /// (Sprint 5-8 Phase 4-5).
     ///
-    /// `about_to_wait` から毎フレーム呼ばれ、`foreground_process_status` の最新応答が
-    /// `pending_close_request` と一致した場合に以下を行う:
-    /// - 前景プロセスなし → 即時 Kill 経路で exit
-    /// - 前景プロセスあり → `close_window_dialog` をセットしてレンダラーが描画
+    /// Called every frame from `about_to_wait`. When the latest response in
+    /// `foreground_process_status` matches `pending_close_request`, do the
+    /// following:
+    /// - No foreground process → exit immediately via the Kill path.
+    /// - Has a foreground process → set `close_window_dialog` so the renderer
+    ///   draws it.
     ///
-    /// `close_window_dialog` が `selected_button` 確定状態（外部で `selected_button = u8::MAX` で
-    /// キャンセル / `selected_button = 0` で Kill 確定）になっている場合、それも処理する。
+    /// If `close_window_dialog` is already in a "confirmed" state (externally
+    /// `selected_button = u8::MAX` for cancel, `selected_button = 0` for Kill),
+    /// process that as well.
     pub(super) fn poll_pending_close_request(&mut self, event_loop: &ActiveEventLoop) {
-        // 1. ダイアログが「確定」された場合の処理
+        // 1. Handle the case where the dialog was "confirmed".
         let dialog_decision: Option<bool> = if let Some(dlg) = &self.app.state.close_window_dialog {
-            // selected_button = 0xFF をキャンセル、0xFE を Kill 確定のシグナルとして使う
+            // selected_button = 0xFF signals cancel, 0xFE signals Kill confirmed.
             match dlg.selected_button {
-                0xFE => Some(true),  // Kill 確定
-                0xFF => Some(false), // キャンセル
+                0xFE => Some(true),  // Kill confirmed
+                0xFF => Some(false), // Cancel
                 _ => None,
             }
         } else {
@@ -121,29 +136,30 @@ impl EventHandler {
             return;
         }
 
-        // 2. IPC 応答が来ているかチェック
+        // 2. Check whether the IPC response has arrived.
         let Some(req) = self.app.state.pending_close_request else {
             return;
         };
         let Some(status) = self.app.state.foreground_process_status else {
             return;
         };
-        // window_id 一致を確認
+        // Verify the window_id matches.
         if status.window_id != req.server_window_id {
-            // 別 Window の応答 → 無視（クリアはしない）
+            // Response for a different window → ignore (do not clear).
             return;
         }
-        // 応答消費
+        // Consume the response.
         self.app.state.foreground_process_status = None;
 
         if status.has_foreground {
-            // 確認ダイアログを表示
+            // Show the confirmation dialog.
             info!(
-                "前景プロセス検知あり: window_id={}、確認ダイアログを表示",
+                "Foreground process detected: window_id={}; displaying confirmation dialog",
                 req.server_window_id
             );
-            // i18n キーから文言を取得（キーが無い場合は `t` が key 自体を返すので、
-            // 文言が必ず i18n JSON 側で定義されている前提）
+            // Fetch wording from the i18n keys. When a key is missing, `t`
+            // returns the key itself, so the wording is assumed to be defined
+            // on the i18n JSON side.
             let message = nexterm_i18n::fl!("close_window_confirm_foreground");
             let kill_label = nexterm_i18n::fl!("close_window_button_kill");
             let cancel_label = nexterm_i18n::fl!("close_window_button_cancel");
@@ -152,14 +168,14 @@ impl EventHandler {
                 message,
                 kill_label,
                 cancel_label,
-                selected_button: 1, // デフォルトはキャンセル側にフォーカス（安全側）
+                selected_button: 1, // Default focus to Cancel (the safer side).
             });
             if let Some(w) = &self.window {
                 w.request_redraw();
             }
         } else {
-            // 前景プロセスなし → 即時 Kill
-            info!("前景プロセスなし: Prompt → Kill に進む");
+            // No foreground process → Kill immediately.
+            info!("No foreground process: proceeding from Prompt to Kill");
             self.app.state.pending_close_request = None;
             if let Some(conn) = &self.connection {
                 let _ = conn.send_tx.try_send(ClientToServer::KillSession {
@@ -191,7 +207,7 @@ impl EventHandler {
             wgpu.resize(size);
         }
         self.app.state.resize(cols, rows);
-        // サーバーにリサイズを通知する
+        // Notify the server of the resize.
         if let Some(conn) = &self.connection {
             let _ = conn.send_tx.try_send(ClientToServer::Resize { cols, rows });
         }
@@ -207,12 +223,13 @@ impl EventHandler {
             self.scale_factor,
             self.app.config.font.ligatures,
         );
-        // スケール変更でグリフが無効化されるためアトラスを再生成する
+        // A scale change invalidates the glyphs, so recreate the atlas.
         let atlas_size = self.app.config.gpu.atlas_size;
         if let Some(wgpu) = &self.wgpu_state {
             self.atlas = Some(GlyphAtlas::new_with_config(&wgpu.device, atlas_size));
         }
-        // DPI 変更後のセルサイズ変更に合わせて cols/rows を再計算してサーバーに通知する
+        // After the DPI change, recompute cols/rows to match the new cell size
+        // and notify the server.
         if let Some(win) = &self.window {
             let size = win.inner_size();
             let cell_h_sf = self.app.font.cell_height();
@@ -240,18 +257,18 @@ impl EventHandler {
         self.modifiers = mods;
     }
 
-    /// `WindowEvent::Ime` — 日本語・中国語などの IME 入力を処理する
+    /// `WindowEvent::Ime` — handle IME input for Japanese, Chinese, and others.
     pub(super) fn on_ime(&mut self, ime_event: Ime) {
-        // Phase 5-11-8 Step 8-3 (Sub-phase B): 設定パネルの SSH フィールド編集中は
-        // ターミナルではなく TextInputState に IME 入力を振り分ける。
-        // Sub-phase A で TextInputState.preedit / insert_str を準備済み。
+        // Phase 5-11-8 Step 8-3 (Sub-phase B): while editing an SSH field in the
+        // settings panel, route IME input to TextInputState instead of the
+        // terminal. Sub-phase A prepared TextInputState.preedit / insert_str.
         let ssh_editing = self.app.state.settings_panel.is_open
             && self.app.state.settings_panel.ssh_field_editing.is_some();
 
         if ssh_editing {
             match ime_event {
                 Ime::Enabled => {
-                    // IME 有効化のみ。preedit は次の Preedit イベントで設定される
+                    // Only signals IME enablement; preedit is set on the next Preedit event.
                 }
                 Ime::Preedit(text, _cursor_range) => {
                     if let Some(state) = self.app.state.settings_panel.ssh_field_editing.as_mut() {
@@ -262,8 +279,9 @@ impl EventHandler {
                     }
                 }
                 Ime::Commit(text) => {
-                    // 確定テキストを TextInputState.buffer のカーソル位置に挿入し、
-                    // preedit をクリア。Sub-phase A の ssh_field_insert_str を再利用。
+                    // Insert the committed text at the cursor position in
+                    // TextInputState.buffer and clear preedit. Reuse
+                    // ssh_field_insert_str from Sub-phase A.
                     self.app.state.settings_panel.ssh_field_insert_str(&text);
                     if let Some(state) = self.app.state.settings_panel.ssh_field_editing.as_mut() {
                         state.preedit = None;
@@ -278,18 +296,18 @@ impl EventHandler {
                     }
                 }
             }
-            // IME カーソルエリアを SSH フィールド行へ追従させる
+            // Keep the IME cursor area tracking the SSH field row.
             self.update_ime_cursor_area_for_ssh_field();
             return;
         }
 
-        // 通常のターミナル経路（PTY へ転送）
+        // Normal terminal path (forward to PTY).
         match ime_event {
             Ime::Enabled => {
-                // IME が有効になった（特別な処理は不要）
+                // IME became enabled (no special handling required).
             }
             Ime::Preedit(text, _cursor_range) => {
-                // 変換中テキストを state に保存して再描画する
+                // Store the in-progress text in state and request a redraw.
                 if text.is_empty() {
                     self.app.state.ime_preedit = None;
                 } else {
@@ -300,7 +318,7 @@ impl EventHandler {
                 }
             }
             Ime::Commit(text) => {
-                // 確定テキストをプリエディットクリア + PTY 送信
+                // Clear preedit and send the committed text to the PTY.
                 self.app.state.ime_preedit = None;
                 if let Some(conn) = &self.connection {
                     let _ = conn.send_tx.try_send(ClientToServer::PasteText { text });
@@ -313,7 +331,7 @@ impl EventHandler {
                 self.app.state.ime_preedit = None;
             }
         }
-        // IME カーソルエリアをフォーカスペインのカーソル位置に更新する
+        // Update the IME cursor area to follow the focused pane's cursor.
         if let Some(pane) = self.app.state.focused_pane() {
             let cell_w = self.app.font.cell_width();
             let cell_h = self.app.font.cell_height();
@@ -328,21 +346,21 @@ impl EventHandler {
         }
     }
 
-    /// Phase 5-11-8 Step 8-3 (Sub-phase B): SSH フィールド編集中の IME カーソルエリアを
-    /// フィールド行のピクセル位置に追従させる。
+    /// Phase 5-11-8 Step 8-3 (Sub-phase B): track the IME cursor area to the
+    /// pixel position of the SSH field row while editing an SSH field.
     ///
-    /// 計算式は `overlay/settings.rs` の SSH 編集行レンダラーと同じレイアウトロジックを
-    /// 用いる。変更があれば両者を同期させること。
+    /// The formula uses the same layout logic as the SSH edit-row renderer in
+    /// `overlay/settings.rs`. Keep the two in sync on any change.
     ///
-    /// `input_handler` から `begin_ssh_field_edit` 成功時と矢印キーでのカーソル移動時に
-    /// 呼ばれるため `pub(in crate::renderer)` で公開する。
+    /// Called from `input_handler` on a successful `begin_ssh_field_edit` and
+    /// on arrow-key cursor moves, so it is exposed as `pub(in crate::renderer)`.
     pub(in crate::renderer) fn update_ime_cursor_area_for_ssh_field(&self) {
         let Some(w) = &self.window else { return };
         let sp = &self.app.state.settings_panel;
         if !sp.is_open || sp.ssh_field_editing.is_none() {
             return;
         }
-        // TextInput 対象でないフィールド（port=3 / auth_type=5）なら何もしない
+        // Do nothing for non-TextInput fields (port=3 / auth_type=5).
         let row_index = match sp.ssh_field_focus {
             1 => 0u32, // name
             2 => 1,    // host
@@ -359,11 +377,11 @@ impl EventHandler {
         let cell_w = self.app.font.cell_width();
         let cell_h = self.app.font.cell_height();
 
-        // overlay/settings.rs のレイアウト式を再現
+        // Reproduce the layout formula from overlay/settings.rs.
         let panel_w = (sw * 0.72).min(sw - cell_w * 4.0);
         let panel_h = (sh * 0.75).min(sh - cell_h * 4.0);
         let px = (sw - panel_w) / 2.0;
-        let py = (sh - panel_h) / 2.0; // IME 位置はアニメーション中も定位置 (eased=1.0 相当) を使う
+        let py = (sh - panel_h) / 2.0; // Use the fixed position (eased=1.0 equivalent) even during animation.
         let sidebar_w = cell_w * 18.0;
         let content_x = px + sidebar_w;
         let content_inner_x = content_x + cell_w;
@@ -373,7 +391,7 @@ impl EventHandler {
         let fields_top = content_top + cell_h * (1.5 + host_count * 1.2 + 0.6);
         let row_y = fields_top + cell_h * (1.3 + row_index as f32 * 1.1);
 
-        // カーソル位置（プレフィックス 14 セル + display_cursor の文字数）
+        // Cursor position (14-cell prefix + display_cursor's character count).
         const PREFIX_COLS: f32 = 14.0;
         let cursor_byte = state.display_cursor();
         let display = state.display_string();
@@ -382,7 +400,8 @@ impl EventHandler {
             .map(|s| s.chars().count() as f32)
             .unwrap_or(0.0);
         let ime_x = content_inner_x + cell_w * (PREFIX_COLS + cursor_col);
-        // IME 確定パネルは行の下に出るのが自然。row_y + cell_h で行の直下を示す
+        // The IME candidate panel naturally appears below the row.
+        // row_y + cell_h points just below the row.
         let ime_y = row_y + cell_h;
 
         w.set_ime_cursor_area(
@@ -411,8 +430,8 @@ impl EventHandler {
             warn!("Render error: {}", e);
         }
 
-        // GlyphAtlas の動的拡張: 満杯になったら 2 倍サイズで再生成する
-        // 借用競合を避けるため atlas を一時的に取り出して処理する
+        // Dynamic GlyphAtlas growth: when full, recreate at 2× the size.
+        // Temporarily move atlas out to avoid borrow conflicts.
         if let Some(mut atlas) = self.atlas.take() {
             if atlas.needs_grow
                 && let Some(wgpu) = &self.wgpu_state
@@ -422,9 +441,11 @@ impl EventHandler {
             self.atlas = Some(atlas);
         }
 
-        // Phase 5-11-8 Step 8-3 (Sub-phase B): SSH フィールド編集中は描画完了後に
-        // IME カーソルエリアを最新のフィールド位置へ追従させる。これにより文字挿入・
-        // カーソル移動・Backspace 等あらゆる編集操作後に IME 候補窓が正しい位置に出る。
+        // Phase 5-11-8 Step 8-3 (Sub-phase B): while editing an SSH field, sync
+        // the IME cursor area to the latest field position after the frame is
+        // drawn. This keeps the IME candidate window in the correct place after
+        // every editing operation — character insertion, cursor movement,
+        // Backspace, and so on.
         if self.app.state.settings_panel.is_open
             && self.app.state.settings_panel.ssh_field_editing.is_some()
         {

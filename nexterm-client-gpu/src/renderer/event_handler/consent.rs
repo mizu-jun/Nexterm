@@ -1,17 +1,17 @@
-//! Sprint 4-1: 機密操作の同意フロー
+//! Sprint 4-1: consent flow for sensitive operations.
 //!
-//! `event_handler.rs` から抽出した:
+//! Extracted from `event_handler.rs`:
 //! - `handle_notification_request` / `handle_clipboard_write_request` / `request_open_url`
-//! - `resolve_pending_consent`（input_handler から呼び出される）
-//! - `truncate_utf8_at` ヘルパー
+//! - `resolve_pending_consent` (invoked from input_handler)
+//! - `truncate_utf8_at` helper
 
 use super::EventHandler;
 
 impl EventHandler {
-    /// OSC 9 / 777 デスクトップ通知要求を処理する
+    /// Handle an OSC 9 / 777 desktop-notification request.
     ///
-    /// `SecurityConfig.osc_notification` ポリシー + セッション内 override に従って
-    /// 即時送信 / 拒否 / 同意ダイアログ表示のいずれかを行う。
+    /// According to the `SecurityConfig.osc_notification` policy and the per-session
+    /// override, either send immediately, deny, or show the consent dialog.
     pub(super) fn handle_notification_request(
         &mut self,
         pane_id: u32,
@@ -21,7 +21,7 @@ impl EventHandler {
         use nexterm_config::ConsentPolicy;
         let policy = self.app.config.security.osc_notification;
         let session_override = self.app.state.session_consent_overrides.osc_notification;
-        // 通知本文は config の上限で切り詰める（DoS 対策）
+        // Truncate the notification body at the configured limit (DoS mitigation).
         let max = self.app.config.security.notification_max_bytes;
         let body = truncate_utf8_at(&body, max);
 
@@ -30,7 +30,7 @@ impl EventHandler {
             (ConsentPolicy::Allow, _) => true,
             (ConsentPolicy::Deny, _) => false,
             (ConsentPolicy::Prompt, _) => {
-                // ダイアログを表示。ユーザーの選択は input_handler 側で処理する
+                // Show the dialog. The user's choice is processed in input_handler.
                 self.app.state.pending_consent = Some(crate::state::ConsentDialog::new(
                     crate::state::ConsentKind::Notification {
                         source_pane: pane_id,
@@ -46,26 +46,26 @@ impl EventHandler {
             crate::notification::send_notification(&title, &body);
         } else {
             tracing::info!(
-                "デスクトップ通知をポリシーで拒否しました: pane={} title={:?}",
+                "Desktop notification denied by policy: pane={} title={:?}",
                 pane_id,
                 title
             );
         }
     }
 
-    /// OSC 52 クリップボード書き込み要求を処理する
+    /// Handle an OSC 52 clipboard-write request.
     ///
-    /// `SecurityConfig.osc52_clipboard` ポリシー + セッション内 override に従って
-    /// 即時書き込み / 拒否 / 同意ダイアログ表示のいずれかを行う。
+    /// According to the `SecurityConfig.osc52_clipboard` policy and the per-session
+    /// override, either write immediately, deny, or show the consent dialog.
     pub(super) fn handle_clipboard_write_request(&mut self, pane_id: u32, text: String) {
         use nexterm_config::ConsentPolicy;
         let policy = self.app.config.security.osc52_clipboard;
         let session_override = self.app.state.session_consent_overrides.osc52_clipboard;
-        // 設定で許可された最大バイト数を超える要求は無条件で拒否
+        // Requests exceeding the configured maximum size are denied unconditionally.
         let max = self.app.config.security.osc52_max_bytes;
         if text.len() > max {
             tracing::warn!(
-                "OSC 52 要求をサイズ上限超過で拒否: pane={} bytes={} max={}",
+                "OSC 52 request denied due to size limit: pane={} bytes={} max={}",
                 pane_id,
                 text.len(),
                 max
@@ -92,24 +92,24 @@ impl EventHandler {
             match arboard::Clipboard::new() {
                 Ok(mut clipboard) => {
                     if let Err(e) = clipboard.set_text(text) {
-                        tracing::warn!("OSC 52 クリップボード書き込み失敗: {}", e);
+                        tracing::warn!("OSC 52 clipboard write failed: {}", e);
                     }
                 }
                 Err(_) => {
-                    tracing::warn!("OSC 52: クリップボード API を初期化できません");
+                    tracing::warn!("OSC 52: failed to initialize the clipboard API");
                 }
             }
         } else {
             tracing::info!(
-                "OSC 52 クリップボード要求をポリシーで拒否しました: pane={}",
+                "OSC 52 clipboard request denied by policy: pane={}",
                 pane_id
             );
         }
     }
 
-    /// 外部 URL を開く要求を処理する（Ctrl+クリック / OSC 8 経由）
+    /// Handle a request to open an external URL (Ctrl+click / via OSC 8).
     ///
-    /// `SecurityConfig.external_url` ポリシー + セッション内 override に従う。
+    /// Honors the `SecurityConfig.external_url` policy and the per-session override.
     pub(super) fn request_open_url(&mut self, url: String) {
         use nexterm_config::ConsentPolicy;
         let policy = self.app.config.security.external_url;
@@ -130,19 +130,20 @@ impl EventHandler {
         if allow {
             crate::vertex_util::open_url(&url);
         } else {
-            tracing::info!("URL オープン要求をポリシーで拒否しました: {}", url);
+            tracing::info!("Open-URL request denied by policy: {}", url);
         }
     }
 
-    /// 同意ダイアログのユーザー決定を実行する
+    /// Apply the user's decision from the consent dialog.
     ///
-    /// 呼び出し側 (input_handler) はキー入力を解釈してこのメソッドを呼ぶ。
-    /// 引数 `decision`:
-    /// - `Some(true)`: 1 度だけ許可
-    /// - `Some(false)`: 1 度だけ拒否
-    /// - `None`: ダイアログ閉じるのみ（拒否扱い）
+    /// The caller (input_handler) interprets the key input and invokes this method.
+    /// Argument `decision`:
+    /// - `Some(true)`: allow once
+    /// - `Some(false)`: deny once
+    /// - `None`: close the dialog only (treated as deny)
     ///
-    /// 引数 `always`: true なら同種の要求をセッション中常に同じ決定で扱う
+    /// Argument `always`: when true, treat any future request of the same kind with
+    /// the same decision for the rest of the session.
     pub(in crate::renderer) fn resolve_pending_consent(
         &mut self,
         decision: Option<bool>,
@@ -179,7 +180,7 @@ impl EventHandler {
                 if let Ok(mut clipboard) = arboard::Clipboard::new()
                     && let Err(e) = clipboard.set_text(text)
                 {
-                    tracing::warn!("クリップボード書き込み失敗: {}", e);
+                    tracing::warn!("Clipboard write failed: {}", e);
                 }
             }
             crate::state::ConsentKind::Notification { title, body, .. } => {
@@ -189,7 +190,7 @@ impl EventHandler {
     }
 }
 
-/// バイト長で UTF-8 文字境界を尊重しつつ文字列を切り詰める
+/// Truncate a string at `max_bytes`, respecting UTF-8 character boundaries.
 fn truncate_utf8_at(s: &str, max_bytes: usize) -> String {
     if s.len() <= max_bytes {
         return s.to_string();

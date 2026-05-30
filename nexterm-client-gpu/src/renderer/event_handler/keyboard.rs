@@ -1,7 +1,7 @@
-//! winit `WindowEvent::KeyboardInput` のハンドラ
+//! Handler for winit `WindowEvent::KeyboardInput`.
 //!
-//! `event_handler.rs` から抽出した:
-//! - `on_keyboard_input` — 検索モード入力 / ローカル消費判定 / サーバー転送
+//! Extracted from `event_handler.rs`:
+//! - `on_keyboard_input` — search-mode input / local-consumption check / server forwarding
 
 use winit::{
     event::KeyEvent,
@@ -18,7 +18,7 @@ impl EventHandler {
             physical_key, text, ..
         } = key_event;
 
-        // 検索モードの文字入力を処理する（PTY には転送しない）
+        // Handle character input in search mode (do not forward to PTY).
         if self.app.state.search.is_active {
             if matches!(physical_key, PhysicalKey::Code(WKeyCode::Backspace)) {
                 self.app.state.pop_search_char();
@@ -29,7 +29,7 @@ impl EventHandler {
                     self.app.state.push_search_char(ch);
                 }
             }
-            // Escape / Enter は handle_key で処理する
+            // Escape / Enter are handled by handle_key.
             if let PhysicalKey::Code(code) = physical_key
                 && matches!(code, WKeyCode::Escape | WKeyCode::Enter)
             {
@@ -38,14 +38,14 @@ impl EventHandler {
             return;
         }
 
-        // ローカル操作（パレット・検索開始など）をチェックする
+        // Check for local actions (palette, start search, etc.).
         let consumed = if let PhysicalKey::Code(code) = physical_key {
             self.handle_key(code, event_loop)
         } else {
             false
         };
 
-        // 設定パネルのフォントファミリー入力中は文字をフィールドに追加する
+        // While editing the settings-panel font-family field, append the character to the field.
         if !consumed
             && self.app.state.settings_panel.is_open
             && self.app.state.settings_panel.font_family_editing
@@ -62,13 +62,13 @@ impl EventHandler {
                 }
                 return;
             }
-            // テキストがない場合（矢印キー等）もサーバーへは転送しない
+            // Even when there is no text (arrow keys, etc.), do not forward to the server.
             return;
         }
 
-        // Phase 5-11-8 Step 8-3 (Sub-phase A): SSH フィールド編集中の文字入力
-        // Backspace / Delete / 矢印 / Enter / Esc は handle_key で処理済みのため、
-        // ここでは printable char のみを TextInputState に挿入する。
+        // Phase 5-11-8 Step 8-3 (Sub-phase A): character input while editing an SSH field.
+        // Backspace / Delete / arrows / Enter / Esc are already handled in handle_key,
+        // so here we only insert printable characters into TextInputState.
         if !consumed
             && self.app.state.settings_panel.is_open
             && self.app.state.settings_panel.ssh_field_editing.is_some()
@@ -77,8 +77,8 @@ impl EventHandler {
                 && !self.modifiers.control_key()
                 && !self.modifiers.alt_key()
             {
-                // 制御文字 (Backspace=\x08, Tab=\x09 など) を除外し、
-                // 印字可能文字のみを挿入する。
+                // Exclude control characters (Backspace=\x08, Tab=\x09, etc.) and
+                // insert only printable characters.
                 for ch in t.chars() {
                     if !ch.is_control() {
                         self.app.state.settings_panel.ssh_field_insert_char(ch);
@@ -89,11 +89,11 @@ impl EventHandler {
                 }
                 return;
             }
-            // 矢印キー等のテキストなしイベントもサーバーへは転送しない
+            // Text-less events such as arrow keys are also not forwarded to the server.
             return;
         }
 
-        // ローカルで消費されなかった場合はサーバーへ転送する
+        // If not consumed locally, forward to the server.
         if !consumed {
             self.forward_key_to_server(physical_key, text.as_deref());
         }

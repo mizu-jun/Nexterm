@@ -1,9 +1,9 @@
-//! winit `ApplicationHandler` のライフサイクルフック
+//! winit `ApplicationHandler` lifecycle hooks.
 //!
-//! `event_handler.rs` から抽出した:
-//! - `on_new_events` — 60fps タイマー設定
-//! - `on_resumed` — ウィンドウ・wgpu 初期化・サーバー接続
-//! - `on_about_to_wait` — サーバーメッセージポーリング・ホットリロード処理
+//! Extracted from `event_handler.rs`:
+//! - `on_new_events` — 60 fps timer setup
+//! - `on_resumed` — window / wgpu initialization / server connection
+//! - `on_about_to_wait` — server-message polling / hot-reload handling
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -24,27 +24,28 @@ use crate::glyph_atlas::{GlyphAtlas, GlyphKey};
 use crate::renderer::WgpuState;
 
 impl EventHandler {
-    /// `ApplicationHandler::new_events` の実装
+    /// `ApplicationHandler::new_events` implementation.
     pub(super) fn on_new_events(&mut self, event_loop: &ActiveEventLoop, _cause: StartCause) {
-        // PTY 出力を 16ms ごとにポーリングする（約 60fps）
+        // Poll PTY output every 16 ms (about 60 fps).
         event_loop.set_control_flow(ControlFlow::WaitUntil(
             std::time::Instant::now() + std::time::Duration::from_millis(16),
         ));
     }
 
-    /// `ApplicationHandler::resumed` の実装
+    /// `ApplicationHandler::resumed` implementation.
     pub(super) fn on_resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // ウィンドウを作成する（設定に従って透過・ぼかし・装飾を適用する）
+        // Create the window (apply transparency, blur, and decorations per config).
         use nexterm_config::WindowDecorations;
         let win_cfg = &self.app.config.window;
         let transparent = win_cfg.background_opacity < 1.0;
         let decorations = !matches!(win_cfg.decorations, WindowDecorations::None);
 
-        // Sprint 5-11-1 / H1 PoC: AccessKit Adapter は **Window を可視化する前** に
-        // 作成する必要がある（accesskit_winit::Adapter::new のドキュメント参照）。
-        // そのため `with_visible(false)` で不可視作成 → Adapter 初期化 → `set_visible(true)` の
-        // 順序を守る。可視化前に Adapter を入れないとプラットフォーム側 a11y ツリーが
-        // 正しく初期化されない。
+        // Sprint 5-11-1 / H1 PoC: the AccessKit Adapter must be created
+        // **before the window is made visible** (see the docs for
+        // `accesskit_winit::Adapter::new`). Therefore follow the order
+        // `with_visible(false)` → Adapter init → `set_visible(true)`. If the
+        // Adapter is not installed before visibility, the platform-side a11y
+        // tree is not initialized correctly.
         let attrs = Window::default_attributes()
             .with_title("Nexterm")
             .with_inner_size(PhysicalSize::new(1280u32, 800u32))
@@ -58,28 +59,29 @@ impl EventHandler {
                 .expect("Failed to create window"),
         );
 
-        // Sprint 5-11-1 / H1 PoC: AccessKit Adapter を初期化（可視化前）。
+        // Sprint 5-11-1 / H1 PoC: initialize the AccessKit Adapter (before visibility).
         //
-        // `Adapter::with_event_loop_proxy` は内部で activation / action / deactivation の
-        // 3 種ハンドラを `EventLoopProxy<UserEvent>` 経由でイベント送信するよう設定する。
-        // この `proxy` は `From<accesskit_winit::Event> for UserEvent` を経由するため
-        // `user_event` ハンドラが `UserEvent::Accessibility(...)` として受け取る。
+        // `Adapter::with_event_loop_proxy` configures the activation /
+        // action / deactivation handlers to send events through an
+        // `EventLoopProxy<UserEvent>`. The proxy reaches the `user_event`
+        // handler as `UserEvent::Accessibility(...)` via
+        // `From<accesskit_winit::Event> for UserEvent`.
         //
-        // **既定 ON 方針 (Q2=a 自動検出)**: スクリーンリーダーが起動していない場合は
-        // プラットフォーム側で adapter が非アクティブ状態を保つため、CPU/メモリオーバーヘッドは
-        // ほぼゼロ。明示的な opt-in 設定は不要。
+        // **Default-on policy (Q2=a auto-detect)**: when no screen reader is
+        // running, the platform keeps the adapter inactive, so the CPU/memory
+        // overhead is essentially zero. An explicit opt-in is not required.
         let accesskit_adapter = accesskit_winit::Adapter::with_event_loop_proxy(
             event_loop,
             &window,
             self.proxy.clone(),
         );
-        info!("AccessKit Adapter を初期化（スクリーンリーダー接続待ち）");
+        info!("Initialized AccessKit Adapter (waiting for a screen reader to connect)");
         self.accesskit_adapter = Some(accesskit_adapter);
 
-        // Adapter 初期化が完了したので Window を可視化する
+        // Adapter initialization is complete, so make the window visible.
         window.set_visible(true);
 
-        // アプリケーションアイコンを設定する
+        // Set the application icon.
         {
             let icon_bytes = include_bytes!("../../../../assets/nexterm-source.png");
             if let Ok(img) = image::load_from_memory(icon_bytes) {
@@ -91,10 +93,10 @@ impl EventHandler {
             }
         }
 
-        // IME 入力を有効にする
+        // Enable IME input.
         window.set_ime_allowed(true);
 
-        // DPI スケール係数を取得し、フォントを実スケールで再生成する
+        // Read the DPI scale factor and rebuild the font at the real scale.
         let scale_factor = window.scale_factor() as f32;
         self.scale_factor = scale_factor;
         self.app.font = FontManager::new(
@@ -105,25 +107,26 @@ impl EventHandler {
             self.app.config.font.ligatures,
         );
 
-        // Acrylic（すりガラス）背景を適用する（Windows 11 のみ有効）
+        // Apply the Acrylic (frosted-glass) background (Windows 11 only).
         #[cfg(windows)]
         crate::platform::apply_acrylic_blur(&window);
 
-        // wgpu を非同期で初期化する（tokio runtime が必要）
+        // Initialize wgpu asynchronously (requires a tokio runtime).
         let mut wgpu_state = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current()
                 .block_on(WgpuState::new(Arc::clone(&window), &self.app.config.gpu))
         })
         .expect("Failed to initialize wgpu");
 
-        // 背景画像をロード（Sprint 5-7 / Phase 3-1）。失敗時は内部で warn ログ
+        // Load the background image (Sprint 5-7 / Phase 3-1). On failure, a warn log is emitted internally.
         wgpu_state.load_background(&self.app.config.window);
 
         let mut atlas =
             GlyphAtlas::new_with_config(&wgpu_state.device, self.app.config.gpu.atlas_size);
 
-        // ASCII 印字可能文字（0x20-0x7E）をグリフアトラスに事前ロードする。
-        // 初回のキーストローク遅延を排除し、起動直後からスムーズな描画を実現する。
+        // Pre-load printable ASCII characters (0x20-0x7E) into the glyph atlas.
+        // This eliminates the first-keystroke delay and makes rendering smooth
+        // from startup.
         for ch in ' '..='~' {
             for bold in [false, true] {
                 let key = GlyphKey {
@@ -142,8 +145,8 @@ impl EventHandler {
             }
         }
 
-        // ウィンドウサイズからセル数を計算してステートを初期化する
-        // タブバー（上部）とステータスバー（下部1セル）を除いた領域でセル数を計算する
+        // Compute the cell count from the window size and initialize state.
+        // Exclude the tab bar (top) and status bar (bottom 1 cell) from the area.
         let size = window.inner_size();
         let cell_h_init = self.app.font.cell_height();
         let tab_bar_h_init = if self.app.config.tab_bar.enabled {
@@ -164,17 +167,18 @@ impl EventHandler {
         self.atlas = Some(atlas);
         self.wgpu_state = Some(wgpu_state);
 
-        // Sprint 5-8 Phase 4-1 Step 1.5: Quake モードの対象 OS Window を **主 Window** に固定する。
-        // Phase 4-2 で複数 OS Window が実装された後も、Quake 表示・隠蔽は常にここで設定した
-        // `target_window_id` 経由でのみ行う（他の Window が誤って Quake トグルされない設計）。
+        // Sprint 5-8 Phase 4-1 Step 1.5: pin the Quake-mode target OS window to
+        // the **primary window**. Even after Phase 4-2 added multiple OS
+        // windows, Quake show/hide always goes through the `target_window_id`
+        // set here (other windows are intentionally never toggled into Quake).
         self.quake.target_window_id = Some(window.id());
 
-        // サーバーに接続してデフォルトセッションにアタッチする
+        // Connect to the server and attach to the default session.
         let conn = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
                 match Connection::connect_gpu().await {
                     Ok(conn) => {
-                        // セッションにアタッチ → 実際のサイズを通知
+                        // Attach to the session → notify the real size.
                         let _ = conn.send_tx.try_send(ClientToServer::Attach {
                             session_name: "main".to_string(),
                         });
@@ -194,10 +198,11 @@ impl EventHandler {
         info!("wgpu renderer initialized");
     }
 
-    /// `ApplicationHandler::about_to_wait` の実装
+    /// `ApplicationHandler::about_to_wait` implementation.
     pub(super) fn on_about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        // サーバーからのメッセージをポーリングして状態を更新する
-        // borrow checker のため、まず受信したメッセージを Vec に集めてから処理する
+        // Poll server messages and update state.
+        // To satisfy the borrow checker, first collect the received messages
+        // into a Vec and then process them.
         let mut had_messages = false;
         let mut messages = Vec::new();
         if let Some(conn) = &mut self.connection {
@@ -207,10 +212,11 @@ impl EventHandler {
             }
         }
         for msg in messages {
-            // Sprint 5-8 Phase 4-4 Step C: `WindowListChanged` を検出して、
-            // タブ外ドロップで生まれた新規 Window があれば OS Window をスポーン要求する。
-            // `pending_new_window_drop_pos` が `Some` のときのみ発火する（手動 break_pane や
-            // 他クライアント由来の Window 生成では OS Window スポーンしない設計）。
+            // Sprint 5-8 Phase 4-4 Step C: detect `WindowListChanged`. If a new
+            // window was created by a drop outside the tab bar, request an OS
+            // window spawn. This only fires when `pending_new_window_drop_pos`
+            // is `Some` (manual break_pane or windows from other clients are
+            // intentionally not spawned as new OS windows).
             if let ServerToClient::WindowListChanged { ref windows } = msg {
                 let current_ids: std::collections::HashSet<u32> =
                     windows.iter().map(|w| w.window_id).collect();
@@ -221,8 +227,9 @@ impl EventHandler {
                 if !new_ids.is_empty()
                     && let Some(pos) = self.pending_new_window_drop_pos.take()
                 {
-                    // 最小 ID（= 最も新しい Window）を採用。複数同時生成は想定外
-                    let server_window_id = *new_ids.iter().min().expect("new_ids 非空");
+                    // Use the smallest ID (= the newest window); creating
+                    // multiple at once is not expected.
+                    let server_window_id = *new_ids.iter().min().expect("new_ids non-empty");
                     if let Err(e) =
                         self.proxy
                             .send_event(crate::renderer::UserEvent::SpawnOsWindow {
@@ -230,10 +237,10 @@ impl EventHandler {
                                 pos: Some(pos),
                             })
                     {
-                        tracing::warn!("SpawnOsWindow UserEvent 送信失敗: {}", e);
+                        tracing::warn!("Failed to send SpawnOsWindow UserEvent: {}", e);
                     } else {
                         tracing::info!(
-                            "新規 OS Window スポーン要求送信 (server_window_id={}, pos={:?})",
+                            "Sent new OS window spawn request (server_window_id={}, pos={:?})",
                             server_window_id,
                             pos
                         );
@@ -242,16 +249,18 @@ impl EventHandler {
                 self.known_server_window_ids = current_ids;
             }
 
-            // 機密操作要求は SecurityConfig ポリシーに従って処理する（Sprint 4-1）
+            // Handle sensitive-operation requests per the SecurityConfig policy (Sprint 4-1).
             match msg {
                 ServerToClient::DesktopNotification {
                     pane_id,
                     title,
                     body,
                 } => {
-                    // Sprint 5-11-5: SR には consent 設定に関わらず通知する。
-                    // SR は OS 通知の代替ではなくアクセシビリティ手段のため、
-                    // 同意ポリシーで OS 通知を抑止していても SR には届く必要がある。
+                    // Sprint 5-11-5: always notify the screen reader regardless
+                    // of the consent setting. The SR is an accessibility
+                    // channel rather than a substitute for OS notifications,
+                    // so even when the consent policy suppresses the OS
+                    // notification, the SR must still receive it.
                     self.app.state.add_alert(
                         crate::state::AlertKind::Notification,
                         pane_id,
@@ -269,7 +278,7 @@ impl EventHandler {
             }
         }
 
-        // BEL を受信していればウィンドウ注目要求を発行する
+        // If a BEL was received, request user attention on the window.
         if self.app.state.pending_bell {
             self.app.state.pending_bell = false;
             if let Some(w) = &self.window {
@@ -277,11 +286,11 @@ impl EventHandler {
             }
         }
 
-        // Phase 4-5: 保留中の Window 閉じ要求を処理する
-        // （QueryForegroundProcess の応答受信 → 確認ダイアログ表示 or 即時 Kill）
+        // Phase 4-5: process any pending window-close request
+        // (QueryForegroundProcess response → show confirmation dialog or kill immediately).
         self.poll_pending_close_request(event_loop);
 
-        // 設定ホットリロードをポーリングする（最新の設定を適用する）
+        // Poll for config hot-reload and apply the latest config.
         if let Some(rx) = &mut self.config_rx
             && let Ok(new_config) = rx.try_recv()
         {
@@ -289,7 +298,7 @@ impl EventHandler {
                 "Config reloaded: font={} {}pt",
                 new_config.font.family, new_config.font.size
             );
-            // フォントサイズ変更時はグリフアトラスも再生成する
+            // When the font size changes, rebuild the glyph atlas as well.
             let font_changed = self.app.config.font != new_config.font;
             self.app.config = new_config;
             if font_changed {
@@ -308,11 +317,11 @@ impl EventHandler {
             had_messages = true;
         }
 
-        // カスタムシェーダーファイルの変更をポーリングしてパイプラインを再構築する
+        // Poll for custom-shader file changes and rebuild the pipelines.
         if let Some(rx) = &mut self.shader_reload_rx
             && rx.try_recv().is_ok()
         {
-            // チャネルをドレインして複数イベントを 1 回にまとめる
+            // Drain the channel to collapse multiple events into one.
             while rx.try_recv().is_ok() {}
             if let Some(wgpu) = &mut self.wgpu_state {
                 wgpu.reload_shader_pipelines(&self.app.config.gpu);
@@ -320,13 +329,13 @@ impl EventHandler {
             had_messages = true;
         }
 
-        // ステータスバーを 1 秒ごとに再評価してキャッシュを更新する
+        // Re-evaluate the status bar every second and update the cache.
         if self.app.config.status_bar.enabled
             && self.last_status_eval.elapsed() >= Duration::from_secs(1)
             && let Some(eval) = &self.status_eval
         {
-            // フォーカスペインの cwd を取得して WidgetContext に詰める
-            // （Sprint 5-7 / UI-1-2: cwd / cwd_short / git_branch ウィジェット用）
+            // Fetch the focused pane's cwd and pack it into a WidgetContext
+            // (Sprint 5-7 / UI-1-2: for the cwd / cwd_short / git_branch widgets).
             let cwd = self
                 .app
                 .state
@@ -348,7 +357,7 @@ impl EventHandler {
             had_messages = true;
         }
 
-        // Sprint 5-7 / UI-1-4: キーヒントオーバーレイの期限切れ判定
+        // Sprint 5-7 / UI-1-4: detect key-hint overlay expiration.
         if let Some(deadline) = self.app.state.key_hint_visible_until
             && Instant::now() >= deadline
         {
@@ -357,14 +366,14 @@ impl EventHandler {
                 w.request_redraw();
             }
         }
-        // Sprint 5-7 / UI-1-4 bug fix: prefix モードの期限切れ判定（タイムアウト 2 秒）
+        // Sprint 5-7 / UI-1-4 bug fix: detect prefix-mode expiration (2-second timeout).
         if let Some(deadline) = self.app.state.prefix_pending_until
             && Instant::now() >= deadline
         {
             self.app.state.prefix_pending_until = None;
         }
 
-        // 更新チェッカーからの通知をポーリングしてバナーを表示する
+        // Poll for notifications from the update checker and show the banner.
         if self.update_rx.has_changed().unwrap_or(false)
             && let Some(ver) = self.update_rx.borrow_and_update().clone()
             && self.app.state.update_banner.is_none()
@@ -377,7 +386,8 @@ impl EventHandler {
             w.request_redraw();
         }
 
-        // 設定パネルの開閉アニメーションを進める（60fps 想定で約 8フレーム = 0.13秒）
+        // Advance the settings-panel open/close animation
+        // (assumes 60 fps: about 8 frames = 0.13 s).
         let sp = &mut self.app.state.settings_panel;
         if sp.is_open && sp.open_progress < 1.0 {
             sp.open_progress = (sp.open_progress + 0.15).min(1.0);
@@ -386,35 +396,37 @@ impl EventHandler {
             }
         }
 
-        // Sprint 5-7 / Phase 2-2: Quake モード処理
-        // 1) global-hotkey 押下イベントを排出し、押下があれば "toggle" として扱う
-        // 2) サーバー経由のトグル要求 (`pending_quake_action`) を取り出す
-        // 3) 両者を統合して 1 回だけウィンドウ操作する（同フレームで複数発火しても 1 回）
+        // Sprint 5-7 / Phase 2-2: Quake-mode handling.
+        // 1) Drain global-hotkey press events. Any press is treated as "toggle".
+        // 2) Take a server-issued toggle request (`pending_quake_action`).
+        // 3) Combine them and perform the window operation at most once per
+        //    frame (even if multiple events fire in the same frame).
         self.handle_quake_tick();
 
-        // Sprint 5-11-2 Step 2-5: AccessKit ツリーのライブ更新。
-        // 100ms スロットリング + 状態ハッシュ比較を内部で実施するため、毎フレーム呼んで安全。
-        // SR が非接続なら `update_if_active` が no-op になるためオーバーヘッドはほぼゼロ。
+        // Sprint 5-11-2 Step 2-5: live update of the AccessKit tree.
+        // Internally applies 100 ms throttling and a state-hash comparison, so
+        // calling this every frame is safe. When no SR is connected,
+        // `update_if_active` is a no-op, so the overhead is essentially zero.
         self.update_accesskit_tree_if_needed();
     }
 
-    /// Quake モードのトグル要求を 1 フレームに 1 回処理する
+    /// Process Quake-mode toggle requests at most once per frame.
     pub(super) fn handle_quake_tick(&mut self) {
-        // ホットキー押下を排出
+        // Drain hotkey presses.
         let hotkey_pressed = self.quake.drain_pressed();
-        // IPC 経由の保留アクション
+        // Pending action from IPC.
         let pending = self.app.state.pending_quake_action.take();
 
-        // 何も無ければ早期 return
+        // If nothing to do, return early.
         if !hotkey_pressed && pending.is_none() {
             return;
         }
 
-        // 統合: ホットキーは常に "toggle"。IPC 経由のアクション指定があればそちらを優先
+        // Merge: hotkey is always "toggle". If IPC specifies an action, that takes precedence.
         let action = pending.unwrap_or_else(|| "toggle".to_string());
 
         let Some(window) = self.window.as_ref().cloned() else {
-            warn!("Quake トグル要求を受け取りましたがウィンドウが未初期化です");
+            warn!("Received a Quake toggle request but the window is not initialized");
             return;
         };
 
@@ -450,7 +462,7 @@ impl EventHandler {
                 }
             }
             other => {
-                warn!("未知の Quake action '{}' を受信。無視します", other);
+                warn!("Received unknown Quake action '{}'; ignoring", other);
             }
         }
         window.request_redraw();

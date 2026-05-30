@@ -1,15 +1,16 @@
-//! Sprint 5-11-1 / H1 PoC: AccessKit イベントハンドラ
+//! Sprint 5-11-1 / H1 PoC: AccessKit event handler.
 //!
-//! `UserEvent::Accessibility(accesskit_winit::Event)` を受け取って
-//! 適切な応答（初期ツリー送出 / アクション処理 / 非アクティブ化）を行う。
+//! Receives `UserEvent::Accessibility(accesskit_winit::Event)` and sends back
+//! the appropriate response (initial tree, action handling, deactivation).
 //!
-//! Phase 5-11-1 PoC スコープ:
-//! - `InitialTreeRequested`: スクリーンリーダー接続時に固定ツリーを返す
-//! - `ActionRequested`: ログのみ（実アクションは Phase 5-11-2 以降）
-//! - `AccessibilityDeactivated`: ログのみ（リソース解放は adapter 側で完結）
+//! Phase 5-11-1 PoC scope:
+//! - `InitialTreeRequested`: return a fixed tree when a screen reader connects.
+//! - `ActionRequested`: log only (real actions land in Phase 5-11-2 and later).
+//! - `AccessibilityDeactivated`: log only (resource release happens inside the
+//!   adapter).
 //!
-//! Sprint 5-11-2 Step 2-5 で `update_accesskit_tree_if_needed` を追加。
-//! `on_about_to_wait` 末尾で呼び出してライブ更新を行う。
+//! Sprint 5-11-2 Step 2-5 added `update_accesskit_tree_if_needed`. Called at the
+//! end of `on_about_to_wait` to perform live updates.
 
 use std::time::{Duration, Instant};
 
@@ -25,45 +26,48 @@ use crate::accessibility::{
 
 use super::EventHandler;
 
-/// AccessKit ライブ更新のスロットリング間隔（Q3=a で合意した 100ms）。
+/// Throttling interval for AccessKit live updates (100 ms, agreed under Q3=a).
 ///
-/// この間隔を空けて `compute_tree_state_hash` と `update_if_active` を実行する。
-/// スクリーンリーダー側の認識遅延は最大 100ms 程度に収まる。
+/// `compute_tree_state_hash` and `update_if_active` run at most this often.
+/// Screen-reader recognition lag is kept within roughly 100 ms.
 const TREE_UPDATE_THROTTLE: Duration = Duration::from_millis(100);
 
 impl EventHandler {
-    /// AccessKit プラットフォームアダプタから届いたイベントを処理する。
+    /// Handle an event delivered by the AccessKit platform adapter.
     ///
-    /// Sprint 5-11-2 Step 2-1: 固定ツリーから動的ツリー（`ClientState` 反映）に移行。
-    /// Sprint 5-11-2 Step 2-3: 複数 OS Window 対応。`event.window_id` から該当 Adapter を引く。
+    /// Sprint 5-11-2 Step 2-1: migrated from a fixed tree to a dynamic tree
+    /// (reflecting `ClientState`).
+    /// Sprint 5-11-2 Step 2-3: multi-OS-window support. Look up the relevant
+    /// Adapter from `event.window_id`.
     ///
-    /// **設計メモ**: ツリー内容は `ClientState` 単一インスタンスから生成するため、すべての
-    /// OS Window で同じツリーが返る。将来的に「Window ごとに別 view」を導入する場合は
-    /// `PerWindowViewState` を参照して各 Adapter に異なるツリーを送る形に拡張する。
+    /// **Design note**: tree contents are generated from a single `ClientState`
+    /// instance, so every OS window returns the same tree. If "per-window
+    /// views" are introduced in the future, extend this to consult
+    /// `PerWindowViewState` and feed each Adapter a different tree.
     pub(super) fn on_accesskit_event(
         &mut self,
         event: accesskit_winit::Event,
         event_loop: &ActiveEventLoop,
     ) {
-        // 先にツリーを計算（adapter mut borrow と state ref borrow を分離する）
+        // Compute the tree first to keep the adapter mut borrow and the state ref borrow separate.
         let tree_update_for_initial = matches!(
             event.window_event,
             accesskit_winit::WindowEvent::InitialTreeRequested
         )
         .then(|| build_tree_from_state(&self.app.state));
 
-        // 対象 Adapter を window_id で引く。主 Window と追加 Window を区別する。
+        // Look up the target Adapter by window_id, distinguishing primary from additional windows.
         let event_window_id = event.window_id;
         let is_main = self.window.as_ref().map(|w| w.id()) == Some(event_window_id);
 
         match event.window_event {
             accesskit_winit::WindowEvent::InitialTreeRequested => {
                 info!(
-                    "AccessKit: スクリーンリーダーが接続、初期ツリーを送出する (window_id={:?})",
+                    "AccessKit: screen reader connected; sending initial tree (window_id={:?})",
                     event_window_id
                 );
-                let tree_update =
-                    tree_update_for_initial.expect("InitialTreeRequested arm では事前計算済み");
+                let tree_update = tree_update_for_initial
+                    .expect("InitialTreeRequested arm should have precomputed the tree");
                 if is_main {
                     if let Some(adapter) = self.accesskit_adapter.as_mut() {
                         adapter.update_if_active(|| tree_update);
@@ -77,63 +81,68 @@ impl EventHandler {
             }
             accesskit_winit::WindowEvent::AccessibilityDeactivated => {
                 info!(
-                    "AccessKit: スクリーンリーダーが切断された (window_id={:?})",
+                    "AccessKit: screen reader disconnected (window_id={:?})",
                     event_window_id
                 );
             }
         }
     }
 
-    /// AccessKit `ActionRequest` を Nexterm 内部操作にマップして実行する（Step 2-4）。
+    /// Map an AccessKit `ActionRequest` to an internal Nexterm operation and
+    /// run it (Step 2-4).
     ///
-    /// **ディスパッチ表**:
+    /// **Dispatch table**:
     ///
-    /// | target_node | Action | 効果 |
+    /// | target_node | Action | Effect |
     /// |---|---|---|
-    /// | `Tab { pane_id }` | `Focus` / `Click` | `FocusPane` IPC 送信 + `state.focused_pane_id` 更新 |
-    /// | `Pane { pane_id }` | `Focus` / `Click` | 同上 |
-    /// | `CloseDialogKill` | `Click` / `Focus` | `selected_button = 0xFE`（Kill 確定） |
-    /// | `CloseDialogCancel` | `Click` / `Focus` | `selected_button = 0xFF`（Cancel 確定） |
-    /// | `ContextItem { idx }` | `Click` | 既存 `execute_context_menu_action` 流用 + メニューを閉じる |
-    /// | `PaletteItem { idx }` | `Click` | 既存 `execute_action` 流用 + パレットを閉じる |
-    /// | `PaletteSearch` | `SetValue(s)` | `palette.query = s` + selection リセット |
-    /// | `QuickSelectItem { idx }` | `Click` | `matches[idx].text` をクリップボードコピー + `quick_select.exit()` |
-    /// | `SettingsTab { idx }` | `Focus` / `Click` | カテゴリ切替 + `font_family_editing = false` |
-    /// | `SettingsFontFamily` | `Click` | 編集モード ON |
+    /// | `Tab { pane_id }` | `Focus` / `Click` | send `FocusPane` IPC + update `state.focused_pane_id` |
+    /// | `Pane { pane_id }` | `Focus` / `Click` | same as above |
+    /// | `CloseDialogKill` | `Click` / `Focus` | `selected_button = 0xFE` (Kill confirmed) |
+    /// | `CloseDialogCancel` | `Click` / `Focus` | `selected_button = 0xFF` (Cancel confirmed) |
+    /// | `ContextItem { idx }` | `Click` | reuse the existing `execute_context_menu_action` + close the menu |
+    /// | `PaletteItem { idx }` | `Click` | reuse the existing `execute_action` + close the palette |
+    /// | `PaletteSearch` | `SetValue(s)` | `palette.query = s` + reset selection |
+    /// | `QuickSelectItem { idx }` | `Click` | copy `matches[idx].text` to the clipboard + `quick_select.exit()` |
+    /// | `SettingsTab { idx }` | `Focus` / `Click` | switch category + `font_family_editing = false` |
+    /// | `SettingsFontFamily` | `Click` | enter edit mode |
     /// | `SettingsFontFamily` | `SetValue(s)` | `font_family = s`, `dirty = true` |
-    /// | `SettingsFontSize` | `SetValue(v)` | 0.5 単位丸め + clamp 8.0〜32.0 |
+    /// | `SettingsFontSize` | `SetValue(v)` | round to 0.5 + clamp to 8.0–32.0 |
     /// | `SettingsFontSize` | `Increment` / `Decrement` | `increase_font_size` / `decrease_font_size` |
     /// | `SettingsThemeScheme` | `Click` / `Increment` | `next_scheme` |
     /// | `SettingsThemeScheme` | `Decrement` | `prev_scheme` |
-    /// | `SettingsWindowOpacity` | `SetValue(v)` | 0.05 単位丸め + clamp 0.1〜1.0 |
+    /// | `SettingsWindowOpacity` | `SetValue(v)` | round to 0.05 + clamp to 0.1–1.0 |
     /// | `SettingsWindowOpacity` | `Increment` / `Decrement` | `increase_opacity` / `decrease_opacity` |
     /// | `SettingsStartupLanguage` | `Click` / `Increment` | `next_language` |
     /// | `SettingsStartupLanguage` | `Decrement` | `prev_language` |
-    /// | `SettingsStartupAutoUpdate` | `Click` | トグル + `dirty = true` |
-    /// | その他 | — | `debug!` ログのみ |
+    /// | `SettingsStartupAutoUpdate` | `Click` | toggle + `dirty = true` |
+    /// | other | — | `debug!` log only |
     ///
-    /// **設計メモ**:
-    /// - `Focus` を `Click` と同等扱いにする理由: スクリーンリーダー（NVDA / VoiceOver / Orca）
-    ///   は仮想カーソルでフォーカスを移動するだけで実際の制御が遷移する。Nexterm でも同じ UX
-    ///   を実現するため、Focus アクションでも `FocusPane` IPC を送る。
-    /// - `selected_button` の値: `window.rs::poll_pending_close_request` が `0xFE` を Kill、
-    ///   `0xFF` を Cancel として消費する（既存の半オープン契約をそのまま利用）。
-    /// - パレットの `idx` は `filtered()` 上の位置。動的ツリー側で同じ順序で展開しているため
-    ///   その idx の `PaletteAction.action` 文字列を取って `execute_action` に渡せばよい。
-    /// - ContextMenu の `idx` は `items` 上の位置で、こちらは生のインデックス。
+    /// **Design notes**:
+    /// - Reason for treating `Focus` like `Click`: screen readers
+    ///   (NVDA / VoiceOver / Orca) move focus with a virtual cursor and that
+    ///   already implies a control transfer. To deliver the same UX in
+    ///   Nexterm, the Focus action also sends `FocusPane` IPC.
+    /// - Values of `selected_button`: `window.rs::poll_pending_close_request`
+    ///   consumes `0xFE` as Kill and `0xFF` as Cancel (reusing the existing
+    ///   half-open contract).
+    /// - The palette `idx` is the position within `filtered()`. The dynamic
+    ///   tree expands in the same order, so simply pass the `PaletteAction.action`
+    ///   string at that index to `execute_action`.
+    /// - The ContextMenu `idx` is the position in `items` — a raw index.
     fn handle_accesskit_action(&mut self, request: ActionRequest, event_loop: &ActiveEventLoop) {
         let kind = decode_node_id(request.target_node);
         debug!(
-            "AccessKit: アクション受信 action={:?}, target={:?} ({:?})",
+            "AccessKit: received action action={:?}, target={:?} ({:?})",
             request.action, request.target_node, kind
         );
 
-        // 設定パネル系のアクションは純関数 `dispatch_settings_action` に委譲する。
-        // 該当した場合は再描画を要求して早期 return。
+        // Settings-panel actions are delegated to the pure function
+        // `dispatch_settings_action`. On match, request a redraw and return early.
         //
-        // Phase 5-11-7: Phase 5-11-6 #6 で追加された 4 フィールド（CursorStyle / PaddingX /
-        // PaddingY / PresentMode）と、新規 Profiles 項目（SettingsProfileItem）も
-        // 同じ委譲先で処理できるよう route に追加。
+        // Phase 5-11-7: extended the route so the four fields added in
+        // Phase 5-11-6 #6 (CursorStyle / PaddingX / PaddingY / PresentMode)
+        // and the new Profiles entry (SettingsProfileItem) are handled by the
+        // same delegate.
         if matches!(
             kind,
             NodeIdKind::SettingsTab { .. }
@@ -163,13 +172,13 @@ impl EventHandler {
             );
             if handled {
                 info!(
-                    "AccessKit: 設定パネル アクション処理 action={:?}, kind={:?}",
+                    "AccessKit: settings-panel action handled action={:?}, kind={:?}",
                     request.action, kind
                 );
                 self.request_redraw_if_window();
             } else {
                 debug!(
-                    "AccessKit: 設定パネル 未対応 action={:?}, kind={:?}",
+                    "AccessKit: settings-panel action not handled action={:?}, kind={:?}",
                     request.action, kind
                 );
             }
@@ -177,10 +186,10 @@ impl EventHandler {
         }
 
         match (request.action, kind) {
-            // ===== タブ / ペインのフォーカス・クリック =====
+            // ===== Tab / pane focus and click =====
             (Action::Focus | Action::Click, NodeIdKind::Tab { pane_id })
             | (Action::Focus | Action::Click, NodeIdKind::Pane { pane_id }) => {
-                info!("AccessKit: pane_id={} にフォーカス要求", pane_id);
+                info!("AccessKit: focus request for pane_id={}", pane_id);
                 self.app.state.focused_pane_id = Some(pane_id);
                 if let Some(conn) = &self.connection {
                     let _ = conn.send_tx.try_send(ClientToServer::FocusPane { pane_id });
@@ -188,11 +197,11 @@ impl EventHandler {
                 self.request_redraw_if_window();
             }
 
-            // ===== 閉じる確認ダイアログ =====
+            // ===== Close-confirmation dialog =====
             (Action::Click | Action::Focus, NodeIdKind::CloseDialogKill) => {
-                info!("AccessKit: CloseDialog Kill ボタン確定");
+                info!("AccessKit: CloseDialog Kill button confirmed");
                 if let Some(dlg) = self.app.state.close_window_dialog.as_mut() {
-                    // 0xFE = Kill 確定（次フレームの poll_pending_close_request が消費）
+                    // 0xFE = Kill confirmed (consumed by the next frame's poll_pending_close_request).
                     dlg.selected_button = if matches!(request.action, Action::Click) {
                         0xFE
                     } else {
@@ -202,7 +211,7 @@ impl EventHandler {
                 }
             }
             (Action::Click | Action::Focus, NodeIdKind::CloseDialogCancel) => {
-                info!("AccessKit: CloseDialog Cancel ボタン確定");
+                info!("AccessKit: CloseDialog Cancel button confirmed");
                 if let Some(dlg) = self.app.state.close_window_dialog.as_mut() {
                     dlg.selected_button = if matches!(request.action, Action::Click) {
                         0xFF
@@ -213,7 +222,7 @@ impl EventHandler {
                 }
             }
 
-            // ===== コンテキストメニュー =====
+            // ===== Context menu =====
             (Action::Click, NodeIdKind::ContextItem { idx }) => {
                 let action = self
                     .app
@@ -223,14 +232,17 @@ impl EventHandler {
                     .and_then(|m| m.items.get(idx))
                     .map(|item| item.action.clone());
                 if let Some(action) = action {
-                    info!("AccessKit: ContextMenu 項目 {} を実行: {:?}", idx, action);
-                    // メニューを閉じてからアクション実行（既存マウスクリック経路と同じ順序）
+                    info!(
+                        "AccessKit: executing ContextMenu item {}: {:?}",
+                        idx, action
+                    );
+                    // Close the menu before running the action (same order as the existing mouse-click path).
                     self.app.state.context_menu = None;
                     self.execute_context_menu_action(&action);
                     self.request_redraw_if_window();
                 } else {
                     debug!(
-                        "AccessKit: ContextMenu 項目 idx={} が範囲外（メニューが既に閉じている可能性）",
+                        "AccessKit: ContextMenu item idx={} out of range (menu may already be closed)",
                         idx
                     );
                 }
@@ -244,7 +256,7 @@ impl EventHandler {
                 }
             }
 
-            // ===== コマンドパレット =====
+            // ===== Command palette =====
             (Action::Click, NodeIdKind::PaletteItem { idx }) => {
                 let action_id = self
                     .app
@@ -254,15 +266,15 @@ impl EventHandler {
                     .get(idx)
                     .map(|a| a.action.clone());
                 if let Some(action_id) = action_id {
-                    info!("AccessKit: Palette 項目 {} を実行: {}", idx, action_id);
-                    // 既存 Enter キー経路と同じ順序: 閉じる → 履歴記録 → アクション実行
+                    info!("AccessKit: executing Palette item {}: {}", idx, action_id);
+                    // Same order as the existing Enter-key path: close → record history → execute.
                     self.app.state.palette.close();
                     self.app.state.palette.record_use(&action_id);
                     self.execute_action(&action_id, event_loop);
                     self.request_redraw_if_window();
                 } else {
                     debug!(
-                        "AccessKit: Palette 項目 idx={} が範囲外（query 変更等で消失した可能性）",
+                        "AccessKit: Palette item idx={} out of range (may have disappeared due to a query change)",
                         idx
                     );
                 }
@@ -275,18 +287,19 @@ impl EventHandler {
             }
             (Action::SetValue, NodeIdKind::PaletteSearch) => {
                 if let Some(ActionData::Value(s)) = request.data {
-                    info!("AccessKit: Palette 検索文字列を設定: {:?}", s.as_ref());
+                    info!("AccessKit: set Palette search string: {:?}", s.as_ref());
                     self.app.state.palette.query = s.into_string();
                     self.app.state.palette.selected = 0;
                     self.request_redraw_if_window();
                 }
             }
 
-            // ===== Quick Select（Step 2-2-h）=====
+            // ===== Quick Select (Step 2-2-h) =====
             //
-            // SR からの Click は「ラベルキー入力でマッチが確定したとき」と同じ挙動にする
-            // （既存の `handle_quick_select_key` の `accept` 経路を踏襲）。
-            // Focus は描画状態を変えるだけの非破壊操作なので debug ログだけにしておく。
+            // A SR Click is treated the same as "label-key input confirmed a match"
+            // (following the existing `accept` branch of `handle_quick_select_key`).
+            // Focus is a non-destructive operation that only changes drawing state,
+            // so just emit a debug log.
             (Action::Click, NodeIdKind::QuickSelectItem { idx }) => {
                 let text = self
                     .app
@@ -296,7 +309,7 @@ impl EventHandler {
                     .get(idx)
                     .map(|m| m.text.clone());
                 if let Some(text) = text {
-                    info!("AccessKit: Quick Select 項目 {} を確定: {}", idx, text);
+                    info!("AccessKit: confirmed Quick Select item {}: {}", idx, text);
                     if let Ok(mut clipboard) = arboard::Clipboard::new() {
                         let _ = clipboard.set_text(text);
                     }
@@ -304,20 +317,20 @@ impl EventHandler {
                     self.request_redraw_if_window();
                 } else {
                     debug!(
-                        "AccessKit: Quick Select 項目 idx={} が範囲外（既に exit() 済の可能性）",
+                        "AccessKit: Quick Select item idx={} out of range (may have already exited)",
                         idx
                     );
                 }
             }
 
-            // ===== Host Manager（Phase 5-11-6 #2）=====
+            // ===== Host Manager (Phase 5-11-6 #2) =====
             //
-            // SR からの Click は既存の Enter キー経路（`input_handler/mod.rs` の
-            // `host_manager.is_open` 分岐）と同等の挙動:
-            // - `auth_type == "password"` → `PasswordModal` を開く（パスワード入力自体の
-            //   SR 対応は Phase 5-11-7 候補）
-            // - その他 → `record_connection` + `connect_ssh_host_new_tab`
-            // Focus は `host_manager.selected` を更新するだけの非破壊操作。
+            // A SR Click is the same as the existing Enter-key path (the
+            // `host_manager.is_open` branch in `input_handler/mod.rs`):
+            // - `auth_type == "password"` → open `PasswordModal` (SR support
+            //   for password input itself is a Phase 5-11-7 candidate).
+            // - Otherwise → `record_connection` + `connect_ssh_host_new_tab`.
+            // Focus only updates `host_manager.selected` (non-destructive).
             (Action::Click, NodeIdKind::HostItem { idx }) => {
                 let host = self
                     .app
@@ -327,7 +340,7 @@ impl EventHandler {
                     .get(idx)
                     .map(|h| (*h).clone());
                 if let Some(host) = host {
-                    info!("AccessKit: Host 項目 {} を確定: {}", idx, host.name);
+                    info!("AccessKit: confirmed Host item {}: {}", idx, host.name);
                     self.app.state.host_manager.close();
                     if host.auth_type == "password" {
                         self.app.state.host_manager.password_modal =
@@ -339,7 +352,7 @@ impl EventHandler {
                     self.request_redraw_if_window();
                 } else {
                     debug!(
-                        "AccessKit: Host 項目 idx={} が範囲外（host_manager は閉じている可能性）",
+                        "AccessKit: Host item idx={} out of range (host_manager may be closed)",
                         idx
                     );
                 }
@@ -353,12 +366,13 @@ impl EventHandler {
                 }
             }
 
-            // ===== Macro Picker（Phase 5-11-6 #3）=====
+            // ===== Macro Picker (Phase 5-11-6 #3) =====
             //
-            // SR からの Click は既存の Enter キー経路（`input_handler/mod.rs` の
-            // `macro_picker.is_open` 分岐）と同等の挙動: `selected = idx` →
-            // `selected_macro()` で MacroConfig 取得 → `close()` → IPC `RunMacro` 送信。
-            // Focus は `macro_picker.selected` を更新するだけ。
+            // A SR Click matches the existing Enter-key path (the
+            // `macro_picker.is_open` branch in `input_handler/mod.rs`):
+            // `selected = idx` → take the MacroConfig via `selected_macro()` →
+            // `close()` → send IPC `RunMacro`. Focus only updates
+            // `macro_picker.selected`.
             (Action::Click, NodeIdKind::MacroItem { idx }) => {
                 self.app.state.macro_picker.selected = idx;
                 let mac = self
@@ -368,7 +382,7 @@ impl EventHandler {
                     .selected_macro()
                     .map(|m| (m.lua_fn.clone(), m.name.clone()));
                 if let Some((fn_name, display_name)) = mac {
-                    info!("AccessKit: Macro 項目 {} を実行: {}", idx, display_name);
+                    info!("AccessKit: executing Macro item {}: {}", idx, display_name);
                     self.app.state.macro_picker.close();
                     if let Some(conn) = &self.connection {
                         let _ = conn.send_tx.try_send(ClientToServer::RunMacro {
@@ -379,7 +393,7 @@ impl EventHandler {
                     self.request_redraw_if_window();
                 } else {
                     debug!(
-                        "AccessKit: Macro 項目 idx={} が範囲外（macro_picker は閉じている可能性）",
+                        "AccessKit: Macro item idx={} out of range (macro_picker may be closed)",
                         idx
                     );
                 }
@@ -391,30 +405,34 @@ impl EventHandler {
                 }
             }
 
-            // ===== Alert Dismiss（Phase 5-11-6 #4）=====
+            // ===== Alert Dismiss (Phase 5-11-6 #4) =====
             //
-            // SR からの Click でアラートを TTL（5 秒）を待たず即時 dismiss する。
-            // `Action::Default` は accesskit 0.24 に存在しないため `Click` のみで対応。
+            // A SR Click dismisses the alert immediately without waiting for
+            // the TTL (5 seconds). `Action::Default` does not exist in
+            // accesskit 0.24, so only `Click` is wired up.
             (Action::Click, NodeIdKind::Alert { seq }) => {
                 if self.app.state.dismiss_alert(seq) {
-                    info!("AccessKit: Alert seq={} を即時 dismiss", seq);
+                    info!("AccessKit: dismissed Alert seq={} immediately", seq);
                     self.request_redraw_if_window();
                 } else {
                     debug!(
-                        "AccessKit: Alert seq={} が見つからない（既に TTL 切れの可能性）",
+                        "AccessKit: Alert seq={} not found (may have already expired)",
                         seq
                     );
                 }
             }
 
-            // ===== Scroll（Phase 5-11-6 #5）=====
+            // ===== Scroll (Phase 5-11-6 #5) =====
             //
-            // PaneArea に対する SR の Scroll 要求 → `state.scroll_up/down(rows/2)` を呼ぶ。
-            // 既存の PageUp/PageDown キー経路と同じ半画面単位。
+            // A SR Scroll request on the PaneArea → call
+            // `state.scroll_up/down(rows/2)`. Half-screen units, matching the
+            // existing PageUp/PageDown key path.
             //
-            // 設計（state API の方向に揃える）:
-            // - `Action::ScrollUp` = 過去側を見せる = `state.scroll_up`（offset を増やす）
-            // - `Action::ScrollDown` = 最新側に戻る = `state.scroll_down`（offset を減らす）
+            // Design (matched to the direction of the state API):
+            // - `Action::ScrollUp` = show older content = `state.scroll_up`
+            //   (increase the offset).
+            // - `Action::ScrollDown` = return toward the newest content =
+            //   `state.scroll_down` (decrease the offset).
             (Action::ScrollUp, NodeIdKind::PaneArea) => {
                 let lines = (self.app.state.rows as usize / 2).max(1);
                 self.app.state.scroll_up(lines);
@@ -426,79 +444,89 @@ impl EventHandler {
                 self.request_redraw_if_window();
             }
 
-            // ===== Phase 5-11-7: ターミナル入力バッファ =====
+            // ===== Phase 5-11-7: terminal input buffer =====
             //
-            // SR ユーザーが `SetValue` で書き込んだ文字列を、フォーカスペインに対して
-            // `PasteText` IPC で送信する。書き込み後、AccessKit ツリー側の `value` は
-            // 次の `update_accesskit_tree_if_needed` で空文字列に戻る（`build_base_nodes`
-            // が毎回 `set_value("")` で構築するため）。
+            // Send the string the SR user wrote via `SetValue` to the focused
+            // pane through a `PasteText` IPC. After the write, the `value` in
+            // the AccessKit tree returns to an empty string on the next
+            // `update_accesskit_tree_if_needed` (because `build_base_nodes`
+            // always constructs it with `set_value("")`).
             //
-            // Focus アクションは副作用なし（仮想カーソル通過で書き込みが発生しないように）。
+            // The Focus action has no side effects (so the virtual cursor
+            // passing over does not trigger a write).
             (Action::SetValue, NodeIdKind::PaneInputBuffer) => {
                 if let Some(ActionData::Value(s)) = request.data {
                     let text = s.into_string();
                     if text.is_empty() {
-                        debug!("AccessKit: PaneInputBuffer 空文字列 SetValue 無視");
+                        debug!("AccessKit: ignoring empty PaneInputBuffer SetValue");
                     } else if let Some(conn) = &self.connection {
                         info!(
-                            "AccessKit: PaneInputBuffer SetValue {} 文字を PTY へ転送",
+                            "AccessKit: forwarding {} characters from PaneInputBuffer SetValue to PTY",
                             text.chars().count()
                         );
                         let _ = conn.send_tx.try_send(ClientToServer::PasteText { text });
                         self.request_redraw_if_window();
                     }
                 } else {
-                    debug!("AccessKit: PaneInputBuffer SetValue で ActionData::Value 以外を受信");
+                    debug!(
+                        "AccessKit: PaneInputBuffer SetValue received non-ActionData::Value payload"
+                    );
                 }
             }
             (Action::Focus | Action::Click, NodeIdKind::PaneInputBuffer) => {
-                // 副作用なし。SR の仮想カーソル通過時に値変更が起きないようにする。
-                debug!("AccessKit: PaneInputBuffer Focus/Click（副作用なし）");
+                // No side effects. Ensures no value change occurs when the SR virtual cursor passes by.
+                debug!("AccessKit: PaneInputBuffer Focus/Click (no side effect)");
             }
 
-            // ===== その他 =====
+            // ===== Anything else =====
             (action, kind) => {
                 debug!(
-                    "AccessKit: 未対応の (action, target) 組合せ: action={:?}, kind={:?}",
+                    "AccessKit: unsupported (action, target) pair: action={:?}, kind={:?}",
                     action, kind
                 );
             }
         }
     }
 
-    /// 主 Window のみ再描画要求を送る補助関数。
-    /// 追加 OS Window の再描画は現状 `request_redraw_if_window` の対象外（ツリーは
-    /// `update_accesskit_tree_if_needed` 経由で次フレームに反映される）。
+    /// Helper to request a redraw on the primary window only.
+    /// Additional OS windows are not redrawn here (their trees are reflected
+    /// on the next frame via `update_accesskit_tree_if_needed`).
     fn request_redraw_if_window(&self) {
         if let Some(w) = &self.window {
             w.request_redraw();
         }
     }
 
-    /// Sprint 5-11-2 Step 2-5: AccessKit ツリーをライブ更新する。
+    /// Sprint 5-11-2 Step 2-5: live update of the AccessKit tree.
     ///
-    /// **呼び出し位置**: `on_about_to_wait` の末尾。サーバーメッセージ・設定リロード・
-    /// ホットキー処理など毎フレームの状態変化が反映された後に呼ぶ。
+    /// **Call site**: the end of `on_about_to_wait`. Invoked after the per-frame
+    /// state changes — server messages, config reload, hotkey handling, and so on
+    /// — have been applied.
     ///
-    /// **更新戦略**:
-    /// 1. **Sprint 5-11-5**: アラート TTL (5 秒) 切れエントリを `expire_alerts(now)` で除去
-    ///    （スロットリング前に実行: 期限切れ即時除去で SR ツリーを正確に保つ）
-    /// 2. 前回更新から `TREE_UPDATE_THROTTLE` (100ms) 未満なら早期 return（スロットリング）
-    /// 3. `compute_tree_state_hash(&self.app.state)` で現在の状態フィンガープリントを計算
-    /// 4. 前回ハッシュと一致なら早期 return（状態未変化）
-    /// 5. 変化あり: 主 Window + 全追加 Window の各 Adapter に `update_if_active(|| tree)` を呼ぶ
-    ///    （adapter が非アクティブなら no-op なので毎回安全に呼べる）
+    /// **Update strategy**:
+    /// 1. **Sprint 5-11-5**: drop alert entries that have outlived the TTL (5 s)
+    ///    via `expire_alerts(now)`. Run this before throttling so expired
+    ///    entries are removed immediately and the SR tree stays accurate.
+    /// 2. Return early if less than `TREE_UPDATE_THROTTLE` (100 ms) has elapsed
+    ///    since the last update (throttling).
+    /// 3. Compute the current state fingerprint via
+    ///    `compute_tree_state_hash(&self.app.state)`.
+    /// 4. Return early if it matches the previous hash (no state change).
+    /// 5. On change: call `update_if_active(|| tree)` on the primary window's
+    ///    Adapter and on every additional window's Adapter. When the adapter
+    ///    is inactive, the call is a no-op, so it is safe to invoke every time.
     ///
-    /// **注意**: ツリー本体は Adapter ごとに別々の `TreeUpdate` を build する。
-    /// `TreeUpdate` は `Clone` 不能だが、`build_tree_from_state` は十分軽量（O(N)、典型 ~50µs）
-    /// なので複数 Window でも問題ない。
+    /// **Note**: a separate `TreeUpdate` is built per Adapter. `TreeUpdate` is
+    /// not `Clone`, but `build_tree_from_state` is light enough (O(N), typically
+    /// ~50 µs) that this is fine even with multiple windows.
     ///
-    /// **設計の根拠**: Q3=a (100ms スロットル) + 設計 (a) ハッシュベース。
-    /// 案 (b) 「各イベントで明示的に呼ぶ」は触る箇所が分散するため不採用。
+    /// **Design rationale**: Q3=a (100 ms throttle) + design (a) hash-based.
+    /// Design (b), "explicitly call from each event", was rejected because it
+    /// scatters the call sites.
     pub(super) fn update_accesskit_tree_if_needed(&mut self) {
         let now = Instant::now();
 
-        // Sprint 5-11-5: 期限切れアラートを除去（毎フレーム実行、軽量）
+        // Sprint 5-11-5: drop expired alerts (run every frame, very cheap).
         self.app.state.expire_alerts(now);
 
         if let Some(last) = self.last_tree_update_at
@@ -508,39 +536,42 @@ impl EventHandler {
         }
         self.last_tree_update_at = Some(now);
 
-        // 構造変化（タブ・ペイン・オーバーレイ・アラート）の検知
+        // Detect structural changes (tabs, panes, overlays, alerts).
         let current_hash = compute_tree_state_hash(&self.app.state);
         let tree_changed = self.last_tree_hash != Some(current_hash);
         self.last_tree_hash = Some(current_hash);
 
-        // Sprint 5-11-3: ターミナル本文（grid 行内容）の差分検知。
-        // 構造変化がないターミナル出力（cargo build / log streaming 等）でも
-        // フォーカスペインに `Live::Polite` を設定したノードを送り直すことで SR にアナウンスさせる。
+        // Sprint 5-11-3: detect differences in the terminal body (grid row contents).
+        // Even when terminal output does not change the structure (e.g. cargo
+        // build / log streaming), re-sending nodes that carry `Live::Polite`
+        // for the focused pane lets the SR announce the new text.
         let grid_changed = self.detect_grid_row_changes();
 
         if !tree_changed && !grid_changed {
-            return; // 構造・内容ともに変化なし
+            return; // No structural or content change.
         }
 
-        // 主 Window 用 Adapter
+        // Adapter for the primary window.
         if let Some(adapter) = self.accesskit_adapter.as_mut() {
             let update = build_tree_from_state(&self.app.state);
             adapter.update_if_active(|| update);
         }
-        // 追加 OS Window 用 Adapter（現状は全 Window 同一ツリー）
+        // Adapters for additional OS windows (currently all windows share the same tree).
         for cw in self.windows.values_mut() {
             let update = build_tree_from_state(&self.app.state);
             cw.accesskit_adapter.update_if_active(|| update);
         }
     }
 
-    /// Sprint 5-11-3: 各ペインのグリッド行ハッシュを再計算し、変化を検知する。
+    /// Sprint 5-11-3: recompute the grid-row hashes for each pane and detect changes.
     ///
-    /// 戻り値: いずれかのペインの行ハッシュ列に変化があれば `true`。
-    /// 副作用として `last_grid_row_hashes` を最新値に置き換える。
+    /// Returns `true` when any pane's row-hash list changed. As a side effect,
+    /// `last_grid_row_hashes` is replaced with the latest values.
     ///
-    /// ペイン削除・追加（HashMap キーの増減）も `true` として返す（構造変化は通常
-    /// `compute_tree_state_hash` が拾うが、このフィールドの整合性を保つために二重判定する）。
+    /// Pane deletions or additions (changes in the HashMap key set) also
+    /// return `true`. Structural changes are typically caught by
+    /// `compute_tree_state_hash`, but this double check keeps this field
+    /// consistent.
     fn detect_grid_row_changes(&mut self) -> bool {
         use std::collections::HashMap;
 
@@ -556,7 +587,7 @@ impl EventHandler {
             new_hashes.insert(pane_id, hashes);
         }
 
-        // ペイン削除も差分として検知（new_hashes の長さが減った場合）
+        // Detect pane deletion as well (when new_hashes shrinks).
         if new_hashes.len() != self.last_grid_row_hashes.len() {
             changed = true;
         }
