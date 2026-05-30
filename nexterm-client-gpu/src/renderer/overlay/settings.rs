@@ -1,4 +1,4 @@
-//! 設定パネル (Ctrl+,) の頂点ビルダー。
+//! Vertex builder for the settings panel (Ctrl+,).
 
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
@@ -8,9 +8,9 @@ use crate::vertex_util::{add_px_rect, add_string_verts};
 use super::super::WgpuState;
 
 impl WgpuState {
-    /// 設定パネル頂点を構築する（Ctrl+, でオープン）
+    /// Build vertices for the settings panel (opens with Ctrl+,)
     ///
-    /// タブ 0=Font, 1=Colors, 2=Window のパネルを表示する。
+    /// Displays the panel for tab 0=Font, 1=Colors, 2=Window.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::renderer) fn build_settings_panel_verts(
         &self,
@@ -33,23 +33,23 @@ impl WgpuState {
             return;
         }
 
-        // 開閉アニメーション: イーズアウトキュービックでスムーズに表示する
+        // Open/close animation: smoothly via ease-out cubic
         let eased = sp.eased_progress();
 
-        // パネルサイズ（左サイドバー付き）
+        // Panel size (with left sidebar)
         let panel_w = (sw * 0.72).min(sw - cell_w * 4.0);
         let panel_h = (sh * 0.75).min(sh - cell_h * 4.0);
         let px = (sw - panel_w) / 2.0;
-        // スライドアップ: 開始時は 16px 下から徐々に定位置へ移動する
+        // Slide-up: start 16px below and ease into the resting position
         let slide_offset = (1.0 - eased) * 16.0;
         let py = (sh - panel_h) / 2.0 + slide_offset;
 
-        // サイドバー幅・コンテンツ領域（日本語カテゴリ名を考慮して18セル分確保）
+        // Sidebar width / content area (reserve 18 cells to fit Japanese category names)
         let sidebar_w = cell_w * 18.0;
         let content_x = px + sidebar_w;
         let content_w = panel_w - sidebar_w;
 
-        // ドロップシャドウ（4px オフセット）
+        // Drop shadow (4px offset)
         add_px_rect(
             px + 4.0,
             py + 4.0,
@@ -62,7 +62,7 @@ impl WgpuState {
             bg_idx,
         );
 
-        // 枠線（外側 1px、アクセントカラー薄め）
+        // Border (outer 1px, faint accent color)
         add_px_rect(
             px - 1.0,
             py - 1.0,
@@ -75,7 +75,7 @@ impl WgpuState {
             bg_idx,
         );
 
-        // パネル背景（完全不透明: ターミナル透過設定に関わらず常に不透明）
+        // Panel background (fully opaque regardless of terminal transparency)
         add_px_rect(
             px,
             py,
@@ -88,7 +88,7 @@ impl WgpuState {
             bg_idx,
         );
 
-        // タイトルバー（#1E2030、不透明）
+        // Title bar (#1E2030, opaque)
         let title_h = cell_h * 1.4;
         add_px_rect(
             px,
@@ -102,7 +102,7 @@ impl WgpuState {
             bg_idx,
         );
 
-        // タイトルバー上端アクセント線（3px、#7AA2F7）
+        // Top accent line of the title bar (3px, #7AA2F7)
         add_px_rect(
             px,
             py,
@@ -114,7 +114,7 @@ impl WgpuState {
             bg_verts,
             bg_idx,
         );
-        // 内側1px薄めのグロー
+        // Inner 1px faint glow
         add_px_rect(
             px,
             py + 3.0,
@@ -127,7 +127,7 @@ impl WgpuState {
             bg_idx,
         );
 
-        // タイトル
+        // Title
         add_string_verts(
             " * Nexterm Settings",
             px + cell_w * 0.5,
@@ -143,7 +143,7 @@ impl WgpuState {
             text_verts,
             text_idx,
         );
-        // 閉じるボタンヒント
+        // Close-button hint
         let close_text = "Esc";
         let close_x = px + panel_w - close_text.len() as f32 * cell_w - cell_w;
         add_string_verts(
@@ -162,7 +162,7 @@ impl WgpuState {
             text_idx,
         );
 
-        // サイドバー背景（不透明）
+        // Sidebar background (opaque)
         let sidebar_top = py + title_h;
         let sidebar_h = panel_h - title_h - cell_h * 1.5;
         add_px_rect(
@@ -177,7 +177,7 @@ impl WgpuState {
             bg_idx,
         );
 
-        // サイドバー区切り線（アクセントカラー薄め）
+        // Sidebar separator (faint accent color)
         add_px_rect(
             px + sidebar_w,
             sidebar_top,
@@ -190,13 +190,13 @@ impl WgpuState {
             bg_idx,
         );
 
-        // サイドバーカテゴリ一覧
+        // Sidebar category list
         let cat_item_h = cell_h * 1.3;
         for (i, cat) in SettingsCategory::ALL.iter().enumerate() {
             let item_y = sidebar_top + i as f32 * cat_item_h + cell_h * 0.3;
             let is_active = &sp.category == cat;
             if is_active {
-                // アクティブ項目: 青みを強めたアクセント背景（完全不透明）
+                // Active item: bluer accent background (fully opaque)
                 add_px_rect(
                     px,
                     item_y - cell_h * 0.15,
@@ -208,7 +208,7 @@ impl WgpuState {
                     bg_verts,
                     bg_idx,
                 );
-                // 左端インジケーター（3px + 内側1px薄め）
+                // Left-edge indicator (3px + faint inner 1px)
                 add_px_rect(
                     px,
                     item_y - cell_h * 0.15,
@@ -255,13 +255,13 @@ impl WgpuState {
             );
         }
 
-        // コンテンツ領域
+        // Content area
         let content_top = py + title_h + cell_h * 0.5;
         let content_inner_x = content_x + cell_w;
 
         match &sp.category {
             SettingsCategory::Font => {
-                // フォントファミリー
+                // Font family
                 let family_cursor = if sp.font_family_editing { "|" } else { "" };
                 let family_line = format!("Family:  {}{}", sp.font_family, family_cursor);
                 if sp.font_family_editing {
@@ -294,9 +294,9 @@ impl WgpuState {
                     text_idx,
                 );
                 let hint = if sp.font_family_editing {
-                    "(Enter=確定  Esc=キャンセル)"
+                    "(Enter=confirm  Esc=cancel)"
                 } else {
-                    "(F キーで編集)"
+                    "(press F to edit)"
                 };
                 add_string_verts(
                     hint,
@@ -313,7 +313,7 @@ impl WgpuState {
                     text_verts,
                     text_idx,
                 );
-                // フォントサイズ
+                // Font size
                 let size_line = format!("Size:    {:.1}pt", sp.font_size);
                 add_string_verts(
                     &size_line,
@@ -330,7 +330,7 @@ impl WgpuState {
                     text_verts,
                     text_idx,
                 );
-                // サイズバー（8〜32pt）
+                // Size bar (8 - 32pt)
                 let bar_w = content_w - cell_w * 3.0;
                 let bar_y = content_top + cell_h * 4.2;
                 add_px_rect(
@@ -357,7 +357,7 @@ impl WgpuState {
                     bg_idx,
                 );
                 add_string_verts(
-                    "(↑/↓ で変更)",
+                    "(↑/↓ to change)",
                     content_inner_x,
                     content_top + cell_h * 4.8,
                     [0.376, 0.408, 0.518, 1.0],
@@ -373,8 +373,8 @@ impl WgpuState {
                 );
             }
             SettingsCategory::Theme => {
-                // カラースキーム
-                let scheme_line = format!("テーマ:  {}  (←/→)", sp.scheme_name());
+                // Color scheme
+                let scheme_line = format!("Theme:  {}  (←/→)", sp.scheme_name());
                 add_string_verts(
                     &scheme_line,
                     content_inner_x,
@@ -390,7 +390,7 @@ impl WgpuState {
                     text_verts,
                     text_idx,
                 );
-                // スキームプレビュードット（9個）
+                // Scheme preview dots (9 entries)
                 let dot_y = content_top + cell_h * 2.5;
                 let scheme_names = [
                     "dark",
@@ -460,22 +460,22 @@ impl WgpuState {
                 }
             }
             SettingsCategory::Window => {
-                // Phase 5-11-6 #6: Window カテゴリは 5 フィールド構成
-                //   行0=opacity / 行1=cursor_style / 行2=padding_x / 行3=padding_y / 行4=present_mode
-                // フォーカス中フィールドはハイライト矩形 + 値ラベルを明るく描画する。
-                // 操作:
-                //   ↑/↓ = フィールド間移動 (input_handler)
-                //   ←/→ = 値変更 (input_handler)
+                // Phase 5-11-6 #6: the Window category has 5 fields:
+                //   row 0=opacity / row 1=cursor_style / row 2=padding_x / row 3=padding_y / row 4=present_mode
+                // The focused field renders with a highlight rect and brighter value label.
+                // Controls:
+                //   ↑/↓ = move between fields (input_handler)
+                //   ←/→ = change value (input_handler)
 
                 let focus = sp.window_field_focus;
                 let bar_w = content_w - cell_w * 3.0;
-                // 各行の縦位置（ラベルとコントロールでセットでオフセットする）
-                let row_h = cell_h * 3.2; // 行 1 つ分の高さ（ラベル + コントロール）
+                // Vertical position per row (label + control offset together)
+                let row_h = cell_h * 3.2; // height of one row (label + control)
                 let labels_top = content_top + cell_h * 0.6;
 
-                // ===== ヘルプテキスト（最上部） =====
+                // ===== Help text (at the top) =====
                 add_string_verts(
-                    "↑/↓ でフィールド選択, ←/→ で値変更",
+                    "↑/↓ to select field, ←/→ to change value",
                     content_inner_x,
                     content_top,
                     [0.45, 0.50, 0.62, 1.0],
@@ -490,7 +490,7 @@ impl WgpuState {
                     text_idx,
                 );
 
-                // ===== 行 0: 不透明度（スライダー） =====
+                // ===== Row 0: opacity (slider) =====
                 let row0_y = labels_top + row_h * 0.0;
                 if focus == 0 {
                     add_px_rect(
@@ -510,7 +510,7 @@ impl WgpuState {
                 } else {
                     [0.663, 0.694, 0.839, 1.0]
                 };
-                let opacity_line = format!("不透明度:  {:.0}%", sp.opacity * 100.0);
+                let opacity_line = format!("Opacity:  {:.0}%", sp.opacity * 100.0);
                 add_string_verts(
                     &opacity_line,
                     content_inner_x,
@@ -550,7 +550,7 @@ impl WgpuState {
                     bg_idx,
                 );
 
-                // ===== 行 1: カーソル形状（cycle） =====
+                // ===== Row 1: cursor style (cycle) =====
                 let row1_y = labels_top + row_h * 1.0;
                 if focus == 1 {
                     add_px_rect(
@@ -571,7 +571,7 @@ impl WgpuState {
                     [0.663, 0.694, 0.839, 1.0]
                 };
                 add_string_verts(
-                    "カーソル形状:",
+                    "Cursor style:",
                     content_inner_x,
                     row1_y,
                     cs_label_color,
@@ -602,7 +602,7 @@ impl WgpuState {
                     text_idx,
                 );
 
-                // ===== 行 2: 横パディング =====
+                // ===== Row 2: horizontal padding =====
                 let row2_y = labels_top + row_h * 2.0;
                 if focus == 2 {
                     add_px_rect(
@@ -623,7 +623,7 @@ impl WgpuState {
                     [0.663, 0.694, 0.839, 1.0]
                 };
                 add_string_verts(
-                    &format!("横パディング:  {} px", sp.padding_x),
+                    &format!("Horizontal padding:  {} px", sp.padding_x),
                     content_inner_x,
                     row2_y,
                     px_color,
@@ -637,7 +637,7 @@ impl WgpuState {
                     text_verts,
                     text_idx,
                 );
-                // ミニスライダー（0〜32）
+                // Mini slider (0 - 32)
                 let px_bar_y = row2_y + cell_h * 1.4;
                 let px_bar_w = bar_w * 0.6;
                 add_px_rect(
@@ -663,7 +663,7 @@ impl WgpuState {
                     bg_idx,
                 );
 
-                // ===== 行 3: 縦パディング =====
+                // ===== Row 3: vertical padding =====
                 let row3_y = labels_top + row_h * 3.0;
                 if focus == 3 {
                     add_px_rect(
@@ -684,7 +684,7 @@ impl WgpuState {
                     [0.663, 0.694, 0.839, 1.0]
                 };
                 add_string_verts(
-                    &format!("縦パディング:  {} px", sp.padding_y),
+                    &format!("Vertical padding:  {} px", sp.padding_y),
                     content_inner_x,
                     row3_y,
                     py_color,
@@ -723,7 +723,7 @@ impl WgpuState {
                     bg_idx,
                 );
 
-                // ===== 行 4: 描画モード（cycle） =====
+                // ===== Row 4: present mode (cycle) =====
                 let row4_y = labels_top + row_h * 4.0;
                 if focus == 4 {
                     add_px_rect(
@@ -744,7 +744,7 @@ impl WgpuState {
                     [0.663, 0.694, 0.839, 1.0]
                 };
                 add_string_verts(
-                    "描画モード:",
+                    "Present mode:",
                     content_inner_x,
                     row4_y,
                     pm_color,
@@ -777,7 +777,7 @@ impl WgpuState {
             }
             SettingsCategory::Profiles => {
                 add_string_verts(
-                    "プロファイル一覧:",
+                    "Profiles:",
                     content_inner_x,
                     content_top + cell_h * 0.5,
                     [0.663, 0.694, 0.839, 1.0],
@@ -793,7 +793,7 @@ impl WgpuState {
                 );
                 if sp.profiles.is_empty() {
                     add_string_verts(
-                        "プロファイルがありません",
+                        "No profiles configured",
                         content_inner_x,
                         content_top + cell_h * 1.8,
                         [0.376, 0.408, 0.518, 1.0],
@@ -808,7 +808,7 @@ impl WgpuState {
                         text_idx,
                     );
                     add_string_verts(
-                        "nexterm.toml に [[profiles]] を追加してください",
+                        "Add [[profiles]] to nexterm.toml",
                         content_inner_x,
                         content_top + cell_h * 2.7,
                         [0.376, 0.408, 0.518, 1.0],
@@ -866,9 +866,9 @@ impl WgpuState {
             SettingsCategory::Startup => {
                 use crate::settings_panel::LANGUAGE_OPTIONS;
 
-                // 言語選択ラベル
+                // Language selection label
                 add_string_verts(
-                    "言語 / Language",
+                    "Language",
                     content_inner_x,
                     content_top + cell_h * 0.5,
                     [0.663, 0.694, 0.839, 1.0],
@@ -883,7 +883,7 @@ impl WgpuState {
                     text_idx,
                 );
 
-                // 選択バー背景
+                // Selection bar background
                 let sel_y = content_top + cell_h * 1.6;
                 let sel_w = content_w - cell_w * 2.0;
                 add_px_rect(
@@ -898,7 +898,7 @@ impl WgpuState {
                     bg_idx,
                 );
 
-                // 現在の言語名表示
+                // Current language name display
                 let lang_label = LANGUAGE_OPTIONS
                     .get(sp.language_index)
                     .map(|(name, _)| *name)
@@ -920,8 +920,8 @@ impl WgpuState {
                     text_idx,
                 );
 
-                // 更新確認トグル
-                let check_label = "起動時に更新を確認する";
+                // Update check toggle
+                let check_label = "Check for updates on startup";
                 let check_y = content_top + cell_h * 3.0;
                 add_string_verts(
                     check_label,
@@ -964,9 +964,9 @@ impl WgpuState {
                     text_idx,
                 );
 
-                // 変更は次回起動時に反映される旨の注記
+                // Note that the change takes effect at next startup
                 add_string_verts(
-                    "※ 言語変更は次回起動時に反映されます",
+                    "* Language change takes effect at next startup",
                     content_inner_x,
                     content_top + cell_h * 4.4,
                     [0.376, 0.408, 0.518, 1.0],
@@ -982,9 +982,9 @@ impl WgpuState {
                 );
             }
             SettingsCategory::Ssh => {
-                // Phase 5-11-8 Step 8-1: SSH ホスト一覧を ListBox 風に描画する（read-only）
+                // Phase 5-11-8 Step 8-1: Render the SSH host list as a ListBox (read-only)
                 add_string_verts(
-                    "SSH ホスト一覧:",
+                    "SSH hosts:",
                     content_inner_x,
                     content_top + cell_h * 0.5,
                     [0.663, 0.694, 0.839, 1.0],
@@ -1000,7 +1000,7 @@ impl WgpuState {
                 );
                 if sp.ssh_hosts.is_empty() {
                     add_string_verts(
-                        "SSH ホストが登録されていません",
+                        "No SSH hosts configured",
                         content_inner_x,
                         content_top + cell_h * 1.8,
                         [0.376, 0.408, 0.518, 1.0],
@@ -1015,7 +1015,7 @@ impl WgpuState {
                         text_idx,
                     );
                     add_string_verts(
-                        "nexterm.toml の [[hosts]] セクションに追加してください",
+                        "Add an entry under the [[hosts]] section in nexterm.toml",
                         content_inner_x,
                         content_top + cell_h * 2.7,
                         [0.376, 0.408, 0.518, 1.0],
@@ -1068,15 +1068,15 @@ impl WgpuState {
                             text_idx,
                         );
                     }
-                    // ===== Phase 5-11-8 Step 8-2: 選択ホストのフィールド編集 UI =====
+                    // ===== Phase 5-11-8 Step 8-2: Field-edit UI for the selected host =====
                     let sel = sp.selected_host_index.min(sp.ssh_hosts.len() - 1);
                     let host = &sp.ssh_hosts[sel];
                     let fields_top =
                         content_top + cell_h * (1.5 + sp.ssh_hosts.len() as f32 * 1.2 + 0.6);
 
-                    // セクションタイトル
+                    // Section title
                     add_string_verts(
-                        "選択ホストの編集（SR からは SetValue で入力可）:",
+                        "Edit selected host (screen readers can use SetValue):",
                         content_inner_x,
                         fields_top,
                         [0.663, 0.694, 0.839, 1.0],
@@ -1091,12 +1091,13 @@ impl WgpuState {
                         text_idx,
                     );
 
-                    // 5 フィールドのラベル + 現在値
-                    // Phase 5-11-8 Step 8-3 (Sub-phase A): name/host/username 編集中は
-                    // バッファ内容を表示し、カーソルバーを重畳する。
-                    // Phase 5-11-8 Step 8-3 (Sub-phase C): port は SpinButton 風
-                    // `< {value} >` 表示、auth_type は ComboBox 風 `< {value} >` 表示
-                    // で常時値変更可能（編集モード不要、←/→ で増減/サイクル）。
+                    // Labels and current values for the 5 fields.
+                    // Phase 5-11-8 Step 8-3 (Sub-phase A): while editing name/host/username,
+                    // show the buffer contents and overlay a cursor bar.
+                    // Phase 5-11-8 Step 8-3 (Sub-phase C): port is rendered as a SpinButton-style
+                    // `< {value} >`, auth_type as a ComboBox-style `< {value} >`.
+                    // Both can be changed at any time (no edit mode required; use ←/→ to
+                    // increment/decrement or cycle).
                     let editing_focus = sp.ssh_field_editing.as_ref().map(|_| sp.ssh_field_focus);
                     let field_labels: [(&str, String, u8); 5] = [
                         ("name      :", host.name.clone(), 1),
@@ -1109,13 +1110,13 @@ impl WgpuState {
                         let row_y = fields_top + cell_h * (1.3 + i as f32 * 1.1);
                         let is_focused = sp.ssh_field_focus == *field_id;
                         let is_editing = editing_focus == Some(*field_id);
-                        // Sub-phase C: port (3) / auth_type (5) は SpinButton / ComboBox
+                        // Sub-phase C: port (3) / auth_type (5) behave like SpinButton / ComboBox
                         let is_spin_or_combo = matches!(*field_id, 3 | 5);
 
-                        // フォーカス中行のハイライト（編集中は色味を変えて区別）
+                        // Highlight for the focused row (uses a different tint while editing)
                         if is_focused {
                             let bg_color = if is_editing {
-                                // 編集中: 青みがかった濃いハイライト
+                                // While editing: darker bluish highlight
                                 [0.176, 0.235, 0.357, 1.0]
                             } else {
                                 [0.149, 0.188, 0.278, 1.0]
@@ -1139,9 +1140,9 @@ impl WgpuState {
                             [0.502, 0.533, 0.647, 1.0]
                         };
 
-                        // 編集中はバッファ + IME preedit を表示。
-                        // port/auth_type は SpinButton/ComboBox 風に `< value >` 表示。
-                        // それ以外はホストの現在値をそのまま表示。
+                        // While editing, show the buffer plus IME preedit.
+                        // port/auth_type are rendered as SpinButton/ComboBox-style `< value >`.
+                        // Other fields show the host's current value as-is.
                         let display_value = if is_editing {
                             sp.ssh_field_editing
                                 .as_ref()
@@ -1170,9 +1171,10 @@ impl WgpuState {
                             text_idx,
                         );
 
-                        // 編集中はカーソルバーを重畳する。
-                        // プレフィックス: "  " (2) + label (11) + " " (1) = 14 文字幅
-                        // カーソル位置: display_cursor() を文字数で換算（CJK は将来 unicode-width で改善）
+                        // Overlay a cursor bar while editing.
+                        // Prefix: "  " (2) + label (11) + " " (1) = 14 character cells wide.
+                        // Cursor position: derived from display_cursor() in character units
+                        // (CJK widths will be improved later via unicode-width).
                         if is_editing && let Some(state) = sp.ssh_field_editing.as_ref() {
                             const PREFIX_COLS: f32 = 14.0;
                             let cursor_byte = state.display_cursor();
@@ -1182,7 +1184,7 @@ impl WgpuState {
                                 .map(|s| s.chars().count() as f32)
                                 .unwrap_or(0.0);
                             let cursor_x = content_inner_x + cell_w * (PREFIX_COLS + cursor_col);
-                            // 細い縦バー（2px 幅）
+                            // Thin vertical bar (2px wide)
                             add_px_rect(
                                 cursor_x,
                                 row_y - cell_h * 0.05,
@@ -1197,12 +1199,12 @@ impl WgpuState {
                         }
                     }
 
-                    // 注記
+                    // Footnote
                     let note_y = fields_top + cell_h * (1.3 + 5.0 * 1.1 + 0.4);
                     let note_text = if sp.ssh_field_editing.is_some() {
-                        "編集中: Enter で確定 / Esc でキャンセル / ← → でカーソル移動"
+                        "Editing: Enter to confirm / Esc to cancel / ← → to move cursor"
                     } else {
-                        "Enter で編集（name/host/username） / ← → で port を ±1 / auth_type を切替"
+                        "Enter to edit (name/host/username) / ← → to adjust port ±1 / cycle auth_type"
                     };
                     add_string_verts(
                         note_text,
@@ -1221,13 +1223,14 @@ impl WgpuState {
                     );
                 }
 
-                // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): Add / Delete ボタン =====
-                // 空リスト時は content_top + 4.0 行下、非空時は note_y + 1.5 行下
+                // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): Add / Delete buttons =====
+                // For an empty list, place at content_top + 4.0 rows;
+                // otherwise, at note_y + 1.5 rows.
                 let buttons_y = if sp.ssh_hosts.is_empty() {
                     content_top + cell_h * 4.0
                 } else {
                     let sel = sp.selected_host_index.min(sp.ssh_hosts.len() - 1);
-                    let _ = sel; // 実際の計算は fields_top と同じ
+                    let _ = sel; // The actual calculation matches fields_top
                     let fields_top =
                         content_top + cell_h * (1.5 + sp.ssh_hosts.len() as f32 * 1.2 + 0.6);
                     let note_y = fields_top + cell_h * (1.3 + 5.0 * 1.1 + 0.4);
@@ -1240,7 +1243,7 @@ impl WgpuState {
                 let btn_h = cell_h * 1.4;
                 let btn_gap = cell_w * 2.0;
 
-                // Add ボタン
+                // Add button
                 let add_x = content_inner_x;
                 if add_focused {
                     add_px_rect(
@@ -1273,7 +1276,7 @@ impl WgpuState {
                     [0.663, 0.694, 0.839, 1.0]
                 };
                 add_string_verts(
-                    "[ + ] 新規ホストを追加",
+                    "[ + ] Add new host",
                     add_x,
                     buttons_y,
                     add_fg,
@@ -1288,7 +1291,7 @@ impl WgpuState {
                     text_idx,
                 );
 
-                // Delete ボタン（空リスト時は disabled）
+                // Delete button (disabled when the list is empty)
                 let del_x = add_x + btn_w + btn_gap;
                 if delete_focused && !delete_disabled {
                     add_px_rect(
@@ -1316,7 +1319,7 @@ impl WgpuState {
                     );
                 }
                 let del_fg = if delete_disabled {
-                    // disabled: 薄いグレー
+                    // disabled: light gray
                     [0.314, 0.341, 0.408, 1.0]
                 } else if delete_focused {
                     [0.984, 0.808, 0.808, 1.0]
@@ -1324,9 +1327,9 @@ impl WgpuState {
                     [0.776, 0.553, 0.553, 1.0]
                 };
                 let del_label = if delete_disabled {
-                    "[ × ] 選択ホストを削除 (無効)"
+                    "[ x ] Delete selected host (disabled)"
                 } else {
-                    "[ × ] 選択ホストを削除"
+                    "[ x ] Delete selected host"
                 };
                 add_string_verts(
                     del_label,
@@ -1344,10 +1347,10 @@ impl WgpuState {
                     text_idx,
                 );
 
-                // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): 削除確認ダイアログ =====
-                // ssh_delete_dialog_open=true のときに、パネル中央にモーダルダイアログを
-                // 描画する。レンダラー優先順位: パネル本体 → Add/Delete ボタン → ダイアログ
-                // → フェードオーバーレイ（settings_panel 末尾）の順で z-order が確保される。
+                // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): delete confirmation dialog =====
+                // When ssh_delete_dialog_open=true, draw a modal dialog at the center of
+                // the panel. Render order (z-order): panel body -> Add/Delete buttons ->
+                // dialog -> fade overlay (at the end of settings_panel).
                 if sp.ssh_delete_dialog_open && !sp.ssh_hosts.is_empty() {
                     let sel = sp.selected_host_index.min(sp.ssh_hosts.len() - 1);
                     let target_name = if sp.ssh_hosts[sel].name.is_empty() {
@@ -1356,7 +1359,7 @@ impl WgpuState {
                         sp.ssh_hosts[sel].name.clone()
                     };
 
-                    // 半透明オーバーレイ（パネル全体を覆う）
+                    // Semi-transparent overlay covering the entire panel
                     add_px_rect(
                         px,
                         py,
@@ -1369,13 +1372,13 @@ impl WgpuState {
                         bg_idx,
                     );
 
-                    // ダイアログ本体（パネル中央）
+                    // Dialog body (centered within the panel)
                     let dialog_w = panel_w * 0.55;
                     let dialog_h = cell_h * 8.5;
                     let dialog_x = px + (panel_w - dialog_w) / 2.0;
                     let dialog_y = py + (panel_h - dialog_h) / 2.0;
 
-                    // ダイアログ背景（不透明、警告色アクセント）
+                    // Dialog background (opaque, with a warning-color accent)
                     add_px_rect(
                         dialog_x - 2.0,
                         dialog_y - 2.0,
@@ -1399,9 +1402,9 @@ impl WgpuState {
                         bg_idx,
                     );
 
-                    // タイトル
+                    // Title
                     add_string_verts(
-                        " ⚠ ホストを削除しますか？",
+                        " ! Delete this host?",
                         dialog_x + cell_w * 1.0,
                         dialog_y + cell_h * 0.6,
                         [0.984, 0.808, 0.808, 1.0],
@@ -1416,9 +1419,9 @@ impl WgpuState {
                         text_idx,
                     );
 
-                    // メッセージ
+                    // Message
                     let msg = format!(
-                        "「{}」を削除します。この操作は取り消せません。",
+                        "\"{}\" will be deleted. This operation cannot be undone.",
                         target_name
                     );
                     add_string_verts(
@@ -1437,7 +1440,7 @@ impl WgpuState {
                         text_idx,
                     );
 
-                    // Cancel / Confirm ボタン（横並び、Cancel が左でデフォルトフォーカス）
+                    // Cancel / Confirm buttons (side by side; Cancel is on the left and has default focus)
                     let dlg_btn_w = cell_w * 14.0;
                     let dlg_btn_h = cell_h * 1.4;
                     let dlg_btn_gap = cell_w * 2.0;
@@ -1446,7 +1449,7 @@ impl WgpuState {
                     let dlg_btns_y = dialog_y + dialog_h - cell_h * 2.5;
                     let confirm_focused = sp.ssh_delete_dialog_confirm_focused;
 
-                    // Cancel ボタン
+                    // Cancel button
                     let cancel_bg = if !confirm_focused {
                         [0.176, 0.235, 0.357, 1.0]
                     } else {
@@ -1457,7 +1460,7 @@ impl WgpuState {
                         bg_idx,
                     );
                     add_string_verts(
-                        "  キャンセル (Esc)",
+                        "  Cancel (Esc)",
                         dlg_btns_x + cell_w * 0.5,
                         dlg_btns_y + cell_h * 0.2,
                         [0.949, 0.969, 0.984, 1.0],
@@ -1472,7 +1475,7 @@ impl WgpuState {
                         text_idx,
                     );
 
-                    // Confirm ボタン
+                    // Confirm button
                     let confirm_bg = if confirm_focused {
                         [0.498, 0.196, 0.196, 1.0]
                     } else {
@@ -1484,7 +1487,7 @@ impl WgpuState {
                         bg_idx,
                     );
                     add_string_verts(
-                        "  削除する",
+                        "  Delete",
                         confirm_x + cell_w * 0.5,
                         dlg_btns_y + cell_h * 0.2,
                         [0.984, 0.808, 0.808, 1.0],
@@ -1499,9 +1502,9 @@ impl WgpuState {
                         text_idx,
                     );
 
-                    // 操作ヒント
+                    // Operation hint
                     add_string_verts(
-                        "  ← → / Tab でボタン切替 / Enter で決定 / Esc でキャンセル",
+                        "  Use <- -> / Tab to switch buttons / Enter to confirm / Esc to cancel",
                         dialog_x + cell_w * 1.0,
                         dialog_y + dialog_h - cell_h * 0.9,
                         [0.502, 0.533, 0.647, 1.0],
@@ -1518,10 +1521,10 @@ impl WgpuState {
                 }
             }
             _ => {
-                // キーバインドは近日実装予定（Step 8-4 以降）
+                // Key bindings are planned for a future step (Step 8-4 or later)
                 let msg = match &sp.category {
                     SettingsCategory::Keybindings => {
-                        "キーバインドは nexterm.toml の [[keys]] で管理します"
+                        "Key bindings are managed under [[keys]] in nexterm.toml"
                     }
                     _ => "",
                 };
@@ -1543,7 +1546,7 @@ impl WgpuState {
             }
         }
 
-        // ボトムバー（保存・キャンセル）
+        // Bottom bar (Save / Cancel)
         let bottom_y = py + panel_h - cell_h * 1.5;
         add_px_rect(
             px,
@@ -1568,7 +1571,7 @@ impl WgpuState {
             bg_idx,
         );
         add_string_verts(
-            "  Enter=保存  Esc=キャンセル  Tab=次のカテゴリ",
+            "  Enter=Save  Esc=Cancel  Tab=Next category",
             px + cell_w * 0.5,
             bottom_y + cell_h * 0.3,
             [0.376, 0.408, 0.518, 1.0],
@@ -1583,8 +1586,8 @@ impl WgpuState {
             text_idx,
         );
 
-        // フェードインオーバーレイ: パネルと同色で、open_progress が進むにつれて透明になる
-        // eased=1.0 のときはオーバーレイなし（完全に表示）
+        // Fade-in overlay: same color as the panel; becomes transparent as open_progress advances.
+        // When eased=1.0, no overlay is drawn (fully visible).
         let fade_alpha = (1.0 - eased) * 0.95;
         if fade_alpha > 0.01 {
             add_px_rect(

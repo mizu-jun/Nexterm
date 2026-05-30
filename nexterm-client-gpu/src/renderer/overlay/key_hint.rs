@@ -1,8 +1,8 @@
-//! キーヒントオーバーレイの頂点ビルダー（Sprint 5-7 / UI-1-4）。
+//! Vertex builder for the key-hint overlay (Sprint 5-7 / UI-1-4).
 //!
-//! WezTerm の `show_active_key_table` 相当。Leader 単独押下後 2 秒間、
-//! 画面下部に半透明オーバーレイで `<leader> ...` または `ctrl+b ...` 形式の
-//! バインド一覧を表示する。
+//! Equivalent to WezTerm's `show_active_key_table`. For two seconds after a
+//! lone Leader press, a semi-transparent overlay at the bottom of the screen
+//! shows the list of `<leader> ...` or `ctrl+b ...` style bindings.
 
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
@@ -12,11 +12,13 @@ use crate::vertex_util::{add_px_rect, add_string_verts};
 use super::super::WgpuState;
 
 impl WgpuState {
-    /// キーヒントオーバーレイの頂点を構築する。
+    /// Build vertices for the key-hint overlay.
     ///
-    /// `state.key_hint_visible_until` が `Some(時刻)` かつ現在時刻より未来のときに描画する。
-    /// 画面下部に半透明バナーを置き、config.keys から prefix 系（leader_key で始まる、
-    /// または `<leader>` を含む）バインドの末尾キーと action 名を一覧表示する。
+    /// Drawn when `state.key_hint_visible_until` is `Some(time)` and the time
+    /// is still in the future. Draws a semi-transparent banner at the bottom
+    /// of the screen and lists the trailing key + action name for each
+    /// prefix-style binding from `config.keys` (entries starting with
+    /// `leader_key` or containing `<leader>`).
     #[allow(clippy::too_many_arguments)]
     pub(in crate::renderer) fn build_key_hint_verts(
         &self,
@@ -33,7 +35,7 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
-        // 表示判定: 期限が Some かつ現在時刻より未来
+        // Visibility check: deadline is Some and still in the future
         let visible = match state.key_hint_visible_until {
             Some(t) => std::time::Instant::now() < t,
             None => false,
@@ -42,14 +44,14 @@ impl WgpuState {
             return;
         }
 
-        // 表示対象のバインドを抽出する:
-        //   1. `<leader> ...` で始まる（明示的に leader を使う）
-        //   2. `<leader_key> ...`（例: `ctrl+b ...`）で始まる（後方互換 tmux 互換）
+        // Extract bindings to display:
+        //   1. Starts with `<leader> ...` (uses leader explicitly)
+        //   2. Starts with `<leader_key> ...` (e.g. `ctrl+b ...`) (tmux-compatible legacy form)
         let leader = &cfg.leader_key;
         let mut hints: Vec<(String, String)> = Vec::new();
         for binding in &cfg.keys {
             let key = &binding.key;
-            // スペース区切りで 2 トークン以上のもののみ（prefix 系）
+            // Only space-separated entries with 2+ tokens (prefix-style)
             let tokens: Vec<&str> = key.split_whitespace().collect();
             if tokens.len() < 2 {
                 continue;
@@ -60,11 +62,11 @@ impl WgpuState {
             if !is_leader_prefix {
                 continue;
             }
-            // 後半キー（先頭以外を全部結合）
+            // Trailing key (join everything past the first token)
             let rest = tokens[1..].join(" ");
             hints.push((rest, binding.action.clone()));
         }
-        // 重複を除いた表示用に最大 12 件
+        // Deduplicate and cap at 12 entries for display
         hints.dedup_by(|a, b| a.0 == b.0);
         hints.truncate(12);
 
@@ -72,7 +74,7 @@ impl WgpuState {
             return;
         }
 
-        // バナー高さ: ヘッダ 1 行 + 各エントリ 1 行
+        // Banner height: header row + one row per entry
         let lines = (hints.len() as f32) + 1.0;
         let pad = cell_w * 0.6;
         let banner_h = lines * cell_h + pad * 2.0;
@@ -80,7 +82,7 @@ impl WgpuState {
         let bx = (sw - banner_w) / 2.0;
         let by = sh - banner_h - pad;
 
-        // 背景（半透明濃紺）
+        // Background (semi-transparent dark navy)
         add_px_rect(
             bx,
             by,
@@ -92,7 +94,7 @@ impl WgpuState {
             bg_verts,
             bg_idx,
         );
-        // 上端アクセント線（leader 表示色: Tokyo Night blue）
+        // Top accent line (leader display color: Tokyo Night blue)
         add_px_rect(
             bx,
             by,
@@ -105,8 +107,8 @@ impl WgpuState {
             bg_idx,
         );
 
-        // ヘッダ
-        let header = format!(" Leader: {} — 次のキーを押してください ", leader);
+        // Header
+        let header = format!(" Leader: {} — press the next key ", leader);
         add_string_verts(
             &header,
             bx + pad,
@@ -123,7 +125,7 @@ impl WgpuState {
             text_idx,
         );
 
-        // 各エントリ
+        // Each entry
         let key_fg = [0.85, 0.90, 1.0, 1.0];
         let action_fg = [0.75, 0.75, 0.75, 1.0];
         for (i, (key, action)) in hints.iter().enumerate() {

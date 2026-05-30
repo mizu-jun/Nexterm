@@ -1,16 +1,17 @@
-//! オーバーレイ UI の頂点ビルダー群（Sprint 5-4 / A2）。
+//! Vertex builders for overlay UI (Sprint 5-4 / A2).
 //!
-//! 旧 `overlay_verts.rs`（1,958 行）を責務別に 3 ファイルに再分割した:
+//! The original `overlay_verts.rs` (1,958 lines) was split into 3 files by responsibility:
 //!
-//! - [`picker`]: コマンドパレット / SFTP ファイル転送 / マクロピッカー /
-//!   ホストマネージャ（リスト系 UI、4 メソッド）
-//! - [`dialog`]: パスワード入力モーダル / コンテキストメニュー / 同意ダイアログ
-//!   （モーダル系 UI、3 メソッド）
-//! - [`settings`]: 設定パネル（タブ付き複雑 UI、単独 1 メソッド）
-//! - [`util`]: 同意ダイアログで使う共通ヘルパー（pane_id 抽出・プレビュー整形・テキスト折返し）
+//! - [`picker`]: command palette / SFTP file transfer / macro picker /
+//!   host manager (list-style UI, 4 methods)
+//! - [`dialog`]: password input modal / context menu / consent dialog
+//!   (modal-style UI, 3 methods)
+//! - [`settings`]: settings panel (tabbed, more complex UI, single method)
+//! - [`util`]: shared helpers used by the consent dialog (pane_id extraction,
+//!   preview formatting, text wrapping)
 //!
-//! 各サブモジュールは `impl WgpuState` ブロックでメソッドを生やしており、
-//! 呼び出し側（`renderer/mod.rs`）から `self.build_*_verts(...)` で従来通り呼べる。
+//! Each submodule grows methods on `impl WgpuState`, so callers
+//! (`renderer/mod.rs`) keep using `self.build_*_verts(...)` as before.
 
 mod dialog;
 mod key_hint;

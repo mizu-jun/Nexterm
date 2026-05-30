@@ -1,8 +1,8 @@
-//! オーバーレイ描画で共用するヘルパー関数群。
+//! Shared helpers used by overlay rendering.
 //!
-//! 主に `consent_dialog` で使用される。
+//! Primarily consumed by `consent_dialog`.
 
-/// 同意ダイアログの種別から要求元ペイン ID を取り出す
+/// Extract the requesting pane ID from a consent-dialog kind
 pub(super) fn pane_id_for(kind: &crate::state::ConsentKind) -> Option<u32> {
     use crate::state::ConsentKind;
     match kind {
@@ -12,18 +12,18 @@ pub(super) fn pane_id_for(kind: &crate::state::ConsentKind) -> Option<u32> {
     }
 }
 
-/// 同意ダイアログの種別からプレビューに表示する文字列を返す
+/// Return the preview string for a consent-dialog kind
 pub(super) fn preview_text(kind: &crate::state::ConsentKind) -> String {
     use crate::state::ConsentKind;
     match kind {
         ConsentKind::OpenUrl(url) => url.clone(),
         ConsentKind::ClipboardWrite { text, .. } => {
-            // 制御文字や改行は安全のため空白に置換
+            // Replace control chars and newlines with spaces for safety
             let safe: String = text
                 .chars()
                 .map(|c| if c.is_control() { ' ' } else { c })
                 .collect();
-            // バイト長で切り詰める
+            // Truncate by byte length
             if safe.len() > 200 {
                 let mut end = 200;
                 while end > 0 && !safe.is_char_boundary(end) {
@@ -38,7 +38,7 @@ pub(super) fn preview_text(kind: &crate::state::ConsentKind) -> String {
     }
 }
 
-/// テキストを指定列幅で複数行に折り返す（CJK 全角は 2 列分カウント）
+/// Wrap text to multiple lines at the given column width (CJK full-width chars count as 2 columns)
 pub(super) fn wrap_text(s: &str, max_cols: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut current = String::new();

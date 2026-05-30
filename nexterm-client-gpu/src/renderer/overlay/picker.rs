@@ -1,7 +1,7 @@
-//! ピッカー系オーバーレイの頂点ビルダー。
+//! Vertex builders for picker-style overlays.
 //!
-//! コマンドパレット / SFTP ファイル転送 / マクロピッカー / ホストマネージャ
-//! のリスト系 UI を担当する。
+//! Handles list-style UI for the command palette / SFTP file transfer /
+//! macro picker / host manager.
 
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
@@ -11,7 +11,7 @@ use crate::vertex_util::{add_px_rect, add_string_verts};
 use super::super::WgpuState;
 
 impl WgpuState {
-    /// コマンドパレット頂点を構築する（中央フローティング）
+    /// Build vertices for the command palette (center floating)
     #[allow(clippy::too_many_arguments)]
     pub(in crate::renderer) fn build_palette_verts(
         &self,
@@ -30,14 +30,14 @@ impl WgpuState {
         let palette = &state.palette;
         let items = palette.filtered();
         let palette_cols: f32 = 40.0;
-        let palette_rows = (items.len() + 2).min(12) as f32; // クエリ行 + 最大10アイテム + マージン
+        let palette_rows = (items.len() + 2).min(12) as f32; // query row + up to 10 items + margin
 
         let pw = palette_cols * cell_w;
         let ph = palette_rows * cell_h;
         let px = (sw - pw) / 2.0;
         let py = (sh - ph) / 2.0;
 
-        // パレット背景（ダークグレー）
+        // Palette background (dark gray)
         add_px_rect(
             px,
             py,
@@ -49,7 +49,7 @@ impl WgpuState {
             bg_verts,
             bg_idx,
         );
-        // 外枠（やや明るい）
+        // Outer border (slightly brighter)
         add_px_rect(
             px,
             py,
@@ -62,7 +62,7 @@ impl WgpuState {
             bg_idx,
         );
 
-        // クエリ行
+        // Query row
         let query_text = format!("> {}", palette.query);
         add_string_verts(
             &query_text,
@@ -80,11 +80,11 @@ impl WgpuState {
             text_idx,
         );
 
-        // アクション一覧
+        // Action list
         for (i, action) in items.iter().enumerate().take(palette_rows as usize - 1) {
             let item_py = py + cell_h * (i as f32 + 1.2);
             if i == palette.selected {
-                // 選択行ハイライト
+                // Highlight the selected row
                 add_px_rect(
                     px + 2.0,
                     item_py,
@@ -122,9 +122,9 @@ impl WgpuState {
         }
     }
 
-    /// SFTP ファイル転送ダイアログ頂点を構築する
+    /// Build vertices for the SFTP file-transfer dialog
     ///
-    /// ホスト名・ローカルパス・リモートパスの 3 フィールドを入力する。
+    /// Three fields: host name / local path / remote path.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::renderer) fn build_file_transfer_verts(
         &self,
@@ -142,14 +142,14 @@ impl WgpuState {
     ) {
         let ft = &state.file_transfer;
         let panel_cols: f32 = 56.0;
-        let panel_rows: f32 = 7.0; // タイトル + ホスト + ローカル + リモート + ヒント
+        let panel_rows: f32 = 7.0; // title + host + local + remote + hint
 
         let pw = panel_cols * cell_w;
         let ph = panel_rows * cell_h;
         let px = (sw - pw) / 2.0;
         let py = (sh - ph) / 2.0;
 
-        // パネル背景（深青緑）
+        // Panel background (deep teal)
         let bg_color = if ft.mode == "upload" {
             [0.05, 0.15, 0.20, 0.96]
         } else {
@@ -163,7 +163,7 @@ impl WgpuState {
         };
         add_px_rect(px, py, pw, 2.0, accent, sw, sh, bg_verts, bg_idx);
 
-        // タイトル
+        // Title
         let title = if ft.mode == "upload" {
             "SFTP Upload  (Tab=next, Enter=send, Esc=cancel)"
         } else {
@@ -192,7 +192,7 @@ impl WgpuState {
             let row_y = py + cell_h * (i as f32 * 1.5 + 1.3);
             let is_active = i == ft.field;
 
-            // フィールド背景（アクティブは明るく）
+            // Field background (brighter when active)
             let field_bg = if is_active {
                 [0.15, 0.25, 0.35, 1.0]
             } else {
@@ -210,7 +210,7 @@ impl WgpuState {
                 bg_idx,
             );
 
-            // ラベル
+            // Label
             add_string_verts(
                 label,
                 px + cell_w,
@@ -231,7 +231,7 @@ impl WgpuState {
                 text_idx,
             );
 
-            // 入力値 + カーソル
+            // Input value + cursor
             let display = if is_active {
                 format!("{}_", value)
             } else {
@@ -259,9 +259,9 @@ impl WgpuState {
         }
     }
 
-    /// Lua マクロピッカー頂点を構築する（中央フローティングリスト）
+    /// Build vertices for the Lua macro picker (center floating list)
     ///
-    /// 定義済みマクロを一覧表示し、Enter で実行する。
+    /// Lists defined macros; Enter runs the selected one.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::renderer) fn build_macro_picker_verts(
         &self,
@@ -287,7 +287,7 @@ impl WgpuState {
         let px = (sw - pw) / 2.0;
         let py = (sh - ph) / 2.0;
 
-        // パネル背景（深紫系）
+        // Panel background (deep purple)
         add_px_rect(
             px,
             py,
@@ -299,7 +299,7 @@ impl WgpuState {
             bg_verts,
             bg_idx,
         );
-        // 上端アクセント線（紫/ピンク）
+        // Top accent line (purple / pink)
         add_px_rect(
             px,
             py,
@@ -312,7 +312,7 @@ impl WgpuState {
             bg_idx,
         );
 
-        // タイトル行
+        // Title row
         add_string_verts(
             "Lua Macros",
             px + cell_w,
@@ -329,7 +329,7 @@ impl WgpuState {
             text_idx,
         );
 
-        // クエリ行
+        // Query row
         let query_text = format!("> {}", mp.query);
         add_string_verts(
             &query_text,
@@ -347,7 +347,7 @@ impl WgpuState {
             text_idx,
         );
 
-        // マクロ一覧
+        // Macro list
         for (i, mac) in items.iter().enumerate().take(panel_rows as usize - 2) {
             let item_py = py + cell_h * (i as f32 + 2.2);
             let is_selected = i == mp.selected;
@@ -393,7 +393,7 @@ impl WgpuState {
             );
         }
 
-        // 空マクロ時のヒント
+        // Hint when no macros are present
         if items.is_empty() {
             add_string_verts(
                 "  (no macros in config)",
@@ -413,9 +413,9 @@ impl WgpuState {
         }
     }
 
-    /// ホストマネージャ頂点を構築する（中央フローティングリスト）
+    /// Build vertices for the host manager (center floating list)
     ///
-    /// コマンドパレットと同様のレイアウトで SSH ホスト一覧を表示する。
+    /// Lists SSH hosts using the same layout as the command palette.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::renderer) fn build_host_manager_verts(
         &self,
@@ -434,14 +434,14 @@ impl WgpuState {
         let hm = &state.host_manager;
         let items = hm.filtered();
         let panel_cols: f32 = 52.0;
-        let panel_rows = (items.len() + 3).min(14) as f32; // タイトル + クエリ + 最大12項目
+        let panel_rows = (items.len() + 3).min(14) as f32; // title + query + up to 12 items
 
         let pw = panel_cols * cell_w;
         let ph = panel_rows * cell_h;
         let px = (sw - pw) / 2.0;
         let py = (sh - ph) / 2.0;
 
-        // パネル背景（深めの紺）
+        // Panel background (dark navy)
         add_px_rect(
             px,
             py,
@@ -453,7 +453,7 @@ impl WgpuState {
             bg_verts,
             bg_idx,
         );
-        // 上端アクセント線（緑系）
+        // Top accent line (green)
         add_px_rect(
             px,
             py,
@@ -466,7 +466,7 @@ impl WgpuState {
             bg_idx,
         );
 
-        // タイトル行
+        // Title row
         add_string_verts(
             "SSH Hosts",
             px + cell_w,
@@ -483,7 +483,7 @@ impl WgpuState {
             text_idx,
         );
 
-        // クエリ行
+        // Query row
         let query_text = format!("> {}", hm.query);
         add_string_verts(
             &query_text,
@@ -501,7 +501,7 @@ impl WgpuState {
             text_idx,
         );
 
-        // ホスト一覧（タイトル+クエリ = 2行分オフセット）
+        // Host list (offset by 2 rows for title + query)
         for (i, host) in items.iter().enumerate().take(panel_rows as usize - 2) {
             let item_py = py + cell_h * (i as f32 + 2.2);
             let is_selected = i == hm.selected;
@@ -518,7 +518,7 @@ impl WgpuState {
                     bg_idx,
                 );
             }
-            // 表示フォーマット: "> name  user@host:port"
+            // Display format: "> name  user@host:port"
             let prefix = if is_selected { "> " } else { "  " };
             let label = format!(
                 "{}{:<20} {}@{}:{}",
@@ -546,7 +546,7 @@ impl WgpuState {
             );
         }
 
-        // 空ホスト時のヒント
+        // Hint when no hosts are present
         if items.is_empty() {
             add_string_verts(
                 "  (no hosts in config)",

@@ -1,6 +1,6 @@
-//! モーダル系オーバーレイの頂点ビルダー。
+//! Vertex builders for modal overlays.
 //!
-//! パスワード入力モーダル / コンテキストメニュー / 同意ダイアログを担当する。
+//! Handles the password input modal / context menu / consent dialog.
 
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
@@ -11,7 +11,7 @@ use super::super::WgpuState;
 use super::util::{pane_id_for, preview_text, wrap_text};
 
 impl WgpuState {
-    /// パスワード入力モーダルの頂点を構築する
+    /// Build vertices for the password input modal
     #[allow(clippy::too_many_arguments)]
     pub(in crate::renderer) fn build_password_modal_verts(
         &self,
@@ -36,7 +36,7 @@ impl WgpuState {
         let px = (sw - pw) / 2.0;
         let py = (sh - ph) / 2.0;
 
-        // 背景（濃い紺）
+        // Background (dark navy)
         add_px_rect(
             px,
             py,
@@ -48,7 +48,7 @@ impl WgpuState {
             bg_verts,
             bg_idx,
         );
-        // 上端アクセント線（オレンジ）
+        // Top accent line (orange)
         add_px_rect(
             px,
             py,
@@ -61,7 +61,7 @@ impl WgpuState {
             bg_idx,
         );
 
-        // タイトル
+        // Title
         let title = format!(
             "Password: {}@{}:{}",
             modal.host.username, modal.host.host, modal.host.port
@@ -82,8 +82,8 @@ impl WgpuState {
             text_idx,
         );
 
-        // パスワード入力欄（マスク表示）
-        // HIGH H-6: input は private な Zeroizing<String> なので input_len() 経由で文字数のみ取得
+        // Password input field (masked display)
+        // HIGH H-6: `input` is a private Zeroizing<String>, so only retrieve the char count via input_len()
         let masked = "*".repeat(modal.input_len());
         let prompt = format!("> {}_", masked);
         add_string_verts(
@@ -102,7 +102,7 @@ impl WgpuState {
             text_idx,
         );
 
-        // エラーメッセージ
+        // Error message
         if let Some(err) = &modal.error {
             add_string_verts(
                 err,
@@ -121,11 +121,11 @@ impl WgpuState {
             );
         }
 
-        // remember 状態（OS キーチェーン保存トグル）
+        // remember state (toggle for storing in the OS keychain)
         let remember_label = if modal.remember {
-            "[X] OS キーチェーンに保存する (Tab で切替)"
+            "[X] Save to OS keychain (Tab to toggle)"
         } else {
-            "[ ] OS キーチェーンに保存する (Tab で切替)"
+            "[ ] Save to OS keychain (Tab to toggle)"
         };
         let remember_color = if modal.remember {
             [0.4, 0.9, 0.5, 1.0]
@@ -149,7 +149,7 @@ impl WgpuState {
         );
         if modal.prefilled {
             add_string_verts(
-                "(キーチェーンから自動入力済み)",
+                "(prefilled from the keychain)",
                 px + cell_w,
                 py + cell_h * 2.0,
                 [0.5, 0.7, 1.0, 1.0],
@@ -165,9 +165,9 @@ impl WgpuState {
             );
         }
 
-        // ヒント
+        // Hint
         add_string_verts(
-            "Enter=接続  Tab=保存切替  Esc=キャンセル",
+            "Enter=connect  Tab=toggle save  Esc=cancel",
             px + cell_w,
             py + cell_h * 4.1,
             [0.45, 0.50, 0.48, 1.0],
@@ -183,7 +183,7 @@ impl WgpuState {
         );
     }
 
-    /// コンテキストメニュー頂点を構築する（右クリック時のポップアップ）
+    /// Build vertices for the context menu (right-click popup)
     #[allow(clippy::too_many_arguments)]
     pub(in crate::renderer) fn build_context_menu_verts(
         &self,
@@ -199,7 +199,7 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
-        // ラベルとヒントの最大表示幅からメニュー幅を動的に計算する
+        // Compute the menu width dynamically from the max visual width of labels and hints
         let max_label_w = menu
             .items
             .iter()
@@ -212,14 +212,14 @@ impl WgpuState {
             .map(|item| visual_width(&item.hint))
             .max()
             .unwrap_or(0);
-        // 左パディング(0.9) + ラベル + ギャップ(2) + ヒント + 右パディング(1.5)
+        // Left padding (0.9) + label + gap (2) + hint + right padding (1.5)
         let min_cells = max_label_w + max_hint_w + 5;
         let menu_w = (min_cells as f32).max(16.0) * cell_w;
         let menu_h = menu.items.len() as f32 * cell_h;
         let mx = menu.x;
         let my = menu.y;
 
-        // ドロップシャドウ（3px オフセット）
+        // Drop shadow (3px offset)
         add_px_rect(
             mx + 3.0,
             my + 3.0,
@@ -232,7 +232,7 @@ impl WgpuState {
             bg_idx,
         );
 
-        // 枠線（外側 1px、アクセントカラー薄め）
+        // Border (outer 1px, faint accent color)
         add_px_rect(
             mx - 1.0,
             my - 1.0,
@@ -245,7 +245,7 @@ impl WgpuState {
             bg_idx,
         );
 
-        // メニュー全体の背景（完全不透明: ターミナル透過設定に関わらず常に不透明）
+        // Background for the whole menu (fully opaque regardless of terminal transparency)
         add_px_rect(
             mx,
             my,
@@ -258,7 +258,7 @@ impl WgpuState {
             bg_idx,
         );
 
-        // 上端のアクセント線（3px 太め）
+        // Top accent line (3px thick)
         add_px_rect(
             mx,
             my,
@@ -276,7 +276,7 @@ impl WgpuState {
             let item_y = my + i as f32 * cell_h;
 
             if matches!(item.action, ContextMenuAction::Separator) {
-                // セパレーター: 中央に水平線を描く
+                // Separator: draw a horizontal line in the middle
                 let sep_y = item_y + cell_h * 0.45;
                 add_px_rect(
                     mx + cell_w * 0.5,
@@ -292,7 +292,7 @@ impl WgpuState {
                 continue;
             }
 
-            // ホバーハイライト背景（セパレーター以外）
+            // Hover highlight background (non-separator items)
             if menu.hovered == Some(i) {
                 add_px_rect(
                     mx + 2.0,
@@ -305,7 +305,7 @@ impl WgpuState {
                     bg_verts,
                     bg_idx,
                 );
-                // ホバー時の左アクセント線（3px）
+                // Left accent line on hover (3px)
                 add_px_rect(
                     mx + 2.0,
                     item_y + 1.0,
@@ -319,11 +319,11 @@ impl WgpuState {
                 );
             }
 
-            // ラベルテキスト（左パディング 0.9セル分）
+            // Label text (left padding 0.9 cells)
             let text_color = if menu.hovered == Some(i) {
-                [0.95, 0.96, 1.0, 1.0] // ホバー時は少し明るく
+                [0.95, 0.96, 1.0, 1.0] // Slightly brighter on hover
             } else {
-                [0.75, 0.78, 0.88, 1.0] // 通常は少し抑えた色
+                [0.75, 0.78, 0.88, 1.0] // Slightly muted otherwise
             };
             add_string_verts(
                 &item.label,
@@ -341,7 +341,7 @@ impl WgpuState {
                 text_idx,
             );
 
-            // キーヒントテキスト（右寄せ、グレー）
+            // Key hint text (right-aligned, gray)
             if !item.hint.is_empty() {
                 let hint_visual_w = visual_width(&item.hint) as f32;
                 let hint_x = mx + menu_w - (hint_visual_w * cell_w + cell_w * 0.5);
@@ -364,9 +364,9 @@ impl WgpuState {
         }
     }
 
-    /// 同意ダイアログ（Sprint 4-1: 機密操作確認モーダル）の頂点を構築する
+    /// Build vertices for the consent dialog (Sprint 4-1: sensitive-operation confirmation modal)
     ///
-    /// 中央フローティング。種別に応じてタイトル・プレビュー・ボタンを描画する。
+    /// Center floating. Renders title, preview, and buttons depending on the kind.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::renderer) fn build_consent_dialog_verts(
         &self,
@@ -388,7 +388,7 @@ impl WgpuState {
             return;
         };
 
-        // 背景半透明オーバーレイ（画面全体）
+        // Semi-transparent backdrop overlay (full screen)
         add_px_rect(
             0.0,
             0.0,
@@ -401,13 +401,13 @@ impl WgpuState {
             bg_idx,
         );
 
-        // ダイアログ寸法（横 60 セル、縦 12 セル）
+        // Dialog dimensions (60 cells wide, 12 cells tall)
         let pw = (60.0 * cell_w).min(sw - cell_w * 4.0);
         let ph = 12.0 * cell_h;
         let px = (sw - pw) / 2.0;
         let py = (sh - ph) / 2.0;
 
-        // 背景（濃い紺）
+        // Background (dark navy)
         add_px_rect(
             px,
             py,
@@ -419,7 +419,7 @@ impl WgpuState {
             bg_verts,
             bg_idx,
         );
-        // 上端アクセント線（黄色 = 警告色）
+        // Top accent line (yellow = warning color)
         add_px_rect(
             px,
             py,
@@ -432,7 +432,7 @@ impl WgpuState {
             bg_idx,
         );
 
-        // タイトル
+        // Title
         let title_key = match dialog.kind {
             ConsentKind::OpenUrl(_) => "consent-title-open-url",
             ConsentKind::ClipboardWrite { .. } => "consent-title-clipboard-write",
@@ -455,7 +455,7 @@ impl WgpuState {
             text_idx,
         );
 
-        // 要求元ペイン情報
+        // Requesting pane info
         let mut content_y = py + cell_h * 1.8;
         if let Some(pane_id) = pane_id_for(&dialog.kind) {
             let label = nexterm_i18n::fl!("consent-source-pane", pane_id = pane_id);
@@ -477,7 +477,7 @@ impl WgpuState {
             content_y += cell_h * 1.3;
         }
 
-        // ペイロードプレビュー（最大 2 行・各行 56 文字）
+        // Payload preview (up to 2 lines, 56 chars each)
         let preview = preview_text(&dialog.kind);
         for (i, line) in wrap_text(&preview, 56).iter().take(2).enumerate() {
             add_string_verts(
@@ -497,7 +497,7 @@ impl WgpuState {
             );
         }
 
-        // ボタン行（4 ボタン、選択中はハイライト）
+        // Button row (4 buttons; highlight the selected one)
         let buttons = [
             nexterm_i18n::t("consent-allow"),
             nexterm_i18n::t("consent-deny"),
@@ -542,7 +542,7 @@ impl WgpuState {
             bx += bw + cell_w * 0.5;
         }
 
-        // 操作ヒント（最下行）
+        // Operation hint (last row)
         let hint = nexterm_i18n::t("consent-hint");
         add_string_verts(
             &hint,
@@ -561,18 +561,20 @@ impl WgpuState {
         );
     }
 
-    /// Window 閉じ確認ダイアログを描画する（Sprint 5-9 Phase 4-6）。
+    /// Render the Window-close confirmation dialog (Sprint 5-9 Phase 4-6).
     ///
-    /// `state.close_window_dialog` が `Some` のときのみ呼び出され、画面中央に
-    /// モーダルダイアログを表示する。`build_consent_dialog_verts` と同じ装飾パターン
-    /// （半透明オーバーレイ + 警告色アクセント + 中央 2 ボタン）を踏襲し、視覚的整合性を保つ。
+    /// Called only when `state.close_window_dialog` is `Some`; displays a modal
+    /// dialog in the center of the screen. Follows the same decoration pattern
+    /// as `build_consent_dialog_verts` (semi-transparent overlay + warning-color
+    /// accent + two centered buttons) to keep visual consistency.
     ///
-    /// ボタン構成:
-    /// - 左（selected_button = 0）: 「閉じる（Kill）」赤系背景
-    /// - 右（selected_button = 1）: 「キャンセル」グレー背景
+    /// Button layout:
+    /// - Left (selected_button = 0): "Close (Kill)" — red background
+    /// - Right (selected_button = 1): "Cancel" — gray background
     ///
-    /// 確定シグナル値（`0xFE` = Kill 確定 / `0xFF` = キャンセル確定）は
-    /// `input_handler` 側で書き込まれ、`poll_pending_close_request` が次フレームで消費する。
+    /// Confirmation signal values (`0xFE` = Kill confirmed / `0xFF` = Cancel
+    /// confirmed) are written from the `input_handler` side and consumed by
+    /// `poll_pending_close_request` on the next frame.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::renderer) fn build_close_window_dialog_verts(
         &self,
@@ -592,7 +594,7 @@ impl WgpuState {
             return;
         };
 
-        // 半透明オーバーレイ（画面全体、クリックで誤操作を防ぐ視覚的シールド）
+        // Semi-transparent overlay (full screen; visual shield that prevents accidental clicks)
         add_px_rect(
             0.0,
             0.0,
@@ -605,13 +607,13 @@ impl WgpuState {
             bg_idx,
         );
 
-        // ダイアログ寸法（横 56 セル / 縦 10 セル、画面サイズに応じてクランプ）
+        // Dialog dimensions (56 cells wide / 10 cells tall; clamped to screen size)
         let pw = (56.0 * cell_w).min(sw - cell_w * 4.0);
         let ph = 10.0 * cell_h;
         let px = (sw - pw) / 2.0;
         let py = (sh - ph) / 2.0;
 
-        // ダイアログ背景（濃い紺）
+        // Dialog background (dark navy)
         add_px_rect(
             px,
             py,
@@ -623,7 +625,7 @@ impl WgpuState {
             bg_verts,
             bg_idx,
         );
-        // 上端アクセント線（赤系 = 警告色、consent ダイアログより強い注意喚起）
+        // Top accent line (red = warning color; stronger alert than the consent dialog)
         add_px_rect(
             px,
             py,
@@ -636,8 +638,8 @@ impl WgpuState {
             bg_idx,
         );
 
-        // タイトル ＝ 確認メッセージ本文を直接描画する（短いので分離不要）。
-        // 横幅オーバー時は wrap_text で 2 行までに折り返す。
+        // Title = render the confirmation message directly (short enough to skip a separate title).
+        // If it overflows the width, wrap_text breaks it to up to 2 lines.
         let content_y = py + cell_h * 1.2;
         let max_cols = ((pw - cell_w * 2.0) / cell_w).max(20.0) as usize;
         for (i, line) in wrap_text(&dialog.message, max_cols)
@@ -661,9 +663,9 @@ impl WgpuState {
                 text_idx,
             );
         }
-        // content_y はメッセージ本文描画後は不要（ボタン位置は ph 基準で計算）
+        // content_y is unused after the message body (button positions are computed from ph)
 
-        // ボタン行: Kill (左、selected_button == 0) + Cancel (右、selected_button == 1)
+        // Button row: Kill (left, selected_button == 0) + Cancel (right, selected_button == 1)
         let buttons: [(&str, [f32; 4]); 2] = [
             (&dialog.kill_label, [0.75, 0.25, 0.25, 1.0]),
             (&dialog.cancel_label, [0.20, 0.24, 0.34, 1.0]),
@@ -677,12 +679,12 @@ impl WgpuState {
         let mut bx = px + (pw - total_w) / 2.0;
         for (i, (label, base_bg)) in buttons.iter().enumerate() {
             let is_selected = dialog.selected_button as usize == i;
-            // 選択中はアクセント色で塗りつぶし、非選択は base 色
+            // Selected: fill with the accent color; unselected: base color
             let bg = if is_selected {
                 if i == 0 {
-                    [0.95, 0.40, 0.40, 1.0] // Kill 選択: 鮮やかな赤
+                    [0.95, 0.40, 0.40, 1.0] // Kill selected: vivid red
                 } else {
-                    [0.95, 0.85, 0.40, 1.0] // Cancel 選択: 黄色（安全側）
+                    [0.95, 0.85, 0.40, 1.0] // Cancel selected: yellow (safe side)
                 }
             } else {
                 *base_bg
@@ -694,7 +696,7 @@ impl WgpuState {
             } else {
                 [0.95, 0.95, 0.95, 1.0]
             };
-            // ラベル中央寄せ
+            // Center the label
             let label_w = visual_width(label) as f32 * cell_w;
             let label_x = bx + (bw - label_w) / 2.0;
             add_string_verts(
@@ -715,8 +717,8 @@ impl WgpuState {
             bx += bw + cell_w * 0.8;
         }
 
-        // 操作ヒント（最下行）。i18n キーは流用せず簡潔な英語＋記号で表記
-        // （言語間で意味が変わらない記号中心の構成）
+        // Operation hint (last row). Uses concise English + symbols rather than reusing
+        // an i18n key (symbol-heavy phrasing reads the same across locales).
         let hint = "Enter / Y: confirm  •  Esc / N: cancel  •  ← →: switch";
         add_string_verts(
             hint,
