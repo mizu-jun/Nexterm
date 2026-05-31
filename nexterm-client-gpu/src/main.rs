@@ -100,12 +100,23 @@ async fn main() -> Result<()> {
 
 /// Default tracing directive used when `NEXTERM_LOG` is unset.
 ///
-/// `info` keeps nexterm's own logs visible. The `wgpu_core` / `wgpu_hal` /
-/// `naga` overrides silence the per-frame `Device::maintain: waiting for
-/// submission index N` flood that `wgpu_core::device::resource` emits at INFO
-/// every frame (≈60 Hz). Without the override a 4-minute session bloats the
-/// client log file past 1 MB and drowns out useful diagnostics.
-const DEFAULT_LOG_DIRECTIVES: &str = "info,wgpu_core=warn,wgpu_hal=warn,naga=warn";
+/// `info` keeps nexterm's own logs visible. The remaining overrides silence
+/// per-frame log floods from upstream wgpu / naga:
+///
+/// - `wgpu_core=warn` muzzles the
+///   `wgpu_core::device::resource: Device::maintain: waiting for submission
+///   index N` flood emitted at INFO every frame (≈60 Hz).
+/// - `wgpu_hal=warn` / `naga=warn` keep the rest of those crates terse.
+/// - `wgpu_hal::vulkan::conv=error` silences the
+///   `Unrecognized present mode 1000361000` (VK_PRESENT_MODE_FIFO_LATEST_READY_EXT)
+///   WARN that newer NVIDIA Vulkan drivers emit on every frame because wgpu
+///   has not added the enum yet. The targeted `=error` keeps the rest of
+///   `wgpu_hal`'s legitimate WARNs visible.
+///
+/// Without these overrides a 4-minute session bloats the client log file past
+/// 1 MB and drowns out useful diagnostics.
+const DEFAULT_LOG_DIRECTIVES: &str =
+    "info,wgpu_core=warn,wgpu_hal=warn,wgpu_hal::vulkan::conv=error,naga=warn";
 
 /// Initialize logging. Windows release builds log to a file
 /// (`%LOCALAPPDATA%\nexterm\nexterm-client.log`); all other configurations log to stdout.
