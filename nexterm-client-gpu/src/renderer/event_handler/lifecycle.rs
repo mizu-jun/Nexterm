@@ -174,23 +174,58 @@ impl EventHandler {
         self.quake.target_window_id = Some(window.id());
 
         // Connect to the server and attach to the default session.
+        //
+        // The single-binary build (`nexterm` bin in `nexterm-client-gpu`) spawns
+        // `nexterm_server::run_server` as an internal Tokio task. Server
+        // initialization (snapshot load, font parsing, IPC pipe creation) takes
+        // up to ~1.5 s in practice, so a single `connect` attempt can race the
+        // server and fail with "the system cannot find the file specified"
+        // (Windows `os error 2`) before the named pipe is listening. Retry on
+        // a 200 ms cadence for up to ~3 s so the client smoothly waits out the
+        // startup race instead of falling into offline mode permanently.
         let conn = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                match Connection::connect_gpu().await {
-                    Ok(conn) => {
-                        // Attach to the session → notify the real size.
-                        let _ = conn.send_tx.try_send(ClientToServer::Attach {
-                            session_name: "main".to_string(),
-                        });
-                        let _ = conn.send_tx.try_send(ClientToServer::Resize { cols, rows });
-                        info!("Connected to nexterm server");
-                        Some(conn)
-                    }
-                    Err(e) => {
-                        warn!("Failed to connect to server (offline mode): {}", e);
-                        None
+                const MAX_ATTEMPTS: u32 = 15;
+                const RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(200);
+                let mut last_err: Option<anyhow::Error> = None;
+                for attempt in 1..=MAX_ATTEMPTS {
+                    match Connection::connect_gpu().await {
+                        Ok(conn) => {
+                            // Attach to the session → notify the real size.
+                            let _ = conn.send_tx.try_send(ClientToServer::Attach {
+                                session_name: "main".to_string(),
+                            });
+                            let _ = conn.send_tx.try_send(ClientToServer::Resize { cols, rows });
+                            if attempt > 1 {
+                                info!("Connected to nexterm server (after {} attempt(s))", attempt);
+                            } else {
+                                info!("Connected to nexterm server");
+                            }
+                            return Some(conn);
+                        }
+                        Err(e) => {
+                            tracing::debug!(
+                                "connect attempt {}/{} failed: {}",
+                                attempt,
+                                MAX_ATTEMPTS,
+                                e
+                            );
+                            last_err = Some(e);
+                            if attempt < MAX_ATTEMPTS {
+                                tokio::time::sleep(RETRY_DELAY).await;
+                            }
+                        }
                     }
                 }
+                warn!(
+                    "Failed to connect to server after {} attempts (offline mode): {}",
+                    MAX_ATTEMPTS,
+                    last_err
+                        .as_ref()
+                        .map(|e| e.to_string())
+                        .unwrap_or_else(|| "<unknown>".to_string()),
+                );
+                None
             })
         });
         self.connection = conn;
