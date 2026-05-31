@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-06-01
+
+Follow-up PATCH on top of 1.7.1, fixing a startup race that could leave
+the client in offline mode and silencing a second per-frame WARN flood.
+No breaking changes (`PROTOCOL_VERSION = 8` and `SNAPSHOT_VERSION = 4`
+retained).
+
+### Fixed
+
+- **IPC connect race on startup** (`nexterm-client-gpu`): in the
+  single-binary build the GPU client and the embedded server task race at
+  launch. If the server's snapshot-load + IPC-listen took longer than the
+  client's first `connect` attempt (observed: ~943 ms on a real session),
+  the connect returned `os error 2` (Windows: file not found — the named
+  pipe did not exist yet) and the client fell into offline mode
+  **permanently**, with no further reconnect attempts. The window stayed
+  blank and unresponsive until the user force-closed it.
+  The connect path now retries up to 15 times on a 200 ms cadence (≈3 s
+  total budget). The retried path emits a `debug!` line per attempt and
+  only escalates to `warn!` if all attempts fail.
+
+### Changed
+
+- **Default log filter targets `wgpu_hal::vulkan::conv=error`**
+  (`nexterm-client-gpu`): newer NVIDIA Vulkan drivers advertise
+  `VK_PRESENT_MODE_FIFO_LATEST_READY_EXT` (id `1000361000`), which
+  current wgpu does not recognize and which it emits as a WARN every
+  single frame (≈30 Hz). The directive added in 1.7.1 only suppressed
+  INFO from `wgpu_hal`, so this WARN flood survived and now drowned out
+  the cleaner log. The new targeted `=error` directive silences only the
+  `wgpu_hal::vulkan::conv` module; other `wgpu_hal` WARNs continue to
+  surface. Setting `NEXTERM_LOG` explicitly continues to override the
+  default exactly as before.
+
 ## [1.7.1] - 2026-05-31
 
 Diagnostic and resilience PATCH release. No breaking changes

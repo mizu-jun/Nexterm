@@ -4,6 +4,17 @@ This document gathers the steps required when upgrading to a Nexterm version tha
 
 ---
 
+## v1.7.1 → v1.7.2 (IPC connect race fix + targeted wgpu_hal::vulkan::conv silencing)
+
+**No breaking changes and no migration steps.** `PROTOCOL_VERSION = 8` and `SNAPSHOT_VERSION = 4` are retained. The snapshot file schema is unchanged.
+
+Two fixes ship as a follow-up PATCH:
+
+- **IPC connect retry**: previously the GPU client tried to connect to the embedded server exactly once, immediately after wgpu init. On slow startups (snapshot load + font parsing + IPC pipe creation ≈ 1 to 1.5 s in practice) this single attempt could race the server, fail with `os error 2`, and leave the client in offline mode forever — the window appeared but no panes could be opened. The client now retries the initial connect up to 15 times on a 200 ms cadence (≈3 s budget). If you were hitting this race, simply upgrading is enough; no config change is required.
+- **`wgpu_hal::vulkan::conv` lowered to `error` in the default log filter**: NVIDIA's recent Vulkan drivers advertise `VK_PRESENT_MODE_FIFO_LATEST_READY_EXT` (id `1000361000`), which the current wgpu release does not recognize and which it flags as a WARN every frame. The 1.7.1 filter only quieted INFO from `wgpu_hal`, so the WARN flood survived. The new filter targets just `wgpu_hal::vulkan::conv` at `error` level; legitimate WARNs from the rest of `wgpu_hal` continue to surface. To restore the 1.7.1 behaviour, set `NEXTERM_LOG=info,wgpu_core=warn,wgpu_hal=warn,naga=warn`.
+
+---
+
 ## v1.7.0 → v1.7.1 (snapshot self-heal + ConPTY diagnostics + log-noise reduction)
 
 **No breaking changes and no migration steps.** `PROTOCOL_VERSION = 8` and `SNAPSHOT_VERSION = 4` are retained. The snapshot file schema is unchanged.
