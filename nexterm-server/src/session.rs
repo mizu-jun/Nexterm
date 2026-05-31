@@ -520,7 +520,10 @@ impl Session {
                     windows.insert(win_snap.id, window);
                 }
                 Err(e) => {
-                    warn!("failed to restore window '{}': {}", win_snap.name, e);
+                    // `{:#}` prints the full anyhow error chain so context added
+                    // around the underlying ConPTY / spawn_command error (shell,
+                    // cwd, cols, rows) shows up in the log.
+                    warn!("failed to restore window '{}': {:#}", win_snap.name, e);
                 }
             }
         }

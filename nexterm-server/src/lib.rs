@@ -19,9 +19,10 @@ mod window;
 use std::sync::Arc;
 
 use anyhow::Result;
-use tracing::info;
+use tracing::{info, warn};
 
 use session::SessionManager;
+use snapshot::ServerSnapshot;
 
 /// Run the main logic of `nexterm-server`.
 /// The caller is responsible for log initialization (no need when embedded in the GPU client).
@@ -47,6 +48,9 @@ pub async fn run_server() -> Result<()> {
 
     // Restore the previous session(s) when a snapshot exists.
     if let Some(snap) = persist::load_snapshot() {
+        let original_window_count = total_window_count(&snap);
+        let original_session_count = snap.sessions.len();
+
         let restored = manager.restore_from_snapshot(&snap).await;
         if !restored.is_empty() {
             info!("restored sessions: {:?}", restored);
@@ -55,6 +59,29 @@ pub async fn run_server() -> Result<()> {
             pane::set_min_pane_id(max_pane_id + 1);
             let max_window_id = max_window_id_in_snapshot(&snap);
             session::set_min_window_id(max_window_id + 1);
+        }
+
+        // Self-heal: if any window or session failed to restore (e.g. ConPTY
+        // returned E_INVALIDARG because the saved cwd no longer exists), rewrite
+        // the snapshot immediately so the broken entries do not keep failing on
+        // every subsequent launch. Without this, short-lived sessions can leave
+        // bad entries in the snapshot file forever because the 30 s auto-save
+        // never fires.
+        let current_snap = manager.to_snapshot().await;
+        let current_window_count = total_window_count(&current_snap);
+        let current_session_count = current_snap.sessions.len();
+        if current_window_count < original_window_count
+            || current_session_count < original_session_count
+        {
+            let dropped_windows = original_window_count.saturating_sub(current_window_count);
+            let dropped_sessions = original_session_count.saturating_sub(current_session_count);
+            warn!(
+                "snapshot self-heal: {} window(s) / {} session(s) failed to restore; rewriting snapshot",
+                dropped_windows, dropped_sessions
+            );
+            if let Err(e) = persist::save_snapshot(&current_snap) {
+                warn!("snapshot self-heal save failed: {}", e);
+            }
         }
     }
 
@@ -191,6 +218,13 @@ fn max_window_id_in_snapshot(snap: &snapshot::ServerSnapshot) -> u32 {
         .map(|w| w.id)
         .max()
         .unwrap_or(0)
+}
+
+/// Total number of windows across every session in the snapshot.
+///
+/// Used by the snapshot self-heal path to detect when entries failed to restore.
+fn total_window_count(snap: &ServerSnapshot) -> usize {
+    snap.sessions.iter().map(|s| s.windows.len()).sum()
 }
 
 /// Shutdown signal handler (Unix/Windows).

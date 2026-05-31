@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySystem};
 use tokio::sync::broadcast;
 use tracing::{debug, error, info};
@@ -391,12 +391,20 @@ impl Pane {
     ) -> Result<Self> {
         let pty_system = NativePtySystem::default();
 
-        let pair = pty_system.openpty(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })?;
+        let pair = pty_system
+            .openpty(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .with_context(|| {
+                format!(
+                    "openpty failed (cols={}, rows={}, shell={:?}); \
+                     ConPTY on Windows rejects size 0 with E_INVALIDARG (HRESULT 0x80070057)",
+                    cols, rows, shell
+                )
+            })?;
 
         let mut cmd = CommandBuilder::new(shell);
         cmd.args(args);
@@ -421,7 +429,12 @@ impl Pane {
             cmd.cwd(c);
         }
 
-        let child = pair.slave.spawn_command(cmd)?;
+        let child = pair.slave.spawn_command(cmd).with_context(|| {
+            format!(
+                "spawn_command failed (shell={:?}, args={:?}, cwd={:?})",
+                shell, args, effective_cwd
+            )
+        })?;
         // Save the child PID (the process keeps running even after `child` is dropped).
         let pid = child.process_id();
 
