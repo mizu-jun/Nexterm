@@ -98,6 +98,15 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Default tracing directive used when `NEXTERM_LOG` is unset.
+///
+/// `info` keeps nexterm's own logs visible. The `wgpu_core` / `wgpu_hal` /
+/// `naga` overrides silence the per-frame `Device::maintain: waiting for
+/// submission index N` flood that `wgpu_core::device::resource` emits at INFO
+/// every frame (≈60 Hz). Without the override a 4-minute session bloats the
+/// client log file past 1 MB and drowns out useful diagnostics.
+const DEFAULT_LOG_DIRECTIVES: &str = "info,wgpu_core=warn,wgpu_hal=warn,naga=warn";
+
 /// Initialize logging. Windows release builds log to a file
 /// (`%LOCALAPPDATA%\nexterm\nexterm-client.log`); all other configurations log to stdout.
 #[cfg(all(windows, not(debug_assertions)))]
@@ -110,7 +119,8 @@ fn init_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_env("NEXTERM_LOG").unwrap_or_else(|_| EnvFilter::new("info")),
+            EnvFilter::try_from_env("NEXTERM_LOG")
+                .unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_DIRECTIVES)),
         )
         .with_writer(non_blocking)
         .init();
@@ -120,7 +130,10 @@ fn init_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
 #[cfg(not(all(windows, not(debug_assertions))))]
 fn init_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_env("NEXTERM_LOG"))
+        .with_env_filter(
+            EnvFilter::try_from_env("NEXTERM_LOG")
+                .unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_DIRECTIVES)),
+        )
         .init();
     None
 }
