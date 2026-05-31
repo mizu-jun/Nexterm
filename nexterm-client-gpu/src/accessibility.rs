@@ -2159,24 +2159,25 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
     h.finish()
 }
 
-/// Sprint 5-11-2 Step 2-4 拡張: 設定パネルの AccessKit アクションを処理する純関数。
+/// Sprint 5-11-2 Step 2-4 extension: pure function handling AccessKit actions on the settings panel.
 ///
-/// `EventHandler::handle_accesskit_action` から呼び出される。`EventHandler` を構築せず
-/// 単体テスト可能にするため独立関数として切り出している。
+/// Called from `EventHandler::handle_accesskit_action`. Extracted as a standalone
+/// function so it can be unit-tested without constructing an `EventHandler`.
 ///
-/// # 戻り値
+/// # Returns
 ///
-/// `true` の場合、呼び出し側は再描画を要求する（処理が状態変更を伴う）。
-/// `false` の場合、対象 NodeId が設定パネル系でないか、対象アクションに対応がない。
+/// `true` when the caller should request a redraw (handler caused a state change).
+/// `false` when the target NodeId is not in the settings panel domain, or no matching
+/// action handler exists.
 ///
-/// # 設計メモ
+/// # Design notes
 ///
-/// - `Focus` を SR 経路の状態変更トリガーに使うのは「タブ/ペイン/カテゴリタブ」のみ
-///   （仮想カーソル移動 = 制御遷移と解釈）。CheckBox や TextInput では Focus で副作用を
-///   起こさず描画状態のみ。
-/// - `SettingsFontSize` / `SettingsWindowOpacity` の SetValue は `set_*_value` の純関数
-///   setter（0.5 / 0.05 単位丸めと clamp）に委譲する。
-/// - ThemeScheme / Language の Click と Increment は同等扱い（ComboBox の「次へ」）。
+/// - `Focus` is used as a state-change trigger via the SR path only for
+///   "Tab / Pane / CategoryTab" (virtual-cursor traversal = control transition).
+///   For CheckBox and TextInput, Focus has no side effects beyond rendering state.
+/// - `SettingsFontSize` / `SettingsWindowOpacity` SetValue is delegated to the pure
+///   `set_*_value` setters (rounded to 0.5 / 0.05 units and clamped).
+/// - ThemeScheme / Language treat Click and Increment equivalently (ComboBox "next").
 pub fn dispatch_settings_action(
     panel: &mut SettingsPanel,
     action: accesskit::Action,
@@ -2187,7 +2188,7 @@ pub fn dispatch_settings_action(
     use accesskit::{Action, ActionData};
 
     match (action, kind) {
-        // ===== カテゴリタブ =====
+        // ===== Category tabs =====
         (Action::Focus | Action::Click, NodeIdKind::SettingsTab { idx }) => {
             if let Some(cat) = SettingsCategory::ALL.get(*idx) {
                 panel.category = cat.clone();
@@ -2198,7 +2199,7 @@ pub fn dispatch_settings_action(
             }
         }
 
-        // ===== フォントファミリー (TextInput) =====
+        // ===== Font family (TextInput) =====
         (Action::Click, NodeIdKind::SettingsFontFamily) => {
             panel.font_family_editing = true;
             true
@@ -2213,7 +2214,7 @@ pub fn dispatch_settings_action(
             }
         }
 
-        // ===== フォントサイズ (Slider) =====
+        // ===== Font size (Slider) =====
         (Action::SetValue, NodeIdKind::SettingsFontSize) => {
             if let Some(ActionData::NumericValue(v)) = data {
                 panel.set_font_size_value(v);
@@ -2231,7 +2232,7 @@ pub fn dispatch_settings_action(
             true
         }
 
-        // ===== テーマスキーム (ComboBox) =====
+        // ===== Theme scheme (ComboBox) =====
         (Action::Click | Action::Increment, NodeIdKind::SettingsThemeScheme) => {
             panel.next_scheme();
             true
@@ -2241,7 +2242,7 @@ pub fn dispatch_settings_action(
             true
         }
 
-        // ===== ウィンドウ不透明度 (Slider) =====
+        // ===== Window opacity (Slider) =====
         (Action::SetValue, NodeIdKind::SettingsWindowOpacity) => {
             if let Some(ActionData::NumericValue(v)) = data {
                 panel.set_opacity_value(v);
@@ -2259,7 +2260,7 @@ pub fn dispatch_settings_action(
             true
         }
 
-        // ===== 言語 (ComboBox) =====
+        // ===== Language (ComboBox) =====
         (Action::Click | Action::Increment, NodeIdKind::SettingsStartupLanguage) => {
             panel.next_language();
             true
@@ -2269,14 +2270,15 @@ pub fn dispatch_settings_action(
             true
         }
 
-        // ===== 自動更新確認 (CheckBox) =====
-        // Focus でトグルすると SR の仮想カーソル通過で値が変わるため Click のみで反応する。
+        // ===== Auto update check (CheckBox) =====
+        // Toggling on Focus would change the value as the SR virtual cursor passes by,
+        // so only Click reacts.
         (Action::Click, NodeIdKind::SettingsStartupAutoUpdate) => {
             panel.toggle_auto_check_update();
             true
         }
 
-        // ===== Phase 5-11-6 #6 - カーソル形状 (ComboBox) =====
+        // ===== Phase 5-11-6 #6 - Cursor style (ComboBox) =====
         (Action::Click | Action::Increment, NodeIdKind::SettingsCursorStyle) => {
             panel.next_cursor_style();
             panel.window_field_focus = 1;
@@ -2292,7 +2294,7 @@ pub fn dispatch_settings_action(
             true
         }
 
-        // ===== Phase 5-11-6 #6 - 水平パディング (Slider) =====
+        // ===== Phase 5-11-6 #6 - Horizontal padding (Slider) =====
         (Action::SetValue, NodeIdKind::SettingsPaddingX) => {
             if let Some(ActionData::NumericValue(v)) = data {
                 panel.set_padding_x_value(v);
@@ -2317,7 +2319,7 @@ pub fn dispatch_settings_action(
             true
         }
 
-        // ===== Phase 5-11-6 #6 - 垂直パディング (Slider) =====
+        // ===== Phase 5-11-6 #6 - Vertical padding (Slider) =====
         (Action::SetValue, NodeIdKind::SettingsPaddingY) => {
             if let Some(ActionData::NumericValue(v)) = data {
                 panel.set_padding_y_value(v);
@@ -2342,7 +2344,7 @@ pub fn dispatch_settings_action(
             true
         }
 
-        // ===== Phase 5-11-6 #6 - GPU プレゼンテーションモード (ComboBox) =====
+        // ===== Phase 5-11-6 #6 - GPU present mode (ComboBox) =====
         (Action::Click | Action::Increment, NodeIdKind::SettingsPresentMode) => {
             panel.next_present_mode();
             panel.window_field_focus = 4;
@@ -2358,8 +2360,9 @@ pub fn dispatch_settings_action(
             true
         }
 
-        // ===== Phase 5-11-7 - Profiles 項目 (ListBoxOption) =====
-        // Click / Focus いずれも仮想カーソル移動 = 制御遷移として扱い、selected_profile を更新する。
+        // ===== Phase 5-11-7 - Profile item (ListBoxOption) =====
+        // Click / Focus are both treated as virtual-cursor traversal = control transition,
+        // updating `selected_profile`.
         (Action::Click | Action::Focus, NodeIdKind::SettingsProfileItem { idx })
             if *idx < panel.profiles.len() =>
         {
@@ -2367,10 +2370,10 @@ pub fn dispatch_settings_action(
             true
         }
 
-        // ===== Phase 5-11-8 Step 8-1 - Ssh ホスト項目 (ListBoxOption) =====
-        // Click / Focus どちらも selected_host_index を更新する。
-        // ホスト変更時は ssh_field_focus を 0（リスト）に戻して
-        // フィールドノードの value 表示と整合させる。
+        // ===== Phase 5-11-8 Step 8-1 - Ssh host item (ListBoxOption) =====
+        // Both Click and Focus update `selected_host_index`.
+        // When the host changes, reset `ssh_field_focus` to 0 (the list) so the
+        // value display on the field nodes stays consistent.
         (Action::Click | Action::Focus, NodeIdKind::SettingsSshHostItem { idx })
             if *idx < panel.ssh_hosts.len() =>
         {
@@ -2379,7 +2382,7 @@ pub fn dispatch_settings_action(
             true
         }
 
-        // ===== Phase 5-11-8 Step 8-2 - Ssh フィールド: name (TextInput) =====
+        // ===== Phase 5-11-8 Step 8-2 - Ssh field: name (TextInput) =====
         (Action::Focus, NodeIdKind::SettingsSshFieldName) => {
             panel.ssh_field_focus = 1;
             true
@@ -2394,7 +2397,7 @@ pub fn dispatch_settings_action(
             }
         }
 
-        // ===== Phase 5-11-8 Step 8-2 - Ssh フィールド: host (TextInput) =====
+        // ===== Phase 5-11-8 Step 8-2 - Ssh field: host (TextInput) =====
         (Action::Focus, NodeIdKind::SettingsSshFieldHost) => {
             panel.ssh_field_focus = 2;
             true
@@ -2409,7 +2412,7 @@ pub fn dispatch_settings_action(
             }
         }
 
-        // ===== Phase 5-11-8 Step 8-2 - Ssh フィールド: port (SpinButton) =====
+        // ===== Phase 5-11-8 Step 8-2 - Ssh field: port (SpinButton) =====
         (Action::Focus, NodeIdKind::SettingsSshFieldPort) => {
             panel.ssh_field_focus = 3;
             true
@@ -2434,7 +2437,7 @@ pub fn dispatch_settings_action(
             true
         }
 
-        // ===== Phase 5-11-8 Step 8-2 - Ssh フィールド: username (TextInput) =====
+        // ===== Phase 5-11-8 Step 8-2 - Ssh field: username (TextInput) =====
         (Action::Focus, NodeIdKind::SettingsSshFieldUsername) => {
             panel.ssh_field_focus = 4;
             true
@@ -2449,7 +2452,7 @@ pub fn dispatch_settings_action(
             }
         }
 
-        // ===== Phase 5-11-8 Step 8-2 - Ssh フィールド: auth_type (ComboBox) =====
+        // ===== Phase 5-11-8 Step 8-2 - Ssh field: auth_type (ComboBox) =====
         (Action::Focus, NodeIdKind::SettingsSshFieldAuthType) => {
             panel.ssh_field_focus = 5;
             true
@@ -2465,31 +2468,31 @@ pub fn dispatch_settings_action(
             true
         }
 
-        // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): Add / Delete ボタン =====
+        // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): Add / Delete buttons =====
         (Action::Focus, NodeIdKind::SettingsSshAddBtn) => {
             panel.ssh_field_focus = 6;
             true
         }
         (Action::Click, NodeIdKind::SettingsSshAddBtn) => {
-            // SR の Click イベントで新規ホストを追加 + name 編集モード自動開始
+            // Click from the SR adds a new host and auto-enters name edit mode.
             panel.add_ssh_host();
             true
         }
         (Action::Focus, NodeIdKind::SettingsSshDeleteBtn) => {
-            // 空リスト時もフォーカスは受け入れる（SR ナビゲーション安定化のため）
-            // ただし `description` で「無効」を明示しているので SR は誤動作しない
+            // Accept focus even when the list is empty (so SR navigation stays stable).
+            // `description` already marks the button as "disabled", so the SR won't misbehave.
             panel.ssh_field_focus = 7;
             true
         }
         (Action::Click, NodeIdKind::SettingsSshDeleteBtn) => {
-            // 空リスト時は何もしない（open_ssh_delete_dialog 内で is_empty チェック済み）
+            // No-op when the list is empty (`open_ssh_delete_dialog` checks `is_empty`).
             panel.open_ssh_delete_dialog();
             true
         }
 
-        // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): 削除確認ダイアログ =====
-        // ダイアログ本体への Action は受け取らない（モーダル管理は SR 側に任せる）
-        // Cancel ボタン / Confirm ボタンへの Action のみ処理する
+        // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): delete confirmation dialog =====
+        // We do not accept Actions on the dialog body itself (modal management is left to the SR).
+        // Only Cancel / Confirm button Actions are handled.
         (Action::Focus, NodeIdKind::SettingsSshDeleteCancelBtn) => {
             panel.ssh_delete_dialog_confirm_focused = false;
             true
@@ -2513,22 +2516,22 @@ pub fn dispatch_settings_action(
 
 #[cfg(test)]
 mod tests {
-    // テスト内で `SettingsPanel::default()` の後にフィールドを個別代入するパターンは
-    // SR ディスパッチ仕様を読みやすく示すために許容する（多フィールド struct のため
-    // 構造体リテラルで書くと冗長になる）。
+    // The pattern of assigning fields individually after `SettingsPanel::default()` in
+    // tests is permitted to keep the SR dispatch spec readable (the struct has many
+    // fields, so an inline struct literal becomes verbose).
     #![allow(clippy::field_reassign_with_default)]
 
     use super::*;
     use crate::state::ClientState;
 
-    /// NodeId オフセットの安全性: タブとペインの ID 範囲が衝突しないこと
+    /// NodeId offset safety: the Tab and Pane ID ranges must not collide.
     #[test]
     fn node_id_offsets_do_not_overlap() {
         let max_tab = tab_node_id(u32::MAX).0;
         let min_pane = pane_node_id(0).0;
         assert!(
             max_tab < min_pane,
-            "タブ ID 範囲 [{}, {}] とペイン ID 範囲 [{}, ...] が衝突する",
+            "Tab ID range [{}, {}] collides with Pane ID range [{}, ...]",
             NODE_ID_TAB_OFFSET,
             max_tab,
             min_pane
@@ -2536,17 +2539,17 @@ mod tests {
         const _: () = assert!(NODE_ID_TAB_OFFSET > 99);
     }
 
-    /// オーバーレイ動的 ID オフセットがタブ範囲と衝突しないこと
+    /// Overlay dynamic ID offsets must not collide with the Tab range.
     #[test]
     fn overlay_offsets_do_not_overlap_with_tabs() {
-        // 各オーバーレイ ID オフセット < タブオフセット
+        // Each overlay ID offset must be below the Tab offset.
         const _: () = assert!(NODE_ID_PALETTE_ITEM_OFFSET < NODE_ID_TAB_OFFSET);
         const _: () = assert!(NODE_ID_HOST_ITEM_OFFSET < NODE_ID_TAB_OFFSET);
         const _: () = assert!(NODE_ID_MACRO_ITEM_OFFSET < NODE_ID_TAB_OFFSET);
         const _: () = assert!(NODE_ID_CONTEXT_ITEM_OFFSET < NODE_ID_TAB_OFFSET);
         const _: () = assert!(NODE_ID_QUICKSELECT_ITEM_OFFSET < NODE_ID_TAB_OFFSET);
-        // 異なるオーバーレイの ID 範囲が交差しないこと（10万件まで安全と想定）
-        const ITEM_CAP: u64 = 100_000_000; // 各オフセット間の差
+        // The ID ranges of different overlays must not intersect (assumed safe up to 100k items).
+        const ITEM_CAP: u64 = 100_000_000; // Spacing between offsets.
         const _: () = assert!(NODE_ID_HOST_ITEM_OFFSET - NODE_ID_PALETTE_ITEM_OFFSET >= ITEM_CAP);
         const _: () = assert!(NODE_ID_MACRO_ITEM_OFFSET - NODE_ID_HOST_ITEM_OFFSET >= ITEM_CAP);
         const _: () = assert!(NODE_ID_CONTEXT_ITEM_OFFSET - NODE_ID_MACRO_ITEM_OFFSET >= ITEM_CAP);
@@ -2554,19 +2557,19 @@ mod tests {
             assert!(NODE_ID_QUICKSELECT_ITEM_OFFSET - NODE_ID_CONTEXT_ITEM_OFFSET >= ITEM_CAP);
     }
 
-    /// 空の ClientState でツリー構築（初期状態）
+    /// Build a tree from an empty ClientState (initial state).
     #[test]
     fn build_tree_from_empty_state() {
         let state = ClientState::new(80, 24, 1000);
         let update = build_tree_from_state(&state);
 
-        // ROOT / TAB_BAR / PANE_AREA + PaneInputBuffer (Phase 5-11-7) = 4 ノード
+        // ROOT / TAB_BAR / PANE_AREA + PaneInputBuffer (Phase 5-11-7) = 4 nodes
         assert_eq!(update.nodes.len(), 4);
         assert_eq!(update.focus, ROOT_ID);
         assert!(update.tree.is_some());
     }
 
-    /// 単一ペイン構成のツリー
+    /// Tree for a single-pane configuration.
     #[test]
     fn build_tree_with_single_pane() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -2588,7 +2591,7 @@ mod tests {
         assert!(ids.contains(&PANE_INPUT_BUFFER_ID.0));
     }
 
-    /// 複数ペイン構成: タブ順序が tab_order に従うこと
+    /// Multi-pane configuration: tab order must follow `tab_order`.
     #[test]
     fn build_tree_respects_tab_order() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -2607,7 +2610,7 @@ mod tests {
         assert_eq!(update.focus, pane_node_id(10));
     }
 
-    /// タイトル付きペインのラベル生成
+    /// Label generation for a pane with a title.
     #[test]
     fn build_tree_uses_pane_title() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -2623,7 +2626,7 @@ mod tests {
         assert_eq!(update.nodes.len(), 30);
     }
 
-    /// CommandPalette 表示時にダイアログ + 検索 + 候補リストが含まれること
+    /// When the CommandPalette is open, the tree must include the dialog, search box, and candidate list.
     #[test]
     fn build_tree_with_open_palette() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -2634,30 +2637,30 @@ mod tests {
         let update = build_tree_from_state(&state);
 
         let ids: Vec<u64> = update.nodes.iter().map(|(id, _)| id.0).collect();
-        assert!(ids.contains(&PALETTE_ID.0), "PALETTE_ID が含まれていない");
+        assert!(ids.contains(&PALETTE_ID.0), "PALETTE_ID is missing");
         assert!(
             ids.contains(&PALETTE_SEARCH_ID.0),
-            "PALETTE_SEARCH_ID が含まれていない"
+            "PALETTE_SEARCH_ID is missing"
         );
         assert!(
             ids.contains(&PALETTE_LIST_ID.0),
-            "PALETTE_LIST_ID が含まれていない"
+            "PALETTE_LIST_ID is missing"
         );
 
-        // フォーカスは検索入力（候補なしのため）または最初の候補
-        // 標準デフォルトでは候補があるはずだが、ここでは存在性のみ確認
+        // Focus lands on either the search input (when there are no candidates) or the first candidate.
+        // The default state has candidates, but here we only check that one of the two is present.
         assert!(update.focus == PALETTE_SEARCH_ID || update.focus == palette_item_id(0));
     }
 
-    /// CloseWindowDialog 表示時に AlertDialog + 2 ボタンが含まれること
+    /// When the CloseWindowDialog is shown, the tree must include an AlertDialog and two buttons.
     #[test]
     fn build_tree_with_close_dialog() {
         let mut state = ClientState::new(80, 24, 1000);
         state.close_window_dialog = Some(CloseWindowDialog {
             server_window_id: 1,
-            message: "プロセスがまだ動いています。本当に閉じますか？".to_string(),
-            kill_label: "強制終了".to_string(),
-            cancel_label: "キャンセル".to_string(),
+            message: "A process is still running. Close anyway?".to_string(),
+            kill_label: "Force kill".to_string(),
+            cancel_label: "Cancel".to_string(),
             selected_button: 1, // Cancel
         });
 
@@ -2668,11 +2671,11 @@ mod tests {
         assert!(ids.contains(&CLOSE_DIALOG_KILL_BTN.0));
         assert!(ids.contains(&CLOSE_DIALOG_CANCEL_BTN.0));
 
-        // フォーカスは Cancel ボタン
+        // Focus lands on the Cancel button.
         assert_eq!(update.focus, CLOSE_DIALOG_CANCEL_BTN);
     }
 
-    /// ContextMenu 表示時に Menu + MenuItem が含まれること
+    /// When the ContextMenu is shown, the tree must include a Menu and MenuItem nodes.
     #[test]
     fn build_tree_with_context_menu() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -2682,16 +2685,16 @@ mod tests {
 
         let ids: Vec<u64> = update.nodes.iter().map(|(id, _)| id.0).collect();
         assert!(ids.contains(&CONTEXT_MENU_ID.0));
-        // 標準メニューは複数項目を持つ。コンテキストメニュー項目の NodeId 範囲は
-        // [NODE_ID_CONTEXT_ITEM_OFFSET, NODE_ID_TAB_OFFSET) （次のオフセットがタブ）
+        // The default menu has multiple items. The NodeId range for context menu items is
+        // [NODE_ID_CONTEXT_ITEM_OFFSET, NODE_ID_TAB_OFFSET) (the next offset is for tabs).
         let item_count = ids
             .iter()
             .filter(|&&id| (NODE_ID_CONTEXT_ITEM_OFFSET..NODE_ID_TAB_OFFSET).contains(&id))
             .count();
-        assert!(item_count > 0, "コンテキストメニュー項目が含まれていない");
+        assert!(item_count > 0, "context menu items are missing");
     }
 
-    /// 優先順位: CloseWindowDialog が他のオーバーレイより優先されること
+    /// Priority: CloseWindowDialog takes precedence over other overlays.
     #[test]
     fn close_dialog_takes_priority_over_palette() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -2708,14 +2711,14 @@ mod tests {
 
         let ids: Vec<u64> = update.nodes.iter().map(|(id, _)| id.0).collect();
         assert!(ids.contains(&CLOSE_DIALOG_ID.0));
-        // パレットは追加されない（優先度が低いため）
+        // The palette is not added because its priority is lower.
         assert!(
             !ids.contains(&PALETTE_ID.0),
-            "CloseWindowDialog 表示時はパレットは含まれないはず"
+            "Palette should not be present while CloseWindowDialog is shown"
         );
     }
 
-    /// Quick Select 表示時に Dialog + ListBox + マッチ項目が含まれること
+    /// When Quick Select is active, the tree must include a Dialog, ListBox, and match items.
     #[test]
     fn build_tree_with_quick_select_overlay() {
         use crate::state::QuickSelectMatch;
@@ -2744,25 +2747,25 @@ mod tests {
         let ids: Vec<u64> = update.nodes.iter().map(|(id, _)| id.0).collect();
         assert!(
             ids.contains(&QUICK_SELECT_ID.0),
-            "QUICK_SELECT_ID が含まれない"
+            "QUICK_SELECT_ID is missing"
         );
         assert!(
             ids.contains(&QUICK_SELECT_LIST_ID.0),
-            "QUICK_SELECT_LIST_ID が含まれない"
+            "QUICK_SELECT_LIST_ID is missing"
         );
         assert!(
             ids.contains(&quickselect_item_id(0).0),
-            "マッチ項目 0 が含まれない"
+            "match item 0 is missing"
         );
         assert!(
             ids.contains(&quickselect_item_id(1).0),
-            "マッチ項目 1 が含まれない"
+            "match item 1 is missing"
         );
-        // typed_label が空のときは最初のマッチにフォーカス
+        // When `typed_label` is empty, focus lands on the first match.
         assert_eq!(update.focus, quickselect_item_id(0));
     }
 
-    /// typed_label が prefix で一致したらその項目にフォーカスが移ること
+    /// When `typed_label` matches as a prefix, focus moves to that item.
     #[test]
     fn quick_select_focus_follows_typed_label() {
         use crate::state::QuickSelectMatch;
@@ -2791,18 +2794,18 @@ mod tests {
         assert_eq!(update.focus, quickselect_item_id(1));
     }
 
-    /// Quick Select マッチなし時は ListBox 自身にフォーカス
+    /// When Quick Select has no matches, focus falls back to the ListBox itself.
     #[test]
     fn quick_select_focus_falls_back_to_list_when_empty() {
         let mut state = ClientState::new(80, 24, 1000);
         state.quick_select.is_active = true;
-        // matches は空のまま
+        // `matches` stays empty.
 
         let update = build_tree_from_state(&state);
         assert_eq!(update.focus, QUICK_SELECT_LIST_ID);
     }
 
-    /// CloseWindowDialog は Quick Select より優先される（最強モーダル）
+    /// CloseWindowDialog takes precedence over Quick Select (highest-priority modal).
     #[test]
     fn close_dialog_takes_priority_over_quick_select() {
         use crate::state::QuickSelectMatch;
@@ -2829,11 +2832,11 @@ mod tests {
         assert!(ids.contains(&CLOSE_DIALOG_ID.0));
         assert!(
             !ids.contains(&QUICK_SELECT_ID.0),
-            "CloseDialog 表示時は Quick Select は含まれないはず"
+            "Quick Select must not appear while CloseDialog is shown"
         );
     }
 
-    /// Quick Select は ContextMenu / Palette より優先される
+    /// Quick Select takes precedence over the ContextMenu / Palette.
     #[test]
     fn quick_select_takes_priority_over_context_menu_and_palette() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -2846,15 +2849,15 @@ mod tests {
         assert!(ids.contains(&QUICK_SELECT_ID.0));
         assert!(
             !ids.contains(&CONTEXT_MENU_ID.0),
-            "Quick Select 中は ContextMenu は含まれないはず"
+            "ContextMenu must not appear while Quick Select is active"
         );
         assert!(
             !ids.contains(&PALETTE_ID.0),
-            "Quick Select 中は Palette は含まれないはず"
+            "Palette must not appear while Quick Select is active"
         );
     }
 
-    /// 更新バナーは非モーダルとして他のオーバーレイと共存
+    /// The update banner is non-modal and coexists with other overlays.
     #[test]
     fn update_banner_coexists_with_palette() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -2868,9 +2871,9 @@ mod tests {
         assert!(ids.contains(&UPDATE_BANNER_ID.0));
     }
 
-    // ===== Step 2-5: ライブ更新用ステートハッシュテスト =====
+    // ===== Step 2-5: live-update state hash tests =====
 
-    /// 同じ状態は同じハッシュを返す（決定論的）
+    /// Same state must produce the same hash (deterministic).
     #[test]
     fn tree_state_hash_is_deterministic() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -2882,10 +2885,10 @@ mod tests {
 
         let h1 = compute_tree_state_hash(&state);
         let h2 = compute_tree_state_hash(&state);
-        assert_eq!(h1, h2, "同一状態のハッシュが一致しない");
+        assert_eq!(h1, h2, "hash differs for identical state");
     }
 
-    /// タイトル変更でハッシュが変わる
+    /// Title change must alter the hash.
     #[test]
     fn tree_state_hash_detects_title_change() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -2899,10 +2902,10 @@ mod tests {
         state.panes.get_mut(&1).unwrap().title = "emacs".to_string();
         let h2 = compute_tree_state_hash(&state);
 
-        assert_ne!(h1, h2, "タイトル変更でハッシュが変化しない");
+        assert_ne!(h1, h2, "hash did not change after title change");
     }
 
-    /// フォーカス変更でハッシュが変わる
+    /// Focus change must alter the hash.
     #[test]
     fn tree_state_hash_detects_focus_change() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -2919,10 +2922,10 @@ mod tests {
         state.focused_pane_id = Some(2);
         let h2 = compute_tree_state_hash(&state);
 
-        assert_ne!(h1, h2, "フォーカス変更でハッシュが変化しない");
+        assert_ne!(h1, h2, "hash did not change after focus change");
     }
 
-    /// パレット開閉でハッシュが変わる
+    /// Opening or closing the palette must alter the hash.
     #[test]
     fn tree_state_hash_detects_palette_open() {
         let state_closed = ClientState::new(80, 24, 1000);
@@ -2932,10 +2935,13 @@ mod tests {
         state_open.palette.is_open = true;
         let h_open = compute_tree_state_hash(&state_open);
 
-        assert_ne!(h_closed, h_open, "パレットの開閉でハッシュが変化しない");
+        assert_ne!(
+            h_closed, h_open,
+            "hash did not change after toggling the palette"
+        );
     }
 
-    /// パレット内クエリ変更でハッシュが変わる
+    /// Changing the palette query must alter the hash.
     #[test]
     fn tree_state_hash_detects_palette_query_change() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -2946,10 +2952,10 @@ mod tests {
         state.palette.query = "xyz".to_string();
         let h2 = compute_tree_state_hash(&state);
 
-        assert_ne!(h1, h2, "パレットクエリ変更でハッシュが変化しない");
+        assert_ne!(h1, h2, "hash did not change after palette query change");
     }
 
-    /// CloseWindowDialog の selected_button 変更でハッシュが変わる
+    /// Changing `selected_button` on CloseWindowDialog must alter the hash.
     #[test]
     fn tree_state_hash_detects_dialog_button_change() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -2965,10 +2971,13 @@ mod tests {
         state.close_window_dialog.as_mut().unwrap().selected_button = 1;
         let h2 = compute_tree_state_hash(&state);
 
-        assert_ne!(h1, h2, "CloseWindowDialog ボタン変更でハッシュが変化しない");
+        assert_ne!(
+            h1, h2,
+            "hash did not change after CloseWindowDialog button change"
+        );
     }
 
-    /// Quick Select の開閉でハッシュが変わる
+    /// Opening or closing Quick Select must alter the hash.
     #[test]
     fn tree_state_hash_detects_quick_select_open() {
         let state_closed = ClientState::new(80, 24, 1000);
@@ -2980,11 +2989,11 @@ mod tests {
 
         assert_ne!(
             h_closed, h_open,
-            "Quick Select の開閉でハッシュが変化しない"
+            "hash did not change after toggling Quick Select"
         );
     }
 
-    /// Quick Select の typed_label 変更でハッシュが変わる
+    /// Changing the Quick Select `typed_label` must alter the hash.
     #[test]
     fn tree_state_hash_detects_quick_select_typed_label_change() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -2995,10 +3004,10 @@ mod tests {
         state.quick_select.typed_label = "ab".to_string();
         let h2 = compute_tree_state_hash(&state);
 
-        assert_ne!(h1, h2, "typed_label 変更でハッシュが変化しない");
+        assert_ne!(h1, h2, "hash did not change after typed_label change");
     }
 
-    /// 更新バナーの追加/削除でハッシュが変わる
+    /// Adding or removing the update banner must alter the hash.
     #[test]
     fn tree_state_hash_detects_update_banner() {
         let state_none = ClientState::new(80, 24, 1000);
@@ -3008,12 +3017,15 @@ mod tests {
         state_banner.update_banner = Some("v1.6.0".to_string());
         let h_banner = compute_tree_state_hash(&state_banner);
 
-        assert_ne!(h_none, h_banner, "バナー追加でハッシュが変化しない");
+        assert_ne!(
+            h_none, h_banner,
+            "hash did not change after adding the banner"
+        );
     }
 
-    // ===== Step 2-4: decode_node_id ユニットテスト =====
+    // ===== Step 2-4: decode_node_id unit tests =====
 
-    /// 固定 NodeId が正しく逆引きできること
+    /// Fixed NodeIds must round-trip correctly.
     #[test]
     fn decode_fixed_node_ids() {
         assert_eq!(decode_node_id(ROOT_ID), NodeIdKind::Root);
@@ -3043,7 +3055,7 @@ mod tests {
         );
     }
 
-    /// Quick Select マッチ NodeId のラウンドトリップ
+    /// Quick Select match NodeId round-trip.
     #[test]
     fn decode_quick_select_item_ids() {
         assert_eq!(
@@ -3064,7 +3076,7 @@ mod tests {
         );
     }
 
-    /// タブ NodeId（`tab_node_id(pane_id)`）の逆引きラウンドトリップ
+    /// Tab NodeId (`tab_node_id(pane_id)`) decode round-trip.
     #[test]
     fn decode_tab_node_id_roundtrip() {
         for &pane_id in &[0u32, 1, 42, 12345, u32::MAX] {
@@ -3075,7 +3087,7 @@ mod tests {
         }
     }
 
-    /// ペイン NodeId（`pane_node_id(pane_id)`）の逆引きラウンドトリップ
+    /// Pane NodeId (`pane_node_id(pane_id)`) decode round-trip.
     #[test]
     fn decode_pane_node_id_roundtrip() {
         for &pane_id in &[0u32, 1, 42, 12345, u32::MAX] {
@@ -3086,7 +3098,7 @@ mod tests {
         }
     }
 
-    /// 動的オフセット項目（パレット / ホスト / マクロ / コンテキスト）の逆引き
+    /// Decode dynamic offset items (palette / host / macro / context).
     #[test]
     fn decode_dynamic_item_ids() {
         assert_eq!(
@@ -3119,37 +3131,37 @@ mod tests {
         );
     }
 
-    /// 未知 / 予約範囲は `Unknown` を返す
+    /// Unknown / reserved ranges must return `Unknown`.
     #[test]
     fn decode_unknown_node_ids() {
         assert_eq!(decode_node_id(NodeId(0)), NodeIdKind::Unknown);
-        // 17 は SettingsTabList、18〜24 は SettingsTab、25 は SettingsContent、
-        // 26 は AlertRegion（Sprint 5-11-5 で割当）、27 は PaneInputBuffer（Phase 5-11-7）、
-        // 30〜35 は設定フィールド（Step 2-2-e'）、36〜39 は Phase 5-11-6 #6 の設定フィールド、
-        // 40〜44 は Phase 5-11-8 Step 8-2 の SSH ホストフィールド、
-        // 45〜49 は Phase 5-11-8 Step 8-3 Sub-phase D の Add/Delete + 削除確認ダイアログ。
-        // 28〜29, 50〜99 は将来用に予約。
+        // 17 is SettingsTabList, 18..=24 are SettingsTab, 25 is SettingsContent,
+        // 26 is AlertRegion (assigned in Sprint 5-11-5), 27 is PaneInputBuffer (Phase 5-11-7),
+        // 30..=35 are settings fields (Step 2-2-e'), 36..=39 are Phase 5-11-6 #6 settings fields,
+        // 40..=44 are Phase 5-11-8 Step 8-2 SSH host fields,
+        // 45..=49 are Phase 5-11-8 Step 8-3 Sub-phase D Add/Delete + delete confirmation dialog.
+        // 28..=29 and 50..=99 are reserved for future use.
         assert_eq!(decode_node_id(NodeId(28)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(29)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(50)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(99)), NodeIdKind::Unknown);
-        // 700M〜999M は将来 SettingsField 動的展開で使う予約範囲（600M〜700M は
-        // Phase 5-11-7 で SettingsProfileItem に割当済み）。
+        // 700M..999M is reserved for future SettingsField dynamic expansion
+        // (600M..700M was assigned to SettingsProfileItem in Phase 5-11-7).
         assert_eq!(decode_node_id(NodeId(700_000_000)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(999_999_999)), NodeIdKind::Unknown);
-        // タブとペインの間の隙間（5.3e9〜1e10）も Unknown
+        // The gap between the Tab and Pane ranges (5.3e9..1e10) is also Unknown.
         assert_eq!(decode_node_id(NodeId(7_000_000_000)), NodeIdKind::Unknown);
-        // ペイン範囲と行範囲の間の隙間（1e10 + u32::MAX 〜 2e10）も Unknown
+        // The gap between the Pane range and the row range (1e10 + u32::MAX .. 2e10) is also Unknown.
         assert_eq!(decode_node_id(NodeId(15_000_000_000)), NodeIdKind::Unknown);
-        // 行範囲を超えた範囲（u32::MAX * MAX_ROWS_PER_PANE + 2e10 以降）
+        // Beyond the row range (u32::MAX * MAX_ROWS_PER_PANE + 2e10 onward).
         let row_range_end =
             NODE_ID_PANE_ROW_OFFSET + (u32::MAX as u64) * MAX_ROWS_PER_PANE + MAX_ROWS_PER_PANE;
         assert_eq!(decode_node_id(NodeId(row_range_end)), NodeIdKind::Unknown);
     }
 
-    // ===== Step 2-2-e': SettingsField 展開 =====
+    // ===== Step 2-2-e': SettingsField expansion =====
 
-    /// SettingsPanel TabList と各カテゴリタブの NodeId が正しく逆引きできること
+    /// The SettingsPanel TabList and each category tab NodeId must round-trip correctly.
     #[test]
     fn decode_settings_tab_node_ids() {
         assert_eq!(
@@ -3164,13 +3176,13 @@ mod tests {
             assert_eq!(
                 decode_node_id(settings_tab_id_at(idx)),
                 NodeIdKind::SettingsTab { idx },
-                "settings_tab_id_at({}) が逆引きできない",
+                "settings_tab_id_at({}) failed to round-trip",
                 idx
             );
         }
     }
 
-    /// 各設定フィールド NodeId が正しく逆引きできること
+    /// Each settings field NodeId must round-trip correctly.
     #[test]
     fn decode_settings_field_node_ids() {
         assert_eq!(
@@ -3199,7 +3211,7 @@ mod tests {
         );
     }
 
-    /// SettingsPanel を開いたとき Dialog + TabList + 全カテゴリタブ + Content が含まれること
+    /// When the SettingsPanel is open, the tree must include Dialog + TabList + all category tabs + Content.
     #[test]
     fn build_tree_with_settings_panel_open() {
         use crate::settings_panel::SettingsCategory;
@@ -3217,16 +3229,16 @@ mod tests {
         for idx in 0..SettingsCategory::ALL.len() {
             assert!(
                 ids.contains(&settings_tab_id_at(idx).0),
-                "カテゴリタブ {} が含まれない",
+                "category tab {} is missing",
                 idx
             );
         }
-        // Font カテゴリのフィールドが含まれる
+        // Fields for the Font category must be present.
         assert!(ids.contains(&SETTINGS_FONT_FAMILY_ID.0));
         assert!(ids.contains(&SETTINGS_FONT_SIZE_ID.0));
     }
 
-    /// Font 編集中はフォーカスが FontFamily 入力欄に移ること
+    /// While editing the Font, focus must move to the FontFamily input.
     #[test]
     fn settings_panel_focus_follows_font_family_editing() {
         use crate::settings_panel::SettingsCategory;
@@ -3240,7 +3252,7 @@ mod tests {
         assert_eq!(update.focus, SETTINGS_FONT_FAMILY_ID);
     }
 
-    /// 編集中でなければフォーカスは現在カテゴリのタブ
+    /// Outside of editing, focus is on the current category tab.
     #[test]
     fn settings_panel_focus_defaults_to_current_tab() {
         use crate::settings_panel::SettingsCategory;
@@ -3250,11 +3262,11 @@ mod tests {
         state.settings_panel.category = SettingsCategory::Theme;
 
         let update = build_tree_from_state(&state);
-        // Theme は SettingsCategory::ALL のインデックス 2
+        // Theme is index 2 in SettingsCategory::ALL.
         assert_eq!(update.focus, settings_tab_id_at(2));
     }
 
-    /// カテゴリ別に正しいフィールドだけが含まれること
+    /// Each category must include only the fields belonging to it.
     #[test]
     fn settings_panel_shows_only_current_category_fields() {
         use crate::settings_panel::SettingsCategory;
@@ -3262,7 +3274,7 @@ mod tests {
         let mut state = ClientState::new(80, 24, 1000);
         state.settings_panel.is_open = true;
 
-        // Startup カテゴリ
+        // Startup category
         state.settings_panel.category = SettingsCategory::Startup;
         let update = build_tree_from_state(&state);
         let ids: Vec<u64> = update.nodes.iter().map(|(id, _)| id.0).collect();
@@ -3270,21 +3282,21 @@ mod tests {
         assert!(ids.contains(&SETTINGS_STARTUP_AUTO_UPDATE_ID.0));
         assert!(
             !ids.contains(&SETTINGS_FONT_FAMILY_ID.0),
-            "Startup カテゴリで Font フィールドが含まれている"
+            "Font field must not appear in the Startup category"
         );
 
-        // Window カテゴリ
+        // Window category
         state.settings_panel.category = SettingsCategory::Window;
         let update = build_tree_from_state(&state);
         let ids: Vec<u64> = update.nodes.iter().map(|(id, _)| id.0).collect();
         assert!(ids.contains(&SETTINGS_WINDOW_OPACITY_ID.0));
         assert!(
             !ids.contains(&SETTINGS_THEME_SCHEME_ID.0),
-            "Window カテゴリで Theme フィールドが含まれている"
+            "Theme field must not appear in the Window category"
         );
     }
 
-    /// SSH / Keybindings / Profiles カテゴリは Content Group のみで詳細フィールドは含まれない
+    /// SSH / Keybindings / Profiles categories only have a Content Group; no detail fields.
     #[test]
     fn settings_panel_unimplemented_categories_have_empty_content() {
         use crate::settings_panel::SettingsCategory;
@@ -3300,16 +3312,16 @@ mod tests {
             state.settings_panel.category = cat;
             let update = build_tree_from_state(&state);
             let ids: Vec<u64> = update.nodes.iter().map(|(id, _)| id.0).collect();
-            // Content Group は存在
+            // The Content Group is present.
             assert!(ids.contains(&SETTINGS_CONTENT_ID.0));
-            // 詳細フィールドは含まれない
+            // Detail fields are not present.
             assert!(!ids.contains(&SETTINGS_FONT_FAMILY_ID.0));
             assert!(!ids.contains(&SETTINGS_THEME_SCHEME_ID.0));
             assert!(!ids.contains(&SETTINGS_WINDOW_OPACITY_ID.0));
         }
     }
 
-    /// カテゴリ切替でハッシュが変わる（タブの selected が変わるため）
+    /// Category switching must alter the hash (because the selected tab changes).
     #[test]
     fn tree_state_hash_detects_settings_category_change() {
         use crate::settings_panel::SettingsCategory;
@@ -3322,10 +3334,10 @@ mod tests {
         state.settings_panel.category = SettingsCategory::Theme;
         let h2 = compute_tree_state_hash(&state);
 
-        assert_ne!(h1, h2, "カテゴリ切替でハッシュが変化しない");
+        assert_ne!(h1, h2, "hash did not change after category switch");
     }
 
-    /// フォントサイズ変更でハッシュが変わる
+    /// Changing the font size must alter the hash.
     #[test]
     fn tree_state_hash_detects_settings_font_size_change() {
         use crate::settings_panel::SettingsCategory;
@@ -3339,10 +3351,10 @@ mod tests {
         state.settings_panel.font_size = 16.0;
         let h2 = compute_tree_state_hash(&state);
 
-        assert_ne!(h1, h2, "font_size 変更でハッシュが変化しない");
+        assert_ne!(h1, h2, "hash did not change after font_size change");
     }
 
-    /// auto_check_update トグルでハッシュが変わる
+    /// Toggling `auto_check_update` must alter the hash.
     #[test]
     fn tree_state_hash_detects_settings_auto_update_toggle() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -3353,42 +3365,42 @@ mod tests {
         state.settings_panel.auto_check_update = true;
         let h2 = compute_tree_state_hash(&state);
 
-        assert_ne!(h1, h2, "auto_check_update トグルでハッシュが変化しない");
+        assert_ne!(h1, h2, "hash did not change after auto_check_update toggle");
     }
 
     // ============================================================
-    // Sprint 5-11-2 Step 2-4 拡張: dispatch_settings_action の単体テスト
+    // Sprint 5-11-2 Step 2-4 extension: unit tests for dispatch_settings_action
     // ============================================================
 
     use crate::settings_panel::{SettingsCategory, SettingsPanel};
     use accesskit::{Action, ActionData};
 
-    /// SettingsTab に Focus / Click を投げるとカテゴリが切り替わり、編集モードも抜ける
+    /// Focus / Click on a SettingsTab switches the category and exits edit mode.
     #[test]
     fn dispatch_settings_tab_click_changes_category() {
         let mut panel = SettingsPanel::default();
         panel.category = SettingsCategory::Font;
         panel.font_family_editing = true;
 
-        // ALL の idx=2 は Theme
+        // ALL idx=2 is Theme.
         let kind = NodeIdKind::SettingsTab { idx: 2 };
         let handled = dispatch_settings_action(&mut panel, Action::Click, &kind, None);
 
-        assert!(handled, "SettingsTab Click は handled=true を返すべき");
+        assert!(handled, "SettingsTab Click should return handled=true");
         assert_eq!(panel.category, SettingsCategory::Theme);
         assert!(
             !panel.font_family_editing,
-            "カテゴリ切替で font_family_editing が解除されるべき"
+            "category switch should clear font_family_editing"
         );
 
-        // Focus でも同様に動作する
+        // Focus must behave the same way.
         let kind2 = NodeIdKind::SettingsTab { idx: 0 };
         let handled = dispatch_settings_action(&mut panel, Action::Focus, &kind2, None);
         assert!(handled);
         assert_eq!(panel.category, SettingsCategory::Startup);
     }
 
-    /// 範囲外の SettingsTab idx は handled=false（カテゴリ不変）
+    /// Out-of-range SettingsTab idx must return handled=false (category unchanged).
     #[test]
     fn dispatch_settings_tab_out_of_range_returns_false() {
         let mut panel = SettingsPanel::default();
@@ -3398,11 +3410,11 @@ mod tests {
         let kind = NodeIdKind::SettingsTab { idx: 99 };
         let handled = dispatch_settings_action(&mut panel, Action::Click, &kind, None);
 
-        assert!(!handled, "範囲外 idx は handled=false");
-        assert_eq!(panel.category, original, "カテゴリは変わらないべき");
+        assert!(!handled, "out-of-range idx must return handled=false");
+        assert_eq!(panel.category, original, "category should not change");
     }
 
-    /// SettingsFontFamily Click で編集モードに入る
+    /// Click on SettingsFontFamily enters edit mode.
     #[test]
     fn dispatch_settings_font_family_click_enters_editing() {
         let mut panel = SettingsPanel::default();
@@ -3418,11 +3430,11 @@ mod tests {
         assert!(handled);
         assert!(
             panel.font_family_editing,
-            "Click で font_family_editing=true になるべき"
+            "Click should make font_family_editing=true"
         );
     }
 
-    /// SettingsFontFamily SetValue で文字列が反映され dirty=true
+    /// SetValue on SettingsFontFamily applies the string and sets dirty=true.
     #[test]
     fn dispatch_settings_font_family_set_value_updates_string() {
         let mut panel = SettingsPanel::default();
@@ -3439,10 +3451,10 @@ mod tests {
 
         assert!(handled);
         assert_eq!(panel.font_family, "JetBrains Mono");
-        assert!(panel.dirty, "値設定で dirty=true になるべき");
+        assert!(panel.dirty, "setting a value should make dirty=true");
     }
 
-    /// SettingsFontFamily SetValue に NumericValue を渡しても無視（handled=false）
+    /// Passing NumericValue to SettingsFontFamily SetValue is ignored (handled=false).
     #[test]
     fn dispatch_settings_font_family_set_value_with_numeric_returns_false() {
         let mut panel = SettingsPanel::default();
@@ -3455,16 +3467,19 @@ mod tests {
             Some(ActionData::NumericValue(42.0)),
         );
 
-        assert!(!handled, "NumericValue は TextInput では handled=false");
+        assert!(
+            !handled,
+            "NumericValue on a TextInput must return handled=false"
+        );
         assert_eq!(panel.font_family, original);
     }
 
-    /// SettingsFontSize SetValue で 0.5 単位丸めと clamp 8.0〜32.0 が効く
+    /// SetValue on SettingsFontSize applies 0.5-unit rounding and clamping to 8.0..=32.0.
     #[test]
     fn dispatch_settings_font_size_set_value_rounds_and_clamps() {
         let mut panel = SettingsPanel::default();
 
-        // 14.37 → 14.5 に丸まる
+        // 14.37 rounds to 14.5.
         let handled = dispatch_settings_action(
             &mut panel,
             Action::SetValue,
@@ -3474,11 +3489,11 @@ mod tests {
         assert!(handled);
         assert!(
             (panel.font_size - 14.5).abs() < f32::EPSILON,
-            "0.5 単位丸め: 14.37 → 14.5, actual = {}",
+            "0.5-unit rounding: 14.37 -> 14.5, actual = {}",
             panel.font_size
         );
 
-        // 100.0 → 32.0 にクランプ
+        // 100.0 clamps to 32.0.
         dispatch_settings_action(
             &mut panel,
             Action::SetValue,
@@ -3487,10 +3502,10 @@ mod tests {
         );
         assert!(
             (panel.font_size - 32.0).abs() < f32::EPSILON,
-            "上限 32.0 にクランプ"
+            "upper bound clamps to 32.0"
         );
 
-        // 1.0 → 8.0 にクランプ
+        // 1.0 clamps to 8.0.
         dispatch_settings_action(
             &mut panel,
             Action::SetValue,
@@ -3499,11 +3514,11 @@ mod tests {
         );
         assert!(
             (panel.font_size - 8.0).abs() < f32::EPSILON,
-            "下限 8.0 にクランプ"
+            "lower bound clamps to 8.0"
         );
     }
 
-    /// SettingsFontSize Increment / Decrement で 0.5 ステップ
+    /// Increment / Decrement on SettingsFontSize moves in 0.5 steps.
     #[test]
     fn dispatch_settings_font_size_increment_decrement() {
         let mut panel = SettingsPanel::default();
@@ -3526,7 +3541,7 @@ mod tests {
         assert!((panel.font_size - 14.0).abs() < f32::EPSILON);
     }
 
-    /// SettingsThemeScheme Click / Increment は next_scheme と同等（1 増える）
+    /// Click / Increment on SettingsThemeScheme behave like next_scheme (advance by 1).
     #[test]
     fn dispatch_settings_theme_scheme_click_advances() {
         let mut panel = SettingsPanel::default();
@@ -3538,7 +3553,7 @@ mod tests {
             &NodeIdKind::SettingsThemeScheme,
             None,
         );
-        assert_eq!(panel.scheme_index, 1, "Click で次のスキーム");
+        assert_eq!(panel.scheme_index, 1, "Click selects next scheme");
 
         dispatch_settings_action(
             &mut panel,
@@ -3546,7 +3561,7 @@ mod tests {
             &NodeIdKind::SettingsThemeScheme,
             None,
         );
-        assert_eq!(panel.scheme_index, 2, "Increment で次のスキーム");
+        assert_eq!(panel.scheme_index, 2, "Increment selects next scheme");
 
         dispatch_settings_action(
             &mut panel,
@@ -3554,10 +3569,10 @@ mod tests {
             &NodeIdKind::SettingsThemeScheme,
             None,
         );
-        assert_eq!(panel.scheme_index, 1, "Decrement で前のスキーム");
+        assert_eq!(panel.scheme_index, 1, "Decrement selects previous scheme");
     }
 
-    /// SettingsWindowOpacity SetValue で 0.05 単位丸めと clamp 0.1〜1.0 が効く
+    /// SetValue on SettingsWindowOpacity applies 0.05-unit rounding and clamping to 0.1..=1.0.
     #[test]
     fn dispatch_settings_opacity_set_value_rounds_and_clamps() {
         let mut panel = SettingsPanel::default();
@@ -3571,7 +3586,7 @@ mod tests {
         );
         assert!(
             (panel.opacity - 0.75).abs() < 1e-4,
-            "0.05 単位丸め: 0.737 → 0.75, actual = {}",
+            "0.05-unit rounding: 0.737 -> 0.75, actual = {}",
             panel.opacity
         );
 
@@ -3594,7 +3609,7 @@ mod tests {
         assert!((panel.opacity - 0.1).abs() < f32::EPSILON);
     }
 
-    /// SettingsStartupLanguage Click で next_language（インデックス +1）
+    /// Click on SettingsStartupLanguage advances to next_language (index + 1).
     #[test]
     fn dispatch_settings_language_click_advances() {
         let mut panel = SettingsPanel::default();
@@ -3617,14 +3632,14 @@ mod tests {
         assert_eq!(panel.language_index, 0);
     }
 
-    /// SettingsStartupAutoUpdate Click でトグル、Focus は無反応
+    /// Click on SettingsStartupAutoUpdate toggles; Focus has no effect.
     #[test]
     fn dispatch_settings_auto_update_click_toggles() {
         let mut panel = SettingsPanel::default();
         panel.auto_check_update = false;
         panel.dirty = false;
 
-        // Click でトグル
+        // Click toggles.
         let handled = dispatch_settings_action(
             &mut panel,
             Action::Click,
@@ -3635,7 +3650,7 @@ mod tests {
         assert!(panel.auto_check_update);
         assert!(panel.dirty);
 
-        // もう一度 Click で false に戻る
+        // A second Click flips it back to false.
         dispatch_settings_action(
             &mut panel,
             Action::Click,
@@ -3644,7 +3659,7 @@ mod tests {
         );
         assert!(!panel.auto_check_update);
 
-        // Focus は無反応
+        // Focus has no effect.
         let before = panel.auto_check_update;
         let handled = dispatch_settings_action(
             &mut panel,
@@ -3654,12 +3669,12 @@ mod tests {
         );
         assert!(
             !handled,
-            "Focus は handled=false（CheckBox は Focus でトグルしない）"
+            "Focus must return handled=false (CheckBoxes do not toggle on Focus)"
         );
         assert_eq!(panel.auto_check_update, before);
     }
 
-    // ===== Phase 5-11-6 #6: Window カテゴリ 4 新フィールドのテスト =====
+    // ===== Phase 5-11-6 #6: tests for the 4 new fields in the Window category =====
 
     #[test]
     fn decode_node_id_returns_settings_cursor_style() {
@@ -3693,7 +3708,7 @@ mod tests {
         );
     }
 
-    /// CursorStyle: Click は次にサイクル、フォーカスも 1 に
+    /// CursorStyle: Click cycles to next and moves focus to 1.
     #[test]
     fn dispatch_cursor_style_click_cycles_and_focuses() {
         let mut panel = SettingsPanel::default();
@@ -3710,7 +3725,7 @@ mod tests {
         assert_eq!(panel.window_field_focus, 1);
     }
 
-    /// CursorStyle: Decrement は前にサイクル
+    /// CursorStyle: Decrement cycles backward.
     #[test]
     fn dispatch_cursor_style_decrement_goes_back() {
         let mut panel = SettingsPanel::default();
@@ -3724,7 +3739,7 @@ mod tests {
         assert_eq!(panel.cursor_style, nexterm_config::CursorStyle::Underline);
     }
 
-    /// CursorStyle: Focus はフォーカスのみ移動（値変更しない）
+    /// CursorStyle: Focus only moves focus (does not change value).
     #[test]
     fn dispatch_cursor_style_focus_only_moves_focus() {
         let mut panel = SettingsPanel::default();
@@ -3737,11 +3752,14 @@ mod tests {
             None,
         );
         assert!(handled);
-        assert_eq!(panel.cursor_style, before, "Focus では値を変えない");
+        assert_eq!(
+            panel.cursor_style, before,
+            "Focus must not change the value"
+        );
         assert_eq!(panel.window_field_focus, 1);
     }
 
-    /// PaddingX: SetValue で四捨五入 + clamp
+    /// PaddingX: SetValue rounds half-up and clamps.
     #[test]
     fn dispatch_padding_x_set_value_rounds_and_clamps() {
         let mut panel = SettingsPanel::default();
@@ -3752,17 +3770,17 @@ mod tests {
             Some(ActionData::NumericValue(15.7)),
         );
         assert!(handled);
-        assert_eq!(panel.padding_x, 16, "15.7 → 16 に丸める");
+        assert_eq!(panel.padding_x, 16, "rounds 15.7 -> 16");
         assert_eq!(panel.window_field_focus, 2);
 
-        // 上限 clamp
+        // Upper-bound clamp.
         let _ = dispatch_settings_action(
             &mut panel,
             Action::SetValue,
             &NodeIdKind::SettingsPaddingX,
             Some(ActionData::NumericValue(100.0)),
         );
-        assert_eq!(panel.padding_x, 32, "上限 32 にクランプ");
+        assert_eq!(panel.padding_x, 32, "upper bound clamps to 32");
     }
 
     /// PaddingX: Increment / Decrement
@@ -3789,7 +3807,7 @@ mod tests {
         assert_eq!(panel.padding_x, 0);
     }
 
-    /// PaddingY: SetValue + Increment / Decrement の確認
+    /// PaddingY: verify SetValue + Increment / Decrement.
     #[test]
     fn dispatch_padding_y_actions() {
         let mut panel = SettingsPanel::default();
@@ -3820,7 +3838,7 @@ mod tests {
         assert_eq!(panel.padding_y, 8);
     }
 
-    /// PresentMode: Click はサイクル、Decrement は逆方向
+    /// PresentMode: Click cycles forward, Decrement cycles backward.
     #[test]
     fn dispatch_present_mode_click_and_decrement() {
         let mut panel = SettingsPanel::default();
@@ -3851,7 +3869,7 @@ mod tests {
         );
     }
 
-    /// build_settings_panel_nodes: Window カテゴリで 5 ノードが公開されること
+    /// build_settings_panel_nodes: the Window category must expose 5 nodes.
     #[test]
     fn build_settings_panel_nodes_window_exposes_five_fields() {
         let mut panel = SettingsPanel::default();
@@ -3865,7 +3883,7 @@ mod tests {
         assert!(ids.contains(&SETTINGS_PRESENT_MODE_ID.0));
     }
 
-    /// build_settings_panel_nodes: window_field_focus に応じてフォーカスが正しく移動する
+    /// build_settings_panel_nodes: focus moves correctly according to window_field_focus.
     #[test]
     fn build_settings_panel_nodes_window_focus_follows_field() {
         let cases = [
@@ -3882,14 +3900,14 @@ mod tests {
             let (_nodes, focus) = build_settings_panel_nodes(&panel);
             assert_eq!(
                 focus, expected_node,
-                "window_field_focus={} ではフォーカスが {:?} を指すべき",
+                "with window_field_focus={}, focus should point to {:?}",
                 focus_idx, expected_node
             );
         }
     }
 
-    /// compute_tree_state_hash: window_field_focus / cursor_style / padding / present_mode の
-    /// 変化を検出する
+    /// compute_tree_state_hash: detects changes in
+    /// window_field_focus / cursor_style / padding / present_mode.
     #[test]
     fn tree_hash_detects_window_field_changes() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -3897,33 +3915,33 @@ mod tests {
         state.settings_panel.category = crate::settings_panel::SettingsCategory::Window;
         let h0 = compute_tree_state_hash(&state);
 
-        // フォーカス変化
+        // Focus change.
         state.settings_panel.window_field_focus = 1;
         let h1 = compute_tree_state_hash(&state);
-        assert_ne!(h0, h1, "window_field_focus 変化はハッシュに反映される");
+        assert_ne!(h0, h1, "window_field_focus change must affect the hash");
 
-        // cursor_style 変化
+        // cursor_style change.
         state.settings_panel.cursor_style = nexterm_config::CursorStyle::Beam;
         let h2 = compute_tree_state_hash(&state);
-        assert_ne!(h1, h2, "cursor_style 変化はハッシュに反映される");
+        assert_ne!(h1, h2, "cursor_style change must affect the hash");
 
-        // padding_x 変化
+        // padding_x change.
         state.settings_panel.padding_x = 8;
         let h3 = compute_tree_state_hash(&state);
-        assert_ne!(h2, h3, "padding_x 変化はハッシュに反映される");
+        assert_ne!(h2, h3, "padding_x change must affect the hash");
 
-        // padding_y 変化
+        // padding_y change.
         state.settings_panel.padding_y = 12;
         let h4 = compute_tree_state_hash(&state);
-        assert_ne!(h3, h4, "padding_y 変化はハッシュに反映される");
+        assert_ne!(h3, h4, "padding_y change must affect the hash");
 
-        // present_mode 変化
+        // present_mode change.
         state.settings_panel.present_mode = nexterm_config::PresentModeConfig::Fifo;
         let h5 = compute_tree_state_hash(&state);
-        assert_ne!(h4, h5, "present_mode 変化はハッシュに反映される");
+        assert_ne!(h4, h5, "present_mode change must affect the hash");
     }
 
-    /// 設定パネル系以外の NodeIdKind では handled=false で何もしない
+    /// Non-settings-panel NodeIdKind values must return handled=false (no-op).
     #[test]
     fn dispatch_settings_action_ignores_non_settings_kinds() {
         let mut panel = SettingsPanel::default();
@@ -3943,9 +3961,9 @@ mod tests {
         assert!(!handled);
     }
 
-    // ===== Sprint 5-11-3: ペイン行ノード関連テスト =====
+    // ===== Sprint 5-11-3: pane row node tests =====
 
-    /// テスト用に文字列から `nexterm_proto::Grid` を作る
+    /// Build a `nexterm_proto::Grid` from string lines for testing.
     fn grid_from_lines(lines: &[&str]) -> nexterm_proto::Grid {
         let width = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as u16;
         let height = lines.len() as u16;
@@ -3964,39 +3982,40 @@ mod tests {
         grid
     }
 
-    /// T1: 末尾の半角空白が除去される
+    /// T1: trailing ASCII spaces are stripped.
     #[test]
     fn pane_row_text_strips_trailing_spaces() {
         let grid = grid_from_lines(&["hello   "]);
         assert_eq!(pane_row_text(&grid, 0), "hello");
     }
 
-    /// T2: 空行は単一の半角空白を返す（SR が「空行」として認識する境界を保つ）
+    /// T2: An empty row returns a single ASCII space (preserves the boundary the SR
+    /// recognises as "blank line").
     #[test]
     fn pane_row_text_empty_row_returns_space() {
         let grid = grid_from_lines(&["        "]);
         assert_eq!(pane_row_text(&grid, 0), " ");
     }
 
-    /// T3: 全角文字は保持される（末尾は半角空白だけ除去）
+    /// T3: full-width characters are preserved (only trailing ASCII spaces are stripped).
     #[test]
     fn pane_row_text_preserves_full_width() {
         let grid = grid_from_lines(&["あいう  "]);
-        // grid.set は col 単位で書き込むので、3 文字 + パディング 5 セル = 8 セル
-        // 結果は "あいう" + 末尾空白除去
+        // grid.set writes by column, so 3 chars + 5 padding cells = 8 cells.
+        // The result is "あいう" with trailing spaces stripped.
         let text = pane_row_text(&grid, 0);
         assert!(text.starts_with("あいう"), "unexpected: {:?}", text);
         assert!(!text.ends_with(' '), "trailing space remains: {:?}", text);
     }
 
-    /// T4: 範囲外の行を要求しても panic せず " " を返す
+    /// T4: requesting an out-of-range row returns " " instead of panicking.
     #[test]
     fn pane_row_text_handles_out_of_range_row() {
         let grid = grid_from_lines(&["hello"]);
         assert_eq!(pane_row_text(&grid, 100), " ");
     }
 
-    /// T5: ペイン行 NodeId はペイン NodeId と衝突しない
+    /// T5: pane-row NodeIds do not collide with pane NodeIds.
     #[test]
     fn pane_row_node_id_no_collision_with_pane() {
         let pane_min = pane_node_id(0).0;
@@ -4004,14 +4023,14 @@ mod tests {
         let row_min = pane_row_node_id(0, 0).0;
         assert!(
             pane_max < row_min,
-            "ペイン範囲 [{}, {}] と行範囲 [{}, ...] が衝突する",
+            "pane range [{}, {}] collides with row range [{}, ...]",
             pane_min,
             pane_max,
             row_min
         );
     }
 
-    /// T6: ペイン行 NodeId はタブ NodeId と衝突しない
+    /// T6: pane-row NodeIds do not collide with tab NodeIds.
     #[test]
     fn pane_row_node_id_no_collision_with_tab() {
         let tab_max = tab_node_id(u32::MAX).0;
@@ -4019,7 +4038,7 @@ mod tests {
         assert!(tab_max < row_min);
     }
 
-    /// T7: pane_row_node_id ↔ decode_node_id の往復が成立する
+    /// T7: pane_row_node_id ↔ decode_node_id roundtrip holds.
     #[test]
     fn decode_pane_row_roundtrip() {
         for (pane_id, row) in [(0u32, 0u16), (42, 7), (1234, 23), (u32::MAX, 999)] {
@@ -4041,14 +4060,14 @@ mod tests {
         }
     }
 
-    /// T8: build_tree_from_state が各ペインの行ノードを子として含む
+    /// T8: build_tree_from_state includes row nodes as children of each pane.
     #[test]
     fn build_tree_includes_pane_rows() {
         let mut state = ClientState::new(10, 5, 1000);
-        // ペイン 1 を 5 行 10 列で追加
+        // Add pane 1 with 5 rows × 10 columns.
         let mut pane = crate::state::PaneState::new(10, 5, 1000);
         pane.title = "test".to_string();
-        // 行 0 に "hello" を書き込む
+        // Write "hello" into row 0.
         for (c, ch) in "hello".chars().enumerate() {
             pane.grid.set(
                 c as u16,
@@ -4067,38 +4086,35 @@ mod tests {
 
         let update = build_tree_from_state(&state);
 
-        // 5 行ぶんの PaneRow ノードがツリーに含まれている
+        // 5 PaneRow nodes are included in the tree.
         let row_node_count = update
             .nodes
             .iter()
             .filter(|(id, _)| matches!(decode_node_id(*id), NodeIdKind::PaneRow { pane_id: 1, .. }))
             .count();
-        assert_eq!(
-            row_node_count, 5,
-            "5 行ぶんの PaneRow ノードが含まれていない"
-        );
+        assert_eq!(row_node_count, 5, "5 PaneRow nodes are not present");
 
-        // 行 0 のノードに "hello" が value として設定されている
+        // The row-0 node has "hello" set as its value.
         let row0_id = pane_row_node_id(1, 0);
         let row0_node = update
             .nodes
             .iter()
             .find(|(id, _)| *id == row0_id)
             .map(|(_, n)| n)
-            .expect("行 0 のノードが見つからない");
+            .expect("row 0 node not found");
         assert_eq!(row0_node.value(), Some("hello"));
     }
 
-    /// T9: Sprint 5-11-4 で挙動変更 — Live::Polite はフォーカスペインの
-    /// **カーソル行のみ**（旧: フォーカスペインの全行）。
+    /// T9: Behaviour changed in Sprint 5-11-4 — Live::Polite is applied only to the
+    /// **cursor row** of the focused pane (previously: all rows of the focused pane).
     ///
-    /// 過剰アナウンス抑止のため、SR は cursor_row 上の差分のみ読み上げる。
-    /// 非カーソル行・非フォーカスペインは Live::None（明示せず）。
+    /// To suppress over-announcement, the SR only reads diffs on `cursor_row`.
+    /// Non-cursor rows and non-focused panes use Live::None (unspecified).
     #[test]
     fn build_tree_focused_pane_has_live_polite() {
         let mut state = ClientState::new(5, 3, 1000);
         let mut pane1 = crate::state::PaneState::new(5, 3, 1000);
-        // cursor_row を 1 にして「カーソル行のみ Polite」を確実に検証
+        // Set cursor_row to 1 to reliably verify "cursor row only is Polite".
         pane1.grid.cursor_row = 1;
         let pane2 = crate::state::PaneState::new(5, 3, 1000);
         state.panes.insert(1, pane1);
@@ -4108,58 +4124,58 @@ mod tests {
 
         let update = build_tree_from_state(&state);
 
-        // ペイン 1 (focused) のカーソル行 (row 1) のみ Live::Polite
+        // Only the cursor row (row 1) of pane 1 (focused) is Live::Polite.
         let row1_cursor = update
             .nodes
             .iter()
             .find(|(id, _)| *id == pane_row_node_id(1, 1))
             .map(|(_, n)| n)
-            .expect("ペイン 1 行 1 (カーソル行) が見つからない");
+            .expect("pane 1 row 1 (cursor row) not found");
         assert_eq!(row1_cursor.live(), Some(Live::Polite));
 
-        // ペイン 1 (focused) の非カーソル行 (row 0 / 2) は Live::None
+        // Non-cursor rows (row 0 / 2) of pane 1 (focused) are Live::None.
         for row in [0u16, 2u16] {
             let n = update
                 .nodes
                 .iter()
                 .find(|(id, _)| *id == pane_row_node_id(1, row))
                 .map(|(_, n)| n)
-                .unwrap_or_else(|| panic!("ペイン 1 行 {row} が見つからない"));
+                .unwrap_or_else(|| panic!("pane 1 row {row} not found"));
             assert_eq!(
                 n.live(),
                 None,
-                "ペイン 1 row {row} は非カーソル行なので Live::None のはず"
+                "pane 1 row {row} is a non-cursor row so it must be Live::None"
             );
         }
 
-        // ペイン 2 (non-focused) の全行は Live::None
+        // All rows of pane 2 (non-focused) are Live::None.
         for row in 0u16..3u16 {
             let n = update
                 .nodes
                 .iter()
                 .find(|(id, _)| *id == pane_row_node_id(2, row))
                 .map(|(_, n)| n)
-                .unwrap_or_else(|| panic!("ペイン 2 行 {row} が見つからない"));
+                .unwrap_or_else(|| panic!("pane 2 row {row} not found"));
             assert_eq!(
                 n.live(),
                 None,
-                "非フォーカスペイン 2 row {row} は Live::None のはず"
+                "non-focused pane 2 row {row} must be Live::None"
             );
         }
     }
 
-    /// T10: compute_grid_row_hashes が行内容変化を検知する
+    /// T10: compute_grid_row_hashes detects row content changes.
     #[test]
     fn compute_grid_row_hashes_detects_change() {
         let mut grid = grid_from_lines(&["hello", "world", "     "]);
         let baseline = compute_grid_row_hashes(&grid);
         assert_eq!(baseline.len(), 3);
 
-        // 同じ grid なら同じハッシュ
+        // The same grid yields the same hashes.
         let same = compute_grid_row_hashes(&grid);
         assert_eq!(baseline, same);
 
-        // 行 1 の 1 セルだけ変更
+        // Change a single cell on row 1.
         grid.set(
             0,
             1,
@@ -4172,15 +4188,15 @@ mod tests {
         );
         let after = compute_grid_row_hashes(&grid);
         assert_eq!(after.len(), 3);
-        // 行 0 / 行 2 は変わらず、行 1 のみ変化
-        assert_eq!(after[0], baseline[0], "行 0 は変わらないはず");
-        assert_ne!(after[1], baseline[1], "行 1 は変化するはず");
-        assert_eq!(after[2], baseline[2], "行 2 は変わらないはず");
+        // Row 0 and row 2 are unchanged; only row 1 changes.
+        assert_eq!(after[0], baseline[0], "row 0 must be unchanged");
+        assert_ne!(after[1], baseline[1], "row 1 must change");
+        assert_eq!(after[2], baseline[2], "row 2 must be unchanged");
     }
 
-    // ===== Sprint 5-11-4: カーソル TextSelection + スクロールバック =====
+    // ===== Sprint 5-11-4: cursor TextSelection + scrollback =====
 
-    /// 5-11-4 T1: ASCII 行の character_lengths は各 1 バイト
+    /// 5-11-4 T1: each ASCII row character_lengths entry is 1 byte.
     #[test]
     fn pane_row_text_with_lengths_ascii() {
         let grid = grid_from_lines(&["abc"]);
@@ -4189,34 +4205,35 @@ mod tests {
         assert_eq!(lengths, vec![1, 1, 1]);
     }
 
-    /// 5-11-4 T2: 全角 CJK は UTF-8 で 3 バイトずつ
+    /// 5-11-4 T2: full-width CJK is 3 bytes each in UTF-8.
     #[test]
     fn pane_row_text_with_lengths_cjk() {
         let grid = grid_from_lines(&["あい"]);
         let (text, lengths) = pane_row_text_with_lengths(&grid, 0);
-        // grid 上は全角 2 セル + 各セル後ろにスペース placeholder 1 個 = 4 セル
-        // しかし `grid_from_lines` ヘルパーが char をそのまま set すると placeholder が入らない可能性。
-        // pane_row_text の挙動と一致させて検証。
+        // On the grid this is 2 full-width cells + 1 placeholder space cell each = 4 cells.
+        // However the `grid_from_lines` helper may not insert placeholders when set()
+        // writes chars directly, so just verify behaviour matches pane_row_text.
         assert!(text.starts_with("あ"));
         assert!(text.contains("い"));
-        // 各 char はそれぞれ 1〜3 バイト範囲
+        // Each char is in the 1..=4 byte range.
         assert!(lengths.iter().all(|&b| (1..=4).contains(&b)));
-        // バイト長合計 == text.len()
+        // Sum of byte lengths == text.len()
         let sum: usize = lengths.iter().map(|&b| b as usize).sum();
         assert_eq!(sum, text.len());
     }
 
-    /// 5-11-4 T3: 空行は (" ", [1])
+    /// 5-11-4 T3: an empty row returns (" ", [1]).
     #[test]
     fn pane_row_text_with_lengths_empty_row() {
-        // 1 行ぶんの空セルがある grid を作る（grid_from_lines は空 string で空 grid を作るため代用）
+        // Build a grid with one row of empty cells (grid_from_lines makes an empty
+        // grid for empty strings, so we use a single space instead).
         let grid = grid_from_lines(&[" "]);
         let (text, lengths) = pane_row_text_with_lengths(&grid, 0);
         assert_eq!(text, " ");
         assert_eq!(lengths, vec![1]);
     }
 
-    /// 5-11-4 T4: 範囲外の row は空行と同じ扱い
+    /// 5-11-4 T4: an out-of-range row is treated like an empty row.
     #[test]
     fn pane_row_text_with_lengths_out_of_range_row() {
         let grid = grid_from_lines(&["abc"]);
@@ -4225,7 +4242,7 @@ mod tests {
         assert_eq!(lengths, vec![1]);
     }
 
-    /// 5-11-4 T5: cursor_character_index は cursor_col をそのまま返す（範囲内）
+    /// 5-11-4 T5: cursor_character_index returns cursor_col unchanged (in-range case).
     #[test]
     fn cursor_character_index_within_range() {
         assert_eq!(cursor_character_index("hello", 0), 0);
@@ -4233,54 +4250,55 @@ mod tests {
         assert_eq!(cursor_character_index("hello", 5), 5);
     }
 
-    /// 5-11-4 T6: cursor_character_index は char 数を超えるとクランプ
+    /// 5-11-4 T6: cursor_character_index clamps when exceeding the char count.
     #[test]
     fn cursor_character_index_clamps_to_char_count() {
-        // "hello" は 5 chars
+        // "hello" is 5 chars.
         assert_eq!(cursor_character_index("hello", 10), 5);
-        // 空文字列（実際には pane_row_text が " " を返すので使われないが念のため）
+        // Empty string (in practice pane_row_text returns " ", so this is defensive).
         assert_eq!(cursor_character_index("", 5), 0);
     }
 
-    /// 5-11-4 T7: 全角文字 (CJK) は 1 char としてカウント（バイト数ではない）
+    /// 5-11-4 T7: full-width characters (CJK) count as 1 char each, not by byte length.
     #[test]
     fn cursor_character_index_cjk_is_char_based() {
-        // "あい" は 2 chars (6 バイト)
+        // "あい" is 2 chars (6 bytes).
         assert_eq!(cursor_character_index("あい", 2), 2);
-        // クランプも 2 chars 基準
+        // Clamping is also based on 2 chars.
         assert_eq!(cursor_character_index("あい", 5), 2);
     }
 
-    /// 5-11-4 T8: pane_scrollback_row_node_id がビューポート行 NodeId と衝突しない
+    /// 5-11-4 T8: pane_scrollback_row_node_id does not collide with viewport-row NodeIds.
     #[test]
     fn pane_scrollback_row_node_id_no_collision_with_viewport_row() {
         let pane_id = 7u32;
-        // ビューポート行 [0..1000) と スクロールバック行 [0..9000) が同じペイン内で衝突しない
+        // Viewport rows [0..1000) and scrollback rows [0..9000) do not collide within
+        // the same pane.
         for row in [0u16, 100, 500, 999] {
             let v_id = pane_row_node_id(pane_id, row);
             for sb in [0u16, 100, 500, 8999] {
                 let sb_id = pane_scrollback_row_node_id(pane_id, sb);
                 assert_ne!(
                     v_id, sb_id,
-                    "viewport row {row} と scrollback {sb} の NodeId が衝突"
+                    "viewport row {row} and scrollback {sb} NodeIds collide"
                 );
             }
         }
     }
 
-    /// 5-11-4 T9: 異なるペイン間で scrollback 行 NodeId が衝突しない
+    /// 5-11-4 T9: scrollback-row NodeIds do not collide across panes.
     #[test]
     fn pane_scrollback_row_node_id_no_collision_between_panes() {
-        // ペイン 1 のスクロールバック末尾 (idx=8999) とペイン 2 のスクロールバック先頭 (idx=0)
-        // は MAX_ROWS_PER_PANE 単位で分離されているので衝突しない
+        // Pane 1's last scrollback entry (idx=8999) and pane 2's first scrollback entry
+        // (idx=0) are separated by MAX_ROWS_PER_PANE, so they do not collide.
         let id1_last = pane_scrollback_row_node_id(1, (MAX_SCROLLBACK_ROWS_PER_PANE - 1) as u16);
         let id2_first = pane_scrollback_row_node_id(2, 0);
         assert_ne!(id1_last, id2_first);
-        // 値域の確認
+        // Range check.
         assert!(id1_last.0 < id2_first.0);
     }
 
-    /// 5-11-4 T10: decode_node_id が scrollback 行を正しく PaneScrollbackRow にデコードする
+    /// 5-11-4 T10: decode_node_id correctly decodes scrollback rows as PaneScrollbackRow.
     #[test]
     fn decode_scrollback_row_roundtrip() {
         for pane_id in [0u32, 1, 42, u32::MAX] {
@@ -4300,7 +4318,7 @@ mod tests {
         }
     }
 
-    /// 5-11-4 T11: スクロールバックが空ならスクロールバック行ノードは生成されない
+    /// 5-11-4 T11: no scrollback-row nodes are emitted when the scrollback is empty.
     #[test]
     fn build_tree_no_scrollback_when_empty() {
         let mut state = ClientState::new(5, 2, 1000);
@@ -4316,15 +4334,15 @@ mod tests {
             .iter()
             .filter(|(id, _)| matches!(decode_node_id(*id), NodeIdKind::PaneScrollbackRow { .. }))
             .count();
-        assert_eq!(sb_node_count, 0, "スクロールバックが空なら行ノードは 0");
+        assert_eq!(sb_node_count, 0, "an empty scrollback yields 0 row nodes");
     }
 
-    /// 5-11-4 T12: スクロールバックに行を push すると行ノードがツリーに含まれる
+    /// 5-11-4 T12: pushing rows into the scrollback adds row nodes to the tree.
     #[test]
     fn build_tree_includes_scrollback_rows_when_present() {
         let mut state = ClientState::new(5, 2, 1000);
         let mut pane = crate::state::PaneState::new(5, 2, 1000);
-        // スクロールバックに 3 行追加
+        // Append 3 rows to the scrollback.
         for i in 0..3 {
             let line: Vec<nexterm_proto::Cell> = format!("line{}", i)
                 .chars()
@@ -4353,18 +4371,16 @@ mod tests {
                 )
             })
             .count();
-        assert_eq!(
-            sb_node_count, 3,
-            "スクロールバック 3 行ぶんが含まれているはず"
-        );
+        assert_eq!(sb_node_count, 3, "3 scrollback row nodes must be present");
     }
 
-    /// 5-11-4 T13: スクロールバックが SCROLLBACK_WINDOW_RADIUS * 2 を大きく超えても窓内のみ公開
+    /// 5-11-4 T13: even when the scrollback far exceeds SCROLLBACK_WINDOW_RADIUS * 2,
+    /// only rows within the window are exposed.
     #[test]
     fn build_tree_scrollback_window_radius_limit() {
         let mut state = ClientState::new(5, 2, 1000);
         let mut pane = crate::state::PaneState::new(5, 2, 1000);
-        // 500 行のスクロールバックを push（SCROLLBACK_WINDOW_RADIUS=100 の 5 倍）
+        // Push 500 scrollback rows (5× SCROLLBACK_WINDOW_RADIUS=100).
         for _ in 0..500 {
             let line: Vec<nexterm_proto::Cell> = "x"
                 .chars()
@@ -4393,21 +4409,25 @@ mod tests {
                 )
             })
             .count();
-        // 窓幅は [center - RADIUS, center + RADIUS + 1) なので最大 2*RADIUS + 1 行
+        // Window width is [center - RADIUS, center + RADIUS + 1), so at most
+        // 2*RADIUS + 1 rows.
         let expected_max = SCROLLBACK_WINDOW_RADIUS * 2 + 1;
         assert!(
             sb_node_count <= expected_max,
-            "スクロールバック行数 {sb_node_count} が窓上限 {expected_max} を超えている"
+            "scrollback row count {sb_node_count} exceeds window limit {expected_max}"
         );
-        assert!(sb_node_count > 0, "窓内に最低 1 行は含まれるはず");
+        assert!(
+            sb_node_count > 0,
+            "at least 1 row must fall within the window"
+        );
     }
 
-    /// 5-11-4 T14: フォーカスペインのカーソル行に TextSelection が設定される
+    /// 5-11-4 T14: a TextSelection is set on the focused pane's cursor row.
     #[test]
     fn build_tree_focused_pane_cursor_row_has_text_selection() {
         let mut state = ClientState::new(10, 5, 1000);
         let mut pane = crate::state::PaneState::new(10, 5, 1000);
-        // 行 2 に "abc" を書き、カーソルを (col=2, row=2) に置く
+        // Write "abc" to row 2 and place the cursor at (col=2, row=2).
         for (c, ch) in "abc".chars().enumerate() {
             pane.grid.set(
                 c as u16,
@@ -4433,10 +4453,10 @@ mod tests {
             .iter()
             .find(|(id, _)| *id == pane_node_id(1))
             .map(|(_, n)| n)
-            .expect("ペインノードが見つからない");
+            .expect("pane node not found");
         let sel = pane_node
             .text_selection()
-            .expect("フォーカスペインのカーソル行に TextSelection が設定されているはず");
+            .expect("a TextSelection must be set on the focused pane's cursor row");
         // anchor == focus == TextPosition { node: pane_row_node_id(1, 2), character_index: 2 }
         assert_eq!(sel.anchor.node, pane_row_node_id(1, 2));
         assert_eq!(sel.focus.node, pane_row_node_id(1, 2));
@@ -4444,7 +4464,7 @@ mod tests {
         assert_eq!(sel.focus.character_index, 2);
     }
 
-    /// 5-11-4 T15: 非フォーカスペインには TextSelection が設定されない
+    /// 5-11-4 T15: non-focused panes do not have a TextSelection.
     #[test]
     fn build_tree_non_focused_pane_has_no_text_selection() {
         let mut state = ClientState::new(5, 2, 1000);
@@ -4462,14 +4482,14 @@ mod tests {
             .iter()
             .find(|(id, _)| *id == pane_node_id(2))
             .map(|(_, n)| n)
-            .expect("ペイン 2 が見つからない");
+            .expect("pane 2 not found");
         assert!(
             pane2_node.text_selection().is_none(),
-            "非フォーカスペインに TextSelection が設定されてはいけない"
+            "a non-focused pane must not have a TextSelection set"
         );
     }
 
-    /// 5-11-4 T16: tree_state_hash がカーソル移動を検出する
+    /// 5-11-4 T16: tree_state_hash detects cursor movement.
     #[test]
     fn tree_state_hash_detects_cursor_move() {
         let mut state = ClientState::new(10, 5, 1000);
@@ -4481,14 +4501,14 @@ mod tests {
         let h1 = compute_tree_state_hash(&state);
         state.panes.get_mut(&1).unwrap().grid.cursor_col = 3;
         let h2 = compute_tree_state_hash(&state);
-        assert_ne!(h1, h2, "cursor_col 変化でハッシュが変わるはず");
+        assert_ne!(h1, h2, "the hash must change when cursor_col changes");
 
         state.panes.get_mut(&1).unwrap().grid.cursor_row = 2;
         let h3 = compute_tree_state_hash(&state);
-        assert_ne!(h2, h3, "cursor_row 変化でハッシュが変わるはず");
+        assert_ne!(h2, h3, "the hash must change when cursor_row changes");
     }
 
-    /// 5-11-4 T17: tree_state_hash がスクロールバック追記を検出する
+    /// 5-11-4 T17: tree_state_hash detects scrollback growth.
     #[test]
     fn tree_state_hash_detects_scrollback_grow() {
         let mut state = ClientState::new(5, 2, 1000);
@@ -4509,15 +4529,15 @@ mod tests {
             .collect();
         state.panes.get_mut(&1).unwrap().scrollback.push_line(line);
         let h2 = compute_tree_state_hash(&state);
-        assert_ne!(h1, h2, "scrollback.len 変化でハッシュが変わるはず");
+        assert_ne!(h1, h2, "the hash must change when scrollback.len changes");
     }
 
-    /// 5-11-4 T18: tree_state_hash が scroll_offset 変化を検出する
+    /// 5-11-4 T18: tree_state_hash detects scroll_offset changes.
     #[test]
     fn tree_state_hash_detects_scroll_offset_change() {
         let mut state = ClientState::new(5, 2, 1000);
         let mut pane = crate::state::PaneState::new(5, 2, 1000);
-        // スクロールバックを 5 行追加（scroll_offset > 0 が意味を持つように）
+        // Push 5 scrollback rows so that scroll_offset > 0 is meaningful.
         for _ in 0..5 {
             let line: Vec<nexterm_proto::Cell> = "x"
                 .chars()
@@ -4537,23 +4557,23 @@ mod tests {
         let h1 = compute_tree_state_hash(&state);
         state.panes.get_mut(&1).unwrap().scroll_offset = 3;
         let h2 = compute_tree_state_hash(&state);
-        assert_ne!(h1, h2, "scroll_offset 変化でハッシュが変わるはず");
+        assert_ne!(h1, h2, "the hash must change when scroll_offset changes");
     }
 
-    // ===== Sprint 5-11-5: Bell / OSC 9 / OSC 777 → Role::Alert テスト =====
+    // ===== Sprint 5-11-5: Bell / OSC 9 / OSC 777 → Role::Alert tests =====
 
-    /// add_alert がキューに追加され、seq が単調増加すること
+    /// add_alert appends to the queue and seq increases monotonically.
     #[test]
     fn add_alert_assigns_monotonic_seq() {
         let mut state = ClientState::new(80, 24, 1000);
-        let s0 = state.add_alert(AlertKind::Bell, 1, "ベル".to_string(), String::new());
+        let s0 = state.add_alert(AlertKind::Bell, 1, "Bell".to_string(), String::new());
         let s1 = state.add_alert(
             AlertKind::Notification,
             1,
             "Title".to_string(),
             "Body".to_string(),
         );
-        let s2 = state.add_alert(AlertKind::Bell, 2, "ベル".to_string(), String::new());
+        let s2 = state.add_alert(AlertKind::Bell, 2, "Bell".to_string(), String::new());
         assert_eq!(s0, 0);
         assert_eq!(s1, 1);
         assert_eq!(s2, 2);
@@ -4563,7 +4583,7 @@ mod tests {
         assert_eq!(state.alerts[2].pane_id, 2);
     }
 
-    /// ALERTS_MAX_LEN (16) を超えると古い順に drop されること
+    /// Entries beyond ALERTS_MAX_LEN (16) are dropped in oldest-first order.
     #[test]
     fn add_alert_drops_oldest_when_full() {
         use crate::state::ALERTS_MAX_LEN;
@@ -4571,9 +4591,9 @@ mod tests {
         for i in 0..(ALERTS_MAX_LEN + 5) {
             state.add_alert(AlertKind::Bell, 1, format!("alert {}", i), String::new());
         }
-        // 上限内に収まる
+        // Capped within the limit.
         assert_eq!(state.alerts.len(), ALERTS_MAX_LEN);
-        // 先頭は ALERTS_MAX_LEN + 5 - ALERTS_MAX_LEN = 5 から始まる
+        // The head starts at ALERTS_MAX_LEN + 5 - ALERTS_MAX_LEN = 5.
         assert_eq!(state.alerts.front().unwrap().seq, 5);
         assert_eq!(
             state.alerts.back().unwrap().seq,
@@ -4581,12 +4601,12 @@ mod tests {
         );
     }
 
-    /// expire_alerts が TTL 切れエントリを除去し、期限内エントリを残すこと
+    /// expire_alerts drops TTL-expired entries while keeping fresh entries.
     #[test]
     fn expire_alerts_removes_only_expired_entries() {
         use crate::state::ALERT_TTL;
         let mut state = ClientState::new(80, 24, 1000);
-        // 古い 2 件は created_at を遡って手動で設定（直接 push_back）
+        // The two old entries get their created_at set in the past manually (direct push_back).
         let now = std::time::Instant::now();
         let old = now - ALERT_TTL - std::time::Duration::from_secs(1);
         state.alerts.push_back(AlertEntry {
@@ -4605,16 +4625,16 @@ mod tests {
             body: String::new(),
             created_at: old,
         });
-        // 新しい 1 件は add_alert で追加
+        // The one fresh entry is added via add_alert.
         state.add_alert(AlertKind::Bell, 1, "fresh".to_string(), String::new());
 
         let removed = state.expire_alerts(now);
-        assert_eq!(removed, 2, "古い 2 件が除去される");
+        assert_eq!(removed, 2, "the 2 old entries are removed");
         assert_eq!(state.alerts.len(), 1);
         assert_eq!(state.alerts.front().unwrap().title, "fresh");
     }
 
-    /// Phase 5-11-6 #4: `dismiss_alert(seq)` で指定 seq のみ除去できること
+    /// Phase 5-11-6 #4: `dismiss_alert(seq)` removes only the entry with the given seq.
     #[test]
     fn dismiss_alert_removes_matching_seq_only() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -4623,44 +4643,44 @@ mod tests {
         let seq_c = state.add_alert(AlertKind::Bell, 1, "c".to_string(), String::new());
         assert_eq!(state.alerts.len(), 3);
 
-        // 真ん中の B のみ除去
+        // Remove only the middle entry B.
         let dismissed = state.dismiss_alert(seq_b);
-        assert!(dismissed, "存在する seq の dismiss は true");
+        assert!(dismissed, "dismiss returns true for an existing seq");
         assert_eq!(state.alerts.len(), 2);
         let remaining: Vec<u64> = state.alerts.iter().map(|a| a.seq).collect();
-        assert_eq!(remaining, vec![seq_a, seq_c], "A と C のみ残る");
+        assert_eq!(remaining, vec![seq_a, seq_c], "only A and C remain");
     }
 
-    /// Phase 5-11-6 #4: 存在しない seq への `dismiss_alert` は false 返却で副作用なし
+    /// Phase 5-11-6 #4: `dismiss_alert` for an unknown seq returns false and has no side effects.
     #[test]
     fn dismiss_alert_returns_false_for_unknown_seq() {
         let mut state = ClientState::new(80, 24, 1000);
         let seq = state.add_alert(AlertKind::Bell, 1, "only".to_string(), String::new());
-        // 別の seq を指定
+        // Specify a different seq.
         let dismissed = state.dismiss_alert(seq.wrapping_add(99));
-        assert!(!dismissed, "存在しない seq の dismiss は false");
-        assert_eq!(state.alerts.len(), 1, "副作用なし");
+        assert!(!dismissed, "dismiss returns false for an unknown seq");
+        assert_eq!(state.alerts.len(), 1, "no side effects");
     }
 
-    /// alert_node_id が 50e12 オフセット + seq になり pane_row 範囲と衝突しないこと
+    /// alert_node_id is at the 50e12 offset + seq and does not collide with the pane_row range.
     #[test]
     fn alert_node_id_in_correct_offset() {
         let id0 = alert_node_id(0).0;
         let id_big = alert_node_id(u32::MAX as u64).0;
         assert_eq!(id0, NODE_ID_ALERT_OFFSET);
         assert_eq!(id_big, NODE_ID_ALERT_OFFSET + u32::MAX as u64);
-        // ペイン行範囲（最大 ~4.3e13）の上限を超えていること
+        // Must exceed the upper bound of the pane row range (~4.3e13).
         let pane_row_end =
             NODE_ID_PANE_ROW_OFFSET + (u32::MAX as u64) * MAX_ROWS_PER_PANE + MAX_ROWS_PER_PANE;
         assert!(
             NODE_ID_ALERT_OFFSET >= pane_row_end,
-            "Alert オフセット ({}) はペイン行上限 ({}) 以上である必要がある",
+            "Alert offset ({}) must be at least the pane row upper bound ({})",
             NODE_ID_ALERT_OFFSET,
             pane_row_end
         );
     }
 
-    /// decode_node_id で Alert NodeId を逆引きできること
+    /// decode_node_id can reverse-look-up an Alert NodeId.
     #[test]
     fn decode_alert_node_id_roundtrip() {
         for seq in [0u64, 1, 16, 100, u32::MAX as u64] {
@@ -4668,11 +4688,11 @@ mod tests {
             let kind = decode_node_id(nid);
             assert_eq!(kind, NodeIdKind::Alert { seq });
         }
-        // AlertRegion 固定 ID
+        // AlertRegion fixed ID.
         assert_eq!(decode_node_id(ALERT_REGION_ID), NodeIdKind::AlertRegion);
     }
 
-    /// 空キューでは ALERT_REGION_ID は ROOT に含まれないこと
+    /// ALERT_REGION_ID is not included in ROOT when the queue is empty.
     #[test]
     fn build_tree_without_alerts_omits_alert_region() {
         let state = ClientState::new(80, 24, 1000);
@@ -4681,80 +4701,83 @@ mod tests {
             .nodes
             .iter()
             .find(|(id, _)| *id == ROOT_ID)
-            .expect("ROOT が存在");
-        // ROOT の children に ALERT_REGION_ID は含まれない
+            .expect("ROOT exists");
+        // ROOT's children do not contain ALERT_REGION_ID.
         let children: Vec<NodeId> = root_node.1.children().to_vec();
         assert!(
             !children.contains(&ALERT_REGION_ID),
-            "アラートなしでは ALERT_REGION_ID が ROOT に含まれない"
+            "ALERT_REGION_ID must not appear in ROOT when no alerts exist"
         );
-        // ALERT_REGION_ID ノードそのものも存在しない
+        // The ALERT_REGION_ID node itself is also absent.
         assert!(
             !update.nodes.iter().any(|(id, _)| *id == ALERT_REGION_ID),
-            "アラートなしでは ALERT_REGION ノードが含まれない"
+            "the ALERT_REGION node must not be present when no alerts exist"
         );
     }
 
-    /// アラート追加で ALERT_REGION_ID と各 Alert ノードが ROOT 子要素に追加されること
+    /// Adding an alert appends ALERT_REGION_ID and each Alert node as ROOT children.
     #[test]
     fn build_tree_with_alerts_includes_alert_region_and_children() {
         let mut state = ClientState::new(80, 24, 1000);
-        let seq_bell = state.add_alert(AlertKind::Bell, 1, "ベル".to_string(), String::new());
+        let seq_bell = state.add_alert(AlertKind::Bell, 1, "Bell".to_string(), String::new());
         let seq_notify = state.add_alert(
             AlertKind::Notification,
             1,
-            "ビルド完了".to_string(),
+            "Build finished".to_string(),
             "exit code 0".to_string(),
         );
 
         let update = build_tree_from_state(&state);
 
-        // ROOT に ALERT_REGION_ID が含まれる
+        // ROOT contains ALERT_REGION_ID.
         let root = update.nodes.iter().find(|(id, _)| *id == ROOT_ID).unwrap();
         assert!(root.1.children().contains(&ALERT_REGION_ID));
 
-        // ALERT_REGION 自身が存在し Live::Assertive
+        // ALERT_REGION itself exists and is Live::Assertive.
         let region = update
             .nodes
             .iter()
             .find(|(id, _)| *id == ALERT_REGION_ID)
-            .expect("ALERT_REGION ノードが存在");
+            .expect("ALERT_REGION node must exist");
         assert_eq!(region.1.live(), Some(Live::Assertive));
 
-        // 各 Alert ノードが存在
+        // Each Alert node exists.
         let bell_node = update
             .nodes
             .iter()
             .find(|(id, _)| *id == alert_node_id(seq_bell))
-            .expect("Bell ノードが存在");
+            .expect("Bell node must exist");
         assert_eq!(bell_node.1.role(), Role::Alert);
-        assert_eq!(bell_node.1.label(), Some("ベル"));
+        assert_eq!(bell_node.1.label(), Some("Bell"));
 
         let notify_node = update
             .nodes
             .iter()
             .find(|(id, _)| *id == alert_node_id(seq_notify))
-            .expect("Notification ノードが存在");
+            .expect("Notification node must exist");
         assert_eq!(notify_node.1.role(), Role::Alert);
-        assert_eq!(notify_node.1.label(), Some("通知: ビルド完了"));
+        assert_eq!(notify_node.1.label(), Some("Notification: Build finished"));
         assert_eq!(notify_node.1.description(), Some("exit code 0"));
     }
 
-    /// tree_state_hash がアラート追加で変化すること
+    /// tree_state_hash changes when an alert is added.
     #[test]
     fn tree_state_hash_detects_alert_added() {
         let mut state = ClientState::new(80, 24, 1000);
         let h0 = compute_tree_state_hash(&state);
-        state.add_alert(AlertKind::Bell, 1, "ベル".to_string(), String::new());
+        state.add_alert(AlertKind::Bell, 1, "Bell".to_string(), String::new());
         let h1 = compute_tree_state_hash(&state);
-        assert_ne!(h0, h1, "アラート追加でハッシュが変化");
-        // 同種のアラート追加でも seq が違うのでハッシュは変化
-        state.add_alert(AlertKind::Bell, 1, "ベル".to_string(), String::new());
+        assert_ne!(h0, h1, "the hash must change when an alert is added");
+        // Even adding the same kind of alert changes the hash because seq differs.
+        state.add_alert(AlertKind::Bell, 1, "Bell".to_string(), String::new());
         let h2 = compute_tree_state_hash(&state);
-        assert_ne!(h1, h2, "2 件目追加でハッシュが変化");
+        assert_ne!(
+            h1, h2,
+            "the hash must change after the second alert is added"
+        );
     }
 
-    /// tree_state_hash がアラート kind 変化で変化すること
+    /// tree_state_hash changes when the alert kind differs.
     #[test]
     fn tree_state_hash_detects_alert_kind_difference() {
         let mut s1 = ClientState::new(80, 24, 1000);
@@ -4770,14 +4793,14 @@ mod tests {
 
         let h1 = compute_tree_state_hash(&s1);
         let h2 = compute_tree_state_hash(&s2);
-        assert_ne!(h1, h2, "Bell と Notification でハッシュが異なる");
+        assert_ne!(h1, h2, "Bell and Notification produce different hashes");
     }
 
-    /// 本文が空の Alert (Bell) は description が設定されないこと
+    /// An Alert (Bell) with empty body does not have a description set.
     #[test]
     fn build_tree_alert_without_body_omits_description() {
         let mut state = ClientState::new(80, 24, 1000);
-        let seq = state.add_alert(AlertKind::Bell, 1, "ベル".to_string(), String::new());
+        let seq = state.add_alert(AlertKind::Bell, 1, "Bell".to_string(), String::new());
         let update = build_tree_from_state(&state);
         let bell = update
             .nodes
@@ -4787,9 +4810,9 @@ mod tests {
         assert_eq!(bell.1.description(), None);
     }
 
-    // ===== Phase 5-11-7: PTY 入力バッファ =====
+    // ===== Phase 5-11-7: PTY input buffer =====
 
-    /// PaneInputBuffer の NodeId(27) が `NodeIdKind::PaneInputBuffer` に decode されること
+    /// PaneInputBuffer with NodeId(27) decodes to `NodeIdKind::PaneInputBuffer`.
     #[test]
     fn decode_pane_input_buffer() {
         assert_eq!(
@@ -4799,7 +4822,7 @@ mod tests {
         assert_eq!(decode_node_id(NodeId(27)), NodeIdKind::PaneInputBuffer);
     }
 
-    /// PaneInputBuffer は PaneArea の子として常に存在し、Role::TextInput であること
+    /// PaneInputBuffer is always present as a PaneArea child and has Role::TextInput.
     #[test]
     fn build_tree_includes_pane_input_buffer() {
         let state = ClientState::new(80, 24, 1000);
@@ -4809,13 +4832,13 @@ mod tests {
             .nodes
             .iter()
             .find(|(id, _)| *id == PANE_INPUT_BUFFER_ID)
-            .expect("PaneInputBuffer ノードが存在");
+            .expect("PaneInputBuffer node must exist");
         assert_eq!(input_buffer.1.role(), Role::TextInput);
-        assert_eq!(input_buffer.1.label(), Some("ターミナル入力バッファ"));
+        assert_eq!(input_buffer.1.label(), Some("Terminal input buffer"));
         assert_eq!(input_buffer.1.value(), Some(""));
     }
 
-    /// PaneInputBuffer の description はフォーカスペインのタイトルを含むこと
+    /// PaneInputBuffer's description includes the focused pane's title.
     #[test]
     fn pane_input_buffer_description_includes_focused_pane_title() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -4834,12 +4857,12 @@ mod tests {
         let desc = input_buffer.1.description().unwrap_or("");
         assert!(
             desc.contains("vim main.rs"),
-            "description にペインタイトルが含まれる: {}",
+            "description must contain the pane title: {}",
             desc
         );
     }
 
-    /// フォーカスペインが存在しない場合は「フォーカスペインなし」と表示されること
+    /// When no pane is focused, the description shows "No focused pane".
     #[test]
     fn pane_input_buffer_description_when_no_focus() {
         let state = ClientState::new(80, 24, 1000);
@@ -4851,13 +4874,13 @@ mod tests {
             .unwrap();
         let desc = input_buffer.1.description().unwrap_or("");
         assert!(
-            desc.contains("フォーカスペインなし"),
-            "フォーカスなしのメッセージが含まれる: {}",
+            desc.contains("No focused pane"),
+            "description must contain the no-focus message: {}",
             desc
         );
     }
 
-    /// PaneArea の子に PaneInputBuffer が末尾追加されていること
+    /// PaneInputBuffer is appended as the last child of PaneArea.
     #[test]
     fn pane_area_children_include_input_buffer_as_last() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -4876,13 +4899,13 @@ mod tests {
         assert_eq!(
             *children.last().unwrap(),
             PANE_INPUT_BUFFER_ID,
-            "PaneArea の最後の子が PaneInputBuffer"
+            "PaneArea's last child must be PaneInputBuffer"
         );
-        // ペイン本体 + PaneInputBuffer = 2 子
+        // Pane body + PaneInputBuffer = 2 children.
         assert_eq!(children.len(), 2);
     }
 
-    /// フォーカスペインが変わると tree hash も変わること（入力バッファ description 反映）
+    /// Changing the focused pane also changes the tree hash (input-buffer description reflects it).
     #[test]
     fn tree_state_hash_detects_focused_pane_title_change() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -4895,12 +4918,15 @@ mod tests {
 
         state.panes.get_mut(&1).unwrap().title = "new title".to_string();
         let h1 = compute_tree_state_hash(&state);
-        assert_ne!(h0, h1, "フォーカスペインのタイトル変更でハッシュが変化");
+        assert_ne!(
+            h0, h1,
+            "the hash must change when the focused pane's title changes"
+        );
     }
 
     // ===== Phase 5-11-7: SettingsPanel Profiles + Ssh/Keybindings description =====
 
-    /// SettingsProfileItem の NodeId roundtrip
+    /// SettingsProfileItem NodeId roundtrip.
     #[test]
     fn settings_profile_item_id_roundtrip() {
         for idx in [0, 1, 50, 99_999] {
@@ -4909,23 +4935,23 @@ mod tests {
             assert_eq!(
                 decoded,
                 NodeIdKind::SettingsProfileItem { idx },
-                "settings_profile_item_id({}) の roundtrip",
+                "roundtrip for settings_profile_item_id({})",
                 idx
             );
         }
     }
 
-    /// SettingsProfileItem オフセットが QuickSelect / Tab 範囲と衝突しないこと
+    /// The SettingsProfileItem offset does not overlap the QuickSelect / Tab ranges.
     #[test]
     fn settings_profile_offset_does_not_overlap() {
         const _: () = assert!(NODE_ID_SETTINGS_PROFILE_OFFSET > NODE_ID_QUICKSELECT_ITEM_OFFSET);
         const _: () = assert!(
             NODE_ID_SETTINGS_PROFILE_OFFSET + 100_000_000 <= NODE_ID_TAB_OFFSET,
-            "Profiles 範囲 [600M, 700M) は Tab 範囲 [1G, ...) と衝突しない"
+            "Profiles range [600M, 700M) must not collide with Tab range [1G, ...)"
         );
     }
 
-    /// Profiles カテゴリが空のとき: 「プロファイルがありません」を案内する
+    /// When the Profiles category is empty: shows the "No profiles defined" guidance.
     #[test]
     fn build_settings_panel_profiles_empty() {
         use crate::settings_panel::SettingsCategory;
@@ -4940,13 +4966,13 @@ mod tests {
             .unwrap();
         let desc = content.1.description().unwrap_or("");
         assert!(
-            desc.contains("プロファイルがありません"),
-            "空案内文が含まれる: {}",
+            desc.contains("No profiles defined"),
+            "the empty guidance message must be included: {}",
             desc
         );
     }
 
-    /// Profiles カテゴリにプロファイルがあるとき: ListBoxOption が公開される
+    /// When the Profiles category has entries: ListBoxOption nodes are exposed.
     #[test]
     fn build_settings_panel_profiles_exposes_listbox_options() {
         use crate::settings_panel::{ProfileEntry, SettingsCategory};
@@ -4970,14 +4996,14 @@ mod tests {
 
         let (nodes, focus) = build_settings_panel_nodes(&panel);
 
-        // 各 ListBoxOption が公開される
+        // Each ListBoxOption is exposed.
         let opt0 = nodes
             .iter()
             .find(|(id, _)| *id == settings_profile_item_id(0))
             .unwrap();
         assert_eq!(opt0.1.role(), Role::ListBoxOption);
         assert!(opt0.1.label().unwrap_or("").contains("bash"));
-        assert_eq!(opt0.1.is_selected(), None); // 未選択 (set_selected されない)
+        assert_eq!(opt0.1.is_selected(), None); // unselected (set_selected is not called)
 
         let opt1 = nodes
             .iter()
@@ -4985,14 +5011,14 @@ mod tests {
             .unwrap();
         assert_eq!(opt1.1.role(), Role::ListBoxOption);
         assert!(opt1.1.label().unwrap_or("").contains("powershell"));
-        // selected_profile = 1 なのでこちらが選択中
+        // selected_profile = 1 so this one is selected.
         assert_eq!(opt1.1.is_selected(), Some(true));
 
-        // フォーカスは選択中のプロファイル項目へ
+        // Focus moves to the selected profile item.
         assert_eq!(focus, settings_profile_item_id(1));
     }
 
-    /// dispatch_settings_action: SettingsProfileItem Click で selected_profile が更新される
+    /// dispatch_settings_action: SettingsProfileItem Click updates selected_profile.
     #[test]
     fn dispatch_settings_profile_item_click() {
         use crate::settings_panel::{ProfileEntry, SettingsCategory};
@@ -5024,7 +5050,7 @@ mod tests {
         assert_eq!(panel.selected_profile, 1);
     }
 
-    /// dispatch_settings_action: SettingsProfileItem Focus でも selected_profile が更新される
+    /// dispatch_settings_action: SettingsProfileItem Focus also updates selected_profile.
     #[test]
     fn dispatch_settings_profile_item_focus() {
         use crate::settings_panel::{ProfileEntry, SettingsCategory};
@@ -5048,7 +5074,7 @@ mod tests {
         assert_eq!(panel.selected_profile, 0);
     }
 
-    /// dispatch_settings_action: 範囲外の idx は no-op で false を返す
+    /// dispatch_settings_action: an out-of-range idx is a no-op and returns false.
     #[test]
     fn dispatch_settings_profile_item_out_of_range() {
         let mut panel = SettingsPanel::default();
@@ -5386,7 +5412,7 @@ mod tests {
         assert_eq!(panel.selected_host_index, 0);
     }
 
-    /// dispatch_settings_action: 範囲外の idx は no-op で false を返す
+    /// dispatch_settings_action: an out-of-range idx is a no-op and returns false.
     #[test]
     fn dispatch_settings_ssh_host_item_out_of_range() {
         let mut panel = SettingsPanel::default();
