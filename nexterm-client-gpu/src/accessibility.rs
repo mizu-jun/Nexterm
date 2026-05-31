@@ -5090,8 +5090,9 @@ mod tests {
         assert_eq!(panel.selected_profile, 0);
     }
 
-    /// SSH カテゴリ（空リスト時）は GUI で新規追加を促す案内 description を持つこと。
-    /// Phase 5-11-8 Step 8-3 Sub-phase D で TOML 編集案内から GUI 案内に変わった。
+    /// The SSH category (empty list) has a description that prompts adding a new
+    /// host via the GUI. In Phase 5-11-8 Step 8-3 Sub-phase D this changed from
+    /// TOML-edit guidance to GUI guidance.
     #[test]
     fn build_settings_panel_ssh_has_informative_description() {
         use crate::settings_panel::SettingsCategory;
@@ -5104,19 +5105,19 @@ mod tests {
             .find(|(id, _)| *id == SETTINGS_CONTENT_ID)
             .unwrap();
         let desc = content.1.description().unwrap_or("");
-        // Sub-phase D 以降: GUI Add ボタン経由での追加を案内する
+        // Sub-phase D onward: guidance is to add via the GUI Add button.
         assert!(
-            desc.contains("追加") || desc.contains("新規"),
-            "案内文: {}",
+            desc.contains("Add") || desc.contains("add"),
+            "guidance text: {}",
             desc
         );
         assert!(
-            !desc.contains("まだ実装されていません"),
-            "「未実装」表記が消えている"
+            !desc.contains("not implemented yet"),
+            "the \"not implemented\" wording must be gone"
         );
     }
 
-    /// Keybindings カテゴリも TOML 編集の案内 description を持つこと
+    /// The Keybindings category also has a description pointing to TOML editing.
     #[test]
     fn build_settings_panel_keybindings_has_informative_description() {
         use crate::settings_panel::SettingsCategory;
@@ -5129,15 +5130,15 @@ mod tests {
             .find(|(id, _)| *id == SETTINGS_CONTENT_ID)
             .unwrap();
         let desc = content.1.description().unwrap_or("");
-        assert!(desc.contains("nexterm.toml"), "案内文: {}", desc);
-        assert!(desc.contains("[[keys]]"), "案内文: {}", desc);
+        assert!(desc.contains("nexterm.toml"), "guidance text: {}", desc);
+        assert!(desc.contains("[[keys]]"), "guidance text: {}", desc);
         assert!(
-            !desc.contains("まだ実装されていません"),
-            "「未実装」表記が消えている"
+            !desc.contains("not implemented yet"),
+            "the \"not implemented\" wording must be gone"
         );
     }
 
-    /// tree_state_hash が selected_profile 変更で変化すること
+    /// tree_state_hash changes when selected_profile changes.
     #[test]
     fn tree_state_hash_detects_selected_profile_change() {
         use crate::settings_panel::ProfileEntry;
@@ -5162,10 +5163,10 @@ mod tests {
 
         state.settings_panel.selected_profile = 1;
         let h1 = compute_tree_state_hash(&state);
-        assert_ne!(h0, h1, "selected_profile 変更でハッシュが変化");
+        assert_ne!(h0, h1, "the hash must change when selected_profile changes");
     }
 
-    /// tree_state_hash が profiles リスト変更で変化すること
+    /// tree_state_hash changes when the profiles list changes.
     #[test]
     fn tree_state_hash_detects_profiles_change() {
         use crate::settings_panel::ProfileEntry;
@@ -5181,17 +5182,17 @@ mod tests {
             working_dir: String::new(),
         }];
         let h1 = compute_tree_state_hash(&state);
-        assert_ne!(h0, h1, "profiles 追加でハッシュが変化");
+        assert_ne!(h0, h1, "the hash must change when profiles are added");
     }
 
-    // ===== Phase 5-11-8 Step 8-1: SSH ホスト ListBox =====
+    // ===== Phase 5-11-8 Step 8-1: SSH host ListBox =====
 
-    /// SshHostEntry::label の整形ルール
+    /// SshHostEntry::label formatting rules.
     #[test]
     fn ssh_host_entry_label_format() {
         use crate::settings_panel::SshHostEntry;
 
-        // 通常: name (user@host:port)
+        // Normal: name (user@host:port)
         let h = SshHostEntry {
             name: "myhost".to_string(),
             host: "example.com".to_string(),
@@ -5201,21 +5202,21 @@ mod tests {
         };
         assert_eq!(h.label(), "myhost (alice@example.com:2222)");
 
-        // port = 22 のときは省略
+        // port = 22 is omitted.
         let h22 = SshHostEntry {
             port: 22,
             ..h.clone()
         };
         assert_eq!(h22.label(), "myhost (alice@example.com)");
 
-        // name 空のときは endpoint のみ
+        // When name is empty, only the endpoint is shown.
         let h_noname = SshHostEntry {
             name: String::new(),
             ..h.clone()
         };
         assert_eq!(h_noname.label(), "alice@example.com:2222");
 
-        // username 空のときは host のみ
+        // When username is empty, only the host is shown.
         let h_nouser = SshHostEntry {
             username: String::new(),
             ..h.clone()
@@ -5223,7 +5224,7 @@ mod tests {
         assert_eq!(h_nouser.label(), "myhost (example.com:2222)");
     }
 
-    /// SettingsSshHostItem の NodeId roundtrip
+    /// SettingsSshHostItem NodeId roundtrip.
     #[test]
     fn settings_ssh_host_item_id_roundtrip() {
         for idx in [0, 1, 50, 99_999] {
@@ -5232,26 +5233,26 @@ mod tests {
             assert_eq!(
                 decoded,
                 NodeIdKind::SettingsSshHostItem { idx },
-                "settings_ssh_host_item_id({}) の roundtrip",
+                "roundtrip for settings_ssh_host_item_id({})",
                 idx
             );
         }
     }
 
-    /// SettingsSshHostItem オフセットが Profiles / Tab 範囲と衝突しないこと
+    /// The SettingsSshHostItem offset does not overlap the Profiles / Tab ranges.
     #[test]
     fn settings_ssh_host_offset_does_not_overlap() {
         const _: () = assert!(
             NODE_ID_SETTINGS_SSH_HOST_OFFSET > NODE_ID_SETTINGS_PROFILE_OFFSET + 100_000_000,
-            "Ssh ホスト範囲 [800M, 900M) は Profiles 範囲 [600M, 700M) と衝突しない"
+            "SSH host range [800M, 900M) must not collide with Profiles range [600M, 700M)"
         );
         const _: () = assert!(
             NODE_ID_SETTINGS_SSH_HOST_OFFSET + 100_000_000 <= NODE_ID_TAB_OFFSET,
-            "Ssh ホスト範囲 [800M, 900M) は Tab 範囲 [1G, ...) と衝突しない"
+            "SSH host range [800M, 900M) must not collide with Tab range [1G, ...)"
         );
     }
 
-    /// 700M..800M の予約範囲 / 900M..1G の予約範囲は Unknown のまま
+    /// Reserved ranges 700M..800M and 900M..1G remain Unknown.
     #[test]
     fn settings_ssh_host_offset_reserved_ranges_are_unknown() {
         assert_eq!(decode_node_id(NodeId(700_000_000)), NodeIdKind::Unknown);
@@ -5260,8 +5261,8 @@ mod tests {
         assert_eq!(decode_node_id(NodeId(999_999_999)), NodeIdKind::Unknown);
     }
 
-    /// Ssh カテゴリが空のとき: 「登録されていません」と GUI 追加案内を含む。
-    /// Phase 5-11-8 Step 8-3 Sub-phase D で TOML 編集案内から GUI 案内に変わった。
+    /// The empty SSH category includes "No SSH hosts are registered" plus GUI add guidance.
+    /// In Phase 5-11-8 Step 8-3 Sub-phase D this changed from TOML-edit guidance to GUI guidance.
     #[test]
     fn build_settings_panel_ssh_empty_has_informative_description() {
         use crate::settings_panel::SettingsCategory;
@@ -5276,19 +5277,19 @@ mod tests {
             .unwrap();
         let desc = content.1.description().unwrap_or("");
         assert!(
-            desc.contains("登録されていません"),
-            "空案内文が含まれる: {}",
+            desc.contains("No SSH hosts are registered"),
+            "the empty-list guidance must be included: {}",
             desc
         );
-        // Sub-phase D 以降: GUI Add ボタン経由での追加を案内
+        // Sub-phase D onward: guidance is to add via the GUI Add button.
         assert!(
-            desc.contains("追加") || desc.contains("新規"),
-            "GUI 案内が含まれる: {}",
+            desc.contains("Add") || desc.contains("add"),
+            "the GUI guidance must be included: {}",
             desc
         );
     }
 
-    /// Ssh カテゴリにホストがあるとき: ListBoxOption が公開される
+    /// When the SSH category has hosts: ListBoxOption nodes are exposed.
     #[test]
     fn build_settings_panel_ssh_exposes_listbox_options() {
         use crate::settings_panel::{SettingsCategory, SshHostEntry};
@@ -5314,17 +5315,17 @@ mod tests {
 
         let (nodes, focus) = build_settings_panel_nodes(&panel);
 
-        // 各 ListBoxOption が公開される
+        // Each ListBoxOption is exposed.
         let opt0 = nodes
             .iter()
             .find(|(id, _)| *id == settings_ssh_host_item_id(0))
             .unwrap();
         assert_eq!(opt0.1.role(), Role::ListBoxOption);
         assert!(opt0.1.label().unwrap_or("").contains("prod"));
-        // description に認証方式が含まれる
+        // The description includes the auth method.
         assert!(
             opt0.1.description().unwrap_or("").contains("key"),
-            "認証方式が description に含まれる"
+            "the auth method must be included in the description"
         );
         assert_eq!(opt0.1.is_selected(), None);
 
@@ -5335,25 +5336,29 @@ mod tests {
         assert_eq!(opt1.1.role(), Role::ListBoxOption);
         assert!(opt1.1.label().unwrap_or("").contains("staging"));
         assert!(opt1.1.label().unwrap_or("").contains(":2222"));
-        // selected_host_index = 1 なのでこちらが選択中
+        // selected_host_index = 1 so this entry is selected.
         assert_eq!(opt1.1.is_selected(), Some(true));
 
-        // フォーカスは選択中のホスト項目へ
+        // Focus moves to the selected host item.
         assert_eq!(focus, settings_ssh_host_item_id(1));
 
-        // SETTINGS_CONTENT に件数の案内が含まれる
-        // （Step 8-2 で説明文を「編集中」モードに変更したため、Step 8-1 時点の
-        //   「nexterm.toml の [[hosts]] セクションで行います」案内は description には載らない。
-        //   代わりに各フィールドノードに編集方法を記載している）
+        // SETTINGS_CONTENT includes the host count.
+        // (Step 8-2 changed the description to the "editing" mode, so the Step 8-1
+        //  "Edit via the [[hosts]] section in nexterm.toml" guidance is no longer
+        //  on the description. Each field node now documents how to edit instead.)
         let content = nodes
             .iter()
             .find(|(id, _)| *id == SETTINGS_CONTENT_ID)
             .unwrap();
         let desc = content.1.description().unwrap_or("");
-        assert!(desc.contains("2 件"), "件数が含まれる: {}", desc);
+        assert!(
+            desc.contains("of 2"),
+            "host count must be included: {}",
+            desc
+        );
     }
 
-    /// dispatch_settings_action: SettingsSshHostItem Click で selected_host_index が更新される
+    /// dispatch_settings_action: SettingsSshHostItem Click updates selected_host_index.
     #[test]
     fn dispatch_settings_ssh_host_item_click() {
         use crate::settings_panel::{SettingsCategory, SshHostEntry};
@@ -5387,7 +5392,7 @@ mod tests {
         assert_eq!(panel.selected_host_index, 1);
     }
 
-    /// dispatch_settings_action: SettingsSshHostItem Focus でも selected_host_index が更新される
+    /// dispatch_settings_action: SettingsSshHostItem Focus also updates selected_host_index.
     #[test]
     fn dispatch_settings_ssh_host_item_focus() {
         use crate::settings_panel::{SettingsCategory, SshHostEntry};
@@ -5428,7 +5433,7 @@ mod tests {
         assert_eq!(panel.selected_host_index, 0);
     }
 
-    /// tree_state_hash が selected_host_index 変更で変化すること
+    /// tree_state_hash changes when selected_host_index changes.
     #[test]
     fn tree_state_hash_detects_selected_host_index_change() {
         use crate::settings_panel::SshHostEntry;
@@ -5455,10 +5460,13 @@ mod tests {
 
         state.settings_panel.selected_host_index = 1;
         let h1 = compute_tree_state_hash(&state);
-        assert_ne!(h0, h1, "selected_host_index 変更でハッシュが変化");
+        assert_ne!(
+            h0, h1,
+            "the hash must change when selected_host_index changes"
+        );
     }
 
-    /// tree_state_hash が ssh_hosts リスト変更で変化すること
+    /// tree_state_hash changes when the ssh_hosts list changes.
     #[test]
     fn tree_state_hash_detects_ssh_hosts_change() {
         use crate::settings_panel::SshHostEntry;
@@ -5475,12 +5483,15 @@ mod tests {
             auth_type: "key".to_string(),
         }];
         let h1 = compute_tree_state_hash(&state);
-        assert_ne!(h0, h1, "ssh_hosts 追加でハッシュが変化");
+        assert_ne!(
+            h0, h1,
+            "the hash must change when an ssh_hosts entry is added"
+        );
     }
 
-    // ===== Phase 5-11-8 Step 8-2: SSH ホストフィールド編集 =====
+    // ===== Phase 5-11-8 Step 8-2: SSH host field editing =====
 
-    /// テスト用: 2 ホスト入りの SettingsPanel を作る
+    /// Test helper: build a SettingsPanel with 2 hosts.
     fn make_ssh_panel_with_2_hosts() -> SettingsPanel {
         use crate::settings_panel::{SettingsCategory, SshHostEntry};
         let mut panel = SettingsPanel::default();
@@ -5506,7 +5517,7 @@ mod tests {
         panel
     }
 
-    /// SettingsSshField* の NodeId decode
+    /// SettingsSshField* NodeId decode.
     #[test]
     fn settings_ssh_field_node_ids_decode() {
         assert_eq!(
@@ -5529,7 +5540,7 @@ mod tests {
             decode_node_id(SETTINGS_SSH_FIELD_AUTH_TYPE_ID),
             NodeIdKind::SettingsSshFieldAuthType
         );
-        // Phase 5-11-8 Step 8-3 Sub-phase D: 45-49 は Add/Delete ボタン + 削除確認ダイアログ
+        // Phase 5-11-8 Step 8-3 Sub-phase D: 45-49 are Add/Delete buttons + delete confirmation dialog.
         assert_eq!(
             decode_node_id(SETTINGS_SSH_ADD_BTN_ID),
             NodeIdKind::SettingsSshAddBtn
@@ -5550,11 +5561,11 @@ mod tests {
             decode_node_id(SETTINGS_SSH_DELETE_CANCEL_BTN_ID),
             NodeIdKind::SettingsSshDeleteCancelBtn
         );
-        // 50 は予約
+        // 50 is reserved.
         assert_eq!(decode_node_id(NodeId(50)), NodeIdKind::Unknown);
     }
 
-    /// build_tree が選択ホストの 5 フィールドを公開する
+    /// build_tree exposes the 5 fields of the selected host.
     #[test]
     fn build_settings_panel_ssh_exposes_5_field_nodes() {
         let panel = make_ssh_panel_with_2_hosts();
@@ -5568,34 +5579,34 @@ mod tests {
         };
 
         // name (TextInput)
-        let n = find(SETTINGS_SSH_FIELD_NAME_ID).expect("name ノードがある");
+        let n = find(SETTINGS_SSH_FIELD_NAME_ID).expect("name node must exist");
         assert_eq!(n.role(), Role::TextInput);
         assert_eq!(n.value().unwrap_or(""), "prod");
 
         // host (TextInput)
-        let h = find(SETTINGS_SSH_FIELD_HOST_ID).expect("host ノードがある");
+        let h = find(SETTINGS_SSH_FIELD_HOST_ID).expect("host node must exist");
         assert_eq!(h.role(), Role::TextInput);
         assert_eq!(h.value().unwrap_or(""), "prod.example.com");
 
         // port (SpinButton)
-        let p = find(SETTINGS_SSH_FIELD_PORT_ID).expect("port ノードがある");
+        let p = find(SETTINGS_SSH_FIELD_PORT_ID).expect("port node must exist");
         assert_eq!(p.role(), Role::SpinButton);
         assert_eq!(p.numeric_value(), Some(22.0));
         assert_eq!(p.min_numeric_value(), Some(1.0));
         assert_eq!(p.max_numeric_value(), Some(65535.0));
 
         // username (TextInput)
-        let u = find(SETTINGS_SSH_FIELD_USERNAME_ID).expect("username ノードがある");
+        let u = find(SETTINGS_SSH_FIELD_USERNAME_ID).expect("username node must exist");
         assert_eq!(u.role(), Role::TextInput);
         assert_eq!(u.value().unwrap_or(""), "deploy");
 
         // auth_type (ComboBox)
-        let a = find(SETTINGS_SSH_FIELD_AUTH_TYPE_ID).expect("auth_type ノードがある");
+        let a = find(SETTINGS_SSH_FIELD_AUTH_TYPE_ID).expect("auth_type node must exist");
         assert_eq!(a.role(), Role::ComboBox);
         assert_eq!(a.value().unwrap_or(""), "key");
     }
 
-    /// 空ホストリストでは 5 フィールドノードが公開されない
+    /// With an empty host list, the 5 field nodes are not exposed.
     #[test]
     fn build_settings_panel_ssh_no_fields_when_empty() {
         use crate::settings_panel::SettingsCategory;
@@ -5609,10 +5620,13 @@ mod tests {
                 || *id == SETTINGS_SSH_FIELD_HOST_ID
                 || *id == SETTINGS_SSH_FIELD_PORT_ID
         });
-        assert!(!has_field, "空リスト時はフィールドノードを出さない");
+        assert!(
+            !has_field,
+            "no field nodes must be exposed for an empty list"
+        );
     }
 
-    /// ssh_field_focus が name のときフォーカスが name ノードへ
+    /// When ssh_field_focus is name, focus moves to the name node.
     #[test]
     fn build_settings_panel_ssh_focus_follows_ssh_field_focus() {
         let mut panel = make_ssh_panel_with_2_hosts();
@@ -5633,7 +5647,7 @@ mod tests {
         assert_eq!(focus, settings_ssh_host_item_id(0));
     }
 
-    /// dispatch SettingsSshFieldName SetValue で name が更新され dirty=true
+    /// dispatch SettingsSshFieldName SetValue updates name and sets dirty=true.
     #[test]
     fn dispatch_ssh_field_name_set_value() {
         let mut panel = make_ssh_panel_with_2_hosts();
@@ -5651,7 +5665,7 @@ mod tests {
         assert_eq!(panel.ssh_field_focus, 1);
     }
 
-    /// dispatch SettingsSshFieldHost SetValue で host 更新
+    /// dispatch SettingsSshFieldHost SetValue updates host.
     #[test]
     fn dispatch_ssh_field_host_set_value() {
         let mut panel = make_ssh_panel_with_2_hosts();
@@ -5666,12 +5680,12 @@ mod tests {
         assert!(panel.dirty);
     }
 
-    /// dispatch SettingsSshFieldPort SetValue でクランプ動作
+    /// dispatch SettingsSshFieldPort SetValue performs clamping.
     #[test]
     fn dispatch_ssh_field_port_set_value_clamps() {
         let mut panel = make_ssh_panel_with_2_hosts();
 
-        // 範囲内
+        // In-range.
         dispatch_settings_action(
             &mut panel,
             accesskit::Action::SetValue,
@@ -5680,7 +5694,7 @@ mod tests {
         );
         assert_eq!(panel.ssh_hosts[0].port, 8022);
 
-        // 上限超過
+        // Above the upper bound.
         dispatch_settings_action(
             &mut panel,
             accesskit::Action::SetValue,
@@ -5689,7 +5703,7 @@ mod tests {
         );
         assert_eq!(panel.ssh_hosts[0].port, 65535);
 
-        // 下限以下
+        // Below the lower bound.
         dispatch_settings_action(
             &mut panel,
             accesskit::Action::SetValue,
@@ -5722,11 +5736,11 @@ mod tests {
         assert_eq!(panel.ssh_hosts[0].port, initial);
     }
 
-    /// dispatch SettingsSshFieldAuthType Click で次の値に切り替わる
+    /// dispatch SettingsSshFieldAuthType Click cycles to the next value.
     #[test]
     fn dispatch_ssh_field_auth_type_click_cycles() {
         let mut panel = make_ssh_panel_with_2_hosts();
-        // 初期は "key"
+        // Initial value is "key".
         assert_eq!(panel.ssh_hosts[0].auth_type, "key");
 
         dispatch_settings_action(
@@ -5744,7 +5758,7 @@ mod tests {
             &NodeIdKind::SettingsSshFieldAuthType,
             None,
         );
-        // agent → password (循環)
+        // agent → password (cycles)
         assert_eq!(panel.ssh_hosts[0].auth_type, "password");
 
         dispatch_settings_action(
@@ -5753,11 +5767,11 @@ mod tests {
             &NodeIdKind::SettingsSshFieldAuthType,
             None,
         );
-        // password → agent (逆方向)
+        // password → agent (reverse direction)
         assert_eq!(panel.ssh_hosts[0].auth_type, "agent");
     }
 
-    /// dispatch Focus 経路で ssh_field_focus が更新される
+    /// dispatch Focus path updates ssh_field_focus.
     #[test]
     fn dispatch_ssh_field_focus_updates_focus_tracker() {
         let mut panel = make_ssh_panel_with_2_hosts();
@@ -5774,17 +5788,17 @@ mod tests {
             assert!(handled);
             assert_eq!(
                 panel.ssh_field_focus, expected_focus,
-                "kind={:?} の Focus で field_focus={}",
+                "Focus on kind={:?} must set field_focus={}",
                 kind, expected_focus
             );
         }
     }
 
-    /// ホスト切替で ssh_field_focus が 0 にリセットされる
+    /// Switching hosts resets ssh_field_focus to 0.
     #[test]
     fn dispatch_ssh_host_item_resets_field_focus() {
         let mut panel = make_ssh_panel_with_2_hosts();
-        panel.ssh_field_focus = 3; // 何かフィールドにフォーカス中
+        panel.ssh_field_focus = 3; // currently focused on some field
 
         dispatch_settings_action(
             &mut panel,
@@ -5796,17 +5810,17 @@ mod tests {
         assert_eq!(panel.selected_host_index, 1);
         assert_eq!(
             panel.ssh_field_focus, 0,
-            "ホスト切替でフォーカスをリストへ戻す"
+            "switching hosts must move focus back to the list"
         );
     }
 
-    /// 範囲外の SshHostEntry に対する SetValue は no-op で false
+    /// SetValue on an out-of-range SshHostEntry is a no-op returning false.
     #[test]
     fn dispatch_ssh_field_no_op_when_no_host() {
         use crate::settings_panel::SettingsCategory;
         let mut panel = SettingsPanel::default();
         panel.category = SettingsCategory::Ssh;
-        panel.ssh_hosts = vec![]; // 空リスト
+        panel.ssh_hosts = vec![]; // empty list
         panel.dirty = false;
 
         let handled = dispatch_settings_action(
@@ -5815,15 +5829,15 @@ mod tests {
             &NodeIdKind::SettingsSshFieldName,
             Some(accesskit::ActionData::Value("oops".into())),
         );
-        // Focus は更新するが、空リストなので set_ssh_host_name は no-op
-        // → handled=true（Focus tracker は更新したため）だが ssh_hosts は変化なし
+        // Focus is updated, but with an empty list set_ssh_host_name is a no-op
+        // → handled=true (the focus tracker was updated) but ssh_hosts is unchanged.
         assert!(handled);
         assert!(panel.ssh_hosts.is_empty());
-        // 空リストなら set_ssh_host_name が dirty=true を呼ばないので false のまま
+        // With an empty list, set_ssh_host_name does not set dirty=true so it stays false.
         assert!(!panel.dirty);
     }
 
-    /// SshHostEntry mutation API: set_ssh_host_port_value のクランプ
+    /// SshHostEntry mutation API: set_ssh_host_port_value clamps.
     #[test]
     fn set_ssh_host_port_value_clamps() {
         let mut panel = make_ssh_panel_with_2_hosts();
@@ -5837,22 +5851,22 @@ mod tests {
         assert_eq!(panel.ssh_hosts[0].port, 65535);
     }
 
-    /// SSH_AUTH_TYPES 循環: 未知の値からも先頭で復帰
+    /// SSH_AUTH_TYPES cycling: recover at the head even from an unknown value.
     #[test]
     fn next_ssh_auth_type_from_unknown() {
         let mut panel = make_ssh_panel_with_2_hosts();
         panel.ssh_hosts[0].auth_type = "unknown".to_string();
         panel.next_ssh_auth_type();
-        // unknown は position=None なので current=0 (=password) → 次は key
+        // "unknown" has position=None, so current=0 (=password) → next is key.
         assert_eq!(panel.ssh_hosts[0].auth_type, "key");
     }
 
-    /// write_ssh_hosts_back: in-place 更新で未管理フィールドを保持する
+    /// write_ssh_hosts_back: in-place updates preserve unmanaged fields.
     #[test]
     fn write_ssh_hosts_back_preserves_unknown_fields() {
         use crate::settings_panel::{SshHostEntry, write_ssh_hosts_back};
 
-        // 既存 TOML: name + key_path がある
+        // Existing TOML has name + key_path.
         let existing = r#"
 [[hosts]]
 name = "old_name"
@@ -5874,22 +5888,26 @@ forward_local = ["8080:localhost:80"]
         write_ssh_hosts_back(&mut doc, &new_hosts);
 
         let out = doc.to_string();
-        // 管理フィールドが更新されていること
-        assert!(out.contains("name = \"new_name\""), "name 更新");
-        assert!(out.contains("host = \"new.example.com\""), "host 更新");
-        assert!(out.contains("port = 2222"), "port 更新");
-        assert!(out.contains("username = \"newuser\""), "username 更新");
-        assert!(out.contains("auth_type = \"agent\""), "auth_type 更新");
-        // 未管理フィールドが保持されていること
+        // Managed fields are updated.
+        assert!(out.contains("name = \"new_name\""), "name updated");
+        assert!(out.contains("host = \"new.example.com\""), "host updated");
+        assert!(out.contains("port = 2222"), "port updated");
+        assert!(out.contains("username = \"newuser\""), "username updated");
+        assert!(out.contains("auth_type = \"agent\""), "auth_type updated");
+        // Unmanaged fields are preserved.
         assert!(
             out.contains("key_path = \"/home/me/.ssh/id_rsa\""),
-            "key_path 保持: {}",
+            "key_path preserved: {}",
             out
         );
-        assert!(out.contains("forward_local"), "forward_local 保持: {}", out);
+        assert!(
+            out.contains("forward_local"),
+            "forward_local preserved: {}",
+            out
+        );
     }
 
-    /// write_ssh_hosts_back: [[hosts]] がない既存 TOML でも作成できる
+    /// write_ssh_hosts_back: can create a new [[hosts]] array even if it is missing.
     #[test]
     fn write_ssh_hosts_back_creates_new_array() {
         use crate::settings_panel::{SshHostEntry, write_ssh_hosts_back};
@@ -5904,10 +5922,10 @@ forward_local = ["8080:localhost:80"]
         write_ssh_hosts_back(&mut doc, &hosts);
 
         let out = doc.to_string();
-        assert!(out.contains("name = \"first\""), "新規追加: {}", out);
+        assert!(out.contains("name = \"first\""), "newly added: {}", out);
     }
 
-    /// write_ssh_hosts_back: hosts が空でも既存配列を空にできる（Step 8-3 用）
+    /// write_ssh_hosts_back: can empty the existing array even when hosts is empty (for Step 8-3).
     #[test]
     fn write_ssh_hosts_back_truncates_existing() {
         use crate::settings_panel::write_ssh_hosts_back;
@@ -5928,15 +5946,15 @@ auth_type = "key"
 "#;
         let mut doc: toml_edit::DocumentMut = existing.parse().unwrap();
         write_ssh_hosts_back(&mut doc, &[]);
-        // 配列が空になる
+        // The array is empty.
         let arr = doc
             .get("hosts")
             .and_then(|i| i.as_array_of_tables())
-            .expect("hosts 配列が残っている");
+            .expect("hosts array still present");
         assert_eq!(arr.len(), 0);
     }
 
-    /// compute_tree_state_hash が ssh_field_focus 変更を検知する
+    /// compute_tree_state_hash detects ssh_field_focus changes.
     #[test]
     fn tree_state_hash_detects_ssh_field_focus_change() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -5947,14 +5965,14 @@ auth_type = "key"
 
         state.settings_panel.ssh_field_focus = 3;
         let h1 = compute_tree_state_hash(&state);
-        assert_ne!(h0, h1, "ssh_field_focus 変更でハッシュが変化");
+        assert_ne!(h0, h1, "the hash must change when ssh_field_focus changes");
     }
 
     // ============================================================
-    // Sprint 5-11-8 Step 8-3 Sub-phase E: Add / Delete + ダイアログ dispatch テスト
+    // Sprint 5-11-8 Step 8-3 Sub-phase E: Add / Delete + dialog dispatch tests
     // ============================================================
 
-    /// SettingsSshAddBtn Click で新規ホストが追加され編集モードに入る
+    /// SettingsSshAddBtn Click appends a new host and enters edit mode.
     #[test]
     fn dispatch_settings_ssh_add_btn_click_adds_host() {
         let mut panel = make_ssh_panel_with_2_hosts();
@@ -5968,17 +5986,20 @@ auth_type = "key"
         );
 
         assert!(handled);
-        assert_eq!(panel.ssh_hosts.len(), 3, "ホストが 1 つ追加されている");
-        assert_eq!(panel.selected_host_index, 2, "末尾の新規ホストを選択");
-        assert_eq!(panel.ssh_field_focus, 1, "name フィールドにフォーカス");
+        assert_eq!(panel.ssh_hosts.len(), 3, "one host has been added");
+        assert_eq!(
+            panel.selected_host_index, 2,
+            "the new host at the tail is selected"
+        );
+        assert_eq!(panel.ssh_field_focus, 1, "focus is on the name field");
         assert!(
             panel.ssh_field_editing.is_some(),
-            "name 編集モードが即時開始"
+            "name edit mode starts immediately"
         );
         assert!(panel.dirty);
     }
 
-    /// SettingsSshAddBtn Focus は ssh_field_focus = 6 のみセット（追加しない）
+    /// SettingsSshAddBtn Focus only sets ssh_field_focus = 6 (does not append).
     #[test]
     fn dispatch_settings_ssh_add_btn_focus_only_sets_focus() {
         let mut panel = make_ssh_panel_with_2_hosts();
@@ -5995,11 +6016,11 @@ auth_type = "key"
         assert_eq!(
             panel.ssh_hosts.len(),
             2,
-            "Focus だけではホストは追加されない"
+            "Focus alone must not append a host"
         );
     }
 
-    /// SettingsSshDeleteBtn Click で削除確認ダイアログが開く
+    /// SettingsSshDeleteBtn Click opens the delete confirmation dialog.
     #[test]
     fn dispatch_settings_ssh_delete_btn_click_opens_dialog() {
         let mut panel = make_ssh_panel_with_2_hosts();
@@ -6013,15 +6034,15 @@ auth_type = "key"
         );
 
         assert!(handled);
-        assert!(panel.ssh_delete_dialog_open, "ダイアログが開いている");
+        assert!(panel.ssh_delete_dialog_open, "the dialog is open");
         assert!(
             !panel.ssh_delete_dialog_confirm_focused,
-            "Cancel がデフォルトフォーカス"
+            "Cancel is the default focus"
         );
-        assert_eq!(panel.ssh_hosts.len(), 2, "まだ削除はされていない");
+        assert_eq!(panel.ssh_hosts.len(), 2, "no deletion has happened yet");
     }
 
-    /// SettingsSshDeleteBtn Click は空リスト時に no-op（ダイアログ開かない）
+    /// SettingsSshDeleteBtn Click is a no-op when the list is empty (dialog does not open).
     #[test]
     fn dispatch_settings_ssh_delete_btn_click_noop_when_empty() {
         let mut panel = make_ssh_panel_with_2_hosts();
@@ -6035,16 +6056,16 @@ auth_type = "key"
             None,
         );
 
-        // dispatch ハンドラ自体は handled=true を返す（呼び出し記録）が、
-        // open_ssh_delete_dialog の内部チェックでダイアログは開かない。
+        // The dispatch handler itself returns handled=true (the invocation is recorded),
+        // but open_ssh_delete_dialog's internal check keeps the dialog closed.
         assert!(handled);
         assert!(
             !panel.ssh_delete_dialog_open,
-            "空リスト時はダイアログを開かない"
+            "the dialog must not open when the list is empty"
         );
     }
 
-    /// SettingsSshDeleteConfirmBtn Click で削除が実行されダイアログが閉じる
+    /// SettingsSshDeleteConfirmBtn Click performs the deletion and closes the dialog.
     #[test]
     fn dispatch_settings_ssh_delete_confirm_btn_click_deletes_host() {
         let mut panel = make_ssh_panel_with_2_hosts();
@@ -6059,17 +6080,17 @@ auth_type = "key"
         );
 
         assert!(handled);
-        assert_eq!(panel.ssh_hosts.len(), 1, "ホストが 1 つ削除された");
-        assert!(!panel.ssh_delete_dialog_open, "ダイアログが閉じている");
+        assert_eq!(panel.ssh_hosts.len(), 1, "one host has been deleted");
+        assert!(!panel.ssh_delete_dialog_open, "the dialog is closed");
         assert!(panel.dirty);
     }
 
-    /// SettingsSshDeleteCancelBtn Click でダイアログが閉じ、削除は行われない
+    /// SettingsSshDeleteCancelBtn Click closes the dialog without deleting.
     #[test]
     fn dispatch_settings_ssh_delete_cancel_btn_click_closes_dialog() {
         let mut panel = make_ssh_panel_with_2_hosts();
         panel.open_ssh_delete_dialog();
-        panel.ssh_delete_dialog_confirm_focused = true; // どちらでもよい
+        panel.ssh_delete_dialog_confirm_focused = true; // either value is fine
 
         let handled = dispatch_settings_action(
             &mut panel,
@@ -6081,15 +6102,15 @@ auth_type = "key"
         assert!(handled);
         assert!(!panel.ssh_delete_dialog_open);
         assert!(!panel.ssh_delete_dialog_confirm_focused);
-        assert_eq!(panel.ssh_hosts.len(), 2, "削除はされない");
+        assert_eq!(panel.ssh_hosts.len(), 2, "no deletion happens");
     }
 
-    /// Confirm / Cancel ボタンの Focus はフォーカスフラグのみ更新（削除実行なし）
+    /// Confirm / Cancel button Focus only toggles the focus flag (no delete).
     #[test]
     fn dispatch_settings_ssh_delete_dialog_focus_toggles_flag() {
         let mut panel = make_ssh_panel_with_2_hosts();
         panel.open_ssh_delete_dialog();
-        // 初期状態: Cancel フォーカス
+        // Initial state: Cancel focused.
         assert!(!panel.ssh_delete_dialog_confirm_focused);
 
         let handled = dispatch_settings_action(
@@ -6101,9 +6122,9 @@ auth_type = "key"
         assert!(handled);
         assert!(
             panel.ssh_delete_dialog_confirm_focused,
-            "Confirm Focus でフラグが立つ"
+            "Confirm Focus must raise the flag"
         );
-        assert!(panel.ssh_delete_dialog_open, "ダイアログは開いたまま");
+        assert!(panel.ssh_delete_dialog_open, "the dialog stays open");
 
         let handled = dispatch_settings_action(
             &mut panel,
@@ -6114,11 +6135,11 @@ auth_type = "key"
         assert!(handled);
         assert!(
             !panel.ssh_delete_dialog_confirm_focused,
-            "Cancel Focus でフラグが解除"
+            "Cancel Focus must clear the flag"
         );
     }
 
-    /// compute_tree_state_hash が ssh_delete_dialog_open / confirm_focused 変更を検知する
+    /// compute_tree_state_hash detects ssh_delete_dialog_open / confirm_focused changes.
     #[test]
     fn tree_state_hash_detects_ssh_delete_dialog_changes() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -6126,14 +6147,14 @@ auth_type = "key"
         state.settings_panel.is_open = true;
         let h0 = compute_tree_state_hash(&state);
 
-        // ダイアログを開く
+        // Open the dialog.
         state.settings_panel.open_ssh_delete_dialog();
         let h1 = compute_tree_state_hash(&state);
-        assert_ne!(h0, h1, "ダイアログ open でハッシュが変化");
+        assert_ne!(h0, h1, "the hash must change when the dialog opens");
 
-        // Confirm にフォーカス移動
+        // Move focus to Confirm.
         state.settings_panel.ssh_delete_dialog_confirm_focused = true;
         let h2 = compute_tree_state_hash(&state);
-        assert_ne!(h1, h2, "confirm_focused 変更でハッシュが変化");
+        assert_ne!(h1, h2, "the hash must change when confirm_focused changes");
     }
 }
