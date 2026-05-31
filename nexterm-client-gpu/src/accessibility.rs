@@ -182,7 +182,32 @@ pub const SETTINGS_SSH_DELETE_CONFIRM_BTN_ID: NodeId = NodeId(48);
 /// Phase 5-11-8 Step 8-3 Sub-phase D - "Cancel" button in the SSH delete dialog.
 pub const SETTINGS_SSH_DELETE_CANCEL_BTN_ID: NodeId = NodeId(49);
 
-// 50..99 reserved for future fields (Keybindings editor, etc.).
+/// Phase 5-11-9 Sub-phase E - Keybindings category: key field of the selected binding (TextInput).
+///
+/// While `key_editing` is in `Record` mode, the SR-visible label/description
+/// communicates "Press a key now"; outside Record mode the value field carries
+/// the binding's literal key string (e.g. `"ctrl+shift+p"`).
+pub const SETTINGS_KEY_FIELD_KEY_ID: NodeId = NodeId(50);
+
+/// Phase 5-11-9 Sub-phase E - Keybindings category: action field of the selected binding (ComboBox).
+pub const SETTINGS_KEY_FIELD_ACTION_ID: NodeId = NodeId(51);
+
+/// Phase 5-11-9 Sub-phase E - Keybindings category: add-binding button.
+pub const SETTINGS_KEY_ADD_BTN_ID: NodeId = NodeId(52);
+
+/// Phase 5-11-9 Sub-phase E - Keybindings category: delete-binding button.
+pub const SETTINGS_KEY_DELETE_BTN_ID: NodeId = NodeId(53);
+
+/// Phase 5-11-9 Sub-phase E - Keybindings delete-confirmation dialog body (Role::AlertDialog).
+pub const SETTINGS_KEY_DELETE_DIALOG_ID: NodeId = NodeId(54);
+
+/// Phase 5-11-9 Sub-phase E - "Delete" confirmation button in the Keybindings delete dialog.
+pub const SETTINGS_KEY_DELETE_CONFIRM_BTN_ID: NodeId = NodeId(55);
+
+/// Phase 5-11-9 Sub-phase E - "Cancel" button in the Keybindings delete dialog.
+pub const SETTINGS_KEY_DELETE_CANCEL_BTN_ID: NodeId = NodeId(56);
+
+// 57..99 reserved for future fields.
 
 /// Base NodeId for settings panel category tabs.
 ///
@@ -234,6 +259,22 @@ const NODE_ID_SETTINGS_PROFILE_OFFSET: u64 = 600_000_000;
 /// `NODE_ID_TAB_OFFSET = 1e9`. The range 700M..800M is reserved for future
 /// dynamic expansion of SettingsField.
 const NODE_ID_SETTINGS_SSH_HOST_OFFSET: u64 = 800_000_000;
+
+/// Dynamic items of the SettingsPanel Keybindings category (`900_000_000 + idx`, Phase 5-11-9 Sub-phase E).
+///
+/// Each `KeyBindingEntry` of `SettingsPanel.keybindings` is exposed as
+/// `Role::ListBoxOption`. `selected_key_index` identifies the currently
+/// selected entry.
+///
+/// Range: `[900_000_000, 1_000_000_000)`. Sits just below
+/// `NODE_ID_TAB_OFFSET = 1e9`, so 100M of headroom matches what other
+/// dynamic offsets enjoy.
+const NODE_ID_SETTINGS_KEY_BINDING_OFFSET: u64 = 900_000_000;
+
+/// Phase 5-11-9 Sub-phase E - Compute the NodeId of a key binding list item.
+pub fn settings_key_binding_item_id(idx: usize) -> NodeId {
+    NodeId(NODE_ID_SETTINGS_KEY_BINDING_OFFSET + idx as u64)
+}
 
 /// Offset used to compute a tab node's NodeId.
 ///
@@ -605,6 +646,23 @@ pub enum NodeIdKind {
     SettingsSshDeleteConfirmBtn,
     /// Phase 5-11-8 Step 8-3 Sub-phase D: SSH delete confirmation dialog "Cancel" button.
     SettingsSshDeleteCancelBtn,
+    /// Phase 5-11-9 Sub-phase E: Keybindings category list item
+    /// (`idx` is the index in `SettingsPanel.keybindings`).
+    SettingsKeyBindingItem { idx: usize },
+    /// Phase 5-11-9 Sub-phase E: key field of the selected binding (TextInput).
+    SettingsKeyFieldKey,
+    /// Phase 5-11-9 Sub-phase E: action field of the selected binding (ComboBox).
+    SettingsKeyFieldAction,
+    /// Phase 5-11-9 Sub-phase E: Keybindings category add-binding button.
+    SettingsKeyAddBtn,
+    /// Phase 5-11-9 Sub-phase E: Keybindings category delete-binding button.
+    SettingsKeyDeleteBtn,
+    /// Phase 5-11-9 Sub-phase E: Keybindings delete confirmation dialog body.
+    SettingsKeyDeleteDialog,
+    /// Phase 5-11-9 Sub-phase E: Keybindings delete confirmation "Delete" button.
+    SettingsKeyDeleteConfirmBtn,
+    /// Phase 5-11-9 Sub-phase E: Keybindings delete confirmation "Cancel" button.
+    SettingsKeyDeleteCancelBtn,
     /// Unknown / out-of-range NodeId.
     Unknown,
 }
@@ -625,7 +683,9 @@ pub enum NodeIdKind {
 /// | 30..35 | settings fields (FontFamily / FontSize / ThemeScheme / WindowOpacity / StartupLanguage / StartupAutoUpdate) |
 /// | 36..39 | settings fields Phase 5-11-6 #6 (CursorStyle / PaddingX / PaddingY / PresentMode) |
 /// | 40..44 | settings fields Phase 5-11-8 Step 8-2 (SshFieldName / Host / Port / Username / AuthType) |
-/// | 45..99 | reserved |
+/// | 45..49 | settings fields Phase 5-11-8 Step 8-3 (SshAddBtn / SshDeleteBtn / SshDeleteDialog / SshDeleteConfirmBtn / SshDeleteCancelBtn) |
+/// | 50..56 | settings fields Phase 5-11-9 Sub-phase E (KeyFieldKey / KeyFieldAction / KeyAddBtn / KeyDeleteBtn / KeyDeleteDialog / KeyDeleteConfirmBtn / KeyDeleteCancelBtn) |
+/// | 57..99 | reserved |
 /// | 100M..200M | `PaletteItem { idx: id - 100M }` |
 /// | 200M..300M | `HostItem { idx: id - 200M }` |
 /// | 300M..400M | `MacroItem { idx: id - 300M }` |
@@ -634,7 +694,7 @@ pub enum NodeIdKind {
 /// | 600M..700M | `SettingsProfileItem { idx: id - 600M }` (Phase 5-11-7) |
 /// | 700M..800M | reserved (future dynamic SettingsField expansion) |
 /// | 800M..900M | `SettingsSshHostItem { idx: id - 800M }` (Phase 5-11-8 Step 8-1) |
-/// | 900M..1G | reserved (Keybindings dynamic expansion, Phase 5-11-8 Step 8-4) |
+/// | 900M..1G | `SettingsKeyBindingItem { idx: id - 900M }` (Phase 5-11-9 Sub-phase E) |
 /// | 1G..1G+u32::MAX | `Tab { pane_id: id - 1G }` |
 /// | 10G..10G+u32::MAX | `Pane { pane_id: id - 10G }` |
 /// | 20G..~4.3T | `PaneRow` / `PaneScrollbackRow` (Sprint 5-11-3 / 5-11-4) |
@@ -690,6 +750,14 @@ pub fn decode_node_id(id: NodeId) -> NodeIdKind {
         47 => NodeIdKind::SettingsSshDeleteDialog,
         48 => NodeIdKind::SettingsSshDeleteConfirmBtn,
         49 => NodeIdKind::SettingsSshDeleteCancelBtn,
+        // Phase 5-11-9 Sub-phase E: Keybindings editor fields + Add/Delete + dialog
+        50 => NodeIdKind::SettingsKeyFieldKey,
+        51 => NodeIdKind::SettingsKeyFieldAction,
+        52 => NodeIdKind::SettingsKeyAddBtn,
+        53 => NodeIdKind::SettingsKeyDeleteBtn,
+        54 => NodeIdKind::SettingsKeyDeleteDialog,
+        55 => NodeIdKind::SettingsKeyDeleteConfirmBtn,
+        56 => NodeIdKind::SettingsKeyDeleteCancelBtn,
         _ => decode_dynamic(raw),
     }
 }
@@ -738,6 +806,14 @@ fn decode_dynamic(raw: u64) -> NodeIdKind {
     {
         return NodeIdKind::SettingsSshHostItem {
             idx: (raw - NODE_ID_SETTINGS_SSH_HOST_OFFSET) as usize,
+        };
+    }
+    // Phase 5-11-9 Sub-phase E: SettingsPanel Keybindings item range: [900M, 1G)
+    if (NODE_ID_SETTINGS_KEY_BINDING_OFFSET..NODE_ID_SETTINGS_KEY_BINDING_OFFSET + DYN_RANGE)
+        .contains(&raw)
+    {
+        return NodeIdKind::SettingsKeyBindingItem {
+            idx: (raw - NODE_ID_SETTINGS_KEY_BINDING_OFFSET) as usize,
         };
     }
     // Tab range: [1e9, 1e9 + u32::MAX] = [1e9, 1e9 + ~4.29e9] ≈ [1e9, 5.3e9]
@@ -1437,7 +1513,7 @@ fn build_macro_picker_nodes(picker: &MacroPicker) -> (Vec<(NodeId, Node)>, NodeI
 /// Focus: the editing field while `font_family_editing` is true; for the Window
 /// category, follows `window_field_focus`; otherwise the current category tab.
 fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, NodeId) {
-    use crate::settings_panel::SettingsCategory;
+    use crate::settings_panel::{KeyEditMode, SettingsCategory};
 
     let mut nodes: Vec<(NodeId, Node)> = Vec::with_capacity(16);
 
@@ -1459,6 +1535,13 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
         && !panel.ssh_hosts.is_empty()
     {
         panel_children.push(SETTINGS_SSH_DELETE_DIALOG_ID);
+    }
+    // Phase 5-11-9 Sub-phase E: Keybindings delete confirmation dialog.
+    if panel.key_delete_dialog_open
+        && matches!(panel.category, SettingsCategory::Keybindings)
+        && !panel.keybindings.is_empty()
+    {
+        panel_children.push(SETTINGS_KEY_DELETE_DIALOG_ID);
     }
     dialog.set_children(panel_children);
     nodes.push((SETTINGS_PANEL_ID, dialog));
@@ -1770,13 +1853,107 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
             content_children.push(SETTINGS_SSH_DELETE_BTN_ID);
         }
         SettingsCategory::Keybindings => {
-            // Phase 5-11-7: keybindings also go through nexterm.toml and cannot be
-            // edited from the settings panel. Expose guidance text via description for SR.
-            content_description = Some(
-                "Keybindings are managed under the [[keys]] section of nexterm.toml \
-                 and cannot be edited from this panel."
-                    .to_string(),
+            // Phase 5-11-9 Sub-phase E: expose the keybinding list as ListBox +
+            // ListBoxOption (NodeId 900M+idx), expose the selected binding's key /
+            // action as TextInput / ComboBox (NodeId 50 / 51), and expose
+            // Add / Delete buttons (NodeId 52 / 53) plus the delete confirmation
+            // dialog (NodeId 54..56). Mirrors the SSH Sub-phase D layout.
+            if panel.keybindings.is_empty() {
+                content_description = Some(
+                    "No keybindings are registered. \
+                     Press the Add new keybinding button (Tab to the end of the list)."
+                        .to_string(),
+                );
+            } else {
+                // ===== Keybinding list =====
+                let item_ids: Vec<NodeId> = (0..panel.keybindings.len())
+                    .map(settings_key_binding_item_id)
+                    .collect();
+                for (idx, kb) in panel.keybindings.iter().enumerate() {
+                    let mut item = Node::new(Role::ListBoxOption);
+                    item.set_label(kb.label());
+                    if idx == panel.selected_key_index {
+                        item.set_selected(true);
+                    }
+                    nodes.push((settings_key_binding_item_id(idx), item));
+                }
+                for id in &item_ids {
+                    content_children.push(*id);
+                }
+
+                // ===== Field editing for the selected binding =====
+                let sel = panel.selected_key_index.min(panel.keybindings.len() - 1);
+                let kb = &panel.keybindings[sel];
+
+                // Key field (TextInput). Q1 = (c): both Click (enters Record mode)
+                // and SetValue (direct overwrite) are accepted. While Text-mode
+                // editing is in flight expose the live buffer; while Record-mode
+                // is active expose a guidance description.
+                let mut key_node = Node::new(Role::TextInput);
+                key_node.set_label("Key combination (key)");
+                let key_val = match &panel.key_editing {
+                    Some(KeyEditMode::Text(s)) => s.display_string(),
+                    _ => kb.key.clone(),
+                };
+                key_node.set_value(key_val.as_str());
+                if panel.is_key_recording() {
+                    key_node.set_description(
+                        "Recording: press the key combination to bind, or Esc to cancel.",
+                    );
+                } else {
+                    key_node.set_description(
+                        "Click to start recording the next key press, or SetValue to overwrite the spelling directly (e.g. \"ctrl+shift+p\").",
+                    );
+                }
+                nodes.push((SETTINGS_KEY_FIELD_KEY_ID, key_node));
+                content_children.push(SETTINGS_KEY_FIELD_KEY_ID);
+
+                // Action field (ComboBox cycling KEYBINDING_ACTIONS).
+                let mut action_node = Node::new(Role::ComboBox);
+                action_node.set_label("Action");
+                action_node.set_value(kb.action.as_str());
+                action_node.set_description(
+                    "Use Left/Right to cycle the action, or SetValue to set it directly. Unknown values are rejected.",
+                );
+                nodes.push((SETTINGS_KEY_FIELD_ACTION_ID, action_node));
+                content_children.push(SETTINGS_KEY_FIELD_ACTION_ID);
+
+                content_description = Some(format!(
+                    "Editing binding {} of {}. Use Up/Down to move between fields, Enter to save.",
+                    sel + 1,
+                    panel.keybindings.len(),
+                ));
+            }
+
+            // ===== Add / Delete buttons (always exposed) =====
+            let mut add_btn = Node::new(Role::Button);
+            add_btn.set_label("Add new keybinding");
+            add_btn.set_description(
+                "Enter or Click appends a fresh keybinding and immediately starts recording its key.",
             );
+            if panel.key_field_focus == 3 {
+                add_btn.set_selected(true);
+            }
+            nodes.push((SETTINGS_KEY_ADD_BTN_ID, add_btn));
+            content_children.push(SETTINGS_KEY_ADD_BTN_ID);
+
+            let mut delete_btn = Node::new(Role::Button);
+            if panel.keybindings.is_empty() {
+                delete_btn.set_label("Delete selected keybinding (disabled)");
+                delete_btn.set_description(
+                    "No keybinding is available to delete. Add a new keybinding first.",
+                );
+            } else {
+                delete_btn.set_label("Delete selected keybinding");
+                delete_btn.set_description(
+                    "Enter or Click opens the delete confirmation dialog. Esc or Cancel dismisses it.",
+                );
+                if panel.key_field_focus == 4 {
+                    delete_btn.set_selected(true);
+                }
+            }
+            nodes.push((SETTINGS_KEY_DELETE_BTN_ID, delete_btn));
+            content_children.push(SETTINGS_KEY_DELETE_BTN_ID);
         }
     }
 
@@ -1840,6 +2017,41 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
                 settings_ssh_host_item_id(panel.selected_host_index.min(panel.ssh_hosts.len() - 1))
             }
         }
+    } else if matches!(panel.category, SettingsCategory::Keybindings)
+        && panel.key_delete_dialog_open
+        && !panel.keybindings.is_empty()
+    {
+        // Phase 5-11-9 Sub-phase E: while the delete confirmation dialog is open,
+        // move focus to the active button (Confirm/Cancel) inside the dialog.
+        if panel.key_delete_dialog_confirm_focused {
+            SETTINGS_KEY_DELETE_CONFIRM_BTN_ID
+        } else {
+            SETTINGS_KEY_DELETE_CANCEL_BTN_ID
+        }
+    } else if matches!(panel.category, SettingsCategory::Keybindings) && panel.key_field_focus == 3
+    {
+        // Add button is active even when the keybinding list is empty.
+        SETTINGS_KEY_ADD_BTN_ID
+    } else if matches!(panel.category, SettingsCategory::Keybindings)
+        && panel.key_field_focus == 4
+        && !panel.keybindings.is_empty()
+    {
+        // Delete button is focusable only when the list is non-empty.
+        SETTINGS_KEY_DELETE_BTN_ID
+    } else if matches!(panel.category, SettingsCategory::Keybindings)
+        && !panel.keybindings.is_empty()
+    {
+        // Phase 5-11-9 Sub-phase E: focus selection for the Keybindings category.
+        // key_field_focus = 0 -> selected item of the binding list
+        // key_field_focus = 1 -> Key field
+        // key_field_focus = 2 -> Action field
+        match panel.key_field_focus {
+            1 => SETTINGS_KEY_FIELD_KEY_ID,
+            2 => SETTINGS_KEY_FIELD_ACTION_ID,
+            _ => settings_key_binding_item_id(
+                panel.selected_key_index.min(panel.keybindings.len() - 1),
+            ),
+        }
     } else {
         settings_tab_id_at(current_idx)
     };
@@ -1889,6 +2101,49 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
             confirm_btn.set_selected(true);
         }
         nodes.push((SETTINGS_SSH_DELETE_CONFIRM_BTN_ID, confirm_btn));
+    }
+
+    // ===== Phase 5-11-9 Sub-phase E: build the Keybindings delete confirmation dialog =====
+    // Mirrors the SSH dialog block: `SETTINGS_KEY_DELETE_DIALOG_ID` is already pushed
+    // into `panel_children` (see the top of this function); here we build the AlertDialog
+    // body and its Cancel / Confirm children. Skipped when the list is empty (treated
+    // as dialog_open=false, since there is nothing to delete).
+    if panel.key_delete_dialog_open
+        && matches!(panel.category, SettingsCategory::Keybindings)
+        && !panel.keybindings.is_empty()
+    {
+        let sel = panel.selected_key_index.min(panel.keybindings.len() - 1);
+        let target = &panel.keybindings[sel];
+        let target_label = target.label();
+
+        let mut alert = Node::new(Role::AlertDialog);
+        alert.set_label("Delete this keybinding?");
+        alert.set_description(format!(
+            "Delete \"{}\"? This action cannot be undone.",
+            target_label
+        ));
+        alert.set_modal();
+        alert.set_children(vec![
+            SETTINGS_KEY_DELETE_CANCEL_BTN_ID,
+            SETTINGS_KEY_DELETE_CONFIRM_BTN_ID,
+        ]);
+        nodes.push((SETTINGS_KEY_DELETE_DIALOG_ID, alert));
+
+        let mut cancel_btn = Node::new(Role::Button);
+        cancel_btn.set_label("Cancel");
+        cancel_btn.set_description("Esc / Left / Right / Tab to switch focus; Enter to confirm.");
+        if !panel.key_delete_dialog_confirm_focused {
+            cancel_btn.set_selected(true);
+        }
+        nodes.push((SETTINGS_KEY_DELETE_CANCEL_BTN_ID, cancel_btn));
+
+        let mut confirm_btn = Node::new(Role::Button);
+        confirm_btn.set_label("Delete");
+        confirm_btn.set_description("Permanently deletes the selected keybinding.");
+        if panel.key_delete_dialog_confirm_focused {
+            confirm_btn.set_selected(true);
+        }
+        nodes.push((SETTINGS_KEY_DELETE_CONFIRM_BTN_ID, confirm_btn));
     }
 
     (nodes, focus)
@@ -2128,6 +2383,31 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
         // per-host field hash.
         p.ssh_delete_dialog_open.hash(&mut h);
         p.ssh_delete_dialog_confirm_focused.hash(&mut h);
+        // Phase 5-11-9 Sub-phase E: Keybindings category fields.
+        // Reflect everything `build_settings_panel_nodes` reads:
+        //   - keybindings list (key / action per entry)
+        //   - selected_key_index / key_field_focus
+        //   - delete dialog open / confirm focus
+        //   - key_editing mode (Record / Text + Text buffer) for live updates
+        p.selected_key_index.hash(&mut h);
+        p.key_field_focus.hash(&mut h);
+        p.keybindings.len().hash(&mut h);
+        for kb in &p.keybindings {
+            kb.key.hash(&mut h);
+            kb.action.hash(&mut h);
+        }
+        p.key_delete_dialog_open.hash(&mut h);
+        p.key_delete_dialog_confirm_focused.hash(&mut h);
+        match &p.key_editing {
+            None => 0u8.hash(&mut h),
+            Some(crate::settings_panel::KeyEditMode::Record) => 1u8.hash(&mut h),
+            Some(crate::settings_panel::KeyEditMode::Text(s)) => {
+                2u8.hash(&mut h);
+                s.buffer.hash(&mut h);
+                s.cursor.hash(&mut h);
+                s.preedit.hash(&mut h);
+            }
+        }
     }
 
     // === Quick Select (Step 2-2-h) ===
@@ -2507,6 +2787,98 @@ pub fn dispatch_settings_action(
         }
         (Action::Click, NodeIdKind::SettingsSshDeleteConfirmBtn) => {
             panel.confirm_ssh_delete_dialog();
+            true
+        }
+
+        // ===== Phase 5-11-9 Sub-phase E: Keybinding list item (ListBoxOption) =====
+        // Both Click and Focus update `selected_key_index` and reset focus to the list.
+        (Action::Click | Action::Focus, NodeIdKind::SettingsKeyBindingItem { idx })
+            if *idx < panel.keybindings.len() =>
+        {
+            panel.selected_key_index = *idx;
+            panel.key_field_focus = 0;
+            true
+        }
+
+        // ===== Phase 5-11-9 Sub-phase E: Key field (TextInput) =====
+        // Q1 = (c): Click triggers Record mode AND SetValue writes the spelling directly.
+        (Action::Focus, NodeIdKind::SettingsKeyFieldKey) => {
+            panel.key_field_focus = 1;
+            true
+        }
+        (Action::Click, NodeIdKind::SettingsKeyFieldKey) => {
+            panel.key_field_focus = 1;
+            panel.begin_key_record();
+            true
+        }
+        (Action::SetValue, NodeIdKind::SettingsKeyFieldKey) => {
+            if let Some(ActionData::Value(s)) = data {
+                let updated = panel.set_keybinding_key_direct(s.into_string());
+                panel.key_field_focus = 1;
+                updated
+            } else {
+                false
+            }
+        }
+
+        // ===== Phase 5-11-9 Sub-phase E: Action field (ComboBox) =====
+        (Action::Focus, NodeIdKind::SettingsKeyFieldAction) => {
+            panel.key_field_focus = 2;
+            true
+        }
+        (Action::Click | Action::Increment, NodeIdKind::SettingsKeyFieldAction) => {
+            panel.next_key_action();
+            panel.key_field_focus = 2;
+            true
+        }
+        (Action::Decrement, NodeIdKind::SettingsKeyFieldAction) => {
+            panel.prev_key_action();
+            panel.key_field_focus = 2;
+            true
+        }
+        (Action::SetValue, NodeIdKind::SettingsKeyFieldAction) => {
+            if let Some(ActionData::Value(s)) = data {
+                let updated = panel.set_keybinding_action_direct(s.as_ref());
+                panel.key_field_focus = 2;
+                updated
+            } else {
+                false
+            }
+        }
+
+        // ===== Phase 5-11-9 Sub-phase E: Add / Delete buttons =====
+        (Action::Focus, NodeIdKind::SettingsKeyAddBtn) => {
+            panel.key_field_focus = 3;
+            true
+        }
+        (Action::Click, NodeIdKind::SettingsKeyAddBtn) => {
+            panel.add_key_binding();
+            true
+        }
+        (Action::Focus, NodeIdKind::SettingsKeyDeleteBtn) => {
+            panel.key_field_focus = 4;
+            true
+        }
+        (Action::Click, NodeIdKind::SettingsKeyDeleteBtn) => {
+            panel.open_key_delete_dialog();
+            true
+        }
+
+        // ===== Phase 5-11-9 Sub-phase E: delete confirmation dialog =====
+        (Action::Focus, NodeIdKind::SettingsKeyDeleteCancelBtn) => {
+            panel.key_delete_dialog_confirm_focused = false;
+            true
+        }
+        (Action::Click, NodeIdKind::SettingsKeyDeleteCancelBtn) => {
+            panel.cancel_key_delete_dialog();
+            true
+        }
+        (Action::Focus, NodeIdKind::SettingsKeyDeleteConfirmBtn) => {
+            panel.key_delete_dialog_confirm_focused = true;
+            true
+        }
+        (Action::Click, NodeIdKind::SettingsKeyDeleteConfirmBtn) => {
+            panel.confirm_key_delete_dialog();
             true
         }
 
@@ -3140,15 +3512,17 @@ mod tests {
         // 30..=35 are settings fields (Step 2-2-e'), 36..=39 are Phase 5-11-6 #6 settings fields,
         // 40..=44 are Phase 5-11-8 Step 8-2 SSH host fields,
         // 45..=49 are Phase 5-11-8 Step 8-3 Sub-phase D Add/Delete + delete confirmation dialog.
-        // 28..=29 and 50..=99 are reserved for future use.
+        // 50..=56 are Phase 5-11-9 Sub-phase E Keybindings fields + Add/Delete + dialog.
+        // 28..=29 and 57..=99 are reserved for future use.
         assert_eq!(decode_node_id(NodeId(28)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(29)), NodeIdKind::Unknown);
-        assert_eq!(decode_node_id(NodeId(50)), NodeIdKind::Unknown);
+        assert_eq!(decode_node_id(NodeId(57)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(99)), NodeIdKind::Unknown);
-        // 700M..999M is reserved for future SettingsField dynamic expansion
-        // (600M..700M was assigned to SettingsProfileItem in Phase 5-11-7).
+        // 700M..899M is reserved for future SettingsField dynamic expansion
+        // (600M..700M was assigned to SettingsProfileItem in Phase 5-11-7;
+        //  900M..1G is SettingsKeyBindingItem in Phase 5-11-9 Sub-phase E).
         assert_eq!(decode_node_id(NodeId(700_000_000)), NodeIdKind::Unknown);
-        assert_eq!(decode_node_id(NodeId(999_999_999)), NodeIdKind::Unknown);
+        assert_eq!(decode_node_id(NodeId(799_999_999)), NodeIdKind::Unknown);
         // The gap between the Tab and Pane ranges (5.3e9..1e10) is also Unknown.
         assert_eq!(decode_node_id(NodeId(7_000_000_000)), NodeIdKind::Unknown);
         // The gap between the Pane range and the row range (1e10 + u32::MAX .. 2e10) is also Unknown.
@@ -5117,12 +5491,14 @@ mod tests {
         );
     }
 
-    /// The Keybindings category also has a description pointing to TOML editing.
+    /// Phase 5-11-9 Sub-phase E: the Keybindings category now exposes interactive
+    /// GUI nodes and a non-empty description (no longer the TOML-editing guidance).
     #[test]
     fn build_settings_panel_keybindings_has_informative_description() {
         use crate::settings_panel::SettingsCategory;
         let mut panel = SettingsPanel::default();
         panel.category = SettingsCategory::Keybindings;
+        // Leave the default `keybindings` list intact (built-in defaults are loaded).
 
         let (nodes, _focus) = build_settings_panel_nodes(&panel);
         let content = nodes
@@ -5130,8 +5506,11 @@ mod tests {
             .find(|(id, _)| *id == SETTINGS_CONTENT_ID)
             .unwrap();
         let desc = content.1.description().unwrap_or("");
-        assert!(desc.contains("nexterm.toml"), "guidance text: {}", desc);
-        assert!(desc.contains("[[keys]]"), "guidance text: {}", desc);
+        assert!(
+            desc.contains("Editing binding") || desc.contains("No keybindings"),
+            "guidance text: {}",
+            desc
+        );
         assert!(
             !desc.contains("not implemented yet"),
             "the \"not implemented\" wording must be gone"
@@ -5252,13 +5631,12 @@ mod tests {
         );
     }
 
-    /// Reserved ranges 700M..800M and 900M..1G remain Unknown.
+    /// Reserved range 700M..800M remains Unknown. (900M..1G is now assigned to
+    /// SettingsKeyBindingItem in Phase 5-11-9 Sub-phase E.)
     #[test]
     fn settings_ssh_host_offset_reserved_ranges_are_unknown() {
         assert_eq!(decode_node_id(NodeId(700_000_000)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(799_999_999)), NodeIdKind::Unknown);
-        assert_eq!(decode_node_id(NodeId(900_000_000)), NodeIdKind::Unknown);
-        assert_eq!(decode_node_id(NodeId(999_999_999)), NodeIdKind::Unknown);
     }
 
     /// The empty SSH category includes "No SSH hosts are registered" plus GUI add guidance.
@@ -5561,8 +5939,9 @@ mod tests {
             decode_node_id(SETTINGS_SSH_DELETE_CANCEL_BTN_ID),
             NodeIdKind::SettingsSshDeleteCancelBtn
         );
-        // 50 is reserved.
-        assert_eq!(decode_node_id(NodeId(50)), NodeIdKind::Unknown);
+        // NodeId(57) is reserved (50..=56 are now assigned to the Keybindings panel
+        // in Phase 5-11-9 Sub-phase E).
+        assert_eq!(decode_node_id(NodeId(57)), NodeIdKind::Unknown);
     }
 
     /// build_tree exposes the 5 fields of the selected host.
@@ -6156,5 +6535,594 @@ auth_type = "key"
         state.settings_panel.ssh_delete_dialog_confirm_focused = true;
         let h2 = compute_tree_state_hash(&state);
         assert_ne!(h1, h2, "the hash must change when confirm_focused changes");
+    }
+
+    // ===================================================================
+    // Phase 5-11-9 Sub-phase E: Keybindings AccessKit tests
+    // ===================================================================
+
+    /// Test factory: SettingsPanel preloaded with 2 keybindings on the Keybindings category.
+    fn make_key_panel_with_2_bindings() -> SettingsPanel {
+        use crate::settings_panel::{KEYBINDING_ACTIONS, KeyBindingEntry, SettingsCategory};
+        let mut panel = SettingsPanel::default();
+        panel.category = SettingsCategory::Keybindings;
+        panel.keybindings = vec![
+            KeyBindingEntry {
+                key: "ctrl+shift+p".to_string(),
+                action: KEYBINDING_ACTIONS[0].to_string(),
+            },
+            KeyBindingEntry {
+                key: "ctrl+b d".to_string(),
+                action: KEYBINDING_ACTIONS[1].to_string(),
+            },
+        ];
+        panel.selected_key_index = 0;
+        panel.key_field_focus = 0;
+        panel
+    }
+
+    // ----- decode tests (7) -----
+
+    #[test]
+    fn settings_keybinding_dynamic_node_id_decode() {
+        // Boundary at offset 0.
+        assert_eq!(
+            decode_node_id(settings_key_binding_item_id(0)),
+            NodeIdKind::SettingsKeyBindingItem { idx: 0 }
+        );
+        // Mid-range value.
+        assert_eq!(
+            decode_node_id(settings_key_binding_item_id(42)),
+            NodeIdKind::SettingsKeyBindingItem { idx: 42 }
+        );
+    }
+
+    #[test]
+    fn settings_keybinding_dynamic_node_id_roundtrip() {
+        for &idx in &[0usize, 1, 9, 99, 999, 12_345] {
+            let id = settings_key_binding_item_id(idx);
+            assert_eq!(
+                decode_node_id(id),
+                NodeIdKind::SettingsKeyBindingItem { idx }
+            );
+        }
+    }
+
+    #[test]
+    fn settings_key_field_key_id_decodes() {
+        assert_eq!(
+            decode_node_id(SETTINGS_KEY_FIELD_KEY_ID),
+            NodeIdKind::SettingsKeyFieldKey
+        );
+    }
+
+    #[test]
+    fn settings_key_field_action_id_decodes() {
+        assert_eq!(
+            decode_node_id(SETTINGS_KEY_FIELD_ACTION_ID),
+            NodeIdKind::SettingsKeyFieldAction
+        );
+    }
+
+    #[test]
+    fn settings_key_add_btn_id_decodes() {
+        assert_eq!(
+            decode_node_id(SETTINGS_KEY_ADD_BTN_ID),
+            NodeIdKind::SettingsKeyAddBtn
+        );
+    }
+
+    #[test]
+    fn settings_key_delete_btn_id_decodes() {
+        assert_eq!(
+            decode_node_id(SETTINGS_KEY_DELETE_BTN_ID),
+            NodeIdKind::SettingsKeyDeleteBtn
+        );
+    }
+
+    #[test]
+    fn settings_key_delete_dialog_ids_decode() {
+        assert_eq!(
+            decode_node_id(SETTINGS_KEY_DELETE_DIALOG_ID),
+            NodeIdKind::SettingsKeyDeleteDialog
+        );
+        assert_eq!(
+            decode_node_id(SETTINGS_KEY_DELETE_CONFIRM_BTN_ID),
+            NodeIdKind::SettingsKeyDeleteConfirmBtn
+        );
+        assert_eq!(
+            decode_node_id(SETTINGS_KEY_DELETE_CANCEL_BTN_ID),
+            NodeIdKind::SettingsKeyDeleteCancelBtn
+        );
+    }
+
+    // ----- dispatch tests (11) -----
+
+    /// ListBoxOption Click updates selected_key_index and resets focus to the list.
+    #[test]
+    fn dispatch_settings_keybinding_item_click_updates_selection() {
+        let mut panel = make_key_panel_with_2_bindings();
+        panel.key_field_focus = 2; // pretend Action field was focused
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &NodeIdKind::SettingsKeyBindingItem { idx: 1 },
+            None,
+        );
+
+        assert!(handled);
+        assert_eq!(panel.selected_key_index, 1);
+        assert_eq!(panel.key_field_focus, 0, "focus resets to the list");
+    }
+
+    /// ListBoxOption Click is rejected when idx is out of range.
+    #[test]
+    fn dispatch_settings_keybinding_item_click_out_of_range_rejected() {
+        let mut panel = make_key_panel_with_2_bindings();
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &NodeIdKind::SettingsKeyBindingItem { idx: 99 },
+            None,
+        );
+        assert!(!handled, "out-of-range idx must be rejected");
+        assert_eq!(panel.selected_key_index, 0);
+    }
+
+    /// Key field Click enters Record mode (Q1 = (c) branch a).
+    #[test]
+    fn dispatch_settings_key_field_key_click_enters_record_mode() {
+        let mut panel = make_key_panel_with_2_bindings();
+        assert!(!panel.is_key_recording());
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &NodeIdKind::SettingsKeyFieldKey,
+            None,
+        );
+
+        assert!(handled);
+        assert_eq!(panel.key_field_focus, 1);
+        assert!(panel.is_key_recording(), "Click must start Record mode");
+    }
+
+    /// Key field SetValue directly overwrites without entering edit mode (Q1 = (c) branch b).
+    #[test]
+    fn dispatch_settings_key_field_key_set_value_writes_directly() {
+        let mut panel = make_key_panel_with_2_bindings();
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::SetValue,
+            &NodeIdKind::SettingsKeyFieldKey,
+            Some(ActionData::Value("ctrl+alt+x".into())),
+        );
+
+        assert!(handled);
+        assert_eq!(panel.keybindings[0].key, "ctrl+alt+x");
+        assert!(
+            !panel.is_key_recording(),
+            "SetValue must not enter Record mode"
+        );
+        assert_eq!(panel.key_field_focus, 1);
+        assert!(panel.dirty);
+    }
+
+    /// Key field SetValue with non-Value data is rejected.
+    #[test]
+    fn dispatch_settings_key_field_key_set_value_rejects_non_value_data() {
+        let mut panel = make_key_panel_with_2_bindings();
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::SetValue,
+            &NodeIdKind::SettingsKeyFieldKey,
+            None,
+        );
+        assert!(!handled);
+    }
+
+    /// Action field Click cycles forward.
+    #[test]
+    fn dispatch_settings_key_field_action_click_cycles_forward() {
+        use crate::settings_panel::KEYBINDING_ACTIONS;
+        let mut panel = make_key_panel_with_2_bindings();
+        let original = panel.keybindings[0].action.clone();
+        let pos = KEYBINDING_ACTIONS
+            .iter()
+            .position(|&a| a == original)
+            .expect("seed action is in the list");
+        let expected = KEYBINDING_ACTIONS[(pos + 1) % KEYBINDING_ACTIONS.len()];
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &NodeIdKind::SettingsKeyFieldAction,
+            None,
+        );
+
+        assert!(handled);
+        assert_eq!(panel.keybindings[0].action, expected);
+        assert_eq!(panel.key_field_focus, 2);
+    }
+
+    /// Action field Decrement cycles backward.
+    #[test]
+    fn dispatch_settings_key_field_action_decrement_cycles_backward() {
+        use crate::settings_panel::KEYBINDING_ACTIONS;
+        let mut panel = make_key_panel_with_2_bindings();
+        let original = panel.keybindings[0].action.clone();
+        let pos = KEYBINDING_ACTIONS
+            .iter()
+            .position(|&a| a == original)
+            .expect("seed action is in the list");
+        let expected =
+            KEYBINDING_ACTIONS[(pos + KEYBINDING_ACTIONS.len() - 1) % KEYBINDING_ACTIONS.len()];
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Decrement,
+            &NodeIdKind::SettingsKeyFieldAction,
+            None,
+        );
+
+        assert!(handled);
+        assert_eq!(panel.keybindings[0].action, expected);
+    }
+
+    /// Action field SetValue with a known string writes directly.
+    #[test]
+    fn dispatch_settings_key_field_action_set_value_writes_known_string() {
+        use crate::settings_panel::KEYBINDING_ACTIONS;
+        let mut panel = make_key_panel_with_2_bindings();
+        let target = KEYBINDING_ACTIONS[3];
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::SetValue,
+            &NodeIdKind::SettingsKeyFieldAction,
+            Some(ActionData::Value(target.into())),
+        );
+
+        assert!(handled);
+        assert_eq!(panel.keybindings[0].action, target);
+        assert_eq!(panel.key_field_focus, 2);
+    }
+
+    /// Action field SetValue with an unknown value returns handled=false (helper rejects).
+    #[test]
+    fn dispatch_settings_key_field_action_set_value_rejects_unknown() {
+        let mut panel = make_key_panel_with_2_bindings();
+        let original = panel.keybindings[0].action.clone();
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::SetValue,
+            &NodeIdKind::SettingsKeyFieldAction,
+            Some(ActionData::Value("not_a_real_action".into())),
+        );
+        assert!(!handled, "unknown action strings must be rejected");
+        assert_eq!(
+            panel.keybindings[0].action, original,
+            "value must be untouched"
+        );
+    }
+
+    /// Add button Click appends a new binding and starts Record mode.
+    #[test]
+    fn dispatch_settings_key_add_btn_click_appends_and_records() {
+        let mut panel = make_key_panel_with_2_bindings();
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &NodeIdKind::SettingsKeyAddBtn,
+            None,
+        );
+
+        assert!(handled);
+        assert_eq!(panel.keybindings.len(), 3);
+        assert_eq!(panel.selected_key_index, 2, "tail is selected");
+        assert_eq!(panel.key_field_focus, 1, "key field is focused");
+        assert!(panel.is_key_recording(), "Record mode is active");
+        assert!(panel.dirty);
+    }
+
+    /// Delete button Click opens the confirmation dialog (Cancel default).
+    #[test]
+    fn dispatch_settings_key_delete_btn_click_opens_dialog() {
+        let mut panel = make_key_panel_with_2_bindings();
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &NodeIdKind::SettingsKeyDeleteBtn,
+            None,
+        );
+        assert!(handled);
+        assert!(panel.key_delete_dialog_open);
+        assert!(
+            !panel.key_delete_dialog_confirm_focused,
+            "Cancel is focused by default"
+        );
+        assert_eq!(panel.keybindings.len(), 2, "no deletion happens yet");
+    }
+
+    /// Confirm Click deletes and closes the dialog.
+    #[test]
+    fn dispatch_settings_key_delete_confirm_click_deletes() {
+        let mut panel = make_key_panel_with_2_bindings();
+        panel.open_key_delete_dialog();
+
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &NodeIdKind::SettingsKeyDeleteConfirmBtn,
+            None,
+        );
+
+        assert!(handled);
+        assert_eq!(panel.keybindings.len(), 1);
+        assert!(!panel.key_delete_dialog_open);
+        assert!(panel.dirty);
+    }
+
+    /// Cancel Click closes the dialog without deleting; dialog focus toggles work.
+    #[test]
+    fn dispatch_settings_key_delete_cancel_and_focus_toggle() {
+        let mut panel = make_key_panel_with_2_bindings();
+        panel.open_key_delete_dialog();
+
+        // Confirm focus.
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Focus,
+            &NodeIdKind::SettingsKeyDeleteConfirmBtn,
+            None,
+        );
+        assert!(handled);
+        assert!(panel.key_delete_dialog_confirm_focused);
+
+        // Cancel focus.
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Focus,
+            &NodeIdKind::SettingsKeyDeleteCancelBtn,
+            None,
+        );
+        assert!(handled);
+        assert!(!panel.key_delete_dialog_confirm_focused);
+
+        // Cancel click closes the dialog.
+        let handled = dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &NodeIdKind::SettingsKeyDeleteCancelBtn,
+            None,
+        );
+        assert!(handled);
+        assert!(!panel.key_delete_dialog_open);
+        assert_eq!(panel.keybindings.len(), 2, "no deletion happens");
+    }
+
+    // ----- build_tree tests (4) -----
+
+    /// build_settings_panel_nodes exposes the keybinding list as ListBox children
+    /// plus the key/action fields and Add/Delete buttons.
+    #[test]
+    fn build_settings_panel_nodes_exposes_keybindings_nodes() {
+        let mut panel = make_key_panel_with_2_bindings();
+        panel.is_open = true;
+        let (nodes, _) = build_settings_panel_nodes(&panel);
+
+        // Each binding must have a ListBoxOption.
+        for idx in 0..2 {
+            let id = settings_key_binding_item_id(idx);
+            assert!(
+                nodes.iter().any(|(nid, _)| *nid == id),
+                "expected ListBoxOption for idx {}",
+                idx
+            );
+        }
+        // Field nodes + buttons must exist.
+        for id in [
+            SETTINGS_KEY_FIELD_KEY_ID,
+            SETTINGS_KEY_FIELD_ACTION_ID,
+            SETTINGS_KEY_ADD_BTN_ID,
+            SETTINGS_KEY_DELETE_BTN_ID,
+        ] {
+            assert!(
+                nodes.iter().any(|(nid, _)| *nid == id),
+                "expected node {:?}",
+                id
+            );
+        }
+    }
+
+    /// Empty list still exposes Add (and Delete in disabled label form).
+    #[test]
+    fn build_settings_panel_nodes_empty_keybindings_still_show_add() {
+        use crate::settings_panel::SettingsCategory;
+        let mut panel = SettingsPanel::default();
+        panel.category = SettingsCategory::Keybindings;
+        panel.is_open = true;
+        // Clear the built-in defaults to simulate an empty list.
+        panel.keybindings.clear();
+        panel.selected_key_index = 0;
+        panel.key_field_focus = 0;
+
+        let (nodes, focus) = build_settings_panel_nodes(&panel);
+        assert!(
+            nodes.iter().any(|(nid, _)| *nid == SETTINGS_KEY_ADD_BTN_ID),
+            "Add button must always be exposed"
+        );
+        assert!(
+            nodes
+                .iter()
+                .any(|(nid, _)| *nid == SETTINGS_KEY_DELETE_BTN_ID),
+            "Delete button must be exposed in disabled form"
+        );
+        // No ListBoxOption is created when the list is empty.
+        assert!(
+            !nodes
+                .iter()
+                .any(|(nid, _)| *nid == settings_key_binding_item_id(0))
+        );
+        // Default focus when nothing is set falls back to the category tab.
+        assert!(matches!(
+            decode_node_id(focus),
+            NodeIdKind::SettingsTab { .. }
+        ));
+    }
+
+    /// While the delete dialog is open, focus moves to the Cancel button by default.
+    #[test]
+    fn build_settings_panel_nodes_dialog_focus_defaults_cancel() {
+        let mut panel = make_key_panel_with_2_bindings();
+        panel.is_open = true;
+        panel.open_key_delete_dialog();
+        let (nodes, focus) = build_settings_panel_nodes(&panel);
+
+        // The dialog body + buttons must be in the tree.
+        for id in [
+            SETTINGS_KEY_DELETE_DIALOG_ID,
+            SETTINGS_KEY_DELETE_CONFIRM_BTN_ID,
+            SETTINGS_KEY_DELETE_CANCEL_BTN_ID,
+        ] {
+            assert!(
+                nodes.iter().any(|(nid, _)| *nid == id),
+                "expected dialog node {:?}",
+                id
+            );
+        }
+        // Focus is on Cancel by default.
+        assert_eq!(focus, SETTINGS_KEY_DELETE_CANCEL_BTN_ID);
+
+        // After toggling confirm focus, the focus moves to Confirm.
+        panel.key_delete_dialog_confirm_focused = true;
+        let (_, focus2) = build_settings_panel_nodes(&panel);
+        assert_eq!(focus2, SETTINGS_KEY_DELETE_CONFIRM_BTN_ID);
+    }
+
+    /// key_field_focus chooses the right focus target.
+    #[test]
+    fn build_settings_panel_nodes_focus_follows_key_field_focus() {
+        let mut panel = make_key_panel_with_2_bindings();
+        panel.is_open = true;
+
+        for (focus_val, expected) in [
+            (0u8, settings_key_binding_item_id(0)),
+            (1, SETTINGS_KEY_FIELD_KEY_ID),
+            (2, SETTINGS_KEY_FIELD_ACTION_ID),
+            (3, SETTINGS_KEY_ADD_BTN_ID),
+            (4, SETTINGS_KEY_DELETE_BTN_ID),
+        ] {
+            panel.key_field_focus = focus_val;
+            let (_, focus) = build_settings_panel_nodes(&panel);
+            assert_eq!(
+                focus, expected,
+                "key_field_focus={} should focus {:?}",
+                focus_val, expected
+            );
+        }
+    }
+
+    // ----- hash test (1) -----
+
+    /// compute_tree_state_hash reflects changes across the Keybindings category fields.
+    #[test]
+    fn tree_state_hash_detects_keybindings_changes() {
+        use crate::settings_panel::KEYBINDING_ACTIONS;
+        let mut state = ClientState::new(80, 24, 1000);
+        state.settings_panel = make_key_panel_with_2_bindings();
+        state.settings_panel.is_open = true;
+
+        let h0 = compute_tree_state_hash(&state);
+
+        // 1. Change key_field_focus.
+        state.settings_panel.key_field_focus = 2;
+        let h1 = compute_tree_state_hash(&state);
+        assert_ne!(h0, h1);
+
+        // 2. Change selected_key_index.
+        state.settings_panel.selected_key_index = 1;
+        let h2 = compute_tree_state_hash(&state);
+        assert_ne!(h1, h2);
+
+        // 3. Rewrite a binding's key.
+        state.settings_panel.keybindings[1].key = "f5".to_string();
+        let h3 = compute_tree_state_hash(&state);
+        assert_ne!(h2, h3);
+
+        // 4. Rewrite a binding's action.
+        state.settings_panel.keybindings[1].action = KEYBINDING_ACTIONS[5].to_string();
+        let h4 = compute_tree_state_hash(&state);
+        assert_ne!(h3, h4);
+
+        // 5. Open the delete dialog.
+        state.settings_panel.open_key_delete_dialog();
+        let h5 = compute_tree_state_hash(&state);
+        assert_ne!(h4, h5);
+
+        // 6. Toggle confirm focus inside the dialog.
+        state.settings_panel.key_delete_dialog_confirm_focused = true;
+        let h6 = compute_tree_state_hash(&state);
+        assert_ne!(h5, h6);
+
+        // 7. Record mode change.
+        state.settings_panel.cancel_key_delete_dialog();
+        let h7 = compute_tree_state_hash(&state);
+        state.settings_panel.begin_key_record();
+        let h8 = compute_tree_state_hash(&state);
+        assert_ne!(h7, h8);
+    }
+
+    // ----- sanity (2) -----
+
+    /// The Keybinding dynamic offset must not collide with the SSH host offset
+    /// or other adjacent overlay ranges.
+    #[test]
+    fn settings_keybinding_offset_does_not_overlap_neighbors() {
+        // Keybinding range is 900M..1G. Earlier dynamic ranges are below 900M.
+        const _: () =
+            assert!(NODE_ID_SETTINGS_KEY_BINDING_OFFSET > NODE_ID_SETTINGS_SSH_HOST_OFFSET);
+        // Tab/pane offsets are at 1e9 and 1e10 -> still safely above the key binding range
+        // (the key binding offset spans 100M, matching the local DYN_RANGE in decode_dynamic).
+        const _: () =
+            assert!(NODE_ID_TAB_OFFSET >= NODE_ID_SETTINGS_KEY_BINDING_OFFSET + 100_000_000);
+        // No collision with the fixed ID range (1..=99).
+        assert_ne!(
+            settings_key_binding_item_id(0),
+            NodeId(SETTINGS_KEY_FIELD_KEY_ID.0)
+        );
+    }
+
+    /// Q1 = (c) regression: Click followed by SetValue still ends in a clean
+    /// non-recording state with the SetValue payload applied.
+    #[test]
+    fn keybinding_key_click_then_set_value_lands_clean() {
+        let mut panel = make_key_panel_with_2_bindings();
+
+        // 1. Click enters Record mode.
+        dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &NodeIdKind::SettingsKeyFieldKey,
+            None,
+        );
+        assert!(panel.is_key_recording());
+
+        // 2. SetValue overrides directly; Record mode is cancelled by the helper.
+        dispatch_settings_action(
+            &mut panel,
+            Action::SetValue,
+            &NodeIdKind::SettingsKeyFieldKey,
+            Some(ActionData::Value("f12".into())),
+        );
+
+        assert!(
+            !panel.is_key_recording(),
+            "SetValue helper must reset edit mode"
+        );
+        assert_eq!(panel.keybindings[0].key, "f12");
+        assert_eq!(panel.key_field_focus, 1);
     }
 }

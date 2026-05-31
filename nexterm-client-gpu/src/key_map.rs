@@ -272,6 +272,112 @@ pub(crate) fn char_to_keycode(ch: char) -> Option<WKeyCode> {
     }
 }
 
+/// Phase 5-11-9 Sub-phase B: format a physical key press into a canonical
+/// binding string (e.g. `"ctrl+shift+p"`, `"f5"`, `"a"`).
+///
+/// Wired up by Sub-phase B input handler integration. The `#[allow(dead_code)]`
+/// attribute keeps the dead-code lint quiet until then.
+#[allow(dead_code)]
+///
+/// Returns `None` for events that should not be recorded as a binding:
+///   - Pure modifier presses (Ctrl / Shift / Alt / Super alone)
+///   - Unknown KeyCodes that have no name in `keycode_to_key_str`
+///
+/// The output is round-trippable with `config_key_matches`: the formatted
+/// string, when fed back as a config token, matches the same (code, mods)
+/// pair. Modifier order is fixed (ctrl → shift → alt → meta) so the same
+/// key combination always produces the same string.
+pub(crate) fn format_key_event(code: WKeyCode, mods: ModifiersState) -> Option<String> {
+    let key_name = keycode_to_key_str(code)?;
+    let mut parts: Vec<&str> = Vec::new();
+    if mods.control_key() {
+        parts.push("ctrl");
+    }
+    if mods.shift_key() {
+        parts.push("shift");
+    }
+    if mods.alt_key() {
+        parts.push("alt");
+    }
+    if mods.super_key() {
+        parts.push("meta");
+    }
+    parts.push(key_name);
+    Some(parts.join("+"))
+}
+
+/// Inverse of `key_str_to_keycode` for a curated set of well-known keys.
+/// Returns the canonical lower-case name used in binding strings.
+#[allow(dead_code)]
+fn keycode_to_key_str(code: WKeyCode) -> Option<&'static str> {
+    Some(match code {
+        WKeyCode::KeyA => "a",
+        WKeyCode::KeyB => "b",
+        WKeyCode::KeyC => "c",
+        WKeyCode::KeyD => "d",
+        WKeyCode::KeyE => "e",
+        WKeyCode::KeyF => "f",
+        WKeyCode::KeyG => "g",
+        WKeyCode::KeyH => "h",
+        WKeyCode::KeyI => "i",
+        WKeyCode::KeyJ => "j",
+        WKeyCode::KeyK => "k",
+        WKeyCode::KeyL => "l",
+        WKeyCode::KeyM => "m",
+        WKeyCode::KeyN => "n",
+        WKeyCode::KeyO => "o",
+        WKeyCode::KeyP => "p",
+        WKeyCode::KeyQ => "q",
+        WKeyCode::KeyR => "r",
+        WKeyCode::KeyS => "s",
+        WKeyCode::KeyT => "t",
+        WKeyCode::KeyU => "u",
+        WKeyCode::KeyV => "v",
+        WKeyCode::KeyW => "w",
+        WKeyCode::KeyX => "x",
+        WKeyCode::KeyY => "y",
+        WKeyCode::KeyZ => "z",
+        WKeyCode::Digit0 => "0",
+        WKeyCode::Digit1 => "1",
+        WKeyCode::Digit2 => "2",
+        WKeyCode::Digit3 => "3",
+        WKeyCode::Digit4 => "4",
+        WKeyCode::Digit5 => "5",
+        WKeyCode::Digit6 => "6",
+        WKeyCode::Digit7 => "7",
+        WKeyCode::Digit8 => "8",
+        WKeyCode::Digit9 => "9",
+        WKeyCode::Enter => "enter",
+        WKeyCode::Backspace => "backspace",
+        WKeyCode::Delete => "delete",
+        WKeyCode::Escape => "escape",
+        WKeyCode::Tab => "tab",
+        WKeyCode::Space => "space",
+        WKeyCode::ArrowUp => "up",
+        WKeyCode::ArrowDown => "down",
+        WKeyCode::ArrowLeft => "left",
+        WKeyCode::ArrowRight => "right",
+        WKeyCode::Home => "home",
+        WKeyCode::End => "end",
+        WKeyCode::PageUp => "pageup",
+        WKeyCode::PageDown => "pagedown",
+        WKeyCode::Insert => "insert",
+        WKeyCode::F1 => "f1",
+        WKeyCode::F2 => "f2",
+        WKeyCode::F3 => "f3",
+        WKeyCode::F4 => "f4",
+        WKeyCode::F5 => "f5",
+        WKeyCode::F6 => "f6",
+        WKeyCode::F7 => "f7",
+        WKeyCode::F8 => "f8",
+        WKeyCode::F9 => "f9",
+        WKeyCode::F10 => "f10",
+        WKeyCode::F11 => "f11",
+        WKeyCode::F12 => "f12",
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -392,5 +498,66 @@ mod tests {
             WKeyCode::KeyP,
             mods_ctrl()
         ));
+    }
+
+    // === Phase 5-11-9 Sub-phase B: format_key_event tests ===
+
+    fn mods_shift() -> ModifiersState {
+        ModifiersState::SHIFT
+    }
+
+    fn mods_all() -> ModifiersState {
+        ModifiersState::CONTROL
+            | ModifiersState::SHIFT
+            | ModifiersState::ALT
+            | ModifiersState::SUPER
+    }
+
+    #[test]
+    fn format_plain_letter() {
+        assert_eq!(
+            format_key_event(WKeyCode::KeyA, mods_none()),
+            Some("a".to_string())
+        );
+    }
+
+    #[test]
+    fn format_ctrl_shift_p() {
+        assert_eq!(
+            format_key_event(WKeyCode::KeyP, mods_ctrl_shift()),
+            Some("ctrl+shift+p".to_string())
+        );
+    }
+
+    #[test]
+    fn format_function_key_with_shift() {
+        assert_eq!(
+            format_key_event(WKeyCode::F5, mods_shift()),
+            Some("shift+f5".to_string())
+        );
+    }
+
+    #[test]
+    fn format_all_modifiers_canonical_order() {
+        assert_eq!(
+            format_key_event(WKeyCode::KeyZ, mods_all()),
+            Some("ctrl+shift+alt+meta+z".to_string())
+        );
+    }
+
+    #[test]
+    fn format_round_trips_through_config_key_matches() {
+        let formatted = format_key_event(WKeyCode::KeyP, mods_ctrl_shift()).expect("formatted");
+        assert!(config_key_matches(
+            &formatted,
+            WKeyCode::KeyP,
+            mods_ctrl_shift()
+        ));
+    }
+
+    #[test]
+    fn format_returns_none_for_unsupported_keycode() {
+        // ContextMenu has no entry in `keycode_to_key_str`.
+        assert_eq!(format_key_event(WKeyCode::ContextMenu, mods_none()), None);
     }
 }

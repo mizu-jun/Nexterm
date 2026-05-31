@@ -1520,20 +1520,15 @@ impl WgpuState {
                     );
                 }
             }
-            _ => {
-                // Key bindings are planned for a future step (Step 8-4 or later)
-                let msg = match &sp.category {
-                    SettingsCategory::Keybindings => {
-                        "Key bindings are managed under [[keys]] in nexterm.toml"
-                    }
-                    _ => "",
-                };
+            SettingsCategory::Keybindings => {
+                // Phase 5-11-9 Sub-phase A: render the key binding list as a ListBox.
+                // Sub-phase B/C/D add Record-mode capture, Action ComboBox, and Add/Delete.
                 add_string_verts(
-                    msg,
+                    "Key bindings:",
                     content_inner_x,
-                    content_top + cell_h * 2.0,
-                    [0.376, 0.408, 0.518, 1.0],
-                    false,
+                    content_top + cell_h * 0.5,
+                    [0.663, 0.694, 0.839, 1.0],
+                    true,
                     sw,
                     sh,
                     cell_w,
@@ -1543,6 +1538,467 @@ impl WgpuState {
                     text_verts,
                     text_idx,
                 );
+                if sp.keybindings.is_empty() {
+                    add_string_verts(
+                        "No key bindings configured",
+                        content_inner_x,
+                        content_top + cell_h * 1.8,
+                        [0.376, 0.408, 0.518, 1.0],
+                        false,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
+                    );
+                } else {
+                    // ListBox: one row per binding. Sub-phase A is display-only;
+                    // Sub-phase B+ adds inline edit.
+                    let max_rows = sp.keybindings.len().min(12); // cap rows for layout
+                    for (i, kb) in sp.keybindings.iter().take(max_rows).enumerate() {
+                        let item_y = content_top + cell_h * (1.5 + i as f32 * 1.2);
+                        let is_sel = sp.selected_key_index == i;
+                        if is_sel && sp.key_field_focus == 0 {
+                            add_px_rect(
+                                content_inner_x - cell_w * 0.3,
+                                item_y - cell_h * 0.1,
+                                content_w - cell_w * 0.7,
+                                cell_h,
+                                [0.149, 0.188, 0.278, 1.0],
+                                sw,
+                                sh,
+                                bg_verts,
+                                bg_idx,
+                            );
+                        }
+                        let label = kb.label();
+                        let fg = if is_sel {
+                            [0.753, 0.808, 0.969, 1.0]
+                        } else {
+                            [0.502, 0.533, 0.647, 1.0]
+                        };
+                        add_string_verts(
+                            &label,
+                            content_inner_x,
+                            item_y,
+                            fg,
+                            is_sel,
+                            sw,
+                            sh,
+                            cell_w,
+                            font,
+                            atlas,
+                            &self.queue,
+                            text_verts,
+                            text_idx,
+                        );
+                    }
+                    if sp.keybindings.len() > max_rows {
+                        let more_y = content_top + cell_h * (1.5 + max_rows as f32 * 1.2);
+                        add_string_verts(
+                            &format!("... ({} more)", sp.keybindings.len() - max_rows),
+                            content_inner_x,
+                            more_y,
+                            [0.376, 0.408, 0.518, 1.0],
+                            false,
+                            sw,
+                            sh,
+                            cell_w,
+                            font,
+                            atlas,
+                            &self.queue,
+                            text_verts,
+                            text_idx,
+                        );
+                    }
+
+                    // Edit fields for the selected binding.
+                    // Phase 5-11-9 Sub-phase B enables editing the key field
+                    // via Record / Text modes. Action editing arrives in
+                    // Sub-phase C (ComboBox).
+                    use crate::settings_panel::KeyEditMode;
+                    let sel = sp.selected_key_index.min(sp.keybindings.len() - 1);
+                    let kb = &sp.keybindings[sel];
+                    let visible_rows = sp.keybindings.len().min(max_rows) as f32;
+                    let fields_top = content_top + cell_h * (1.5 + visible_rows * 1.2 + 1.4);
+                    let header = match &sp.key_editing {
+                        Some(KeyEditMode::Record) => {
+                            "Edit selected binding (Recording: press any key, Tab = Text, Esc = cancel):"
+                        }
+                        Some(KeyEditMode::Text(_)) => {
+                            "Edit selected binding (Text: Enter = commit, Tab = Record, Esc = cancel):"
+                        }
+                        None => {
+                            // Phase 5-11-9 Sub-phase C: tailor the hint to the focused field.
+                            match sp.key_field_focus {
+                                1 => {
+                                    "Edit selected binding (Enter on key = record; ↑/↓ to switch field):"
+                                }
+                                2 => {
+                                    "Edit selected binding (←/→ to cycle action; ↑/↓ to switch field):"
+                                }
+                                _ => {
+                                    "Edit selected binding (↑/↓ to focus key or action; Enter on key = record):"
+                                }
+                            }
+                        }
+                    };
+                    add_string_verts(
+                        header,
+                        content_inner_x,
+                        fields_top,
+                        [0.663, 0.694, 0.839, 1.0],
+                        true,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
+                    );
+                    // Show the in-flight Text buffer when editing; otherwise the stored value.
+                    let key_display: String = match &sp.key_editing {
+                        Some(KeyEditMode::Record) => "<press a key>".to_string(),
+                        Some(KeyEditMode::Text(state)) => {
+                            // Concatenate buffer + preedit so IME composition is visible.
+                            let mut s = state.buffer.clone();
+                            if let Some(pre) = state.preedit.as_ref() {
+                                s.push_str(pre);
+                            }
+                            s
+                        }
+                        None => kb.key.clone(),
+                    };
+                    // Phase 5-11-9 Sub-phase C: render the action together with its
+                    // position in `KEYBINDING_ACTIONS` (or `(unknown)` when the
+                    // configured value is not in the fixed list).
+                    use crate::settings_panel::KEYBINDING_ACTIONS;
+                    let action_display: String = {
+                        let actions = KEYBINDING_ACTIONS;
+                        match actions.iter().position(|&a| a == kb.action) {
+                            Some(i) => format!("{} ({}/{})", kb.action, i + 1, actions.len()),
+                            None => format!("{} (unknown)", kb.action),
+                        }
+                    };
+                    let field_labels: [(&str, &str, u8); 2] = [
+                        ("key    :", key_display.as_str(), 1),
+                        ("action :", action_display.as_str(), 2),
+                    ];
+                    for (i, (label, raw_value, field_id)) in field_labels.iter().enumerate() {
+                        let row_y = fields_top + cell_h * (1.3 + i as f32 * 1.1);
+                        let is_focused = sp.key_field_focus == *field_id;
+                        if is_focused {
+                            add_px_rect(
+                                content_inner_x - cell_w * 0.3,
+                                row_y - cell_h * 0.1,
+                                content_w - cell_w * 0.7,
+                                cell_h,
+                                [0.149, 0.188, 0.278, 1.0],
+                                sw,
+                                sh,
+                                bg_verts,
+                                bg_idx,
+                            );
+                        }
+                        let display = if raw_value.is_empty() {
+                            "(empty)".to_string()
+                        } else {
+                            (*raw_value).to_string()
+                        };
+                        let line = format!("{}  {}", label, display);
+                        // Phase 5-11-9 Sub-phase C: highlight an unknown / typo'd
+                        // action in red regardless of focus state, so the user
+                        // sees the validation hit even without inspecting the
+                        // hint header.
+                        let action_invalid = *field_id == 2 && !sp.selected_key_action_is_valid();
+                        let fg = if action_invalid {
+                            [0.969, 0.5, 0.5, 1.0]
+                        } else if is_focused {
+                            [0.753, 0.808, 0.969, 1.0]
+                        } else {
+                            [0.502, 0.533, 0.647, 1.0]
+                        };
+                        add_string_verts(
+                            &line,
+                            content_inner_x,
+                            row_y,
+                            fg,
+                            is_focused,
+                            sw,
+                            sh,
+                            cell_w,
+                            font,
+                            atlas,
+                            &self.queue,
+                            text_verts,
+                            text_idx,
+                        );
+                    }
+                }
+
+                // ===== Phase 5-11-9 Sub-phase D: Add / Delete buttons =====
+                // Anchor position: when the list is empty, place buttons near
+                // the top of the content area (Empty hint already occupies
+                // row 1.8). Otherwise, anchor below the edit fields.
+                let key_buttons_y = if sp.keybindings.is_empty() {
+                    content_top + cell_h * 4.0
+                } else {
+                    let max_rows = sp.keybindings.len().min(12);
+                    let visible_rows = sp.keybindings.len().min(max_rows) as f32;
+                    let fields_top = content_top + cell_h * (1.5 + visible_rows * 1.2 + 1.4);
+                    // 2 edit field rows (key + action) below fields_top header.
+                    let last_field_y = fields_top + cell_h * (1.3 + 1.0 * 1.1);
+                    last_field_y + cell_h * 2.0
+                };
+                let key_add_focused = sp.key_field_focus == 3;
+                let key_delete_focused = sp.key_field_focus == 4;
+                let key_delete_disabled = sp.keybindings.is_empty();
+                let key_btn_w = cell_w * 26.0;
+                let key_btn_h = cell_h * 1.4;
+                let key_btn_gap = cell_w * 2.0;
+
+                // Add button
+                let key_add_x = content_inner_x;
+                let key_add_bg = if key_add_focused {
+                    [0.149, 0.235, 0.357, 1.0]
+                } else {
+                    [0.106, 0.133, 0.184, 1.0]
+                };
+                add_px_rect(
+                    key_add_x - cell_w * 0.3,
+                    key_buttons_y - cell_h * 0.15,
+                    key_btn_w,
+                    key_btn_h,
+                    key_add_bg,
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
+                let key_add_fg = if key_add_focused {
+                    [0.949, 0.969, 0.984, 1.0]
+                } else {
+                    [0.663, 0.694, 0.839, 1.0]
+                };
+                add_string_verts(
+                    "[ + ] Add new key binding",
+                    key_add_x,
+                    key_buttons_y,
+                    key_add_fg,
+                    key_add_focused,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
+                );
+
+                // Delete button (disabled when the list is empty)
+                let key_del_x = key_add_x + key_btn_w + key_btn_gap;
+                let key_del_bg = if key_delete_focused && !key_delete_disabled {
+                    [0.298, 0.149, 0.149, 1.0]
+                } else {
+                    [0.106, 0.133, 0.184, 1.0]
+                };
+                add_px_rect(
+                    key_del_x - cell_w * 0.3,
+                    key_buttons_y - cell_h * 0.15,
+                    key_btn_w,
+                    key_btn_h,
+                    key_del_bg,
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
+                let key_del_fg = if key_delete_disabled {
+                    [0.314, 0.341, 0.408, 1.0]
+                } else if key_delete_focused {
+                    [0.984, 0.808, 0.808, 1.0]
+                } else {
+                    [0.776, 0.553, 0.553, 1.0]
+                };
+                let key_del_label = if key_delete_disabled {
+                    "[ x ] Delete selected binding (disabled)"
+                } else {
+                    "[ x ] Delete selected binding"
+                };
+                add_string_verts(
+                    key_del_label,
+                    key_del_x,
+                    key_buttons_y,
+                    key_del_fg,
+                    key_delete_focused && !key_delete_disabled,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
+                );
+
+                // ===== Phase 5-11-9 Sub-phase D: delete-confirmation dialog =====
+                if sp.key_delete_dialog_open && !sp.keybindings.is_empty() {
+                    let sel = sp.selected_key_index.min(sp.keybindings.len() - 1);
+                    let target = sp.keybindings[sel].label();
+
+                    // Backdrop
+                    add_px_rect(
+                        px,
+                        py,
+                        panel_w,
+                        panel_h,
+                        [0.0, 0.0, 0.0, 0.55],
+                        sw,
+                        sh,
+                        bg_verts,
+                        bg_idx,
+                    );
+
+                    let dialog_w = panel_w * 0.55;
+                    let dialog_h = cell_h * 8.5;
+                    let dialog_x = px + (panel_w - dialog_w) / 2.0;
+                    let dialog_y = py + (panel_h - dialog_h) / 2.0;
+
+                    add_px_rect(
+                        dialog_x - 2.0,
+                        dialog_y - 2.0,
+                        dialog_w + 4.0,
+                        dialog_h + 4.0,
+                        [0.776, 0.345, 0.345, 0.80],
+                        sw,
+                        sh,
+                        bg_verts,
+                        bg_idx,
+                    );
+                    add_px_rect(
+                        dialog_x,
+                        dialog_y,
+                        dialog_w,
+                        dialog_h,
+                        [0.118, 0.125, 0.188, 1.0],
+                        sw,
+                        sh,
+                        bg_verts,
+                        bg_idx,
+                    );
+
+                    add_string_verts(
+                        " ! Delete this key binding?",
+                        dialog_x + cell_w,
+                        dialog_y + cell_h * 0.6,
+                        [0.984, 0.808, 0.808, 1.0],
+                        true,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
+                    );
+                    let msg = format!(
+                        "\"{}\" will be deleted. This operation cannot be undone.",
+                        target
+                    );
+                    add_string_verts(
+                        &msg,
+                        dialog_x + cell_w,
+                        dialog_y + cell_h * 2.2,
+                        [0.753, 0.808, 0.969, 1.0],
+                        false,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
+                    );
+
+                    let dlg_btn_w = cell_w * 14.0;
+                    let dlg_btn_h = cell_h * 1.4;
+                    let dlg_btn_gap = cell_w * 2.0;
+                    let dlg_btns_total_w = dlg_btn_w * 2.0 + dlg_btn_gap;
+                    let dlg_btns_x = dialog_x + (dialog_w - dlg_btns_total_w) / 2.0;
+                    let dlg_btns_y = dialog_y + dialog_h - cell_h * 2.5;
+                    let confirm_focused = sp.key_delete_dialog_confirm_focused;
+
+                    // Cancel button (left, default focus)
+                    let cancel_bg = if !confirm_focused {
+                        [0.176, 0.235, 0.357, 1.0]
+                    } else {
+                        [0.106, 0.133, 0.184, 1.0]
+                    };
+                    add_px_rect(
+                        dlg_btns_x, dlg_btns_y, dlg_btn_w, dlg_btn_h, cancel_bg, sw, sh, bg_verts,
+                        bg_idx,
+                    );
+                    let cancel_fg = if !confirm_focused {
+                        [0.949, 0.969, 0.984, 1.0]
+                    } else {
+                        [0.663, 0.694, 0.839, 1.0]
+                    };
+                    add_string_verts(
+                        "[ Cancel (Esc) ]",
+                        dlg_btns_x + cell_w * 1.0,
+                        dlg_btns_y + cell_h * 0.2,
+                        cancel_fg,
+                        !confirm_focused,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
+                    );
+
+                    // Confirm button (right)
+                    let confirm_x = dlg_btns_x + dlg_btn_w + dlg_btn_gap;
+                    let confirm_bg = if confirm_focused {
+                        [0.486, 0.180, 0.180, 1.0]
+                    } else {
+                        [0.106, 0.133, 0.184, 1.0]
+                    };
+                    add_px_rect(
+                        confirm_x, dlg_btns_y, dlg_btn_w, dlg_btn_h, confirm_bg, sw, sh, bg_verts,
+                        bg_idx,
+                    );
+                    let confirm_fg = if confirm_focused {
+                        [0.984, 0.808, 0.808, 1.0]
+                    } else {
+                        [0.776, 0.553, 0.553, 1.0]
+                    };
+                    add_string_verts(
+                        "[ Delete (Enter) ]",
+                        confirm_x + cell_w * 1.0,
+                        dlg_btns_y + cell_h * 0.2,
+                        confirm_fg,
+                        confirm_focused,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
+                    );
+                }
             }
         }
 

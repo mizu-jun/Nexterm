@@ -93,6 +93,30 @@ impl EventHandler {
             return;
         }
 
+        // Phase 5-11-9 Sub-phase B: character input while editing a key
+        // binding in Text mode. Record mode is handled by `handle_key` and
+        // never reaches here (the key is consumed before character lookup).
+        if !consumed
+            && self.app.state.settings_panel.is_open
+            && self.app.state.settings_panel.is_key_text_editing()
+        {
+            if let Some(ref t) = text
+                && !self.modifiers.control_key()
+                && !self.modifiers.alt_key()
+            {
+                for ch in t.chars() {
+                    if !ch.is_control() {
+                        self.app.state.settings_panel.key_field_insert_char(ch);
+                    }
+                }
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+                return;
+            }
+            return;
+        }
+
         // If not consumed locally, forward to the server.
         if !consumed {
             self.forward_key_to_server(physical_key, text.as_deref());

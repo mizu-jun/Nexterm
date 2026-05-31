@@ -271,7 +271,13 @@ impl EventHandler {
                     // Only signals IME enablement; preedit is set on the next Preedit event.
                 }
                 Ime::Preedit(text, _cursor_range) => {
+                    // Sub-phase B: route preedit to the active editor (SSH or keybinding).
+                    use crate::settings_panel::KeyEditMode;
                     if let Some(state) = self.app.state.settings_panel.ssh_field_editing.as_mut() {
+                        state.preedit = if text.is_empty() { None } else { Some(text) };
+                    } else if let Some(KeyEditMode::Text(state)) =
+                        self.app.state.settings_panel.key_editing.as_mut()
+                    {
                         state.preedit = if text.is_empty() { None } else { Some(text) };
                     }
                     if let Some(w) = &self.window {
@@ -279,11 +285,18 @@ impl EventHandler {
                     }
                 }
                 Ime::Commit(text) => {
-                    // Insert the committed text at the cursor position in
-                    // TextInputState.buffer and clear preedit. Reuse
-                    // ssh_field_insert_str from Sub-phase A.
+                    // Insert the committed text at the cursor position in the
+                    // active editor. Phase 5-11-9 Sub-phase B extends the
+                    // 5-11-8 SSH path to the keybinding key field.
+                    use crate::settings_panel::KeyEditMode;
                     self.app.state.settings_panel.ssh_field_insert_str(&text);
+                    self.app.state.settings_panel.key_field_insert_str(&text);
                     if let Some(state) = self.app.state.settings_panel.ssh_field_editing.as_mut() {
+                        state.preedit = None;
+                    }
+                    if let Some(KeyEditMode::Text(state)) =
+                        self.app.state.settings_panel.key_editing.as_mut()
+                    {
                         state.preedit = None;
                     }
                     if let Some(w) = &self.window {
@@ -291,7 +304,13 @@ impl EventHandler {
                     }
                 }
                 Ime::Disabled => {
+                    use crate::settings_panel::KeyEditMode;
                     if let Some(state) = self.app.state.settings_panel.ssh_field_editing.as_mut() {
+                        state.preedit = None;
+                    }
+                    if let Some(KeyEditMode::Text(state)) =
+                        self.app.state.settings_panel.key_editing.as_mut()
+                    {
                         state.preedit = None;
                     }
                 }
