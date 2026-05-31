@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-05-31
+
+Diagnostic and resilience PATCH release. No breaking changes
+(`PROTOCOL_VERSION = 8` and `SNAPSHOT_VERSION = 4` retained).
+
+### Fixed
+
+- **Snapshot self-heal on startup** (`nexterm-server`): when one or more
+  windows or sessions fail to restore from the persisted snapshot (e.g.
+  ConPTY returns `E_INVALIDARG` because the saved cwd no longer exists),
+  the snapshot file is now rewritten immediately during startup so the
+  broken entries are not retried on every subsequent launch. Previously a
+  short-lived session that ended before the 30-second auto-save tick fired
+  could leave a broken entry stuck in the snapshot indefinitely.
+- **Detailed context on ConPTY failures** (`nexterm-server`): `openpty` and
+  `spawn_command` errors now carry `cols` / `rows` / `shell` / `args` /
+  `cwd` in the error chain, and `Session::restore_from_snapshot` prints
+  the full chain via `{:#}`. A previously opaque
+  `failed to create psuedo console: HRESULT -2147024809` now reads e.g.
+  `openpty failed (cols=0, rows=0, shell="powershell.exe"); ConPTY on
+  Windows rejects size 0 with E_INVALIDARG (HRESULT 0x80070057)`.
+
+### Changed
+
+- **Default logging directives** (`nexterm-client-gpu`): when `NEXTERM_LOG`
+  is unset, the GPU client now applies
+  `info,wgpu_core=warn,wgpu_hal=warn,naga=warn` instead of plain `info`.
+  This silences the per-frame
+  `Device::maintain: waiting for submission index N` INFO that
+  `wgpu_core::device::resource` emits at roughly 60 Hz, which previously
+  bloated `nexterm-client.log` past 1 MB for a 4-minute session and drowned
+  out useful diagnostics. Setting `NEXTERM_LOG` explicitly continues to
+  override the default exactly as before.
+
 ## [1.7.0] - 2026-05-31
 
 Sprint 5-11-9 (Keybindings interactive editor + screen-reader support) and

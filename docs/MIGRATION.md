@@ -4,6 +4,18 @@ This document gathers the steps required when upgrading to a Nexterm version tha
 
 ---
 
+## v1.7.0 → v1.7.1 (snapshot self-heal + ConPTY diagnostics + log-noise reduction)
+
+**No breaking changes and no migration steps.** `PROTOCOL_VERSION = 8` and `SNAPSHOT_VERSION = 4` are retained. The snapshot file schema is unchanged.
+
+Three improvements ship together as a PATCH:
+
+- **Snapshot self-heal**: when one or more windows or sessions fail to restore at startup (e.g. ConPTY returns `E_INVALIDARG` because the saved cwd no longer exists), the server now rewrites the snapshot immediately to evict the broken entries. Users who repeatedly saw the same `failed to restore window 'window-broken'` warning at every launch will see it once on the upgrade run and never again. No action required.
+- **Detailed ConPTY error context**: `openpty` / `spawn_command` failures now carry the shell / cwd / cols / rows that triggered them. The message no longer ends at the opaque `HRESULT -2147024809`. Useful for diagnosing custom-shell setups.
+- **Default log filter quietens wgpu**: the GPU client's default log filter (used when `NEXTERM_LOG` is unset) now includes `wgpu_core=warn,wgpu_hal=warn,naga=warn`. The per-frame `Device::maintain` INFO flood from `wgpu_core::device::resource` no longer reaches the log. If you explicitly set `NEXTERM_LOG` (for example to `trace`) the override behaves exactly as before — you still see every wgpu line. To restore the previous behaviour, set `NEXTERM_LOG=info`.
+
+---
+
 ## v1.6.1 → v1.7.0 (Sprint 5-11-9 keybinding editor + Sprint 5-12 shell-launch visibility)
 
 **No breaking changes.** `PROTOCOL_VERSION = 8` and `SNAPSHOT_VERSION = 4` are unchanged. The configuration schema (`nexterm.toml` / `config.lua`) does not change either. Existing users can upgrade without any action.
