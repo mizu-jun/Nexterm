@@ -1520,20 +1520,15 @@ impl WgpuState {
                     );
                 }
             }
-            _ => {
-                // Key bindings are planned for a future step (Step 8-4 or later)
-                let msg = match &sp.category {
-                    SettingsCategory::Keybindings => {
-                        "Key bindings are managed under [[keys]] in nexterm.toml"
-                    }
-                    _ => "",
-                };
+            SettingsCategory::Keybindings => {
+                // Phase 5-11-9 Sub-phase A: render the key binding list as a ListBox.
+                // Sub-phase B/C/D add Record-mode capture, Action ComboBox, and Add/Delete.
                 add_string_verts(
-                    msg,
+                    "Key bindings:",
                     content_inner_x,
-                    content_top + cell_h * 2.0,
-                    [0.376, 0.408, 0.518, 1.0],
-                    false,
+                    content_top + cell_h * 0.5,
+                    [0.663, 0.694, 0.839, 1.0],
+                    true,
                     sw,
                     sh,
                     cell_w,
@@ -1543,6 +1538,151 @@ impl WgpuState {
                     text_verts,
                     text_idx,
                 );
+                if sp.keybindings.is_empty() {
+                    add_string_verts(
+                        "No key bindings configured",
+                        content_inner_x,
+                        content_top + cell_h * 1.8,
+                        [0.376, 0.408, 0.518, 1.0],
+                        false,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
+                    );
+                } else {
+                    // ListBox: one row per binding. Sub-phase A is display-only;
+                    // Sub-phase B+ adds inline edit.
+                    let max_rows = sp.keybindings.len().min(12); // cap rows for layout
+                    for (i, kb) in sp.keybindings.iter().take(max_rows).enumerate() {
+                        let item_y = content_top + cell_h * (1.5 + i as f32 * 1.2);
+                        let is_sel = sp.selected_key_index == i;
+                        if is_sel && sp.key_field_focus == 0 {
+                            add_px_rect(
+                                content_inner_x - cell_w * 0.3,
+                                item_y - cell_h * 0.1,
+                                content_w - cell_w * 0.7,
+                                cell_h,
+                                [0.149, 0.188, 0.278, 1.0],
+                                sw,
+                                sh,
+                                bg_verts,
+                                bg_idx,
+                            );
+                        }
+                        let label = kb.label();
+                        let fg = if is_sel {
+                            [0.753, 0.808, 0.969, 1.0]
+                        } else {
+                            [0.502, 0.533, 0.647, 1.0]
+                        };
+                        add_string_verts(
+                            &label,
+                            content_inner_x,
+                            item_y,
+                            fg,
+                            is_sel,
+                            sw,
+                            sh,
+                            cell_w,
+                            font,
+                            atlas,
+                            &self.queue,
+                            text_verts,
+                            text_idx,
+                        );
+                    }
+                    if sp.keybindings.len() > max_rows {
+                        let more_y = content_top + cell_h * (1.5 + max_rows as f32 * 1.2);
+                        add_string_verts(
+                            &format!("... ({} more)", sp.keybindings.len() - max_rows),
+                            content_inner_x,
+                            more_y,
+                            [0.376, 0.408, 0.518, 1.0],
+                            false,
+                            sw,
+                            sh,
+                            cell_w,
+                            font,
+                            atlas,
+                            &self.queue,
+                            text_verts,
+                            text_idx,
+                        );
+                    }
+
+                    // Edit fields for the selected binding (Sub-phase A: display-only).
+                    let sel = sp.selected_key_index.min(sp.keybindings.len() - 1);
+                    let kb = &sp.keybindings[sel];
+                    let visible_rows = sp.keybindings.len().min(max_rows) as f32;
+                    let fields_top = content_top + cell_h * (1.5 + visible_rows * 1.2 + 1.4);
+                    add_string_verts(
+                        "Edit selected binding (Sub-phase B/C will enable edit):",
+                        content_inner_x,
+                        fields_top,
+                        [0.663, 0.694, 0.839, 1.0],
+                        true,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
+                    );
+                    let field_labels: [(&str, &str, u8); 2] = [
+                        ("key    :", kb.key.as_str(), 1),
+                        ("action :", kb.action.as_str(), 2),
+                    ];
+                    for (i, (label, raw_value, field_id)) in field_labels.iter().enumerate() {
+                        let row_y = fields_top + cell_h * (1.3 + i as f32 * 1.1);
+                        let is_focused = sp.key_field_focus == *field_id;
+                        if is_focused {
+                            add_px_rect(
+                                content_inner_x - cell_w * 0.3,
+                                row_y - cell_h * 0.1,
+                                content_w - cell_w * 0.7,
+                                cell_h,
+                                [0.149, 0.188, 0.278, 1.0],
+                                sw,
+                                sh,
+                                bg_verts,
+                                bg_idx,
+                            );
+                        }
+                        let display = if raw_value.is_empty() {
+                            "(empty)".to_string()
+                        } else {
+                            (*raw_value).to_string()
+                        };
+                        let line = format!("{}  {}", label, display);
+                        let fg = if is_focused {
+                            [0.753, 0.808, 0.969, 1.0]
+                        } else {
+                            [0.502, 0.533, 0.647, 1.0]
+                        };
+                        add_string_verts(
+                            &line,
+                            content_inner_x,
+                            row_y,
+                            fg,
+                            is_focused,
+                            sw,
+                            sh,
+                            cell_w,
+                            font,
+                            atlas,
+                            &self.queue,
+                            text_verts,
+                            text_idx,
+                        );
+                    }
+                }
             }
         }
 

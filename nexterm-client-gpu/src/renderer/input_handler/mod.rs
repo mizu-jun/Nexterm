@@ -446,10 +446,24 @@ impl EventHandler {
                             sp.next_category();
                             sp.ssh_field_focus = 0;
                         }
+                    } else if sp.category == SettingsCategory::Keybindings
+                        && code == WKeyCode::ArrowDown
+                    {
+                        // Phase 5-11-9 Sub-phase A: ↓ moves key_field_focus 0 → 1 → 2.
+                        // When the list is empty, only focus 0 is valid; fall through immediately
+                        // to the next category.
+                        let max_focus = if sp.keybindings.is_empty() { 0 } else { 2 };
+                        if sp.key_field_focus < max_focus {
+                            sp.key_field_focus += 1;
+                        } else {
+                            sp.next_category();
+                            sp.key_field_focus = 0;
+                        }
                     } else {
                         sp.next_category();
                         sp.window_field_focus = 0;
                         sp.ssh_field_focus = 0;
+                        sp.key_field_focus = 0;
                     }
                 }
                 WKeyCode::ArrowUp if !editing => {
@@ -471,6 +485,15 @@ impl EventHandler {
                             } else {
                                 sp.prev_category();
                                 sp.ssh_field_focus = 0;
+                            }
+                        }
+                        SettingsCategory::Keybindings => {
+                            // Phase 5-11-9 Sub-phase A: ↑ moves key_field_focus back by one
+                            if sp.key_field_focus > 0 {
+                                sp.key_field_focus -= 1;
+                            } else {
+                                sp.prev_category();
+                                sp.key_field_focus = 0;
                             }
                         }
                         _ => sp.prev_category(),

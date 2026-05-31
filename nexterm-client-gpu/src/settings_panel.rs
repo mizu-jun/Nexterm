@@ -227,6 +227,75 @@ impl Default for ProfileEntry {
     }
 }
 
+/// Key binding entry (Phase 5-11-9 Sub-phase A: editable inside the settings panel).
+///
+/// A lightweight mirror of `nexterm-config::KeyBinding`. Sub-phase A populates
+/// the list from `Config.keys` for display only; Sub-phase B/C/D add Record-mode
+/// key capture, Action ComboBox cycling, and Add/Delete UI respectively.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyBindingEntry {
+    /// Key string (e.g. `"ctrl+shift+p"`, `"ctrl+b d"`). Matches the format
+    /// accepted by `nexterm_client_gpu::key_map::config_key_matches_token`.
+    pub key: String,
+    /// Action name (e.g. `"CommandPalette"`). Must be one of the 27 actions
+    /// dispatched by `execute_action` in `renderer::input_handler::action`.
+    pub action: String,
+}
+
+impl KeyBindingEntry {
+    /// Build the one-line label rendered / announced by the UI / SR.
+    /// Example: `"ctrl+shift+p → CommandPalette"`.
+    pub fn label(&self) -> String {
+        let key = if self.key.is_empty() {
+            "(unbound)"
+        } else {
+            self.key.as_str()
+        };
+        let action = if self.action.is_empty() {
+            "(none)"
+        } else {
+            self.action.as_str()
+        };
+        format!("{} → {}", key, action)
+    }
+}
+
+/// Allowed action names (Phase 5-11-9 Sub-phase A).
+///
+/// Mirror of the 27 `match` arms in `renderer::input_handler::action::execute_action`.
+/// Used by Sub-phase C to populate the Action ComboBox.
+/// Q2 decision: fixed list (no free-form input) to prevent silent typos.
+#[allow(dead_code)] // wired up by Sub-phase C
+pub const KEYBINDING_ACTIONS: &[&str] = &[
+    "Quit",
+    "SearchScrollback",
+    "SplitVertical",
+    "SplitHorizontal",
+    "FocusNextPane",
+    "FocusPrevPane",
+    "ClosePane",
+    "NewWindow",
+    "Detach",
+    "CommandPalette",
+    "SetBroadcastOn",
+    "SetBroadcastOff",
+    "ToggleZoom",
+    "QuickSelect",
+    "SwapPaneNext",
+    "SwapPanePrev",
+    "BreakPane",
+    "ShowSettings",
+    "ShowHostManager",
+    "ShowMacroPicker",
+    "SftpUploadDialog",
+    "SftpDownloadDialog",
+    "ConnectSerialPrompt",
+    "JumpPrevPrompt",
+    "JumpNextPrompt",
+    "DetachToNewWindow",
+    "CloseOsWindow",
+];
+
 /// SSH host entry (Phase 5-11-8 Step 8-1: display-only inside the settings panel).
 ///
 /// A lightweight subset of `nexterm-config::HostConfig` that keeps only the
@@ -343,6 +412,16 @@ pub struct SettingsPanel {
     /// accidental deletion); `true` = Confirm (48). Left/Right toggles; Enter
     /// executes.
     pub ssh_delete_dialog_confirm_focused: bool,
+    /// Phase 5-11-9 Sub-phase A: key binding list (mirror of `Config.keys`).
+    /// Sub-phase A loads this from the config on `new()`; Sub-phase B/C/D add
+    /// edit operations and TOML write-back.
+    pub keybindings: Vec<KeyBindingEntry>,
+    /// Phase 5-11-9 Sub-phase A: currently selected key binding index (into `keybindings`).
+    pub selected_key_index: usize,
+    /// Phase 5-11-9 Sub-phase A: focused field index inside the Keybindings category.
+    /// 0=ListBox (binding selection) / 1=key field / 2=action field.
+    /// Sub-phase D extends this range to 0..=4 (3=Add, 4=Delete).
+    pub key_field_focus: u8,
 }
 
 impl Default for SettingsPanel {
@@ -382,6 +461,15 @@ impl SettingsPanel {
                 auth_type: h.auth_type.clone(),
             })
             .collect();
+        // Phase 5-11-9 Sub-phase A: build `KeyBindingEntry` items from `config.keys`.
+        let keybindings: Vec<KeyBindingEntry> = config
+            .keys
+            .iter()
+            .map(|k| KeyBindingEntry {
+                key: k.key.clone(),
+                action: k.action.clone(),
+            })
+            .collect();
         let language_index = LANGUAGE_OPTIONS
             .iter()
             .position(|(_, code)| *code == config.language.as_str())
@@ -405,6 +493,9 @@ impl SettingsPanel {
             ssh_field_editing: None,
             ssh_delete_dialog_open: false,
             ssh_delete_dialog_confirm_focused: false,
+            keybindings,
+            selected_key_index: 0,
+            key_field_focus: 0,
             startup_session: "main".to_string(),
             tab_rename_editing: None,
             tab_rename_text: String::new(),
@@ -1851,5 +1942,81 @@ mod tests {
 
         panel.toggle_ssh_delete_dialog_focus();
         assert!(!panel.ssh_delete_dialog_confirm_focused);
+    }
+
+    // ===== Phase 5-11-9 Sub-phase A: KeyBindingEntry + initial state =====
+
+    #[test]
+    fn keybinding_entry_label_normal() {
+        let kb = KeyBindingEntry {
+            key: "ctrl+shift+p".to_string(),
+            action: "CommandPalette".to_string(),
+        };
+        assert_eq!(kb.label(), "ctrl+shift+p → CommandPalette");
+    }
+
+    #[test]
+    fn keybinding_entry_label_empty_key_or_action() {
+        let kb = KeyBindingEntry {
+            key: String::new(),
+            action: "Quit".to_string(),
+        };
+        assert_eq!(kb.label(), "(unbound) → Quit");
+        let kb2 = KeyBindingEntry {
+            key: "ctrl+b d".to_string(),
+            action: String::new(),
+        };
+        assert_eq!(kb2.label(), "ctrl+b d → (none)");
+    }
+
+    #[test]
+    fn keybindings_loaded_from_default_config() {
+        let config = Config::default();
+        let panel = SettingsPanel::new(&config);
+        // The default config defines several key bindings; the panel must
+        // mirror them 1:1 with matching length, key strings, and action names.
+        assert_eq!(panel.keybindings.len(), config.keys.len());
+        for (i, kb) in panel.keybindings.iter().enumerate() {
+            assert_eq!(kb.key, config.keys[i].key);
+            assert_eq!(kb.action, config.keys[i].action);
+        }
+        assert_eq!(panel.selected_key_index, 0);
+        assert_eq!(panel.key_field_focus, 0);
+    }
+
+    #[test]
+    fn keybindings_empty_when_config_keys_empty() {
+        let mut config = Config::default();
+        config.keys.clear();
+        let panel = SettingsPanel::new(&config);
+        assert!(panel.keybindings.is_empty());
+        assert_eq!(panel.selected_key_index, 0);
+        assert_eq!(panel.key_field_focus, 0);
+    }
+
+    #[test]
+    fn keybinding_actions_contains_known_actions() {
+        // Sanity check: a representative subset of actions exists in the table.
+        for name in [
+            "Quit",
+            "CommandPalette",
+            "SplitVertical",
+            "DetachToNewWindow",
+            "CloseOsWindow",
+        ] {
+            assert!(
+                KEYBINDING_ACTIONS.contains(&name),
+                "KEYBINDING_ACTIONS must include `{name}`"
+            );
+        }
+        // No duplicates allowed.
+        let mut sorted: Vec<&&str> = KEYBINDING_ACTIONS.iter().collect();
+        sorted.sort();
+        let dedup_len = {
+            let mut s = sorted.clone();
+            s.dedup();
+            s.len()
+        };
+        assert_eq!(sorted.len(), dedup_len, "KEYBINDING_ACTIONS has duplicates");
     }
 }
