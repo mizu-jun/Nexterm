@@ -4,6 +4,27 @@ This document gathers the steps required when upgrading to a Nexterm version tha
 
 ---
 
+## v1.6.1 → Unreleased (Sprint 5-11-9 keybinding editor + Sprint 5-12 shell-launch visibility)
+
+**No breaking changes.** `PROTOCOL_VERSION = 8` and `SNAPSHOT_VERSION = 4` are unchanged. The configuration schema (`nexterm.toml` / `config.lua`) does not change either. Existing users can upgrade without any action.
+
+### Sprint 5-11-9: interactive keybinding editor in the settings panel
+
+The Keybindings category of the in-app settings panel used to be a read-only placeholder. It is now a fully interactive editor with screen-reader (AccessKit) support.
+
+- **GUI**: 5-row layout showing the binding list, the selected key field (with a "Recording…" indicator while capturing a key press), the action `ComboBox`, and Add / Delete buttons. Navigation: `↑/↓` cycles between `List → Key → Action → Add → Delete`; `←/→` cycles the action or the dialog buttons; `Enter` activates; `Esc` cancels the in-flight edit or closes the delete dialog.
+- **Editing modes**: `Click` on the key field enters **Record mode** (the next key press becomes the spelling). `Text mode` (free-form edit) is also available. Screen-reader users can additionally write the spelling directly via `Action::SetValue`, bypassing both modes.
+- **Add / Delete**: pressing Add appends a fresh entry and immediately starts Record mode. Delete opens a confirmation dialog (Cancel focused by default to prevent accidental deletion).
+- **AccessKit / screen-reader exposure**: fixed `NodeId 50..=56` for the Key field / Action field / Add / Delete / delete-dialog body; dynamic `NodeId 900_000_000 + idx` for each `ListBoxOption`. The Action `ComboBox` rejects `SetValue` strings outside `KEYBINDING_ACTIONS` (the 27 known actions). Live updates flow through the existing 100 ms-throttled `compute_tree_state_hash` path — the SR observes selection / focus / Record-mode / Text-mode buffer changes in real time.
+
+#### Impact on existing users
+
+- No upgrade procedure required. Existing `[[keys]]` entries in `nexterm.toml` continue to load and now appear in the new editor.
+- Saving from the editor still goes through the existing `[[keys]]` TOML write path; you can keep editing the file by hand if you prefer.
+- No NodeId range that an external tool could have assumed is broken — the new IDs land in previously-reserved slots (50..=56 in the fixed range and 900M..1G in the dynamic range).
+
+---
+
 ## v1.6.1 → Unreleased (Sprint 5-12: visibility and fix for shell-launch failures)
 
 **No breaking changes.** `PROTOCOL_VERSION = 8` and `SNAPSHOT_VERSION = 4` are unchanged. The configuration schema (`nexterm.toml` / `config.lua`) does not change either. Existing users can upgrade without any action.

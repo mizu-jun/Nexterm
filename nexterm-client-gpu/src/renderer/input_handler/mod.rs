@@ -21,8 +21,8 @@ use winit::{
 };
 
 use crate::key_map::{
-    config_key_matches, config_key_matches_token, physical_to_proto_key, proto_modifiers,
-    winit_code_to_char,
+    config_key_matches, config_key_matches_token, format_key_event, physical_to_proto_key,
+    proto_modifiers, winit_code_to_char,
 };
 use crate::vertex_util::grid_to_text;
 
@@ -332,7 +332,15 @@ impl EventHandler {
             //   exclusive focus. Treated as higher priority than the editing
             //   flags (you cannot open the dialog while editing by design).
             let dialog_open = self.app.state.settings_panel.ssh_delete_dialog_open;
-            let editing = font_editing || ssh_editing || dialog_open;
+            // Phase 5-11-9 Sub-phase D: key-binding delete-confirmation dialog.
+            //   Like the SSH dialog, while open it has exclusive focus.
+            let key_dialog_open = self.app.state.settings_panel.key_delete_dialog_open;
+            // Phase 5-11-9 Sub-phase B: key-field edit mode (Record / Text).
+            let key_recording = self.app.state.settings_panel.is_key_recording();
+            let key_text_editing = self.app.state.settings_panel.is_key_text_editing();
+            let key_editing = key_recording || key_text_editing;
+            let editing =
+                font_editing || ssh_editing || dialog_open || key_dialog_open || key_editing;
             match code {
                 // ===== Sub-phase D: dedicated handling while the delete dialog is open (highest priority) =====
                 WKeyCode::Escape if dialog_open => {
@@ -351,6 +359,63 @@ impl EventHandler {
                         .state
                         .settings_panel
                         .toggle_ssh_delete_dialog_focus();
+                }
+                // ===== Sub-phase D: dedicated handling while the key-binding delete dialog is open =====
+                WKeyCode::Escape if key_dialog_open => {
+                    self.app.state.settings_panel.cancel_key_delete_dialog();
+                }
+                WKeyCode::Enter if key_dialog_open => {
+                    let sp = &mut self.app.state.settings_panel;
+                    if sp.key_delete_dialog_confirm_focused {
+                        sp.confirm_key_delete_dialog();
+                    } else {
+                        sp.cancel_key_delete_dialog();
+                    }
+                }
+                WKeyCode::ArrowLeft | WKeyCode::ArrowRight | WKeyCode::Tab if key_dialog_open => {
+                    self.app
+                        .state
+                        .settings_panel
+                        .toggle_key_delete_dialog_focus();
+                }
+                // ===== Phase 5-11-9 Sub-phase B: key-field edit handling =====
+                WKeyCode::Escape if key_editing => {
+                    self.app.state.settings_panel.cancel_key_edit();
+                }
+                WKeyCode::Tab if key_editing => {
+                    // Toggle between Record and Text mode.
+                    self.app.state.settings_panel.toggle_key_edit_mode();
+                }
+                WKeyCode::Enter if key_text_editing => {
+                    // Commit Text mode (Record mode commits on capture).
+                    self.app.state.settings_panel.commit_key_edit();
+                }
+                WKeyCode::Backspace if key_text_editing => {
+                    self.app.state.settings_panel.key_field_backspace();
+                }
+                WKeyCode::Delete if key_text_editing => {
+                    self.app.state.settings_panel.key_field_delete();
+                }
+                WKeyCode::ArrowLeft if key_text_editing => {
+                    self.app.state.settings_panel.key_field_move_left();
+                }
+                WKeyCode::ArrowRight if key_text_editing => {
+                    self.app.state.settings_panel.key_field_move_right();
+                }
+                WKeyCode::Home if key_text_editing => {
+                    self.app.state.settings_panel.key_field_move_home();
+                }
+                WKeyCode::End if key_text_editing => {
+                    self.app.state.settings_panel.key_field_move_end();
+                }
+                // Record-mode capture: any other key press becomes the binding.
+                // Modifier-only presses (ShiftLeft/ShiftRight/ControlLeft/...) are
+                // filtered out because `format_key_event` returns None for them.
+                _ if key_recording => {
+                    if let Some(formatted) = format_key_event(code, self.modifiers) {
+                        self.app.state.settings_panel.capture_key_record(formatted);
+                    }
+                    // Either way (captured or filtered) consume the key.
                 }
                 WKeyCode::Escape => {
                     if font_editing {
@@ -395,6 +460,28 @@ impl EventHandler {
                             //   When the list is empty, treat as disabled and do nothing
                             //   (to prevent accidental presses).
                             sp.open_ssh_delete_dialog();
+                        } else if sp.category == SettingsCategory::Keybindings
+                            && sp.key_field_focus == 1
+                            && sp.begin_key_record()
+                        {
+                            // Phase 5-11-9 Sub-phase B: Enter on the key field starts
+                            // Record mode (the next physical press is captured).
+                            // Tab inside Record mode switches to Text mode for
+                            // prefix bindings like "ctrl+b d".
+                        } else if sp.category == SettingsCategory::Keybindings
+                            && sp.key_field_focus == 3
+                        {
+                            // Phase 5-11-9 Sub-phase D: Add button → append a new
+                            // binding and auto-start Record mode on the key field.
+                            sp.add_key_binding();
+                        } else if sp.category == SettingsCategory::Keybindings
+                            && sp.key_field_focus == 4
+                            && !sp.keybindings.is_empty()
+                        {
+                            // Phase 5-11-9 Sub-phase D: Delete button → open the
+                            // confirmation dialog. With an empty list it is
+                            // treated as disabled.
+                            sp.open_key_delete_dialog();
                         } else {
                             let _ = sp.save_to_toml();
                             sp.close();
@@ -449,11 +536,20 @@ impl EventHandler {
                     } else if sp.category == SettingsCategory::Keybindings
                         && code == WKeyCode::ArrowDown
                     {
-                        // Phase 5-11-9 Sub-phase A: ↓ moves key_field_focus 0 → 1 → 2.
-                        // When the list is empty, only focus 0 is valid; fall through immediately
-                        // to the next category.
-                        let max_focus = if sp.keybindings.is_empty() { 0 } else { 2 };
-                        if sp.key_field_focus < max_focus {
+                        // Phase 5-11-9 Sub-phase A: ↓ walks key_field_focus 0 → 1 → 2.
+                        // Sub-phase D extends the range to 3 (Add) and 4 (Delete).
+                        //   - When the list is empty: 0 (ListBox) → 3 (Add) → next category.
+                        //     Delete (4) is treated as disabled and skipped.
+                        //   - With entries: 0 → 1 → 2 → 3 → 4 → next category.
+                        if sp.keybindings.is_empty() {
+                            if sp.key_field_focus < 3 {
+                                // 0 → 3 directly (skip 1/2 which require a selected binding).
+                                sp.key_field_focus = 3;
+                            } else {
+                                sp.next_category();
+                                sp.key_field_focus = 0;
+                            }
+                        } else if sp.key_field_focus < 4 {
                             sp.key_field_focus += 1;
                         } else {
                             sp.next_category();
@@ -488,8 +584,12 @@ impl EventHandler {
                             }
                         }
                         SettingsCategory::Keybindings => {
-                            // Phase 5-11-9 Sub-phase A: ↑ moves key_field_focus back by one
-                            if sp.key_field_focus > 0 {
+                            // Phase 5-11-9 Sub-phase A: ↑ moves key_field_focus back by one.
+                            // Sub-phase D: when the list is empty, jump from 3 (Add)
+                            //   directly to 0 (ListBox) — focuses 1/2 require a selection.
+                            if sp.keybindings.is_empty() && sp.key_field_focus == 3 {
+                                sp.key_field_focus = 0;
+                            } else if sp.key_field_focus > 0 {
                                 sp.key_field_focus -= 1;
                             } else {
                                 sp.prev_category();
@@ -521,6 +621,14 @@ impl EventHandler {
                                 _ => {}
                             }
                         }
+                        // Phase 5-11-9 Sub-phase C: → cycles the action ComboBox forward
+                        // when the action field (key_field_focus == 2) is focused.
+                        SettingsCategory::Keybindings => {
+                            let sp = &mut self.app.state.settings_panel;
+                            if sp.key_field_focus == 2 {
+                                sp.next_key_action();
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -544,6 +652,14 @@ impl EventHandler {
                                 3 => sp.decrease_ssh_host_port(),
                                 5 => sp.prev_ssh_auth_type(),
                                 _ => {}
+                            }
+                        }
+                        // Phase 5-11-9 Sub-phase C: ← cycles the action ComboBox backward
+                        // when the action field (key_field_focus == 2) is focused.
+                        SettingsCategory::Keybindings => {
+                            let sp = &mut self.app.state.settings_panel;
+                            if sp.key_field_focus == 2 {
+                                sp.prev_key_action();
                             }
                         }
                         _ => {}

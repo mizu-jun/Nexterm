@@ -7,11 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Sprint 5-12 in progress. Root-cause fix and prevention for a Windows-only issue where
-specifying PowerShell in `config.toml` failed to start the shell, or showed the GUI
-with blank panes. Delivered in 4 phases. No breaking changes.
+Sprint 5-11-9 (Keybindings interactive editor + screen-reader support) and
+Sprint 5-12 (Windows shell-launch visibility fixes) in flight. No breaking
+changes (`PROTOCOL_VERSION = 8` and `SNAPSHOT_VERSION = 4` retained).
 
-### Added
+### Added (Sprint 5-11-9 — Keybindings interactive editor)
+
+- **Sub-phase A — keybinding entry data + display**: introduced
+  `KeyBindingEntry { key, action }` plus the `Keybindings` settings category.
+  The settings panel renders the loaded bindings (and any built-in defaults)
+  as a scrollable list, with `→` separating the key spelling from the action
+  name. `KEYBINDING_ACTIONS` enumerates the 27 supported actions
+  (`Quit` / `CommandPalette` / `CloseOsWindow` / …) — anything outside the
+  list is flagged as invalid.
+- **Sub-phase B — edit logic**: `KeyEditMode::Record` (capture the next key
+  press) and `KeyEditMode::Text(TextInputState)` (free-form spelling) drive
+  in-place editing. `begin_key_record` / `begin_key_text_edit` /
+  `capture_key_record` / `commit_key_edit` / `cancel_key_edit` form the
+  state machine. `cycle_keybinding_action_forward/backward` cycles through
+  `KEYBINDING_ACTIONS`.
+- **Sub-phase C — Add / Delete buttons**: `add_key_binding` appends a fresh
+  entry and immediately enters Record mode. `open_key_delete_dialog` /
+  `cancel_key_delete_dialog` / `confirm_key_delete_dialog` /
+  `toggle_key_delete_dialog_focus` drive the delete confirmation dialog
+  (Cancel is focused by default to prevent accidental deletion).
+- **Sub-phase D — settings-panel UI**: 5-row Keybindings section in
+  `renderer/overlay/settings.rs` showing the binding list, the selected key
+  field (with Record indicator), the action ComboBox, and Add / Delete
+  buttons. Navigation: `↑/↓` cycles `key_field_focus` (0=List, 1=Key,
+  2=Action, 3=Add, 4=Delete); `←/→` cycles the action ComboBox or moves
+  between dialog buttons; `Enter` activates the current focus; `Esc`
+  cancels in-flight edits and closes the delete dialog.
+- **Sub-phase E — AccessKit nodes + dispatch + tests**: screen-reader
+  exposure of the entire Keybindings editor.
+  - **NodeId allocation**: fixed `50..=56` for Key field / Action field /
+    Add / Delete buttons / delete-dialog (`AlertDialog` + Confirm + Cancel);
+    dynamic offset `900_000_000` for `SettingsKeyBindingItem` (one
+    `ListBoxOption` per binding).
+  - **`build_settings_panel_nodes` Keybindings branch**: surfaces each
+    binding as a `ListBoxOption`, the selected binding's key as a
+    `TextInput` (description swaps to a "Recording…" hint while in Record
+    mode and exposes the live edit buffer while in Text mode), and the
+    action as a `ComboBox`. Add / Delete are exposed as `Button`s; Delete
+    becomes a labelled "(disabled)" button when the list is empty so SR
+    navigation stays consistent.
+  - **`dispatch_settings_action`** gains 12 arms. Per the design decision
+    "Q1 = (c) both", `Action::Click` on the key field starts Record mode
+    **and** `Action::SetValue` writes the spelling directly via
+    `set_keybinding_key_direct`. The action `ComboBox` accepts
+    `Click` / `Increment` / `Decrement` cycling plus `SetValue` (rejected
+    for strings outside `KEYBINDING_ACTIONS`).
+  - **`compute_tree_state_hash`** now reflects the keybinding list, the
+    selected index, `key_field_focus`, the delete-dialog state, and the
+    `KeyEditMode` (including the in-flight `TextInputState.buffer` /
+    `cursor` / `preedit`) so the SR sees every change live.
+  - **25 new unit tests**: 7 decode tests (fixed + dynamic offsets), 11
+    dispatch tests (each Action × node combination, including Q1=(c)
+    Click→Record + SetValue→direct write regression), 4 build-tree tests
+    (focus selection, empty-list behaviour, delete-dialog body, focus
+    follows `key_field_focus`), 1 hash detection test, 2 sanity tests
+    (offset isolation, Click+SetValue lands clean).
+
+### Added (Sprint 5-12 — Shell-launch visibility)
 
 - **Server error banner UI (Sprint 5-12 Phase 1)** — `ServerToClient::Error` used to
   be log-only. It is now stored in `ClientState.error_banner: Option<String>` and
