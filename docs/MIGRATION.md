@@ -4,7 +4,7 @@ This document gathers the steps required when upgrading to a Nexterm version tha
 
 ---
 
-## v1.6.1 → Unreleased (Sprint 5-11-9 keybinding editor + Sprint 5-12 shell-launch visibility)
+## v1.6.1 → v1.7.0 (Sprint 5-11-9 keybinding editor + Sprint 5-12 shell-launch visibility)
 
 **No breaking changes.** `PROTOCOL_VERSION = 8` and `SNAPSHOT_VERSION = 4` are unchanged. The configuration schema (`nexterm.toml` / `config.lua`) does not change either. Existing users can upgrade without any action.
 
@@ -25,7 +25,7 @@ The Keybindings category of the in-app settings panel used to be a read-only pla
 
 ---
 
-## v1.6.1 → Unreleased (Sprint 5-12: visibility and fix for shell-launch failures)
+## v1.6.1 → v1.7.0 (Sprint 5-12: visibility and fix for shell-launch failures)
 
 **No breaking changes.** `PROTOCOL_VERSION = 8` and `SNAPSHOT_VERSION = 4` are unchanged. The configuration schema (`nexterm.toml` / `config.lua`) does not change either. Existing users can upgrade without any action.
 

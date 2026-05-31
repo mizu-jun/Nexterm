@@ -7,9 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-05-31
+
 Sprint 5-11-9 (Keybindings interactive editor + screen-reader support) and
-Sprint 5-12 (Windows shell-launch visibility fixes) in flight. No breaking
-changes (`PROTOCOL_VERSION = 8` and `SNAPSHOT_VERSION = 4` retained).
+Sprint 5-12 (Windows shell-launch visibility fixes) shipped together. No
+breaking changes (`PROTOCOL_VERSION = 8` and `SNAPSHOT_VERSION = 4`
+retained).
 
 ### Added (Sprint 5-11-9 — Keybindings interactive editor)
 
