@@ -34,17 +34,22 @@ pub async fn run_server() -> Result<()> {
     // defaults we queue warning messages on the SessionManager. They are delivered to the client
     // as `ServerToClient::Error` on the first attach and shown as an error banner.
     let mut startup_warnings: Vec<String> = Vec::new();
-    let shell_config = match nexterm_config::ConfigLoader::load() {
-        Ok(cfg) => cfg.shell,
+    // Load the config exactly once and reuse it for the shell, runtime config,
+    // Lua hooks, plugins, and web server below. Previously `run_server` loaded
+    // the TOML twice (once here for `.shell`, again further down for the rest),
+    // which doubled the startup file IO and emitted duplicate "Loaded the TOML
+    // configuration" log lines.
+    let cfg = match nexterm_config::ConfigLoader::load() {
+        Ok(cfg) => cfg,
         Err(e) => {
             tracing::error!("failed to load config file: {e}");
             startup_warnings.push(format!(
                 "failed to load config file (starting with defaults): {e}"
             ));
-            nexterm_config::Config::default().shell
+            nexterm_config::Config::default()
         }
     };
-    let manager = Arc::new(SessionManager::new(shell_config));
+    let manager = Arc::new(SessionManager::new(cfg.shell.clone()));
 
     // Restore the previous session(s) when a snapshot exists.
     if let Some(snap) = persist::load_snapshot() {
@@ -87,19 +92,8 @@ pub async fn run_server() -> Result<()> {
 
     let manager_for_ipc = Arc::clone(&manager);
 
-    // Load config and extract hook / log / hosts configuration.
+    // Extract hook / log / hosts configuration from the already-loaded config.
     let (runtime_cfg, lua_runner, web_config) = {
-        // Sprint 5-12 Phase 4: queue warnings on the second failed load as well.
-        let cfg = match nexterm_config::ConfigLoader::load() {
-            Ok(cfg) => cfg,
-            Err(e) => {
-                tracing::error!("failed to reload config file: {e}");
-                startup_warnings.push(format!(
-                    "failed to load hook/web config (starting with defaults): {e}"
-                ));
-                nexterm_config::Config::default()
-            }
-        };
         let lua_script = nexterm_config::lua_path();
         let runner = nexterm_config::LuaHookRunner::new(Some(lua_script));
 

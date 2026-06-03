@@ -179,6 +179,16 @@ pub struct EventHandler {
     /// separately via this field. `update_accesskit_tree_if_needed` computes
     /// `compute_grid_row_hashes` on each throttle tick and compares.
     pub(super) last_grid_row_hashes: std::collections::HashMap<u32, Vec<u64>>,
+    /// Timestamp of the most recent server connection attempt.
+    ///
+    /// On a cold start the embedded `nexterm_server::run_server` task may not be
+    /// listening on the IPC pipe/socket yet. Rather than blocking the main
+    /// thread in a multi-second retry loop (which starves the server task and
+    /// *delays* the very pipe being awaited), `on_resumed` makes one quick
+    /// non-blocking attempt and `on_about_to_wait` retries on a fixed cadence
+    /// (`RECONNECT_INTERVAL`) until the connection succeeds. `None` means no
+    /// attempt has been made yet.
+    pub(super) last_connect_attempt: Option<Instant>,
 }
 
 impl EventHandler {

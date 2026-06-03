@@ -17,7 +17,7 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use nexterm_config::{Config, HooksConfig, HostConfig, LogConfig};
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::{debug, info};
 
 /// Subset of configuration that can be hot-reloaded at runtime.
 #[derive(Clone, Debug)]
@@ -76,7 +76,10 @@ pub fn spawn_runtime_updater(shared: SharedRuntimeConfig, mut rx: mpsc::Receiver
                 new_cfg.log.auto_log
             );
         }
-        warn!("config watcher channel closed; stopping hot-reload.");
+        // The channel closes when the watcher is dropped, which happens during a
+        // normal shutdown — this is expected, so log at debug rather than warn to
+        // avoid a spurious warning on every clean exit.
+        debug!("config watcher channel closed; stopping hot-reload.");
     });
 }
 

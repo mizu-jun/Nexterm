@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.3] - 2026-06-04
+
+Follow-up PATCH on top of 1.7.2. Replaces the blocking startup-connect retry
+introduced in 1.7.2 with a non-blocking attempt plus background reconnect,
+which addresses the *root cause* of the offline-mode race, and trims redundant
+startup work and log noise observed in real session logs. No breaking changes
+(`PROTOCOL_VERSION = 8` and `SNAPSHOT_VERSION = 4` retained).
+
+### Fixed
+
+- **Startup connect race, fixed at the root** (`nexterm-client-gpu`): the
+  1.7.2 fix retried the IPC connect for ~3 s by **blocking the winit main
+  thread** (`block_in_place` + `block_on`). In the single-binary build the
+  client and the embedded server share one Tokio runtime, so that block
+  *starved the server task* and delayed the very named pipe the client was
+  waiting for. Real logs showed the client exhausting its 3 s retry budget at
+  T+3.4 s while the server only bound the pipe at T+4.3 s — falling into
+  offline mode even though the server came up healthy ~0.9 s later.
+  `on_resumed` now makes a single non-blocking connect attempt and, on failure,
+  `on_about_to_wait` reconnects on a 200 ms cadence until the server is
+  listening. The main thread stays responsive and the server gets the CPU it
+  needs to bind the pipe promptly.
+
+### Changed
+
+- **Server loads its config once at startup** (`nexterm-server`): `run_server`
+  called `ConfigLoader::load()` twice (once for the shell, again for hooks /
+  web / plugins), doubling startup file IO and emitting duplicate "Loaded the
+  TOML configuration" log lines. It now loads once and reuses the result.
+- **Font system is no longer scanned twice at startup** (`nexterm-client-gpu`):
+  the font manager was built once at scale 1.0 in `NextermApp::new` and then
+  fully rebuilt in `on_resumed` to apply the real DPI scale, triggering a
+  second ~30–50 MB system-font scan (and a duplicate "malformed font" warning
+  for fonts like Windows' `mstmc.ttf`). A new `FontManager::set_scale_factor`
+  reuses the existing font system and only recomputes scale-dependent metrics.
+- **Quieter shutdown / font logs**: the server's "config watcher channel
+  closed" message is now `debug!` (it fires on every clean shutdown, so a
+  `warn!` was misleading), and the default client log filter adds
+  `fontdb=error` to silence unactionable malformed-font warnings from
+  third-party system fonts.
+
 ## [1.7.2] - 2026-06-01
 
 Follow-up PATCH on top of 1.7.1, fixing a startup race that could leave
