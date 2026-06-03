@@ -97,6 +97,8 @@ impl NextermApp {
             last_tree_hash: None,
             // Sprint 5-11-3: per-pane grid row hash cache
             last_grid_row_hashes: HashMap::new(),
+            // Set on the first connection attempt in `on_resumed`.
+            last_connect_attempt: None,
         }
     }
 }

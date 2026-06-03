@@ -112,11 +112,15 @@ async fn main() -> Result<()> {
 ///   WARN that newer NVIDIA Vulkan drivers emit on every frame because wgpu
 ///   has not added the enum yet. The targeted `=error` keeps the rest of
 ///   `wgpu_hal`'s legitimate WARNs visible.
+/// - `fontdb=error` silences the `Failed to load a font face ... malformed font`
+///   WARN that fontdb emits for proprietary/broken system fonts (e.g. Windows'
+///   `mstmc.ttf`). These are unactionable third-party fonts we cannot parse and
+///   the warning is pure noise.
 ///
 /// Without these overrides a 4-minute session bloats the client log file past
 /// 1 MB and drowns out useful diagnostics.
 const DEFAULT_LOG_DIRECTIVES: &str =
-    "info,wgpu_core=warn,wgpu_hal=warn,wgpu_hal::vulkan::conv=error,naga=warn";
+    "info,wgpu_core=warn,wgpu_hal=warn,wgpu_hal::vulkan::conv=error,naga=warn,fontdb=error";
 
 /// Initialize logging. Windows release builds log to a file
 /// (`%LOCALAPPDATA%\nexterm\nexterm-client.log`); all other configurations log to stdout.

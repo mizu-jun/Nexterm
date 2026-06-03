@@ -90,6 +90,36 @@ impl FontManager {
         }
     }
 
+    /// Recompute the scale-dependent metrics for a new DPI scale factor without
+    /// rebuilding the font system.
+    ///
+    /// `FontManager::new` runs a ~30–50 MB system-font scan, so calling it again
+    /// just to apply the real DPI scale (the window's `scale_factor()` is only
+    /// known in `on_resumed`, after the manager was first built at scale 1.0)
+    /// doubles startup cost and emits duplicate fontdb load warnings. This reuses
+    /// the existing `font_system` / `swash_cache` and only recomputes `metrics`
+    /// and `cell_w`, which is effectively free.
+    pub fn set_scale_factor(&mut self, size_pt: f32, scale_factor: f32) {
+        // size_pt × (96 dpi / 72 dpi) × scale_factor = physical font size in pixels.
+        let font_size_px = size_pt * (96.0 / 72.0) * scale_factor;
+        let line_height = font_size_px * 1.2;
+        self.metrics = Metrics::new(font_size_px, line_height);
+        self.cell_w = Self::measure_char_width(
+            &mut self.font_system,
+            &mut self.swash_cache,
+            self.metrics,
+            &self.family,
+        );
+        tracing::debug!(
+            "font rescale: {}pt × scale={} → {}px, cell_w={:.1}px, cell_h={:.1}px",
+            size_pt,
+            scale_factor,
+            font_size_px,
+            self.cell_w,
+            line_height
+        );
+    }
+
     /// Initialise the font system with a curated set of font directories.
     ///
     /// `FontSystem::new()` scans every system font and consumes ~30–50 MB.

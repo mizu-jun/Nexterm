@@ -19,7 +19,6 @@ use winit::{
 
 use super::EventHandler;
 use crate::connection::{Connection, ConnectionExt};
-use crate::font::FontManager;
 use crate::glyph_atlas::{GlyphAtlas, GlyphKey};
 use crate::renderer::WgpuState;
 
@@ -96,16 +95,14 @@ impl EventHandler {
         // Enable IME input.
         window.set_ime_allowed(true);
 
-        // Read the DPI scale factor and rebuild the font at the real scale.
+        // Read the DPI scale factor and re-apply it to the font. The font was
+        // already built at scale 1.0 in `NextermApp::new`; rescaling reuses that
+        // font system instead of running a second full system-font scan.
         let scale_factor = window.scale_factor() as f32;
         self.scale_factor = scale_factor;
-        self.app.font = FontManager::new(
-            &self.app.config.font.family,
-            self.app.config.font.size,
-            &self.app.config.font.font_fallbacks,
-            scale_factor,
-            self.app.config.font.ligatures,
-        );
+        self.app
+            .font
+            .set_scale_factor(self.app.config.font.size, scale_factor);
 
         // Apply the Acrylic (frosted-glass) background (Windows 11 only).
         #[cfg(windows)]
@@ -176,65 +173,80 @@ impl EventHandler {
         // Connect to the server and attach to the default session.
         //
         // The single-binary build (`nexterm` bin in `nexterm-client-gpu`) spawns
-        // `nexterm_server::run_server` as an internal Tokio task. Server
-        // initialization (snapshot load, font parsing, IPC pipe creation) takes
-        // up to ~1.5 s in practice, so a single `connect` attempt can race the
-        // server and fail with "the system cannot find the file specified"
-        // (Windows `os error 2`) before the named pipe is listening. Retry on
-        // a 200 ms cadence for up to ~3 s so the client smoothly waits out the
-        // startup race instead of falling into offline mode permanently.
-        let conn = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                const MAX_ATTEMPTS: u32 = 15;
-                const RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(200);
-                let mut last_err: Option<anyhow::Error> = None;
-                for attempt in 1..=MAX_ATTEMPTS {
-                    match Connection::connect_gpu().await {
-                        Ok(conn) => {
-                            // Attach to the session → notify the real size.
-                            let _ = conn.send_tx.try_send(ClientToServer::Attach {
-                                session_name: "main".to_string(),
-                            });
-                            let _ = conn.send_tx.try_send(ClientToServer::Resize { cols, rows });
-                            if attempt > 1 {
-                                info!("Connected to nexterm server (after {} attempt(s))", attempt);
-                            } else {
-                                info!("Connected to nexterm server");
-                            }
-                            return Some(conn);
-                        }
-                        Err(e) => {
-                            tracing::debug!(
-                                "connect attempt {}/{} failed: {}",
-                                attempt,
-                                MAX_ATTEMPTS,
-                                e
-                            );
-                            last_err = Some(e);
-                            if attempt < MAX_ATTEMPTS {
-                                tokio::time::sleep(RETRY_DELAY).await;
-                            }
-                        }
-                    }
-                }
-                warn!(
-                    "Failed to connect to server after {} attempts (offline mode): {}",
-                    MAX_ATTEMPTS,
-                    last_err
-                        .as_ref()
-                        .map(|e| e.to_string())
-                        .unwrap_or_else(|| "<unknown>".to_string()),
-                );
-                None
-            })
-        });
-        self.connection = conn;
+        // `nexterm_server::run_server` as an internal Tokio task. On a cold start
+        // the IPC pipe/socket may not be listening yet (Windows `os error 2`).
+        //
+        // We do exactly ONE quick, non-blocking attempt here. A multi-second
+        // blocking retry loop at this point would freeze the window *and* starve
+        // the embedded server task (both run on the same Tokio runtime / main
+        // thread), paradoxically delaying the pipe the client is waiting for. If
+        // this first attempt fails, `on_about_to_wait` keeps retrying on a fixed
+        // cadence until the server is up — the window stays responsive and the
+        // server gets the CPU it needs to bind the pipe.
+        if self.try_connect() {
+            info!("Connected to nexterm server");
+        } else {
+            info!("Server not ready yet; will connect in the background");
+        }
+        self.last_connect_attempt = Some(std::time::Instant::now());
 
         info!("wgpu renderer initialized");
     }
 
+    /// Cadence for background reconnection attempts while offline.
+    const RECONNECT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
+
+    /// Make a single, non-blocking attempt to connect to the embedded server and
+    /// attach to the "main" session. Returns `true` on success.
+    ///
+    /// A failed `connect_gpu` returns immediately (the pipe/socket simply does
+    /// not exist yet), so this never stalls the caller. Shared by the initial
+    /// `on_resumed` attempt and the `on_about_to_wait` background retry.
+    pub(super) fn try_connect(&mut self) -> bool {
+        let cols = self.app.state.cols;
+        let rows = self.app.state.rows;
+        let result = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(Connection::connect_gpu())
+        });
+        match result {
+            Ok(conn) => {
+                // Attach to the session → notify the real size.
+                let _ = conn.send_tx.try_send(ClientToServer::Attach {
+                    session_name: "main".to_string(),
+                });
+                let _ = conn.send_tx.try_send(ClientToServer::Resize { cols, rows });
+                self.connection = Some(conn);
+                true
+            }
+            Err(e) => {
+                tracing::debug!("connect attempt failed: {}", e);
+                false
+            }
+        }
+    }
+
     /// `ApplicationHandler::about_to_wait` implementation.
     pub(super) fn on_about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // Background reconnect: if the embedded server was not yet listening when
+        // the window came up, keep retrying on a fixed cadence until it connects.
+        // `on_new_events` keeps the loop awake (`WaitUntil(now + 16 ms)`), so this
+        // fires ~60 times/sec without any extra redraw requests. This replaces the
+        // old blocking startup retry that froze the window for ~3 s.
+        if self.connection.is_none()
+            && self.window.is_some()
+            && self
+                .last_connect_attempt
+                .is_none_or(|t| t.elapsed() >= Self::RECONNECT_INTERVAL)
+        {
+            self.last_connect_attempt = Some(std::time::Instant::now());
+            if self.try_connect() {
+                info!("Connected to nexterm server (background reconnect)");
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+            }
+        }
+
         // Poll server messages and update state.
         // To satisfy the borrow checker, first collect the received messages
         // into a Vec and then process them.
