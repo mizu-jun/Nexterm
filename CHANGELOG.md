@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.4] - 2026-06-04
+
+PATCH release that re-syncs the Flatpak vendored-sources manifest with
+`Cargo.lock`. No code changes since 1.7.3 (`PROTOCOL_VERSION = 8`,
+`SNAPSHOT_VERSION = 4` retained); 1.7.3 shipped with every asset except the
+Flatpak bundle, which this release restores.
+
+### Fixed
+
+- **Flatpak build (`pkg/flatpak/cargo-sources.json` out of sync)**: a previous
+  dependency bump (`chacha20` 0.9.1 → 0.10.0, `cipher` 0.4.4 → 0.5.1) updated
+  `Cargo.lock` without regenerating the vendored-sources manifest, leaving
+  stale crate entries that no longer matched `Cargo.lock`. The Flatpak CI's
+  sync check failed at release time (so 1.7.3 has no Flatpak asset). The
+  manifest is regenerated and back in sync.
+
 ## [1.7.3] - 2026-06-04
 
 Follow-up PATCH on top of 1.7.2. Replaces the blocking startup-connect retry
