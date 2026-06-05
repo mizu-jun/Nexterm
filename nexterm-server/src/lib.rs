@@ -52,6 +52,11 @@ pub async fn run_server() -> Result<()> {
     let manager = Arc::new(SessionManager::new(cfg.shell.clone()));
 
     // Restore the previous session(s) when a snapshot exists.
+    // P1-A diagnostic: log each major startup step so we can locate where the
+    // server stalls between `restored sessions` and `ipc::serve`. Previously the
+    // 38 s gap between Session2 and Session3 (2026-06-03 log) left no breadcrumbs
+    // in this region — see `memory/project_windows_powershell_startup_investigation.md`.
+    info!("startup: loading snapshot...");
     if let Some(snap) = persist::load_snapshot() {
         let original_window_count = total_window_count(&snap);
         let original_session_count = snap.sessions.len();
@@ -72,6 +77,7 @@ pub async fn run_server() -> Result<()> {
         // every subsequent launch. Without this, short-lived sessions can leave
         // bad entries in the snapshot file forever because the 30 s auto-save
         // never fires.
+        info!("startup: running snapshot self-heal check...");
         let current_snap = manager.to_snapshot().await;
         let current_window_count = total_window_count(&current_snap);
         let current_session_count = current_snap.sessions.len();
@@ -92,6 +98,7 @@ pub async fn run_server() -> Result<()> {
 
     let manager_for_ipc = Arc::clone(&manager);
 
+    info!("startup: building runtime config and Lua hook runner...");
     // Extract hook / log / hosts configuration from the already-loaded config.
     let (runtime_cfg, lua_runner, web_config) = {
         let lua_script = nexterm_config::lua_path();
@@ -106,6 +113,10 @@ pub async fn run_server() -> Result<()> {
                 .unwrap_or_else(nexterm_plugin::default_plugin_dir);
             let mgr = nexterm_plugin::PluginManager::new(std::sync::Arc::new(|_pane_id, _data| {}));
             if plugin_dir.exists() {
+                info!(
+                    "startup: loading WASM plugins from {}...",
+                    plugin_dir.display()
+                );
                 match mgr.load_dir(&plugin_dir) {
                     Ok(n) if n > 0 => info!("loaded {} WASM plugin(s)", n),
                     Ok(_) => {}
@@ -128,6 +139,7 @@ pub async fn run_server() -> Result<()> {
         manager.set_startup_warnings(startup_warnings);
     }
 
+    info!("startup: spawning config watcher...");
     // Watch config.toml and hot-reload runtime config on changes.
     // `_watcher` stops watching when dropped, so retain it within run_server's scope.
     let _watcher = match runtime_config::spawn_watcher(Arc::clone(&runtime_cfg)) {
@@ -143,6 +155,7 @@ pub async fn run_server() -> Result<()> {
 
     // Launch the web terminal in the background if enabled.
     if web_config.enabled {
+        info!("startup: launching web terminal server...");
         let web_manager = Arc::clone(&manager);
         tokio::spawn(web::start_web_server(web_config, web_manager));
     }
@@ -163,6 +176,7 @@ pub async fn run_server() -> Result<()> {
         }
     });
 
+    info!("startup: entering ipc::serve (this is the last step before accept loop)");
     // Run the IPC server and wait for a shutdown signal.
     tokio::select! {
         result = ipc::serve(manager_for_ipc, runtime_cfg, lua_runner) => {

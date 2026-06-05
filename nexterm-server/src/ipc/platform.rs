@@ -162,12 +162,32 @@ pub(super) async fn serve_named_pipe(
     let pipe_name = named_pipe_name();
     info!("listening on named pipe: {}", pipe_name);
 
+    let mut iteration: u64 = 0;
     loop {
+        // P1-A diagnostic: surface the underlying error when `create` fails.
+        // `first_pipe_instance(false)` lets multiple nexterm processes share the
+        // same pipe name, but if the OS still rejects the create (e.g. ACL
+        // mismatch, name collision with a non-nexterm process) we previously
+        // bubbled the error up with `?` and the calling task died silently.
+        // Now we log it explicitly with the pipe name and current iteration so
+        // the 2026-06-03 "no listening log" symptom can be distinguished from
+        // "listening logged once, then create failed on the next loop".
         let server = ServerOptions::new()
             .first_pipe_instance(false)
             // Explicitly reject remote clients (allow same-machine only).
             .reject_remote_clients(true)
-            .create(&pipe_name)?;
+            .create(&pipe_name)
+            .map_err(|e| {
+                error!(
+                    "ServerOptions::create failed on iteration {} for pipe {}: {} (raw os error: {:?})",
+                    iteration,
+                    pipe_name,
+                    e,
+                    e.raw_os_error()
+                );
+                e
+            })?;
+        iteration = iteration.wrapping_add(1);
 
         server.connect().await?;
 

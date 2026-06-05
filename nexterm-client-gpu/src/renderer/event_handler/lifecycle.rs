@@ -196,6 +196,11 @@ impl EventHandler {
     /// Cadence for background reconnection attempts while offline.
     const RECONNECT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
 
+    /// P1-A diagnostic: log a `WARN` summary every N consecutive failures.
+    /// At a 200 ms cadence, 25 attempts is roughly one summary every 5 s — enough
+    /// to make a stuck offline state visible in the log without flooding it.
+    const CONNECT_FAILURE_LOG_INTERVAL: u64 = 25;
+
     /// Make a single, non-blocking attempt to connect to the embedded server and
     /// attach to the "main" session. Returns `true` on success.
     ///
@@ -216,10 +221,48 @@ impl EventHandler {
                 });
                 let _ = conn.send_tx.try_send(ClientToServer::Resize { cols, rows });
                 self.connection = Some(conn);
+                // P1-A diagnostic: report how long the offline streak lasted so we can
+                // tell "connected immediately" from "took 30 s of background retries".
+                if self.connect_failure_count > 0 {
+                    let elapsed = self
+                        .connect_failure_started_at
+                        .map(|t| t.elapsed())
+                        .unwrap_or_default();
+                    info!(
+                        "Connected after {} failed attempt(s) over {:.1}s",
+                        self.connect_failure_count,
+                        elapsed.as_secs_f64()
+                    );
+                }
+                self.connect_failure_count = 0;
+                self.connect_failure_started_at = None;
                 true
             }
             Err(e) => {
-                tracing::debug!("connect attempt failed: {}", e);
+                self.connect_failure_count = self.connect_failure_count.saturating_add(1);
+                if self.connect_failure_count == 1 {
+                    // First failure in this offline streak — surface the underlying
+                    // error and start the offline timer. Subsequent attempts at the
+                    // 200 ms cadence stay at `debug` until the WARN interval below.
+                    self.connect_failure_started_at = Some(std::time::Instant::now());
+                    info!("Initial connect attempt failed: {}", e);
+                } else if self
+                    .connect_failure_count
+                    .is_multiple_of(Self::CONNECT_FAILURE_LOG_INTERVAL)
+                {
+                    let elapsed = self
+                        .connect_failure_started_at
+                        .map(|t| t.elapsed())
+                        .unwrap_or_default();
+                    tracing::warn!(
+                        "Still offline after {} attempts over {:.1}s (last error: {})",
+                        self.connect_failure_count,
+                        elapsed.as_secs_f64(),
+                        e
+                    );
+                } else {
+                    tracing::debug!("connect attempt failed: {}", e);
+                }
                 false
             }
         }

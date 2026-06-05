@@ -189,6 +189,17 @@ pub struct EventHandler {
     /// (`RECONNECT_INTERVAL`) until the connection succeeds. `None` means no
     /// attempt has been made yet.
     pub(super) last_connect_attempt: Option<Instant>,
+    /// P1-A diagnostic: number of consecutive failed `try_connect` attempts.
+    ///
+    /// Reset to 0 once the connection succeeds. Used to throttle reconnect
+    /// logging so we surface the first failure (`INFO`) and periodic summaries
+    /// (`WARN` every `CONNECT_FAILURE_LOG_INTERVAL` attempts) without flooding
+    /// stderr at the 200 ms reconnect cadence.
+    pub(super) connect_failure_count: u64,
+    /// P1-A diagnostic: timestamp of the first failed `try_connect` attempt in
+    /// the current offline streak. `None` while connected. Used to report the
+    /// total offline duration once the connection finally succeeds.
+    pub(super) connect_failure_started_at: Option<Instant>,
 }
 
 impl EventHandler {

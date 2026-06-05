@@ -99,6 +99,9 @@ impl NextermApp {
             last_grid_row_hashes: HashMap::new(),
             // Set on the first connection attempt in `on_resumed`.
             last_connect_attempt: None,
+            // P1-A reconnect diagnostics — reset on every successful connect.
+            connect_failure_count: 0,
+            connect_failure_started_at: None,
         }
     }
 }
