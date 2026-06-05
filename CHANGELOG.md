@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.5] - 2026-06-05
+
+Diagnostic-only PATCH release. No behavior change beyond logging; PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are retained, and the wire format is unchanged from 1.7.4.
+
+This release adds breadcrumb logging across the server startup sequence and the client reconnect loop so we can pinpoint the silent stall reported in `nexterm-client.log.2026-06-03`, where the server task vanished for ~38 s between `restored sessions` and the IPC accept loop without emitting any log line.
+
+### Added
+
+- **Server startup checkpoints (`nexterm-server/src/lib.rs`)**: six new `INFO` log lines covering snapshot load, self-heal check, runtime-config build, WASM plugin load, config-watcher spawn, optional web-terminal launch, and the decisive `entering ipc::serve` line right before the named-pipe / Unix-socket accept loop. The last line is what distinguishes "stalled before `ipc::serve`" from "stalled inside the accept loop".
+- **Named-pipe create failure context (`nexterm-server/src/ipc/platform.rs`, Windows)**: `ServerOptions::create` failures are now logged at `error!` with the raw OS error code and the loop iteration number, so collisions on `\\.\pipe\nexterm-<USERNAME>` are no longer swallowed by `?`.
+- **Client reconnect diagnostics (`nexterm-client-gpu/src/renderer/event_handler/lifecycle.rs`)**: `try_connect` now reports the first failure of an offline streak at `INFO` with the underlying error (was `debug`, invisible in production), emits a `WARN` summary every ~5 s while still offline (attempt count + elapsed seconds + last error), and logs the total offline duration at `INFO` once the connection succeeds. The 200 ms retry cadence and overall behavior are unchanged.
+
+### Why
+
+P1-A of the Windows-launch investigation. The next on-device reproduction run will identify exactly which startup step is stalling, which is the prerequisite for designing P1-B (single-instance pipe coordination) against concrete evidence rather than speculation. See `memory/project_windows_powershell_startup_investigation.md` for the full failure analysis.
+
 ## [1.7.4] - 2026-06-04
 
 PATCH release that re-syncs the Flatpak vendored-sources manifest with
