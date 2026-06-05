@@ -24,9 +24,17 @@ use tracing::{info, warn};
 use session::SessionManager;
 use snapshot::ServerSnapshot;
 
-/// Run the main logic of `nexterm-server`.
-/// The caller is responsible for log initialization (no need when embedded in the GPU client).
-/// Waits until shutdown signal or until the IPC server exits.
+/// Run the main logic of `nexterm-server`, loading the config file from disk.
+///
+/// Use this entry point when running as a standalone `nexterm-server` binary.
+/// The single-binary GPU client should call [`run_server_with_config`] instead
+/// to avoid reading and parsing the same TOML twice (once on the client, once
+/// here) — see `nexterm-client.log.2026-06-05` where the duplicate
+/// `Loaded the TOML configuration` log lines from the client and the embedded
+/// server task fire within microseconds of each other.
+///
+/// The caller is responsible for log initialization (no need when embedded in
+/// the GPU client). Waits until shutdown signal or until the IPC server exits.
 pub async fn run_server() -> Result<()> {
     info!("starting nexterm-server...");
 
@@ -34,11 +42,6 @@ pub async fn run_server() -> Result<()> {
     // defaults we queue warning messages on the SessionManager. They are delivered to the client
     // as `ServerToClient::Error` on the first attach and shown as an error banner.
     let mut startup_warnings: Vec<String> = Vec::new();
-    // Load the config exactly once and reuse it for the shell, runtime config,
-    // Lua hooks, plugins, and web server below. Previously `run_server` loaded
-    // the TOML twice (once here for `.shell`, again further down for the rest),
-    // which doubled the startup file IO and emitted duplicate "Loaded the TOML
-    // configuration" log lines.
     let cfg = match nexterm_config::ConfigLoader::load() {
         Ok(cfg) => cfg,
         Err(e) => {
@@ -49,6 +52,25 @@ pub async fn run_server() -> Result<()> {
             nexterm_config::Config::default()
         }
     };
+    run_server_inner(cfg, startup_warnings).await
+}
+
+/// Run the main logic of `nexterm-server` using a pre-loaded config.
+///
+/// Intended for the single-binary GPU client, which has already parsed the
+/// TOML for its own use (font, language, status bar, etc.). Reusing that
+/// `Config` here eliminates the duplicate TOML read previously visible as
+/// twin `nexterm_config::loader: Loaded the TOML configuration` log lines on
+/// startup.
+pub async fn run_server_with_config(cfg: nexterm_config::Config) -> Result<()> {
+    info!("starting nexterm-server...");
+    run_server_inner(cfg, Vec::new()).await
+}
+
+async fn run_server_inner(
+    cfg: nexterm_config::Config,
+    startup_warnings: Vec<String>,
+) -> Result<()> {
     let manager = Arc::new(SessionManager::new(cfg.shell.clone()));
 
     // Restore the previous session(s) when a snapshot exists.

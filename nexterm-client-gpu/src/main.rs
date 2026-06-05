@@ -41,16 +41,22 @@ use crate::renderer::UserEvent;
 async fn main() -> Result<()> {
     let _log_guard = init_tracing();
 
+    // Load the config (TOML → Lua) BEFORE spawning the server task so we can
+    // hand the parsed `Config` to it via `run_server_with_config`. Previously
+    // the client and the embedded server each called `ConfigLoader::load()`
+    // independently — visible in `nexterm-client.log.2026-06-05` as two
+    // `Loaded the TOML configuration` log lines fired within microseconds of
+    // each other. The redundant read doubled startup file IO.
+    let config = ConfigLoader::load()?;
+
     // Start the server as an internal Tokio task (no separate process needed).
     // The IPC socket uses the same protocol regardless.
-    let server_handle = tokio::spawn(async {
-        if let Err(e) = nexterm_server::run_server().await {
+    let server_config = config.clone();
+    let server_handle = tokio::spawn(async move {
+        if let Err(e) = nexterm_server::run_server_with_config(server_config).await {
             tracing::error!("nexterm-server error: {}", e);
         }
     });
-
-    // Load the config (TOML → Lua).
-    let config = ConfigLoader::load()?;
     // The config's `language` field wins; "auto" falls back to OS locale detection.
     if config.language == "auto" {
         nexterm_i18n::init();

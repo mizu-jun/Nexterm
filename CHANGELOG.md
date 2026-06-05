@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.6] - 2026-06-06
+
+PATCH release that eliminates the duplicate TOML read on startup of the single-binary GPU client. No behavior change beyond fewer file reads and cleaner logs; PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are retained, and the wire format is unchanged from 1.7.5.
+
+### Fixed
+
+- **Duplicate `Loaded the TOML configuration` log (`nexterm-client.log.2026-06-05`)**: the GPU client and the embedded `nexterm-server` task each called `ConfigLoader::load()` independently, so the same TOML file was parsed twice within microseconds of each other on every startup. The client now loads the config once and hands the parsed `Config` to the embedded server via the new `run_server_with_config` entry point. The standalone `nexterm-server` binary still uses `run_server` and continues to load the file itself, so the systemd / standalone path is unchanged.
+
+### Added
+
+- **`nexterm_server::run_server_with_config(cfg)`**: new public entry point for embedders that have already parsed the config. The existing `run_server()` is preserved for the standalone binary and now simply loads the file and delegates to the shared inner routine.
+
 ## [1.7.5] - 2026-06-05
 
 Diagnostic-only PATCH release. No behavior change beyond logging; PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are retained, and the wire format is unchanged from 1.7.4.
