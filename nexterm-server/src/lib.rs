@@ -6,7 +6,7 @@ mod hooks;
 mod ipc;
 mod pane;
 pub mod persist;
-mod runtime_config;
+pub mod runtime_config;
 mod serial;
 mod session;
 pub mod snapshot;
@@ -20,6 +20,10 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use tracing::{info, warn};
+
+pub use runtime_config::{
+    RuntimeConfig, SharedRuntimeConfig, build_shared as build_shared_runtime_config,
+};
 
 use session::SessionManager;
 use snapshot::ServerSnapshot;
@@ -52,7 +56,7 @@ pub async fn run_server() -> Result<()> {
             nexterm_config::Config::default()
         }
     };
-    run_server_inner(cfg, startup_warnings).await
+    run_server_inner(cfg, startup_warnings, None, None).await
 }
 
 /// Run the main logic of `nexterm-server` using a pre-loaded config.
@@ -64,12 +68,40 @@ pub async fn run_server() -> Result<()> {
 /// startup.
 pub async fn run_server_with_config(cfg: nexterm_config::Config) -> Result<()> {
     info!("starting nexterm-server...");
-    run_server_inner(cfg, Vec::new()).await
+    run_server_inner(cfg, Vec::new(), None, None).await
+}
+
+/// Run the main logic of `nexterm-server` with externally owned hot-reload state.
+///
+/// Intended for the single-binary GPU client, which already owns the
+/// [`SharedRuntimeConfig`] and a `notify` watcher (Sprint 5-13 / v1.7.7). With
+/// the shared handle in hand, the embedded server skips `spawn_watcher` and
+/// reuses the client's existing watcher — `nexterm-client.log.2026-06-05`
+/// showed `nexterm_config::watcher: Watching the configuration directory`
+/// firing twice on every startup because both the client and the embedded
+/// server installed their own watcher on the same directory.
+///
+/// `shutdown_rx` lets the caller stop the server cleanly without the
+/// `tokio::task::JoinHandle::abort()` hack. v1.7.7 moves the embedded server
+/// onto its own OS thread / Tokio runtime so winit's main-thread occupation
+/// cannot starve the server task (see
+/// `memory/project_windows_powershell_startup_investigation.md` problem 3);
+/// in that layout `abort()` is no longer available because the server is no
+/// longer a Tokio task.
+pub async fn run_server_with_config_and_runtime(
+    cfg: nexterm_config::Config,
+    runtime_cfg: SharedRuntimeConfig,
+    shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+) -> Result<()> {
+    info!("starting nexterm-server...");
+    run_server_inner(cfg, Vec::new(), Some(runtime_cfg), Some(shutdown_rx)).await
 }
 
 async fn run_server_inner(
     cfg: nexterm_config::Config,
     startup_warnings: Vec<String>,
+    runtime_cfg_ext: Option<SharedRuntimeConfig>,
+    shutdown_rx_ext: Option<tokio::sync::oneshot::Receiver<()>>,
 ) -> Result<()> {
     let manager = Arc::new(SessionManager::new(cfg.shell.clone()));
 
@@ -148,11 +180,11 @@ async fn run_server_inner(
             manager.set_plugin_manager(mgr);
         }
 
-        (
-            runtime_config::build_shared(&cfg),
-            Arc::new(runner),
-            cfg.web,
-        )
+        // Use the externally provided SharedRuntimeConfig if available
+        // (single-binary client owns one already + drives its watcher), else
+        // build one and spawn our own watcher below.
+        let runtime_cfg = runtime_cfg_ext.unwrap_or_else(|| runtime_config::build_shared(&cfg));
+        (runtime_cfg, Arc::new(runner), cfg.web)
     };
 
     // Sprint 5-12 Phase 4: register startup warnings (e.g. config load failures) on the
@@ -161,18 +193,27 @@ async fn run_server_inner(
         manager.set_startup_warnings(startup_warnings);
     }
 
-    info!("startup: spawning config watcher...");
-    // Watch config.toml and hot-reload runtime config on changes.
-    // `_watcher` stops watching when dropped, so retain it within run_server's scope.
-    let _watcher = match runtime_config::spawn_watcher(Arc::clone(&runtime_cfg)) {
-        Ok(w) => Some(w),
-        Err(e) => {
-            tracing::warn!(
-                "failed to start config watcher (hot-reload disabled): {}",
-                e
-            );
-            None
+    // Spawn the config watcher only when no external SharedRuntimeConfig was
+    // supplied. When the single-binary GPU client (v1.7.7+) hands us a runtime
+    // config, it also owns the `notify::Watcher` and pushes updates into the
+    // same `SharedRuntimeConfig` we just received, so a second watcher here
+    // would only duplicate file-system events.
+    let _watcher = if shutdown_rx_ext.is_none() {
+        info!("startup: spawning config watcher...");
+        // Watch config.toml and hot-reload runtime config on changes.
+        // `_watcher` stops watching when dropped, so retain it within run_server's scope.
+        match runtime_config::spawn_watcher(Arc::clone(&runtime_cfg)) {
+            Ok(w) => Some(w),
+            Err(e) => {
+                tracing::warn!(
+                    "failed to start config watcher (hot-reload disabled): {}",
+                    e
+                );
+                None
+            }
         }
+    } else {
+        None
     };
 
     // Launch the web terminal in the background if enabled.
@@ -200,13 +241,23 @@ async fn run_server_inner(
 
     info!("startup: entering ipc::serve (this is the last step before accept loop)");
     // Run the IPC server and wait for a shutdown signal.
+    //
+    // When the caller (single-binary client) supplies an explicit `shutdown_rx`,
+    // wait on it. Otherwise (standalone `nexterm-server` binary) fall back to
+    // the OS-level Ctrl+C / SIGTERM handler.
     tokio::select! {
         result = ipc::serve(manager_for_ipc, runtime_cfg, lua_runner) => {
             result?;
         }
-        _ = shutdown_signal() => {
-            info!("received shutdown signal; exiting...");
-        }
+        _ = async {
+            if let Some(rx) = shutdown_rx_ext {
+                let _ = rx.await;
+                info!("received explicit shutdown request; exiting...");
+            } else {
+                shutdown_signal().await;
+                info!("received shutdown signal; exiting...");
+            }
+        } => {}
     }
 
     // Save a snapshot on shutdown.

@@ -28,10 +28,10 @@ impl EventHandler {
     ///   in `pending_close_request`.
     /// - **`Detach`**: keep the server window alive and disconnect only the client
     ///   (tmux-style detached session).
-    ///   - In the single-binary configuration, `server_handle.abort()` also stops
-    ///     the embedded server task, so the practical effect is the same as Kill.
-    ///     The distinction is meaningful only with multi-process setups (e.g.
-    ///     `nexterm-ctl attach`).
+    ///   - In the single-binary configuration, the embedded server thread is also
+    ///     told to shut down via `signal_server_shutdown`, so the practical effect
+    ///     is the same as Kill. The distinction is meaningful only with
+    ///     multi-process setups (e.g. `nexterm-ctl attach`).
     /// - **`Kill`**: destroy the server session with `KillSession` IPC and then
     ///   exit.
     pub(super) fn on_close_requested(&mut self, event_loop: &ActiveEventLoop) {
@@ -72,8 +72,8 @@ impl EventHandler {
                     "CloseRequested: close_action = Detach. Keeping the server window alive and disconnecting the client only"
                 );
                 // Do not send KillSession; disconnect only on the client side.
-                // In the single-binary configuration, server_handle.abort() ends
-                // things in practice.
+                // In the single-binary configuration, signal_server_shutdown()
+                // ends things in practice.
             }
             CloseAction::Kill => {
                 info!(
@@ -90,7 +90,7 @@ impl EventHandler {
         // Tear down additional OS windows, disconnect, abort the server task, and exit.
         self.windows.clear();
         self.connection = None;
-        self.server_handle.abort();
+        self.signal_server_shutdown();
         event_loop.exit();
     }
 
@@ -130,7 +130,7 @@ impl EventHandler {
                 }
                 self.windows.clear();
                 self.connection = None;
-                self.server_handle.abort();
+                self.signal_server_shutdown();
                 event_loop.exit();
             }
             return;
@@ -184,7 +184,7 @@ impl EventHandler {
             }
             self.windows.clear();
             self.connection = None;
-            self.server_handle.abort();
+            self.signal_server_shutdown();
             event_loop.exit();
         }
     }

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.7] - 2026-06-06
+
+PATCH release that addresses two of the three problems surfaced by the v1.7.5 diagnostic logs in `nexterm-client.log.2026-06-05`. PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are retained; the wire format is unchanged from 1.7.6. The standalone `nexterm-server` binary path is unchanged — only the single-binary GPU client uses the new entry point.
+
+### Fixed
+
+- **Duplicate `Watching the configuration directory` (problem 2)**: the GPU client and the embedded `nexterm-server` task each installed their own `notify::Watcher` over the same TOML directory, keeping two file-system handles open for the entire process lifetime. The client now owns the only `SharedRuntimeConfig` and the only watcher, and forwards each reload to the server's dispatch layer via `ArcSwap::store`. The embedded server skips `runtime_config::spawn_watcher` when given an external runtime config.
+- **~1.6 s server starvation between `restored sessions` and `ipc::serve` (problem 3)**: the embedded server previously ran as a `tokio::task` on the same runtime that drove winit, so winit's main-thread occupation could block server-side progress for seconds at a time on lower-core machines. The server now runs on a dedicated OS thread (`std::thread::Builder::name("nexterm-server")`) with its own multi-thread Tokio runtime, fully isolated from winit's scheduling.
+
+### Added
+
+- **`nexterm_server::run_server_with_config_and_runtime(cfg, runtime_cfg, shutdown_rx)`**: new public entry point for embedders that own the `SharedRuntimeConfig` and want explicit shutdown control instead of relying on `tokio::task::JoinHandle::abort()`. The existing `run_server()` (standalone binary) and `run_server_with_config(cfg)` (v1.7.6 single-binary entry) are preserved.
+- **`nexterm_server::{SharedRuntimeConfig, RuntimeConfig, build_shared_runtime_config}`**: re-exports of the runtime-config types so external embedders can construct and update the shared handle without depending on internal modules.
+
+### Changed
+
+- Single-binary `nexterm` client: the embedded server task became a dedicated OS thread with its own Tokio runtime; `server_handle.abort()` was replaced by an explicit `tokio::sync::oneshot` shutdown channel. On window close the client now sends `()` on that channel and joins the server thread so its snapshot save completes before the process exits.
+
 ## [1.7.6] - 2026-06-06
 
 PATCH release that eliminates the duplicate TOML read on startup of the single-binary GPU client. No behavior change beyond fewer file reads and cleaner logs; PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are retained, and the wire format is unchanged from 1.7.5.

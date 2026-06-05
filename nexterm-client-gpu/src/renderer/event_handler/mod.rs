@@ -118,8 +118,23 @@ pub struct EventHandler {
     pub(super) _shader_watcher: Option<notify::RecommendedWatcher>,
     /// Tab double-click detection (last click time and pane ID).
     pub(super) last_tab_click: Option<(Instant, u32)>,
-    /// Handle to the embedded server task (aborted on window exit).
-    pub(super) server_handle: tokio::task::JoinHandle<()>,
+    /// Shutdown channel for the embedded server thread (Sprint 5-13 / v1.7.7).
+    ///
+    /// Send `()` to ask the server task to stop cleanly. Replaces the previous
+    /// `server_handle: tokio::task::JoinHandle<()>` + `abort()` design — the
+    /// server now runs on its own OS thread with its own Tokio runtime so it
+    /// is no longer a Tokio task we can abort. `Option` because the channel
+    /// can only be consumed once; subsequent close paths must handle `None`.
+    pub(super) server_shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    /// Shared runtime config (Sprint 5-13 / v1.7.7).
+    ///
+    /// The client owns the `notify::Watcher` and the `SharedRuntimeConfig`,
+    /// then hands a clone to the embedded server via
+    /// `run_server_with_config_and_runtime`. When `config_rx` delivers a new
+    /// `Config`, we also rebuild the runtime config and `store` it here so
+    /// the server's dispatch layer picks up the change without a duplicate
+    /// watcher.
+    pub(super) runtime_cfg: Option<nexterm_server::SharedRuntimeConfig>,
     /// Accumulator buffer for touchpad precision scroll (PixelDelta).
     pub(super) pixel_scroll_accumulator: f64,
     /// Receive channel for notifications from the update checker
@@ -203,6 +218,20 @@ pub struct EventHandler {
 }
 
 impl EventHandler {
+    /// Sprint 5-13 / v1.7.7: ask the embedded server thread to stop cleanly.
+    ///
+    /// Replaces the previous `server_handle.abort()` calls. The shutdown
+    /// channel can only be consumed once, so subsequent invocations are a
+    /// no-op (the server is already on its way out, or running standalone
+    /// without an embedded thread at all).
+    pub(super) fn signal_server_shutdown(&mut self) {
+        if let Some(tx) = self.server_shutdown_tx.take() {
+            // The receiver may already be dropped if the server task exited on
+            // its own (e.g. ipc::serve returned an error). Ignore the result.
+            let _ = tx.send(());
+        }
+    }
+
     /// Spawn a new OS window and register it in the `windows` HashMap
     /// (Sprint 5-8 Phase 4-4 real implementation).
     ///
@@ -351,7 +380,7 @@ impl EventHandler {
         // Exit when all OS windows have been closed.
         if self.windows.is_empty() && self.window.is_none() {
             self.connection = None;
-            self.server_handle.abort();
+            self.signal_server_shutdown();
             event_loop.exit();
         }
     }

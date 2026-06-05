@@ -388,6 +388,16 @@ impl EventHandler {
                 "Config reloaded: font={} {}pt",
                 new_config.font.family, new_config.font.size
             );
+            // Sprint 5-13 / v1.7.7: forward the new config to the embedded
+            // server's `SharedRuntimeConfig` so its dispatch layer (Lua hooks,
+            // log policy, SSH hosts) picks up the change. Previously the
+            // server spawned its own `notify::Watcher` over the same TOML —
+            // having a single client-owned watcher do both halves of the work
+            // removes the duplication observed in `nexterm-client.log.2026-06-05`.
+            if let Some(runtime_cfg) = &self.runtime_cfg {
+                let new_runtime = nexterm_server::RuntimeConfig::from_config(&new_config);
+                runtime_cfg.store(std::sync::Arc::new(new_runtime));
+            }
             // When the font size changes, rebuild the glyph atlas as well.
             let font_changed = self.app.config.font != new_config.font;
             self.app.config = new_config;

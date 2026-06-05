@@ -1,8 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 //! nexterm entry point — single-binary wgpu + winit desktop client.
 //!
-//! Runs nexterm-server's logic as an internal Tokio task so the full feature
-//! set is available in one process.
+//! Runs nexterm-server's logic on its own OS thread with a dedicated Tokio
+//! runtime (Sprint 5-13 / v1.7.7). The previous design spawned the server as
+//! a `tokio::task` on the same runtime that drove winit, which meant winit's
+//! main-thread occupation could starve the server task for seconds at a time
+//! on lower-core machines. See
+//! `memory/project_windows_powershell_startup_investigation.md` problem 3.
 
 // Sprint 5-11-1 / H1 PoC: scaffolding for screen-reader support (accesskit node tree).
 mod accessibility;
@@ -41,22 +45,53 @@ use crate::renderer::UserEvent;
 async fn main() -> Result<()> {
     let _log_guard = init_tracing();
 
-    // Load the config (TOML → Lua) BEFORE spawning the server task so we can
-    // hand the parsed `Config` to it via `run_server_with_config`. Previously
+    // Load the config (TOML → Lua) BEFORE spawning the server thread so we can
+    // hand the parsed `Config` and a `SharedRuntimeConfig` to it. Previously
     // the client and the embedded server each called `ConfigLoader::load()`
     // independently — visible in `nexterm-client.log.2026-06-05` as two
-    // `Loaded the TOML configuration` log lines fired within microseconds of
-    // each other. The redundant read doubled startup file IO.
+    // `Loaded the TOML configuration` lines fired within microseconds of each
+    // other, plus a duplicated `Watching the configuration directory`. The
+    // redundant read doubled startup file IO; the duplicated watcher kept
+    // both file-system handles open for the lifetime of the process.
     let config = ConfigLoader::load()?;
 
-    // Start the server as an internal Tokio task (no separate process needed).
-    // The IPC socket uses the same protocol regardless.
+    // Sprint 5-13 / v1.7.7 problem 2: the client owns the `SharedRuntimeConfig`
+    // and the `notify::Watcher`. The embedded server reuses the same shared
+    // handle (no second watcher inside the server).
+    let runtime_cfg = nexterm_server::build_shared_runtime_config(&config);
+
+    // Sprint 5-13 / v1.7.7 problem 3: spawn the server on a dedicated OS thread
+    // with its own multi-thread Tokio runtime so winit's main-thread occupation
+    // cannot starve the server task. The previous `tokio::spawn` on the same
+    // runtime caused a ~1.6 s stall between `restored sessions` and
+    // `ipc::serve` on systems where worker threads were busy with winit / wgpu
+    // init (see `nexterm-client.log.2026-06-05`).
     let server_config = config.clone();
-    let server_handle = tokio::spawn(async move {
-        if let Err(e) = nexterm_server::run_server_with_config(server_config).await {
-            tracing::error!("nexterm-server error: {}", e);
-        }
-    });
+    let server_runtime_cfg = std::sync::Arc::clone(&runtime_cfg);
+    let (server_shutdown_tx, server_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let server_thread = std::thread::Builder::new()
+        .name("nexterm-server".to_string())
+        .spawn(move || {
+            let rt = match tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_name("nexterm-server-worker")
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    tracing::error!("failed to build server Tokio runtime: {}", e);
+                    return;
+                }
+            };
+            if let Err(e) = rt.block_on(nexterm_server::run_server_with_config_and_runtime(
+                server_config,
+                server_runtime_cfg,
+                server_shutdown_rx,
+            )) {
+                tracing::error!("nexterm-server error: {}", e);
+            }
+        })?;
+
     // The config's `language` field wins; "auto" falls back to OS locale detection.
     if config.language == "auto" {
         nexterm_i18n::init();
@@ -70,6 +105,12 @@ async fn main() -> Result<()> {
     );
 
     // Start the hot-reload config watcher.
+    //
+    // This is now the ONLY `notify::Watcher` in the process — the embedded
+    // server skips its own `spawn_watcher` when a `SharedRuntimeConfig` is
+    // supplied. The event_handler forwards each `Config` it receives both to
+    // its UI reload logic AND to `runtime_cfg.store(...)` so the server's
+    // dispatch layer sees the change.
     let (config_tx, config_rx) = mpsc::channel(8);
     let config_watcher = watch_config(config_tx).ok();
 
@@ -97,9 +138,17 @@ async fn main() -> Result<()> {
         Some(config_rx),
         config_watcher,
         status_eval,
-        server_handle,
+        Some(server_shutdown_tx),
+        Some(runtime_cfg),
         update_rx,
     ))?;
+
+    // The event loop returned (event_loop.exit() was called). The event handler
+    // should have already sent `()` on `server_shutdown_tx`, so this join will
+    // complete once the server finishes saving its snapshot and tearing down.
+    if let Err(panic) = server_thread.join() {
+        tracing::warn!("server thread panicked: {:?}", panic);
+    }
 
     Ok(())
 }

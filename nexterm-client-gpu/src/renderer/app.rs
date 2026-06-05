@@ -49,13 +49,15 @@ impl NextermApp {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn into_event_handler(
         self,
         proxy: EventLoopProxy<UserEvent>,
         config_rx: Option<tokio::sync::mpsc::Receiver<Config>>,
         config_watcher: Option<notify::RecommendedWatcher>,
         status_eval: Option<StatusBarEvaluator>,
-        server_handle: tokio::task::JoinHandle<()>,
+        server_shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+        runtime_cfg: Option<nexterm_server::SharedRuntimeConfig>,
         update_rx: tokio::sync::watch::Receiver<Option<String>>,
     ) -> EventHandler {
         // Start watching the custom shader file if one is configured
@@ -80,7 +82,8 @@ impl NextermApp {
             shader_reload_rx,
             _shader_watcher,
             last_tab_click: None,
-            server_handle,
+            server_shutdown_tx,
+            runtime_cfg,
             pixel_scroll_accumulator: 0.0,
             update_rx,
             quake,
