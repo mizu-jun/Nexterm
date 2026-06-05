@@ -896,6 +896,87 @@ impl WgpuState {
         );
     }
 
+    /// Build the offline-mode banner vertices (one-line amber bar at the top of the screen).
+    ///
+    /// Sprint 5-14 / v1.7.8 — P2-1. Shown while the client is repeatedly failing
+    /// to connect to the embedded server. Surfaces what was previously a silent
+    /// blank window during cold start, especially on Windows where the
+    /// `\\.\pipe\nexterm-<user>` named pipe may take >1 s to come up.
+    /// Auto-clears as soon as the connection succeeds (no key dismissal).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn build_offline_banner_verts(
+        &self,
+        state: &ClientState,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
+        font: &mut FontManager,
+        atlas: &mut GlyphAtlas,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
+    ) {
+        let Some(started) = state.offline_banner_since else {
+            return;
+        };
+
+        // The banner spans the full screen width and is one row tall. Stack it
+        // below `update_banner` if present.
+        let bar_h = cell_h * 1.4;
+        let bar_y = if state.update_banner.is_some() {
+            bar_h
+        } else {
+            0.0
+        };
+
+        // Background (amber / warning orange).
+        add_px_rect(
+            0.0,
+            bar_y,
+            sw,
+            bar_h,
+            [0.45, 0.28, 0.05, 0.97],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
+        // Left-edge accent line (bright amber).
+        add_px_rect(
+            0.0,
+            bar_y,
+            4.0,
+            bar_h,
+            [0.95, 0.62, 0.15, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
+
+        // Format the seconds count for display.
+        let elapsed_secs = started.elapsed().as_secs();
+        let raw = nexterm_i18n::fl!("offline-banner-connecting");
+        let msg = raw.replace("{seconds}", &elapsed_secs.to_string());
+        add_string_verts(
+            &msg,
+            cell_w * 1.2,
+            bar_y + (bar_h - cell_h) * 0.5,
+            [1.0, 0.92, 0.78, 1.0],
+            false,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
+        );
+    }
+
     /// Build the server error banner vertices (one-line bar at the top of the screen, just
     /// below `update_banner`).
     ///
@@ -921,14 +1002,17 @@ impl WgpuState {
             return;
         };
 
-        // The banner spans the full screen width and is one row tall. If update_banner is
-        // present, stack this banner below it.
+        // The banner spans the full screen width and is one row tall. Stack
+        // below `update_banner` and `offline_banner` (Sprint 5-14 / v1.7.8)
+        // when either is present.
         let bar_h = cell_h * 1.4;
-        let bar_y = if state.update_banner.is_some() {
-            bar_h
-        } else {
-            0.0
-        };
+        let mut bar_y = 0.0_f32;
+        if state.update_banner.is_some() {
+            bar_y += bar_h;
+        }
+        if state.offline_banner_since.is_some() {
+            bar_y += bar_h;
+        }
 
         // Background (dark red).
         add_px_rect(

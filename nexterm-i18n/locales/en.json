@@ -56,6 +56,7 @@
   "palette-set-broadcast-on": "Enable Input Broadcast",
   "palette-set-broadcast-off": "Disable Input Broadcast",
   "update-available": "Update available: v{version}  — press Enter to open releases",
+  "offline-banner-connecting": "Connecting to the embedded server… ({seconds}s)",
   "update-dismiss": "Dismiss update notification",
   "update-open-releases": "Open release notes",
   "error-banner-prefix": "Error:",

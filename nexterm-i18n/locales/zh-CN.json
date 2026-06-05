@@ -56,6 +56,7 @@
   "palette-set-broadcast-on": "启用输入广播",
   "palette-set-broadcast-off": "禁用输入广播",
   "update-available": "有新版本可用: v{version}  — 按 Enter 查看详情",
+  "offline-banner-connecting": "正在连接服务器… ({seconds}秒)",
   "update-dismiss": "关闭更新通知",
   "update-open-releases": "打开发行说明",
   "error-banner-prefix": "错误:",

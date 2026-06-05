@@ -56,6 +56,7 @@
   "palette-set-broadcast-on": "Activer la diffusion d'entrée",
   "palette-set-broadcast-off": "Désactiver la diffusion d'entrée",
   "update-available": "Mise à jour disponible: v{version}  — Appuyer sur Entrée pour les détails",
+  "offline-banner-connecting": "Connexion au serveur… ({seconds}s)",
   "update-dismiss": "Fermer la notification de mise à jour",
   "update-open-releases": "Ouvrir les notes de version",
   "error-banner-prefix": "Erreur :",

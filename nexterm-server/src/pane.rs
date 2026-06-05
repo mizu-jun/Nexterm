@@ -305,6 +305,25 @@ pub fn set_min_pane_id(min_id: u32) {
     NEXT_PANE_ID.fetch_max(min_id, Ordering::Relaxed);
 }
 
+/// Check whether `cwd` is a valid directory that the PTY can actually be
+/// spawned into.
+///
+/// Sprint 5-14 / v1.7.8 — P2-2: used by [`Pane::spawn_with_cwd`] to detect
+/// snapshot-restore cases where the directory has been deleted since the
+/// snapshot was written (e.g. `cargo clean` removed a `target/` subdir, or
+/// the user removed a scratch directory while the session was offline). The
+/// caller falls back to `$HOME` / `%USERPROFILE%` when this returns `false`.
+///
+/// Returns `false` when the path does not exist, is not a directory, or
+/// metadata cannot be read (the last case is treated conservatively because
+/// `spawn_command` would almost certainly fail too).
+pub(crate) fn cwd_is_usable(cwd: &Path) -> bool {
+    match std::fs::metadata(cwd) {
+        Ok(md) => md.is_dir(),
+        Err(_) => false,
+    }
+}
+
 /// Broadcast send channel to every client (sync send, no Mutex required).
 type SharedTx = Arc<broadcast::Sender<ServerToClient>>;
 
@@ -367,6 +386,14 @@ impl Pane {
     }
 
     /// Create a pane with a specific ID and working directory (used to restore a snapshot).
+    ///
+    /// Sprint 5-14 / v1.7.8 — P2-2: when the requested `cwd` no longer exists
+    /// (a common case after a snapshot survives across a `cargo clean`,
+    /// `git clean -fdx`, or a deleted scratch directory), fall back to
+    /// spawning without a cwd so `spawn_impl` will substitute the user's
+    /// `$HOME` / `%USERPROFILE%`. Previously this surfaced as
+    /// `HRESULT -2147024809 (E_INVALIDARG)` on Windows ConPTY and the whole
+    /// pane silently disappeared from the restored snapshot.
     pub fn spawn_with_cwd(
         id: u32,
         cols: u16,
@@ -376,7 +403,16 @@ impl Pane {
         args: &[String],
         cwd: &Path,
     ) -> Result<Self> {
-        Self::spawn_impl(id, cols, rows, initial_tx, shell, args, Some(cwd))
+        let effective_cwd: Option<&Path> = if cwd_is_usable(cwd) {
+            Some(cwd)
+        } else {
+            tracing::warn!(
+                "restored cwd is missing or not a directory ({}); falling back to $HOME",
+                cwd.display()
+            );
+            None
+        };
+        Self::spawn_impl(id, cols, rows, initial_tx, shell, args, effective_cwd)
     }
 
     /// Internal PTY launch implementation (CWD is optional).
@@ -1091,6 +1127,35 @@ mod tests {
         set_min_pane_id(current + 100);
         let next = new_pane_id();
         assert!(next >= current + 100);
+    }
+
+    // ---- cwd_is_usable tests (Sprint 5-14 / v1.7.8 — P2-2) ----
+
+    #[test]
+    fn cwd_is_usable_returns_true_for_existing_directory() {
+        // The OS temp dir always exists and is a directory.
+        let temp = std::env::temp_dir();
+        assert!(cwd_is_usable(&temp));
+    }
+
+    #[test]
+    fn cwd_is_usable_returns_false_for_missing_path() {
+        // Build a path under temp dir that we know does not exist.
+        let mut bogus = std::env::temp_dir();
+        bogus.push("nexterm-cwd-fallback-test-does-not-exist-zzz-9384721");
+        // Make sure it really does not exist before asserting.
+        let _ = std::fs::remove_dir_all(&bogus);
+        assert!(!cwd_is_usable(&bogus));
+    }
+
+    #[test]
+    fn cwd_is_usable_returns_false_for_regular_file() {
+        // Create a temporary file and verify it is rejected as a cwd.
+        let mut path = std::env::temp_dir();
+        path.push(format!("nexterm-cwd-fallback-{}.tmp", std::process::id()));
+        std::fs::write(&path, b"test").expect("temp file write");
+        assert!(!cwd_is_usable(&path));
+        let _ = std::fs::remove_file(&path);
     }
 
     // ---- strip_ansi_escapes tests ----

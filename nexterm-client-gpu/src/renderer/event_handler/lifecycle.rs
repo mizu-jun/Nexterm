@@ -201,6 +201,12 @@ impl EventHandler {
     /// to make a stuck offline state visible in the log without flooding it.
     const CONNECT_FAILURE_LOG_INTERVAL: u64 = 25;
 
+    /// P2-1 (Sprint 5-14 / v1.7.8): show the "Connecting…" banner once the
+    /// offline streak has lasted this long. Short enough that the user sees it
+    /// when the server takes >1 s to come up, long enough that quick startups
+    /// (~5 failed attempts at the 200 ms cadence) never flash it.
+    const OFFLINE_BANNER_THRESHOLD: std::time::Duration = std::time::Duration::from_millis(1000);
+
     /// Make a single, non-blocking attempt to connect to the embedded server and
     /// attach to the "main" session. Returns `true` on success.
     ///
@@ -236,6 +242,8 @@ impl EventHandler {
                 }
                 self.connect_failure_count = 0;
                 self.connect_failure_started_at = None;
+                // P2-1: clear the offline banner if it was visible.
+                self.app.state.offline_banner_since = None;
                 true
             }
             Err(e) => {
@@ -263,6 +271,20 @@ impl EventHandler {
                 } else {
                     tracing::debug!("connect attempt failed: {}", e);
                 }
+
+                // P2-1: once the offline streak has lasted past the threshold,
+                // raise the visible "Connecting…" banner. The renderer reads
+                // `offline_banner_since` and formats the elapsed seconds.
+                if self.app.state.offline_banner_since.is_none()
+                    && let Some(started) = self.connect_failure_started_at
+                    && started.elapsed() >= Self::OFFLINE_BANNER_THRESHOLD
+                {
+                    self.app.state.offline_banner_since = Some(started);
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                }
+
                 false
             }
         }

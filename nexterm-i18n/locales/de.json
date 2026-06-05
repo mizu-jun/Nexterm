@@ -56,6 +56,7 @@
   "palette-set-broadcast-on": "Eingabe-Broadcast aktivieren",
   "palette-set-broadcast-off": "Eingabe-Broadcast deaktivieren",
   "update-available": "Update verfügbar: v{version}  — Enter drücken für Details",
+  "offline-banner-connecting": "Verbindung zum Server… ({seconds}s)",
   "update-dismiss": "Update-Benachrichtigung schließen",
   "update-open-releases": "Versionshinweise öffnen",
   "error-banner-prefix": "Fehler:",

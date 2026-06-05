@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.8] - 2026-06-06
+
+PATCH release that addresses the remaining P2 items from the Windows-launch investigation memo. PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are retained; the wire format is unchanged from 1.7.7.
+
+### Added
+
+- **Offline-mode banner (P2-1)**: while the GPU client is repeatedly failing to connect to the embedded server, a one-line amber bar at the top of the window shows "Connecting to the embedded server… ({seconds}s)" once the offline streak exceeds 1 s. Previously this state was a silent blank window — particularly visible on Windows where the `\\.\pipe\nexterm-<user>` named pipe can take >1 s to come up. The banner auto-clears as soon as the connection succeeds (no key dismissal). New i18n key `offline-banner-connecting` is translated in all 8 locales.
+
+### Fixed
+
+- **Restored panes silently disappearing when their saved cwd was deleted (P2-2)**: `Pane::spawn_with_cwd` now checks that the requested working directory still exists and is a directory before handing it to `portable_pty::spawn_command`. When the directory is missing (e.g. a `cargo clean` removed a `target/` subdir, or a scratch directory was deleted while the session was offline), the spawn now falls back to `$HOME` / `%USERPROFILE%` instead of surfacing `HRESULT -2147024809 (E_INVALIDARG)` on Windows ConPTY and letting the pane be dropped by the snapshot self-heal pass. A `WARN` log line is emitted so the cwd loss is still visible in diagnostics.
+
 ## [1.7.7] - 2026-06-06
 
 PATCH release that addresses two of the three problems surfaced by the v1.7.5 diagnostic logs in `nexterm-client.log.2026-06-05`. PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are retained; the wire format is unchanged from 1.7.6. The standalone `nexterm-server` binary path is unchanged — only the single-binary GPU client uses the new entry point.

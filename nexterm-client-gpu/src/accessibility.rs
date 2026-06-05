@@ -2426,6 +2426,12 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
     // === update_banner (non-modal) ===
     state.update_banner.hash(&mut h);
 
+    // === offline_banner (non-modal, Sprint 5-14 / v1.7.8 — P2-1) ===
+    // We only care whether the banner is visible (the elapsed-seconds count
+    // updates every frame and would otherwise force a tree rebuild every
+    // throttle tick — accessibility consumers do not need that granularity).
+    state.offline_banner_since.is_some().hash(&mut h);
+
     // === SR alerts (Sprint 5-11-5) ===
     // Reflect length + each seq + kind. `kind` becomes hashable via `as u8`.
     // body / title are immutable once an entry is queued, so tracking `seq` is enough

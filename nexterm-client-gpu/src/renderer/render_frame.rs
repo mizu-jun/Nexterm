@@ -533,6 +533,26 @@ impl WgpuState {
             );
         }
 
+        // ---- Offline-mode banner (Sprint 5-14 / v1.7.8 — P2-1) ----
+        // Visible while the client cannot reach the embedded server. Stacks
+        // vertically with `update_banner`. Auto-clears on the next successful
+        // `try_connect`, so unlike the other banners it has no key dismissal.
+        if state.offline_banner_since.is_some() {
+            self.build_offline_banner_verts(
+                state,
+                sw,
+                sh,
+                cell_w,
+                cell_h,
+                font,
+                atlas,
+                &mut bg_verts,
+                &mut bg_idx,
+                &mut text_verts,
+                &mut text_idx,
+            );
+        }
+
         // ---- Server error banner (Sprint 5-12 Phase 1) ----
         // Surfaces PTY launch failures (e.g. PowerShell not found) and config load errors
         // at the top of the screen. Stacks vertically with `update_banner`. Closed with Esc.

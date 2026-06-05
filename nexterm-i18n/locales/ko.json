@@ -56,6 +56,7 @@
   "palette-set-broadcast-on": "입력 브로드캐스트 활성화",
   "palette-set-broadcast-off": "입력 브로드캐스트 비활성화",
   "update-available": "업데이트 있음: v{version}  — Enter 키로 자세히 보기",
+  "offline-banner-connecting": "서버에 연결 중… ({seconds}초)",
   "update-dismiss": "업데이트 알림 닫기",
   "update-open-releases": "릴리스 노트 열기",
   "error-banner-prefix": "오류:",

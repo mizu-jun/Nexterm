@@ -184,6 +184,15 @@ pub struct ClientState {
     pub prefix_pending_until: Option<std::time::Instant>,
     /// Update notification banner (Some(version) = visible, None = hidden)
     pub update_banner: Option<String>,
+    /// Offline-mode banner timestamp (Sprint 5-14 / v1.7.8 — P2-1).
+    ///
+    /// `Some(Instant)` indicates "offline since this time". The renderer
+    /// formats the banner with the elapsed seconds so the user can see
+    /// progress while the embedded server is starting up. Set by
+    /// `try_connect` once the connect-failure streak exceeds the threshold
+    /// (currently 1 s = ~5 attempts at the 200 ms cadence) and reset to
+    /// `None` on a successful connect.
+    pub offline_banner_since: Option<std::time::Instant>,
     /// Consent dialog for sensitive operations (Sprint 4-1).
     /// While `Some`, the dialog consumes every key input.
     pub pending_consent: Option<ConsentDialog>,
@@ -403,6 +412,7 @@ impl ClientState {
             key_hint_visible_until: None,
             prefix_pending_until: None,
             update_banner: None,
+            offline_banner_since: None,
             pending_consent: None,
             session_consent_overrides: SessionConsentOverrides::default(),
             current_workspace: "default".to_string(),
