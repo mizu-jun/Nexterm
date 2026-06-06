@@ -42,7 +42,7 @@ pub use menus::{
 pub use pane::{FloatRect, PaneState, PlacedImage};
 pub use search::SearchState;
 #[allow(unused_imports)]
-pub use selection::{CopyModeState, DetectedUrl, MouseSelection, detect_urls_in_row};
+pub use selection::{CopyModeState, DetectedUrl, MouseSelection, ViMode, detect_urls_in_row};
 
 /// Alert entry surfaced to screen readers (Sprint 5-11-5 / Phase 5-11-5).
 ///

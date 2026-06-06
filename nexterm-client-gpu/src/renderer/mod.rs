@@ -90,6 +90,7 @@ pub(super) struct PaneRenderCache {
 
 impl PaneRenderCache {
     /// Returns true when all layout/display parameters match and the cache can be reused.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn key_matches(
         &self,
         layout: &nexterm_proto::PaneLayout,

@@ -25,6 +25,7 @@ use super::image::{ImageEntry, build_image_verts};
 /// Indices in `src_*_idx` are 0-relative (built against empty local vecs).
 /// This function shifts them by the current lengths of `bg_verts` / `text_verts`
 /// before extending, producing correct absolute indices for the frame buffer.
+#[allow(clippy::too_many_arguments)]
 fn append_pane_verts(
     src_bg_verts: &[BgVertex],
     src_bg_idx: &[u16],
@@ -184,7 +185,7 @@ impl WgpuState {
                         // parameters unchanged, and the atlas not yet reset this
                         // frame (a reset invalidates stored UV coordinates).
                         let cache_valid = !atlas.cleared_this_frame
-                            && self.pane_cache.get(&pane_id).map_or(false, |c| {
+                            && self.pane_cache.get(&pane_id).is_some_and(|c| {
                                 !pane.content_dirty
                                     && c.key_matches(
                                         layout,
@@ -343,6 +344,90 @@ impl WgpuState {
         // frame performs a full rebuild with correct UVs.
         if atlas.cleared_this_frame {
             self.pane_cache.clear();
+        }
+
+        // ---- Copy mode overlay (Vi-mode selection highlight + cursor block) ----
+        // Drawn outside the pane vertex cache so it is always up-to-date.
+        if state.copy_mode.is_active {
+            const CM_SEL_COLOR: [f32; 4] = [0.40, 0.65, 1.0, 0.45];
+            const CM_CURSOR_COLOR: [f32; 4] = [1.0, 1.0, 0.0, 0.60];
+
+            // Resolve the focused pane's pixel origin and column count.
+            let (pane_px, pane_py, pane_cols) =
+                if let Some(pane_id) = state.focused_pane_id
+                    && let Some(layout) = state.pane_layouts.get(&pane_id)
+                {
+                    (
+                        layout.col_offset as f32 * cell_w,
+                        layout.row_offset as f32 * cell_h + grid_offset_y,
+                        layout.cols,
+                    )
+                } else {
+                    (0.0_f32, grid_offset_y, (sw / cell_w) as u16)
+                };
+
+            use crate::state::ViMode;
+            let vi_mode = state.copy_mode.vi_mode.clone();
+            let cursor_col = state.copy_mode.cursor_col;
+            let cursor_row = state.copy_mode.cursor_row;
+            let sel_range = state.copy_mode.normalized_selection();
+            let line_range = state.copy_mode.normalized_visual_line_range();
+
+            match vi_mode {
+                ViMode::VisualLine => {
+                    if let Some((row_start, row_end)) = line_range {
+                        for row in row_start..=row_end {
+                            add_px_rect(
+                                pane_px,
+                                pane_py + row as f32 * cell_h,
+                                pane_cols as f32 * cell_w,
+                                cell_h,
+                                CM_SEL_COLOR,
+                                sw,
+                                sh,
+                                &mut bg_verts,
+                                &mut bg_idx,
+                            );
+                        }
+                    }
+                }
+                ViMode::Visual => {
+                    if let Some(((sc, sr), (ec, er))) = sel_range {
+                        for row in sr..=er {
+                            let col_start = if row == sr { sc } else { 0 };
+                            let col_end =
+                                if row == er { ec } else { pane_cols.saturating_sub(1) };
+                            if col_end >= col_start {
+                                add_px_rect(
+                                    pane_px + col_start as f32 * cell_w,
+                                    pane_py + row as f32 * cell_h,
+                                    (col_end - col_start + 1) as f32 * cell_w,
+                                    cell_h,
+                                    CM_SEL_COLOR,
+                                    sw,
+                                    sh,
+                                    &mut bg_verts,
+                                    &mut bg_idx,
+                                );
+                            }
+                        }
+                    }
+                }
+                ViMode::Normal => {}
+            }
+
+            // Yellow block cursor drawn on top of any selection highlight.
+            add_px_rect(
+                pane_px + cursor_col as f32 * cell_w,
+                pane_py + cursor_row as f32 * cell_h,
+                cell_w,
+                cell_h,
+                CM_CURSOR_COLOR,
+                sw,
+                sh,
+                &mut bg_verts,
+                &mut bg_idx,
+            );
         }
 
         // ---- Pane number overlay (when display_panes_mode is enabled) ----

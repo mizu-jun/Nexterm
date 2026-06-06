@@ -819,6 +819,33 @@ impl WgpuState {
             );
         }
 
+        // Copy mode indicator — accent_primary colour.
+        if state.copy_mode.is_active {
+            use crate::state::ViMode;
+            let mode_label = match state.copy_mode.vi_mode {
+                ViMode::Normal => " COPY ",
+                ViMode::Visual => " VISUAL ",
+                ViMode::VisualLine => " V-LINE ",
+            };
+            right_offset += mode_label.chars().count() as f32 * cell_w;
+            let right_px = sw - right_offset;
+            add_string_verts(
+                mode_label,
+                right_px,
+                py,
+                tokens.accent_primary,
+                true,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
+            );
+        }
+
         // Scrollback position indicator — semantic_warning colour.
         if let Some(pane) = state.focused_pane()
             && pane.scroll_offset > 0
