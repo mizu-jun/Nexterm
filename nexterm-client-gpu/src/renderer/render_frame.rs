@@ -434,6 +434,7 @@ impl WgpuState {
         if state.macro_picker.is_open {
             self.build_macro_picker_verts(
                 state,
+                &tokens,
                 sw,
                 sh,
                 cell_w,
@@ -451,6 +452,7 @@ impl WgpuState {
         if state.host_manager.is_open {
             self.build_host_manager_verts(
                 state,
+                &tokens,
                 sw,
                 sh,
                 cell_w,
@@ -466,6 +468,7 @@ impl WgpuState {
         if state.host_manager.password_modal.is_some() {
             self.build_password_modal_verts(
                 state,
+                &tokens,
                 sw,
                 sh,
                 cell_w,
@@ -483,6 +486,7 @@ impl WgpuState {
         if state.palette.is_open {
             self.build_palette_verts(
                 state,
+                &tokens,
                 sw,
                 sh,
                 cell_w,
@@ -500,6 +504,7 @@ impl WgpuState {
         if state.settings_panel.is_open {
             self.build_settings_panel_verts(
                 state,
+                &tokens,
                 sw,
                 sh,
                 cell_w,
@@ -517,6 +522,7 @@ impl WgpuState {
         if let Some(ref menu) = state.context_menu {
             self.build_context_menu_verts(
                 menu,
+                &tokens,
                 sw,
                 sh,
                 cell_w,
@@ -591,6 +597,7 @@ impl WgpuState {
         if state.pending_consent.is_some() {
             self.build_consent_dialog_verts(
                 state,
+                &tokens,
                 sw,
                 sh,
                 cell_w,
@@ -610,6 +617,7 @@ impl WgpuState {
         if state.close_window_dialog.is_some() {
             self.build_close_window_dialog_verts(
                 state,
+                &tokens,
                 sw,
                 sh,
                 cell_w,

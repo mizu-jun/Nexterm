@@ -4,6 +4,7 @@ use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::state::ClientState;
 use crate::vertex_util::{add_px_rect, add_string_verts};
+use super::util::draw_overlay_panel;
 
 use super::super::WgpuState;
 
@@ -15,6 +16,7 @@ impl WgpuState {
     pub(in crate::renderer) fn build_settings_panel_verts(
         &self,
         state: &ClientState,
+        tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
         cell_w: f32,
@@ -49,66 +51,31 @@ impl WgpuState {
         let content_x = px + sidebar_w;
         let content_w = panel_w - sidebar_w;
 
-        // Drop shadow (4px offset)
-        add_px_rect(
-            px + 4.0,
-            py + 4.0,
-            panel_w,
-            panel_h,
-            [0.04, 0.04, 0.06, 0.85],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
+        // Panel chrome: drop-shadow + border ring + rounded background via shared helper.
+        draw_overlay_panel(px, py, panel_w, panel_h, tokens, 4.0, 6.0, sw, sh, bg_verts, bg_idx);
 
-        // Border (outer 1px, faint accent color)
-        add_px_rect(
-            px - 1.0,
-            py - 1.0,
-            panel_w + 2.0,
-            panel_h + 2.0,
-            [0.478, 0.635, 0.969, 0.20],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
-
-        // Panel background (fully opaque regardless of terminal transparency)
-        add_px_rect(
-            px,
-            py,
-            panel_w,
-            panel_h,
-            [0.102, 0.106, 0.149, 1.0],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
-
-        // Title bar (#1E2030, opaque)
+        // Title bar (tokens.surface_3, opaque)
         let title_h = cell_h * 1.4;
         add_px_rect(
             px,
             py,
             panel_w,
             title_h,
-            [0.118, 0.125, 0.188, 1.0],
+            tokens.surface_3,
             sw,
             sh,
             bg_verts,
             bg_idx,
         );
 
-        // Top accent line of the title bar (3px, #7AA2F7)
+        // Top accent line of the title bar (3px, accent_primary)
+        let ap = tokens.accent_primary;
         add_px_rect(
             px,
             py,
             panel_w,
             3.0,
-            [0.478, 0.635, 0.969, 1.0],
+            ap,
             sw,
             sh,
             bg_verts,
@@ -120,7 +87,7 @@ impl WgpuState {
             py + 3.0,
             panel_w,
             1.0,
-            [0.478, 0.635, 0.969, 0.25],
+            [ap[0], ap[1], ap[2], 0.25],
             sw,
             sh,
             bg_verts,
@@ -132,7 +99,7 @@ impl WgpuState {
             " * Nexterm Settings",
             px + cell_w * 0.5,
             py + cell_h * 0.2,
-            [0.663, 0.694, 0.839, 1.0],
+            tokens.text_secondary,
             false,
             sw,
             sh,
@@ -150,7 +117,7 @@ impl WgpuState {
             close_text,
             close_x,
             py + cell_h * 0.2,
-            [0.478, 0.635, 0.969, 1.0],
+            tokens.accent_primary,
             false,
             sw,
             sh,
@@ -162,7 +129,7 @@ impl WgpuState {
             text_idx,
         );
 
-        // Sidebar background (opaque)
+        // Sidebar background (tokens.surface_1, slightly darker than the panel)
         let sidebar_top = py + title_h;
         let sidebar_h = panel_h - title_h - cell_h * 1.5;
         add_px_rect(
@@ -170,7 +137,7 @@ impl WgpuState {
             sidebar_top,
             sidebar_w,
             sidebar_h,
-            [0.066, 0.070, 0.102, 1.0],
+            tokens.surface_1,
             sw,
             sh,
             bg_verts,
@@ -178,12 +145,13 @@ impl WgpuState {
         );
 
         // Sidebar separator (faint accent color)
+        let ap = tokens.accent_primary;
         add_px_rect(
             px + sidebar_w,
             sidebar_top,
             1.0,
             sidebar_h,
-            [0.478, 0.635, 0.969, 0.30],
+            [ap[0], ap[1], ap[2], 0.30],
             sw,
             sh,
             bg_verts,
@@ -196,25 +164,26 @@ impl WgpuState {
             let item_y = sidebar_top + i as f32 * cat_item_h + cell_h * 0.3;
             let is_active = &sp.category == cat;
             if is_active {
-                // Active item: bluer accent background (fully opaque)
+                // Active item: token-driven selection background
                 add_px_rect(
                     px,
                     item_y - cell_h * 0.15,
                     sidebar_w,
                     cat_item_h,
-                    [0.149, 0.200, 0.320, 1.0],
+                    tokens.tab_active_bg,
                     sw,
                     sh,
                     bg_verts,
                     bg_idx,
                 );
                 // Left-edge indicator (3px + faint inner 1px)
+                let ap = tokens.accent_primary;
                 add_px_rect(
                     px,
                     item_y - cell_h * 0.15,
                     3.0,
                     cat_item_h,
-                    [0.478, 0.635, 0.969, 1.0],
+                    ap,
                     sw,
                     sh,
                     bg_verts,
@@ -225,7 +194,7 @@ impl WgpuState {
                     item_y - cell_h * 0.15,
                     1.0,
                     cat_item_h,
-                    [0.478, 0.635, 0.969, 0.35],
+                    [ap[0], ap[1], ap[2], 0.35],
                     sw,
                     sh,
                     bg_verts,
@@ -234,9 +203,9 @@ impl WgpuState {
             }
             let label = format!("  {} {}", cat.icon(), cat.label());
             let fg = if is_active {
-                [0.753, 0.808, 0.969, 1.0]
+                tokens.text_primary
             } else {
-                [0.502, 0.533, 0.647, 1.0]
+                tokens.text_secondary
             };
             add_string_verts(
                 &label,

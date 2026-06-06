@@ -8,7 +8,7 @@ use crate::state::{ClientState, ContextMenu};
 use crate::vertex_util::{add_px_rect, add_string_verts, visual_width};
 
 use super::super::WgpuState;
-use super::util::{pane_id_for, preview_text, wrap_text};
+use super::util::{draw_overlay_panel, pane_id_for, preview_text, wrap_text};
 
 impl WgpuState {
     /// Build vertices for the password input modal
@@ -16,6 +16,7 @@ impl WgpuState {
     pub(in crate::renderer) fn build_password_modal_verts(
         &self,
         state: &ClientState,
+        tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
         cell_w: f32,
@@ -36,30 +37,11 @@ impl WgpuState {
         let px = (sw - pw) / 2.0;
         let py = (sh - ph) / 2.0;
 
-        // Background (dark navy)
-        add_px_rect(
-            px,
-            py,
-            pw,
-            ph,
-            [0.06, 0.10, 0.20, 0.97],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
-        // Top accent line (orange)
-        add_px_rect(
-            px,
-            py,
-            pw,
-            2.0,
-            [0.9, 0.5, 0.1, 1.0],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
+        // Panel chrome: drop-shadow + border ring + rounded background.
+        draw_overlay_panel(px, py, pw, ph, tokens, 4.0, 6.0, sw, sh, bg_verts, bg_idx);
+        // Top accent stripe.
+        let ap = tokens.accent_primary;
+        add_px_rect(px, py, pw, 2.0, ap, sw, sh, bg_verts, bg_idx);
 
         // Title
         let title = format!(
@@ -70,7 +52,7 @@ impl WgpuState {
             &title,
             px + cell_w,
             py + cell_h * 0.15,
-            [0.9, 0.6, 0.2, 1.0],
+            tokens.accent_primary,
             true,
             sw,
             sh,
@@ -108,7 +90,7 @@ impl WgpuState {
                 err,
                 px + cell_w,
                 py + cell_h * 2.5,
-                [1.0, 0.3, 0.3, 1.0],
+                tokens.semantic_error,
                 false,
                 sw,
                 sh,
@@ -170,7 +152,7 @@ impl WgpuState {
             "Enter=connect  Tab=toggle save  Esc=cancel",
             px + cell_w,
             py + cell_h * 4.1,
-            [0.45, 0.50, 0.48, 1.0],
+            tokens.text_secondary,
             false,
             sw,
             sh,
@@ -188,6 +170,7 @@ impl WgpuState {
     pub(in crate::renderer) fn build_context_menu_verts(
         &self,
         menu: &ContextMenu,
+        tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
         cell_w: f32,
@@ -219,57 +202,12 @@ impl WgpuState {
         let mx = menu.x;
         let my = menu.y;
 
-        // Drop shadow (3px offset)
-        add_px_rect(
-            mx + 3.0,
-            my + 3.0,
-            menu_w,
-            menu_h,
-            [0.02, 0.02, 0.04, 0.80],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
-
-        // Border (outer 1px, faint accent color)
-        add_px_rect(
-            mx - 1.0,
-            my - 1.0,
-            menu_w + 2.0,
-            menu_h + 2.0,
-            [0.478, 0.635, 0.969, 0.15],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
-
-        // Background for the whole menu (fully opaque regardless of terminal transparency)
-        add_px_rect(
-            mx,
-            my,
-            menu_w,
-            menu_h,
-            [0.10, 0.11, 0.18, 1.0],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
+        // Panel chrome: drop-shadow + border ring + rounded background.
+        draw_overlay_panel(mx, my, menu_w, menu_h, tokens, 3.0, 4.0, sw, sh, bg_verts, bg_idx);
 
         // Top accent line (3px thick)
-        add_px_rect(
-            mx,
-            my,
-            menu_w,
-            3.0,
-            [0.478, 0.635, 0.969, 1.0],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
+        let ap = tokens.accent_primary;
+        add_px_rect(mx, my, menu_w, 3.0, ap, sw, sh, bg_verts, bg_idx);
 
         for (i, item) in menu.items.iter().enumerate() {
             use crate::state::ContextMenuAction;
@@ -294,12 +232,13 @@ impl WgpuState {
 
             // Hover highlight background (non-separator items)
             if menu.hovered == Some(i) {
+                let hab = tokens.tab_active_bg;
                 add_px_rect(
                     mx + 2.0,
                     item_y + 1.0,
                     menu_w - 4.0,
                     cell_h - 2.0,
-                    [0.149, 0.200, 0.320, 0.90],
+                    [hab[0], hab[1], hab[2], 0.90],
                     sw,
                     sh,
                     bg_verts,
@@ -311,7 +250,7 @@ impl WgpuState {
                     item_y + 1.0,
                     3.0,
                     cell_h - 2.0,
-                    [0.478, 0.635, 0.969, 0.90],
+                    [ap[0], ap[1], ap[2], 0.90],
                     sw,
                     sh,
                     bg_verts,
@@ -321,9 +260,9 @@ impl WgpuState {
 
             // Label text (left padding 0.9 cells)
             let text_color = if menu.hovered == Some(i) {
-                [0.95, 0.96, 1.0, 1.0] // Slightly brighter on hover
+                tokens.text_primary
             } else {
-                [0.75, 0.78, 0.88, 1.0] // Slightly muted otherwise
+                tokens.text_secondary
             };
             add_string_verts(
                 &item.label,
@@ -341,7 +280,7 @@ impl WgpuState {
                 text_idx,
             );
 
-            // Key hint text (right-aligned, gray)
+            // Key hint text (right-aligned, muted)
             if !item.hint.is_empty() {
                 let hint_visual_w = visual_width(&item.hint) as f32;
                 let hint_x = mx + menu_w - (hint_visual_w * cell_w + cell_w * 0.5);
@@ -371,6 +310,7 @@ impl WgpuState {
     pub(in crate::renderer) fn build_consent_dialog_verts(
         &self,
         state: &ClientState,
+        tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
         cell_w: f32,
@@ -407,30 +347,11 @@ impl WgpuState {
         let px = (sw - pw) / 2.0;
         let py = (sh - ph) / 2.0;
 
-        // Background (dark navy)
-        add_px_rect(
-            px,
-            py,
-            pw,
-            ph,
-            [0.08, 0.12, 0.20, 0.97],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
-        // Top accent line (yellow = warning color)
-        add_px_rect(
-            px,
-            py,
-            pw,
-            3.0,
-            [0.95, 0.75, 0.15, 1.0],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
+        // Panel chrome: drop-shadow + border ring + rounded background.
+        draw_overlay_panel(px, py, pw, ph, tokens, 5.0, 6.0, sw, sh, bg_verts, bg_idx);
+        // Top accent stripe (warning color).
+        let warn_color = tokens.semantic_warning;
+        add_px_rect(px, py, pw, 3.0, warn_color, sw, sh, bg_verts, bg_idx);
 
         // Title
         let title_key = match dialog.kind {
@@ -443,7 +364,7 @@ impl WgpuState {
             &title,
             px + cell_w,
             py + cell_h * 0.4,
-            [0.95, 0.75, 0.15, 1.0],
+            warn_color,
             true,
             sw,
             sh,
@@ -463,7 +384,7 @@ impl WgpuState {
                 &label,
                 px + cell_w,
                 content_y,
-                [0.7, 0.7, 0.8, 1.0],
+                tokens.text_secondary,
                 false,
                 sw,
                 sh,
@@ -484,7 +405,7 @@ impl WgpuState {
                 line,
                 px + cell_w,
                 content_y + i as f32 * cell_h,
-                [1.0, 1.0, 1.0, 1.0],
+                tokens.text_primary,
                 false,
                 sw,
                 sh,
@@ -514,15 +435,15 @@ impl WgpuState {
             let bw = visual_width(btn) as f32 * cell_w + cell_w * 1.5;
             let is_selected = dialog.selected == i;
             let bg = if is_selected {
-                [0.95, 0.75, 0.15, 1.0]
+                warn_color
             } else {
-                [0.16, 0.20, 0.30, 1.0]
+                tokens.surface_3
             };
             add_px_rect(bx, btn_y, bw, cell_h * 1.4, bg, sw, sh, bg_verts, bg_idx);
             let fg = if is_selected {
                 [0.10, 0.10, 0.10, 1.0]
             } else {
-                [0.95, 0.95, 0.95, 1.0]
+                tokens.text_primary
             };
             add_string_verts(
                 btn,
@@ -548,7 +469,7 @@ impl WgpuState {
             &hint,
             px + cell_w,
             py + ph - cell_h * 1.0,
-            [0.6, 0.6, 0.7, 1.0],
+            tokens.text_secondary,
             false,
             sw,
             sh,
@@ -565,7 +486,7 @@ impl WgpuState {
     ///
     /// Called only when `state.close_window_dialog` is `Some`; displays a modal
     /// dialog in the center of the screen. Follows the same decoration pattern
-    /// as `build_consent_dialog_verts` (semi-transparent overlay + warning-color
+    /// as `build_consent_dialog_verts` (semi-transparent overlay + error-color
     /// accent + two centered buttons) to keep visual consistency.
     ///
     /// Button layout:
@@ -579,6 +500,7 @@ impl WgpuState {
     pub(in crate::renderer) fn build_close_window_dialog_verts(
         &self,
         state: &ClientState,
+        tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
         cell_w: f32,
@@ -613,30 +535,11 @@ impl WgpuState {
         let px = (sw - pw) / 2.0;
         let py = (sh - ph) / 2.0;
 
-        // Dialog background (dark navy)
-        add_px_rect(
-            px,
-            py,
-            pw,
-            ph,
-            [0.08, 0.12, 0.20, 0.97],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
-        // Top accent line (red = warning color; stronger alert than the consent dialog)
-        add_px_rect(
-            px,
-            py,
-            pw,
-            3.0,
-            [0.85, 0.30, 0.30, 1.0],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
+        // Panel chrome: drop-shadow + border ring + rounded background.
+        draw_overlay_panel(px, py, pw, ph, tokens, 5.0, 6.0, sw, sh, bg_verts, bg_idx);
+        // Top accent stripe (error/danger color; stronger alert than the consent dialog).
+        let err_color = tokens.semantic_error;
+        add_px_rect(px, py, pw, 3.0, err_color, sw, sh, bg_verts, bg_idx);
 
         // Title = render the confirmation message directly (short enough to skip a separate title).
         // If it overflows the width, wrap_text breaks it to up to 2 lines.
@@ -651,7 +554,7 @@ impl WgpuState {
                 line,
                 px + cell_w,
                 content_y + i as f32 * cell_h * 1.1,
-                [0.97, 0.97, 0.97, 1.0],
+                tokens.text_primary,
                 false,
                 sw,
                 sh,
@@ -663,12 +566,11 @@ impl WgpuState {
                 text_idx,
             );
         }
-        // content_y is unused after the message body (button positions are computed from ph)
 
         // Button row: Kill (left, selected_button == 0) + Cancel (right, selected_button == 1)
         let buttons: [(&str, [f32; 4]); 2] = [
             (&dialog.kill_label, [0.75, 0.25, 0.25, 1.0]),
-            (&dialog.cancel_label, [0.20, 0.24, 0.34, 1.0]),
+            (&dialog.cancel_label, tokens.surface_3),
         ];
         let btn_y = py + ph - cell_h * 2.6;
         let btn_widths: Vec<f32> = buttons
@@ -694,7 +596,7 @@ impl WgpuState {
             let fg = if is_selected {
                 [0.10, 0.10, 0.10, 1.0]
             } else {
-                [0.95, 0.95, 0.95, 1.0]
+                tokens.text_primary
             };
             // Center the label
             let label_w = visual_width(label) as f32 * cell_w;
@@ -724,7 +626,7 @@ impl WgpuState {
             hint,
             px + cell_w,
             py + ph - cell_h * 1.0,
-            [0.55, 0.55, 0.65, 1.0],
+            tokens.text_secondary,
             false,
             sw,
             sh,

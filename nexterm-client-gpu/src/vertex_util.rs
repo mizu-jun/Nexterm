@@ -63,6 +63,34 @@ pub(crate) fn add_px_rect(
     add_rect_verts(x0, y0, x1, y1, color, bg_verts, bg_idx);
 }
 
+/// Draw a pixel-space rectangle with simulated rounded corners via a three-rect cross.
+///
+/// Approximates corner cutoffs at `radius` pixels without any shader changes.
+/// Accurate enough at ≤ 8 px radius for dialog/overlay chrome.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn add_rounded_px_rect(
+    px: f32,
+    py: f32,
+    pw: f32,
+    ph: f32,
+    color: [f32; 4],
+    radius: f32,
+    sw: f32,
+    sh: f32,
+    bg_verts: &mut Vec<BgVertex>,
+    bg_idx: &mut Vec<u16>,
+) {
+    let r = radius.min(pw * 0.5).min(ph * 0.5);
+    // Center vertical band — full height minus the two corner caps.
+    add_px_rect(px, py + r, pw, ph - 2.0 * r, color, sw, sh, bg_verts, bg_idx);
+    if r > 0.0 {
+        // Top horizontal strip (inset by radius on both sides).
+        add_px_rect(px + r, py, pw - 2.0 * r, r, color, sw, sh, bg_verts, bg_idx);
+        // Bottom horizontal strip.
+        add_px_rect(px + r, py + ph - r, pw - 2.0 * r, r, color, sw, sh, bg_verts, bg_idx);
+    }
+}
+
 /// Append a cursor rectangle (per the configured cursor style) to the background vertex buffer.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_cursor(

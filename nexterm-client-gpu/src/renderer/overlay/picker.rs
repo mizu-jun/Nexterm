@@ -9,6 +9,7 @@ use crate::state::ClientState;
 use crate::vertex_util::{add_px_rect, add_string_verts};
 
 use super::super::WgpuState;
+use super::util::draw_overlay_panel;
 
 impl WgpuState {
     /// Build vertices for the command palette (center floating)
@@ -16,6 +17,7 @@ impl WgpuState {
     pub(in crate::renderer) fn build_palette_verts(
         &self,
         state: &ClientState,
+        tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
         cell_w: f32,
@@ -37,30 +39,11 @@ impl WgpuState {
         let px = (sw - pw) / 2.0;
         let py = (sh - ph) / 2.0;
 
-        // Palette background (dark gray)
-        add_px_rect(
-            px,
-            py,
-            pw,
-            ph,
-            [0.15, 0.15, 0.18, 1.0],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
-        // Outer border (slightly brighter)
-        add_px_rect(
-            px,
-            py,
-            pw,
-            2.0,
-            [0.4, 0.6, 1.0, 1.0],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
+        // Panel chrome: drop-shadow + border ring + rounded background.
+        draw_overlay_panel(px, py, pw, ph, tokens, 5.0, 6.0, sw, sh, bg_verts, bg_idx);
+        // Top accent stripe (accent_primary)
+        let ap = tokens.accent_primary;
+        add_px_rect(px, py, pw, 2.0, ap, sw, sh, bg_verts, bg_idx);
 
         // Query row
         let query_text = format!("> {}", palette.query);
@@ -266,6 +249,7 @@ impl WgpuState {
     pub(in crate::renderer) fn build_macro_picker_verts(
         &self,
         state: &ClientState,
+        tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
         cell_w: f32,
@@ -287,30 +271,10 @@ impl WgpuState {
         let px = (sw - pw) / 2.0;
         let py = (sh - ph) / 2.0;
 
-        // Panel background (deep purple)
-        add_px_rect(
-            px,
-            py,
-            pw,
-            ph,
-            [0.12, 0.08, 0.20, 0.96],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
-        // Top accent line (purple / pink)
-        add_px_rect(
-            px,
-            py,
-            pw,
-            2.0,
-            [0.7, 0.3, 1.0, 1.0],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
+        // Panel chrome: shared drop-shadow + border + rounded background.
+        draw_overlay_panel(px, py, pw, ph, tokens, 5.0, 6.0, sw, sh, bg_verts, bg_idx);
+        // Top accent line — intentional purple branding, kept as-is.
+        add_px_rect(px, py, pw, 2.0, [0.7, 0.3, 1.0, 1.0], sw, sh, bg_verts, bg_idx);
 
         // Title row
         add_string_verts(
@@ -420,6 +384,7 @@ impl WgpuState {
     pub(in crate::renderer) fn build_host_manager_verts(
         &self,
         state: &ClientState,
+        tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
         cell_w: f32,
@@ -441,30 +406,10 @@ impl WgpuState {
         let px = (sw - pw) / 2.0;
         let py = (sh - ph) / 2.0;
 
-        // Panel background (dark navy)
-        add_px_rect(
-            px,
-            py,
-            pw,
-            ph,
-            [0.08, 0.12, 0.22, 0.96],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
-        // Top accent line (green)
-        add_px_rect(
-            px,
-            py,
-            pw,
-            2.0,
-            [0.2, 0.8, 0.5, 1.0],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
+        // Panel chrome: shared drop-shadow + border + rounded background.
+        draw_overlay_panel(px, py, pw, ph, tokens, 5.0, 6.0, sw, sh, bg_verts, bg_idx);
+        // Top accent line — intentional green SSH branding, kept as-is.
+        add_px_rect(px, py, pw, 2.0, [0.2, 0.8, 0.5, 1.0], sw, sh, bg_verts, bg_idx);
 
         // Title row
         add_string_verts(
