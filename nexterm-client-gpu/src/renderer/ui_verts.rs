@@ -36,18 +36,27 @@ impl WgpuState {
         let focus_color = tokens.accent_primary;
         let border_w = 2.0_f32;
         let focus_border_w = 3.0_f32;
-        let dim_color = [0.0, 0.0, 0.0, 0.06];
-
         // 1) Dim non-focused panes (only meaningful when >=2 panes).
+        // Phase 4 (UI/UX modernization): alpha is spring-animated via AnimationManager.
         for layout in state.pane_layouts.values() {
-            if state.focused_pane_id == Some(layout.pane_id) {
-                continue;
+            let alpha = state.animations.pane_dim_alpha(layout.pane_id);
+            if alpha > 0.001 {
+                let px = layout.col_offset as f32 * cell_w;
+                let py = layout.row_offset as f32 * cell_h + tab_bar_h;
+                let pw = layout.cols as f32 * cell_w;
+                let ph = layout.rows as f32 * cell_h;
+                add_px_rect(
+                    px,
+                    py,
+                    pw,
+                    ph,
+                    [0.0, 0.0, 0.0, alpha],
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
             }
-            let px = layout.col_offset as f32 * cell_w;
-            let py = layout.row_offset as f32 * cell_h + tab_bar_h;
-            let pw = layout.cols as f32 * cell_w;
-            let ph = layout.rows as f32 * cell_h;
-            add_px_rect(px, py, pw, ph, dim_color, sw, sh, bg_verts, bg_idx);
         }
 
         // 2) Adjacent borders. The focused pane's edges get accent_primary at 3px,
@@ -113,7 +122,7 @@ impl WgpuState {
         &mut self,
         state: &mut ClientState,
         cfg: &nexterm_config::TabBarConfig,
-        animations_cfg: &nexterm_config::AnimationsConfig,
+        _animations_cfg: &nexterm_config::AnimationsConfig,
         tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
@@ -272,17 +281,8 @@ impl WgpuState {
             // with ease-out and expand it horizontally (can be suppressed by reduced-motion
             // settings).
             if is_active {
-                let tab_switch_duration = animations_cfg.scaled_duration_ms(200);
-                let progress = if tab_switch_duration == 0
-                    || state.animations.current_tab_switch_target() != Some(pane_id)
-                {
-                    1.0
-                } else {
-                    let raw = state
-                        .animations
-                        .tab_switch_progress(std::time::Instant::now(), tab_switch_duration);
-                    crate::animations::ease_out_cubic(raw)
-                };
+                // Phase 4 (UI/UX modernization): spring-physics drives the accent line.
+                let progress = state.animations.tab_accent_progress();
                 let mut accent = accent_color;
                 accent[3] = accent_color[3] * progress;
                 // The underline grows outward from the center toward both ends

@@ -46,6 +46,11 @@ impl WgpuState {
         }
         self.last_frame_at = Instant::now();
 
+        // Phase 4 (UI/UX modernization): advance spring-physics animations once per frame.
+        let frame_now = Instant::now();
+        let anim_enabled = config.animations.scaled_duration_ms(1) > 0;
+        state.animations.tick(frame_now, anim_enabled);
+
         // Clear the atlas reset flag at the start of the frame.
         // Even if the atlas was reset on the previous frame, this frame will redraw
         // using the correct UVs.

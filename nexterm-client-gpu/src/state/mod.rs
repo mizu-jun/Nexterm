@@ -513,6 +513,9 @@ impl ClientState {
             self.animations
                 .record_tab_switch(pane_id, std::time::Instant::now());
         }
+        // Phase 4 (UI/UX modernization): always sync pane-dim spring targets on focus change.
+        let all_ids: Vec<u32> = self.pane_layouts.keys().copied().collect();
+        self.animations.record_focus_changed(pane_id, &all_ids);
     }
 
     /// Return the list of pane IDs with background activity

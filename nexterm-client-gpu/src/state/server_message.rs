@@ -256,6 +256,11 @@ impl ClientState {
                 if prev_focused != Some(focused_pane_id) {
                     self.animations.record_tab_switch(focused_pane_id, now);
                 }
+                // Phase 4 (UI/UX modernization): sync pane-dim spring targets unconditionally
+                // so new/removed panes get their springs initialized or cleaned up.
+                let all_ids: Vec<u32> = self.pane_layouts.keys().copied().collect();
+                self.animations
+                    .record_focus_changed(focused_pane_id, &all_ids);
             }
             // Plugin operation responses are ignored in the GPU client
             ServerToClient::PluginList { .. } | ServerToClient::PluginOk { .. } => {}

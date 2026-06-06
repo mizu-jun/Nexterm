@@ -83,6 +83,7 @@ The legacy `nexterm-launcher` crate was removed in v1.4.0. Single-binary mode (t
 ### Crate Dependencies
 
 - `nexterm-proto` — All IPC type definitions. Central crate every other crate depends on; changes ripple project-wide.
+- `nexterm-client-core` — Shared client-side IPC implementation (Sprint 3-6). Consolidates the UDS / Windows named-pipe framing, handshake, and send/recv task management that was duplicated in `nexterm-client-gpu` / `nexterm-client-tui` `connection.rs`. Exposes `Connection`; both the GPU and TUI clients depend on it.
 - `nexterm-vt` — Wrapper around the `vte` crate. VT100/ANSI parser + virtual screen (`Grid`) + Sixel/Kitty image decoding.
 - `nexterm-server` — PTY server. Hierarchy: `SessionManager → Session → Window (BSP) → Pane`.
 - `nexterm-config` — TOML + Lua config. Load order: defaults → `config.toml` → `config.lua`. Hot reload via the `notify` crate.
