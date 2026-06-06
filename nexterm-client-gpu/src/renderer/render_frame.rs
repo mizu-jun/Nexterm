@@ -643,6 +643,7 @@ impl WgpuState {
         self.build_key_hint_verts(
             state,
             config,
+            &tokens,
             sw,
             sh,
             cell_w,

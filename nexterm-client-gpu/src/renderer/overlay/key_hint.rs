@@ -24,6 +24,7 @@ impl WgpuState {
         &self,
         state: &ClientState,
         cfg: &nexterm_config::Config,
+        tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
         cell_w: f32,
@@ -82,25 +83,21 @@ impl WgpuState {
         let bx = (sw - banner_w) / 2.0;
         let by = sh - banner_h - pad;
 
-        // Background (semi-transparent dark navy)
+        // Background (semi-transparent dark navy derived from surface_0)
+        let bg_color = {
+            let [r, g, b, _] = tokens.surface_0;
+            [r, g, b, 0.92]
+        };
         add_px_rect(
-            bx,
-            by,
-            banner_w,
-            banner_h,
-            [0.06, 0.10, 0.20, 0.92],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
+            bx, by, banner_w, banner_h, bg_color, sw, sh, bg_verts, bg_idx,
         );
-        // Top accent line (leader display color: Tokyo Night blue)
+        // Top accent line
         add_px_rect(
             bx,
             by,
             banner_w,
             2.0,
-            [0.478, 0.635, 0.969, 1.0],
+            tokens.accent_muted,
             sw,
             sh,
             bg_verts,
@@ -113,7 +110,7 @@ impl WgpuState {
             &header,
             bx + pad,
             by + pad,
-            [0.95, 0.95, 0.95, 1.0],
+            tokens.text_primary,
             true,
             sw,
             sh,
@@ -126,8 +123,8 @@ impl WgpuState {
         );
 
         // Each entry
-        let key_fg = [0.85, 0.90, 1.0, 1.0];
-        let action_fg = [0.75, 0.75, 0.75, 1.0];
+        let key_fg = tokens.text_primary;
+        let action_fg = tokens.text_secondary;
         for (i, (key, action)) in hints.iter().enumerate() {
             let row_y = by + pad + cell_h + (i as f32 * cell_h);
             let key_x = bx + pad;

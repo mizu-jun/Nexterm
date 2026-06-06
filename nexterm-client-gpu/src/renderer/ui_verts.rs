@@ -564,7 +564,7 @@ impl WgpuState {
         let settings_fg = if settings_open {
             text_fg
         } else {
-            [0.80, 0.80, 0.80, 1.0]
+            tokens.text_secondary
         };
         add_string_verts(
             settings_label,

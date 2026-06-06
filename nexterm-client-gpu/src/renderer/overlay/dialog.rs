@@ -72,7 +72,7 @@ impl WgpuState {
             &prompt,
             px + cell_w,
             py + cell_h * 1.3,
-            [1.0, 1.0, 1.0, 1.0],
+            tokens.text_primary,
             false,
             sw,
             sh,
@@ -110,9 +110,9 @@ impl WgpuState {
             "[ ] Save to OS keychain (Tab to toggle)"
         };
         let remember_color = if modal.remember {
-            [0.4, 0.9, 0.5, 1.0]
+            tokens.semantic_success
         } else {
-            [0.6, 0.6, 0.6, 1.0]
+            tokens.text_muted
         };
         add_string_verts(
             remember_label,
@@ -134,7 +134,7 @@ impl WgpuState {
                 "(prefilled from the keychain)",
                 px + cell_w,
                 py + cell_h * 2.0,
-                [0.5, 0.7, 1.0, 1.0],
+                tokens.semantic_info,
                 false,
                 sw,
                 sh,
@@ -218,12 +218,16 @@ impl WgpuState {
             if matches!(item.action, ContextMenuAction::Separator) {
                 // Separator: draw a horizontal line in the middle
                 let sep_y = item_y + cell_h * 0.45;
+                let sep_color = {
+                    let [r, g, b, _] = tokens.border_subtle;
+                    [r, g, b, 0.70]
+                };
                 add_px_rect(
                     mx + cell_w * 0.5,
                     sep_y,
                     menu_w - cell_w,
                     1.0,
-                    [0.28, 0.32, 0.45, 0.70],
+                    sep_color,
                     sw,
                     sh,
                     bg_verts,
@@ -286,11 +290,15 @@ impl WgpuState {
             if !item.hint.is_empty() {
                 let hint_visual_w = visual_width(&item.hint) as f32;
                 let hint_x = mx + menu_w - (hint_visual_w * cell_w + cell_w * 0.5);
+                let hint_color = {
+                    let [r, g, b, _] = tokens.text_muted;
+                    [r, g, b, 0.80]
+                };
                 add_string_verts(
                     &item.hint,
                     hint_x,
                     item_y + cell_h * 0.1,
-                    [0.45, 0.48, 0.60, 0.80],
+                    hint_color,
                     false,
                     sw,
                     sh,

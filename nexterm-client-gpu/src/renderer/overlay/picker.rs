@@ -73,7 +73,7 @@ impl WgpuState {
                     item_py,
                     pw - 4.0,
                     cell_h,
-                    [0.25, 0.40, 0.65, 1.0],
+                    tokens.surface_2,
                     sw,
                     sh,
                     bg_verts,
@@ -83,9 +83,9 @@ impl WgpuState {
             let prefix = if i == palette.selected { "> " } else { "  " };
             let label = format!("{}{}", prefix, action.label);
             let fg = if i == palette.selected {
-                [1.0, 1.0, 1.0, 1.0]
+                tokens.text_primary
             } else {
-                [0.75, 0.75, 0.78, 1.0]
+                tokens.text_muted
             };
             add_string_verts(
                 &label,
@@ -370,7 +370,7 @@ impl WgpuState {
                 "  (no macros in config)",
                 px + cell_w,
                 py + cell_h * 2.2,
-                [0.5, 0.5, 0.5, 1.0],
+                tokens.text_muted,
                 false,
                 sw,
                 sh,
@@ -514,7 +514,7 @@ impl WgpuState {
                 "  (no hosts in config)",
                 px + cell_w,
                 py + cell_h * 2.2,
-                [0.5, 0.5, 0.5, 1.0],
+                tokens.text_muted,
                 false,
                 sw,
                 sh,
