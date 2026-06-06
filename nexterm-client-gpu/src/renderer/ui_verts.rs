@@ -9,6 +9,38 @@ use crate::vertex_util::{add_px_rect, add_string_verts};
 
 use super::WgpuState;
 
+/// Shared chrome for the one-line notification banners (update / offline / error).
+///
+/// Draws:
+/// 1. A full-width background: `surface_2` tinted 18 % toward `accent`.
+/// 2. A 1 px bottom divider using `border_subtle`.
+/// 3. A 4 px left accent bar in the full `accent` colour.
+#[allow(clippy::too_many_arguments)]
+fn draw_banner_bg(
+    bx: f32,
+    by: f32,
+    bw: f32,
+    bh: f32,
+    accent: [f32; 4],
+    tokens: &nexterm_config::DesignTokens,
+    sw: f32,
+    sh: f32,
+    bg_verts: &mut Vec<BgVertex>,
+    bg_idx: &mut Vec<u16>,
+) {
+    let [r2, g2, b2, _] = tokens.surface_2;
+    let [ra, ga, ba, _] = accent;
+    let bg = [
+        r2 * 0.82 + ra * 0.18,
+        g2 * 0.82 + ga * 0.18,
+        b2 * 0.82 + ba * 0.18,
+        0.97,
+    ];
+    add_px_rect(bx, by, bw, bh, bg, sw, sh, bg_verts, bg_idx);
+    add_px_rect(bx, by + bh - 1.0, bw, 1.0, tokens.border_subtle, sw, sh, bg_verts, bg_idx);
+    add_px_rect(bx, by, 4.0, bh, accent, sw, sh, bg_verts, bg_idx);
+}
+
 impl WgpuState {
     /// Draw the pane border lines.
     #[allow(clippy::too_many_arguments)]
@@ -776,6 +808,7 @@ impl WgpuState {
     pub(super) fn build_search_verts(
         &self,
         state: &ClientState,
+        tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
         cell_w: f32,
@@ -789,29 +822,11 @@ impl WgpuState {
     ) {
         // Display the search bar one row above the status line.
         let py = sh - cell_h * 2.0;
-        add_px_rect(
-            0.0,
-            py,
-            sw,
-            cell_h,
-            [0.08, 0.10, 0.15, 1.0],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
-        // Draw a thin accent line along the top edge.
-        add_px_rect(
-            0.0,
-            py,
-            sw,
-            2.0,
-            [0.3, 0.7, 1.0, 1.0],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
+
+        // Background from design tokens.
+        add_px_rect(0.0, py, sw, cell_h, tokens.surface_2, sw, sh, bg_verts, bg_idx);
+        // Top accent line (accent_primary, 2 px).
+        add_px_rect(0.0, py, sw, 2.0, tokens.accent_primary, sw, sh, bg_verts, bg_idx);
 
         // Search query and cursor (always show `|` instead of blinking).
         let query_with_cursor = format!("{}|", state.search.query);
@@ -827,7 +842,7 @@ impl WgpuState {
             &label,
             0.0,
             py,
-            [0.3, 1.0, 0.5, 1.0],
+            tokens.text_primary,
             false,
             sw,
             sh,
@@ -839,14 +854,14 @@ impl WgpuState {
             text_idx,
         );
 
-        // Show key hint text at the far right.
+        // Key hint at the far right.
         let hint = "Enter/↑ next  Shift+Enter/↑ prev  Esc close ";
         let hint_x = sw - hint.chars().count() as f32 * cell_w;
         add_string_verts(
             hint,
             hint_x.max(0.0),
             py,
-            [0.55, 0.55, 0.55, 1.0],
+            tokens.text_muted,
             false,
             sw,
             sh,
@@ -864,6 +879,7 @@ impl WgpuState {
     pub(super) fn build_update_banner_verts(
         &self,
         state: &ClientState,
+        tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
         cell_w: f32,
@@ -879,43 +895,18 @@ impl WgpuState {
             return;
         };
 
-        // The banner spans the full screen width and is one row tall.
         let bar_h = cell_h * 1.4;
         let bar_y = 0.0;
 
-        // Background (dark green).
-        add_px_rect(
-            0.0,
-            bar_y,
-            sw,
-            bar_h,
-            [0.05, 0.28, 0.18, 0.97],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
-        // Left-edge accent line (bright green).
-        add_px_rect(
-            0.0,
-            bar_y,
-            4.0,
-            bar_h,
-            [0.15, 0.85, 0.45, 1.0],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
+        draw_banner_bg(0.0, bar_y, sw, bar_h, tokens.semantic_success, tokens, sw, sh, bg_verts, bg_idx);
 
-        // Notification text (uses the i18n key "update-available", substituting {version}).
         let raw = nexterm_i18n::fl!("update-available");
         let msg = raw.replace("{version}", version);
         add_string_verts(
             &msg,
             cell_w * 1.2,
             bar_y + (bar_h - cell_h) * 0.5,
-            [0.88, 1.0, 0.88, 1.0],
+            tokens.text_primary,
             false,
             sw,
             sh,
@@ -927,14 +918,13 @@ impl WgpuState {
             text_idx,
         );
 
-        // Right-side hint (press Esc to close).
         let hint = "  [Esc]";
         let hint_x = sw - hint.len() as f32 * cell_w - cell_w;
         add_string_verts(
             hint,
             hint_x,
             bar_y + (bar_h - cell_h) * 0.5,
-            [0.55, 0.80, 0.55, 1.0],
+            tokens.text_muted,
             false,
             sw,
             sh,
@@ -958,6 +948,7 @@ impl WgpuState {
     pub(super) fn build_offline_banner_verts(
         &self,
         state: &ClientState,
+        tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
         cell_w: f32,
@@ -973,41 +964,12 @@ impl WgpuState {
             return;
         };
 
-        // The banner spans the full screen width and is one row tall. Stack it
-        // below `update_banner` if present.
+        // Stack below `update_banner` if present.
         let bar_h = cell_h * 1.4;
-        let bar_y = if state.update_banner.is_some() {
-            bar_h
-        } else {
-            0.0
-        };
+        let bar_y = if state.update_banner.is_some() { bar_h } else { 0.0 };
 
-        // Background (amber / warning orange).
-        add_px_rect(
-            0.0,
-            bar_y,
-            sw,
-            bar_h,
-            [0.45, 0.28, 0.05, 0.97],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
-        // Left-edge accent line (bright amber).
-        add_px_rect(
-            0.0,
-            bar_y,
-            4.0,
-            bar_h,
-            [0.95, 0.62, 0.15, 1.0],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
+        draw_banner_bg(0.0, bar_y, sw, bar_h, tokens.semantic_warning, tokens, sw, sh, bg_verts, bg_idx);
 
-        // Format the seconds count for display.
         let elapsed_secs = started.elapsed().as_secs();
         let raw = nexterm_i18n::fl!("offline-banner-connecting");
         let msg = raw.replace("{seconds}", &elapsed_secs.to_string());
@@ -1015,7 +977,7 @@ impl WgpuState {
             &msg,
             cell_w * 1.2,
             bar_y + (bar_h - cell_h) * 0.5,
-            [1.0, 0.92, 0.78, 1.0],
+            tokens.text_primary,
             false,
             sw,
             sh,
@@ -1038,6 +1000,7 @@ impl WgpuState {
     pub(super) fn build_error_banner_verts(
         &self,
         state: &ClientState,
+        tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
         cell_w: f32,
@@ -1053,9 +1016,7 @@ impl WgpuState {
             return;
         };
 
-        // The banner spans the full screen width and is one row tall. Stack
-        // below `update_banner` and `offline_banner` (Sprint 5-14 / v1.7.8)
-        // when either is present.
+        // Stack below `update_banner` and `offline_banner` when either is present.
         let bar_h = cell_h * 1.4;
         let mut bar_y = 0.0_f32;
         if state.update_banner.is_some() {
@@ -1065,35 +1026,10 @@ impl WgpuState {
             bar_y += bar_h;
         }
 
-        // Background (dark red).
-        add_px_rect(
-            0.0,
-            bar_y,
-            sw,
-            bar_h,
-            [0.40, 0.08, 0.08, 0.97],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
-        // Left-edge accent line (bright red).
-        add_px_rect(
-            0.0,
-            bar_y,
-            4.0,
-            bar_h,
-            [0.95, 0.30, 0.30, 1.0],
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
+        draw_banner_bg(0.0, bar_y, sw, bar_h, tokens.semantic_error, tokens, sw, sh, bg_verts, bg_idx);
 
-        // Show "Error: {message}" (uses the i18n key "error-banner-prefix").
         let prefix = nexterm_i18n::fl!("error-banner-prefix");
         let full = format!("{} {}", prefix, message);
-        // Truncate to what fits in the screen width (reserve space for the [Esc] hint on the right).
         let hint = "  [Esc]";
         let max_chars = ((sw / cell_w) as usize)
             .saturating_sub(hint.chars().count() + 4)
@@ -1103,7 +1039,7 @@ impl WgpuState {
             &msg_display,
             cell_w * 1.2,
             bar_y + (bar_h - cell_h) * 0.5,
-            [1.0, 0.92, 0.92, 1.0],
+            tokens.text_primary,
             false,
             sw,
             sh,
@@ -1115,13 +1051,12 @@ impl WgpuState {
             text_idx,
         );
 
-        // Right-side hint (press Esc to close).
         let hint_x = sw - hint.len() as f32 * cell_w - cell_w;
         add_string_verts(
             hint,
             hint_x,
             bar_y + (bar_h - cell_h) * 0.5,
-            [0.95, 0.70, 0.70, 1.0],
+            tokens.text_muted,
             false,
             sw,
             sh,

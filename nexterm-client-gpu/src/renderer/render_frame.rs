@@ -383,6 +383,7 @@ impl WgpuState {
         if state.search.is_active {
             self.build_search_verts(
                 state,
+                &tokens,
                 sw,
                 sh,
                 cell_w,
@@ -540,6 +541,7 @@ impl WgpuState {
         if state.update_banner.is_some() {
             self.build_update_banner_verts(
                 state,
+                &tokens,
                 sw,
                 sh,
                 cell_w,
@@ -560,6 +562,7 @@ impl WgpuState {
         if state.offline_banner_since.is_some() {
             self.build_offline_banner_verts(
                 state,
+                &tokens,
                 sw,
                 sh,
                 cell_w,
@@ -579,6 +582,7 @@ impl WgpuState {
         if state.error_banner.is_some() {
             self.build_error_banner_verts(
                 state,
+                &tokens,
                 sw,
                 sh,
                 cell_w,
