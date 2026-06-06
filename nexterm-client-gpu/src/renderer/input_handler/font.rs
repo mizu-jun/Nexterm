@@ -26,7 +26,12 @@ impl EventHandler {
         );
         let atlas_size = self.app.config.gpu.atlas_size;
         if let Some(wgpu) = &self.wgpu_state {
-            self.atlas = Some(GlyphAtlas::new_with_config(&wgpu.device, atlas_size));
+            let mut atlas = GlyphAtlas::new_with_config(&wgpu.device, atlas_size);
+            atlas.update_capacity_hint(
+                self.app.font.cell_width() as u32,
+                self.app.font.cell_height() as u32,
+            );
+            self.atlas = Some(atlas);
         }
         info!("Font size changed to {}pt", new_size);
     }
@@ -46,7 +51,12 @@ impl EventHandler {
         );
         let atlas_size = self.app.config.gpu.atlas_size;
         if let Some(wgpu) = &self.wgpu_state {
-            self.atlas = Some(GlyphAtlas::new_with_config(&wgpu.device, atlas_size));
+            let mut atlas = GlyphAtlas::new_with_config(&wgpu.device, atlas_size);
+            atlas.update_capacity_hint(
+                self.app.font.cell_width() as u32,
+                self.app.font.cell_height() as u32,
+            );
+            self.atlas = Some(atlas);
         }
         info!("Font size reset to {}pt", default_size);
     }

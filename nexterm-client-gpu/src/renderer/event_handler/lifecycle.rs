@@ -120,6 +120,10 @@ impl EventHandler {
 
         let mut atlas =
             GlyphAtlas::new_with_config(&wgpu_state.device, self.app.config.gpu.atlas_size);
+        atlas.update_capacity_hint(
+            self.app.font.cell_width() as u32,
+            self.app.font.cell_height() as u32,
+        );
 
         // Pre-load printable ASCII characters (0x20-0x7E) into the glyph atlas.
         // This eliminates the first-keystroke delay and makes rendering smooth
@@ -433,7 +437,12 @@ impl EventHandler {
                 );
                 let atlas_size = self.app.config.gpu.atlas_size;
                 if let Some(wgpu) = &self.wgpu_state {
-                    self.atlas = Some(GlyphAtlas::new_with_config(&wgpu.device, atlas_size));
+                    let mut atlas = GlyphAtlas::new_with_config(&wgpu.device, atlas_size);
+                    atlas.update_capacity_hint(
+                        self.app.font.cell_width() as u32,
+                        self.app.font.cell_height() as u32,
+                    );
+                    self.atlas = Some(atlas);
                 }
             }
             had_messages = true;

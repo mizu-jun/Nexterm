@@ -88,6 +88,10 @@ pub(crate) struct GlyphAtlas {
     pub cleared_this_frame: bool,
     /// True when the atlas needs to grow (the next frame calls `grow()`).
     pub needs_grow: bool,
+    /// Font cell width hint for proportional LRU sizing (0 = use default 8×8).
+    cell_w_hint: u32,
+    /// Font cell height hint for proportional LRU sizing (0 = use default 8×8).
+    cell_h_hint: u32,
 }
 
 impl GlyphAtlas {
@@ -156,6 +160,8 @@ impl GlyphAtlas {
             ligature_cache: LruCache::new(lru_cap),
             cleared_this_frame: false,
             needs_grow: false,
+            cell_w_hint: 0,
+            cell_h_hint: 0,
         }
     }
 
@@ -163,6 +169,8 @@ impl GlyphAtlas {
     /// After this call the UV cache is invalid, so `cleared_this_frame` becomes true.
     pub fn grow(self, device: &wgpu::Device) -> Self {
         let size_max = self.size_max;
+        let cell_w_hint = self.cell_w_hint;
+        let cell_h_hint = self.cell_h_hint;
         let new_size = (self.size * 2).min(size_max);
         if new_size > self.size {
             tracing::debug!("growing GlyphAtlas: {}→{}", self.size, new_size);
@@ -171,7 +179,39 @@ impl GlyphAtlas {
         let mut atlas = Self::with_size(device, new_size);
         atlas.size_max = size_max;
         atlas.cleared_this_frame = true;
+        if cell_w_hint > 0 && cell_h_hint > 0 {
+            atlas.update_capacity_hint(cell_w_hint, cell_h_hint);
+        }
         atlas
+    }
+
+    /// Compute the LRU capacity from actual font cell dimensions.
+    ///
+    /// This is a pure function that can be called without a GPU device, making
+    /// it straightforward to unit-test independently.
+    fn lru_cap_from_cell(atlas_size: u32, cell_w: u32, cell_h: u32) -> NonZeroUsize {
+        let cell_area = (cell_w as u64 * cell_h as u64).max(1) as u32;
+        NonZeroUsize::new(((atlas_size * atlas_size) / cell_area).max(256) as usize)
+            .expect("lru capacity is non-zero")
+    }
+
+    /// Update LRU capacity based on the actual font cell dimensions.
+    ///
+    /// Call this once after atlas creation and again whenever the font changes
+    /// (size, DPI, font face) so the LRU matches how many glyphs the atlas
+    /// texture can actually hold.
+    pub fn update_capacity_hint(&mut self, cell_w: u32, cell_h: u32) {
+        let cap = Self::lru_cap_from_cell(self.size, cell_w, cell_h);
+        self.cache.resize(cap);
+        self.ligature_cache.resize(cap);
+        self.cell_w_hint = cell_w;
+        self.cell_h_hint = cell_h;
+        tracing::debug!(
+            cell_w,
+            cell_h,
+            capacity = cap.get(),
+            "GlyphAtlas: LRU capacity updated from font metrics"
+        );
     }
 
     /// Add a glyph to the atlas (returns the existing entry when cached).
@@ -322,5 +362,43 @@ impl GlyphAtlas {
         self.row_height = self.row_height.max(height);
         self.ligature_cache.put(key, rect);
         rect
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GlyphAtlas;
+
+    #[test]
+    fn lru_cap_default_formula_unchanged() {
+        // 8×8 glyph → same result as the old formula `(size*size)/64`
+        let cap = GlyphAtlas::lru_cap_from_cell(1024, 8, 8);
+        assert_eq!(cap.get(), (1024 * 1024) / 64);
+    }
+
+    #[test]
+    fn lru_cap_realistic_font() {
+        // 14pt / 96 DPI → typical cell ~11×22 px
+        let cap = GlyphAtlas::lru_cap_from_cell(1024, 11, 22);
+        let expected = ((1024u64 * 1024) / (11u64 * 22)).max(256) as usize;
+        assert_eq!(cap.get(), expected);
+        // Must be much smaller than the default 8×8 capacity
+        let default_cap = GlyphAtlas::lru_cap_from_cell(1024, 8, 8).get();
+        assert!(cap.get() < default_cap);
+    }
+
+    #[test]
+    fn lru_cap_floor_at_256() {
+        // Absurdly large cells should still return at least 256
+        let cap = GlyphAtlas::lru_cap_from_cell(64, 64, 64);
+        assert_eq!(cap.get(), 256);
+    }
+
+    #[test]
+    fn lru_cap_doubles_with_atlas_size() {
+        // Capacity should scale quadratically with atlas size
+        let cap1 = GlyphAtlas::lru_cap_from_cell(1024, 16, 32).get();
+        let cap2 = GlyphAtlas::lru_cap_from_cell(2048, 16, 32).get();
+        assert_eq!(cap2, cap1 * 4);
     }
 }
