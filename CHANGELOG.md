@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.3] - 2026-06-07
+
+PATCH release fixing the long-standing "blank screen on Windows" symptom — restored sessions that always re-attach to a snapshot would show no shell prompt because the PTY reader's grid was never shared with the Pane. PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are unchanged.
+
+### Fixed
+
+- **Restored sessions render blank on attach**: `Pane::make_full_refresh` returned a fresh empty `Grid::new(cols, rows)` instead of the live screen. The `VtParser` that owns the real grid lives inside the PTY reader thread, and the only message the reader emits is `GridDiff`. When the shell prompt arrives before any client has attached — the common case on Windows where the `main` session is always restored — that `GridDiff` is dropped (no broadcast receivers) and the late-attaching client gets an empty `FullRefresh`; the idle shell then produces no new output and the screen stays blank, which the user perceives as "PowerShell did not launch".
+
+  The reader now mirrors `parser.screen().full_refresh_grid()` into an `Arc<Mutex<Grid>>` on every output burst, and `make_full_refresh` clones from it. The shell process was always alive (`spawn_command` succeeded in `Pane::spawn_impl`) — only the display of its existing output was broken.
+
+  This complements the v1.7.x work tracked in the Windows PowerShell startup investigation: causes A/B/D/E/F were addressed there, but the snapshot-restore path on Windows is dominated by this `make_full_refresh` shape, not by connection-race or ConPTY spawn issues.
+
 ## [1.9.2] - 2026-06-07
 
 PATCH release fixing a cross-platform unit-test failure introduced in v1.9.1. The v1.9.1 binaries were functionally correct; only a `nexterm-config` unit test used a Windows-style path literal that does not split on Unix, so it failed on Linux/macOS CI. No runtime behavior changed.

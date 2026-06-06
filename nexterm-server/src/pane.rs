@@ -361,6 +361,17 @@ pub struct Pane {
     /// `None` when OSC 7 has never been received (callers fall back to `working_dir()` =
     /// `/proc/{pid}/cwd`).
     pub current_cwd: Arc<Mutex<Option<std::path::PathBuf>>>,
+    /// Most recent full grid snapshot maintained by the PTY reader thread
+    /// (v1.9.3 fix).
+    ///
+    /// The PTY reader owns the `VtParser` locally and only emits
+    /// `GridDiff` broadcasts. When a client attaches *after* the shell has
+    /// already produced output (the standard case for a restored session),
+    /// those diffs are dropped (no broadcast receivers yet) and the parser
+    /// state stays trapped in the reader thread. Mirroring the screen here
+    /// after every burst lets `make_full_refresh` hand the late-attaching
+    /// client the actual current screen instead of a fresh empty grid.
+    latest_grid: Arc<Mutex<Grid>>,
 }
 
 impl Pane {
@@ -517,6 +528,11 @@ impl Pane {
         let current_cwd: Arc<Mutex<Option<std::path::PathBuf>>> = Arc::new(Mutex::new(None));
         let current_cwd_clone = Arc::clone(&current_cwd);
 
+        // Share the latest full-grid snapshot (v1.9.3 fix). Initialised as an
+        // empty grid; the reader thread overwrites it as bytes arrive.
+        let latest_grid: Arc<Mutex<Grid>> = Arc::new(Mutex::new(Grid::new(cols, rows)));
+        let latest_grid_clone = Arc::clone(&latest_grid);
+
         // Launch the PTY reader thread.
         tokio::task::spawn_blocking(move || {
             let mut parser = VtParser::new(cols, rows);
@@ -585,6 +601,14 @@ impl Pane {
                         // Send the grid diff.
                         let dirty = parser.screen_mut().take_dirty_rows();
                         if !dirty.is_empty() {
+                            // v1.9.3 fix: refresh the full-grid snapshot so a
+                            // client attaching after this burst still sees the
+                            // current screen via `make_full_refresh`. Without
+                            // this the parser state is trapped in the reader
+                            // thread and late-attachers get an empty grid.
+                            if let Ok(mut g) = latest_grid_clone.lock() {
+                                *g = parser.screen().full_refresh_grid();
+                            }
                             let (cursor_col, cursor_row) = parser.screen().cursor();
                             let msg = ServerToClient::GridDiff {
                                 pane_id,
@@ -720,6 +744,7 @@ impl Pane {
             mouse_mode,
             keyboard_protocol_flags,
             current_cwd,
+            latest_grid,
         })
     }
 
@@ -732,8 +757,16 @@ impl Pane {
     }
 
     /// Build a Full Refresh grid (used on client attach).
+    ///
+    /// Returns a clone of the latest grid snapshot maintained by the PTY
+    /// reader thread. Falls back to an empty grid of the current size if the
+    /// shared lock is poisoned — this is the same fallback as the pre-v1.9.3
+    /// implementation and keeps callers safe.
     pub fn make_full_refresh(&self) -> Grid {
-        Grid::new(self.cols, self.rows)
+        match self.latest_grid.lock() {
+            Ok(g) => g.clone(),
+            Err(_) => Grid::new(self.cols, self.rows),
+        }
     }
 
     /// Swap the PTY output channel — for broadcast, no swap is needed on reattach (no-op).
@@ -1267,5 +1300,66 @@ mod tests {
         let input = b"\x1b[31m\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e\x1b[0m"; // "日本語" (Japanese) colored red.
         let output = strip_ansi_escapes(input);
         assert_eq!(output, b"\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e"); // "日本語" (Japanese).
+    }
+
+    // ---- v1.9.3: make_full_refresh must reflect PTY output, not return an
+    //              empty grid. This reproduces the "blank screen on restored
+    //              session" bug where the shell prompt is emitted before any
+    //              client attaches, the GridDiff broadcast is dropped (no
+    //              receiver), and a late-attaching client sees an empty
+    //              FullRefresh forever because the parser screen is trapped in
+    //              the reader thread.
+
+    #[cfg(not(windows))]
+    fn grid_text(grid: &nexterm_proto::Grid) -> String {
+        grid.rows
+            .iter()
+            .flat_map(|row| row.iter().map(|c| c.ch))
+            .collect()
+    }
+
+    // Gated on Unix because, on Windows, portable-pty's blocking
+    // `ConPtyMaster::read_full_one_message` (called from the reader thread's
+    // `reader.read(&mut buf)`) does not always wake up when the child exits
+    // — it can keep the `tokio::task::spawn_blocking` thread parked, so
+    // `cargo test` hangs after the test logic itself succeeds. The fix in
+    // this file is platform-independent (sharing the parser screen through
+    // `Arc<Mutex<Grid>>`), so verifying it on Unix CI is sufficient. On
+    // Windows the change should be verified by running the GUI build and
+    // checking that the restored session is no longer blank.
+    #[cfg(not(windows))]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn make_full_refresh_reflects_pty_output_emitted_before_attach() {
+        use std::time::{Duration, Instant};
+
+        // Use a one-shot command so the child process exits on its own —
+        // an interactive shell would hold the PTY open and hang the test.
+        let marker = "NEXTERM_MARKER_FULLREFRESH_V193";
+        let (shell, args): (&str, Vec<String>) =
+            ("/bin/sh", vec!["-c".into(), format!("echo {}", marker)]);
+
+        let (tx, _rx) = tokio::sync::broadcast::channel::<ServerToClient>(2048);
+        let pane = Pane::spawn_with_id(1, 80, 24, tx, shell, &args).expect("spawn_with_id failed");
+
+        // Poll up to 5 s. Before the fix `make_full_refresh` returns a fresh
+        // empty grid, so the marker is never found and the assertion below
+        // fails — that is the RED state we are reproducing.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if grid_text(&pane.make_full_refresh()).contains(marker) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        let dump = grid_text(&pane.make_full_refresh());
+        panic!(
+            "make_full_refresh did not contain `{}` within 5 s. \
+             Reproduces the blank-screen bug: the PTY reader received the \
+             output but `make_full_refresh` returns an empty grid because \
+             the parser screen is not shared. Grid (first 200 chars): {:?}",
+            marker,
+            dump.chars().take(200).collect::<String>()
+        );
     }
 }
