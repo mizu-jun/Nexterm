@@ -419,6 +419,7 @@ impl WgpuState {
         if state.file_transfer.is_open {
             self.build_file_transfer_verts(
                 state,
+                &tokens,
                 sw,
                 sh,
                 cell_w,

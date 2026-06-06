@@ -112,6 +112,7 @@ impl WgpuState {
     pub(in crate::renderer) fn build_file_transfer_verts(
         &self,
         state: &ClientState,
+        tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
         cell_w: f32,
@@ -132,17 +133,13 @@ impl WgpuState {
         let px = (sw - pw) / 2.0;
         let py = (sh - ph) / 2.0;
 
-        // Panel background (deep teal)
-        let bg_color = if ft.mode == "upload" {
-            [0.05, 0.15, 0.20, 0.96]
-        } else {
-            [0.05, 0.20, 0.12, 0.96]
-        };
-        add_px_rect(px, py, pw, ph, bg_color, sw, sh, bg_verts, bg_idx);
+        // Panel chrome: drop-shadow + border ring + rounded background.
+        draw_overlay_panel(px, py, pw, ph, tokens, 5.0, 6.0, sw, sh, bg_verts, bg_idx);
+        // Top accent stripe — upload: accent_primary (cyan), download: semantic_success (green).
         let accent = if ft.mode == "upload" {
-            [0.2, 0.8, 1.0, 1.0]
+            tokens.accent_primary
         } else {
-            [0.2, 1.0, 0.6, 1.0]
+            tokens.semantic_success
         };
         add_px_rect(px, py, pw, 2.0, accent, sw, sh, bg_verts, bg_idx);
 
@@ -175,11 +172,11 @@ impl WgpuState {
             let row_y = py + cell_h * (i as f32 * 1.5 + 1.3);
             let is_active = i == ft.field;
 
-            // Field background (brighter when active)
+            // Field background: surface_2 when active (highlighted), surface_1 otherwise.
             let field_bg = if is_active {
-                [0.15, 0.25, 0.35, 1.0]
+                tokens.surface_2
             } else {
-                [0.10, 0.15, 0.20, 1.0]
+                tokens.surface_1
             };
             add_px_rect(
                 px + cell_w * 8.0,
@@ -199,9 +196,9 @@ impl WgpuState {
                 px + cell_w,
                 row_y,
                 if is_active {
-                    [0.9, 0.95, 1.0, 1.0]
+                    tokens.text_primary
                 } else {
-                    [0.6, 0.65, 0.7, 1.0]
+                    tokens.text_secondary
                 },
                 is_active,
                 sw,
@@ -225,9 +222,9 @@ impl WgpuState {
                 px + cell_w * 8.5,
                 row_y,
                 if is_active {
-                    [1.0, 1.0, 0.8, 1.0]
+                    tokens.text_primary
                 } else {
-                    [0.8, 0.85, 0.8, 1.0]
+                    tokens.text_secondary
                 },
                 false,
                 sw,
