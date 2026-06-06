@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-06-06
+
+MINOR release introducing a comprehensive UI/UX overhaul based on a centralised DesignTokens system. All visual chrome — overlays, tabs, pane borders, status bar, banners, and dialogs — now derives colours and radii from a single source of truth, making the renderer theme-aware and eliminating ~500 hardcoded RGBA literals. PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are retained; the wire format is unchanged from 1.7.8.
+
+### Added
+
+- **DesignTokens system (`nexterm-client-gpu/src/design_tokens.rs`, Phase 1)**: a centralised struct of colour and geometry constants (`surface`, `overlay`, `accent`, `border`, `text_*`, `pane_border_*`, `tab_*`, `status_bar_*`, corner radii, animation durations). All renderer code now imports `DesignTokens::default()` rather than scattering literal `[f32; 4]` arrays throughout shaders and vertex builders. Dark-mode and future light-mode themes can be swapped by returning a different `DesignTokens` instance.
+- **Pill-style tab bar with hover-only close buttons (Phase 1–2)**: tabs are now drawn as rounded rectangles with a configurable pill radius. The close `×` button is invisible at rest and fades in only on tab hover, reducing visual noise when many tabs are open. The active-tab accent line expands from the centre of the pill on focus change.
+- **Pane focus visualisation (Phase 3)**: the focused pane receives a coloured border drawn with `DesignTokens.pane_border_active`; inactive panes are subtly dimmed with a translucent overlay quad (`DesignTokens.pane_dim_overlay`). Both effects update instantly when focus moves.
+- **Spring-physics animations (Phase 4)**: the tab accent line and the pane dim overlay now use an `ease_out_cubic` spring instead of a hard cut. Duration is driven by `DesignTokens.tab_accent_anim_ms` and `DesignTokens.pane_dim_anim_ms` so `config.animations.intensity = "off"` continues to produce instant transitions.
+- **`draw_overlay_panel` unified overlay chrome helper (Phase 5)**: a single function in `vertex_util.rs` that draws the rounded background rect, drop shadow quad, and border stroke shared by every overlay (command palette, host manager, macro picker, SFTP dialog, settings panel, close-window dialog, context menu). Removing per-overlay duplication cut ~300 lines of vertex-builder code.
+- **Status bar zone redesign (Phase 6)**: the status bar is divided into left (connection / session info), centre (clock / workspace name), and right (battery / CPU sample, if enabled) zones using DesignTokens spacing. Zone boundaries are drawn with a subtle separator rather than a full-height divider.
+- **Update banner and incremental-search chrome tokenized (Phases 7–8)**: the amber update-available banner and the `/` incremental-search overlay bar now use DesignTokens colours and radii instead of hardcoded values, so they inherit future theme changes automatically.
+- **Quick Select overlay fully tokenized (Phase 9)**: the Quick Select label overlays that appear during `Ctrl+B Q` copy mode now use DesignTokens for background, text, and highlight colours.
+- **SFTP file-transfer dialog tokenized (Phase 10)**: progress bar fill, track, and border colours in the SFTP upload/download dialog replaced with DesignTokens references.
+
+### Changed
+
+- All remaining hardcoded `[f32; 4]` RGBA literals in `nexterm-client-gpu/src/renderer/overlay/settings.rs` replaced with DesignTokens field references (final cleanup commit after Phases 1–10).
+
 ## [1.7.8] - 2026-06-06
 
 PATCH release that addresses the remaining P2 items from the Windows-launch investigation memo. PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are retained; the wire format is unchanged from 1.7.7.
