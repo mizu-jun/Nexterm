@@ -115,11 +115,25 @@ mod tests {
     #[test]
     fn is_config_path_matches_toml_and_lua() {
         use std::path::PathBuf;
+        // Forward-slash paths parse on every platform (`/` is the separator on
+        // Unix and is also accepted on Windows); only the file name matters.
+        assert!(is_config_path(&[PathBuf::from(
+            "/cfg/nexterm/nexterm.toml"
+        )]));
+        assert!(is_config_path(&[PathBuf::from("/cfg/nexterm/nexterm.lua")]));
+        assert!(is_config_path(&[PathBuf::from("nexterm.toml")]));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn is_config_path_matches_windows_backslash_path() {
+        use std::path::PathBuf;
+        // On Windows the config and state dirs both resolve to
+        // `%APPDATA%\nexterm`; the config file there uses backslash
+        // separators and must still be recognised. (On Unix `\` is a valid
+        // file-name character, so this literal is Windows-only.)
         assert!(is_config_path(&[PathBuf::from(
             r"C:\Users\jun\AppData\Roaming\nexterm\nexterm.toml"
-        )]));
-        assert!(is_config_path(&[PathBuf::from(
-            "/home/u/.config/nexterm/nexterm.lua"
         )]));
     }
 
@@ -129,10 +143,10 @@ mod tests {
         // On Windows the snapshot lives in the same directory as the config,
         // so its 30-second auto-save must not trigger a reload.
         assert!(!is_config_path(&[PathBuf::from(
-            r"C:\Users\jun\AppData\Roaming\nexterm\snapshot.json"
+            "/cfg/nexterm/snapshot.json"
         )]));
         assert!(!is_config_path(&[PathBuf::from(
-            "/x/nexterm/palette_history.json"
+            "/cfg/nexterm/palette_history.json"
         )]));
     }
 

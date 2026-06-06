@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.2] - 2026-06-07
+
+PATCH release fixing a cross-platform unit-test failure introduced in v1.9.1. The v1.9.1 binaries were functionally correct; only a `nexterm-config` unit test used a Windows-style path literal that does not split on Unix, so it failed on Linux/macOS CI. No runtime behavior changed.
+
+### Fixed
+
+- **Cross-platform watcher test**: `is_config_path_matches_toml_and_lua` used a backslash Windows path literal that, on Unix, is treated as a single file name (no separator), so the assertion failed on Linux/macOS. The test now uses forward-slash paths that resolve on every platform, and the Windows backslash case moved to a `#[cfg(windows)]`-gated test.
+
 ## [1.9.1] - 2026-06-07
 
 PATCH release fixing a Windows-specific configuration reload storm and multi-window close handling. PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are unchanged.
