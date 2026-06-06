@@ -12,6 +12,7 @@ vte = { workspace = true }
 thiserror = { workspace = true }
 unicode-width = { workspace = true }
 tracing = { workspace = true }
+image = { workspace = true }
 
 [dev-dependencies]
 # Sprint 4-4: property-based tests for the Sixel / Kitty parsers.

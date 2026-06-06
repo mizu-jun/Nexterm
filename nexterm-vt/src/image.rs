@@ -1,4 +1,4 @@
-//! Sixel / Kitty image protocol decoders.
+//! Sixel / Kitty / iTerm2 image protocol decoders.
 
 use std::collections::HashMap;
 
@@ -311,6 +311,27 @@ pub fn decode_kitty(apc_data: &[u8]) -> Option<DecodedImage> {
     }
 }
 
+// ---- iTerm2 image decoder ----
+
+/// Decodes an iTerm2 inline image payload into RGBA.
+///
+/// `data` is the raw file bytes (already base64-decoded by the caller). The
+/// `image` crate's `load_from_memory` handles any format it supports (PNG,
+/// JPEG, …). The `checked_image_bytes` guard enforces the 256 MiB RGBA ceiling
+/// before the pixel buffer is allocated.
+pub fn decode_iterm2(data: &[u8]) -> Option<DecodedImage> {
+    let img = image::load_from_memory(data).ok()?;
+    let (width, height) = image::GenericImageView::dimensions(&img);
+    // Reject images that would exceed the RGBA allocation ceiling.
+    checked_image_bytes(width, height, 4)?;
+    let rgba8 = img.to_rgba8();
+    Some(DecodedImage {
+        width,
+        height,
+        rgba: rgba8.into_raw(),
+    })
+}
+
 // ---- Utilities ----
 
 fn parse_decimal(data: &[u8], i: &mut usize) -> Option<u16> {
@@ -507,5 +528,36 @@ mod tests {
         // Non-digit bytes are skipped.
         assert_eq!(parse_u32_bytes(b"1a2b3"), 123);
         assert_eq!(parse_u32_bytes(b""), 0);
+    }
+
+    // ---- iTerm2 decoder tests ----
+
+    #[test]
+    fn decode_iterm2_accepts_png() {
+        // Build a 1×1 red RGBA PNG in memory and verify round-trip.
+        let mut buf = std::io::Cursor::new(Vec::new());
+        let img = image::ImageBuffer::from_pixel(1, 1, image::Rgba([255u8, 0, 0, 255]));
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut buf, image::ImageFormat::Png)
+            .unwrap();
+        let result = decode_iterm2(buf.get_ref());
+        assert!(result.is_some(), "should decode a valid 1×1 PNG");
+        let decoded = result.unwrap();
+        assert_eq!(decoded.width, 1);
+        assert_eq!(decoded.height, 1);
+        assert_eq!(decoded.rgba, [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn decode_iterm2_rejects_invalid_data() {
+        assert!(decode_iterm2(b"not an image").is_none());
+        assert!(decode_iterm2(b"").is_none());
+    }
+
+    #[test]
+    fn decode_iterm2_rejects_oversized_image() {
+        // 8193 × 8193 × 4 = just over 256 MiB — checked_image_bytes returns None.
+        // We can't actually allocate that, so test the guard directly.
+        assert!(checked_image_bytes(8193, 8193, 4).is_none());
     }
 }

@@ -803,6 +803,77 @@ impl Screen {
         }
     }
 
+    /// Handles an iTerm2 inline image sequence (OSC 1337).
+    ///
+    /// Format: `ESC ] 1337 ; File=[key=value;...] : [base64-data] BEL/ST`
+    ///
+    /// The vte crate splits the OSC payload on each `;`, so the file arguments
+    /// and base64 data arrive spread across `params[1..]`. This method
+    /// reconstructs the full string, locates the `:` separator, and parses the
+    /// key-value arguments. Images are only placed when `inline=1` is present.
+    ///
+    /// Payloads larger than 16 MiB (base64) or images larger than 256 MiB
+    /// (decoded RGBA) are silently discarded.
+    pub(crate) fn handle_iterm2_osc(&mut self, params: &[&[u8]]) {
+        // Reconstruct the full payload string; vte splits on every ';'.
+        let mut full: Vec<u8> = Vec::new();
+        for (i, p) in params[1..].iter().enumerate() {
+            if i > 0 {
+                full.push(b';');
+            }
+            full.extend_from_slice(p);
+        }
+
+        // Locate the ':' that separates the File arguments from the base64 data.
+        let colon_pos = match full.iter().position(|&b| b == b':') {
+            Some(p) => p,
+            None => return,
+        };
+        let args_bytes = &full[..colon_pos];
+        let data_bytes = full[colon_pos + 1..].trim_ascii();
+
+        // Cap the raw base64 payload as a DoS defence (≈12 MiB decoded).
+        const MAX_ITERM2_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
+        if data_bytes.len() > MAX_ITERM2_PAYLOAD_BYTES {
+            return;
+        }
+
+        // Parse key=value pairs.  Strip the leading "File=" prefix first, then
+        // scan the semicolon-delimited items from all reconstructed fragments.
+        let args_str = std::str::from_utf8(args_bytes).unwrap_or("").trim();
+        let args = args_str.trim_start_matches("File=");
+        let mut inline = false;
+        for kv in args.split(';') {
+            if kv.trim().eq_ignore_ascii_case("inline=1") {
+                inline = true;
+            }
+        }
+        // Sequences without inline=1 must not display (spec requirement).
+        if !inline {
+            return;
+        }
+
+        // Base64-decode the image data.
+        let raw = match crate::image::base64_decode(data_bytes) {
+            Some(r) => r,
+            None => return,
+        };
+
+        // Decode to RGBA via the image crate (PNG, JPEG, …).
+        if let Some(img) = crate::image::decode_iterm2(&raw) {
+            let id = self.next_image_id;
+            self.next_image_id += 1;
+            self.pending_images.push(PendingImage {
+                id,
+                col: self.cursor_col,
+                row: self.cursor_row,
+                width: img.width,
+                height: img.height,
+                rgba: img.rgba,
+            });
+        }
+    }
+
     /// Drains the accumulated images and clears the queue.
     pub fn take_pending_images(&mut self) -> Vec<PendingImage> {
         std::mem::take(&mut self.pending_images)

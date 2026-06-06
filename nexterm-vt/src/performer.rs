@@ -283,6 +283,13 @@ impl Perform for Screen {
                     .to_string();
                 self.set_pending_notification(title, body);
             }
+            // OSC 1337: iTerm2 inline image protocol.
+            // Format: ESC ] 1337 ; File=[key=value;...] : [base64-data] BEL/ST
+            // Only images with `inline=1` are rendered; all other OSC 1337
+            // sub-commands (cursor shape, etc.) are silently ignored.
+            "1337" => {
+                self.handle_iterm2_osc(params);
+            }
             // OSC 133: semantic zone markers (prompt / command / output marking).
             // Format: ESC ] 133 ; <A|B|C|D[;exit_code]> ST
             "133" => {
