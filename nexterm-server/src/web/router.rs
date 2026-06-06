@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 
 use axum::{
     Router,
+    middleware,
     routing::{get, post},
 };
 use tokio::net::TcpListener;
@@ -11,6 +12,7 @@ use tracing::warn;
 
 use super::AppState;
 use super::handlers;
+use super::middleware as mw;
 
 /// Build the router.
 pub(in crate::web) fn build_router(state: AppState) -> Router {
@@ -28,6 +30,10 @@ pub(in crate::web) fn build_router(state: AppState) -> Router {
         .route("/auth/setup-url", get(handlers::login::handle_setup_url))
         .route("/setup/verify", post(handlers::login::handle_setup_verify))
         .route("/ws", get(handlers::ws::ws_handler))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            mw::security_headers,
+        ))
         .with_state(state)
 }
 
