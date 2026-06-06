@@ -340,20 +340,30 @@ pub struct TabBarConfig {
     pub enabled: bool,
     /// Tab-bar height (pixels).
     pub height: u32,
-    /// Active-tab background color (`RRGGBB`).
-    pub active_tab_bg: String,
-    /// Inactive-tab background color (`RRGGBB`).
-    pub inactive_tab_bg: String,
+    /// Active-tab background color override (`#RRGGBB`).
+    ///
+    /// `None` (the default) derives the color from the active color scheme via
+    /// [`crate::DesignTokens`].  Set to an explicit hex string to pin a color
+    /// regardless of the scheme.
+    #[serde(default)]
+    pub active_tab_bg: Option<String>,
+    /// Inactive-tab background color override (`#RRGGBB`).
+    ///
+    /// `None` derives from the active color scheme.
+    #[serde(default)]
+    pub inactive_tab_bg: Option<String>,
     /// Tab separator character.
     pub separator: String,
-    /// Background color for an inactive tab that has activity (`RRGGBB`).
-    /// Sprint 5-7 / UI-1-1: lets you specify a highlight color similar to
-    /// WezTerm's `format-tab-title`.
-    #[serde(default = "default_activity_tab_bg")]
-    pub activity_tab_bg: String,
-    /// Accent-line color at the bottom of the active tab (`RRGGBB`).
-    #[serde(default = "default_active_accent_color")]
-    pub active_accent_color: String,
+    /// Activity-tab background color override (`#RRGGBB`).
+    ///
+    /// `None` derives from the active color scheme.
+    #[serde(default)]
+    pub activity_tab_bg: Option<String>,
+    /// Accent-line color at the bottom of the active tab (`#RRGGBB`).
+    ///
+    /// `None` derives from the active color scheme accent.
+    #[serde(default)]
+    pub active_accent_color: Option<String>,
     /// Whether to prefix the tab label with the pane number in `[1]` form
     /// (Windows Terminal-style).
     #[serde(default)]
@@ -365,17 +375,6 @@ pub struct TabBarConfig {
     /// Whether to brighten the tab background on mouse hover.
     #[serde(default = "default_true")]
     pub hover_highlight: bool,
-}
-
-fn default_activity_tab_bg() -> String {
-    // A slightly warm orange for activity highlights (close to WezTerm's
-    // `#ae8b2d`).
-    "#7A4D1A".to_string()
-}
-
-fn default_active_accent_color() -> String {
-    // Tokyo Night blue (#7AA2F7).
-    "#7AA2F7".to_string()
 }
 
 fn default_inactive_text_brightness() -> f32 {
@@ -391,12 +390,12 @@ impl Default for TabBarConfig {
         Self {
             enabled: true,
             height: 32,
-            // Tokyo Night accent color.
-            active_tab_bg: "#3B4261".to_string(),
-            inactive_tab_bg: "#1E2030".to_string(),
+            // All color fields default to None so DesignTokens drives the look.
+            active_tab_bg: None,
+            inactive_tab_bg: None,
             separator: "❯".to_string(),
-            activity_tab_bg: default_activity_tab_bg(),
-            active_accent_color: default_active_accent_color(),
+            activity_tab_bg: None,
+            active_accent_color: None,
             show_tab_number: false,
             inactive_text_brightness: default_inactive_text_brightness(),
             hover_highlight: true,

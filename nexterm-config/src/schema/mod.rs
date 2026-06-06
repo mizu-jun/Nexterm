@@ -13,6 +13,7 @@ pub mod log;
 pub mod quake;
 pub mod security;
 pub mod shell;
+pub mod tokens;
 pub mod web;
 pub mod window;
 
@@ -25,6 +26,7 @@ pub use log::{LogConfig, StatusBarConfig};
 pub use quake::{QuakeEdge, QuakeModeConfig};
 pub use security::{ConsentPolicy, SecurityConfig};
 pub use shell::{KeyBinding, MacroConfig, SerialPortConfig, ShellConfig};
+pub use tokens::{DesignTokens, parse_hex_color, resolve as resolve_color};
 pub use web::{AccessLogConfig, OAuthConfig, TlsConfig, WebAuthConfig, WebConfig};
 pub use window::{
     BackgroundFit, BackgroundImageConfig, CloseAction, CursorStyle, TabBarConfig, WindowConfig,

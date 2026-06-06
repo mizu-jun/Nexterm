@@ -2,7 +2,6 @@
 //!
 //! Six UI vertex-builder methods extracted from `renderer.rs`.
 
-use crate::color_util::hex_to_rgba;
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::state::ClientState;
@@ -21,82 +20,89 @@ impl WgpuState {
         cell_w: f32,
         cell_h: f32,
         tab_bar_h: f32,
+        tokens: &nexterm_config::DesignTokens,
         bg_verts: &mut Vec<BgVertex>,
         bg_idx: &mut Vec<u16>,
     ) {
         if state.pane_layouts.len() <= 1 {
             return;
         }
-        // Tokyo Night: separator color #415068, focused border #7AA2F7
-        let border_color = [0.255, 0.286, 0.408, 1.0];
-        let focused_border = [0.478, 0.635, 0.969, 1.0];
-        // Focused-pane border highlight (light blue, alpha 0.25)
-        let focused_highlight = [0.478, 0.635, 0.969, 0.25];
-        // Border is 2px wide for visibility
+        // Phase 3 (UI/UX modernization): pane border & focus visualization.
+        //   - Non-focused adjacent borders: 2px `border_subtle` (quiet).
+        //   - Focused adjacent borders:    3px `accent_primary` (clearly lifted).
+        //   - Non-focused panes get a flat dim overlay (alpha 0.06 black) so the
+        //     focused pane stands out without a halo on its own frame.
+        let border_color = tokens.border_subtle;
+        let focus_color = tokens.accent_primary;
         let border_w = 2.0_f32;
+        let focus_border_w = 3.0_f32;
+        let dim_color = [0.0, 0.0, 0.0, 0.06];
 
+        // 1) Dim non-focused panes (only meaningful when >=2 panes).
+        for layout in state.pane_layouts.values() {
+            if state.focused_pane_id == Some(layout.pane_id) {
+                continue;
+            }
+            let px = layout.col_offset as f32 * cell_w;
+            let py = layout.row_offset as f32 * cell_h + tab_bar_h;
+            let pw = layout.cols as f32 * cell_w;
+            let ph = layout.rows as f32 * cell_h;
+            add_px_rect(px, py, pw, ph, dim_color, sw, sh, bg_verts, bg_idx);
+        }
+
+        // 2) Adjacent borders. The focused pane's edges get accent_primary at 3px,
+        //    everything else stays at the subtle 2px divider.
         for layout in state.pane_layouts.values() {
             let px = layout.col_offset as f32 * cell_w;
             let py = layout.row_offset as f32 * cell_h + tab_bar_h;
             let pw = layout.cols as f32 * cell_w;
             let ph = layout.rows as f32 * cell_h;
             let is_focused = state.focused_pane_id == Some(layout.pane_id);
-
-            // Draw a faint highlight border (2px) on the focused pane
-            if is_focused && state.pane_layouts.len() > 1 {
-                // Top edge
-                add_px_rect(px, py, pw, 2.0, focused_highlight, sw, sh, bg_verts, bg_idx);
-                // Bottom edge
-                add_px_rect(
-                    px,
-                    py + ph - 2.0,
-                    pw,
-                    2.0,
-                    focused_highlight,
-                    sw,
-                    sh,
-                    bg_verts,
-                    bg_idx,
-                );
-                // Left edge
-                add_px_rect(px, py, 2.0, ph, focused_highlight, sw, sh, bg_verts, bg_idx);
-                // Right edge
-                add_px_rect(
-                    px + pw - 2.0,
-                    py,
-                    2.0,
-                    ph,
-                    focused_highlight,
-                    sw,
-                    sh,
-                    bg_verts,
-                    bg_idx,
-                );
-            }
-
-            // If a pane sits to the right, draw a 1px vertical border
-            let right_col = layout.col_offset + layout.cols + 1;
-            let color = if is_focused {
-                focused_border
+            let (color, w) = if is_focused {
+                (focus_color, focus_border_w)
             } else {
-                border_color
+                (border_color, border_w)
             };
+
+            // Right neighbor → vertical border on the right edge.
+            let right_col = layout.col_offset + layout.cols + 1;
             if state
                 .pane_layouts
                 .values()
                 .any(|o| o.pane_id != layout.pane_id && o.col_offset == right_col)
             {
-                add_px_rect(px + pw, py, border_w, ph, color, sw, sh, bg_verts, bg_idx);
+                add_px_rect(px + pw, py, w, ph, color, sw, sh, bg_verts, bg_idx);
             }
 
-            // If a pane sits below, draw a 1px horizontal border
+            // Bottom neighbor → horizontal border on the bottom edge.
             let bottom_row = layout.row_offset + layout.rows + 1;
             if state
                 .pane_layouts
                 .values()
                 .any(|o| o.pane_id != layout.pane_id && o.row_offset == bottom_row)
             {
-                add_px_rect(px, py + ph, pw, border_w, color, sw, sh, bg_verts, bg_idx);
+                add_px_rect(px, py + ph, pw, w, color, sw, sh, bg_verts, bg_idx);
+            }
+
+            // Left neighbor → vertical border on the left edge (focused only;
+            // the neighbor draws the divider in the unfocused case).
+            if is_focused && layout.col_offset > 0 {
+                let left_col = layout.col_offset.saturating_sub(1);
+                if state.pane_layouts.values().any(|o| {
+                    o.pane_id != layout.pane_id && o.col_offset + o.cols + 1 == left_col + 1
+                }) {
+                    add_px_rect(px - w, py, w, ph, color, sw, sh, bg_verts, bg_idx);
+                }
+            }
+
+            // Top neighbor → horizontal border on the top edge (focused only).
+            if is_focused && layout.row_offset > 0 {
+                let top_row = layout.row_offset.saturating_sub(1);
+                if state.pane_layouts.values().any(|o| {
+                    o.pane_id != layout.pane_id && o.row_offset + o.rows + 1 == top_row + 1
+                }) {
+                    add_px_rect(px, py - w, pw, w, color, sw, sh, bg_verts, bg_idx);
+                }
             }
         }
     }
@@ -108,6 +114,7 @@ impl WgpuState {
         state: &mut ClientState,
         cfg: &nexterm_config::TabBarConfig,
         animations_cfg: &nexterm_config::AnimationsConfig,
+        tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
         cell_w: f32,
@@ -121,19 +128,25 @@ impl WgpuState {
     ) {
         let bar_h = cfg.height as f32;
         let bar_y = 0.0_f32;
-        // Height of the active-tab accent line (3px for better visibility)
-        let accent_h = 3.0_f32;
+        // Phase 2 (UI/UX modernization): browser-style pill tabs.
+        //   - Bottom accent line: 2px (reduced from 3px) for a quieter look.
+        //   - Top highlight line: 2px on the active tab for a "lifted" feel.
+        //   - 4px transparent gap between tabs replaces the vertical divider.
+        let accent_h = 2.0_f32;
+        let top_highlight_h = 2.0_f32;
+        const TAB_GAP_PX: f32 = 4.0;
 
-        // Full-width tab-bar background (inactive color)
-        let inactive_bg = hex_to_rgba(&cfg.inactive_tab_bg, 1.0);
+        // Resolve each color: user override (Some) takes priority, otherwise use the token.
+        let inactive_bg =
+            nexterm_config::resolve_color(cfg.inactive_tab_bg.as_deref(), tokens.tab_inactive_bg);
         add_px_rect(0.0, bar_y, sw, bar_h, inactive_bg, sw, sh, bg_verts, bg_idx);
-        // Divider line at the bottom of the tab bar (matches the border color)
+        // Divider line at the bottom of the tab bar
         add_px_rect(
             0.0,
             bar_y + bar_h - 1.0,
             sw,
             1.0,
-            [0.255, 0.286, 0.408, 1.0],
+            tokens.border_subtle,
             sw,
             sh,
             bg_verts,
@@ -142,11 +155,16 @@ impl WgpuState {
 
         // Render the "active tab" based on the focused pane ID
         let focused_id = state.focused_pane_id.unwrap_or(0);
-        let active_bg = hex_to_rgba(&cfg.active_tab_bg, 1.0);
-        let activity_bg = hex_to_rgba(&cfg.activity_tab_bg, 1.0);
-        let accent_color = hex_to_rgba(&cfg.active_accent_color, 1.0);
-        // Text colors: active uses near-white; inactive is muted via the config value (Sprint 5-7 / UI-1-1)
-        let text_fg = [0.97, 0.97, 0.97, 1.0];
+        let active_bg =
+            nexterm_config::resolve_color(cfg.active_tab_bg.as_deref(), tokens.tab_active_bg);
+        let activity_bg =
+            nexterm_config::resolve_color(cfg.activity_tab_bg.as_deref(), tokens.tab_activity_bg);
+        let accent_color = nexterm_config::resolve_color(
+            cfg.active_accent_color.as_deref(),
+            tokens.accent_primary,
+        );
+        // Text colors derived from tokens
+        let text_fg = tokens.text_primary;
         let dim = cfg.inactive_text_brightness.clamp(0.2, 1.0);
         let inactive_fg = [dim, dim, dim, 1.0];
 
@@ -179,6 +197,8 @@ impl WgpuState {
         state.tab_hit_rects.clear();
         // Sprint 5-9 Phase 4-6: clear the tab tear-out `[↗]` button hit regions every frame, too
         state.tab_tearout_hit_rects.clear();
+        // Phase 2 (UI/UX modernization): clear close `×` button hit regions every frame
+        state.tab_close_hit_rects.clear();
 
         let mut x_offset = 0.0_f32;
         let text_y = bar_y + (bar_h - cell_h) / 2.0;
@@ -279,6 +299,22 @@ impl WgpuState {
                     bg_verts,
                     bg_idx,
                 );
+                // Phase 2 (UI/UX modernization): pill-style top highlight on the active tab.
+                // A muted accent line at the top edge gives a subtle "lifted" feel without
+                // requiring true rounded corners (which would need a custom shader).
+                let mut top_hi = accent_color;
+                top_hi[3] = accent_color[3] * 0.45 * progress;
+                add_px_rect(
+                    accent_x,
+                    bar_y,
+                    accent_w,
+                    top_highlight_h,
+                    top_hi,
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
             }
 
             // Tab label (vertically centered)
@@ -313,15 +349,19 @@ impl WgpuState {
             // Button area: a square (about cell_w x cell_w) inset from the tab's right edge
             // by `padding`. A click fires the `DetachToNewWindow` path (hit-detected in
             // `mouse.rs`).
-            let tearout_min_width = cell_w * 4.0;
-            if is_hovered && state.tab_drag.is_none() && label_w >= tearout_min_width {
+            // Phase 2 (UI/UX modernization): require room for both `↗` (tear-out) and
+            // `×` (close) buttons. Minimum tab width raised from 4 to 6 cells.
+            let hover_btn_min_width = cell_w * 6.0;
+            if is_hovered && state.tab_drag.is_none() && label_w >= hover_btn_min_width {
                 let btn_size = cell_w; // a 1-cell-wide square
-                let btn_x = x_offset + label_w - padding - btn_size;
                 let btn_y = bar_y + (bar_h - cell_h) / 2.0;
-                // Draw the U+2197 NORTH EAST ARROW (some fonts will substitute it)
+                // `×` close button at the far right, `↗` tear-out one slot to its left.
+                let close_x = x_offset + label_w - padding - btn_size;
+                let tearout_x = close_x - btn_size;
+                // Tear-out arrow (U+2197 NORTH EAST ARROW)
                 add_string_verts(
                     "↗",
-                    btn_x,
+                    tearout_x,
                     btn_y,
                     fg,
                     false,
@@ -334,34 +374,39 @@ impl WgpuState {
                     text_verts,
                     text_idx,
                 );
-                // Make the hit region slightly larger around the button center (favors clickability)
-                let hit_x0 = btn_x - cell_w * 0.25;
-                let hit_x1 = btn_x + btn_size + cell_w * 0.25;
+                // Close button (U+00D7 MULTIPLICATION SIGN, more reliable than "×")
+                add_string_verts(
+                    "×",
+                    close_x,
+                    btn_y,
+                    fg,
+                    false,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
+                );
+                // Hit regions: pad slightly to favor clickability
+                let pad = cell_w * 0.25;
                 state
                     .tab_tearout_hit_rects
-                    .insert(pane_id, (hit_x0, hit_x1));
+                    .insert(pane_id, (tearout_x - pad, tearout_x + btn_size + pad));
+                state
+                    .tab_close_hit_rects
+                    .insert(pane_id, (close_x - pad, close_x + btn_size + pad));
             }
 
             x_offset += label_w;
 
-            // Vertical divider between tabs (1px, light accent color)
+            // Phase 2 (UI/UX modernization): a 4px transparent gap separates tabs
+            // visually instead of a 1px vertical divider line. The gap lets the tab
+            // bar background show through, giving the tabs a discrete pill feel.
             if i + 1 < pane_ids.len() {
-                // Hide the divider next to the active tab (the accent line is enough)
-                if !is_active && pane_ids[i + 1] != focused_id {
-                    let line_h = bar_h * 0.6; // 60% of the tab-bar height
-                    let line_y = bar_y + (bar_h - line_h) / 2.0;
-                    add_px_rect(
-                        x_offset,
-                        line_y,
-                        1.0,
-                        line_h,
-                        [0.25, 0.28, 0.38, 0.50],
-                        sw,
-                        sh,
-                        bg_verts,
-                        bg_idx,
-                    );
-                }
+                x_offset += TAB_GAP_PX;
                 // Keep the separator-string rendering for backward compatibility (default is empty)
                 if !sep.trim().is_empty() {
                     let sep_w = cell_w;
@@ -502,13 +547,13 @@ impl WgpuState {
             && let Some(&(tx0, tx1)) = state.tab_hit_rects.get(&rename_id)
         {
             let edit_w = (tx1 - tx0).min(tab_area_w - tx0);
-            // Edit field background (dark accent color).
+            // Edit field background.
             add_px_rect(
                 tx0,
                 bar_y,
                 edit_w,
                 bar_h,
-                [0.231, 0.259, 0.384, 1.0],
+                tokens.surface_3,
                 sw,
                 sh,
                 bg_verts,
@@ -520,7 +565,7 @@ impl WgpuState {
                 bar_y + bar_h - accent_h * 2.0,
                 edit_w,
                 accent_h * 2.0,
-                [0.478, 0.635, 0.969, 1.0],
+                tokens.accent_primary,
                 sw,
                 sh,
                 bg_verts,
@@ -555,6 +600,7 @@ impl WgpuState {
         sh: f32,
         cell_w: f32,
         cell_h: f32,
+        tokens: &nexterm_config::DesignTokens,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         bg_verts: &mut Vec<BgVertex>,
@@ -563,25 +609,25 @@ impl WgpuState {
         text_idx: &mut Vec<u16>,
     ) {
         let py = sh - cell_h;
-        // Status line background (Tokyo Night: #1E2030).
+        // Status line background.
         add_px_rect(
             0.0,
             py,
             sw,
             cell_h,
-            [0.118, 0.125, 0.188, 1.0],
+            tokens.surface_1,
             sw,
             sh,
             bg_verts,
             bg_idx,
         );
-        // 1px divider line at the top of the status line (#2D3149).
+        // 1px divider line at the top of the status line.
         add_px_rect(
             0.0,
             py,
             sw,
             1.0,
-            [0.176, 0.192, 0.286, 1.0],
+            tokens.border_subtle,
             sw,
             sh,
             bg_verts,
@@ -604,12 +650,11 @@ impl WgpuState {
             )
         };
 
-        // Tokyo Night text color #A9B1D6.
         add_string_verts(
             &status,
             0.0,
             py,
-            [0.663, 0.694, 0.839, 1.0],
+            tokens.text_secondary,
             false,
             sw,
             sh,

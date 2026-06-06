@@ -543,6 +543,36 @@ impl EventHandler {
                     if let Some(w) = &self.window {
                         w.request_redraw();
                     }
+                } else if let Some(close_pane_id) = self
+                    .app
+                    .state
+                    .tab_close_hit_rects
+                    .iter()
+                    .find(|&(_, &(x0, x1))| px_f32 >= x0 && px_f32 < x1)
+                    .map(|(&id, _)| id)
+                {
+                    // Phase 2 (UI/UX modernization): clicking the tab-hover `[×]`
+                    // button closes the pane. Evaluated before tear-out and tab-click
+                    // hit-tests so the close region (which overlaps the tab and is
+                    // adjacent to `[↗]`) wins. The path matches `execute_action("ClosePane")`.
+                    tracing::info!("[×] close button click: closing pane_id={}", close_pane_id);
+                    if let Some(conn) = &self.connection {
+                        // Focus the target pane first so the server's ClosePane
+                        // (which targets the focused pane) applies to the clicked tab.
+                        if self.app.state.focused_pane_id != Some(close_pane_id) {
+                            let _ =
+                                conn.send_tx
+                                    .try_send(nexterm_proto::ClientToServer::FocusPane {
+                                        pane_id: close_pane_id,
+                                    });
+                        }
+                        let _ = conn
+                            .send_tx
+                            .try_send(nexterm_proto::ClientToServer::ClosePane);
+                    }
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
                 } else if let Some(tearout_pane_id) = self
                     .app
                     .state

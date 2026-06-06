@@ -295,10 +295,10 @@ pub fn apply_lua_table_to_config(config: &mut Config, tbl: &LuaTable) -> Result<
             config.tab_bar.height = height;
         }
         if let Ok(active_tab_bg) = tab_bar.get::<String>("active_tab_bg") {
-            config.tab_bar.active_tab_bg = active_tab_bg;
+            config.tab_bar.active_tab_bg = Some(active_tab_bg);
         }
         if let Ok(inactive_tab_bg) = tab_bar.get::<String>("inactive_tab_bg") {
-            config.tab_bar.inactive_tab_bg = inactive_tab_bg;
+            config.tab_bar.inactive_tab_bg = Some(inactive_tab_bg);
         }
         if let Ok(separator) = tab_bar.get::<String>("separator") {
             config.tab_bar.separator = separator;

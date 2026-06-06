@@ -163,6 +163,10 @@ pub struct ClientState {
     /// `DetachToNewWindow` path and detaches the target pane into a new OS Window.
     /// Works without depending on global coordinates, including on Wayland.
     pub tab_tearout_hit_rects: HashMap<u32, (f32, f32)>,
+    /// Phase 2 (UI/UX modernization): hover-only close `×` button hit regions
+    /// per tab `pane_id`. Populated each frame by `build_tab_bar_verts` and
+    /// consumed by mouse-click handling to fire the `ClosePane` IPC path.
+    pub tab_close_hit_rects: HashMap<u32, (f32, f32)>,
     /// Click range (x_start, x_end) of the settings button on the tab bar
     pub settings_tab_rect: Option<(f32, f32)>,
     /// `pane_id` of the tab the mouse is currently hovering (Sprint 5-7 / UI-1-1).
@@ -407,6 +411,7 @@ impl ClientState {
             floating_pane_rects: HashMap::new(),
             tab_hit_rects: HashMap::new(),
             tab_tearout_hit_rects: HashMap::new(),
+            tab_close_hit_rects: HashMap::new(),
             settings_tab_rect: None,
             hovered_tab_id: None,
             key_hint_visible_until: None,

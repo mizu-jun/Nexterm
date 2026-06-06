@@ -77,6 +77,12 @@ impl WgpuState {
             }
         };
         let palette_ref = scheme_palette.as_ref();
+        // Compute design tokens from the active palette (cheap; runs every frame).
+        let tokens = if let Some(p) = scheme_palette.as_ref() {
+            nexterm_config::DesignTokens::from_palette(p)
+        } else {
+            nexterm_config::DesignTokens::default()
+        };
         let output = match self.surface.get_current_texture() {
             Ok(t) => t,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
@@ -172,6 +178,7 @@ impl WgpuState {
                 cell_w,
                 cell_h,
                 tab_bar_h,
+                &tokens,
                 &mut bg_verts,
                 &mut bg_idx,
             );
@@ -337,6 +344,7 @@ impl WgpuState {
                 state,
                 tab_bar_cfg,
                 &config.animations,
+                &tokens,
                 sw,
                 sh,
                 cell_w,
@@ -357,6 +365,7 @@ impl WgpuState {
             sh,
             cell_w,
             cell_h,
+            &tokens,
             font,
             atlas,
             &mut bg_verts,

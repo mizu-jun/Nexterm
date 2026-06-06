@@ -23,10 +23,11 @@ pub use lua_hooks::{HookEvent, LuaHookRunner};
 pub use schema::{
     AccessLogConfig, AnimationIntensity, AnimationsConfig, BackgroundFit, BackgroundImageConfig,
     BuiltinScheme, CloseAction, ColorScheme, Config, ConsentPolicy, CursorStyle, CustomPalette,
-    FontConfig, GpuConfig, HooksConfig, HostConfig, KeyBinding, LogConfig, MacroConfig,
-    OAuthConfig, PresentModeConfig, Profile, QuakeEdge, QuakeModeConfig, SchemePalette,
-    SecurityConfig, SerialPortConfig, ShellConfig, StatusBarConfig, TabBarConfig, TlsConfig,
-    WebAuthConfig, WebConfig, WindowConfig, WindowDecorations,
+    DesignTokens, FontConfig, GpuConfig, HooksConfig, HostConfig, KeyBinding, LogConfig,
+    MacroConfig, OAuthConfig, PresentModeConfig, Profile, QuakeEdge, QuakeModeConfig,
+    SchemePalette, SecurityConfig, SerialPortConfig, ShellConfig, StatusBarConfig, TabBarConfig,
+    TlsConfig, WebAuthConfig, WebConfig, WindowConfig, WindowDecorations, parse_hex_color,
+    resolve_color,
 };
 pub use status_bar::{StatusBarEvaluator, WidgetContext, evaluate_builtin};
 pub use watcher::{ConfigRx, watch_config};

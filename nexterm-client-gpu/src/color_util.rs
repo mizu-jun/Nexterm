@@ -77,15 +77,6 @@ pub(crate) fn ansi_256_to_rgb(n: u8) -> [f32; 4] {
     [grey, grey, grey, 1.0]
 }
 
-/// Convert a `#rrggbb` hex color string into a `[f32; 4]` RGBA value.
-pub(crate) fn hex_to_rgba(hex: &str, alpha: f32) -> [f32; 4] {
-    let hex = hex.trim_start_matches('#');
-    let r = u8::from_str_radix(hex.get(0..2).unwrap_or("80"), 16).unwrap_or(128) as f32 / 255.0;
-    let g = u8::from_str_radix(hex.get(2..4).unwrap_or("80"), 16).unwrap_or(128) as f32 / 255.0;
-    let b = u8::from_str_radix(hex.get(4..6).unwrap_or("80"), 16).unwrap_or(128) as f32 / 255.0;
-    [r, g, b, alpha]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,20 +103,5 @@ mod tests {
         assert!(fg[0] > 0.5); // foreground is bright
         let bg = resolve_color(&nexterm_proto::Color::Default, false, None);
         assert!(bg[0] < 0.5); // background is dark
-    }
-
-    #[test]
-    fn hex_to_rgba_converts() {
-        let c = hex_to_rgba("#ae8b2d", 1.0);
-        assert!((c[0] - 0xae as f32 / 255.0).abs() < 1e-3);
-        assert!((c[1] - 0x8b as f32 / 255.0).abs() < 1e-3);
-        assert!((c[2] - 0x2d as f32 / 255.0).abs() < 1e-3);
-        assert_eq!(c[3], 1.0);
-    }
-
-    #[test]
-    fn hex_to_rgba_without_hash_prefix() {
-        let c = hex_to_rgba("ffffff", 0.5);
-        assert_eq!(c, [1.0, 1.0, 1.0, 0.5]);
     }
 }
