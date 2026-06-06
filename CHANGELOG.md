@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-06-06
+
+PATCH release completing the DesignTokens tokenization pass started in v1.8.0. All remaining hardcoded `[f32; 4]` RGBA literals in the GPU renderer overlay modules are now replaced with `DesignTokens` field references. PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are unchanged.
+
+### Changed
+
+- **Key-hint overlay fully tokenized (Phase 12)**: `build_key_hint_verts` now accepts a `&DesignTokens` parameter. The banner background is derived from `surface_0` at 0.92 alpha, the accent stripe from `accent_muted`, the header and key-column text from `text_primary`, and the action-column text from `text_secondary`.
+- **Command palette and picker overlays tokenized (Phase 13)**: the selected-row highlight in the command palette now uses `surface_2`, selected foreground uses `text_primary`, unselected items use `text_muted`, and the empty-list hints in the macro picker and host manager use `text_muted`. Intentional purple macro branding and green SSH-host branding are preserved.
+- **Dialog overlays fully tokenized (Phase 14)**: the password-prompt input text uses `text_primary`, the "remember password" checkbox enabled/disabled states use `semantic_success` / `text_muted`, the "prefilled from keychain" label uses `semantic_info`, the context-menu separator uses `border_subtle` at 0.70 alpha, and the key-hint text in context menus uses `text_muted` at 0.80 alpha. Black semi-transparent backdrops, dark-text-on-bright-button, and Kill/Cancel semantic colours are preserved as intentional.
+- **Tab bar settings button tokenized (Phase 15)**: the inactive-state colour of the `⚙` button in the tab bar now uses `text_secondary` instead of a hardcoded `[0.80, 0.80, 0.80, 1.0]`.
+
 ## [1.8.0] - 2026-06-06
 
 MINOR release introducing a comprehensive UI/UX overhaul based on a centralised DesignTokens system. All visual chrome — overlays, tabs, pane borders, status bar, banners, and dialogs — now derives colours and radii from a single source of truth, making the renderer theme-aware and eliminating ~500 hardcoded RGBA literals. PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are retained; the wire format is unchanged from 1.7.8.
