@@ -609,50 +609,52 @@ impl WgpuState {
         text_idx: &mut Vec<u16>,
     ) {
         let py = sh - cell_h;
-        // Status line background.
-        add_px_rect(
+
+        // Zone 1: full-width background (surface_1) + top divider.
+        add_px_rect(0.0, py, sw, cell_h, tokens.surface_1, sw, sh, bg_verts, bg_idx);
+        add_px_rect(0.0, py, sw, 1.0, tokens.border_subtle, sw, sh, bg_verts, bg_idx);
+
+        // Zone 2: icon area — accent_primary at 25 % alpha behind the "N" glyph.
+        let icon_zone_w = cell_w * 3.0;
+        let icon_bg = {
+            let [r, g, b, _] = tokens.accent_primary;
+            [r, g, b, 0.25]
+        };
+        add_px_rect(0.0, py, icon_zone_w, cell_h, icon_bg, sw, sh, bg_verts, bg_idx);
+        add_string_verts(
+            " N ",
             0.0,
             py,
-            sw,
-            cell_h,
-            tokens.surface_1,
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
-        // 1px divider line at the top of the status line.
-        add_px_rect(
-            0.0,
-            py,
-            sw,
-            1.0,
-            tokens.border_subtle,
+            tokens.text_on_accent,
+            true,
             sw,
             sh,
-            bg_verts,
-            bg_idx,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
         );
 
-        // Text: N icon + session name + pane info.
+        // Zone 3: pane info text, starting just after the icon zone.
         let pane_id = state.focused_pane_id.unwrap_or(0);
         let activity_ids = state.active_pane_ids();
         let pane_count = state.pane_layouts.len();
-        let status = if activity_ids.is_empty() {
-            format!(" N  nexterm | pane:{}/{}", pane_id, pane_count)
+        let info = if activity_ids.is_empty() {
+            format!(" nexterm │ pane {}/{}", pane_id, pane_count)
         } else {
             let ids: Vec<String> = activity_ids.iter().map(|id| id.to_string()).collect();
             format!(
-                " N  nexterm | pane:{}/{} | ●{}",
+                " nexterm │ pane {}/{} │ ●{}",
                 pane_id,
                 pane_count,
                 ids.join(",")
             )
         };
-
         add_string_verts(
-            &status,
-            0.0,
+            &info,
+            icon_zone_w,
             py,
             tokens.text_secondary,
             false,
@@ -666,23 +668,16 @@ impl WgpuState {
             text_idx,
         );
 
-        // Show the right-side widget (status_bar_right_text or legacy status_bar_text) at the far right.
-        let right_widget_src = if !state.status_bar_right_text.is_empty() {
-            &state.status_bar_right_text
-        } else {
-            &state.status_bar_text
-        };
-        let mut right_offset = 0.0f32;
-        if !right_widget_src.is_empty() {
-            let widget_text = format!(" {} ", right_widget_src);
-            let text_w = widget_text.chars().count() as f32 * cell_w;
-            right_offset = text_w;
-            let right_px = sw - text_w;
+        // Zone 4: left widget (status_bar_text), rendered after the info block.
+        if !state.status_bar_text.is_empty() {
+            let info_w = (1 + info.chars().count()) as f32 * cell_w;
+            let left_x = icon_zone_w + info_w;
+            let left_text = format!("│ {} ", state.status_bar_text);
             add_string_verts(
-                &widget_text,
-                right_px,
+                &left_text,
+                left_x,
                 py,
-                [0.4, 0.9, 0.6, 1.0],
+                tokens.text_muted,
                 false,
                 sw,
                 sh,
@@ -695,31 +690,42 @@ impl WgpuState {
             );
         }
 
-        // Display the left-side widget (status_bar_text) if it is also set.
-        // (Shown left-aligned, independent of right_widgets.)
-        if !state.status_bar_right_text.is_empty() && !state.status_bar_text.is_empty() {
-            let left_text = format!(" {} ", state.status_bar_text);
-            let left_end = left_text.chars().count() as f32 * cell_w;
-            // The left-side widget is rendered to the right of the `nexterm | pane:` text.
-            let base_left = {
-                let pane_id = state.focused_pane_id.unwrap_or(0);
-                let activity_ids = state.active_pane_ids();
-                let status = if activity_ids.is_empty() {
-                    format!(" nexterm | pane:{}", pane_id)
-                } else {
-                    let ids: Vec<String> = activity_ids.iter().map(|id| id.to_string()).collect();
-                    format!(" nexterm | pane:{} | activity:{}", pane_id, ids.join(","))
-                };
-                status.chars().count() as f32 * cell_w
-            };
-            let _ = left_end;
-            let _ = base_left;
-            // TODO: Extend the left-widget offset computation in the future.
+        // Zone 5 (right edge): right widget, stacked indicators.
+        // Source: prefer status_bar_right_text, fall back to status_bar_text when
+        // status_bar_text is not also being shown on the left.
+        let right_widget_src = if !state.status_bar_right_text.is_empty() {
+            &state.status_bar_right_text
+        } else if state.status_bar_text.is_empty() {
+            &state.status_bar_text
+        } else {
+            // status_bar_text is already shown on the left; don't duplicate on the right.
+            ""
+        };
+        let right_widget_src = right_widget_src.to_owned();
+        let mut right_offset = 0.0f32;
+        if !right_widget_src.is_empty() {
+            let widget_text = format!(" {} ", right_widget_src);
+            let text_w = widget_text.chars().count() as f32 * cell_w;
+            right_offset = text_w;
+            let right_px = sw - text_w;
+            add_string_verts(
+                &widget_text,
+                right_px,
+                py,
+                tokens.accent_muted,
+                false,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
+            );
         }
 
-        // Right-edge indicators (stacked from right to left).
-
-        // Zoom indicator (yellow `[Z]` label).
+        // Zoom indicator — semantic_warning colour.
         if state.is_zoomed {
             let zoom_text = " [Z] ";
             right_offset += zoom_text.chars().count() as f32 * cell_w;
@@ -728,7 +734,7 @@ impl WgpuState {
                 zoom_text,
                 right_px,
                 py,
-                [1.0, 0.85, 0.2, 1.0],
+                tokens.semantic_warning,
                 true,
                 sw,
                 sh,
@@ -741,7 +747,7 @@ impl WgpuState {
             );
         }
 
-        // While in scrollback, show the indicator to the left of the widgets.
+        // Scrollback position indicator — semantic_warning colour.
         if let Some(pane) = state.focused_pane()
             && pane.scroll_offset > 0
         {
@@ -751,7 +757,7 @@ impl WgpuState {
                 &scroll_text,
                 right_px,
                 py,
-                [1.0, 0.85, 0.2, 1.0],
+                tokens.semantic_warning,
                 true,
                 sw,
                 sh,
