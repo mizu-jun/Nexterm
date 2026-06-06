@@ -203,7 +203,9 @@ impl WgpuState {
         let my = menu.y;
 
         // Panel chrome: drop-shadow + border ring + rounded background.
-        draw_overlay_panel(mx, my, menu_w, menu_h, tokens, 3.0, 4.0, sw, sh, bg_verts, bg_idx);
+        draw_overlay_panel(
+            mx, my, menu_w, menu_h, tokens, 3.0, 4.0, sw, sh, bg_verts, bg_idx,
+        );
 
         // Top accent line (3px thick)
         let ap = tokens.accent_primary;

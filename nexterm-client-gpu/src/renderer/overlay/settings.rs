@@ -1,10 +1,10 @@
 //! Vertex builder for the settings panel (Ctrl+,).
 
+use super::util::draw_overlay_panel;
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::state::ClientState;
 use crate::vertex_util::{add_px_rect, add_string_verts};
-use super::util::draw_overlay_panel;
 
 use super::super::WgpuState;
 
@@ -52,7 +52,9 @@ impl WgpuState {
         let content_w = panel_w - sidebar_w;
 
         // Panel chrome: drop-shadow + border ring + rounded background via shared helper.
-        draw_overlay_panel(px, py, panel_w, panel_h, tokens, 4.0, 6.0, sw, sh, bg_verts, bg_idx);
+        draw_overlay_panel(
+            px, py, panel_w, panel_h, tokens, 4.0, 6.0, sw, sh, bg_verts, bg_idx,
+        );
 
         // Title bar (tokens.surface_3, opaque)
         let title_h = cell_h * 1.4;
@@ -70,17 +72,7 @@ impl WgpuState {
 
         // Top accent line of the title bar (3px, accent_primary)
         let ap = tokens.accent_primary;
-        add_px_rect(
-            px,
-            py,
-            panel_w,
-            3.0,
-            ap,
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
+        add_px_rect(px, py, panel_w, 3.0, ap, sw, sh, bg_verts, bg_idx);
         // Inner 1px faint glow
         add_px_rect(
             px,
@@ -240,7 +232,7 @@ impl WgpuState {
                         content_top + cell_h * 1.0,
                         field_w,
                         cell_h,
-                        [0.149, 0.188, 0.278, 1.0],
+                        tokens.surface_2,
                         sw,
                         sh,
                         bg_verts,
@@ -251,7 +243,7 @@ impl WgpuState {
                     &family_line,
                     content_inner_x,
                     content_top + cell_h * 1.0,
-                    [0.8, 0.85, 0.9, 1.0],
+                    tokens.text_secondary,
                     sp.font_family_editing,
                     sw,
                     sh,
@@ -271,7 +263,7 @@ impl WgpuState {
                     hint,
                     content_inner_x,
                     content_top + cell_h * 1.9,
-                    [0.376, 0.408, 0.518, 1.0],
+                    tokens.text_muted,
                     false,
                     sw,
                     sh,
@@ -288,7 +280,7 @@ impl WgpuState {
                     &size_line,
                     content_inner_x,
                     content_top + cell_h * 3.0,
-                    [0.9, 0.95, 1.0, 1.0],
+                    tokens.text_secondary,
                     false,
                     sw,
                     sh,
@@ -307,7 +299,7 @@ impl WgpuState {
                     bar_y,
                     bar_w,
                     cell_h * 0.35,
-                    [0.176, 0.192, 0.286, 1.0],
+                    tokens.surface_1,
                     sw,
                     sh,
                     bg_verts,
@@ -319,7 +311,7 @@ impl WgpuState {
                     bar_y,
                     bar_w * fill,
                     cell_h * 0.35,
-                    [0.478, 0.635, 0.969, 1.0],
+                    tokens.accent_primary,
                     sw,
                     sh,
                     bg_verts,
@@ -329,7 +321,7 @@ impl WgpuState {
                     "(↑/↓ to change)",
                     content_inner_x,
                     content_top + cell_h * 4.8,
-                    [0.376, 0.408, 0.518, 1.0],
+                    tokens.text_muted,
                     false,
                     sw,
                     sh,
@@ -348,7 +340,7 @@ impl WgpuState {
                     &scheme_line,
                     content_inner_x,
                     content_top + cell_h * 1.0,
-                    [0.9, 0.95, 1.0, 1.0],
+                    tokens.text_secondary,
                     false,
                     sw,
                     sh,
@@ -395,7 +387,7 @@ impl WgpuState {
                             dot_y - 2.0,
                             dot_size + 4.0,
                             cell_h + 4.0,
-                            [0.478, 0.635, 0.969, 1.0],
+                            tokens.accent_primary,
                             sw,
                             sh,
                             bg_verts,
@@ -412,9 +404,9 @@ impl WgpuState {
                         dot_x,
                         name_y,
                         if is_sel {
-                            [0.663, 0.694, 0.839, 1.0]
+                            tokens.text_secondary
                         } else {
-                            [0.376, 0.408, 0.518, 1.0]
+                            tokens.text_muted
                         },
                         is_sel,
                         sw,
@@ -447,7 +439,7 @@ impl WgpuState {
                     "↑/↓ to select field, ←/→ to change value",
                     content_inner_x,
                     content_top,
-                    [0.45, 0.50, 0.62, 1.0],
+                    tokens.text_muted,
                     false,
                     sw,
                     sh,
@@ -467,7 +459,7 @@ impl WgpuState {
                         row0_y - cell_h * 0.1,
                         content_w - cell_w * 0.7,
                         cell_h * 3.0,
-                        [0.149, 0.188, 0.278, 1.0],
+                        tokens.surface_2,
                         sw,
                         sh,
                         bg_verts,
@@ -475,9 +467,9 @@ impl WgpuState {
                     );
                 }
                 let opacity_color = if focus == 0 {
-                    [0.95, 0.96, 1.0, 1.0]
+                    tokens.text_primary
                 } else {
-                    [0.663, 0.694, 0.839, 1.0]
+                    tokens.text_secondary
                 };
                 let opacity_line = format!("Opacity:  {:.0}%", sp.opacity * 100.0);
                 add_string_verts(
@@ -501,7 +493,7 @@ impl WgpuState {
                     bar_y,
                     bar_w,
                     cell_h * 0.35,
-                    [0.176, 0.192, 0.286, 1.0],
+                    tokens.surface_1,
                     sw,
                     sh,
                     bg_verts,
@@ -512,7 +504,7 @@ impl WgpuState {
                     bar_y,
                     bar_w * sp.opacity,
                     cell_h * 0.35,
-                    [0.478, 0.635, 0.969, 1.0],
+                    tokens.accent_primary,
                     sw,
                     sh,
                     bg_verts,
@@ -527,7 +519,7 @@ impl WgpuState {
                         row1_y - cell_h * 0.1,
                         content_w - cell_w * 0.7,
                         cell_h * 3.0,
-                        [0.149, 0.188, 0.278, 1.0],
+                        tokens.surface_2,
                         sw,
                         sh,
                         bg_verts,
@@ -535,9 +527,9 @@ impl WgpuState {
                     );
                 }
                 let cs_label_color = if focus == 1 {
-                    [0.95, 0.96, 1.0, 1.0]
+                    tokens.text_primary
                 } else {
-                    [0.663, 0.694, 0.839, 1.0]
+                    tokens.text_secondary
                 };
                 add_string_verts(
                     "Cursor style:",
@@ -579,7 +571,7 @@ impl WgpuState {
                         row2_y - cell_h * 0.1,
                         content_w - cell_w * 0.7,
                         cell_h * 3.0,
-                        [0.149, 0.188, 0.278, 1.0],
+                        tokens.surface_2,
                         sw,
                         sh,
                         bg_verts,
@@ -587,9 +579,9 @@ impl WgpuState {
                     );
                 }
                 let px_color = if focus == 2 {
-                    [0.95, 0.96, 1.0, 1.0]
+                    tokens.text_primary
                 } else {
-                    [0.663, 0.694, 0.839, 1.0]
+                    tokens.text_secondary
                 };
                 add_string_verts(
                     &format!("Horizontal padding:  {} px", sp.padding_x),
@@ -614,7 +606,7 @@ impl WgpuState {
                     px_bar_y,
                     px_bar_w,
                     cell_h * 0.25,
-                    [0.176, 0.192, 0.286, 1.0],
+                    tokens.surface_1,
                     sw,
                     sh,
                     bg_verts,
@@ -625,7 +617,7 @@ impl WgpuState {
                     px_bar_y,
                     px_bar_w * (sp.padding_x as f32 / 32.0),
                     cell_h * 0.25,
-                    [0.478, 0.635, 0.969, 1.0],
+                    tokens.accent_primary,
                     sw,
                     sh,
                     bg_verts,
@@ -640,7 +632,7 @@ impl WgpuState {
                         row3_y - cell_h * 0.1,
                         content_w - cell_w * 0.7,
                         cell_h * 3.0,
-                        [0.149, 0.188, 0.278, 1.0],
+                        tokens.surface_2,
                         sw,
                         sh,
                         bg_verts,
@@ -648,9 +640,9 @@ impl WgpuState {
                     );
                 }
                 let py_color = if focus == 3 {
-                    [0.95, 0.96, 1.0, 1.0]
+                    tokens.text_primary
                 } else {
-                    [0.663, 0.694, 0.839, 1.0]
+                    tokens.text_secondary
                 };
                 add_string_verts(
                     &format!("Vertical padding:  {} px", sp.padding_y),
@@ -674,7 +666,7 @@ impl WgpuState {
                     py_bar_y,
                     py_bar_w,
                     cell_h * 0.25,
-                    [0.176, 0.192, 0.286, 1.0],
+                    tokens.surface_1,
                     sw,
                     sh,
                     bg_verts,
@@ -685,7 +677,7 @@ impl WgpuState {
                     py_bar_y,
                     py_bar_w * (sp.padding_y as f32 / 32.0),
                     cell_h * 0.25,
-                    [0.478, 0.635, 0.969, 1.0],
+                    tokens.accent_primary,
                     sw,
                     sh,
                     bg_verts,
@@ -700,7 +692,7 @@ impl WgpuState {
                         row4_y - cell_h * 0.1,
                         content_w - cell_w * 0.7,
                         cell_h * 3.0,
-                        [0.149, 0.188, 0.278, 1.0],
+                        tokens.surface_2,
                         sw,
                         sh,
                         bg_verts,
@@ -708,9 +700,9 @@ impl WgpuState {
                     );
                 }
                 let pm_color = if focus == 4 {
-                    [0.95, 0.96, 1.0, 1.0]
+                    tokens.text_primary
                 } else {
-                    [0.663, 0.694, 0.839, 1.0]
+                    tokens.text_secondary
                 };
                 add_string_verts(
                     "Present mode:",
@@ -749,7 +741,7 @@ impl WgpuState {
                     "Profiles:",
                     content_inner_x,
                     content_top + cell_h * 0.5,
-                    [0.663, 0.694, 0.839, 1.0],
+                    tokens.text_secondary,
                     true,
                     sw,
                     sh,
@@ -765,7 +757,7 @@ impl WgpuState {
                         "No profiles configured",
                         content_inner_x,
                         content_top + cell_h * 1.8,
-                        [0.376, 0.408, 0.518, 1.0],
+                        tokens.text_muted,
                         false,
                         sw,
                         sh,
@@ -780,7 +772,7 @@ impl WgpuState {
                         "Add [[profiles]] to nexterm.toml",
                         content_inner_x,
                         content_top + cell_h * 2.7,
-                        [0.376, 0.408, 0.518, 1.0],
+                        tokens.text_muted,
                         false,
                         sw,
                         sh,
@@ -801,7 +793,7 @@ impl WgpuState {
                                 item_y - cell_h * 0.1,
                                 content_w - cell_w * 0.7,
                                 cell_h,
-                                [0.149, 0.188, 0.278, 1.0],
+                                tokens.surface_2,
                                 sw,
                                 sh,
                                 bg_verts,
@@ -810,9 +802,9 @@ impl WgpuState {
                         }
                         let label = format!("{} {}", prof.icon, prof.name);
                         let fg = if is_sel {
-                            [0.753, 0.808, 0.969, 1.0]
+                            tokens.text_secondary
                         } else {
-                            [0.502, 0.533, 0.647, 1.0]
+                            tokens.text_muted
                         };
                         add_string_verts(
                             &label,
@@ -840,7 +832,7 @@ impl WgpuState {
                     "Language",
                     content_inner_x,
                     content_top + cell_h * 0.5,
-                    [0.663, 0.694, 0.839, 1.0],
+                    tokens.text_secondary,
                     false,
                     sw,
                     sh,
@@ -860,7 +852,7 @@ impl WgpuState {
                     sel_y,
                     sel_w,
                     cell_h,
-                    [0.149, 0.188, 0.278, 1.0],
+                    tokens.surface_2,
                     sw,
                     sh,
                     bg_verts,
@@ -877,7 +869,7 @@ impl WgpuState {
                     &lang_text,
                     content_inner_x + cell_w * 0.5,
                     sel_y + cell_h * 0.1,
-                    [0.95, 0.96, 1.0, 1.0],
+                    tokens.text_primary,
                     true,
                     sw,
                     sh,
@@ -896,7 +888,7 @@ impl WgpuState {
                     check_label,
                     content_inner_x,
                     check_y,
-                    [0.663, 0.694, 0.839, 1.0],
+                    tokens.text_secondary,
                     false,
                     sw,
                     sh,
@@ -913,9 +905,9 @@ impl WgpuState {
                     "[OFF]"
                 };
                 let toggle_color = if sp.auto_check_update {
-                    [0.15, 0.85, 0.45, 1.0]
+                    tokens.semantic_success
                 } else {
-                    [0.55, 0.55, 0.55, 1.0]
+                    tokens.text_muted
                 };
                 add_string_verts(
                     toggle_str,
@@ -938,7 +930,7 @@ impl WgpuState {
                     "* Language change takes effect at next startup",
                     content_inner_x,
                     content_top + cell_h * 4.4,
-                    [0.376, 0.408, 0.518, 1.0],
+                    tokens.text_muted,
                     false,
                     sw,
                     sh,
@@ -956,7 +948,7 @@ impl WgpuState {
                     "SSH hosts:",
                     content_inner_x,
                     content_top + cell_h * 0.5,
-                    [0.663, 0.694, 0.839, 1.0],
+                    tokens.text_secondary,
                     true,
                     sw,
                     sh,
@@ -972,7 +964,7 @@ impl WgpuState {
                         "No SSH hosts configured",
                         content_inner_x,
                         content_top + cell_h * 1.8,
-                        [0.376, 0.408, 0.518, 1.0],
+                        tokens.text_muted,
                         false,
                         sw,
                         sh,
@@ -987,7 +979,7 @@ impl WgpuState {
                         "Add an entry under the [[hosts]] section in nexterm.toml",
                         content_inner_x,
                         content_top + cell_h * 2.7,
-                        [0.376, 0.408, 0.518, 1.0],
+                        tokens.text_muted,
                         false,
                         sw,
                         sh,
@@ -1008,7 +1000,7 @@ impl WgpuState {
                                 item_y - cell_h * 0.1,
                                 content_w - cell_w * 0.7,
                                 cell_h,
-                                [0.149, 0.188, 0.278, 1.0],
+                                tokens.surface_2,
                                 sw,
                                 sh,
                                 bg_verts,
@@ -1017,9 +1009,9 @@ impl WgpuState {
                         }
                         let label = host.label();
                         let fg = if is_sel {
-                            [0.753, 0.808, 0.969, 1.0]
+                            tokens.text_secondary
                         } else {
-                            [0.502, 0.533, 0.647, 1.0]
+                            tokens.text_muted
                         };
                         add_string_verts(
                             &label,
@@ -1048,7 +1040,7 @@ impl WgpuState {
                         "Edit selected host (screen readers can use SetValue):",
                         content_inner_x,
                         fields_top,
-                        [0.663, 0.694, 0.839, 1.0],
+                        tokens.text_secondary,
                         true,
                         sw,
                         sh,
@@ -1086,9 +1078,9 @@ impl WgpuState {
                         if is_focused {
                             let bg_color = if is_editing {
                                 // While editing: darker bluish highlight
-                                [0.176, 0.235, 0.357, 1.0]
+                                tokens.surface_3
                             } else {
-                                [0.149, 0.188, 0.278, 1.0]
+                                tokens.surface_2
                             };
                             add_px_rect(
                                 content_inner_x - cell_w * 0.3,
@@ -1104,9 +1096,9 @@ impl WgpuState {
                         }
 
                         let fg = if is_focused {
-                            [0.753, 0.808, 0.969, 1.0]
+                            tokens.text_secondary
                         } else {
-                            [0.502, 0.533, 0.647, 1.0]
+                            tokens.text_muted
                         };
 
                         // While editing, show the buffer plus IME preedit.
@@ -1159,7 +1151,7 @@ impl WgpuState {
                                 row_y - cell_h * 0.05,
                                 2.0,
                                 cell_h * 1.1,
-                                [0.949, 0.969, 0.984, 1.0],
+                                tokens.text_primary,
                                 sw,
                                 sh,
                                 bg_verts,
@@ -1179,7 +1171,7 @@ impl WgpuState {
                         note_text,
                         content_inner_x,
                         note_y,
-                        [0.376, 0.408, 0.518, 1.0],
+                        tokens.text_muted,
                         false,
                         sw,
                         sh,
@@ -1220,7 +1212,7 @@ impl WgpuState {
                         buttons_y - cell_h * 0.15,
                         btn_w,
                         btn_h,
-                        [0.149, 0.235, 0.357, 1.0],
+                        tokens.surface_2,
                         sw,
                         sh,
                         bg_verts,
@@ -1232,7 +1224,7 @@ impl WgpuState {
                         buttons_y - cell_h * 0.15,
                         btn_w,
                         btn_h,
-                        [0.106, 0.133, 0.184, 1.0],
+                        tokens.surface_1,
                         sw,
                         sh,
                         bg_verts,
@@ -1240,9 +1232,9 @@ impl WgpuState {
                     );
                 }
                 let add_fg = if add_focused {
-                    [0.949, 0.969, 0.984, 1.0]
+                    tokens.text_primary
                 } else {
-                    [0.663, 0.694, 0.839, 1.0]
+                    tokens.text_secondary
                 };
                 add_string_verts(
                     "[ + ] Add new host",
@@ -1280,7 +1272,7 @@ impl WgpuState {
                         buttons_y - cell_h * 0.15,
                         btn_w,
                         btn_h,
-                        [0.106, 0.133, 0.184, 1.0],
+                        tokens.surface_1,
                         sw,
                         sh,
                         bg_verts,
@@ -1289,7 +1281,7 @@ impl WgpuState {
                 }
                 let del_fg = if delete_disabled {
                     // disabled: light gray
-                    [0.314, 0.341, 0.408, 1.0]
+                    tokens.text_muted
                 } else if delete_focused {
                     [0.984, 0.808, 0.808, 1.0]
                 } else {
@@ -1353,7 +1345,10 @@ impl WgpuState {
                         dialog_y - 2.0,
                         dialog_w + 4.0,
                         dialog_h + 4.0,
-                        [0.776, 0.345, 0.345, 0.80],
+                        {
+                            let [r, g, b, _] = tokens.semantic_error;
+                            [r, g, b, 0.80]
+                        },
                         sw,
                         sh,
                         bg_verts,
@@ -1364,7 +1359,7 @@ impl WgpuState {
                         dialog_y,
                         dialog_w,
                         dialog_h,
-                        [0.118, 0.125, 0.188, 1.0],
+                        tokens.surface_0,
                         sw,
                         sh,
                         bg_verts,
@@ -1397,7 +1392,7 @@ impl WgpuState {
                         &msg,
                         dialog_x + cell_w * 1.0,
                         dialog_y + cell_h * 2.2,
-                        [0.753, 0.808, 0.969, 1.0],
+                        tokens.text_secondary,
                         false,
                         sw,
                         sh,
@@ -1420,9 +1415,9 @@ impl WgpuState {
 
                     // Cancel button
                     let cancel_bg = if !confirm_focused {
-                        [0.176, 0.235, 0.357, 1.0]
+                        tokens.surface_3
                     } else {
-                        [0.106, 0.133, 0.184, 1.0]
+                        tokens.surface_1
                     };
                     add_px_rect(
                         dlg_btns_x, dlg_btns_y, dlg_btn_w, dlg_btn_h, cancel_bg, sw, sh, bg_verts,
@@ -1432,7 +1427,7 @@ impl WgpuState {
                         "  Cancel (Esc)",
                         dlg_btns_x + cell_w * 0.5,
                         dlg_btns_y + cell_h * 0.2,
-                        [0.949, 0.969, 0.984, 1.0],
+                        tokens.text_primary,
                         !confirm_focused,
                         sw,
                         sh,
@@ -1476,7 +1471,7 @@ impl WgpuState {
                         "  Use <- -> / Tab to switch buttons / Enter to confirm / Esc to cancel",
                         dialog_x + cell_w * 1.0,
                         dialog_y + dialog_h - cell_h * 0.9,
-                        [0.502, 0.533, 0.647, 1.0],
+                        tokens.text_muted,
                         false,
                         sw,
                         sh,
@@ -1496,7 +1491,7 @@ impl WgpuState {
                     "Key bindings:",
                     content_inner_x,
                     content_top + cell_h * 0.5,
-                    [0.663, 0.694, 0.839, 1.0],
+                    tokens.text_secondary,
                     true,
                     sw,
                     sh,
@@ -1512,7 +1507,7 @@ impl WgpuState {
                         "No key bindings configured",
                         content_inner_x,
                         content_top + cell_h * 1.8,
-                        [0.376, 0.408, 0.518, 1.0],
+                        tokens.text_muted,
                         false,
                         sw,
                         sh,
@@ -1536,7 +1531,7 @@ impl WgpuState {
                                 item_y - cell_h * 0.1,
                                 content_w - cell_w * 0.7,
                                 cell_h,
-                                [0.149, 0.188, 0.278, 1.0],
+                                tokens.surface_2,
                                 sw,
                                 sh,
                                 bg_verts,
@@ -1545,9 +1540,9 @@ impl WgpuState {
                         }
                         let label = kb.label();
                         let fg = if is_sel {
-                            [0.753, 0.808, 0.969, 1.0]
+                            tokens.text_secondary
                         } else {
-                            [0.502, 0.533, 0.647, 1.0]
+                            tokens.text_muted
                         };
                         add_string_verts(
                             &label,
@@ -1571,7 +1566,7 @@ impl WgpuState {
                             &format!("... ({} more)", sp.keybindings.len() - max_rows),
                             content_inner_x,
                             more_y,
-                            [0.376, 0.408, 0.518, 1.0],
+                            tokens.text_muted,
                             false,
                             sw,
                             sh,
@@ -1619,7 +1614,7 @@ impl WgpuState {
                         header,
                         content_inner_x,
                         fields_top,
-                        [0.663, 0.694, 0.839, 1.0],
+                        tokens.text_secondary,
                         true,
                         sw,
                         sh,
@@ -1667,7 +1662,7 @@ impl WgpuState {
                                 row_y - cell_h * 0.1,
                                 content_w - cell_w * 0.7,
                                 cell_h,
-                                [0.149, 0.188, 0.278, 1.0],
+                                tokens.surface_2,
                                 sw,
                                 sh,
                                 bg_verts,
@@ -1686,11 +1681,11 @@ impl WgpuState {
                         // hint header.
                         let action_invalid = *field_id == 2 && !sp.selected_key_action_is_valid();
                         let fg = if action_invalid {
-                            [0.969, 0.5, 0.5, 1.0]
+                            tokens.semantic_error
                         } else if is_focused {
-                            [0.753, 0.808, 0.969, 1.0]
+                            tokens.text_secondary
                         } else {
-                            [0.502, 0.533, 0.647, 1.0]
+                            tokens.text_muted
                         };
                         add_string_verts(
                             &line,
@@ -1734,9 +1729,9 @@ impl WgpuState {
                 // Add button
                 let key_add_x = content_inner_x;
                 let key_add_bg = if key_add_focused {
-                    [0.149, 0.235, 0.357, 1.0]
+                    tokens.surface_2
                 } else {
-                    [0.106, 0.133, 0.184, 1.0]
+                    tokens.surface_1
                 };
                 add_px_rect(
                     key_add_x - cell_w * 0.3,
@@ -1750,9 +1745,9 @@ impl WgpuState {
                     bg_idx,
                 );
                 let key_add_fg = if key_add_focused {
-                    [0.949, 0.969, 0.984, 1.0]
+                    tokens.text_primary
                 } else {
-                    [0.663, 0.694, 0.839, 1.0]
+                    tokens.text_secondary
                 };
                 add_string_verts(
                     "[ + ] Add new key binding",
@@ -1775,7 +1770,7 @@ impl WgpuState {
                 let key_del_bg = if key_delete_focused && !key_delete_disabled {
                     [0.298, 0.149, 0.149, 1.0]
                 } else {
-                    [0.106, 0.133, 0.184, 1.0]
+                    tokens.surface_1
                 };
                 add_px_rect(
                     key_del_x - cell_w * 0.3,
@@ -1789,7 +1784,7 @@ impl WgpuState {
                     bg_idx,
                 );
                 let key_del_fg = if key_delete_disabled {
-                    [0.314, 0.341, 0.408, 1.0]
+                    tokens.text_muted
                 } else if key_delete_focused {
                     [0.984, 0.808, 0.808, 1.0]
                 } else {
@@ -1844,7 +1839,10 @@ impl WgpuState {
                         dialog_y - 2.0,
                         dialog_w + 4.0,
                         dialog_h + 4.0,
-                        [0.776, 0.345, 0.345, 0.80],
+                        {
+                            let [r, g, b, _] = tokens.semantic_error;
+                            [r, g, b, 0.80]
+                        },
                         sw,
                         sh,
                         bg_verts,
@@ -1855,7 +1853,7 @@ impl WgpuState {
                         dialog_y,
                         dialog_w,
                         dialog_h,
-                        [0.118, 0.125, 0.188, 1.0],
+                        tokens.surface_0,
                         sw,
                         sh,
                         bg_verts,
@@ -1885,7 +1883,7 @@ impl WgpuState {
                         &msg,
                         dialog_x + cell_w,
                         dialog_y + cell_h * 2.2,
-                        [0.753, 0.808, 0.969, 1.0],
+                        tokens.text_secondary,
                         false,
                         sw,
                         sh,
@@ -1907,18 +1905,18 @@ impl WgpuState {
 
                     // Cancel button (left, default focus)
                     let cancel_bg = if !confirm_focused {
-                        [0.176, 0.235, 0.357, 1.0]
+                        tokens.surface_3
                     } else {
-                        [0.106, 0.133, 0.184, 1.0]
+                        tokens.surface_1
                     };
                     add_px_rect(
                         dlg_btns_x, dlg_btns_y, dlg_btn_w, dlg_btn_h, cancel_bg, sw, sh, bg_verts,
                         bg_idx,
                     );
                     let cancel_fg = if !confirm_focused {
-                        [0.949, 0.969, 0.984, 1.0]
+                        tokens.text_primary
                     } else {
-                        [0.663, 0.694, 0.839, 1.0]
+                        tokens.text_secondary
                     };
                     add_string_verts(
                         "[ Cancel (Esc) ]",
@@ -1941,7 +1939,7 @@ impl WgpuState {
                     let confirm_bg = if confirm_focused {
                         [0.486, 0.180, 0.180, 1.0]
                     } else {
-                        [0.106, 0.133, 0.184, 1.0]
+                        tokens.surface_1
                     };
                     add_px_rect(
                         confirm_x, dlg_btns_y, dlg_btn_w, dlg_btn_h, confirm_bg, sw, sh, bg_verts,
@@ -1978,7 +1976,7 @@ impl WgpuState {
             bottom_y,
             panel_w,
             1.0,
-            [0.176, 0.192, 0.286, 1.0],
+            tokens.surface_1,
             sw,
             sh,
             bg_verts,
@@ -1989,7 +1987,7 @@ impl WgpuState {
             bottom_y + 1.0,
             panel_w,
             cell_h * 1.5 - 1.0,
-            [0.118, 0.125, 0.188, 1.0],
+            tokens.surface_0,
             sw,
             sh,
             bg_verts,
@@ -1999,7 +1997,7 @@ impl WgpuState {
             "  Enter=Save  Esc=Cancel  Tab=Next category",
             px + cell_w * 0.5,
             bottom_y + cell_h * 0.3,
-            [0.376, 0.408, 0.518, 1.0],
+            tokens.text_muted,
             false,
             sw,
             sh,
@@ -2020,7 +2018,10 @@ impl WgpuState {
                 py - 1.0,
                 panel_w + 2.0,
                 panel_h + 2.0,
-                [0.102, 0.106, 0.149, fade_alpha],
+                {
+                    let [r, g, b, _] = tokens.surface_0;
+                    [r, g, b, fade_alpha]
+                },
                 sw,
                 sh,
                 bg_verts,

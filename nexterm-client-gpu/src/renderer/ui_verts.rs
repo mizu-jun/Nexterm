@@ -37,7 +37,17 @@ fn draw_banner_bg(
         0.97,
     ];
     add_px_rect(bx, by, bw, bh, bg, sw, sh, bg_verts, bg_idx);
-    add_px_rect(bx, by + bh - 1.0, bw, 1.0, tokens.border_subtle, sw, sh, bg_verts, bg_idx);
+    add_px_rect(
+        bx,
+        by + bh - 1.0,
+        bw,
+        1.0,
+        tokens.border_subtle,
+        sw,
+        sh,
+        bg_verts,
+        bg_idx,
+    );
     add_px_rect(bx, by, 4.0, bh, accent, sw, sh, bg_verts, bg_idx);
 }
 
@@ -643,8 +653,28 @@ impl WgpuState {
         let py = sh - cell_h;
 
         // Zone 1: full-width background (surface_1) + top divider.
-        add_px_rect(0.0, py, sw, cell_h, tokens.surface_1, sw, sh, bg_verts, bg_idx);
-        add_px_rect(0.0, py, sw, 1.0, tokens.border_subtle, sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            0.0,
+            py,
+            sw,
+            cell_h,
+            tokens.surface_1,
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
+        add_px_rect(
+            0.0,
+            py,
+            sw,
+            1.0,
+            tokens.border_subtle,
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // Zone 2: icon area — accent_primary at 25 % alpha behind the "N" glyph.
         let icon_zone_w = cell_w * 3.0;
@@ -652,7 +682,17 @@ impl WgpuState {
             let [r, g, b, _] = tokens.accent_primary;
             [r, g, b, 0.25]
         };
-        add_px_rect(0.0, py, icon_zone_w, cell_h, icon_bg, sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            0.0,
+            py,
+            icon_zone_w,
+            cell_h,
+            icon_bg,
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
         add_string_verts(
             " N ",
             0.0,
@@ -824,9 +864,29 @@ impl WgpuState {
         let py = sh - cell_h * 2.0;
 
         // Background from design tokens.
-        add_px_rect(0.0, py, sw, cell_h, tokens.surface_2, sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            0.0,
+            py,
+            sw,
+            cell_h,
+            tokens.surface_2,
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
         // Top accent line (accent_primary, 2 px).
-        add_px_rect(0.0, py, sw, 2.0, tokens.accent_primary, sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            0.0,
+            py,
+            sw,
+            2.0,
+            tokens.accent_primary,
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // Search query and cursor (always show `|` instead of blinking).
         let query_with_cursor = format!("{}|", state.search.query);
@@ -898,7 +958,18 @@ impl WgpuState {
         let bar_h = cell_h * 1.4;
         let bar_y = 0.0;
 
-        draw_banner_bg(0.0, bar_y, sw, bar_h, tokens.semantic_success, tokens, sw, sh, bg_verts, bg_idx);
+        draw_banner_bg(
+            0.0,
+            bar_y,
+            sw,
+            bar_h,
+            tokens.semantic_success,
+            tokens,
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         let raw = nexterm_i18n::fl!("update-available");
         let msg = raw.replace("{version}", version);
@@ -966,9 +1037,24 @@ impl WgpuState {
 
         // Stack below `update_banner` if present.
         let bar_h = cell_h * 1.4;
-        let bar_y = if state.update_banner.is_some() { bar_h } else { 0.0 };
+        let bar_y = if state.update_banner.is_some() {
+            bar_h
+        } else {
+            0.0
+        };
 
-        draw_banner_bg(0.0, bar_y, sw, bar_h, tokens.semantic_warning, tokens, sw, sh, bg_verts, bg_idx);
+        draw_banner_bg(
+            0.0,
+            bar_y,
+            sw,
+            bar_h,
+            tokens.semantic_warning,
+            tokens,
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         let elapsed_secs = started.elapsed().as_secs();
         let raw = nexterm_i18n::fl!("offline-banner-connecting");
@@ -1026,7 +1112,18 @@ impl WgpuState {
             bar_y += bar_h;
         }
 
-        draw_banner_bg(0.0, bar_y, sw, bar_h, tokens.semantic_error, tokens, sw, sh, bg_verts, bg_idx);
+        draw_banner_bg(
+            0.0,
+            bar_y,
+            sw,
+            bar_h,
+            tokens.semantic_error,
+            tokens,
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         let prefix = nexterm_i18n::fl!("error-banner-prefix");
         let full = format!("{} {}", prefix, message);
@@ -1123,13 +1220,19 @@ impl WgpuState {
 
             // Semi-transparent highlight covering the entire match.
             let match_w = (m.col_end - m.col_start) as f32 * cell_w;
-            add_px_rect(lx, ly, match_w, cell_h, match_tint, sw, sh, bg_verts, bg_idx);
+            add_px_rect(
+                lx, ly, match_w, cell_h, match_tint, sw, sh, bg_verts, bg_idx,
+            );
 
             // Label background: accent_primary while the user is typing a prefix,
             // accent_activity otherwise.
             let is_partial_match =
                 !qs.typed_label.is_empty() && m.label.starts_with(&qs.typed_label);
-            let bg_color = if is_partial_match { label_bg_active } else { label_bg_normal };
+            let bg_color = if is_partial_match {
+                label_bg_active
+            } else {
+                label_bg_normal
+            };
             add_px_rect(lx, ly, label_w, cell_h, bg_color, sw, sh, bg_verts, bg_idx);
 
             // Label text on accent background.

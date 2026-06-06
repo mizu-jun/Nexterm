@@ -82,12 +82,32 @@ pub(crate) fn add_rounded_px_rect(
 ) {
     let r = radius.min(pw * 0.5).min(ph * 0.5);
     // Center vertical band — full height minus the two corner caps.
-    add_px_rect(px, py + r, pw, ph - 2.0 * r, color, sw, sh, bg_verts, bg_idx);
+    add_px_rect(
+        px,
+        py + r,
+        pw,
+        ph - 2.0 * r,
+        color,
+        sw,
+        sh,
+        bg_verts,
+        bg_idx,
+    );
     if r > 0.0 {
         // Top horizontal strip (inset by radius on both sides).
         add_px_rect(px + r, py, pw - 2.0 * r, r, color, sw, sh, bg_verts, bg_idx);
         // Bottom horizontal strip.
-        add_px_rect(px + r, py + ph - r, pw - 2.0 * r, r, color, sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            px + r,
+            py + ph - r,
+            pw - 2.0 * r,
+            r,
+            color,
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
     }
 }
 

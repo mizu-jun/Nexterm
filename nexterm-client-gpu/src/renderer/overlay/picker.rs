@@ -271,7 +271,17 @@ impl WgpuState {
         // Panel chrome: shared drop-shadow + border + rounded background.
         draw_overlay_panel(px, py, pw, ph, tokens, 5.0, 6.0, sw, sh, bg_verts, bg_idx);
         // Top accent line — intentional purple branding, kept as-is.
-        add_px_rect(px, py, pw, 2.0, [0.7, 0.3, 1.0, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            px,
+            py,
+            pw,
+            2.0,
+            [0.7, 0.3, 1.0, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // Title row
         add_string_verts(
@@ -406,7 +416,17 @@ impl WgpuState {
         // Panel chrome: shared drop-shadow + border + rounded background.
         draw_overlay_panel(px, py, pw, ph, tokens, 5.0, 6.0, sw, sh, bg_verts, bg_idx);
         // Top accent line — intentional green SSH branding, kept as-is.
-        add_px_rect(px, py, pw, 2.0, [0.2, 0.8, 0.5, 1.0], sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            px,
+            py,
+            pw,
+            2.0,
+            [0.2, 0.8, 0.5, 1.0],
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // Title row
         add_string_verts(
