@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-06-06
+
+MINOR release adding a complete Vim-style copy mode (D2). Users can now navigate, visually select, search, and yank terminal output using standard Vi key bindings without leaving the keyboard. PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are unchanged.
+
+### Added
+
+- **Vi mode in copy mode (D2)**: copy mode now behaves like a full Vim Normal / Visual / Visual-Line modal editor.
+  - **Navigation**: `h`/`j`/`k`/`l` (character/line), `w`/`b` (word forward/back), `e` (word end), `^` (first non-blank of line), `G` (last row), `gg` (first row), `Ctrl-u`/`Ctrl-d` (half-page up/down).
+  - **Visual selection**: `v` enters character-wise Visual mode; `V` enters line-wise Visual-Line mode. Both toggle off on a second press. `y` yanks the selection to the clipboard and exits copy mode.
+  - **Search**: `/` opens a forward incremental search; `?` opens a backward search. `n`/`N` repeat the last search in the same/opposite direction. The search query is committed on `Enter`; `Escape` cancels without navigation.
+  - **Rendering**: the selected region is drawn as a blue semi-transparent overlay (alpha 0.45) directly on top of pane content, bypassing the C4 vertex cache so it is always up-to-date. Visual-Line highlights full rows; Visual highlights character ranges. The cursor position is marked with a yellow block (alpha 0.60).
+  - **Status bar indicator**: the right zone of the status bar shows `COPY`, `VISUAL`, or `V-LINE` in `accent_primary` colour while copy mode is active.
+
+### Fixed
+
+- **Pre-existing clippy lints from C4**: `append_pane_verts` and `PaneRenderCache::key_matches` were flagged for `too_many_arguments`; both now carry `#[allow(clippy::too_many_arguments)]`. The `map_or(false, …)` pattern in the cache-validity check was replaced with `is_some_and(…)`. A redundant `layout.cols as u16` cast was removed.
+
 ## [1.8.1] - 2026-06-06
 
 PATCH release completing the DesignTokens tokenization pass started in v1.8.0. All remaining hardcoded `[f32; 4]` RGBA literals in the GPU renderer overlay modules are now replaced with `DesignTokens` field references. PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are unchanged.
