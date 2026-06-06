@@ -303,6 +303,12 @@ impl Perform for Screen {
                     .to_string();
                 self.set_pending_notification(title, body);
             }
+            // OSC 66: Kitty Text Sizing Protocol.
+            // Format: ESC ] 66 ; metadata ; text BEL/ST
+            // metadata is a colon-separated list of key=value pairs (s/n/d/w/v/h).
+            "66" => {
+                self.handle_osc66(params);
+            }
             // OSC 1337: iTerm2 inline image protocol.
             // Format: ESC ] 1337 ; File=[key=value;...] : [base64-data] BEL/ST
             // Only images with `inline=1` are rendered; all other OSC 1337

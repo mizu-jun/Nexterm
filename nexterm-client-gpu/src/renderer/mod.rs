@@ -200,6 +200,8 @@ pub(super) struct WgpuState {
     image_sampler: wgpu::Sampler,
     /// Image texture cache (`image_id` -> `ImageEntry`).
     image_textures: HashMap<u32, ImageEntry>,
+    /// OSC 66 text-sizing texture cache (`(text, scale_num, scale_den)` -> `(ImageEntry, w, h)`).
+    text_size_textures: HashMap<(String, u8, u8), (ImageEntry, u32, u32)>,
     /// Background image (Sprint 5-7 / Phase 3-1). Loaded only when `WindowConfig.background_image` is set.
     background: Option<BackgroundTexture>,
     // ---- Frame-to-frame reused buffers (avoids per-frame GPU allocations) ----

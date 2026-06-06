@@ -18,7 +18,7 @@ use crate::vertex_util::{add_px_rect, add_string_verts};
 use super::PaneRenderCache;
 use super::WgpuState;
 use super::background_pass::build_background_verts;
-use super::image::build_image_verts;
+use super::image::{ImageEntry, build_image_verts};
 
 /// Append cached (0-relative index) pane vertex data into the frame's main buffers.
 ///
@@ -993,6 +993,170 @@ impl WgpuState {
                         pass.set_vertex_buffer(0, img_vbuf.slice(..));
                         pass.set_index_buffer(img_ibuf.slice(..), wgpu::IndexFormat::Uint16);
                         pass.draw_indexed(0..img_idx.len() as u32, 0, 0..1);
+                    }
+                }
+            }
+        }
+
+        // ---- Text-size overlay pass (OSC 66 / Kitty Text Sizing Protocol) ----
+        if let Some(focused_id) = state.focused_pane_id
+            && let Some(pane) = state.panes.get(&focused_id)
+        {
+            // Clone the list so we can mutably borrow `self` for GPU texture ops below.
+            let text_sizes: Vec<_> = pane
+                .text_sizes
+                .iter()
+                .map(|ts| {
+                    (
+                        ts.text.clone(),
+                        ts.scale_num,
+                        ts.scale_den,
+                        ts.width_cells,
+                        ts.col,
+                        ts.row,
+                    )
+                })
+                .collect();
+
+            for (text, scale_num, scale_den, width_cells, col, row) in text_sizes {
+                let cache_key = (text.clone(), scale_num, scale_den);
+                if !self.text_size_textures.contains_key(&cache_key) {
+                    let fg = [255u8, 255, 255, 255];
+                    let (tw, th, rgba) =
+                        font.rasterize_scaled_text(&text, scale_num, scale_den, fg);
+                    let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some("text_size_tex"),
+                        size: wgpu::Extent3d {
+                            width: tw,
+                            height: th,
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                        view_formats: &[],
+                    });
+                    self.queue.write_texture(
+                        wgpu::ImageCopyTexture {
+                            texture: &tex,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        &rgba,
+                        wgpu::ImageDataLayout {
+                            offset: 0,
+                            bytes_per_row: Some(tw * 4),
+                            rows_per_image: None,
+                        },
+                        wgpu::Extent3d {
+                            width: tw,
+                            height: th,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                    let tex_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+                    let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("text_size_bg"),
+                        layout: &self.text_bind_group_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(&tex_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(&self.image_sampler),
+                            },
+                        ],
+                    });
+                    self.text_size_textures.insert(
+                        cache_key.clone(),
+                        (
+                            ImageEntry {
+                                texture: tex,
+                                bind_group,
+                            },
+                            tw,
+                            th,
+                        ),
+                    );
+                }
+
+                if let Some((entry, tw, th)) = self.text_size_textures.get(&cache_key) {
+                    let (tw, th) = (*tw, *th);
+                    let px = col as f32 * cell_w + padding_x;
+                    let py = row as f32 * cell_h + grid_offset_y;
+                    let pw = if width_cells > 0 {
+                        width_cells as f32 * cell_w
+                    } else {
+                        tw as f32
+                    };
+                    let ph = th as f32;
+                    let x0 = px / sw * 2.0 - 1.0;
+                    let y0 = 1.0 - py / sh * 2.0;
+                    let x1 = (px + pw) / sw * 2.0 - 1.0;
+                    let y1 = 1.0 - (py + ph) / sh * 2.0;
+                    let white = [1.0f32; 4];
+                    let ts_verts = [
+                        TextVertex {
+                            position: [x0, y0],
+                            uv: [0.0, 0.0],
+                            color: white,
+                        },
+                        TextVertex {
+                            position: [x1, y0],
+                            uv: [1.0, 0.0],
+                            color: white,
+                        },
+                        TextVertex {
+                            position: [x1, y1],
+                            uv: [1.0, 1.0],
+                            color: white,
+                        },
+                        TextVertex {
+                            position: [x0, y1],
+                            uv: [0.0, 1.0],
+                            color: white,
+                        },
+                    ];
+                    let ts_idx = [0u16, 1, 2, 0, 2, 3];
+                    let ts_vbuf =
+                        self.device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("text_size_vbuf"),
+                                contents: bytemuck::cast_slice(&ts_verts),
+                                usage: wgpu::BufferUsages::VERTEX,
+                            });
+                    let ts_ibuf =
+                        self.device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("text_size_ibuf"),
+                                contents: bytemuck::cast_slice(&ts_idx),
+                                usage: wgpu::BufferUsages::INDEX,
+                            });
+                    {
+                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("text_size_pass"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: &view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Load,
+                                    store: wgpu::StoreOp::Store,
+                                },
+                            })],
+                            depth_stencil_attachment: None,
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                        });
+                        pass.set_pipeline(&self.image_pipeline);
+                        pass.set_bind_group(0, &entry.bind_group, &[]);
+                        pass.set_vertex_buffer(0, ts_vbuf.slice(..));
+                        pass.set_index_buffer(ts_ibuf.slice(..), wgpu::IndexFormat::Uint16);
+                        pass.draw_indexed(0..ts_idx.len() as u32, 0, 0..1);
                     }
                 }
             }

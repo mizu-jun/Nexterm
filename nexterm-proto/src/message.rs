@@ -580,6 +580,27 @@ pub enum ServerToClient {
         /// RGBA pixel data.
         rgba: Vec<u8>,
     },
+    /// OSC 66 text-sizing notification (Kitty Text Sizing Protocol).
+    TextSized {
+        /// Target pane ID.
+        pane_id: u32,
+        /// Placement column in the grid (0-based).
+        col: u16,
+        /// Placement row in the grid (0-based).
+        row: u16,
+        /// Scale numerator (integer scale `s` maps to num=s, den=1).
+        scale_num: u8,
+        /// Scale denominator (1 for integer scales).
+        scale_den: u8,
+        /// Width in character cells (0 = auto).
+        width_cells: u16,
+        /// Vertical alignment: 0 = baseline, 1 = center, 2 = top.
+        valign: u8,
+        /// Horizontal alignment: 0 = left, 1 = center, 2 = right.
+        halign: u8,
+        /// Text to render at the specified scale.
+        text: String,
+    },
     /// Layout-change notification (on split, focus change, or resize).
     LayoutChanged {
         /// Layouts for all panes.

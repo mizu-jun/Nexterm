@@ -24,6 +24,21 @@ pub struct FloatRect {
     pub rows: u16,
 }
 
+/// OSC 66 placed text-sizing overlay (Kitty Text Sizing Protocol).
+pub struct PlacedTextSize {
+    pub col: u16,
+    pub row: u16,
+    pub scale_num: u8,
+    pub scale_den: u8,
+    pub width_cells: u16,
+    // Alignment hints from the protocol; reserved for future rendering use.
+    #[allow(dead_code)]
+    pub valign: u8,
+    #[allow(dead_code)]
+    pub halign: u8,
+    pub text: String,
+}
+
 /// Placed image
 pub struct PlacedImage {
     pub col: u16,
@@ -43,6 +58,8 @@ pub struct PaneState {
     pub scroll_offset: usize,
     /// Placed images (image_id → PlacedImage)
     pub images: HashMap<u32, PlacedImage>,
+    /// OSC 66 text-sizing overlays pending render.
+    pub text_sizes: Vec<PlacedTextSize>,
     /// Background activity flag (true when output arrives while not focused)
     pub has_activity: bool,
     /// Title set via OSC 0/2 (shells and vim set the window title)
@@ -78,6 +95,7 @@ impl PaneState {
             scrollback: Scrollback::new(scrollback_capacity),
             scroll_offset: 0,
             images: HashMap::new(),
+            text_sizes: Vec::new(),
             has_activity: false,
             title: String::new(),
             cwd: None,

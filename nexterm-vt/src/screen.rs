@@ -210,6 +210,26 @@ pub struct SemanticMark {
     pub exit_code: Option<i32>,
 }
 
+/// A pending OSC 66 text-sizing event (Kitty Text Sizing Protocol).
+pub struct TextSizingEvent {
+    /// Scale numerator (integer `s` sets num=s, den=1; fractional uses `n`/`d`).
+    pub scale_num: u8,
+    /// Scale denominator (1 for integer scales).
+    pub scale_den: u8,
+    /// Width in character cells (0 = auto).
+    pub width_cells: u16,
+    /// Vertical alignment: 0 = baseline, 1 = center, 2 = top.
+    pub valign: u8,
+    /// Horizontal alignment: 0 = left, 1 = center, 2 = right.
+    pub halign: u8,
+    /// Placement column (0-based).
+    pub col: u16,
+    /// Placement row (0-based).
+    pub row: u16,
+    /// Text content (UTF-8, control-characters stripped).
+    pub text: String,
+}
+
 /// Pending image (before being forwarded to the client).
 pub struct PendingImage {
     /// Image ID (used by the Kitty protocol).
@@ -262,6 +282,8 @@ pub struct Screen {
     dcs_cursor: (u16, u16),
     /// Queue of completed images (drained via `take_pending_images`).
     pending_images: Vec<PendingImage>,
+    /// Queue of OSC 66 text-sizing events (drained via `take_pending_text_sizing`).
+    pending_text_sizing: Vec<TextSizingEvent>,
     /// Next image ID.
     next_image_id: u32,
     /// Accumulator for Kitty multi-chunk transfers (`m=1` chunks).
@@ -326,6 +348,7 @@ impl Screen {
             dcs_buf: Vec::new(),
             dcs_cursor: (0, 0),
             pending_images: Vec::new(),
+            pending_text_sizing: Vec::new(),
             next_image_id: 1,
             kitty_chunk_payload: Vec::new(),
             kitty_chunk_params: None,
@@ -886,6 +909,102 @@ impl Screen {
         std::mem::take(&mut self.pending_images)
     }
 
+    /// Handles OSC 66 (Kitty Text Sizing Protocol).
+    ///
+    /// Format: `OSC 66 ; metadata ; text ST`
+    ///
+    /// `metadata` is a colon-separated list of `key=value` pairs:
+    /// - `s=N` — integer scale (1–7); overrides `n`/`d`
+    /// - `n=N` — scale numerator (default 1)
+    /// - `d=N` — scale denominator (default 1)
+    /// - `w=N` — width in character cells (0 = auto)
+    /// - `v=N` — vertical alignment: 0 = baseline, 1 = center, 2 = top
+    /// - `h=N` — horizontal alignment: 0 = left, 1 = center, 2 = right
+    pub(crate) fn handle_osc66(&mut self, params: &[&[u8]]) {
+        // params[0] = "66", params[1] = metadata, params[2] = text
+        if params.len() < 3 {
+            return;
+        }
+        let metadata = std::str::from_utf8(params[1]).unwrap_or("").trim();
+        let text = match std::str::from_utf8(params[2]) {
+            Ok(t) => t.to_string(),
+            Err(_) => return,
+        };
+        if text.is_empty() {
+            return;
+        }
+
+        let mut scale_int: Option<u8> = None;
+        let mut scale_num: u8 = 1;
+        let mut scale_den: u8 = 1;
+        let mut width_cells: u16 = 0;
+        let mut valign: u8 = 0;
+        let mut halign: u8 = 0;
+
+        for kv in metadata.split(':') {
+            let mut parts = kv.splitn(2, '=');
+            let key = parts.next().unwrap_or("").trim();
+            let val = parts.next().unwrap_or("").trim();
+            match key {
+                "s" => {
+                    if let Ok(n) = val.parse::<u8>() {
+                        scale_int = Some(n.clamp(1, 7));
+                    }
+                }
+                "n" => {
+                    if let Ok(n) = val.parse::<u8>() {
+                        scale_num = n.max(1);
+                    }
+                }
+                "d" => {
+                    if let Ok(n) = val.parse::<u8>() {
+                        scale_den = n.max(1);
+                    }
+                }
+                "w" => {
+                    if let Ok(n) = val.parse::<u16>() {
+                        width_cells = n;
+                    }
+                }
+                "v" => {
+                    if let Ok(n) = val.parse::<u8>() {
+                        valign = n.min(2);
+                    }
+                }
+                "h" => {
+                    if let Ok(n) = val.parse::<u8>() {
+                        halign = n.min(2);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(s) = scale_int {
+            scale_num = s;
+            scale_den = 1;
+        }
+
+        const MAX_TEXT_LEN: usize = 4096;
+        let text = sanitize_osc_string(text, MAX_TEXT_LEN);
+
+        self.pending_text_sizing.push(TextSizingEvent {
+            scale_num,
+            scale_den,
+            width_cells,
+            valign,
+            halign,
+            col: self.cursor_col,
+            row: self.cursor_row,
+            text,
+        });
+    }
+
+    /// Drains the accumulated OSC 66 text-sizing events and clears the queue.
+    pub fn take_pending_text_sizing(&mut self) -> Vec<TextSizingEvent> {
+        std::mem::take(&mut self.pending_text_sizing)
+    }
+
     /// Drains the BEL flag and clears it.
     pub fn take_pending_bell(&mut self) -> bool {
         std::mem::replace(&mut self.pending_bell, false)
@@ -973,7 +1092,8 @@ impl Screen {
 
     /// Pushes the current flags onto the stack and activates `flags` (CSI > flags u).
     pub(crate) fn push_keyboard_protocol_flags(&mut self, flags: u8) {
-        self.keyboard_protocol_stack.push(self.keyboard_protocol_flags);
+        self.keyboard_protocol_stack
+            .push(self.keyboard_protocol_flags);
         self.keyboard_protocol_flags = flags;
     }
 
@@ -1291,5 +1411,100 @@ mod kitty_keyboard_protocol_tests {
         assert_eq!(s.keyboard_protocol_flags(), 0x0f);
         s.pop_keyboard_protocol_flags(1);
         assert_eq!(s.keyboard_protocol_flags(), 0);
+    }
+}
+
+#[cfg(test)]
+mod osc66_text_sizing_tests {
+    use super::*;
+
+    fn make_screen() -> Screen {
+        Screen::new(80, 24)
+    }
+
+    fn osc66(screen: &mut Screen, metadata: &str, text: &str) {
+        screen.handle_osc66(&[b"66", metadata.as_bytes(), text.as_bytes()]);
+    }
+
+    #[test]
+    fn integer_scale_s_sets_num_den() {
+        let mut s = make_screen();
+        osc66(&mut s, "s=2", "hello");
+        let events = s.take_pending_text_sizing();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].scale_num, 2);
+        assert_eq!(events[0].scale_den, 1);
+        assert_eq!(events[0].text, "hello");
+    }
+
+    #[test]
+    fn fractional_scale_n_d() {
+        let mut s = make_screen();
+        osc66(&mut s, "n=3:d=2", "hi");
+        let events = s.take_pending_text_sizing();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].scale_num, 3);
+        assert_eq!(events[0].scale_den, 2);
+    }
+
+    #[test]
+    fn s_overrides_n_d() {
+        let mut s = make_screen();
+        osc66(&mut s, "n=3:d=2:s=5", "x");
+        let events = s.take_pending_text_sizing();
+        assert_eq!(events[0].scale_num, 5);
+        assert_eq!(events[0].scale_den, 1);
+    }
+
+    #[test]
+    fn width_cells_parsed() {
+        let mut s = make_screen();
+        osc66(&mut s, "s=1:w=10", "foo");
+        let events = s.take_pending_text_sizing();
+        assert_eq!(events[0].width_cells, 10);
+    }
+
+    #[test]
+    fn empty_text_produces_no_event() {
+        let mut s = make_screen();
+        osc66(&mut s, "s=1", "");
+        assert!(s.take_pending_text_sizing().is_empty());
+    }
+
+    #[test]
+    fn missing_params_produces_no_event() {
+        let mut s = make_screen();
+        s.handle_osc66(&[b"66"]);
+        assert!(s.take_pending_text_sizing().is_empty());
+    }
+
+    #[test]
+    fn scale_clamps_to_max_7() {
+        let mut s = make_screen();
+        osc66(&mut s, "s=255", "x");
+        let events = s.take_pending_text_sizing();
+        assert_eq!(events[0].scale_num, 7);
+    }
+
+    #[test]
+    fn cursor_position_captured() {
+        let mut s = make_screen();
+        s.cursor_col = 5;
+        s.cursor_row = 3;
+        osc66(&mut s, "s=1", "abc");
+        let events = s.take_pending_text_sizing();
+        assert_eq!(events[0].col, 5);
+        assert_eq!(events[0].row, 3);
+    }
+
+    #[test]
+    fn take_drains_queue() {
+        let mut s = make_screen();
+        osc66(&mut s, "s=1", "a");
+        osc66(&mut s, "s=2", "b");
+        let first = s.take_pending_text_sizing();
+        assert_eq!(first.len(), 2);
+        let second = s.take_pending_text_sizing();
+        assert!(second.is_empty());
     }
 }

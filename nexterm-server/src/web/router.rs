@@ -3,8 +3,7 @@
 use std::net::SocketAddr;
 
 use axum::{
-    Router,
-    middleware,
+    Router, middleware,
     routing::{get, post},
 };
 use tokio::net::TcpListener;

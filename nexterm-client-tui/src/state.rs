@@ -140,8 +140,8 @@ impl ClientState {
             ServerToClient::SessionList { sessions } => {
                 tracing::info!("session list: {:?}", sessions);
             }
-            // The TUI client does not support the image protocol; ignore it.
-            ServerToClient::ImagePlaced { .. } => {}
+            // The TUI client does not support the image or text-sizing protocol; ignore both.
+            ServerToClient::ImagePlaced { .. } | ServerToClient::TextSized { .. } => {}
             // Layout change: refresh the pane positions.
             ServerToClient::LayoutChanged {
                 panes,

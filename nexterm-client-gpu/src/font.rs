@@ -309,6 +309,84 @@ impl FontManager {
         (cell_w, cell_h, pixels)
     }
 
+    /// Rasterise multi-character text at a scaled font size (OSC 66 Text Sizing Protocol).
+    ///
+    /// `scale_num / scale_den` is applied to the base font size.
+    /// Returns `(width_px, height_px, rgba_pixels)`.
+    pub fn rasterize_scaled_text(
+        &mut self,
+        text: &str,
+        scale_num: u8,
+        scale_den: u8,
+        fg: [u8; 4],
+    ) -> (u32, u32, Vec<u8>) {
+        let scale = scale_num.max(1) as f32 / scale_den.max(1) as f32;
+        let scaled_size = (self.metrics.font_size * scale).max(1.0);
+        let scaled_line_h = scaled_size * 1.2;
+        let metrics = Metrics::new(scaled_size, scaled_line_h);
+
+        let family_owned = self.family.clone();
+        let attrs = if self.family.eq_ignore_ascii_case("monospace") || self.family.is_empty() {
+            Attrs::new().family(Family::Monospace)
+        } else {
+            Attrs::new().family(Family::Name(&family_owned))
+        };
+
+        // Measure the required width by doing a dry layout run at a generous width.
+        let mut buffer = Buffer::new(&mut self.font_system, metrics);
+        buffer.set_size(&mut self.font_system, Some(32768.0), Some(scaled_line_h));
+        buffer.set_text(&mut self.font_system, text, &attrs, Shaping::Advanced, None);
+        buffer.shape_until_scroll(&mut self.font_system, false);
+
+        // Compute the bounding box from glyph runs.
+        let mut max_x: i32 = 0;
+        for run in buffer.layout_runs() {
+            for glyph in run.glyphs {
+                let right = (glyph.x + glyph.x_offset + glyph.w).ceil() as i32;
+                if right > max_x {
+                    max_x = right;
+                }
+            }
+        }
+        let width = (max_x as u32).max(1);
+        let height = (scaled_line_h.ceil() as u32).max(1);
+
+        // Re-layout at measured width for correct word-wrap handling (single line).
+        buffer.set_size(
+            &mut self.font_system,
+            Some(width as f32),
+            Some(height as f32),
+        );
+        buffer.shape_until_scroll(&mut self.font_system, false);
+
+        let mut pixels = vec![0u8; (width * height * 4) as usize];
+        let color = Color::rgba(fg[0], fg[1], fg[2], fg[3]);
+
+        buffer.draw(
+            &mut self.font_system,
+            &mut self.swash_cache,
+            color,
+            |x, y, _w, _h, c| {
+                if x < 0 || y < 0 {
+                    return;
+                }
+                let px = x as u32;
+                let py = y as u32;
+                if px < width && py < height {
+                    let idx = ((py * width + px) * 4) as usize;
+                    if idx + 3 < pixels.len() {
+                        pixels[idx] = (c.r() as u32 * c.a() as u32 / 255) as u8;
+                        pixels[idx + 1] = (c.g() as u32 * c.a() as u32 / 255) as u8;
+                        pixels[idx + 2] = (c.b() as u32 * c.a() as u32 / 255) as u8;
+                        pixels[idx + 3] = c.a();
+                    }
+                }
+            },
+        );
+
+        (width, height, pixels)
+    }
+
     /// Rasterise a full row with ligatures and return per-column glyphs.
     ///
     /// `chars` is a list of `(col, char, bold, italic, fg_rgba)` tuples.

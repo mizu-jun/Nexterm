@@ -12,7 +12,7 @@ use nexterm_proto::ServerToClient;
 use super::AlertKind;
 use super::ClientState;
 use super::ForegroundProcessStatus;
-use super::pane::{FloatRect, PaneState, PlacedImage};
+use super::pane::{FloatRect, PaneState, PlacedImage, PlacedTextSize};
 
 impl ClientState {
     pub fn apply_server_message(&mut self, msg: ServerToClient) {
@@ -301,6 +301,31 @@ impl ClientState {
                     window_id,
                     has_foreground,
                 });
+            }
+            // OSC 66: Kitty Text Sizing Protocol overlay.
+            ServerToClient::TextSized {
+                pane_id,
+                col,
+                row,
+                scale_num,
+                scale_den,
+                width_cells,
+                valign,
+                halign,
+                text,
+            } => {
+                if let Some(pane) = self.panes.get_mut(&pane_id) {
+                    pane.text_sizes.push(PlacedTextSize {
+                        col,
+                        row,
+                        scale_num,
+                        scale_den,
+                        width_cells,
+                        valign,
+                        halign,
+                        text,
+                    });
+                }
             }
         }
     }

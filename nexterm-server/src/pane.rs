@@ -665,6 +665,23 @@ impl Pane {
                             };
                             send_msg(&shared_tx_clone, msg);
                         }
+
+                        // Send OSC 66 text-sizing events (Kitty Text Sizing Protocol).
+                        let text_events = parser.screen_mut().take_pending_text_sizing();
+                        for ev in text_events {
+                            let msg = ServerToClient::TextSized {
+                                pane_id,
+                                col: ev.col,
+                                row: ev.row,
+                                scale_num: ev.scale_num,
+                                scale_den: ev.scale_den,
+                                width_cells: ev.width_cells,
+                                valign: ev.valign,
+                                halign: ev.halign,
+                                text: ev.text,
+                            };
+                            send_msg(&shared_tx_clone, msg);
+                        }
                     }
                     Err(e) => {
                         error!("PTY read error: {}", e);

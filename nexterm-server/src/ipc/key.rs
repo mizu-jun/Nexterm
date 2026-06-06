@@ -54,7 +54,11 @@ fn kitty_mods_param(mods: Modifiers) -> u8 {
     let shift = if mods.is_shift() { 1u8 } else { 0 };
     let alt = if mods.0 & Modifiers::ALT != 0 { 2u8 } else { 0 };
     let ctrl = if mods.is_ctrl() { 4u8 } else { 0 };
-    let meta = if mods.0 & Modifiers::META != 0 { 8u8 } else { 0 };
+    let meta = if mods.0 & Modifiers::META != 0 {
+        8u8
+    } else {
+        0
+    };
     (shift | alt | ctrl | meta) + 1
 }
 
@@ -194,16 +198,14 @@ mod tests {
     #[test]
     fn kitty_char_ctrl_press() {
         // Ctrl+'a' → codepoint 97, mods_param = 5 → `\x1b[97;5u`
-        let bytes =
-            kitty_key_to_bytes(&KeyCode::Char('a'), Modifiers(Modifiers::CTRL), 1, 0x01);
+        let bytes = kitty_key_to_bytes(&KeyCode::Char('a'), Modifiers(Modifiers::CTRL), 1, 0x01);
         assert_eq!(bytes, b"\x1b[97;5u");
     }
 
     #[test]
     fn kitty_char_with_event_type_repeat() {
         // 'a' repeat (event_type=2) with event-type flag set → `\x1b[97;;2u`
-        let bytes =
-            kitty_key_to_bytes(&KeyCode::Char('a'), Modifiers::default(), 2, 0x03);
+        let bytes = kitty_key_to_bytes(&KeyCode::Char('a'), Modifiers::default(), 2, 0x03);
         // mods_param=1 (no mods), but we need to emit it because event_type follows
         assert_eq!(bytes, b"\x1b[97;1;2u");
     }

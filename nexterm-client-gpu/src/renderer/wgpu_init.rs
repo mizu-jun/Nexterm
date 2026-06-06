@@ -350,6 +350,7 @@ impl WgpuState {
             image_pipeline,
             image_sampler,
             image_textures: HashMap::new(),
+            text_size_textures: HashMap::new(),
             background: None,
             buf_bg_v,
             buf_bg_i,
