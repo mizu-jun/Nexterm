@@ -56,6 +56,69 @@ pub use event_handler::{EventHandler, UserEvent};
 use background_pass::BackgroundTexture;
 use image::ImageEntry;
 
+use crate::glyph_atlas::{BgVertex, TextVertex};
+use crate::state::MouseSelection;
+
+/// Cached CPU-side vertex data for a single pane's grid render (C4 partial-redraw).
+///
+/// Built when a pane's content is dirty; reused every subsequent frame until the
+/// content changes, a layout parameter changes, or the glyph atlas is reset.
+/// Indices are 0-relative (i.e. pane-local). `render_frame` shifts them by the
+/// current combined buffer offset when appending.
+pub(super) struct PaneRenderCache {
+    // Layout / display parameters active when the cache was built
+    pub(super) col_offset: u16,
+    pub(super) row_offset: u16,
+    pub(super) cols: u16,
+    pub(super) rows: u16,
+    pub(super) sw_bits: u32,
+    pub(super) sh_bits: u32,
+    pub(super) cell_w_bits: u32,
+    pub(super) cell_h_bits: u32,
+    pub(super) grid_offset_y_bits: u32,
+    pub(super) was_focused: bool,
+    pub(super) cursor_style: nexterm_config::CursorStyle,
+    pub(super) mouse_sel_start: (u16, u16),
+    pub(super) mouse_sel_end: (u16, u16),
+    pub(super) mouse_sel_dragging: bool,
+    // Cached vertex data (pane-local, 0-relative indices)
+    pub(super) bg_verts: Vec<BgVertex>,
+    pub(super) bg_idx: Vec<u16>,
+    pub(super) text_verts: Vec<TextVertex>,
+    pub(super) text_idx: Vec<u16>,
+}
+
+impl PaneRenderCache {
+    /// Returns true when all layout/display parameters match and the cache can be reused.
+    pub(super) fn key_matches(
+        &self,
+        layout: &nexterm_proto::PaneLayout,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
+        grid_offset_y: f32,
+        is_focused: bool,
+        cursor_style: &nexterm_config::CursorStyle,
+        mouse_sel: &MouseSelection,
+    ) -> bool {
+        self.col_offset == layout.col_offset
+            && self.row_offset == layout.row_offset
+            && self.cols == layout.cols
+            && self.rows == layout.rows
+            && self.sw_bits == sw.to_bits()
+            && self.sh_bits == sh.to_bits()
+            && self.cell_w_bits == cell_w.to_bits()
+            && self.cell_h_bits == cell_h.to_bits()
+            && self.grid_offset_y_bits == grid_offset_y.to_bits()
+            && self.was_focused == is_focused
+            && &self.cursor_style == cursor_style
+            && self.mouse_sel_start == mouse_sel.start
+            && self.mouse_sel_end == mouse_sel.end
+            && self.mouse_sel_dragging == mouse_sel.is_dragging
+    }
+}
+
 // ---- Shader file watcher ----
 
 /// Start a watcher for custom shader files.
@@ -158,6 +221,12 @@ pub(super) struct WgpuState {
     txt_i_cap: u64,
     /// Timestamp of the last frame draw (used for FPS limiting).
     last_frame_at: Instant,
+    /// Per-pane CPU vertex cache (C4 partial-redraw optimization).
+    ///
+    /// Keyed by `pane_id`. Entries are invalidated when the pane's content changes
+    /// (`content_dirty = true`), when layout parameters change, or when the glyph
+    /// atlas is cleared mid-frame (`atlas.cleared_this_frame = true`).
+    pane_cache: HashMap<u32, PaneRenderCache>,
 }
 
 // ---- Multi OS-window skeleton (Sprint 5-8 Phase 4-1 Step 1.2) ----

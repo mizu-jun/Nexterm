@@ -59,6 +59,11 @@ pub struct PaneState {
     /// `jump_prev_prompt` / `jump_next_prompt` traverse this list to jump between prompts.
     /// This is approximate and can drift slightly across redraws and resizes.
     pub prompt_anchors: Vec<usize>,
+    /// True when grid content has changed since the last vertex build.
+    ///
+    /// Set on `FullRefresh` / `apply_diff`. Cleared by the renderer after building
+    /// vertex data for this pane. Used by the partial-redraw cache (C4).
+    pub content_dirty: bool,
 }
 
 impl PaneState {
@@ -77,6 +82,7 @@ impl PaneState {
             title: String::new(),
             cwd: None,
             prompt_anchors: Vec::new(),
+            content_dirty: true,
         }
     }
 
@@ -97,5 +103,6 @@ impl PaneState {
         self.cursor_row = cursor_row;
         // New output arrived, so snap back to the latest screen
         self.scroll_offset = 0;
+        self.content_dirty = true;
     }
 }

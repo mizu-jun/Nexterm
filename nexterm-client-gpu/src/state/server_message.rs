@@ -28,6 +28,7 @@ impl ClientState {
                 state.grid = grid;
                 state.cursor_col = cursor_col;
                 state.cursor_row = cursor_row;
+                state.content_dirty = true;
                 if self.focused_pane_id.is_none() {
                     self.focused_pane_id = Some(pane_id);
                 }

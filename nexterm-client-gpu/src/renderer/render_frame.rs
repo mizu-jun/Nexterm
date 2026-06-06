@@ -15,9 +15,34 @@ use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::state::ClientState;
 use crate::vertex_util::{add_px_rect, add_string_verts};
 
+use super::PaneRenderCache;
 use super::WgpuState;
 use super::background_pass::build_background_verts;
 use super::image::build_image_verts;
+
+/// Append cached (0-relative index) pane vertex data into the frame's main buffers.
+///
+/// Indices in `src_*_idx` are 0-relative (built against empty local vecs).
+/// This function shifts them by the current lengths of `bg_verts` / `text_verts`
+/// before extending, producing correct absolute indices for the frame buffer.
+fn append_pane_verts(
+    src_bg_verts: &[BgVertex],
+    src_bg_idx: &[u16],
+    src_text_verts: &[TextVertex],
+    src_text_idx: &[u16],
+    bg_verts: &mut Vec<BgVertex>,
+    bg_idx: &mut Vec<u16>,
+    text_verts: &mut Vec<TextVertex>,
+    text_idx: &mut Vec<u16>,
+) {
+    let bg_base = bg_verts.len() as u16;
+    bg_verts.extend_from_slice(src_bg_verts);
+    bg_idx.extend(src_bg_idx.iter().map(|i| i + bg_base));
+
+    let txt_base = text_verts.len() as u16;
+    text_verts.extend_from_slice(src_text_verts);
+    text_idx.extend(src_text_idx.iter().map(|i| i + txt_base));
+}
 
 impl WgpuState {
     /// Render a single frame.
@@ -136,6 +161,7 @@ impl WgpuState {
                     (state.pane_layouts.get(&pane_id), state.panes.get(&pane_id))
                 {
                     if pane.scroll_offset > 0 && is_focused {
+                        // Scrollback mode: no caching (historical rows change on scroll)
                         self.build_scrollback_verts_in_rect(
                             pane,
                             layout,
@@ -153,25 +179,103 @@ impl WgpuState {
                             &mut text_idx,
                         );
                     } else {
-                        self.build_grid_verts_in_rect(
-                            pane,
-                            layout,
-                            is_focused,
-                            &state.mouse_sel,
-                            sw,
-                            sh,
-                            cell_w,
-                            cell_h,
-                            grid_offset_y,
-                            font,
-                            atlas,
-                            palette_ref,
-                            cursor_style,
-                            &mut bg_verts,
-                            &mut bg_idx,
-                            &mut text_verts,
-                            &mut text_idx,
-                        );
+                        // C4: check whether the cached vertex data can be reused.
+                        // A cache hit requires all of: content unchanged, layout
+                        // parameters unchanged, and the atlas not yet reset this
+                        // frame (a reset invalidates stored UV coordinates).
+                        let cache_valid = !atlas.cleared_this_frame
+                            && self.pane_cache.get(&pane_id).map_or(false, |c| {
+                                !pane.content_dirty
+                                    && c.key_matches(
+                                        layout,
+                                        sw,
+                                        sh,
+                                        cell_w,
+                                        cell_h,
+                                        grid_offset_y,
+                                        is_focused,
+                                        cursor_style,
+                                        &state.mouse_sel,
+                                    )
+                            });
+
+                        if cache_valid {
+                            // Cache hit: append stored vertex data directly.
+                            let c = self.pane_cache.get(&pane_id).unwrap();
+                            append_pane_verts(
+                                &c.bg_verts,
+                                &c.bg_idx,
+                                &c.text_verts,
+                                &c.text_idx,
+                                &mut bg_verts,
+                                &mut bg_idx,
+                                &mut text_verts,
+                                &mut text_idx,
+                            );
+                        } else {
+                            // Cache miss: rebuild into local vecs, then store and append.
+                            let mut l_bg_v: Vec<BgVertex> = Vec::new();
+                            let mut l_bg_i: Vec<u16> = Vec::new();
+                            let mut l_txt_v: Vec<TextVertex> = Vec::new();
+                            let mut l_txt_i: Vec<u16> = Vec::new();
+
+                            self.build_grid_verts_in_rect(
+                                pane,
+                                layout,
+                                is_focused,
+                                &state.mouse_sel,
+                                sw,
+                                sh,
+                                cell_w,
+                                cell_h,
+                                grid_offset_y,
+                                font,
+                                atlas,
+                                palette_ref,
+                                cursor_style,
+                                &mut l_bg_v,
+                                &mut l_bg_i,
+                                &mut l_txt_v,
+                                &mut l_txt_i,
+                            );
+
+                            // Append to frame buffers before moving into cache.
+                            append_pane_verts(
+                                &l_bg_v,
+                                &l_bg_i,
+                                &l_txt_v,
+                                &l_txt_i,
+                                &mut bg_verts,
+                                &mut bg_idx,
+                                &mut text_verts,
+                                &mut text_idx,
+                            );
+
+                            // Store in cache for subsequent frames.
+                            self.pane_cache.insert(
+                                pane_id,
+                                PaneRenderCache {
+                                    col_offset: layout.col_offset,
+                                    row_offset: layout.row_offset,
+                                    cols: layout.cols,
+                                    rows: layout.rows,
+                                    sw_bits: sw.to_bits(),
+                                    sh_bits: sh.to_bits(),
+                                    cell_w_bits: cell_w.to_bits(),
+                                    cell_h_bits: cell_h.to_bits(),
+                                    grid_offset_y_bits: grid_offset_y.to_bits(),
+                                    was_focused: is_focused,
+                                    cursor_style: cursor_style.clone(),
+                                    mouse_sel_start: state.mouse_sel.start,
+                                    mouse_sel_end: state.mouse_sel.end,
+                                    mouse_sel_dragging: state.mouse_sel.is_dragging,
+                                    bg_verts: l_bg_v,
+                                    bg_idx: l_bg_i,
+                                    text_verts: l_txt_v,
+                                    text_idx: l_txt_i,
+                                },
+                            );
+                        }
                     }
                 }
             }
@@ -226,6 +330,19 @@ impl WgpuState {
                     &mut text_idx,
                 );
             }
+        }
+
+        // C4: clear content_dirty on all panes now that vertex data has been built
+        // for this frame.  New diffs arriving before the next frame will re-set the
+        // flag, triggering a cache miss on the next render.
+        for p in state.panes.values_mut() {
+            p.content_dirty = false;
+        }
+        // C4: if the glyph atlas was reset during pane rendering (atlas overflow),
+        // all cached UV coordinates are stale.  Evict every cache entry so the next
+        // frame performs a full rebuild with correct UVs.
+        if atlas.cleared_this_frame {
+            self.pane_cache.clear();
         }
 
         // ---- Pane number overlay (when display_panes_mode is enabled) ----
