@@ -10,10 +10,22 @@
 use nexterm_config::CloseAction;
 use nexterm_proto::ClientToServer;
 use tracing::{info, warn};
-use winit::{event::Ime, event_loop::ActiveEventLoop, keyboard::ModifiersState};
+use winit::{event::Ime, event_loop::ActiveEventLoop, keyboard::ModifiersState, window::WindowId};
 
 use super::EventHandler;
 use crate::glyph_atlas::GlyphAtlas;
+use crate::state::PendingCloseRequest;
+
+/// Decide whether a fresh `QueryForegroundProcess` should be sent for an
+/// incoming close request.
+///
+/// Returns `false` when a close is already pending for the same window, so
+/// repeated `CloseRequested` events — for example the user clicking the
+/// window's close button several times before the confirmation dialog
+/// responds — do not spam the IPC channel.
+fn should_send_close_query(pending: &Option<PendingCloseRequest>, target_window_id: u32) -> bool {
+    !matches!(pending, Some(req) if req.server_window_id == target_window_id)
+}
 
 impl EventHandler {
     /// `WindowEvent::CloseRequested`
@@ -34,7 +46,27 @@ impl EventHandler {
     ///     multi-process setups (e.g. `nexterm-ctl attach`).
     /// - **`Kill`**: destroy the server session with `KillSession` IPC and then
     ///   exit.
-    pub(super) fn on_close_requested(&mut self, event_loop: &ActiveEventLoop) {
+    ///
+    /// Multi-window note: only the **main** window runs the prompt/detach/kill
+    /// flow above, because closing it ends the application. A detached /
+    /// additional OS window closes on its own via `close_os_window` without a
+    /// prompt and without tearing down the rest of the app — matching the
+    /// `CloseOsWindow` action. This is why the handler needs `window_id`:
+    /// previously every close targeted the main window's state, so closing a
+    /// detached window queried the wrong server window and showed its dialog on
+    /// the main window, which looked unresponsive and invited repeated clicks.
+    pub(super) fn on_close_requested(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId) {
+        // Route a non-main (detached) window's close to the per-window path.
+        let is_main_window = self.window.as_ref().map(|w| w.id()) == Some(window_id);
+        if !is_main_window {
+            info!(
+                "CloseRequested: closing the detached OS window only (window_id={:?})",
+                window_id
+            );
+            self.close_os_window(event_loop, window_id);
+            return;
+        }
+
         let action = self.app.config.window.close_action;
         // The session name is currently fixed ("main" is used for `Attach`).
         // When multi-session support lands, fetch this from
@@ -49,6 +81,18 @@ impl EventHandler {
                 // `foreground_process_status` via `apply_server_message` and is
                 // consumed by `poll_pending_close_request` in about_to_wait.
                 let target_window_id = self.app.state.focused_server_window_id;
+                // Guard against repeated close requests for the same window
+                // while one is already pending (e.g. the user clicking the
+                // close button several times). Re-sending the query would spam
+                // the IPC channel without changing the outcome.
+                if !should_send_close_query(&self.app.state.pending_close_request, target_window_id)
+                {
+                    info!(
+                        "CloseRequested: a close is already pending for window_id={}; ignoring the repeat",
+                        target_window_id
+                    );
+                    return;
+                }
                 info!(
                     "CloseRequested: close_action = Prompt. Sending QueryForegroundProcess for window_id={}",
                     target_window_id
@@ -475,5 +519,35 @@ impl EventHandler {
         {
             self.update_ime_cursor_area_for_ssh_field();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_send_close_query;
+    use crate::state::{CloseActionKind, PendingCloseRequest};
+
+    fn pending(window_id: u32) -> Option<PendingCloseRequest> {
+        Some(PendingCloseRequest {
+            server_window_id: window_id,
+            close_action: CloseActionKind::Prompt,
+        })
+    }
+
+    #[test]
+    fn sends_query_when_nothing_is_pending() {
+        assert!(should_send_close_query(&None, 0));
+    }
+
+    #[test]
+    fn skips_resend_when_same_window_is_already_pending() {
+        // Repeated CloseRequested events for the same window must not spam IPC.
+        assert!(!should_send_close_query(&pending(0), 0));
+    }
+
+    #[test]
+    fn sends_query_for_a_different_window() {
+        // A close request for a different window is independent and proceeds.
+        assert!(should_send_close_query(&pending(0), 1));
     }
 }

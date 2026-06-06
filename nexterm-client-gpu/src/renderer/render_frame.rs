@@ -353,18 +353,17 @@ impl WgpuState {
             const CM_CURSOR_COLOR: [f32; 4] = [1.0, 1.0, 0.0, 0.60];
 
             // Resolve the focused pane's pixel origin and column count.
-            let (pane_px, pane_py, pane_cols) =
-                if let Some(pane_id) = state.focused_pane_id
-                    && let Some(layout) = state.pane_layouts.get(&pane_id)
-                {
-                    (
-                        layout.col_offset as f32 * cell_w,
-                        layout.row_offset as f32 * cell_h + grid_offset_y,
-                        layout.cols,
-                    )
-                } else {
-                    (0.0_f32, grid_offset_y, (sw / cell_w) as u16)
-                };
+            let (pane_px, pane_py, pane_cols) = if let Some(pane_id) = state.focused_pane_id
+                && let Some(layout) = state.pane_layouts.get(&pane_id)
+            {
+                (
+                    layout.col_offset as f32 * cell_w,
+                    layout.row_offset as f32 * cell_h + grid_offset_y,
+                    layout.cols,
+                )
+            } else {
+                (0.0_f32, grid_offset_y, (sw / cell_w) as u16)
+            };
 
             use crate::state::ViMode;
             let vi_mode = state.copy_mode.vi_mode.clone();
@@ -395,8 +394,11 @@ impl WgpuState {
                     if let Some(((sc, sr), (ec, er))) = sel_range {
                         for row in sr..=er {
                             let col_start = if row == sr { sc } else { 0 };
-                            let col_end =
-                                if row == er { ec } else { pane_cols.saturating_sub(1) };
+                            let col_end = if row == er {
+                                ec
+                            } else {
+                                pane_cols.saturating_sub(1)
+                            };
                             if col_end >= col_start {
                                 add_px_rect(
                                     pane_px + col_start as f32 * cell_w,

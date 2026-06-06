@@ -9,8 +9,8 @@
 
 use winit::keyboard::KeyCode as WKeyCode;
 
-use crate::state::ViMode;
 use super::EventHandler;
+use crate::state::ViMode;
 
 impl EventHandler {
     /// Handle key input in copy mode (true = consumed)
@@ -323,13 +323,7 @@ impl EventHandler {
     }
 
     /// Return the end position of the current (or next) word
-    fn find_word_end(
-        &self,
-        col: u16,
-        row: u16,
-        max_col: u16,
-        max_row: u16,
-    ) -> Option<(u16, u16)> {
+    fn find_word_end(&self, col: u16, row: u16, max_col: u16, max_row: u16) -> Option<(u16, u16)> {
         let pane = self.app.state.focused_pane()?;
         let mut c = col as usize + 1;
         let mut r = row as usize;
@@ -342,8 +336,7 @@ impl EventHandler {
                 }
                 // Walk to the last non-whitespace before a boundary
                 while c < cells.len() {
-                    let at_end =
-                        c + 1 >= cells.len() || cells[c + 1].ch.is_whitespace();
+                    let at_end = c + 1 >= cells.len() || cells[c + 1].ch.is_whitespace();
                     if !cells[c].ch.is_whitespace() && at_end {
                         return Some((c as u16, r as u16));
                     }
@@ -450,8 +443,7 @@ impl EventHandler {
                                 let mut lines = Vec::new();
                                 for row_idx in sr..=er {
                                     if let Some(row) = pane.grid.rows.get(row_idx as usize) {
-                                        let col_start =
-                                            if row_idx == sr { sc as usize } else { 0 };
+                                        let col_start = if row_idx == sr { sc as usize } else { 0 };
                                         let col_end = if row_idx == er {
                                             (ec + 1) as usize
                                         } else {

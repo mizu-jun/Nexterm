@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.1] - 2026-06-07
+
+PATCH release fixing a Windows-specific configuration reload storm and multi-window close handling. PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are unchanged.
+
+### Fixed
+
+- **Configuration reload storm on Windows**: on Windows the config directory and the state directory both resolve to `%APPDATA%\nexterm`, so the 30-second snapshot auto-save repeatedly fired the config watcher and caused five to six redundant config reloads every 30 seconds. The watcher now reacts only to `nexterm.toml` / `nexterm.lua` changes and ignores every other file in the directory (snapshot, history, and atomic-write temp files). Reloads whose content is identical to the previous one are additionally suppressed. Unix was unaffected because its config and state directories are already separate.
+- **Repeated close requests spamming IPC**: clicking a window's close button several times before the confirmation dialog responded sent a fresh `QueryForegroundProcess` each time. The handler now ignores repeated close requests while one is already pending for the same window.
+- **Detached OS windows could not be closed independently**: closing a detached (additional) OS window previously targeted the main window's state — it queried the wrong server window and drew the confirmation dialog on the main window, so the detached window looked unresponsive. Detached windows now close on their own through the per-window path (no prompt, no process exit); only closing the main window runs the prompt/exit flow.
+
+### Internal
+
+- Reformatted `copy_mode.rs` and `render_frame.rs` to satisfy `cargo fmt --check` (no behavior change).
+- Removed a redundant `.max(256)` in the `lru_cap_realistic_font` test that a newer Clippy (`unnecessary_min_or_max`) flagged; the 256 floor is already covered by `lru_cap_floor_at_256`.
+
 ## [1.9.0] - 2026-06-06
 
 MINOR release adding a complete Vim-style copy mode (D2). Users can now navigate, visually select, search, and yank terminal output using standard Vi key bindings without leaving the keyboard. PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are unchanged.

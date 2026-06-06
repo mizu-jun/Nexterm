@@ -380,7 +380,10 @@ mod tests {
     fn lru_cap_realistic_font() {
         // 14pt / 96 DPI → typical cell ~11×22 px
         let cap = GlyphAtlas::lru_cap_from_cell(1024, 11, 22);
-        let expected = ((1024u64 * 1024) / (11u64 * 22)).max(256) as usize;
+        // For an 11×22 cell the area-based capacity is far above the 256 floor,
+        // so no clamp is needed here; the floor itself is covered by
+        // `lru_cap_floor_at_256`.
+        let expected = ((1024u64 * 1024) / (11u64 * 22)) as usize;
         assert_eq!(cap.get(), expected);
         // Must be much smaller than the default 8×8 capacity
         let default_cap = GlyphAtlas::lru_cap_from_cell(1024, 8, 8).get();

@@ -378,12 +378,21 @@ impl EventHandler {
         }
 
         // Exit when all OS windows have been closed.
-        if self.windows.is_empty() && self.window.is_none() {
+        if should_exit_after_window_close(self.windows.len(), self.window.is_some()) {
             self.connection = None;
             self.signal_server_shutdown();
             event_loop.exit();
         }
     }
+}
+
+/// Whether the process should exit after an OS window was closed.
+///
+/// The process exits only once no OS windows remain at all — neither the
+/// main window nor any detached/additional ones. Closing a detached window
+/// while others survive keeps the application running.
+fn should_exit_after_window_close(additional_windows: usize, main_window_present: bool) -> bool {
+    additional_windows == 0 && !main_window_present
 }
 
 impl ApplicationHandler<UserEvent> for EventHandler {
@@ -452,7 +461,7 @@ impl ApplicationHandler<UserEvent> for EventHandler {
 
         match event {
             WindowEvent::CloseRequested => {
-                self.on_close_requested(event_loop);
+                self.on_close_requested(event_loop, window_id);
             }
             WindowEvent::Resized(size) => {
                 self.on_resized(size);
@@ -508,5 +517,28 @@ impl ApplicationHandler<UserEvent> for EventHandler {
         if let Some(w) = &self.window {
             w.request_redraw();
         }
+    }
+}
+
+#[cfg(test)]
+mod close_lifecycle_tests {
+    use super::should_exit_after_window_close;
+
+    #[test]
+    fn exits_only_when_no_windows_remain() {
+        // No additional windows and no main window → exit the process.
+        assert!(should_exit_after_window_close(0, false));
+    }
+
+    #[test]
+    fn does_not_exit_while_main_window_remains() {
+        assert!(!should_exit_after_window_close(0, true));
+    }
+
+    #[test]
+    fn does_not_exit_while_additional_windows_remain() {
+        // A detached window was closed but others (and/or main) still exist.
+        assert!(!should_exit_after_window_close(2, false));
+        assert!(!should_exit_after_window_close(2, true));
     }
 }
