@@ -1071,11 +1071,12 @@ impl WgpuState {
 
     /// Build the Quick Select overlay vertices.
     ///
-    /// At each match position, draw a label (a, b, ..., aa, ...) over a yellow background.
+    /// At each match position, draw a label (a, b, ..., aa, ...) over a coloured background.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn build_quick_select_verts(
         &self,
         state: &ClientState,
+        tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
         cell_w: f32,
@@ -1091,6 +1092,15 @@ impl WgpuState {
         if !qs.is_active {
             return;
         }
+
+        // Derive per-use colours from tokens once.
+        let [ar, ag, ab, _] = tokens.accent_activity;
+        let [pr, pg, pb, _] = tokens.accent_primary;
+        let [s1r, s1g, s1b, _] = tokens.surface_1;
+        let match_tint = [ar, ag, ab, 0.25];
+        let label_bg_normal = [ar, ag, ab, 0.92];
+        let label_bg_active = [pr, pg, pb, 0.95];
+        let hud_bg = [s1r, s1g, s1b, 0.92];
 
         // Fetch the offset of the focused pane.
         let (pane_x, pane_y) = if let Some(pid) = state.focused_pane_id {
@@ -1113,34 +1123,21 @@ impl WgpuState {
 
             // Semi-transparent highlight covering the entire match.
             let match_w = (m.col_end - m.col_start) as f32 * cell_w;
-            add_px_rect(
-                lx,
-                ly,
-                match_w,
-                cell_h,
-                [0.9, 0.85, 0.2, 0.25],
-                sw,
-                sh,
-                bg_verts,
-                bg_idx,
-            );
+            add_px_rect(lx, ly, match_w, cell_h, match_tint, sw, sh, bg_verts, bg_idx);
 
-            // Label background (yellow).
+            // Label background: accent_primary while the user is typing a prefix,
+            // accent_activity otherwise.
             let is_partial_match =
                 !qs.typed_label.is_empty() && m.label.starts_with(&qs.typed_label);
-            let bg_color = if is_partial_match {
-                [1.0, 0.6, 0.0, 0.95]
-            } else {
-                [0.9, 0.85, 0.1, 0.92]
-            };
+            let bg_color = if is_partial_match { label_bg_active } else { label_bg_normal };
             add_px_rect(lx, ly, label_w, cell_h, bg_color, sw, sh, bg_verts, bg_idx);
 
-            // Label text (black).
+            // Label text on accent background.
             add_string_verts(
                 &m.label,
                 lx,
                 ly,
-                [0.05, 0.05, 0.05, 1.0],
+                tokens.text_on_accent,
                 true,
                 sw,
                 sh,
@@ -1153,14 +1150,14 @@ impl WgpuState {
             );
         }
 
-        // Show the in-progress label at the top of the screen.
+        // HUD at the top of the screen showing what has been typed so far.
         let typed = format!("Quick Select: {}_", qs.typed_label);
         add_px_rect(
             0.0,
             0.0,
             typed.len() as f32 * cell_w + cell_w,
             cell_h,
-            [0.15, 0.15, 0.18, 0.92],
+            hud_bg,
             sw,
             sh,
             bg_verts,
@@ -1170,7 +1167,7 @@ impl WgpuState {
             &typed,
             cell_w * 0.5,
             0.0,
-            [1.0, 0.85, 0.2, 1.0],
+            tokens.accent_activity,
             true,
             sw,
             sh,

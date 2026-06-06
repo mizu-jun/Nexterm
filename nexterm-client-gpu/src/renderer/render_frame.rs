@@ -401,6 +401,7 @@ impl WgpuState {
         if state.quick_select.is_active {
             self.build_quick_select_verts(
                 state,
+                &tokens,
                 sw,
                 sh,
                 cell_w,
