@@ -10,13 +10,19 @@ pub(super) async fn handle_key_event(
     ctx: &mut DispatchContext<'_>,
     code: &KeyCode,
     modifiers: Modifiers,
+    event_type: u8,
 ) {
     if let Some(ref name) = *ctx.current_session {
-        let bytes = super::key::key_to_bytes(code, modifiers);
-        if !bytes.is_empty() {
-            let arc = ctx.manager.sessions();
-            let sessions = arc.lock().await;
-            if let Some(s) = sessions.get(name)
+        let arc = ctx.manager.sessions();
+        let sessions = arc.lock().await;
+        if let Some(s) = sessions.get(name) {
+            let flags = s.focused_keyboard_protocol_flags();
+            let bytes = if flags != 0 {
+                super::key::kitty_key_to_bytes(code, modifiers, event_type, flags)
+            } else {
+                super::key::key_to_bytes(code, modifiers)
+            };
+            if !bytes.is_empty()
                 && let Err(e) = s.write_to_focused(&bytes)
             {
                 error!("PTY write error: {}", e);

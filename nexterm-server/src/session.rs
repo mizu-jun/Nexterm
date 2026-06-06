@@ -471,6 +471,13 @@ impl Session {
             .unwrap_or(0)
     }
 
+    /// Return the focused pane's Kitty keyboard protocol flags (0 = disabled).
+    pub fn focused_keyboard_protocol_flags(&self) -> u8 {
+        self.focused_window()
+            .map(|w| w.focused_keyboard_protocol_flags())
+            .unwrap_or(0)
+    }
+
     /// Resize the whole window (recompute every pane via BSP).
     pub fn resize_focused(&mut self, cols: u16, rows: u16) -> Result<()> {
         self.cols = cols;

@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{DirtyRow, Grid};
 
+fn default_key_event_type() -> u8 {
+    1
+}
+
 /// Bit flags for keyboard modifier keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Modifiers(pub u8);
@@ -78,6 +82,10 @@ pub enum ClientToServer {
         code: KeyCode,
         /// Modifier keys held at the same time.
         modifiers: Modifiers,
+        /// Kitty keyboard protocol event type: 1=press (default), 2=repeat, 3=release.
+        /// Older clients that do not send this field default to press (1).
+        #[serde(default = "default_key_event_type")]
+        event_type: u8,
     },
     /// Terminal resize.
     Resize {
@@ -872,6 +880,7 @@ mod tests {
         let msg = ClientToServer::KeyEvent {
             code: KeyCode::Char('a'),
             modifiers: Modifiers(Modifiers::CTRL),
+            event_type: 1,
         };
         let encoded = postcard::to_stdvec(&msg).unwrap();
         let decoded: ClientToServer = postcard::from_bytes(&encoded).unwrap();

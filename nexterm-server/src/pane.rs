@@ -352,6 +352,8 @@ pub struct Pane {
     pub bracketed_paste: Arc<std::sync::atomic::AtomicBool>,
     /// Mouse-reporting mode (0 = disabled, 1 = X11 ?1000, 2 = SGR ?1006).
     pub mouse_mode: Arc<std::sync::atomic::AtomicU8>,
+    /// Kitty keyboard protocol progressive-enhancement flags (bitmask, 0 = disabled).
+    pub keyboard_protocol_flags: Arc<std::sync::atomic::AtomicU8>,
     /// Current working directory reported by OSC 7 (Sprint 5-2 / B2).
     ///
     /// Updated when the shell emits something like `printf '\033]7;file://...' "$PWD"`.
@@ -506,6 +508,11 @@ impl Pane {
             Arc::new(std::sync::atomic::AtomicU8::new(0));
         let mouse_mode_clone = Arc::clone(&mouse_mode);
 
+        // Share the Kitty keyboard protocol flags via `Arc<AtomicU8>`.
+        let keyboard_protocol_flags: Arc<std::sync::atomic::AtomicU8> =
+            Arc::new(std::sync::atomic::AtomicU8::new(0));
+        let keyboard_protocol_flags_clone = Arc::clone(&keyboard_protocol_flags);
+
         // Share the OSC 7 CWD via `Arc<Mutex<Option<PathBuf>>>` (Sprint 5-2 / B2).
         let current_cwd: Arc<Mutex<Option<std::path::PathBuf>>> = Arc::new(Mutex::new(None));
         let current_cwd_clone = Arc::clone(&current_cwd);
@@ -539,6 +546,12 @@ impl Pane {
                         // Reflect mouse-reporting mode changes into the AtomicU8.
                         mouse_mode_clone.store(
                             parser.screen().mouse_mode,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+
+                        // Reflect Kitty keyboard protocol flag changes into the AtomicU8.
+                        keyboard_protocol_flags_clone.store(
+                            parser.screen().keyboard_protocol_flags(),
                             std::sync::atomic::Ordering::Relaxed,
                         );
 
@@ -688,6 +701,7 @@ impl Pane {
             asciicast_writer,
             bracketed_paste,
             mouse_mode,
+            keyboard_protocol_flags,
             current_cwd,
         })
     }

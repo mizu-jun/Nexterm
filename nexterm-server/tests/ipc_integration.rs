@@ -72,16 +72,22 @@ fn test_key_event_roundtrip() {
     let msg = ClientToServer::KeyEvent {
         code: KeyCode::Char('a'),
         modifiers: Modifiers(Modifiers::CTRL),
+        event_type: 1,
     };
 
     let encoded = postcard::to_stdvec(&msg).expect("KeyEvent のシリアライズ失敗");
     let decoded: ClientToServer = postcard::from_bytes(&encoded).expect("デシリアライズ失敗");
 
     match decoded {
-        ClientToServer::KeyEvent { code, modifiers } => {
+        ClientToServer::KeyEvent {
+            code,
+            modifiers,
+            event_type,
+        } => {
             assert_eq!(code, KeyCode::Char('a'));
             assert!(modifiers.is_ctrl());
             assert!(!modifiers.is_shift());
+            assert_eq!(event_type, 1);
         }
         _ => panic!("KeyEvent であるべき"),
     }

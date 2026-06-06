@@ -3958,6 +3958,7 @@ name = "nexterm-vt"
 version = "1.8.1"
 dependencies = [
  "criterion",
+ "image",
  "nexterm-proto",
  "proptest",
  "thiserror 2.0.18",

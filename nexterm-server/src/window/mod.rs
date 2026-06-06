@@ -854,6 +854,17 @@ impl Window {
             .unwrap_or(0)
     }
 
+    /// Return the focused pane's Kitty keyboard protocol flags (0 = disabled).
+    pub fn focused_keyboard_protocol_flags(&self) -> u8 {
+        self.panes
+            .get(&self.focused_pane_id)
+            .map(|p| {
+                p.keyboard_protocol_flags
+                    .load(std::sync::atomic::Ordering::Relaxed)
+            })
+            .unwrap_or(0)
+    }
+
     /// Resize only the focused pane (backward compatibility, single-pane use).
     #[allow(dead_code)]
     pub fn resize_focused(&mut self, cols: u16, rows: u16) -> Result<()> {

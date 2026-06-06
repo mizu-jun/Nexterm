@@ -301,6 +301,11 @@ pub struct Screen {
     /// Processed on the client side according to
     /// `SecurityConfig.osc52_clipboard`.
     pending_clipboard_writes: Vec<String>,
+    /// Kitty keyboard protocol progressive-enhancement flags (bitmask).
+    /// Set by `CSI > flags u` (push) and restored by `CSI < n u` (pop).
+    keyboard_protocol_flags: u8,
+    /// Stack for the Kitty keyboard protocol push/pop mechanism.
+    keyboard_protocol_stack: Vec<u8>,
 }
 
 impl Screen {
@@ -338,6 +343,8 @@ impl Screen {
             hyperlink_start_col: 0,
             hyperlink_start_row: 0,
             pending_clipboard_writes: Vec::new(),
+            keyboard_protocol_flags: 0,
+            keyboard_protocol_stack: Vec::new(),
         }
     }
 
@@ -959,6 +966,29 @@ impl Screen {
         self.bracketed_paste = enabled;
     }
 
+    /// Returns the active Kitty keyboard protocol progressive-enhancement flags.
+    pub fn keyboard_protocol_flags(&self) -> u8 {
+        self.keyboard_protocol_flags
+    }
+
+    /// Pushes the current flags onto the stack and activates `flags` (CSI > flags u).
+    pub(crate) fn push_keyboard_protocol_flags(&mut self, flags: u8) {
+        self.keyboard_protocol_stack.push(self.keyboard_protocol_flags);
+        self.keyboard_protocol_flags = flags;
+    }
+
+    /// Pops `n` levels from the stack, restoring the previous flags (CSI < n u).
+    pub(crate) fn pop_keyboard_protocol_flags(&mut self, n: usize) {
+        for _ in 0..n {
+            if let Some(prev) = self.keyboard_protocol_stack.pop() {
+                self.keyboard_protocol_flags = prev;
+            } else {
+                self.keyboard_protocol_flags = 0;
+                break;
+            }
+        }
+    }
+
     /// Records an OSC 133 semantic-zone mark.
     pub(crate) fn add_semantic_mark(&mut self, kind: SemanticMarkKind, exit_code: Option<i32>) {
         self.semantic_marks.push(SemanticMark {
@@ -1202,5 +1232,64 @@ mod osc_security_tests {
             parse_osc7_cwd("file:///C:/Users/foo"),
             Some("C:/Users/foo".to_string())
         );
+    }
+}
+
+#[cfg(test)]
+mod kitty_keyboard_protocol_tests {
+    use super::*;
+
+    fn make_screen() -> Screen {
+        Screen::new(80, 24)
+    }
+
+    #[test]
+    fn initial_flags_are_zero() {
+        let s = make_screen();
+        assert_eq!(s.keyboard_protocol_flags(), 0);
+    }
+
+    #[test]
+    fn push_sets_new_flags() {
+        let mut s = make_screen();
+        s.push_keyboard_protocol_flags(0x01);
+        assert_eq!(s.keyboard_protocol_flags(), 0x01);
+    }
+
+    #[test]
+    fn push_saves_previous_flags_on_stack() {
+        let mut s = make_screen();
+        s.push_keyboard_protocol_flags(0x01);
+        s.push_keyboard_protocol_flags(0x03);
+        assert_eq!(s.keyboard_protocol_flags(), 0x03);
+        s.pop_keyboard_protocol_flags(1);
+        assert_eq!(s.keyboard_protocol_flags(), 0x01);
+    }
+
+    #[test]
+    fn pop_restores_to_zero_on_empty_stack() {
+        let mut s = make_screen();
+        s.pop_keyboard_protocol_flags(1); // no-op on empty stack
+        assert_eq!(s.keyboard_protocol_flags(), 0);
+    }
+
+    #[test]
+    fn pop_n_pops_multiple_levels() {
+        let mut s = make_screen();
+        s.push_keyboard_protocol_flags(0x01);
+        s.push_keyboard_protocol_flags(0x02);
+        s.push_keyboard_protocol_flags(0x04);
+        s.pop_keyboard_protocol_flags(2);
+        assert_eq!(s.keyboard_protocol_flags(), 0x01);
+    }
+
+    #[test]
+    fn push_pop_round_trip() {
+        let mut s = make_screen();
+        assert_eq!(s.keyboard_protocol_flags(), 0);
+        s.push_keyboard_protocol_flags(0x0f);
+        assert_eq!(s.keyboard_protocol_flags(), 0x0f);
+        s.pop_keyboard_protocol_flags(1);
+        assert_eq!(s.keyboard_protocol_flags(), 0);
     }
 }

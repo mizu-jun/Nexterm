@@ -157,6 +157,26 @@ impl Perform for Screen {
                 // Direct access to Screen is needed here, so call the helper on screen.rs.
                 self.set_scroll_region(top, bottom);
             }
+            // Kitty keyboard protocol: CSI > flags u (push), CSI < n u (pop).
+            'u' => match intermediates.first() {
+                Some(&b'>') => {
+                    let flags = params
+                        .iter()
+                        .next()
+                        .and_then(|sub| sub.first().copied())
+                        .unwrap_or(0) as u8;
+                    self.push_keyboard_protocol_flags(flags);
+                }
+                Some(&b'<') => {
+                    let n = params
+                        .iter()
+                        .next()
+                        .and_then(|sub| sub.first().copied())
+                        .unwrap_or(1) as usize;
+                    self.pop_keyboard_protocol_flags(n.max(1));
+                }
+                _ => {} // CSI ? u (query) — ignored; replies would need PTY write-back.
+            },
             _ => {} // Ignore every unsupported CSI sequence.
         }
     }
@@ -383,5 +403,59 @@ impl Screen {
                 _ => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod kitty_csi_tests {
+    use crate::VtParser;
+
+    fn parse(input: &[u8]) -> VtParser {
+        let mut p = VtParser::new(80, 24);
+        p.advance(input);
+        p
+    }
+
+    #[test]
+    fn csi_push_sets_flags() {
+        // CSI > 1 u → push flags=1
+        let p = parse(b"\x1b[>1u");
+        assert_eq!(p.screen().keyboard_protocol_flags(), 1);
+    }
+
+    #[test]
+    fn csi_push_all_flags() {
+        // CSI > 15 u → push flags=0x0f
+        let p = parse(b"\x1b[>15u");
+        assert_eq!(p.screen().keyboard_protocol_flags(), 15);
+    }
+
+    #[test]
+    fn csi_pop_restores_previous() {
+        // Push 1, push 3, pop 1 → should restore 1
+        let mut p = VtParser::new(80, 24);
+        p.advance(b"\x1b[>1u");
+        p.advance(b"\x1b[>3u");
+        assert_eq!(p.screen().keyboard_protocol_flags(), 3);
+        p.advance(b"\x1b[<1u");
+        assert_eq!(p.screen().keyboard_protocol_flags(), 1);
+    }
+
+    #[test]
+    fn csi_pop_zero_without_arg_pops_one() {
+        // CSI < u with no param → pop 1 level (default)
+        let mut p = VtParser::new(80, 24);
+        p.advance(b"\x1b[>7u");
+        p.advance(b"\x1b[<u");
+        assert_eq!(p.screen().keyboard_protocol_flags(), 0);
+    }
+
+    #[test]
+    fn csi_u_unknown_intermediate_is_ignored() {
+        // CSI ? u (query) is silently ignored
+        let mut p = VtParser::new(80, 24);
+        p.advance(b"\x1b[>5u");
+        p.advance(b"\x1b[?u"); // query — no-op
+        assert_eq!(p.screen().keyboard_protocol_flags(), 5);
     }
 }

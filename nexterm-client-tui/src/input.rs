@@ -75,6 +75,7 @@ pub fn poll_input(prefix_mode: PrefixMode) -> Result<Option<Action>> {
                 return Ok(Some(Action::SendKey(ClientToServer::KeyEvent {
                     code,
                     modifiers,
+                    event_type: 1,
                 })));
             }
         }

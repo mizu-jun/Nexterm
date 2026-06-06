@@ -988,6 +988,7 @@ impl EventHandler {
                 let _ = conn.send_tx.try_send(ClientToServer::KeyEvent {
                     code: ProtoKeyCode::Char(ch),
                     modifiers: mods,
+                    event_type: 1,
                 });
             }
             return;
@@ -998,6 +999,7 @@ impl EventHandler {
             let _ = conn.send_tx.try_send(ClientToServer::KeyEvent {
                 code: key_code,
                 modifiers: mods,
+                event_type: 1,
             });
         }
     }
