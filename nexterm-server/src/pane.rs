@@ -486,6 +486,13 @@ impl Pane {
         })?;
         // Save the child PID (the process keeps running even after `child` is dropped).
         let pid = child.process_id();
+        // v1.9.4 — log enough about the spawned child to confirm later from
+        // user logs whether the shell process actually started, with what
+        // command line and working directory, and at what size.
+        info!(
+            "pane {}: spawned shell={:?} args={:?} pid={:?} cols={} rows={} cwd={:?}",
+            id, shell, args, pid, cols, rows, effective_cwd
+        );
 
         // Acquire the write handle (one-shot) and the read handle.
         let writer = Mutex::new(pair.master.take_writer()?);
@@ -535,8 +542,17 @@ impl Pane {
 
         // Launch the PTY reader thread.
         tokio::task::spawn_blocking(move || {
+            // v1.9.4 — confirm the reader actually started. Critical for
+            // diagnosing the case where `spawn_blocking` itself fails to
+            // schedule (silent stall).
+            info!("pane {}: PTY reader thread started", pane_id);
             let mut parser = VtParser::new(cols, rows);
             let mut buf = [0u8; 4096];
+            // v1.9.4 — once-only flags for diagnostic logs so production
+            // sessions emit one `first PTY output` / `first GridDiff` line
+            // and then stay quiet.
+            let mut logged_first_output = false;
+            let mut logged_first_diff = false;
 
             /// Helper that sends a message via the `broadcast::Sender` (sync, no waiting).
             fn send_msg(tx: &broadcast::Sender<ServerToClient>, msg: ServerToClient) {
@@ -547,10 +563,14 @@ impl Pane {
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => {
-                        debug!("pane {}: PTY reached EOF", pane_id);
+                        info!("pane {}: PTY reached EOF", pane_id);
                         break;
                     }
                     Ok(n) => {
+                        if !logged_first_output {
+                            info!("pane {}: first PTY output ({} bytes)", pane_id, n);
+                            logged_first_output = true;
+                        }
                         parser.advance(&buf[..n]);
 
                         // Reflect bracketed-paste mode changes into the AtomicBool.
@@ -601,6 +621,14 @@ impl Pane {
                         // Send the grid diff.
                         let dirty = parser.screen_mut().take_dirty_rows();
                         if !dirty.is_empty() {
+                            if !logged_first_diff {
+                                info!(
+                                    "pane {}: first GridDiff ({} dirty rows)",
+                                    pane_id,
+                                    dirty.len()
+                                );
+                                logged_first_diff = true;
+                            }
                             // v1.9.3 fix: refresh the full-grid snapshot so a
                             // client attaching after this burst still sees the
                             // current screen via `make_full_refresh`. Without

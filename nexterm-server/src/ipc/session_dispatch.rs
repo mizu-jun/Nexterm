@@ -1,11 +1,25 @@
 //! Session-related IPC handlers — Ping/Hello/Attach/Detach/ListSessions/KillSession/
 //! StartRecording/StopRecording/StartAsciicast/StopAsciicast/SetBroadcast/DisplayPanes.
 
-use nexterm_proto::ServerToClient;
-use tracing::info;
+use nexterm_proto::{Grid, ServerToClient};
+use tracing::{info, warn};
 
 use super::dispatch::DispatchContext;
 use super::dispatch_util::validate_recording_path;
+
+/// Returns `true` when every cell in `grid` is blank (`ch == ' '`).
+///
+/// Used by `handle_attach` to detect the "restored session is still
+/// rendering" state: the PTY reader has not yet processed the shell's
+/// initial prompt, so `make_full_refresh` returns an empty grid even
+/// though the shell process is alive. The caller then nudges the PTY
+/// with `\r` so the shell re-emits its prompt and the next `GridDiff`
+/// populates the screen.
+fn is_blank_grid(grid: &Grid) -> bool {
+    grid.rows
+        .iter()
+        .all(|row| row.iter().all(|cell| cell.ch == ' '))
+}
 
 pub(super) async fn handle_ping(ctx: &mut DispatchContext<'_>) {
     let _ = ctx.tx.send(ServerToClient::Pong).await;
@@ -34,6 +48,50 @@ pub(super) async fn handle_attach(ctx: &mut DispatchContext<'_>, session_name: &
                 crate::hooks::on_session_start(ctx.hooks, &ctx.lua, session_name);
             }
 
+            // v1.9.4 — subscribe to the session's broadcast BEFORE composing
+            // the Full Refresh. `tokio::sync::broadcast::Receiver` only sees
+            // messages sent after it subscribes, so any `GridDiff` emitted
+            // between `make_full_refresh` and the previous subscribe location
+            // (end of this function) used to be lost. That race was the
+            // residual cause of the "blank screen on restored Windows
+            // session" symptom: the PTY reader produces the shell prompt
+            // diff in the gap and the client never receives it.
+            let bcast_rx = {
+                let arc = manager.sessions();
+                let sessions = arc.lock().await;
+                sessions.get(session_name).map(|s| s.attach())
+            };
+            if let Some(mut bcast_rx) = bcast_rx {
+                let fwd_tx = tx.clone();
+                if let Some(h) = ctx.bcast_forwarder.take() {
+                    let _: () = h.abort();
+                }
+                let handle = tokio::spawn(async move {
+                    loop {
+                        match bcast_rx.recv().await {
+                            Ok(msg) => {
+                                if fwd_tx.send(msg).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                tracing::warn!(
+                                    "broadcast: skipped {} messages (buffer overflow)",
+                                    n
+                                );
+                                continue;
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        }
+                    }
+                });
+                *ctx.bcast_forwarder = Some(handle.abort_handle());
+                info!(
+                    "attach '{}': broadcast forwarder spawned before FullRefresh",
+                    session_name
+                );
+            }
+
             // Send a Full Refresh.
             let refresh = {
                 let arc = manager.sessions();
@@ -45,6 +103,49 @@ pub(super) async fn handle_attach(ctx: &mut DispatchContext<'_>, session_name: &
                     })
                 })
             };
+            // v1.9.4 — if the focused pane's grid is still blank when we
+            // attach (typical for a freshly restored session where the
+            // shell has not had time to print its prompt before the client
+            // arrived), nudge the PTY with a CR. The shell echoes it and
+            // re-emits the prompt; the subsequent GridDiff is delivered
+            // because the forwarder above is already subscribed.
+            if let Some((pane_id, grid)) = &refresh {
+                let non_blank_rows = grid
+                    .rows
+                    .iter()
+                    .filter(|row| row.iter().any(|c| c.ch != ' '))
+                    .count();
+                info!(
+                    "attach '{}': FullRefresh pane_id={} size={}x{} non_blank_rows={} cursor=({},{})",
+                    session_name,
+                    pane_id,
+                    grid.width,
+                    grid.height,
+                    non_blank_rows,
+                    grid.cursor_col,
+                    grid.cursor_row
+                );
+                let should_nudge = grid.width > 0 && grid.height > 0 && is_blank_grid(grid);
+                if should_nudge {
+                    let arc = manager.sessions();
+                    let sessions = arc.lock().await;
+                    if let Some(s) = sessions.get(session_name)
+                        && let Some(w) = s.focused_window()
+                        && let Some(p) = w.pane(w.focused_pane_id())
+                    {
+                        match p.write_input(b"\r") {
+                            Ok(()) => info!(
+                                "attach '{}': pane_id={} grid was blank; nudged PTY with CR",
+                                session_name, pane_id
+                            ),
+                            Err(e) => warn!(
+                                "attach '{}': pane_id={} nudge write_input failed: {}",
+                                session_name, pane_id, e
+                            ),
+                        }
+                    }
+                }
+            }
             if let Some((pane_id, grid)) = refresh {
                 let _ = tx.send(ServerToClient::FullRefresh { pane_id, grid }).await;
             }
@@ -82,39 +183,6 @@ pub(super) async fn handle_attach(ctx: &mut DispatchContext<'_>, session_name: &
 
             // on_attach hook.
             crate::hooks::on_attach(ctx.hooks, &ctx.lua, session_name);
-
-            // Spawn the broadcast forwarder task.
-            let bcast_rx = {
-                let arc = manager.sessions();
-                let sessions = arc.lock().await;
-                sessions.get(session_name).map(|s| s.attach())
-            };
-            if let Some(mut bcast_rx) = bcast_rx {
-                let fwd_tx = tx.clone();
-                if let Some(h) = ctx.bcast_forwarder.take() {
-                    let _: () = h.abort();
-                }
-                let handle = tokio::spawn(async move {
-                    loop {
-                        match bcast_rx.recv().await {
-                            Ok(msg) => {
-                                if fwd_tx.send(msg).await.is_err() {
-                                    break;
-                                }
-                            }
-                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                                tracing::warn!(
-                                    "broadcast: skipped {} messages (buffer overflow)",
-                                    n
-                                );
-                                continue;
-                            }
-                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                        }
-                    }
-                });
-                *ctx.bcast_forwarder = Some(handle.abort_handle());
-            }
         }
         Err(e) => {
             let _ = tx
@@ -433,5 +501,47 @@ pub(super) async fn handle_delete_workspace(
                 })
                 .await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_blank_grid;
+    use nexterm_proto::{Cell, Grid};
+
+    #[test]
+    fn is_blank_grid_returns_true_for_fresh_grid() {
+        // A newly created grid is full of default cells (ch == ' ').
+        let g = Grid::new(80, 24);
+        assert!(is_blank_grid(&g));
+    }
+
+    #[test]
+    fn is_blank_grid_returns_false_when_any_cell_has_a_visible_char() {
+        let mut g = Grid::new(80, 24);
+        g.rows[2][5] = Cell {
+            ch: '$',
+            ..Cell::default()
+        };
+        assert!(!is_blank_grid(&g));
+    }
+
+    #[test]
+    fn is_blank_grid_treats_explicit_space_cells_as_blank() {
+        // A row of explicit ' ' default cells is still blank.
+        let mut g = Grid::new(80, 24);
+        for cell in g.rows[0].iter_mut() {
+            *cell = Cell::default();
+        }
+        assert!(is_blank_grid(&g));
+    }
+
+    #[test]
+    fn is_blank_grid_handles_a_zero_size_grid() {
+        // Degenerate but valid: a 0×0 grid is vacuously blank and must not
+        // panic. Callers should not nudge in this case but the helper still
+        // returns true.
+        let g = Grid::new(0, 0);
+        assert!(is_blank_grid(&g));
     }
 }

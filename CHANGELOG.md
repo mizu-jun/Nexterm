@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.4] - 2026-06-07
+
+PATCH release closing the remaining "blank screen on restored Windows session" race after v1.9.3, plus broad startup diagnostics so a future repro can be triaged from the log alone. PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are unchanged.
+
+### Fixed
+
+- **Attach-to-broadcast subscription race**: `handle_attach` used to send `FullRefresh` first and only subscribe to the session's broadcast at the very end of the handler. Because `tokio::sync::broadcast::Receiver` only sees messages sent after subscription, any `GridDiff` emitted by the PTY reader in the window between `make_full_refresh` and the subscribe call was dropped — and on Windows that is exactly when PowerShell tends to print its prompt, leaving the screen blank. The handler now subscribes the broadcast and spawns the forwarder before composing the `FullRefresh`, so prompts arriving during attach are buffered and forwarded to the client.
+
+- **Restored-session blank-grid fallback (nudge)**: when the focused pane's grid is still entirely blank at attach time — typical when the reader has not had time to process the shell's first prompt yet — the server now writes a single `\r` to the PTY. The shell echoes the carriage return and re-emits its prompt, and the resulting `GridDiff` is delivered through the just-spawned forwarder. Costs a harmless empty line at restore time but eliminates the "frozen blank pane" state.
+
+### Added
+
+- **Startup diagnostics**: the server log now includes per-pane spawn details (`shell`, `args`, `pid`, `cwd`, `cols`, `rows`), one-shot markers for `PTY reader thread started` / `first PTY output` / `first GridDiff`, and per-window restore-progress lines (`window 'X': restoring N pane(s)` … `restore complete, N pane(s) live`). `handle_attach` also logs the `FullRefresh` payload summary (`non_blank_rows`, cursor position) and whether the nudge fired. The PTY `EOF` log was promoted from `debug!` to `info!`. These should make any future "PowerShell did not start" report diagnosable from a single client log file.
+
 ## [1.9.3] - 2026-06-07
 
 PATCH release fixing the long-standing "blank screen on Windows" symptom — restored sessions that always re-attach to a snapshot would show no shell prompt because the PTY reader's grid was never shared with the Pane. PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are unchanged.

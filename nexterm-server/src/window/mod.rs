@@ -14,6 +14,7 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use tokio::sync::broadcast;
+use tracing::info;
 
 use nexterm_proto::{PaneLayout, ServerToClient};
 
@@ -997,8 +998,19 @@ impl Window {
         // Snapshot v3 and earlier do not store `pane_order`, so on restore we use the appearance
         // order from `size_map` (compute_pane_sizes traverses in DFS).
         let mut pane_order: Vec<u32> = Vec::with_capacity(size_map.len());
+        // v1.9.4 — log restoration progress so the user log shows which panes
+        // we are about to spawn and which actually came back.
+        info!(
+            "window '{}': restoring {} pane(s) from snapshot",
+            snap.name,
+            pane_order.capacity()
+        );
         for (pane_id, pane_cols, pane_rows) in size_map {
             let cwd = find_cwd_in_snapshot(&snap.layout, pane_id);
+            info!(
+                "window '{}': spawning pane_id={} size={}x{} cwd={:?}",
+                snap.name, pane_id, pane_cols, pane_rows, cwd
+            );
             let pane = match cwd {
                 Some(ref cwd_path) => Pane::spawn_with_cwd(
                     pane_id,
@@ -1014,6 +1026,11 @@ impl Window {
             panes.insert(pane_id, pane);
             pane_order.push(pane_id);
         }
+        info!(
+            "window '{}': restore complete, {} pane(s) live",
+            snap.name,
+            panes.len()
+        );
 
         Ok(Self {
             id: snap.id,
