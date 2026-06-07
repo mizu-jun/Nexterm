@@ -885,4 +885,65 @@ mod tests {
         // We only verify that the parser does not crash; the concrete behavior
         // depends on `decode_kitty`.
     }
+
+    // ---- v1.9.5: device attribute / DSR query responses ----
+    //
+    // Background: PowerShell + PSReadLine on Windows ConPTY sends
+    // `CSI c` and/or `CSI 6 n` on startup and waits for a terminal reply
+    // before drawing the prompt. The previous parser silently dropped these
+    // queries, so the prompt never appeared. The reader thread now drains
+    // `take_pending_responses` after every `advance` and writes the bytes
+    // back to the PTY.
+
+    #[test]
+    fn primary_device_attributes_query_produces_vt102_reply() {
+        // CSI c (or CSI 0 c) — Primary DA. Reply must identify us as a
+        // VT102-class terminal: `ESC [ ? 6 c`.
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b[c");
+        let replies = parser.screen_mut().take_pending_responses();
+        assert_eq!(replies, vec![b"\x1b[?6c".to_vec()]);
+    }
+
+    #[test]
+    fn secondary_device_attributes_query_produces_vt220_reply() {
+        // CSI > c — Secondary DA. xterm-compatible reply: VT220, firmware
+        // 276, no ROM cartridge.
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b[>c");
+        let replies = parser.screen_mut().take_pending_responses();
+        assert_eq!(replies, vec![b"\x1b[>1;276;0c".to_vec()]);
+    }
+
+    #[test]
+    fn dsr_operating_status_query_produces_ok_reply() {
+        // CSI 5 n — DSR operating status. Reply `ESC [ 0 n` (terminal OK).
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b[5n");
+        let replies = parser.screen_mut().take_pending_responses();
+        assert_eq!(replies, vec![b"\x1b[0n".to_vec()]);
+    }
+
+    #[test]
+    fn dsr_cursor_position_query_uses_one_based_indices() {
+        // CSI 6 n — DSR cursor position. Reply `ESC [ row ; col R` with
+        // 1-based coordinates. Move the cursor first so the reply is
+        // non-trivial.
+        let mut parser = VtParser::new(80, 24);
+        // CUP 5;10 → row 5, col 10 (1-based).
+        parser.advance(b"\x1b[5;10H");
+        parser.advance(b"\x1b[6n");
+        let replies = parser.screen_mut().take_pending_responses();
+        assert_eq!(replies, vec![b"\x1b[5;10R".to_vec()]);
+    }
+
+    #[test]
+    fn take_pending_responses_drains_the_queue() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b[c\x1b[5n");
+        let first = parser.screen_mut().take_pending_responses();
+        assert_eq!(first.len(), 2);
+        let second = parser.screen_mut().take_pending_responses();
+        assert!(second.is_empty());
+    }
 }

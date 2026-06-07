@@ -341,7 +341,11 @@ pub struct Pane {
     /// PTY master (for resizing).
     master: Box<dyn MasterPty + Send>,
     /// PTY write handle (used to forward key input).
-    writer: Mutex<Box<dyn Write + Send>>,
+    ///
+    /// Shared with the reader thread via `Arc` so it can write
+    /// device-attribute / DSR replies back to the PTY (v1.9.5 fix —
+    /// previously the reader had no way to answer pwsh's startup queries).
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     /// Text-log file writer (`Some` only while recording).
     log_writer: LogWriter,
     /// Binary-log file writer (`Some` only when `binary_log=true`).
@@ -495,7 +499,9 @@ impl Pane {
         );
 
         // Acquire the write handle (one-shot) and the read handle.
-        let writer = Mutex::new(pair.master.take_writer()?);
+        let writer: Arc<Mutex<Box<dyn Write + Send>>> =
+            Arc::new(Mutex::new(pair.master.take_writer()?));
+        let writer_clone = Arc::clone(&writer);
         let mut reader = pair.master.try_clone_reader()?;
         let master = pair.master;
 
@@ -568,10 +574,53 @@ impl Pane {
                     }
                     Ok(n) => {
                         if !logged_first_output {
-                            info!("pane {}: first PTY output ({} bytes)", pane_id, n);
+                            // v1.9.5 — include a short hex preview (first
+                            // 32 bytes) so the user log shows exactly which
+                            // control sequences the shell sent. Previously
+                            // only the byte count was logged, leaving us
+                            // blind to whether the chunk contained a DA/DSR
+                            // query that demanded a reply.
+                            let preview: String = buf[..n.min(32)]
+                                .iter()
+                                .map(|b| format!("{:02x}", b))
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            info!(
+                                "pane {}: first PTY output ({} bytes) hex={}{}",
+                                pane_id,
+                                n,
+                                preview,
+                                if n > 32 { " …" } else { "" }
+                            );
                             logged_first_output = true;
                         }
                         parser.advance(&buf[..n]);
+
+                        // v1.9.5 — drain Primary/Secondary DA + DSR replies
+                        // the parser queued and write them back to the PTY.
+                        // Doing it right after `advance` minimises the time
+                        // PowerShell + PSReadLine spends waiting on the
+                        // reply before drawing the prompt.
+                        let responses = parser.screen_mut().take_pending_responses();
+                        if !responses.is_empty() {
+                            if let Ok(mut w) = writer_clone.lock() {
+                                for reply in &responses {
+                                    if let Err(e) = w.write_all(reply) {
+                                        error!(
+                                            "pane {}: PTY response write failed: {}",
+                                            pane_id, e
+                                        );
+                                        break;
+                                    }
+                                }
+                                let _ = w.flush();
+                            }
+                            info!(
+                                "pane {}: replied to {} terminal-capability query/queries",
+                                pane_id,
+                                responses.len()
+                            );
+                        }
 
                         // Reflect bracketed-paste mode changes into the AtomicBool.
                         bracketed_paste_clone.store(

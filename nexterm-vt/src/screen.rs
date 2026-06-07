@@ -328,6 +328,15 @@ pub struct Screen {
     keyboard_protocol_flags: u8,
     /// Stack for the Kitty keyboard protocol push/pop mechanism.
     keyboard_protocol_stack: Vec<u8>,
+    /// Bytes the parser owes back to the PTY in response to terminal-capability
+    /// queries (Primary/Secondary DA, DSR, …). Drained by the reader thread via
+    /// `take_pending_responses` and written verbatim to the PTY master.
+    ///
+    /// Added in v1.9.5 to fix the "PowerShell blank screen" symptom on
+    /// Windows: PSReadLine sends `CSI c` / `CSI 6 n` at startup and waits for
+    /// a terminal reply before drawing the prompt; without this queue the
+    /// queries were silently dropped.
+    pending_responses: Vec<Vec<u8>>,
 }
 
 impl Screen {
@@ -368,6 +377,7 @@ impl Screen {
             pending_clipboard_writes: Vec::new(),
             keyboard_protocol_flags: 0,
             keyboard_protocol_stack: Vec::new(),
+            pending_responses: Vec::new(),
         }
     }
 
@@ -1073,6 +1083,20 @@ impl Screen {
     /// Drains the pending OSC 52 clipboard-write requests and clears the queue.
     pub fn take_pending_clipboard_writes(&mut self) -> Vec<String> {
         std::mem::take(&mut self.pending_clipboard_writes)
+    }
+
+    /// Queue a byte sequence that should be written back to the PTY (a reply
+    /// to a Primary/Secondary DA query, DSR, or similar). The reader thread
+    /// drains this queue with [`take_pending_responses`] after every
+    /// `parser.advance`.
+    pub(crate) fn push_pending_response(&mut self, bytes: Vec<u8>) {
+        self.pending_responses.push(bytes);
+    }
+
+    /// Drain the PTY response queue. Each returned `Vec<u8>` is one complete
+    /// reply (`ESC [ … final-byte`) and must be written to the PTY as-is.
+    pub fn take_pending_responses(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.pending_responses)
     }
 
     /// Returns the bracketed paste (DEC ?2004) state.

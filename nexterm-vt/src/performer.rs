@@ -177,6 +177,48 @@ impl Perform for Screen {
                 }
                 _ => {} // CSI ? u (query) — ignored; replies would need PTY write-back.
             },
+            // v1.9.5 — Device Attributes (DA) query.
+            //
+            //   CSI c   / CSI 0 c    → Primary DA. Reply with VT102
+            //                          (`ESC [ ? 6 c`).
+            //   CSI > c / CSI > 0 c  → Secondary DA. Reply with
+            //                          "VT220, firmware 276, no ROM"
+            //                          (`ESC [ > 1 ; 276 ; 0 c`).
+            //
+            // Without these replies PowerShell + PSReadLine on Windows
+            // ConPTY hangs forever waiting and never draws the prompt.
+            'c' => match intermediates.first() {
+                Some(&b'>') => {
+                    self.push_pending_response(b"\x1b[>1;276;0c".to_vec());
+                }
+                None => {
+                    self.push_pending_response(b"\x1b[?6c".to_vec());
+                }
+                _ => {} // CSI = c and other variants are out of scope.
+            },
+            // v1.9.5 — Device Status Report (DSR).
+            //
+            //   CSI 5 n  → operating-status query. Reply `ESC [ 0 n` (OK).
+            //   CSI 6 n  → cursor-position query. Reply
+            //              `ESC [ row ; col R` with 1-based coordinates.
+            //
+            // `CSI ? n` (DEC private variants) is ignored — those are
+            // printer/keyboard-light queries we do not model.
+            'n' => {
+                if intermediates.first() == Some(&b'?') {
+                    return;
+                }
+                match p1(0) {
+                    5 => self.push_pending_response(b"\x1b[0n".to_vec()),
+                    6 => {
+                        let (col, row) = self.cursor();
+                        let reply =
+                            format!("\x1b[{};{}R", row.saturating_add(1), col.saturating_add(1));
+                        self.push_pending_response(reply.into_bytes());
+                    }
+                    _ => {}
+                }
+            }
             _ => {} // Ignore every unsupported CSI sequence.
         }
     }

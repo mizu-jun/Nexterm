@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.5] - 2026-06-08
+
+PATCH release fixing the real root cause of the "PowerShell renders blank on Windows" symptom: the VT parser silently dropped every Device Attributes / Device Status Report query, and there was no path for the parser to reply at all. PowerShell + PSReadLine queries the terminal on startup and waits for the reply before drawing the prompt, so on Windows ConPTY pwsh would emit a short escape-sequence preamble and then hang forever. PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are unchanged.
+
+### Fixed
+
+- **Reply to Device Attributes (DA) and Device Status Report (DSR) queries**: the VT parser handlers for `CSI c` / `CSI > c` / `CSI 5 n` / `CSI 6 n` were missing — the old `_ => {}` arm in `csi_dispatch` swallowed them. The parser now queues a reply for each:
+  - `CSI c`   → `ESC [ ? 6 c` (VT102, the conservative xterm-compatible Primary DA reply).
+  - `CSI > c` → `ESC [ > 1 ; 276 ; 0 c` (Secondary DA: VT220, firmware 276, no ROM).
+  - `CSI 5 n` → `ESC [ 0 n` (terminal operating normally).
+  - `CSI 6 n` → `ESC [ row ; col R` with 1-based cursor coordinates.
+
+- **PTY write-back path**: the `VtParser` previously had no way to send anything back to the PTY — `Pane.writer` was scoped exclusively to client key input. The reader thread now owns an `Arc<Mutex<Writer>>` clone and, after every `parser.advance`, drains `Screen::take_pending_responses` and writes the bytes verbatim. PSReadLine receives its DA / DSR replies and proceeds to draw the prompt instead of hanging.
+
+### Added
+
+- **`Screen::take_pending_responses` / `push_pending_response`**: a small queue alongside the existing `pending_title` / `pending_clipboard_writes` / etc. pattern. The performer pushes replies into it; the reader thread drains it.
+
+- **Hex preview of the first PTY output**: the existing `first PTY output (N bytes)` log now also prints the first 32 bytes in hex so a future "still blank" report can be diagnosed without guessing what control sequences the shell sent.
+
+### Tests
+
+- 5 new unit tests in `nexterm-vt` covering each of the four queries plus a `take_pending_responses` drain test (124 total, up from 119).
+
 ## [1.9.4] - 2026-06-07
 
 PATCH release closing the remaining "blank screen on restored Windows session" race after v1.9.3, plus broad startup diagnostics so a future repro can be triaged from the log alone. PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are unchanged.
