@@ -38,13 +38,47 @@ impl WgpuState {
         // Open/close animation: smoothly via ease-out cubic
         let eased = sp.eased_progress();
 
+        // Phase 2 (UI 4-tasks, 2026-06-12): full-screen scrim behind the panel.
+        //
+        // When the user enables `window.background_opacity < 1.0` (or Acrylic
+        // on Windows 11), the main terminal surface stays translucent so the
+        // desktop bleeds through the cells *outside* the panel rect. That
+        // looks fine for the terminal itself but breaks the "modal settings"
+        // affordance — the user reported (2026-06-09) that the settings panel
+        // feels transparent. The fix is to lay an opaque scrim across the
+        // whole window before drawing the panel chrome, leaving the terminal's
+        // own transparency untouched (the scrim only exists while the panel
+        // is open). Fading via `eased` keeps it in sync with the slide-in.
+        //
+        // `surface_0` is the deepest background in the active scheme, so the
+        // scrim matches the panel's color family in both light and dark
+        // themes. Alpha goes up to 1.0 at full open.
+        let scrim = tokens.surface_0;
+        let scrim_color = [scrim[0], scrim[1], scrim[2], eased];
+        add_px_rect(0.0, 0.0, sw, sh, scrim_color, sw, sh, bg_verts, bg_idx);
+
         // Panel size (with left sidebar)
         let panel_w = (sw * 0.72).min(sw - cell_w * 4.0);
         let panel_h = (sh * 0.75).min(sh - cell_h * 4.0);
-        let px = (sw - panel_w) / 2.0;
+        let base_x = (sw - panel_w) / 2.0;
         // Slide-up: start 16px below and ease into the resting position
         let slide_offset = (1.0 - eased) * 16.0;
-        let py = (sh - panel_h) / 2.0 + slide_offset;
+        let base_y = (sh - panel_h) / 2.0 + slide_offset;
+        // Phase 3 (UI 4-tasks, 2026-06-12): apply the cumulative title-bar
+        // drag offset and clamp it so the panel cannot be flung off-screen.
+        // `title_h` matches the value computed below; passing it here lets
+        // the clamp keep at least the title bar reachable on the bottom edge.
+        let title_h_for_clamp = cell_h * 1.4;
+        let (px, py) = crate::settings_panel::clamp_panel_position(
+            base_x,
+            base_y,
+            panel_w,
+            panel_h,
+            sw,
+            sh,
+            title_h_for_clamp,
+            sp.drag_offset,
+        );
 
         // Sidebar width / content area (reserve 18 cells to fit Japanese category names)
         let sidebar_w = cell_w * 18.0;

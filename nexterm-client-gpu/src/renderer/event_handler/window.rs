@@ -520,6 +520,135 @@ impl EventHandler {
             self.update_ime_cursor_area_for_ssh_field();
         }
     }
+
+    /// `WindowEvent::DroppedFile` (Phase 5 / UI 4-tasks, 2026-06-12).
+    ///
+    /// Pastes the dropped file's path into the focused pane via the same IPC
+    /// path used by clipboard paste (`ClientToServer::PasteText`). When the
+    /// shell has bracketed-paste mode enabled the server wraps the text in
+    /// `ESC [ 200 ~ … ESC [ 201 ~`, so paths with embedded special characters
+    /// are not interpreted as keystrokes.
+    ///
+    /// winit fires one event per dropped file even when several files are
+    /// dropped at once. `last_file_drop_at` lets us insert a single space
+    /// between paths so the resulting command line is `file1 file2 file3`.
+    pub(super) fn on_dropped_file(&mut self, path: std::path::PathBuf) {
+        /// Maximum gap between two `DroppedFile` events to still be considered
+        /// part of the same multi-file drop. winit fires them effectively
+        /// back-to-back, so 500 ms is loose enough for slow runtimes and tight
+        /// enough not to merge unrelated user gestures.
+        const FILE_DROP_BATCH_WINDOW: std::time::Duration = std::time::Duration::from_millis(500);
+
+        let formatted = format_dropped_path(&path);
+        let now = std::time::Instant::now();
+        let prepend_space = self
+            .last_file_drop_at
+            .is_some_and(|t| now.duration_since(t) <= FILE_DROP_BATCH_WINDOW);
+        self.last_file_drop_at = Some(now);
+
+        let text = if prepend_space {
+            format!(" {}", formatted)
+        } else {
+            formatted
+        };
+
+        if let Some(conn) = &self.connection {
+            // Failure is swallowed for the same reason as every other IPC
+            // try_send in this module: the channel is unbounded in practice,
+            // and a dropped frame is preferable to a panic in the UI thread.
+            let _ = conn.send_tx.try_send(ClientToServer::PasteText { text });
+            tracing::info!("Dropped file pasted as terminal input: {:?}", path);
+        } else {
+            tracing::warn!(
+                "Dropped file ignored — no server connection yet: {:?}",
+                path
+            );
+        }
+    }
+}
+
+/// Phase 5 (UI 4-tasks, 2026-06-12): format a dropped-file path for pasting
+/// into the terminal.
+///
+/// Wraps the path in double quotes when it contains whitespace or an embedded
+/// double quote, escaping any embedded `"` with a backslash. This works for
+/// bash / zsh / fish / PowerShell. Path separators are preserved verbatim —
+/// on Windows the `\` characters are emitted as-is because PowerShell
+/// tolerates them and the user is closest to the shell that can interpret
+/// the original path. Pure function — covered by `format_dropped_path_tests`.
+pub(super) fn format_dropped_path(path: &std::path::Path) -> String {
+    let s = path.to_string_lossy();
+    let needs_quote = s.chars().any(|c| c.is_whitespace() || c == '"');
+    if needs_quote {
+        let escaped = s.replace('"', "\\\"");
+        format!("\"{}\"", escaped)
+    } else {
+        s.into_owned()
+    }
+}
+
+#[cfg(test)]
+mod format_dropped_path_tests {
+    use super::format_dropped_path;
+    use std::path::Path;
+
+    /// Plain ASCII paths without any shell-sensitive characters are passed
+    /// through verbatim — no quotes, no escapes.
+    #[test]
+    fn plain_path_is_unquoted() {
+        assert_eq!(
+            format_dropped_path(Path::new("/tmp/foo.txt")),
+            "/tmp/foo.txt"
+        );
+    }
+
+    /// Spaces in the path must trigger double-quoting so the shell sees a
+    /// single argument.
+    #[test]
+    fn path_with_space_gets_double_quoted() {
+        assert_eq!(
+            format_dropped_path(Path::new("/tmp/my file.txt")),
+            "\"/tmp/my file.txt\""
+        );
+    }
+
+    /// A path containing a literal double quote must escape it inside the
+    /// double-quoted wrapper.
+    #[test]
+    fn path_with_double_quote_is_escaped() {
+        assert_eq!(
+            format_dropped_path(Path::new("/tmp/he said \"hi\".txt")),
+            "\"/tmp/he said \\\"hi\\\".txt\""
+        );
+    }
+
+    /// Tabs / newlines also count as whitespace and must trigger quoting.
+    #[test]
+    fn path_with_tab_is_quoted() {
+        assert_eq!(
+            format_dropped_path(Path::new("/tmp/with\ttab.txt")),
+            "\"/tmp/with\ttab.txt\""
+        );
+    }
+
+    /// Windows-style paths with backslashes go through unmodified — the
+    /// receiving shell (PowerShell, cmd, WSL) can decide how to interpret
+    /// them. Only the space-induced quoting applies.
+    #[cfg(windows)]
+    #[test]
+    fn windows_path_with_space_quotes_but_keeps_backslashes() {
+        assert_eq!(
+            format_dropped_path(Path::new(r"C:\Users\Jane Doe\file.txt")),
+            "\"C:\\Users\\Jane Doe\\file.txt\""
+        );
+    }
+
+    /// Sanity check: a file with no extension and no spaces still passes
+    /// through unquoted.
+    #[test]
+    fn extension_less_file_is_unquoted() {
+        assert_eq!(format_dropped_path(Path::new("Makefile")), "Makefile");
+    }
 }
 
 #[cfg(test)]

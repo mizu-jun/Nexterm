@@ -149,6 +149,7 @@ impl EventHandler {
         // Compute the cell count from the window size and initialize state.
         // Exclude the tab bar (top) and status bar (bottom 1 cell) from the area.
         let size = window.inner_size();
+        let cell_w_init = self.app.font.cell_width();
         let cell_h_init = self.app.font.cell_height();
         let tab_bar_h_init = if self.app.config.tab_bar.enabled {
             self.app.config.tab_bar.height as f32
@@ -158,10 +159,31 @@ impl EventHandler {
         let status_bar_h_init = cell_h_init;
         let pad_x = self.app.config.window.padding_x as f32;
         let pad_y = self.app.config.window.padding_y as f32;
-        let cols = ((size.width as f32 - pad_x * 2.0) / self.app.font.cell_width()).max(1.0) as u16;
-        let rows = ((size.height as f32 - tab_bar_h_init - status_bar_h_init - pad_y * 2.0)
-            / cell_h_init)
-            .max(1.0) as u16;
+        let (cols, rows) = compute_grid_cells(
+            size,
+            cell_w_init,
+            cell_h_init,
+            tab_bar_h_init,
+            status_bar_h_init,
+            pad_x,
+            pad_y,
+        );
+        // Phase 1 (UI 4-tasks) diagnostic: surfaces the requested vs. observed
+        // initial size and resulting grid so the "windows lags inner_size"
+        // case becomes visible in nexterm-client.log without trace-level on.
+        info!(
+            "Initial grid {}x{} from inner_size {}x{} (cell={}x{}, tab_bar_h={}, status_bar_h={}, pad_x={}, pad_y={})",
+            cols,
+            rows,
+            size.width,
+            size.height,
+            cell_w_init,
+            cell_h_init,
+            tab_bar_h_init,
+            status_bar_h_init,
+            pad_x,
+            pad_y,
+        );
         self.app.state.resize(cols, rows);
 
         self.window = Some(Arc::clone(&window));
@@ -230,6 +252,13 @@ impl EventHandler {
                     session_name: "main".to_string(),
                 });
                 let _ = conn.send_tx.try_send(ClientToServer::Resize { cols, rows });
+                // Phase 1 (UI 4-tasks) diagnostic: records exactly what cols/rows
+                // we attached with so the log can distinguish "client computed
+                // wrong" from "server applied wrong".
+                info!(
+                    "try_connect attached and sent Resize cols={} rows={}",
+                    cols, rows
+                );
                 self.connection = Some(conn);
                 // P1-A diagnostic: report how long the offline streak lasted so we can
                 // tell "connected immediately" from "took 30 s of background retries".
@@ -314,6 +343,52 @@ impl EventHandler {
                     w.request_redraw();
                 }
             }
+        }
+
+        // Phase 1 (UI 4-tasks, 2026-06-12): on the first frame after the
+        // connection is established, recompute cols/rows from the *current*
+        // `inner_size()` and resync if it drifted from what `on_resumed`
+        // cached. See the `initial_size_synced` field doc-comment for the
+        // root-cause analysis. Idempotent: runs exactly once per process.
+        if !self.initial_size_synced
+            && self.connection.is_some()
+            && let Some(window) = self.window.as_ref().cloned()
+        {
+            let size = window.inner_size();
+            let cell_w = self.app.font.cell_width();
+            let cell_h = self.app.font.cell_height();
+            let tab_bar_h = if self.app.config.tab_bar.enabled {
+                self.app.config.tab_bar.height as f32
+            } else {
+                0.0
+            };
+            let status_bar_h = cell_h;
+            let pad_x = self.app.config.window.padding_x as f32;
+            let pad_y = self.app.config.window.padding_y as f32;
+            let (cols, rows) =
+                compute_grid_cells(size, cell_w, cell_h, tab_bar_h, status_bar_h, pad_x, pad_y);
+            let prev_cols = self.app.state.cols;
+            let prev_rows = self.app.state.rows;
+            if cols != prev_cols || rows != prev_rows {
+                info!(
+                    "Initial size drift detected: state was {}x{} but inner_size {}x{} maps to {}x{}; resyncing",
+                    prev_cols, prev_rows, size.width, size.height, cols, rows,
+                );
+                self.app.state.resize(cols, rows);
+                if let Some(conn) = &self.connection {
+                    let _ = conn.send_tx.try_send(ClientToServer::Resize { cols, rows });
+                }
+                window.request_redraw();
+            } else {
+                tracing::debug!(
+                    "Initial size sync: state {}x{} matches window {}x{} (no resize)",
+                    prev_cols,
+                    prev_rows,
+                    size.width,
+                    size.height
+                );
+            }
+            self.initial_size_synced = true;
         }
 
         // Poll server messages and update state.
@@ -597,5 +672,119 @@ impl EventHandler {
             }
         }
         window.request_redraw();
+    }
+}
+
+/// Compute the grid dimensions (cols, rows) from a physical window size, font
+/// metrics, and chrome heights. Extracted from `on_resumed` and the initial
+/// size-drift sync so both go through the exact same formula. Pure function —
+/// covered by the tests below.
+///
+/// All inputs are in physical pixels. `cell_w` / `cell_h` come from
+/// `FontManager` and reflect the current DPI scale; the chrome heights
+/// (`tab_bar_h`, `status_bar_h`) and `pad_x` / `pad_y` likewise come from the
+/// config in pixel units. Result is clamped to a minimum of (1, 1) cells so a
+/// zero-sized window does not produce a zero-cell grid that the VT layer would
+/// reject.
+pub(super) fn compute_grid_cells(
+    size: PhysicalSize<u32>,
+    cell_w: f32,
+    cell_h: f32,
+    tab_bar_h: f32,
+    status_bar_h: f32,
+    pad_x: f32,
+    pad_y: f32,
+) -> (u16, u16) {
+    let cols = ((size.width as f32 - pad_x * 2.0) / cell_w).max(1.0) as u16;
+    let rows =
+        ((size.height as f32 - tab_bar_h - status_bar_h - pad_y * 2.0) / cell_h).max(1.0) as u16;
+    (cols, rows)
+}
+
+#[cfg(test)]
+mod compute_grid_cells_tests {
+    use super::*;
+
+    /// 1280x800 with a 10x20 cell, 28 px tab bar, and 20 px status bar (= cell_h)
+    /// is the default-launch shape. Verifies the routine reproduces the cols/rows
+    /// the renderer normally settles on without any padding.
+    #[test]
+    fn default_launch_size() {
+        let (cols, rows) = compute_grid_cells(
+            PhysicalSize::new(1280, 800),
+            10.0,
+            20.0,
+            28.0,
+            20.0,
+            0.0,
+            0.0,
+        );
+        assert_eq!(cols, 128);
+        // (800 - 28 - 20) / 20 = 37.6 → 37
+        assert_eq!(rows, 37);
+    }
+
+    /// Confirms padding shrinks the usable area on both axes symmetrically.
+    #[test]
+    fn padding_reduces_usable_area() {
+        let (cols, rows) = compute_grid_cells(
+            PhysicalSize::new(1280, 800),
+            10.0,
+            20.0,
+            28.0,
+            20.0,
+            8.0,
+            12.0,
+        );
+        // width:  (1280 - 16) / 10 = 126.4 → 126
+        assert_eq!(cols, 126);
+        // height: (800 - 28 - 20 - 24) / 20 = 36.4 → 36
+        assert_eq!(rows, 36);
+    }
+
+    /// A 0x0 window must still produce a (1, 1) grid: the VT layer treats a
+    /// zero-cell dimension as invalid, and the drift-sync path would otherwise
+    /// send a malformed Resize during a minimize.
+    #[test]
+    fn zero_size_clamps_to_one() {
+        let (cols, rows) =
+            compute_grid_cells(PhysicalSize::new(0, 0), 10.0, 20.0, 28.0, 20.0, 0.0, 0.0);
+        assert_eq!(cols, 1);
+        assert_eq!(rows, 1);
+    }
+
+    /// The chrome budget can exceed window height (very small windows / large
+    /// tab bar). Result must still floor to 1 row, not panic or wrap.
+    #[test]
+    fn chrome_larger_than_window_clamps() {
+        let (cols, rows) =
+            compute_grid_cells(PhysicalSize::new(200, 30), 10.0, 20.0, 28.0, 20.0, 0.0, 0.0);
+        assert_eq!(cols, 20);
+        assert_eq!(rows, 1);
+    }
+
+    /// Tab bar disabled (`tab_bar_h = 0`) should give back the rows freed up by
+    /// the missing chrome — same width as `default_launch_size` but more rows.
+    #[test]
+    fn tab_bar_disabled_yields_more_rows() {
+        let (_, rows_with) = compute_grid_cells(
+            PhysicalSize::new(1280, 800),
+            10.0,
+            20.0,
+            28.0,
+            20.0,
+            0.0,
+            0.0,
+        );
+        let (_, rows_without) = compute_grid_cells(
+            PhysicalSize::new(1280, 800),
+            10.0,
+            20.0,
+            0.0,
+            20.0,
+            0.0,
+            0.0,
+        );
+        assert!(rows_without > rows_with);
     }
 }

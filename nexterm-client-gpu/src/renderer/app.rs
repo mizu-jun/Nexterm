@@ -105,6 +105,11 @@ impl NextermApp {
             // P1-A reconnect diagnostics — reset on every successful connect.
             connect_failure_count: 0,
             connect_failure_started_at: None,
+            // Phase 1 (UI 4-tasks): initial-size drift sync runs once after
+            // the first successful connect; see EventHandler doc-comment.
+            initial_size_synced: false,
+            // Phase 5 (UI 4-tasks): no drop has happened yet.
+            last_file_drop_at: None,
         }
     }
 }

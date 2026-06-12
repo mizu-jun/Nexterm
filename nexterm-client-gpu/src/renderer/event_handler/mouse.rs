@@ -331,6 +331,22 @@ impl EventHandler {
             }
         }
 
+        // Phase 3 (UI 4-tasks, 2026-06-12): if a title-bar drag is in flight,
+        // update the panel's drag offset before any other hit-tests so the
+        // rendered position tracks the cursor on this frame. `update_drag` is
+        // a no-op when no drag is active, so the unconditional call is cheap.
+        {
+            let fx = position.x as f32;
+            let fy = position.y as f32;
+            let sp = &mut self.app.state.settings_panel;
+            if sp.is_dragging() {
+                sp.update_drag(fx, fy);
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+            }
+        }
+
         // While dragging a settings-panel slider, update the value live.
         {
             let fx = position.x as f32;
@@ -510,7 +526,18 @@ impl EventHandler {
                             _ => {}
                         }
                     }
-                    SettingsPanelHit::TitleBar | SettingsPanelHit::PanelBackground => {
+                    SettingsPanelHit::TitleBar => {
+                        // Phase 3 (UI 4-tasks, 2026-06-12): pressing the title
+                        // bar starts a drag-to-move. The actual offset update
+                        // happens in `on_cursor_moved`, and `on_mouse_left_released`
+                        // ends the drag — same pattern as the slider drag right
+                        // above. We capture `cursor_position` (already in
+                        // physical pixels) as the grab anchor.
+                        let fx = px as f32;
+                        let fy = py as f32;
+                        self.app.state.settings_panel.start_drag(fx, fy);
+                    }
+                    SettingsPanelHit::PanelBackground => {
                         // Other clicks inside the panel → do nothing.
                     }
                 }
@@ -686,6 +713,27 @@ impl EventHandler {
                                 current_screen_pos: screen_pos,
                             });
                         }
+                    } else {
+                        // Phase 4 (UI 4-tasks, 2026-06-12): the press landed in
+                        // the tab bar but missed every interactive element
+                        // (no tab, no settings button, no `[×]`, no `[↗]`). Treat
+                        // it as a "grab the window" affordance the same way most
+                        // native title bars do, so the user can reposition the
+                        // window even when `WindowDecorations::None` hides the OS
+                        // title bar.
+                        //
+                        // The pane body is intentionally excluded above (text
+                        // selection lives there). Errors from `drag_window` are
+                        // swallowed: backends that do not implement it (Wayland
+                        // before xdg-shell drag, headless tests) should simply
+                        // be a no-op rather than crash. winit's contract is that
+                        // calling this during a pressed button starts an OS-driven
+                        // drag-move loop that ends when the button is released —
+                        // we therefore do *not* need an `on_mouse_left_released`
+                        // counterpart for it.
+                        if let Some(w) = &self.window {
+                            let _ = w.drag_window();
+                        }
                     }
                 }
                 return; // Do not pass tab-bar clicks to the terminal.
@@ -713,6 +761,16 @@ impl EventHandler {
         if self.app.state.settings_panel.drag_slider.take().is_some() {
             let _ = self.app.state.settings_panel.save_to_toml();
             self.app.state.settings_panel.dirty = false;
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+        }
+
+        // Phase 3 (UI 4-tasks, 2026-06-12): end any in-flight title-bar drag.
+        // `end_drag` only clears the anchor — the accumulated `drag_offset`
+        // sticks until the panel closes, so the new position persists.
+        if self.app.state.settings_panel.is_dragging() {
+            self.app.state.settings_panel.end_drag();
             if let Some(w) = &self.window {
                 w.request_redraw();
             }

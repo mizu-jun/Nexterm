@@ -56,10 +56,24 @@ impl EventHandler {
         // Panel dimensions (same formula as `build_settings_panel_verts`).
         let panel_w = (sw * 0.72).min(sw - cell_w * 4.0);
         let panel_h = (sh * 0.75).min(sh - cell_h * 4.0);
-        let px = (sw - panel_w) / 2.0;
+        let base_x = (sw - panel_w) / 2.0;
         let eased = sp.eased_progress();
         let slide_offset = (1.0 - eased) * 16.0;
-        let py = (sh - panel_h) / 2.0 + slide_offset;
+        let base_y = (sh - panel_h) / 2.0 + slide_offset;
+        // Phase 3 (UI 4-tasks, 2026-06-12): mirror the drag offset + clamp
+        // from `build_settings_panel_verts` so the hit-test stays aligned with
+        // the rendered panel even after the user drags it.
+        let title_h_for_clamp = cell_h * 1.4;
+        let (px, py) = crate::settings_panel::clamp_panel_position(
+            base_x,
+            base_y,
+            panel_w,
+            panel_h,
+            sw,
+            sh,
+            title_h_for_clamp,
+            sp.drag_offset,
+        );
 
         let sidebar_w = cell_w * 18.0;
         let content_x = px + sidebar_w;

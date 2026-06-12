@@ -215,6 +215,32 @@ pub struct EventHandler {
     /// the current offline streak. `None` while connected. Used to report the
     /// total offline duration once the connection finally succeeds.
     pub(super) connect_failure_started_at: Option<Instant>,
+    /// Phase 5 (UI 4-tasks, 2026-06-12): timestamp of the most recent
+    /// `WindowEvent::DroppedFile` event.
+    ///
+    /// winit delivers one event per dropped file even when the user drops
+    /// several files at once, so we batch them in time. If a new drop arrives
+    /// within `FILE_DROP_BATCH_WINDOW` of the previous one, the formatted path
+    /// is prefixed with a single space so the resulting command line looks
+    /// like `file1 file2 file3` instead of a concatenated `file1file2file3`.
+    /// `None` until the first drop occurs in this process.
+    pub(super) last_file_drop_at: Option<Instant>,
+    /// Phase 1 (UI 4-tasks, 2026-06-12): whether the post-connect "initial size
+    /// drift sync" pass has run.
+    ///
+    /// `on_resumed` derives the initial cols/rows from `window.inner_size()`
+    /// *immediately* after creating the window with `with_visible(false)` +
+    /// `with_inner_size(1280x800)`. On Windows + winit 0.30 the very first
+    /// `inner_size()` reading sometimes lags behind the requested size, and
+    /// because the actual size matches the request, no `WindowEvent::Resized`
+    /// is delivered to correct it. The terminal then stays pinned at the PTY
+    /// default of 80x24 and the un-tiled portion of the surface renders as
+    /// grey. After the IPC connection comes up, this flag triggers a single
+    /// idempotent recompute: if the real `inner_size()` now disagrees with the
+    /// cached `state.cols/rows`, we resize the state and forward the new size
+    /// to the server. Set to `true` after the first attempt regardless of
+    /// whether a drift was found.
+    pub(super) initial_size_synced: bool,
 }
 
 impl EventHandler {
@@ -509,6 +535,12 @@ impl ApplicationHandler<UserEvent> for EventHandler {
             }
             WindowEvent::RedrawRequested => {
                 self.on_redraw_requested();
+            }
+            WindowEvent::DroppedFile(path) => {
+                // Phase 5 (UI 4-tasks, 2026-06-12): the user dropped a file
+                // onto the window — paste its (quoted if needed) path into
+                // the focused pane.
+                self.on_dropped_file(path);
             }
             _ => {}
         }
