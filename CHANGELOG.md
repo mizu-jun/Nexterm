@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.6] - 2026-06-20
+
+PATCH release bundling five small client-side UX fixes reported on 2026-06-09. No protocol or snapshot changes (PROTOCOL_VERSION = 8, SNAPSHOT_VERSION = 4).
+
+### Fixed
+
+- **Initial grid drift on Windows + winit 0.30** (`event_handler/lifecycle.rs`): the first `window.inner_size()` returned after `with_visible(false)` + `with_inner_size(1280x800)` sometimes lags the requested size, and because the eventual size matches the request no `WindowEvent::Resized` fires. The terminal stayed pinned at the PTY default of 80×24 and the un-tiled portion rendered as grey. An idempotent post-connect resync now recomputes cols/rows from the live `inner_size()` on the first frame after the IPC channel comes up and resizes the state + notifies the server when it differs. Pure helper `compute_grid_cells` extracted with 5 unit tests.
+
+- **Settings panel translucent backdrop** (`overlay/settings.rs`): when the main window used `background_opacity < 1.0` or Windows 11 Acrylic, the area around the settings panel stayed translucent so the desktop bled through and the panel felt non-modal. A full-screen `surface_0` scrim is now drawn behind the panel chrome only while the panel is open. The terminal's own transparency is intentionally left alone.
+
+### Added
+
+- **Settings panel drag-to-move** (`settings_panel.rs`, `overlay/settings.rs`, `event_handler/settings_panel_hit.rs`, `event_handler/mouse.rs`): pressing the panel's title bar grabs it; cursor movement updates a cumulative `drag_offset`; release ends the drag. Position is clamped via the pure `clamp_panel_position` (6 unit tests + 3 lifecycle tests) so the panel stays fully visible horizontally and keeps at least the title bar onscreen vertically. `close()` resets the offset so the next open returns to centered. Renderer and hit-test share the clamp function, so visual position and click regions never drift apart.
+
+- **Tab-bar drag-to-move-window** (`event_handler/mouse.rs`): clicking empty space in the tab bar (no tab, no Settings button, no `[×]`, no `[↗]`) now starts the OS-driven window move loop via `winit::Window::drag_window()`, matching native title-bar behaviour. The pane body remains excluded so text selection is unaffected. `drag_window`'s `Result` is swallowed; backends without support simply no-op.
+
+- **File-drop paste** (`event_handler/window.rs`, `event_handler/mod.rs`): `WindowEvent::DroppedFile` is now handled. Each dropped path is formatted via the pure `format_dropped_path` (6 unit tests) — wrapped in double quotes when it contains whitespace or a literal `"`, with embedded `"` escaped as `\"`; Windows backslashes are preserved verbatim for PowerShell. Paths are sent through the existing `ClientToServer::PasteText` channel so bracketed paste applies automatically. Drops within 500 ms of the previous one prepend a single space, giving `file1 file2 file3` for multi-file drops.
+
+### Tests
+
+- 20 new unit tests across `compute_grid_cells`, `clamp_panel_position`, settings-panel lifecycle, and `format_dropped_path`.
+
 ## [1.9.5] - 2026-06-08
 
 PATCH release fixing the real root cause of the "PowerShell renders blank on Windows" symptom: the VT parser silently dropped every Device Attributes / Device Status Report query, and there was no path for the parser to reply at all. PowerShell + PSReadLine queries the terminal on startup and waits for the reply before drawing the prompt, so on Windows ConPTY pwsh would emit a short escape-sequence preamble and then hang forever. PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are unchanged.
