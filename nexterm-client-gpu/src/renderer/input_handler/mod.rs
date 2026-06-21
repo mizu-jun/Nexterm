@@ -46,6 +46,12 @@ impl EventHandler {
             return self.handle_consent_dialog_key(code);
         }
 
+        // Phase 2c-4: while the block-name modal is open it consumes every key
+        // (Enter commits, Esc cancels, Backspace edits, printable chars append).
+        if self.app.state.block_name_modal.is_open {
+            return self.handle_block_name_modal_key(code);
+        }
+
         // Sprint 5-9 Phase 4-6: while the close-window confirmation dialog is
         // open it also consumes every key (same priority as the consent dialog).
         if self.app.state.close_window_dialog.is_some() {
@@ -82,6 +88,14 @@ impl EventHandler {
                     let _ = clipboard.set_text(text);
                 }
             }
+            return true;
+        }
+
+        // Ctrl+Shift+L: open the block-name modal for the currently-selected
+        // block. Silently consumes the chord when nothing is selected (no
+        // surprise "L" reaching the shell, mirrors the Ctrl+Shift+R path).
+        if ctrl && shift && code == WKeyCode::KeyL {
+            let _ = self.app.state.open_block_name_modal();
             return true;
         }
 
@@ -1010,6 +1024,40 @@ impl EventHandler {
             }
         }
         false
+    }
+
+    /// Handle a key while the block-name modal is open (Phase 2c-4).
+    ///
+    /// Mapping:
+    /// - `Enter` → commit and close
+    /// - `Escape` → cancel and close (no store change)
+    /// - `Backspace` → erase one character
+    /// - any printable character → append (the modal enforces the length cap)
+    /// - everything else → consumed silently so the focused pane never sees
+    ///   stray keystrokes while the modal is in front
+    pub(super) fn handle_block_name_modal_key(&mut self, code: WKeyCode) -> bool {
+        match code {
+            WKeyCode::Enter => {
+                let _ = self.app.state.commit_block_name_modal();
+            }
+            WKeyCode::Escape => {
+                self.app.state.block_name_modal.close();
+            }
+            WKeyCode::Backspace => {
+                self.app.state.block_name_modal.pop_char();
+            }
+            other => {
+                if let Some(ch) = winit_code_to_char(other) {
+                    let shifted = if self.modifiers.shift_key() {
+                        ch.to_ascii_uppercase()
+                    } else {
+                        ch
+                    };
+                    self.app.state.block_name_modal.push_char(shifted);
+                }
+            }
+        }
+        true
     }
 
     /// Forward a key input to the server-side PTY

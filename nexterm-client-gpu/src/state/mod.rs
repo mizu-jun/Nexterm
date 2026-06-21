@@ -288,6 +288,12 @@ pub struct ClientState {
     /// Windows). Mutations write back atomically through `NamedBlockStore::save`.
     #[allow(dead_code)] // consumed by the palette / name-modal wiring in Phase 2b
     pub named_blocks: crate::named_blocks::NamedBlockStore,
+    /// Block-name input modal (Phase 2c-4).
+    ///
+    /// Opened with `Ctrl+Shift+L` while a block is selected and dismissed via
+    /// `Esc` / `Enter`. While `is_open` is true the input-handler routes most
+    /// key events through the modal so the focused pane does not receive them.
+    pub block_name_modal: blocks::BlockNameModal,
 }
 
 /// Response payload for `QueryForegroundProcess` (Sprint 5-8 Phase 4-5)
@@ -454,6 +460,8 @@ impl ClientState {
             // Command-blocks Phase 2a: per-session block UI state.
             selected_block: None,
             named_blocks: crate::named_blocks::NamedBlockStore::load(),
+            // Command-blocks Phase 2c-4: block-name input modal.
+            block_name_modal: blocks::BlockNameModal::default(),
         }
     }
 

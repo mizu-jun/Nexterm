@@ -24,6 +24,95 @@ use crate::command_blocks::{
     BlockId, CommandBlock, find_block_by_id, next_block_id, prev_block_id, sanitize_replay_command,
 };
 
+/// Maximum number of characters allowed in a block name.
+///
+/// The store itself does not enforce a cap, but the modal does so a stray
+/// "hold-down-the-key" cannot grow the name to absurd lengths or push the
+/// JSON file past sane sizes.
+const MAX_BLOCK_NAME_LEN: usize = 64;
+
+/// Text-input modal for assigning / editing the name of the selected block.
+///
+/// Modelled on `host_manager::PasswordModal` but stripped of secret-handling
+/// machinery: the name is plain user-facing text, intentionally persisted to
+/// `named_blocks.json`, so there is no zeroize / keyring path here. The modal
+/// only carries UI state; the actual persistence is driven by
+/// [`ClientState::commit_block_name_modal`].
+#[derive(Debug, Default)]
+pub struct BlockNameModal {
+    /// Whether the modal is currently visible. The renderer / input handler
+    /// gates its drawing and key-consumption on this flag.
+    pub is_open: bool,
+    /// Block being renamed. `None` outside an open session.
+    pub target_block: Option<BlockId>,
+    /// Current text buffer (never longer than [`MAX_BLOCK_NAME_LEN`]).
+    input: String,
+    /// Latest validation error (set on commit attempt with an empty name etc.).
+    pub error: Option<String>,
+}
+
+impl BlockNameModal {
+    /// Open the modal for `block_id`, pre-filling the buffer with `current_name`.
+    pub fn open_for(&mut self, block_id: BlockId, current_name: Option<&str>) {
+        self.is_open = true;
+        self.target_block = Some(block_id);
+        self.input.clear();
+        if let Some(name) = current_name {
+            self.input.push_str(name);
+            if self.input.chars().count() > MAX_BLOCK_NAME_LEN {
+                // Truncate gracefully if the stored name predates the cap.
+                let truncated: String = self.input.chars().take(MAX_BLOCK_NAME_LEN).collect();
+                self.input = truncated;
+            }
+        }
+        self.error = None;
+    }
+
+    /// Close the modal and discard any in-flight text.
+    pub fn close(&mut self) {
+        self.is_open = false;
+        self.target_block = None;
+        self.input.clear();
+        self.error = None;
+    }
+
+    /// Append a character if the cap allows it. Returns `true` when the buffer
+    /// actually changed (used by the renderer to flag a redraw).
+    pub fn push_char(&mut self, ch: char) -> bool {
+        if !self.is_open {
+            return false;
+        }
+        // Drop ASCII controls; the name is meant to be human-readable.
+        if (ch as u32) < 0x20 || ch == '\u{7f}' {
+            return false;
+        }
+        if self.input.chars().count() >= MAX_BLOCK_NAME_LEN {
+            return false;
+        }
+        self.input.push(ch);
+        true
+    }
+
+    /// Delete the last character. Returns `true` when something was removed.
+    pub fn pop_char(&mut self) -> bool {
+        if !self.is_open {
+            return false;
+        }
+        self.input.pop().is_some()
+    }
+
+    /// Read the current buffer (read-only view).
+    pub fn input(&self) -> &str {
+        &self.input
+    }
+
+    /// Take ownership of the current buffer, leaving the modal with an empty
+    /// input but otherwise unchanged.
+    pub fn take_input(&mut self) -> String {
+        std::mem::take(&mut self.input)
+    }
+}
+
 /// Convert a row of `Cell`s back to a printable string.
 ///
 /// Mirrors `scrollback::Scrollback::line_to_string` (kept private over there).
@@ -163,6 +252,40 @@ impl ClientState {
             .end_row
             .unwrap_or_else(|| pane.scrollback.len().saturating_sub(1));
         extract_rows(pane, block.prompt_row, end_row)
+    }
+
+    /// Open [`BlockNameModal`] for the currently-selected block.
+    ///
+    /// Returns `true` when the modal was actually opened. Fails (returns
+    /// `false`) when nothing is selected or when the focused pane has no
+    /// matching block.
+    pub fn open_block_name_modal(&mut self) -> bool {
+        let Some(block) = self.selected_command_block().map(|b| b.id) else {
+            return false;
+        };
+        let current = self.named_blocks.get(block).map(|s| s.to_string());
+        self.block_name_modal.open_for(block, current.as_deref());
+        true
+    }
+
+    /// Commit the modal's text to the persistent store and close it.
+    ///
+    /// Empty / whitespace-only input is interpreted as "remove this name"
+    /// (consistent with [`NamedBlockStore::set`]). The modal closes whether or
+    /// not the store changed; the boolean return value reflects only the
+    /// underlying state change.
+    pub fn commit_block_name_modal(&mut self) -> bool {
+        let Some(id) = self.block_name_modal.target_block else {
+            self.block_name_modal.close();
+            return false;
+        };
+        let name = self.block_name_modal.take_input();
+        let changed = self.named_blocks.set(id, &name);
+        if changed {
+            self.named_blocks.save();
+        }
+        self.block_name_modal.close();
+        changed
     }
 
     /// Extract the **command line** of the currently-selected block, sanitised
@@ -482,6 +605,121 @@ mod tests {
     fn selected_block_replay_rejects_embedded_escape() {
         let state = pane_with_rows(&["ls\u{1b}[31m", "out"], 1, 0, 1);
         assert!(state.selected_block_replay_command().is_none());
+    }
+
+    // ---- BlockNameModal (Phase 2c-4) ----
+
+    #[test]
+    fn modal_starts_closed() {
+        let modal = BlockNameModal::default();
+        assert!(!modal.is_open);
+        assert!(modal.target_block.is_none());
+        assert!(modal.input().is_empty());
+    }
+
+    #[test]
+    fn modal_open_for_prefills_current_name() {
+        let mut modal = BlockNameModal::default();
+        modal.open_for(7, Some("deploy"));
+        assert!(modal.is_open);
+        assert_eq!(modal.target_block, Some(7));
+        assert_eq!(modal.input(), "deploy");
+    }
+
+    #[test]
+    fn modal_open_for_truncates_oversized_prefill() {
+        let mut modal = BlockNameModal::default();
+        let long = "x".repeat(MAX_BLOCK_NAME_LEN + 50);
+        modal.open_for(1, Some(&long));
+        assert_eq!(modal.input().chars().count(), MAX_BLOCK_NAME_LEN);
+    }
+
+    #[test]
+    fn modal_push_char_respects_cap() {
+        let mut modal = BlockNameModal::default();
+        modal.open_for(1, None);
+        for _ in 0..MAX_BLOCK_NAME_LEN {
+            assert!(modal.push_char('a'));
+        }
+        assert!(!modal.push_char('a'), "cap should reject additional chars");
+        assert_eq!(modal.input().chars().count(), MAX_BLOCK_NAME_LEN);
+    }
+
+    #[test]
+    fn modal_push_char_drops_controls() {
+        let mut modal = BlockNameModal::default();
+        modal.open_for(1, None);
+        assert!(!modal.push_char('\x1b'));
+        assert!(!modal.push_char('\u{7f}'));
+        assert!(!modal.push_char('\n'));
+        assert!(modal.input().is_empty());
+    }
+
+    #[test]
+    fn modal_pop_char_removes_last() {
+        let mut modal = BlockNameModal::default();
+        modal.open_for(1, Some("abc"));
+        assert!(modal.pop_char());
+        assert_eq!(modal.input(), "ab");
+    }
+
+    #[test]
+    fn modal_close_resets_state() {
+        let mut modal = BlockNameModal::default();
+        modal.open_for(1, Some("temp"));
+        modal.close();
+        assert!(!modal.is_open);
+        assert!(modal.target_block.is_none());
+        assert!(modal.input().is_empty());
+    }
+
+    #[test]
+    fn open_block_name_modal_succeeds_only_with_selection() {
+        let _g = StoreEnvGuard::new("open-modal-no-selection");
+        let mut state = pane_with_rows(&["$ ls", "x"], 1, 0, 1);
+        state.selected_block = None;
+        assert!(!state.open_block_name_modal());
+        assert!(!state.block_name_modal.is_open);
+
+        state.selected_block = Some(1);
+        assert!(state.open_block_name_modal());
+        assert!(state.block_name_modal.is_open);
+        assert_eq!(state.block_name_modal.target_block, Some(1));
+    }
+
+    #[test]
+    fn open_block_name_modal_prefills_existing_name() {
+        let _g = StoreEnvGuard::new("open-modal-prefill");
+        let mut state = pane_with_rows(&["$ ls", "x"], 1, 0, 1);
+        state.named_blocks.set(1, "deploy");
+        assert!(state.open_block_name_modal());
+        assert_eq!(state.block_name_modal.input(), "deploy");
+    }
+
+    #[test]
+    fn commit_block_name_modal_persists_and_closes() {
+        let _g = StoreEnvGuard::new("commit-modal");
+        let mut state = pane_with_rows(&["$ ls", "x"], 1, 0, 1);
+        assert!(state.open_block_name_modal());
+        for ch in "build".chars() {
+            state.block_name_modal.push_char(ch);
+        }
+        assert!(state.commit_block_name_modal());
+        assert!(!state.block_name_modal.is_open);
+        assert_eq!(state.named_blocks.get(1), Some("build"));
+    }
+
+    #[test]
+    fn commit_with_empty_input_removes_name() {
+        let _g = StoreEnvGuard::new("commit-empty");
+        let mut state = pane_with_rows(&["$ ls", "x"], 1, 0, 1);
+        state.named_blocks.set(1, "existing");
+        assert!(state.open_block_name_modal());
+        // Clear the input
+        while state.block_name_modal.pop_char() {}
+        assert!(state.commit_block_name_modal());
+        assert!(!state.block_name_modal.is_open);
+        assert!(state.named_blocks.get(1).is_none());
     }
 
     #[test]
