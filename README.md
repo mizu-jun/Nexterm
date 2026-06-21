@@ -78,6 +78,15 @@ For full release history, see [CHANGELOG.md](CHANGELOG.md).
 - **Tab bar** — WezTerm-style tab bar with pane labels and `❯` separators
 - **Copy mode** — Vim-style text selection (Ctrl+[, hjkl, v, y)
 
+### Command Blocks (Warp-style)
+- **OSC 133 prompt markers** — When the shell emits OSC 133 A/B/C/D sequences, Nexterm folds each prompt → command → output → exit-code span into an addressable `CommandBlock`
+- **Block-aware navigation** — `Ctrl+Shift+ArrowUp/ArrowDown` jumps between prompts *and* updates the selected block
+- **Block copy** — With a block selected, `Ctrl+Shift+C` copies command + output as a unit (falls back to grid copy with no selection)
+- **Block replay** — `Ctrl+Shift+R` re-runs the selected block's command line; defensive sanitiser rejects ESC / BEL / CSI / embedded newlines so a hostile SSH peer cannot weaponise the path
+- **Named blocks** — `Ctrl+Shift+L` opens a rename modal; assignments persist to `~/.local/state/nexterm/named_blocks.json` (atomic write, mode 0600, LRU-capped at 10 000 entries)
+- **Visual overlay** — Left status border (green / red / grey for success / failure / running) and selection tint, rendered in scrollback view; status badge glyphs and the in-grid path follow once on-device verification is available
+- **Compatible** — Shares the OSC 133 protocol with WezTerm, kitty, and Ghostty; see [`docs/shell-integration.md`](docs/shell-integration.md) for bash / zsh / fish snippets
+
 ### Configuration & Automation
 - **Lua + TOML config** — TOML for defaults, Lua for dynamic overrides; hot-reload on save
 - **Keybinding customization** — Execute custom actions on key combinations

@@ -238,6 +238,19 @@ VtParser
 | Sixel | Decode DCS `q` sequence | `ImagePlaced { rgba, width, height, col, row }` |
 | Kitty | Decode APC `G` sequence | Same as above |
 
+### OSC 133 Semantic Marks (Sprint 5-2 / B1)
+
+`Screen` also records OSC 133 prompt-markers (`A` / `B` / `C` / `D`) as
+`SemanticMark { row, kind, exit_code }`. `row` is the scrollback-absolute
+index at the moment the mark arrived, mirroring the `prompt_anchors` list.
+Marks drain through `Screen::take_semantic_marks()` and ship as
+`ServerToClient::SemanticMark` per OSC sequence — there is no per-row
+diff for them.
+
+The client folds the mark stream into `CommandBlock` records and uses
+them to drive the Warp-style command-blocks UI (see "Command Blocks" in
+the GPU Client section).
+
 ---
 
 ## GPU Client (nexterm-client-gpu)
@@ -326,6 +339,48 @@ CopyModeState
 
 URL detection is performed by `detect_urls_in_row()`, which scans for URLs starting with `https://` or `http://` and returns them as `DetectedUrl { row, col_start, col_end, url }`.
 On Ctrl+Click, `find_url_at(col, row)` locates any URL at the click position and opens it in the OS default browser.
+
+### Command Blocks
+
+The Warp-style block UI is layered on top of the OSC 133 stream
+described under "OSC 133 Semantic Marks". The data flow stays inside
+the client:
+
+```
+ServerToClient::SemanticMark  (already shipped in v1.x)
+        │
+        ▼
+PaneState
+  ├── marks: Vec<SemanticMark>          (capped at 8 192)
+  └── blocks: Vec<CommandBlock>         (derived view — pure function)
+
+ClientState
+  ├── selected_block: Option<BlockId>
+  ├── named_blocks: NamedBlockStore     (~/.local/state/nexterm/named_blocks.json)
+  └── block_name_modal: BlockNameModal
+```
+
+The derivation `extract_command_blocks(pane_id, marks) → Vec<CommandBlock>`
+lives in `nexterm-client-gpu/src/command_blocks.rs` and is a side-effect-
+free fold. The renderer pulls `compute_block_overlay_lines(blocks,
+selected, visible_top, visible_rows)` from the same module to get the
+mapping onto the viewport (signed `visual_row_start` / `visual_row_end`
+so blocks that extend above the viewport still render their tail).
+
+The replay path is intentionally narrow: `sanitize_replay_command()`
+rejects ESC / BEL / CSI / DEL / embedded newlines before the command
+ever reaches `ClientToServer::PasteText`, so a hostile SSH peer cannot
+turn captured output into a fresh attack vector.
+
+`BlockId = (pane_id as u64) << 32 | (prompt_row as u32 as u64)` —
+unique within a session until the absolute row counter wraps past
+`u32::MAX`. Renames persist atomically with mode 0600; the store is
+LRU-evicted at 10 000 entries.
+
+The renderer overlay (`build_block_overlay_verts` in
+`renderer/grid_verts.rs`) paints a left status border + selection tint
+during scrollback view; in-grid rendering and status badge glyphs land
+together with on-device verification.
 
 ---
 
