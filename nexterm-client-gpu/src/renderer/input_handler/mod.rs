@@ -63,13 +63,45 @@ impl EventHandler {
             return true;
         }
 
-        // Ctrl+Shift+C: copy the visible grid of the focused pane to the clipboard
+        // Ctrl+Shift+C: copy to the clipboard.
+        //
+        // Phase 2c of the command-blocks feature makes this block-aware: when a
+        // block is currently selected on the focused pane, the clipboard gets
+        // that block (prompt row through the end row) instead of the entire
+        // visible grid. With no selection the original Sprint 5-2 behaviour
+        // (copy the whole grid) is preserved.
         if ctrl && shift && code == WKeyCode::KeyC {
-            if let Some(pane) = self.app.state.focused_pane() {
+            let block_text = self.app.state.selected_block_text();
+            if let Some(text) = block_text {
+                if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                    let _ = clipboard.set_text(text);
+                }
+            } else if let Some(pane) = self.app.state.focused_pane() {
                 let text = grid_to_text(pane);
                 if let Ok(mut clipboard) = arboard::Clipboard::new() {
                     let _ = clipboard.set_text(text);
                 }
+            }
+            return true;
+        }
+
+        // Ctrl+Shift+R: replay the selected block's command line.
+        //
+        // Reads `command_row..output_row` from scrollback, runs it through
+        // `sanitize_replay_command` (rejects ESC / BEL / CSI / embedded
+        // newlines), and pushes the result followed by `\n` into the focused
+        // pane via the existing `PasteText` path. A `None` result (no
+        // selection, stale block, sanitiser rejected the content) is a no-op
+        // but still consumes the chord so the shell never sees a stray "R".
+        if ctrl && shift && code == WKeyCode::KeyR {
+            if let Some(cmd) = self.app.state.selected_block_replay_command()
+                && let Some(conn) = &self.connection
+            {
+                let mut payload = cmd;
+                payload.push('\n');
+                let _ = conn
+                    .send_tx
+                    .try_send(ClientToServer::PasteText { text: payload });
             }
             return true;
         }

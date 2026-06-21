@@ -16,10 +16,46 @@
 
 #![allow(dead_code)]
 
+use nexterm_proto::Cell;
+
 use super::ClientState;
+use super::pane::PaneState;
 use crate::command_blocks::{
-    BlockId, CommandBlock, find_block_by_id, next_block_id, prev_block_id,
+    BlockId, CommandBlock, find_block_by_id, next_block_id, prev_block_id, sanitize_replay_command,
 };
+
+/// Convert a row of `Cell`s back to a printable string.
+///
+/// Mirrors `scrollback::Scrollback::line_to_string` (kept private over there).
+/// Trailing whitespace is trimmed so that "ls\n        " comes back as "ls".
+fn cells_to_string(line: &[Cell]) -> String {
+    line.iter()
+        .map(|c| c.ch)
+        .collect::<String>()
+        .trim_end()
+        .to_string()
+}
+
+/// Read the scrollback rows in `start_row..=end_row` and join them with `\n`.
+///
+/// Rows that fall outside the live scrollback (e.g. because the ring has
+/// rotated past them) are silently skipped. The function returns `None` when
+/// not a single row inside the range survives in scrollback.
+fn extract_rows(pane: &PaneState, start_row: usize, end_row: usize) -> Option<String> {
+    if end_row < start_row {
+        return None;
+    }
+    let mut lines = Vec::with_capacity(end_row - start_row + 1);
+    for row in start_row..=end_row {
+        if let Some(cells) = pane.scrollback.get(row) {
+            lines.push(cells_to_string(cells));
+        }
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    Some(lines.join("\n"))
+}
 
 impl ClientState {
     /// Resolve the block that is currently selected in the focused pane.
@@ -108,6 +144,54 @@ impl ClientState {
     pub fn selected_block_name(&self) -> Option<&str> {
         let id = self.selected_block?;
         self.named_blocks.get(id)
+    }
+
+    /// Build the clipboard payload for the currently-selected block.
+    ///
+    /// The string covers `prompt_row..=end_row` (or `prompt_row..=scrollback
+    /// tail` for a still-running block) on the focused pane, joined with `\n`.
+    /// Trailing per-line whitespace is trimmed via [`cells_to_string`].
+    ///
+    /// Returns `None` when nothing is selected, no pane is focused, the
+    /// referenced block is no longer present in the block list, or every row
+    /// in the range has already rotated out of scrollback.
+    pub fn selected_block_text(&self) -> Option<String> {
+        let pane = self.focused_pane()?;
+        let id = self.selected_block?;
+        let block = find_block_by_id(&pane.blocks, id)?;
+        let end_row = block
+            .end_row
+            .unwrap_or_else(|| pane.scrollback.len().saturating_sub(1));
+        extract_rows(pane, block.prompt_row, end_row)
+    }
+
+    /// Extract the **command line** of the currently-selected block, sanitised
+    /// for safe re-injection into the PTY.
+    ///
+    /// The command is read from `command_row..output_row` on the focused pane.
+    /// When `B` was not emitted (`command_row == output_row`) the prompt row
+    /// itself is used as a fallback, which usually carries the full
+    /// "`$ command`" string — sanitise then strips the prompt prefix only
+    /// where it does not contain control characters (defensive: see
+    /// [`sanitize_replay_command`]).
+    ///
+    /// Returns `None` for any of: no selection, focused pane gone, missing
+    /// scrollback rows, empty result, embedded control bytes, or embedded
+    /// newlines (which would mean replay re-runs every captured line).
+    pub fn selected_block_replay_command(&self) -> Option<String> {
+        let pane = self.focused_pane()?;
+        let id = self.selected_block?;
+        let block = find_block_by_id(&pane.blocks, id)?;
+
+        // Prefer the explicit command range. If `B` was missing we treat the
+        // entire prompt row as the user's input and let the sanitiser decide.
+        let (start, end_inclusive) = if block.command_row == block.output_row {
+            (block.command_row, block.command_row)
+        } else {
+            (block.command_row, block.output_row.saturating_sub(1))
+        };
+        let raw = extract_rows(pane, start, end_inclusive)?;
+        sanitize_replay_command(&raw)
     }
 }
 
@@ -297,6 +381,114 @@ mod tests {
         assert!(state.selected_block_name().is_none());
         // Second remove is a no-op.
         assert!(!state.remove_selected_block_name());
+    }
+
+    // ---- Block text extraction (Phase 2c-2/3) ----
+
+    /// Build a `Cell`-row from a `&str`, padded to `width` blanks.
+    fn row(text: &str, width: usize) -> Vec<nexterm_proto::Cell> {
+        let mut cells: Vec<nexterm_proto::Cell> = text
+            .chars()
+            .map(|ch| nexterm_proto::Cell {
+                ch,
+                ..nexterm_proto::Cell::default()
+            })
+            .collect();
+        while cells.len() < width {
+            cells.push(nexterm_proto::Cell::default());
+        }
+        cells
+    }
+
+    /// Construct a focused-pane state with the given rows pushed to scrollback
+    /// and a single complete block spanning rows 0..=`last_row`.
+    fn pane_with_rows(
+        rows: &[&str],
+        block_id: u64,
+        command_row: usize,
+        output_row: usize,
+    ) -> ClientState {
+        let mut state = ClientState::new(80, 24, 1024);
+        let mut pane = PaneState::new(80, 24, 1024);
+        for line in rows {
+            pane.scrollback.push_line(row(line, 80));
+        }
+        pane.blocks = vec![CommandBlock {
+            id: block_id,
+            pane_id: 1,
+            prompt_row: 0,
+            command_row,
+            output_row,
+            end_row: Some(rows.len() - 1),
+            exit_code: Some(0),
+            collapsed: false,
+        }];
+        state.panes.insert(1, pane);
+        state.focused_pane_id = Some(1);
+        state.selected_block = Some(block_id);
+        state
+    }
+
+    #[test]
+    fn selected_block_text_joins_rows_with_newlines() {
+        let state = pane_with_rows(&["$ ls", "foo.txt", "bar.txt"], 1, 0, 1);
+        let text = state.selected_block_text().expect("block text");
+        assert_eq!(text, "$ ls\nfoo.txt\nbar.txt");
+    }
+
+    #[test]
+    fn selected_block_text_returns_none_without_selection() {
+        let mut state = pane_with_rows(&["$ ls", "x"], 1, 0, 1);
+        state.selected_block = None;
+        assert!(state.selected_block_text().is_none());
+    }
+
+    #[test]
+    fn selected_block_text_returns_none_when_block_is_stale() {
+        let mut state = pane_with_rows(&["$ ls", "x"], 1, 0, 1);
+        // Point at a block that doesn't exist on the pane.
+        state.selected_block = Some(0xDEAD_BEEF);
+        assert!(state.selected_block_text().is_none());
+    }
+
+    #[test]
+    fn selected_block_text_trims_trailing_padding() {
+        // The fixture pads to width 80; trimming should drop the trailing spaces.
+        let state = pane_with_rows(&["$ echo hi", "hi"], 1, 0, 1);
+        let text = state.selected_block_text().unwrap();
+        assert!(
+            !text.contains("  "),
+            "no double-spaces should leak from padding"
+        );
+    }
+
+    #[test]
+    fn selected_block_replay_uses_command_row_only() {
+        // command_row=0, output_row=1 → replay reads only row 0.
+        let state = pane_with_rows(&["ls -la", "file1", "file2"], 1, 0, 1);
+        let cmd = state.selected_block_replay_command().expect("replay");
+        assert_eq!(cmd, "ls -la");
+    }
+
+    #[test]
+    fn selected_block_replay_falls_back_to_prompt_when_b_missing() {
+        // Shell omits `B`: command_row == output_row → replay reads that single row.
+        let state = pane_with_rows(&["$ pwd", "/home/me"], 1, 0, 0);
+        let cmd = state.selected_block_replay_command().expect("replay");
+        assert_eq!(cmd, "$ pwd");
+    }
+
+    #[test]
+    fn selected_block_replay_rejects_embedded_escape() {
+        let state = pane_with_rows(&["ls\u{1b}[31m", "out"], 1, 0, 1);
+        assert!(state.selected_block_replay_command().is_none());
+    }
+
+    #[test]
+    fn selected_block_replay_returns_none_without_selection() {
+        let mut state = pane_with_rows(&["echo hi", "hi"], 1, 0, 1);
+        state.selected_block = None;
+        assert!(state.selected_block_replay_command().is_none());
     }
 
     #[test]
