@@ -311,6 +311,21 @@ impl WgpuState {
                     &mut text_verts,
                     &mut text_idx,
                 );
+                // Phase 2c-1: paint command-block left border + selection
+                // tint over the scrollback view. Pure no-op when disabled or
+                // when the pane has no blocks recorded.
+                self.build_block_overlay_verts(
+                    pane,
+                    state.selected_block,
+                    &config.blocks,
+                    sw,
+                    sh,
+                    cell_w,
+                    cell_h,
+                    grid_offset_y,
+                    &mut bg_verts,
+                    &mut bg_idx,
+                );
             } else {
                 // ---- Normal grid display ----
                 self.build_grid_verts(
@@ -674,6 +689,23 @@ impl WgpuState {
         }
         if state.host_manager.password_modal.is_some() {
             self.build_password_modal_verts(
+                state,
+                &tokens,
+                sw,
+                sh,
+                cell_w,
+                cell_h,
+                font,
+                atlas,
+                &mut bg_verts,
+                &mut bg_idx,
+                &mut text_verts,
+                &mut text_idx,
+            );
+        }
+        // Phase 2c-4: block-name input modal.
+        if state.block_name_modal.is_open {
+            self.build_block_name_modal_verts(
                 state,
                 &tokens,
                 sw,

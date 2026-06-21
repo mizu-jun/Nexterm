@@ -648,4 +648,124 @@ impl WgpuState {
             text_idx,
         );
     }
+
+    /// Build vertices for the block-name input modal (Phase 2c-4 / 2c-1).
+    ///
+    /// Mirrors `build_password_modal_verts` but stripped of secret-handling
+    /// and "remember" toggles: the modal only carries a plain text buffer
+    /// for naming a command block. The frame is centred on the canvas.
+    /// Drawing is gated by `state.block_name_modal.is_open`.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::renderer) fn build_block_name_modal_verts(
+        &self,
+        state: &ClientState,
+        tokens: &nexterm_config::DesignTokens,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
+        font: &mut FontManager,
+        atlas: &mut GlyphAtlas,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
+    ) {
+        if !state.block_name_modal.is_open {
+            return;
+        }
+
+        let pw = 44.0 * cell_w;
+        let ph = 5.0 * cell_h;
+        let px = (sw - pw) / 2.0;
+        let py = (sh - ph) / 2.0;
+
+        // Panel chrome.
+        draw_overlay_panel(px, py, pw, ph, tokens, 4.0, 6.0, sw, sh, bg_verts, bg_idx);
+        // Top accent stripe in the same hue as block selection.
+        add_px_rect(
+            px,
+            py,
+            pw,
+            2.0,
+            tokens.accent_primary,
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
+
+        // Title.
+        let title = nexterm_i18n::t("block-modal-title");
+        add_string_verts(
+            &title,
+            px + cell_w,
+            py + cell_h * 0.15,
+            tokens.accent_primary,
+            true,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
+        );
+
+        // Input field with a trailing underscore caret.
+        let prompt = format!("> {}_", state.block_name_modal.input());
+        add_string_verts(
+            &prompt,
+            px + cell_w,
+            py + cell_h * 1.3,
+            tokens.text_primary,
+            false,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
+        );
+
+        // Help line.
+        let help = nexterm_i18n::t("block-modal-help");
+        add_string_verts(
+            &help,
+            px + cell_w,
+            py + cell_h * 2.8,
+            tokens.text_muted,
+            false,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
+        );
+
+        // Error message (if any).
+        if let Some(err) = &state.block_name_modal.error {
+            add_string_verts(
+                err,
+                px + cell_w,
+                py + cell_h * 3.6,
+                tokens.semantic_error,
+                false,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
+            );
+        }
+    }
 }

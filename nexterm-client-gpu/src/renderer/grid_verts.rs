@@ -331,6 +331,104 @@ impl WgpuState {
         }
     }
 
+    /// Phase 2c-1 (command-blocks): paint left-border + selection tint for
+    /// each block visible inside the current scrollback view.
+    ///
+    /// Scope of this initial implementation:
+    /// - **Only invoked while the pane is in scrollback mode**
+    ///   (`pane.scroll_offset > 0`). The normal grid display uses block ids
+    ///   that have not yet been pushed to scrollback, which would require
+    ///   a different coordinate translation; that case lands in a later
+    ///   iteration once on-device verification is available.
+    /// - Draws only the left N-pixel border (where N comes from
+    ///   `BlocksConfig.effective_border_width_px()`) plus a faint full-row
+    ///   tint for the selected block. Status badges (`✓` / `✗` / `●`) are
+    ///   deferred because their precise glyph placement needs visual
+    ///   calibration.
+    /// - Gated by `BlocksConfig.enabled`; returns immediately when false.
+    ///
+    /// Colour mapping:
+    /// - `BlockStatus::Success` → green
+    /// - `BlockStatus::Failure` → red
+    /// - `BlockStatus::Running` → grey
+    ///
+    /// The selected block additionally receives a low-alpha row-wide tint
+    /// using the same hue so a glance reveals both *what* is highlighted
+    /// and *why*.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn build_block_overlay_verts(
+        &self,
+        pane: &crate::state::PaneState,
+        selected_block: Option<crate::command_blocks::BlockId>,
+        config: &nexterm_config::BlocksConfig,
+        sw: f32,
+        sh: f32,
+        _cell_w: f32,
+        cell_h: f32,
+        y_offset: f32,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+    ) {
+        if !config.enabled || pane.blocks.is_empty() {
+            return;
+        }
+        // Only the scrollback display path is supported in this first cut.
+        if pane.scroll_offset == 0 {
+            return;
+        }
+
+        let visible_rows = ((sh - y_offset - cell_h) / cell_h).max(0.0) as u16;
+        if visible_rows == 0 {
+            return;
+        }
+        let visible_top = pane.scroll_offset;
+
+        let lines = crate::command_blocks::compute_block_overlay_lines(
+            &pane.blocks,
+            selected_block,
+            visible_top,
+            visible_rows,
+        );
+        if lines.is_empty() {
+            return;
+        }
+
+        let border_w = config.effective_border_width_px() as f32;
+        let grid_w = sw; // tint spans the entire grid
+
+        for line in lines {
+            // Clip start / end to the viewport in row units.
+            let start_row = line.visual_row_start.max(0) as f32;
+            let end_row_excl = ((line.visual_row_end + 1).max(0) as f32).min(visible_rows as f32);
+            if end_row_excl <= start_row {
+                continue;
+            }
+            let py = start_row * cell_h + y_offset;
+            let h = (end_row_excl - start_row) * cell_h;
+
+            let (mut r, mut g, mut b) = match line.status {
+                crate::command_blocks::BlockStatus::Success => (0.20, 0.75, 0.30),
+                crate::command_blocks::BlockStatus::Failure => (0.85, 0.25, 0.25),
+                crate::command_blocks::BlockStatus::Running => (0.55, 0.55, 0.55),
+            };
+            // Subtly brighten the border for the selected block.
+            if line.selected {
+                r = (r * 1.2_f32).min(1.0);
+                g = (g * 1.2_f32).min(1.0);
+                b = (b * 1.2_f32).min(1.0);
+            }
+            let border_color = [r, g, b, 0.95];
+            add_px_rect(0.0, py, border_w, h, border_color, sw, sh, bg_verts, bg_idx);
+
+            // Full-row tint for the selected block (low alpha so the text
+            // underneath stays readable).
+            if line.selected {
+                let tint = [r, g, b, 0.10];
+                add_px_rect(0.0, py, grid_w, h, tint, sw, sh, bg_verts, bg_idx);
+            }
+        }
+    }
+
     /// Multi-pane variant: draw the grid inside the given layout rectangle.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn build_grid_verts_in_rect(
