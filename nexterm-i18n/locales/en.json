@@ -76,5 +76,7 @@
   "context-menu-close-this-os-window": "Close this window only",
   "palette-detach-to-new-window": "Detach Current Tab to New Window",
   "palette-close-os-window": "Close This OS Window",
-  "tab-tearout-button-tooltip": "Detach to new window"
+  "tab-tearout-button-tooltip": "Detach to new window",
+  "block-modal-title": "Name this block",
+  "block-modal-help": "Enter: save  Esc: cancel  (empty input removes the name)"
 }

@@ -76,5 +76,7 @@
   "context-menu-close-this-os-window": "Cerrar solo esta ventana",
   "palette-detach-to-new-window": "Separar la pestaña actual a una nueva ventana",
   "palette-close-os-window": "Cerrar esta ventana del SO",
-  "tab-tearout-button-tooltip": "Separar a nueva ventana"
+  "tab-tearout-button-tooltip": "Separar a nueva ventana",
+  "block-modal-title": "Nombrar este bloque",
+  "block-modal-help": "Enter: guardar  Esc: cancelar  (entrada vacía elimina el nombre)"
 }

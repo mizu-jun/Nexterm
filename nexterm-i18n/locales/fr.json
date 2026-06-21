@@ -76,5 +76,7 @@
   "context-menu-close-this-os-window": "Fermer uniquement cette fenêtre",
   "palette-detach-to-new-window": "Détacher l'onglet courant vers une nouvelle fenêtre",
   "palette-close-os-window": "Fermer cette fenêtre OS",
-  "tab-tearout-button-tooltip": "Détacher vers une nouvelle fenêtre"
+  "tab-tearout-button-tooltip": "Détacher vers une nouvelle fenêtre",
+  "block-modal-title": "Nommer ce bloc",
+  "block-modal-help": "Entrée : enregistrer  Échap : annuler  (entrée vide supprime le nom)"
 }

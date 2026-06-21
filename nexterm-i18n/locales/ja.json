@@ -76,5 +76,7 @@
   "context-menu-close-this-os-window": "このウィンドウだけ閉じる",
   "palette-detach-to-new-window": "現在のタブを新規ウィンドウに分離",
   "palette-close-os-window": "この OS ウィンドウを閉じる",
-  "tab-tearout-button-tooltip": "新規ウィンドウに分離"
+  "tab-tearout-button-tooltip": "新規ウィンドウに分離",
+  "block-modal-title": "ブロック名を入力",
+  "block-modal-help": "Enter: 保存  Esc: 取消  （空入力で名前を削除）"
 }

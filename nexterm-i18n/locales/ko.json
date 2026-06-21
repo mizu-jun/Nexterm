@@ -76,5 +76,7 @@
   "context-menu-close-this-os-window": "이 창만 닫기",
   "palette-detach-to-new-window": "현재 탭을 새 창으로 분리",
   "palette-close-os-window": "이 OS 창 닫기",
-  "tab-tearout-button-tooltip": "새 창으로 분리"
+  "tab-tearout-button-tooltip": "새 창으로 분리",
+  "block-modal-title": "이 블록 이름 지정",
+  "block-modal-help": "Enter: 저장  Esc: 취소  (빈 입력은 이름을 제거)"
 }

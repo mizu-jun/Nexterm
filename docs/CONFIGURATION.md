@@ -473,6 +473,33 @@ end
 
 ---
 
+### `[blocks]` — Command Blocks (Warp-style block UI)
+
+Drives the Warp-style block overlay rendered alongside the grid when the
+shell emits OSC 133 prompt sequences. See
+[`shell-integration.md`](shell-integration.md) for the bash / zsh / fish
+prompt snippets needed to enable the underlying markers; without them
+this whole section is a no-op.
+
+```toml
+[blocks]
+enabled = true            # Master switch; set to false to skip the overlay pass
+border_width_px = 2       # Left-border width in pixels (clamped to 1..=8)
+show_exit_code_badge = true  # Reserve for the on-screen ✓ / ✗ / ● badge (renderer support lands later)
+```
+
+| Key | Type | Default | Notes |
+|-----|------|---------|-------|
+| `enabled` | `bool` | `true` | When `false` the renderer skips the block overlay entirely |
+| `border_width_px` | `u8` | `2` | Clamped to the range `1..=8` at draw time |
+| `show_exit_code_badge` | `bool` | `true` | Forward-compat flag; the glyph badge ships once on-device verification is available |
+
+Named blocks are stored at `~/.local/state/nexterm/named_blocks.json`
+(`%APPDATA%\nexterm\named_blocks.json` on Windows) with atomic write +
+mode 0600, capped at 10 000 entries.
+
+---
+
 ### `[[serial]]` — Serial Port Connection
 
 Serial port settings used by `ConnectSerial` in the command palette can be entered directly in the connection dialog or specified via the protocol.

@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Command Blocks (Warp-style block UI)
+
+Folds the existing OSC 133 `SemanticMark` stream (Sprint 5-2 / B1) into
+addressable command blocks and surfaces them in the UI. The feature is
+gated by the new `[blocks]` section in `config.toml`; with OSC 133
+disabled or unconfigured the renderer no-ops as before. No PROTOCOL or
+SNAPSHOT changes were required — the IPC and persistence machinery
+needed by the feature was already in place.
+
+- **`CommandBlock` abstraction** (`nexterm-client-gpu/src/command_blocks.rs`):
+  pure `extract_command_blocks` folder + `find_block_by_id` /
+  `next_block_id` / `prev_block_id` navigation + `BlockStatus` /
+  `compute_block_overlay_lines` for the renderer. Includes a defensive
+  `sanitize_replay_command` that rejects ESC / BEL / CSI / embedded
+  newlines so a hostile SSH peer cannot weaponise the replay path.
+- **Named-block persistence** (`nexterm-client-gpu/src/named_blocks.rs`):
+  `NamedBlockStore` at `~/.local/state/nexterm/named_blocks.json` with
+  atomic write + mode 0600 (palette_history.json pattern). Capped at
+  10 000 entries with LRU eviction.
+- **ClientState helpers** (`nexterm-client-gpu/src/state/blocks.rs`):
+  `select_next/prev_block`, `selected_command_block`,
+  `selected_block_text` (clipboard payload), `selected_block_replay_command`
+  (sanitised PTY input), `set/remove_selected_block_name`, and
+  `BlockNameModal` for the rename UI.
+- **Keybindings**:
+  - `Ctrl+Shift+ArrowUp` / `ArrowDown` now updates the block selection
+    alongside the existing prompt jump.
+  - `Ctrl+Shift+C` is block-aware: when a block is selected it copies
+    the block instead of the whole grid (falls back to grid otherwise).
+  - `Ctrl+Shift+R` replays the selected block's command line via
+    `PasteText` after the sanitiser approves it.
+  - `Ctrl+Shift+L` opens the block-name input modal (Enter saves,
+    Esc cancels, empty input removes the name).
+- **Renderer overlay** (`nexterm-client-gpu/src/renderer/grid_verts.rs`):
+  left N-px border + selection tint coloured by exit code (success =
+  green, failure = red, running = grey). Initial cut renders only while
+  the pane is in scrollback mode; the in-grid path and the status badge
+  glyph land together with on-device verification.
+- **Block-name modal frame**
+  (`nexterm-client-gpu/src/renderer/overlay/dialog.rs`): centred panel
+  with accent stripe, input echo, and a help line. Strings come from
+  `nexterm-i18n` keys `block-modal-title` / `block-modal-help`
+  (translated to all 8 locales).
+- **Configuration**: new `[blocks]` section (`enabled` /
+  `border_width_px` / `show_exit_code_badge`); `border_width_px` is
+  clamped to `1..=8` at draw time.
+- **i18n**: `block-modal-title` and `block-modal-help` added to en / ja /
+  zh-CN / ko / de / fr / es / it.
+- **Docs**: `docs/plans/blocks-implementation.md` records the phased
+  plan and `docs/shell-integration.md` documents the bash / zsh / fish
+  prompt snippets required to emit OSC 133.
+
 ## [1.9.6] - 2026-06-20
 
 PATCH release bundling five small client-side UX fixes reported on 2026-06-09. No protocol or snapshot changes (PROTOCOL_VERSION = 8, SNAPSHOT_VERSION = 4).

@@ -76,5 +76,7 @@
   "context-menu-close-this-os-window": "仅关闭此窗口",
   "palette-detach-to-new-window": "将当前标签分离到新窗口",
   "palette-close-os-window": "关闭此 OS 窗口",
-  "tab-tearout-button-tooltip": "分离到新窗口"
+  "tab-tearout-button-tooltip": "分离到新窗口",
+  "block-modal-title": "命名此块",
+  "block-modal-help": "Enter: 保存  Esc: 取消  （空输入将删除名称）"
 }

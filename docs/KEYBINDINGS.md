@@ -35,8 +35,32 @@
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+Shift+C` | Copy visible grid of focused pane to clipboard |
+| `Ctrl+Shift+C` | Copy: selected command block when one is active, otherwise the visible grid |
 | `Ctrl+Shift+V` | Paste clipboard content into focused pane |
+
+## Command Blocks (OSC 133)
+
+Available when the shell emits OSC 133 prompt markers — see
+[`shell-integration.md`](shell-integration.md) for the bash / zsh / fish
+snippets. Disable the whole feature with `[blocks] enabled = false` in
+`config.toml`.
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+Shift+ArrowUp` | Jump to previous prompt **and** select the matching block |
+| `Ctrl+Shift+ArrowDown` | Jump to next prompt **and** select the matching block |
+| `Ctrl+Shift+C` | Copy the selected block's full text (command + output) to the clipboard. Falls back to grid copy when no block is selected |
+| `Ctrl+Shift+R` | Replay the selected block's command line through the focused pane (sanitised: rejects ESC / BEL / CSI / embedded newlines) |
+| `Ctrl+Shift+L` | Open the block-name input modal for the selected block |
+
+### Block name modal
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Save the name and close (empty input removes the name) |
+| `Escape` | Cancel and close without touching the persisted store |
+| `Backspace` | Erase one character |
+| printable characters | Append (up to 64 characters; ASCII controls are dropped) |
 
 ## Copy mode (Vim-style)
 

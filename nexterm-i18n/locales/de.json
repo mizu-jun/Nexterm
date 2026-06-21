@@ -76,5 +76,7 @@
   "context-menu-close-this-os-window": "Nur dieses Fenster schließen",
   "palette-detach-to-new-window": "Aktuellen Tab in neues Fenster verschieben",
   "palette-close-os-window": "Dieses OS-Fenster schließen",
-  "tab-tearout-button-tooltip": "In neues Fenster verschieben"
+  "tab-tearout-button-tooltip": "In neues Fenster verschieben",
+  "block-modal-title": "Diesen Block benennen",
+  "block-modal-help": "Enter: Speichern  Esc: Abbrechen  (leere Eingabe entfernt den Namen)"
 }
