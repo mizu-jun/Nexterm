@@ -13,6 +13,7 @@ use super::AlertKind;
 use super::ClientState;
 use super::ForegroundProcessStatus;
 use super::pane::{FloatRect, PaneState, PlacedImage, PlacedTextSize};
+use crate::command_blocks::{SemanticMark, SemanticMarkKind, extract_command_blocks};
 
 impl ClientState {
     pub fn apply_server_message(&mut self, msg: ServerToClient) {
@@ -148,25 +149,41 @@ impl ClientState {
             }
             // OSC 133 semantic zone marks — show the latest command's exit code in the status bar,
             //   and on A (PromptStart) record an anchor for jump-to-prompt (Sprint 5-2 / B1).
+            //   Phase 1: also feed the command-blocks accumulator.
             ServerToClient::SemanticMark {
                 pane_id,
                 kind,
                 exit_code,
                 ..
             } => {
-                if kind == "A"
-                    && let Some(pane) = self.panes.get_mut(&pane_id)
-                {
-                    // Deduplicate: skip when identical to the most recent anchor
-                    let next_idx = pane.scrollback.len();
-                    if pane.prompt_anchors.last().copied() != Some(next_idx) {
-                        pane.prompt_anchors.push(next_idx);
+                if let Some(pane) = self.panes.get_mut(&pane_id) {
+                    let abs_row = pane.scrollback.len();
+
+                    if kind == "A" {
+                        // Deduplicate: skip when identical to the most recent anchor
+                        if pane.prompt_anchors.last().copied() != Some(abs_row) {
+                            pane.prompt_anchors.push(abs_row);
+                        }
+                        // Cap on retained anchors (memory DoS guard). Drop the oldest.
+                        const MAX_PROMPT_ANCHORS: usize = 1024;
+                        if pane.prompt_anchors.len() > MAX_PROMPT_ANCHORS {
+                            let excess = pane.prompt_anchors.len() - MAX_PROMPT_ANCHORS;
+                            pane.prompt_anchors.drain(..excess);
+                        }
                     }
-                    // Cap on retained anchors (memory DoS guard). Drop the oldest.
-                    const MAX_PROMPT_ANCHORS: usize = 1024;
-                    if pane.prompt_anchors.len() > MAX_PROMPT_ANCHORS {
-                        let excess = pane.prompt_anchors.len() - MAX_PROMPT_ANCHORS;
-                        pane.prompt_anchors.drain(..excess);
+
+                    if let Some(parsed) = SemanticMarkKind::from_ipc(&kind) {
+                        pane.marks.push(SemanticMark {
+                            row: abs_row,
+                            kind: parsed,
+                            exit_code,
+                        });
+                        // Soft-cap the accumulator; oldest quarter is shed.
+                        if pane.marks.len() > PaneState::MAX_SEMANTIC_MARKS {
+                            let shed = PaneState::MAX_SEMANTIC_MARKS / 4;
+                            pane.marks.drain(..shed);
+                        }
+                        pane.blocks = extract_command_blocks(pane_id, &pane.marks);
                     }
                 }
                 if kind == "D"
@@ -179,6 +196,9 @@ impl ClientState {
                         self.status_bar_text.clear();
                     }
                 }
+                // Drop a stale selection if the previously selected block has
+                // since left the scrollback (Phase 2a-2 helper).
+                self.prune_block_selection();
             }
             // Floating pane events — cache the position info, but the actual
             // rendering is implemented separately in renderer.rs.

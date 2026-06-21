@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 use nexterm_proto::Grid;
 
+use crate::command_blocks::{CommandBlock, SemanticMark};
 use crate::scrollback::Scrollback;
 
 /// Floating pane position and size information
@@ -76,6 +77,17 @@ pub struct PaneState {
     /// `jump_prev_prompt` / `jump_next_prompt` traverse this list to jump between prompts.
     /// This is approximate and can drift slightly across redraws and resizes.
     pub prompt_anchors: Vec<usize>,
+    /// OSC 133 semantic-mark accumulator (Phase 1 of the command-blocks feature).
+    ///
+    /// Each entry is recorded with `row` set to the scrollback-absolute index at
+    /// the moment the mark arrived, mirroring `prompt_anchors`. The accumulator
+    /// is bounded by [`Self::MAX_SEMANTIC_MARKS`]; once exceeded the oldest
+    /// `MAX_SEMANTIC_MARKS / 4` entries are dropped so that `BlockId`s for
+    /// recently-named blocks stay stable for as long as practical.
+    pub marks: Vec<SemanticMark>,
+    /// Derived view computed by [`crate::command_blocks::extract_command_blocks`]
+    /// over [`Self::marks`]. Recomputed whenever a new mark arrives.
+    pub blocks: Vec<CommandBlock>,
     /// True when grid content has changed since the last vertex build.
     ///
     /// Set on `FullRefresh` / `apply_diff`. Cleared by the renderer after building
@@ -84,6 +96,14 @@ pub struct PaneState {
 }
 
 impl PaneState {
+    /// Soft cap on the OSC 133 mark accumulator (memory-DoS guard).
+    ///
+    /// When the buffer grows past this, the oldest quarter is dropped. The cap
+    /// is generous enough (8 192 marks ≈ 2 048 complete blocks) that real
+    /// sessions never hit it, while keeping a hostile shell from exhausting
+    /// memory.
+    pub const MAX_SEMANTIC_MARKS: usize = 8192;
+
     // Sprint 5-11-2 Step 2-1: widened from `pub(super)` to `pub(crate)` so that
     // `accessibility::tests` can build panes manually. Production code only
     // invokes this via `apply_server_message` (state/server_message.rs).
@@ -100,6 +120,8 @@ impl PaneState {
             title: String::new(),
             cwd: None,
             prompt_anchors: Vec::new(),
+            marks: Vec::new(),
+            blocks: Vec::new(),
             content_dirty: true,
         }
     }

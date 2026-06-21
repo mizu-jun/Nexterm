@@ -5,6 +5,7 @@
 //! types via the `nexterm_config::*` re-exports.
 
 pub mod animations;
+pub mod blocks;
 pub mod color;
 pub mod font;
 pub mod gpu;
@@ -18,6 +19,7 @@ pub mod web;
 pub mod window;
 
 pub use animations::{AnimationIntensity, AnimationsConfig};
+pub use blocks::BlocksConfig;
 pub use color::{BuiltinScheme, ColorScheme, CustomPalette, SchemePalette};
 pub use font::FontConfig;
 pub use gpu::{ApiVersion, GpuConfig, PresentModeConfig, Profile};
@@ -163,6 +165,13 @@ pub struct Config {
     /// applies every change instantly (reduced-motion support).
     #[serde(default)]
     pub animations: AnimationsConfig,
+
+    /// Command-blocks UI (Phase 2 of the blocks feature). Drives the Warp-style
+    /// left border / exit-status badge overlay rendered alongside the grid when
+    /// the shell emits OSC 133 prompt sequences. Disable with `enabled = false`
+    /// to skip the overlay pass entirely.
+    #[serde(default)]
+    pub blocks: BlocksConfig,
 }
 
 fn default_leader_key() -> String {
@@ -212,6 +221,7 @@ impl Default for Config {
             leader_key: default_leader_key(),
             quake_mode: QuakeModeConfig::default(),
             animations: AnimationsConfig::default(),
+            blocks: BlocksConfig::default(),
         }
     }
 }

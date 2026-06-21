@@ -286,14 +286,21 @@ impl EventHandler {
             return true;
         }
 
-        // Ctrl+Shift+ArrowUp / ArrowDown: jump to the previous/next shell prompt (Sprint 5-2 / B1)
-        // Follows the anchors recorded by OSC 133 A (PromptStart)
+        // Ctrl+Shift+ArrowUp / ArrowDown: jump to the previous/next shell prompt (Sprint 5-2 / B1).
+        // Follows the anchors recorded by OSC 133 A (PromptStart).
+        //
+        // Phase 2b of the command-blocks feature folds block selection into the
+        // same chord: the prompt-jump call still drives the scroll, and the
+        // block selection is updated alongside so the Phase 2c renderer can
+        // highlight the currently-active block.
         if ctrl && shift && code == WKeyCode::ArrowUp {
             self.app.state.jump_prev_prompt();
+            self.app.state.select_prev_block();
             return true;
         }
         if ctrl && shift && code == WKeyCode::ArrowDown {
             self.app.state.jump_next_prompt();
+            self.app.state.select_next_block();
             return true;
         }
 

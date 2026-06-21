@@ -12,6 +12,7 @@
 mod accessibility;
 mod animations;
 mod color_util;
+mod command_blocks;
 mod connection;
 mod drop_target;
 mod font;
@@ -19,6 +20,7 @@ mod glyph_atlas;
 mod host_manager;
 mod key_map;
 mod macro_picker;
+mod named_blocks;
 mod notification;
 mod palette;
 mod platform;

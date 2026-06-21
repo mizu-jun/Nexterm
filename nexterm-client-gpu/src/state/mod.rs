@@ -22,6 +22,7 @@ use crate::macro_picker::MacroPicker;
 use crate::palette::CommandPalette;
 use crate::settings_panel::SettingsPanel;
 
+mod blocks;
 mod consent;
 mod menus;
 mod pane;
@@ -273,6 +274,20 @@ pub struct ClientState {
     /// a single slot overwritten by the latest error (never stacks). Coexists
     /// independently with `update_banner`.
     pub error_banner: Option<String>,
+    /// Currently-selected command block, used by the block UI (Phase 2a).
+    ///
+    /// Lookup is `state.panes[pane_id].blocks` keyed by `BlockId`. `None` means
+    /// nothing is selected (the renderer draws no highlight). Cleared when the
+    /// referenced block leaves the scrollback or the pane is closed.
+    #[allow(dead_code)] // consumed by the renderer / keybinding wiring in Phase 2b
+    pub selected_block: Option<crate::command_blocks::BlockId>,
+    /// Persisted store of user-assigned block names (Phase 2a).
+    ///
+    /// Loaded once on `ClientState::new` from
+    /// `~/.local/state/nexterm/named_blocks.json` (or `%APPDATA%\nexterm\…` on
+    /// Windows). Mutations write back atomically through `NamedBlockStore::save`.
+    #[allow(dead_code)] // consumed by the palette / name-modal wiring in Phase 2b
+    pub named_blocks: crate::named_blocks::NamedBlockStore,
 }
 
 /// Response payload for `QueryForegroundProcess` (Sprint 5-8 Phase 4-5)
@@ -436,6 +451,9 @@ impl ClientState {
             next_alert_seq: 0,
             // Sprint 5-12 Phase 1: banner for server-error display
             error_banner: None,
+            // Command-blocks Phase 2a: per-session block UI state.
+            selected_block: None,
+            named_blocks: crate::named_blocks::NamedBlockStore::load(),
         }
     }
 
