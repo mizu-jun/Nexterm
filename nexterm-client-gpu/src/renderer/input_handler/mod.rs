@@ -99,6 +99,22 @@ impl EventHandler {
             return true;
         }
 
+        // Ctrl+Shift+X: remove the user-assigned name from the selected
+        // block (no-op when nothing is selected or no name is set). Always
+        // consumes the chord so the shell never sees a stray "X".
+        if ctrl && shift && code == WKeyCode::KeyX {
+            let _ = self.app.state.remove_selected_block_name();
+            return true;
+        }
+
+        // Ctrl+Shift+/: toggle collapse/expand on the selected block.
+        // Running blocks are refused (state method short-circuits); the
+        // chord still gets consumed so it never reaches the shell.
+        if ctrl && shift && code == WKeyCode::Slash {
+            let _ = self.app.state.toggle_selected_block_collapse();
+            return true;
+        }
+
         // Ctrl+Shift+R: replay the selected block's command line.
         //
         // Reads `command_row..output_row` from scrollback, runs it through

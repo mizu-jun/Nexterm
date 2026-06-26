@@ -52,6 +52,8 @@ snippets. Disable the whole feature with `[blocks] enabled = false` in
 | `Ctrl+Shift+C` | Copy the selected block's full text (command + output) to the clipboard. Falls back to grid copy when no block is selected |
 | `Ctrl+Shift+R` | Replay the selected block's command line through the focused pane (sanitised: rejects ESC / BEL / CSI / embedded newlines) |
 | `Ctrl+Shift+L` | Open the block-name input modal for the selected block |
+| `Ctrl+Shift+X` | Remove the user-assigned name from the selected block |
+| `Ctrl+Shift+/` | Collapse or expand the selected block (running blocks are refused) |
 
 ### Block name modal
 

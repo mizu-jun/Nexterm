@@ -170,6 +170,37 @@ pub fn find_block_by_id(blocks: &[CommandBlock], id: BlockId) -> Option<&Command
     blocks.iter().find(|b| b.id == id)
 }
 
+/// Pure predicate: does `abs_row` sit inside a collapsed block, and is it a
+/// row that should be elided from the visible scrollback view?
+///
+/// A collapsed block is rendered as "prompt row + first output row only". So a
+/// row is elided iff:
+/// - it belongs to a block whose `collapsed == true`,
+/// - the block has a known `end_row` (running blocks are not eligible — their
+///   tail rows are still being written),
+/// - the row is strictly between the prompt row + first-output row and the end
+///   row. The prompt row and the output row themselves remain visible.
+///
+/// Pure — no allocations, no `ClientState` access.
+pub fn is_row_collapsed(blocks: &[CommandBlock], abs_row: usize) -> bool {
+    for b in blocks {
+        if !b.collapsed {
+            continue;
+        }
+        let Some(end) = b.end_row else {
+            continue;
+        };
+        if abs_row < b.prompt_row || abs_row > end {
+            continue;
+        }
+        if abs_row == b.prompt_row || abs_row == b.output_row {
+            return false;
+        }
+        return true;
+    }
+    false
+}
+
 /// Return the block ID immediately after `current` (`None` → first), or `None`
 /// when already at the end. Pure.
 pub fn next_block_id(blocks: &[CommandBlock], current: Option<BlockId>) -> Option<BlockId> {
@@ -763,6 +794,84 @@ mod tests {
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].block_id, 2);
     }
+
+    // ---- is_row_collapsed -------------------------------------------------
+
+    fn collapsed(id: u64, pane: u32, prompt: usize, output: usize, end: usize) -> CommandBlock {
+        let mut b = finished(id, pane, prompt, end, Some(0));
+        b.command_row = prompt;
+        b.output_row = output;
+        b.collapsed = true;
+        b
+    }
+
+    #[test]
+    fn is_row_collapsed_returns_false_for_empty_blocks() {
+        assert!(!is_row_collapsed(&[], 0));
+        assert!(!is_row_collapsed(&[], 999));
+    }
+
+    #[test]
+    fn is_row_collapsed_returns_false_when_block_not_collapsed() {
+        let blocks = vec![finished(1, 1, 10, 20, Some(0))];
+        for r in 10..=20 {
+            assert!(
+                !is_row_collapsed(&blocks, r),
+                "row {} should not be elided",
+                r
+            );
+        }
+    }
+
+    #[test]
+    fn is_row_collapsed_returns_false_for_running_block_even_if_collapsed() {
+        // No end_row → block still streaming output → never elide.
+        let mut b = running(1, 1, 10);
+        b.collapsed = true;
+        b.output_row = 11;
+        assert!(!is_row_collapsed(&[b], 12));
+    }
+
+    #[test]
+    fn is_row_collapsed_keeps_prompt_and_first_output_rows_visible() {
+        let blocks = vec![collapsed(1, 1, 10, 11, 20)];
+        assert!(!is_row_collapsed(&blocks, 10), "prompt row visible");
+        assert!(!is_row_collapsed(&blocks, 11), "first output row visible");
+    }
+
+    #[test]
+    fn is_row_collapsed_elides_inner_output_rows() {
+        let blocks = vec![collapsed(1, 1, 10, 11, 20)];
+        for r in 12..=20 {
+            assert!(is_row_collapsed(&blocks, r), "row {} should be elided", r);
+        }
+    }
+
+    #[test]
+    fn is_row_collapsed_ignores_rows_outside_block_range() {
+        let blocks = vec![collapsed(1, 1, 10, 11, 20)];
+        assert!(!is_row_collapsed(&blocks, 9));
+        assert!(!is_row_collapsed(&blocks, 21));
+    }
+
+    #[test]
+    fn is_row_collapsed_handles_multiple_blocks() {
+        let blocks = vec![
+            collapsed(1, 1, 0, 1, 5),
+            finished(2, 1, 10, 15, Some(0)), // not collapsed
+            collapsed(3, 1, 20, 21, 30),
+        ];
+        // First collapsed block elides rows 2..=5
+        assert!(is_row_collapsed(&blocks, 3));
+        // Middle block: not collapsed → all rows visible
+        assert!(!is_row_collapsed(&blocks, 12));
+        // Third collapsed block elides rows 22..=30
+        assert!(is_row_collapsed(&blocks, 25));
+        assert!(!is_row_collapsed(&blocks, 20));
+        assert!(!is_row_collapsed(&blocks, 21));
+    }
+
+    // ---- overlay ordering -------------------------------------------------
 
     #[test]
     fn overlay_orders_lines_in_block_order() {

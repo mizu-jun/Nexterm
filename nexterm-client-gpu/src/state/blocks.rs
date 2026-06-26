@@ -235,6 +235,33 @@ impl ClientState {
         self.named_blocks.get(id)
     }
 
+    /// Flip the `collapsed` flag on the currently-selected block.
+    ///
+    /// Only finished blocks can be collapsed: collapsing a still-running
+    /// command would hide rows that are still being written. Returns `true`
+    /// when the flag actually changed.
+    pub fn toggle_selected_block_collapse(&mut self) -> bool {
+        let Some(id) = self.selected_block else {
+            return false;
+        };
+        let Some(pane_id) = self.focused_pane_id else {
+            return false;
+        };
+        let Some(pane) = self.panes.get_mut(&pane_id) else {
+            return false;
+        };
+        let Some(block) = pane.blocks.iter_mut().find(|b| b.id == id) else {
+            return false;
+        };
+        if block.end_row.is_none() {
+            // Running blocks are not eligible for collapse.
+            return false;
+        }
+        block.collapsed = !block.collapsed;
+        pane.content_dirty = true;
+        true
+    }
+
     /// Build the clipboard payload for the currently-selected block.
     ///
     /// The string covers `prompt_row..=end_row` (or `prompt_row..=scrollback
@@ -737,5 +764,56 @@ mod tests {
         state.set_selected_block_name("temp");
         assert!(state.set_selected_block_name("   "));
         assert!(state.selected_block_name().is_none());
+    }
+
+    // ---- toggle_selected_block_collapse ----------------------------------
+
+    #[test]
+    fn toggle_collapse_returns_false_without_selection() {
+        let mut state = state_with_blocks(1, 2);
+        state.selected_block = None;
+        assert!(!state.toggle_selected_block_collapse());
+    }
+
+    #[test]
+    fn toggle_collapse_flips_flag_on_finished_block() {
+        let mut state = state_with_blocks(1, 1);
+        state.select_next_block();
+        let id = state.selected_block.expect("selected");
+        // First toggle: false → true
+        assert!(state.toggle_selected_block_collapse());
+        let pane = state.panes.get(&1).unwrap();
+        let block = pane.blocks.iter().find(|b| b.id == id).unwrap();
+        assert!(block.collapsed);
+        // Second toggle: true → false
+        assert!(state.toggle_selected_block_collapse());
+        let pane = state.panes.get(&1).unwrap();
+        let block = pane.blocks.iter().find(|b| b.id == id).unwrap();
+        assert!(!block.collapsed);
+    }
+
+    #[test]
+    fn toggle_collapse_refuses_running_block() {
+        // Running block: only an A mark, no D yet.
+        let mut state = ClientState::new(80, 24, 1024);
+        let mut pane = PaneState::new(80, 24, 1024);
+        let marks = vec![m(5, SemanticMarkKind::PromptStart, None)];
+        pane.marks = marks.clone();
+        pane.blocks = extract_command_blocks(1, &marks);
+        state.panes.insert(1, pane);
+        state.focused_pane_id = Some(1);
+        state.select_next_block();
+        assert!(state.selected_block.is_some());
+        assert!(!state.toggle_selected_block_collapse());
+        assert!(!state.panes.get(&1).unwrap().blocks[0].collapsed);
+    }
+
+    #[test]
+    fn toggle_collapse_marks_pane_content_dirty() {
+        let mut state = state_with_blocks(1, 1);
+        state.select_next_block();
+        state.panes.get_mut(&1).unwrap().content_dirty = false;
+        assert!(state.toggle_selected_block_collapse());
+        assert!(state.panes.get(&1).unwrap().content_dirty);
     }
 }

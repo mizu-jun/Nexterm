@@ -264,10 +264,18 @@ impl WgpuState {
         let visible_rows = ((sh - y_offset - cell_h) / cell_h).max(0.0) as usize;
         let offset = pane.scroll_offset;
 
-        for visual_row in 0..visible_rows {
-            let sb_row = offset + visual_row;
-            let Some(line) = pane.scrollback.get(sb_row) else {
+        // Walk scrollback rows from `offset` onward, skipping rows that fall
+        // inside a collapsed block (the inner output rows of a `collapsed = true`
+        // block — its prompt and first output row remain visible).
+        let mut visual_row = 0usize;
+        let mut sb_row = offset;
+        while visual_row < visible_rows {
+            if crate::command_blocks::is_row_collapsed(&pane.blocks, sb_row) {
+                sb_row += 1;
                 continue;
+            }
+            let Some(line) = pane.scrollback.get(sb_row) else {
+                break;
             };
             let py = visual_row as f32 * cell_h + y_offset;
             for (col, cell) in line.iter().enumerate() {
@@ -328,6 +336,8 @@ impl WgpuState {
                 ]);
                 text_idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
             }
+            visual_row += 1;
+            sb_row += 1;
         }
     }
 
@@ -716,11 +726,19 @@ impl WgpuState {
         let off_x = layout.col_offset as f32 * cell_w;
         let off_y = layout.row_offset as f32 * cell_h + tab_bar_h;
         let offset = pane.scroll_offset;
+        let visible_rows = layout.rows as usize;
 
-        for visual_row in 0..layout.rows as usize {
-            let sb_row = offset + visual_row;
-            let Some(line) = pane.scrollback.get(sb_row) else {
+        // Skip rows inside collapsed blocks; see `build_scrollback_verts` for
+        // the rationale.
+        let mut visual_row = 0usize;
+        let mut sb_row = offset;
+        while visual_row < visible_rows {
+            if crate::command_blocks::is_row_collapsed(&pane.blocks, sb_row) {
+                sb_row += 1;
                 continue;
+            }
+            let Some(line) = pane.scrollback.get(sb_row) else {
+                break;
             };
             let py = off_y + visual_row as f32 * cell_h;
             for (col, cell) in line.iter().enumerate().take(layout.cols as usize) {
@@ -780,6 +798,8 @@ impl WgpuState {
                 ]);
                 text_idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
             }
+            visual_row += 1;
+            sb_row += 1;
         }
     }
 }
