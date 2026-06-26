@@ -51,6 +51,11 @@ pub struct CommandPalette {
     matcher: SkimMatcherV2,
     /// Action history (persisted to disk).
     history: PaletteHistory,
+    /// Phase 2c-F: named-block search mode. When the query starts with `@`,
+    /// the palette switches to ranking these synthetic actions (built by the
+    /// host from `NamedBlockStore` + the focused pane's block list) instead
+    /// of the static action list. Action ids are `"BlockSelect:<u64>"`.
+    named_block_actions: Vec<PaletteAction>,
 }
 
 impl CommandPalette {
@@ -64,6 +69,7 @@ impl CommandPalette {
             selected: 0,
             matcher: SkimMatcherV2::default(),
             history: PaletteHistory::new(),
+            named_block_actions: Vec::new(),
         }
     }
 
@@ -131,10 +137,39 @@ impl CommandPalette {
 
     /// Return actions matching the query, sorted by descending score.
     ///
-    /// - Empty query: history order (`last_used` desc → `use_count` desc) → original registration order.
-    /// - Non-empty query: fuzzy score + history bonus, sorted descending.
+    /// - **`@`-prefix mode** (Phase 2c-F): when the query starts with `@`, the
+    ///   palette ranks the named-block list against the rest of the query
+    ///   (`@deploy` → fuzzy-match "deploy" against block names). History
+    ///   ranking does not apply — blocks are session-scoped, not
+    ///   action-scoped, and re-using the same `last_used_unix` heuristic
+    ///   that lives in `NamedBlockStore` itself happens at refresh time.
+    /// - **Empty query**: history order (`last_used` desc → `use_count` desc)
+    ///   → original registration order.
+    /// - **Non-empty query**: fuzzy score + history bonus, sorted descending.
     pub fn filtered(&self) -> Vec<&PaletteAction> {
-        rank_actions(&self.actions, &self.query, &self.history, &self.matcher)
+        if let Some(sub) = self.query.strip_prefix('@') {
+            // No history bonus inside @-mode: pass an empty map so ranking is
+            // pure fuzzy match. An empty `sub` returns the full named-block
+            // list in registration order (mirrors the empty-query branch
+            // above, but for blocks).
+            let empty_history = PaletteHistory::new();
+            rank_actions(
+                &self.named_block_actions,
+                sub,
+                &empty_history,
+                &self.matcher,
+            )
+        } else {
+            rank_actions(&self.actions, &self.query, &self.history, &self.matcher)
+        }
+    }
+
+    /// Phase 2c-F: replace the synthetic named-block actions used by the
+    /// `@`-prefix search. Callers (the input handler / event handler) refresh
+    /// this list whenever the palette opens, so closed-then-reopened palette
+    /// instances reflect newly-named blocks.
+    pub fn set_named_block_actions(&mut self, actions: Vec<PaletteAction>) {
+        self.named_block_actions = actions;
     }
 
     /// Record a "used" event and persist the history (Sprint 5-7 / Phase 3-3).
@@ -160,6 +195,27 @@ impl CommandPalette {
     pub fn register(&mut self, action: PaletteAction) {
         self.actions.push(action);
     }
+}
+
+/// Phase 2c-F: build the synthetic palette actions used by the `@`-prefix
+/// search. Each input pair `(BlockId, name)` becomes a `PaletteAction` whose
+/// `label` is the human name and whose `action` field encodes the block ID as
+/// `"BlockSelect:<u64>"` (the execute_action dispatcher parses that prefix).
+///
+/// Pure — no I/O. Callers should sort the input deterministically if they
+/// care about the order when the query is empty (the palette itself does not
+/// re-sort named-block actions).
+pub fn build_named_block_actions<I>(blocks: I) -> Vec<PaletteAction>
+where
+    I: IntoIterator<Item = (u64, String)>,
+{
+    blocks
+        .into_iter()
+        .map(|(id, name)| PaletteAction {
+            label: name,
+            action: format!("BlockSelect:{}", id),
+        })
+        .collect()
 }
 
 /// Return the default action list (already translated via i18n).
@@ -742,5 +798,80 @@ mod tests {
         unsafe {
             std::env::remove_var("__NEXTERM_TEST_PALETTE_HISTORY_PATH__");
         }
+    }
+
+    // ---- Phase 2c-F: @ prefix named-block search -----------------------
+
+    fn block_action(id: u64, name: &str) -> PaletteAction {
+        PaletteAction {
+            label: name.to_string(),
+            action: format!("BlockSelect:{}", id),
+        }
+    }
+
+    #[test]
+    fn build_named_block_actions_encodes_id_in_action_field() {
+        let acts = build_named_block_actions(vec![
+            (0x0000_0001_0000_000A, "deploy".to_string()),
+            (0x0000_0001_0000_0014, "tests".to_string()),
+        ]);
+        assert_eq!(acts.len(), 2);
+        assert_eq!(acts[0].label, "deploy");
+        assert_eq!(acts[0].action, "BlockSelect:4294967306");
+        assert_eq!(acts[1].action, "BlockSelect:4294967316");
+    }
+
+    #[test]
+    fn filtered_switches_to_blocks_on_at_prefix() {
+        let mut p = CommandPalette::new();
+        p.set_named_block_actions(vec![
+            block_action(1, "deploy"),
+            block_action(2, "tests"),
+            block_action(3, "lint"),
+        ]);
+        p.query = "@dep".to_string();
+        let results = p.filtered();
+        assert!(!results.is_empty(), "@dep must hit at least one block");
+        assert_eq!(results[0].label, "deploy");
+        // Static palette actions must NOT leak into @-mode results.
+        assert!(
+            results.iter().all(|a| a.action.starts_with("BlockSelect:")),
+            "block-mode results must only carry BlockSelect ids"
+        );
+    }
+
+    #[test]
+    fn filtered_at_with_empty_subquery_returns_all_named_blocks() {
+        let mut p = CommandPalette::new();
+        p.set_named_block_actions(vec![block_action(1, "deploy"), block_action(2, "tests")]);
+        p.query = "@".to_string();
+        let results = p.filtered();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn filtered_at_with_no_named_blocks_is_empty() {
+        let mut p = CommandPalette::new();
+        // No set_named_block_actions call → empty list.
+        p.query = "@anything".to_string();
+        assert!(p.filtered().is_empty());
+    }
+
+    #[test]
+    fn filtered_without_at_prefix_returns_static_actions() {
+        let mut p = CommandPalette::new();
+        p.set_named_block_actions(vec![block_action(1, "deploy")]);
+        p.query.clear();
+        let results = p.filtered();
+        assert!(
+            !results.is_empty(),
+            "empty query must still surface the default actions"
+        );
+        // No BlockSelect entries in non-@ mode.
+        assert!(
+            results
+                .iter()
+                .all(|a| !a.action.starts_with("BlockSelect:"))
+        );
     }
 }

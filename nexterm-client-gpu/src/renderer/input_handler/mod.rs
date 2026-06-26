@@ -141,6 +141,15 @@ impl EventHandler {
             if self.app.state.palette.is_open {
                 self.app.state.palette.close();
             } else {
+                // Phase 2c-F: refresh the @-prefix named-block list against
+                // the focused pane *before* opening, so the palette already
+                // has fresh data on the first keystroke.
+                let entries = self.app.state.collect_named_block_palette_entries();
+                let block_actions = crate::palette::build_named_block_actions(entries);
+                self.app
+                    .state
+                    .palette
+                    .set_named_block_actions(block_actions);
                 self.app.state.palette.open();
             }
             return true;

@@ -239,6 +239,18 @@ impl EventHandler {
                     }
                 }
             }
+            // Phase 2c-F: palette `@<name>` selection. The action id is the
+            // synthetic `BlockSelect:<u64>` string built by
+            // `palette::build_named_block_actions`. Parse the suffix and
+            // delegate to `ClientState::jump_to_block`, which both scrolls
+            // the focused pane to the block's prompt row and updates
+            // `selected_block`. Malformed suffixes (parse failure, unknown
+            // id) silently no-op.
+            other if other.starts_with("BlockSelect:") => {
+                if let Ok(id) = other["BlockSelect:".len()..].parse::<u64>() {
+                    let _ = self.app.state.jump_to_block(id);
+                }
+            }
             _ => debug!("Execute action: {}", action),
         }
     }

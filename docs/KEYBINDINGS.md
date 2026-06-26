@@ -55,6 +55,14 @@ snippets. Disable the whole feature with `[blocks] enabled = false` in
 | `Ctrl+Shift+X` | Remove the user-assigned name from the selected block |
 | `Ctrl+Shift+/` | Collapse or expand the selected block (running blocks are refused) |
 
+### Command palette `@` prefix
+
+Open the palette with `Ctrl+Shift+P` and type `@` to switch into named-block
+search. The remainder of the query is fuzzy-matched against the names
+assigned via `Ctrl+Shift+L`. Pressing `Enter` selects the block and scrolls
+the focused pane so its prompt row sits at the top of the view; the
+normal `Ctrl+Shift+R` / `Ctrl+Shift+C` shortcuts then apply.
+
 ### Block name modal
 
 | Key | Action |

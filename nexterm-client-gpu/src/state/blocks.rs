@@ -235,6 +235,62 @@ impl ClientState {
         self.named_blocks.get(id)
     }
 
+    /// Phase 2c-F: collect every block currently visible on the focused
+    /// pane that *also* has a user-assigned name. Returned as `(BlockId,
+    /// name)` pairs ordered by the block's prompt row (most recent last) so
+    /// the palette's "empty @ subquery" view feels chronological.
+    ///
+    /// Returns an empty `Vec` when no pane is focused, the pane has no
+    /// blocks, or the named-block store is empty.
+    pub fn collect_named_block_palette_entries(&self) -> Vec<(BlockId, String)> {
+        let Some(pane) = self.focused_pane() else {
+            return Vec::new();
+        };
+        if pane.blocks.is_empty() || self.named_blocks.is_empty() {
+            return Vec::new();
+        }
+        pane.blocks
+            .iter()
+            .filter_map(|b| {
+                self.named_blocks
+                    .get(b.id)
+                    .map(|name| (b.id, name.to_string()))
+            })
+            .collect()
+    }
+
+    /// Phase 2c-F: jump to a block from the `@`-prefix palette.
+    ///
+    /// Sets `selected_block` and scrolls the focused pane so that the block's
+    /// prompt row sits at the top of the viewport, mirroring the existing
+    /// `jump_prev_prompt` (`prompt_anchors`) behaviour from Sprint 5-2 / B1.
+    /// A block whose `prompt_row` is past the live grid (already on screen)
+    /// resets `scroll_offset` to `0`.
+    ///
+    /// Returns `true` when a block was found and the selection updated.
+    pub fn jump_to_block(&mut self, id: BlockId) -> bool {
+        let Some(pane_id) = self.focused_pane_id else {
+            return false;
+        };
+        let Some(pane) = self.panes.get_mut(&pane_id) else {
+            return false;
+        };
+        let Some(block) = pane.blocks.iter().find(|b| b.id == id) else {
+            return false;
+        };
+        let prompt_row = block.prompt_row;
+        let scrollback_len = pane.scrollback.len();
+        // Block prompt sits inside the live grid → return to live view.
+        // Otherwise scroll so the prompt sits at the top of the visible area.
+        pane.scroll_offset = if prompt_row >= scrollback_len {
+            0
+        } else {
+            prompt_row
+        };
+        self.selected_block = Some(id);
+        true
+    }
+
     /// Select a block by ID. Returns `true` when the selection actually
     /// changed. Used by the mouse-click path so border-clicks reach the same
     /// state mutation as the keyboard navigation does.
@@ -803,6 +859,56 @@ mod tests {
         state.set_selected_block_name("temp");
         assert!(state.set_selected_block_name("   "));
         assert!(state.selected_block_name().is_none());
+    }
+
+    // ---- Phase 2c-F: palette @ prefix --------------------------------
+
+    #[test]
+    fn collect_named_block_palette_entries_is_empty_without_focus() {
+        let state = ClientState::new(80, 24, 1024);
+        assert!(state.collect_named_block_palette_entries().is_empty());
+    }
+
+    #[test]
+    fn collect_named_block_palette_entries_filters_unnamed_blocks() {
+        let _g = StoreEnvGuard::new("collect");
+        let mut state = state_with_blocks(1, 3);
+        state.select_next_block();
+        state.set_selected_block_name("first");
+        state.select_next_block();
+        // Leave the second block unnamed.
+        state.select_next_block();
+        state.set_selected_block_name("third");
+
+        let entries = state.collect_named_block_palette_entries();
+        assert_eq!(entries.len(), 2);
+        let names: Vec<&str> = entries.iter().map(|(_, n)| n.as_str()).collect();
+        assert!(names.contains(&"first"));
+        assert!(names.contains(&"third"));
+    }
+
+    #[test]
+    fn jump_to_block_sets_selection_and_scroll() {
+        let _g = StoreEnvGuard::new("jump");
+        let mut state = state_with_blocks(1, 2);
+        // Pad the scrollback so prompt_row=0 of the first block is below
+        // scrollback.len() (forces the "scroll to row" branch).
+        let pane = state.panes.get_mut(&1).unwrap();
+        for _ in 0..40 {
+            pane.scrollback
+                .push_line(vec![nexterm_proto::Cell::default(); 80]);
+        }
+        let block_id = state.panes[&1].blocks[0].id;
+        assert!(state.jump_to_block(block_id));
+        assert_eq!(state.selected_block, Some(block_id));
+        // prompt_row of block #0 == 0, which is now in scrollback.
+        assert_eq!(state.panes[&1].scroll_offset, 0);
+    }
+
+    #[test]
+    fn jump_to_block_returns_false_for_unknown_id() {
+        let mut state = state_with_blocks(1, 2);
+        assert!(!state.jump_to_block(0xDEAD_BEEF));
     }
 
     // ---- select_block_by_id / toggle_block_collapse_by_id ----------------
