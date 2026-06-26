@@ -179,6 +179,25 @@ impl WgpuState {
                             &mut text_verts,
                             &mut text_idx,
                         );
+                        // Command-block overlay: drawn after the scrollback
+                        // text so the border + badge sit on top.
+                        self.build_block_overlay_verts_in_rect(
+                            pane,
+                            state.selected_block,
+                            &config.blocks,
+                            layout,
+                            sw,
+                            sh,
+                            cell_w,
+                            cell_h,
+                            grid_offset_y,
+                            font,
+                            atlas,
+                            &mut bg_verts,
+                            &mut bg_idx,
+                            &mut text_verts,
+                            &mut text_idx,
+                        );
                     } else {
                         // C4: check whether the cached vertex data can be reused.
                         // A cache hit requires all of: content unchanged, layout
@@ -252,7 +271,8 @@ impl WgpuState {
                                 &mut text_idx,
                             );
 
-                            // Store in cache for subsequent frames.
+                            // Store the bare grid in cache (without overlay),
+                            // so selection changes don't invalidate it.
                             self.pane_cache.insert(
                                 pane_id,
                                 PaneRenderCache {
@@ -277,6 +297,27 @@ impl WgpuState {
                                 },
                             );
                         }
+
+                        // Command-block overlay for in-grid mode. Drawn
+                        // outside the cache so selection changes refresh
+                        // instantly without invalidating the cached grid.
+                        self.build_block_overlay_verts_in_rect(
+                            pane,
+                            state.selected_block,
+                            &config.blocks,
+                            layout,
+                            sw,
+                            sh,
+                            cell_w,
+                            cell_h,
+                            grid_offset_y,
+                            font,
+                            atlas,
+                            &mut bg_verts,
+                            &mut bg_idx,
+                            &mut text_verts,
+                            &mut text_idx,
+                        );
                     }
                 }
             }
@@ -311,9 +352,9 @@ impl WgpuState {
                     &mut text_verts,
                     &mut text_idx,
                 );
-                // Phase 2c-1: paint command-block left border + selection
-                // tint over the scrollback view. Pure no-op when disabled or
-                // when the pane has no blocks recorded.
+                // Command-block left border + selection tint + status badge
+                // over the scrollback view. No-op when disabled or when the
+                // pane has no blocks recorded.
                 self.build_block_overlay_verts(
                     pane,
                     state.selected_block,
@@ -323,8 +364,12 @@ impl WgpuState {
                     cell_w,
                     cell_h,
                     grid_offset_y,
+                    font,
+                    atlas,
                     &mut bg_verts,
                     &mut bg_idx,
+                    &mut text_verts,
+                    &mut text_idx,
                 );
             } else {
                 // ---- Normal grid display ----
@@ -340,6 +385,25 @@ impl WgpuState {
                     atlas,
                     palette_ref,
                     cursor_style,
+                    &mut bg_verts,
+                    &mut bg_idx,
+                    &mut text_verts,
+                    &mut text_idx,
+                );
+                // Same overlay over the live grid: the viewport top maps to
+                // `scrollback.len()` so blocks whose end_row is None extend to
+                // the bottom of the screen (running indicator stays visible).
+                self.build_block_overlay_verts(
+                    pane,
+                    state.selected_block,
+                    &config.blocks,
+                    sw,
+                    sh,
+                    cell_w,
+                    cell_h,
+                    grid_offset_y,
+                    font,
+                    atlas,
                     &mut bg_verts,
                     &mut bg_idx,
                     &mut text_verts,

@@ -331,30 +331,25 @@ impl WgpuState {
         }
     }
 
-    /// Phase 2c-1 (command-blocks): paint left-border + selection tint for
-    /// each block visible inside the current scrollback view.
+    /// Phase 2c-1 (command-blocks): paint left-border + selection tint + a
+    /// status badge for each block visible inside the focused pane viewport.
     ///
-    /// Scope of this initial implementation:
-    /// - **Only invoked while the pane is in scrollback mode**
-    ///   (`pane.scroll_offset > 0`). The normal grid display uses block ids
-    ///   that have not yet been pushed to scrollback, which would require
-    ///   a different coordinate translation; that case lands in a later
-    ///   iteration once on-device verification is available.
-    /// - Draws only the left N-pixel border (where N comes from
-    ///   `BlocksConfig.effective_border_width_px()`) plus a faint full-row
-    ///   tint for the selected block. Status badges (`✓` / `✗` / `●`) are
-    ///   deferred because their precise glyph placement needs visual
-    ///   calibration.
+    /// Works in both display modes:
+    /// - `pane.scroll_offset > 0` (scrollback): the topmost visible row is at
+    ///   scrollback-absolute index `scroll_offset`.
+    /// - `pane.scroll_offset == 0` (live grid): the topmost visible row is at
+    ///   scrollback-absolute index `pane.scrollback.len()` — i.e. the index
+    ///   that would be assigned to the next row pushed off the screen.
+    ///
+    /// Behaviour:
+    /// - Left N-pixel border coloured by `BlockStatus` (success = green,
+    ///   failure = red, running = grey). Selected block is brightened ~20 %.
+    /// - Selected block additionally receives a low-alpha row-wide tint so a
+    ///   glance reveals both *what* is highlighted and *why*.
+    /// - When `config.show_exit_code_badge` is on and the prompt row is
+    ///   on-screen, a small glyph (`✓` / `✗` / `●`) is drawn in the right
+    ///   margin at the prompt row.
     /// - Gated by `BlocksConfig.enabled`; returns immediately when false.
-    ///
-    /// Colour mapping:
-    /// - `BlockStatus::Success` → green
-    /// - `BlockStatus::Failure` → red
-    /// - `BlockStatus::Running` → grey
-    ///
-    /// The selected block additionally receives a low-alpha row-wide tint
-    /// using the same hue so a glance reveals both *what* is highlighted
-    /// and *why*.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn build_block_overlay_verts(
         &self,
@@ -363,25 +358,116 @@ impl WgpuState {
         config: &nexterm_config::BlocksConfig,
         sw: f32,
         sh: f32,
-        _cell_w: f32,
+        cell_w: f32,
         cell_h: f32,
         y_offset: f32,
+        font: &mut FontManager,
+        atlas: &mut GlyphAtlas,
         bg_verts: &mut Vec<BgVertex>,
         bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
     ) {
-        if !config.enabled || pane.blocks.is_empty() {
-            return;
-        }
-        // Only the scrollback display path is supported in this first cut.
-        if pane.scroll_offset == 0 {
+        let visible_rows = ((sh - y_offset - cell_h) / cell_h).max(0.0) as u16;
+        self.build_block_overlay_region(
+            pane,
+            selected_block,
+            config,
+            0.0,
+            y_offset,
+            sw,
+            visible_rows,
+            sw,
+            sh,
+            cell_w,
+            cell_h,
+            font,
+            atlas,
+            bg_verts,
+            bg_idx,
+            text_verts,
+            text_idx,
+        );
+    }
+
+    /// Multi-pane variant: draw the overlay relative to the pane's layout
+    /// rectangle. Shares the inner region routine with the fallback path.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn build_block_overlay_verts_in_rect(
+        &self,
+        pane: &crate::state::PaneState,
+        selected_block: Option<crate::command_blocks::BlockId>,
+        config: &nexterm_config::BlocksConfig,
+        layout: &nexterm_proto::PaneLayout,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
+        tab_bar_h: f32,
+        font: &mut FontManager,
+        atlas: &mut GlyphAtlas,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
+    ) {
+        let off_x = layout.col_offset as f32 * cell_w;
+        let off_y = layout.row_offset as f32 * cell_h + tab_bar_h;
+        let width = layout.cols as f32 * cell_w;
+        self.build_block_overlay_region(
+            pane,
+            selected_block,
+            config,
+            off_x,
+            off_y,
+            width,
+            layout.rows,
+            sw,
+            sh,
+            cell_w,
+            cell_h,
+            font,
+            atlas,
+            bg_verts,
+            bg_idx,
+            text_verts,
+            text_idx,
+        );
+    }
+
+    /// Shared implementation: render the block overlay into an arbitrary
+    /// rectangular region of the screen.
+    #[allow(clippy::too_many_arguments)]
+    fn build_block_overlay_region(
+        &self,
+        pane: &crate::state::PaneState,
+        selected_block: Option<crate::command_blocks::BlockId>,
+        config: &nexterm_config::BlocksConfig,
+        region_x: f32,
+        region_y: f32,
+        region_width: f32,
+        visible_rows: u16,
+        sw: f32,
+        sh: f32,
+        cell_w: f32,
+        cell_h: f32,
+        font: &mut FontManager,
+        atlas: &mut GlyphAtlas,
+        bg_verts: &mut Vec<BgVertex>,
+        bg_idx: &mut Vec<u16>,
+        text_verts: &mut Vec<TextVertex>,
+        text_idx: &mut Vec<u16>,
+    ) {
+        if !config.enabled || pane.blocks.is_empty() || visible_rows == 0 {
             return;
         }
 
-        let visible_rows = ((sh - y_offset - cell_h) / cell_h).max(0.0) as u16;
-        if visible_rows == 0 {
-            return;
-        }
-        let visible_top = pane.scroll_offset;
+        // Map the viewport top to a scrollback-absolute row index.
+        let visible_top = if pane.scroll_offset > 0 {
+            pane.scroll_offset
+        } else {
+            pane.scrollback.len()
+        };
 
         let lines = crate::command_blocks::compute_block_overlay_lines(
             &pane.blocks,
@@ -394,16 +480,15 @@ impl WgpuState {
         }
 
         let border_w = config.effective_border_width_px() as f32;
-        let grid_w = sw; // tint spans the entire grid
 
         for line in lines {
-            // Clip start / end to the viewport in row units.
+            // Clip start / end to the region in row units.
             let start_row = line.visual_row_start.max(0) as f32;
             let end_row_excl = ((line.visual_row_end + 1).max(0) as f32).min(visible_rows as f32);
             if end_row_excl <= start_row {
                 continue;
             }
-            let py = start_row * cell_h + y_offset;
+            let py = start_row * cell_h + region_y;
             let h = (end_row_excl - start_row) * cell_h;
 
             let (mut r, mut g, mut b) = match line.status {
@@ -418,13 +503,68 @@ impl WgpuState {
                 b = (b * 1.2_f32).min(1.0);
             }
             let border_color = [r, g, b, 0.95];
-            add_px_rect(0.0, py, border_w, h, border_color, sw, sh, bg_verts, bg_idx);
+            add_px_rect(
+                region_x,
+                py,
+                border_w,
+                h,
+                border_color,
+                sw,
+                sh,
+                bg_verts,
+                bg_idx,
+            );
 
             // Full-row tint for the selected block (low alpha so the text
             // underneath stays readable).
             if line.selected {
                 let tint = [r, g, b, 0.10];
-                add_px_rect(0.0, py, grid_w, h, tint, sw, sh, bg_verts, bg_idx);
+                add_px_rect(
+                    region_x,
+                    py,
+                    region_width,
+                    h,
+                    tint,
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
+            }
+
+            // Status badge (✓ / ✗ / ●) in the right margin at the prompt row.
+            if config.show_exit_code_badge
+                && let Some(prow) = line.prompt_visual_row
+                && prow >= 0
+                && (prow as u16) < visible_rows
+            {
+                let badge_ch = match line.status {
+                    crate::command_blocks::BlockStatus::Success => '\u{2713}', // ✓
+                    crate::command_blocks::BlockStatus::Failure => '\u{2717}', // ✗
+                    crate::command_blocks::BlockStatus::Running => '\u{25CF}', // ●
+                };
+                let badge_color = [r, g, b, 1.0];
+                let badge_color_u8 = [(r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8, 255];
+                // Place the glyph one cell from the right edge so the border
+                // tint underneath stays visible.
+                let badge_px = region_x + region_width - cell_w * 1.5;
+                let badge_py = prow as f32 * cell_h + region_y;
+                draw_badge_glyph(
+                    &self.queue,
+                    font,
+                    atlas,
+                    badge_ch,
+                    badge_px,
+                    badge_py,
+                    cell_w,
+                    cell_h,
+                    sw,
+                    sh,
+                    badge_color,
+                    badge_color_u8,
+                    text_verts,
+                    text_idx,
+                );
             }
         }
     }
@@ -642,4 +782,79 @@ impl WgpuState {
             }
         }
     }
+}
+
+/// Rasterise a single glyph and append it to the text vertex buffer at the
+/// given pixel coordinates. Used by the command-block status badge.
+///
+/// The glyph is anchored so its baseline matches the surrounding cell row; if
+/// the rasterised size exceeds `cell_w` × `cell_h`, the excess simply extends
+/// beyond the nominal cell — acceptable for badges, which sit in the right
+/// margin away from regular text.
+#[allow(clippy::too_many_arguments)]
+fn draw_badge_glyph(
+    queue: &wgpu::Queue,
+    font: &mut FontManager,
+    atlas: &mut GlyphAtlas,
+    ch: char,
+    px: f32,
+    py: f32,
+    cell_w: f32,
+    cell_h: f32,
+    sw: f32,
+    sh: f32,
+    color: [f32; 4],
+    color_u8: [u8; 4],
+    text_verts: &mut Vec<TextVertex>,
+    text_idx: &mut Vec<u16>,
+) {
+    let is_wide = UnicodeWidthChar::width(ch).unwrap_or(1) >= 2;
+    let key = GlyphKey {
+        ch,
+        bold: true,
+        italic: false,
+        wide: is_wide,
+    };
+    let (gw, gh, pixels) = font.rasterize_char(ch, true, false, color_u8, is_wide);
+    if gw == 0 || gh == 0 || pixels.is_empty() {
+        return;
+    }
+    let rect = atlas.get_or_insert(key, &pixels, gw, gh, queue);
+
+    // Centre the glyph horizontally inside one cell, align to the cell top.
+    let glyph_w = gw as f32;
+    let glyph_h = gh as f32;
+    let x_pad = ((cell_w - glyph_w).max(0.0)) * 0.5;
+    let y_pad = ((cell_h - glyph_h).max(0.0)) * 0.5;
+    let gx = px + x_pad;
+    let gy = py + y_pad;
+
+    let tx0 = gx / sw * 2.0 - 1.0;
+    let ty0 = 1.0 - gy / sh * 2.0;
+    let tx1 = (gx + glyph_w) / sw * 2.0 - 1.0;
+    let ty1 = 1.0 - (gy + glyph_h) / sh * 2.0;
+    let base = text_verts.len() as u16;
+    text_verts.extend_from_slice(&[
+        TextVertex {
+            position: [tx0, ty0],
+            uv: rect.uv_min,
+            color,
+        },
+        TextVertex {
+            position: [tx1, ty0],
+            uv: [rect.uv_max[0], rect.uv_min[1]],
+            color,
+        },
+        TextVertex {
+            position: [tx1, ty1],
+            uv: rect.uv_max,
+            color,
+        },
+        TextVertex {
+            position: [tx0, ty1],
+            uv: [rect.uv_min[0], rect.uv_max[1]],
+            color,
+        },
+    ]);
+    text_idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
 }
