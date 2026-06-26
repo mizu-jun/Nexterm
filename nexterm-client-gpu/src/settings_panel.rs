@@ -167,6 +167,10 @@ pub enum SettingsCategory {
     Ssh,
     Keybindings,
     Profiles,
+    /// Phase 2c-G: read-only view of the `[blocks]` config section. The
+    /// values themselves are still edited through `config.toml`; making the
+    /// toggles clickable lands in a follow-up.
+    Blocks,
 }
 
 impl SettingsCategory {
@@ -178,6 +182,7 @@ impl SettingsCategory {
         SettingsCategory::Ssh,
         SettingsCategory::Keybindings,
         SettingsCategory::Profiles,
+        SettingsCategory::Blocks,
     ];
 
     pub fn label(&self) -> &str {
@@ -189,6 +194,7 @@ impl SettingsCategory {
             SettingsCategory::Ssh => "SSH",
             SettingsCategory::Keybindings => "Keybindings",
             SettingsCategory::Profiles => "Profiles",
+            SettingsCategory::Blocks => "Blocks",
         }
     }
 
@@ -201,6 +207,7 @@ impl SettingsCategory {
             SettingsCategory::Ssh => "⊞",
             SettingsCategory::Keybindings => "⌨",
             SettingsCategory::Profiles => "◉",
+            SettingsCategory::Blocks => "▤",
         }
     }
 }
@@ -395,6 +402,12 @@ pub struct SettingsPanel {
     pub language_index: usize,
     /// Whether to check for updates at startup.
     pub auto_check_update: bool,
+    /// Phase 2c-G: read-only mirror of the `[blocks]` section. Populated at
+    /// construction time so the Blocks settings page can display the active
+    /// values; interactive editing lands in a follow-up.
+    pub blocks_enabled: bool,
+    pub blocks_border_width_px: u8,
+    pub blocks_show_exit_code_badge: bool,
     /// Cursor shape (Phase 5-11-6 #6). `block` / `beam` / `underline`.
     /// On save we write back to the top-level `cursor_style` key in the TOML.
     pub cursor_style: nexterm_config::CursorStyle,
@@ -543,6 +556,9 @@ impl SettingsPanel {
             tab_rename_text: String::new(),
             language_index,
             auto_check_update: config.auto_check_update,
+            blocks_enabled: config.blocks.enabled,
+            blocks_border_width_px: config.blocks.border_width_px,
+            blocks_show_exit_code_badge: config.blocks.show_exit_code_badge,
             cursor_style: config.cursor_style.clone(),
             // `padding_x` / `padding_y` are `u32` in the config but the UI
             // clamps them to 0..=32.

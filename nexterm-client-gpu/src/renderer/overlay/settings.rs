@@ -2001,6 +2001,72 @@ impl WgpuState {
                     );
                 }
             }
+            // Phase 2c-G: read-only Blocks page. Displays the three
+            // `[blocks]` config values so the user can confirm the feature is
+            // wired up. Editing still happens through `config.toml` — making
+            // these clickable lands in a follow-up.
+            SettingsCategory::Blocks => {
+                let lines: [(&str, String); 4] = [
+                    (
+                        "Enabled",
+                        if sp.blocks_enabled { "ON" } else { "OFF" }.to_string(),
+                    ),
+                    ("Border width (px)", sp.blocks_border_width_px.to_string()),
+                    (
+                        "Status badge (✓ / ✗ / ●)",
+                        if sp.blocks_show_exit_code_badge {
+                            "ON"
+                        } else {
+                            "OFF"
+                        }
+                        .to_string(),
+                    ),
+                    (
+                        "Editing",
+                        "Edit `config.toml` → [blocks] (live-reload)".to_string(),
+                    ),
+                ];
+                for (i, (label, value)) in lines.iter().enumerate() {
+                    let y = content_top + cell_h * (0.5 + i as f32 * 1.6);
+                    add_string_verts(
+                        label,
+                        content_inner_x,
+                        y,
+                        tokens.text_secondary,
+                        false,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
+                    );
+                    // Value column: right of the label.
+                    let value_x = content_inner_x + cell_w * 26.0;
+                    let value_color = match value.as_str() {
+                        "ON" => tokens.semantic_success,
+                        "OFF" => tokens.text_muted,
+                        _ => tokens.text_primary,
+                    };
+                    add_string_verts(
+                        value,
+                        value_x,
+                        y,
+                        value_color,
+                        true,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
+                    );
+                }
+            }
         }
 
         // Bottom bar (Save / Cancel)

@@ -92,7 +92,10 @@ pub const QUICK_SELECT_LIST_ID: NodeId = NodeId(16);
 /// Category TabList of the settings panel.
 pub const SETTINGS_TABLIST_ID: NodeId = NodeId(17);
 
-// 18..24 correspond to indexes of `SettingsCategory::ALL` (see `settings_tab_id_at`).
+// Tabs for `SettingsCategory::ALL` live at `SETTINGS_TAB_BASE + idx`
+// (see `settings_tab_id_at`). Phase 2c-G moved the base from 18 to 60 so
+// the range cannot collide with `SETTINGS_CONTENT_ID = 25` once the
+// category list grew past 7 entries.
 
 /// Content container (`Group`) for the current settings panel category.
 pub const SETTINGS_CONTENT_ID: NodeId = NodeId(25);
@@ -212,10 +215,21 @@ pub const SETTINGS_KEY_DELETE_CANCEL_BTN_ID: NodeId = NodeId(56);
 /// Base NodeId for settings panel category tabs.
 ///
 /// Range: `[18, 18 + SettingsCategory::ALL.len()) = [18, 25)`. Adjacent to
-/// `SETTINGS_CONTENT_ID = 25`, but `decode_node_id`'s range match prevents collisions.
-const SETTINGS_TAB_BASE: u64 = 18;
+/// `SETTINGS_CONTENT_ID = 25` previously overlapped `settings_tab_id_at(7)`;
+/// Phase 2c-G moved the base into a non-conflicting range (see
+/// `settings_tab_id_at`).
+const SETTINGS_TAB_BASE: u64 = 60;
 
 /// Compute the NodeId of the tab for the given `SettingsCategory::ALL` index.
+///
+/// Phase 2c-G note: the tab base was previously 18, with 7 slots reserved
+/// before `SETTINGS_CONTENT_ID = 25`. Adding the Blocks category pushed
+/// idx 7 into the `SETTINGS_CONTENT_ID` slot and broke node-id uniqueness
+/// (the build_settings_panel_nodes function pushes both, and direct
+/// equality lookups returned the wrong node). The base has been moved to
+/// `60` — the gap between the `30..=39` settings-field range and the
+/// `100..=199` dialog-element range, with 40 slots of headroom for future
+/// categories.
 pub fn settings_tab_id_at(idx: usize) -> NodeId {
     NodeId(SETTINGS_TAB_BASE + idx as u64)
 }
@@ -675,7 +689,7 @@ pub enum NodeIdKind {
 /// |---|---|
 /// | 1..16 | Fixed nodes (base + overlay roots) |
 /// | 17 | `SettingsTabList` |
-/// | 18..24 | `SettingsTab { idx: id - 18 }` |
+/// | 60..99 | `SettingsTab { idx: id - 60 }` |
 /// | 25 | `SettingsContent` |
 /// | 26 | `AlertRegion` (Sprint 5-11-5) |
 /// | 27 | `PaneInputBuffer` (Phase 5-11-7) |
@@ -720,7 +734,7 @@ pub fn decode_node_id(id: NodeId) -> NodeIdKind {
         15 => NodeIdKind::CloseDialogCancel,
         16 => NodeIdKind::QuickSelectList,
         17 => NodeIdKind::SettingsTabList,
-        18..=24 => NodeIdKind::SettingsTab {
+        60..=99 => NodeIdKind::SettingsTab {
             idx: (raw - SETTINGS_TAB_BASE) as usize,
         },
         25 => NodeIdKind::SettingsContent,
@@ -1954,6 +1968,22 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
             }
             nodes.push((SETTINGS_KEY_DELETE_BTN_ID, delete_btn));
             content_children.push(SETTINGS_KEY_DELETE_BTN_ID);
+        }
+        // Phase 2c-G: read-only Blocks page. Surface the three values via
+        // AccessKit so screen-readers can announce the current state. The
+        // page itself ships without editable controls.
+        SettingsCategory::Blocks => {
+            content_description = Some(format!(
+                "Command Blocks. Enabled: {}. Border width: {} px. Status badge: {}. \
+                 Editing is currently done through config.toml under [blocks].",
+                if panel.blocks_enabled { "on" } else { "off" },
+                panel.blocks_border_width_px,
+                if panel.blocks_show_exit_code_badge {
+                    "on"
+                } else {
+                    "off"
+                },
+            ));
         }
     }
 
@@ -3513,17 +3543,21 @@ mod tests {
     #[test]
     fn decode_unknown_node_ids() {
         assert_eq!(decode_node_id(NodeId(0)), NodeIdKind::Unknown);
-        // 17 is SettingsTabList, 18..=24 are SettingsTab, 25 is SettingsContent,
+        // 17 is SettingsTabList, 25 is SettingsContent,
         // 26 is AlertRegion (assigned in Sprint 5-11-5), 27 is PaneInputBuffer (Phase 5-11-7),
         // 30..=35 are settings fields (Step 2-2-e'), 36..=39 are Phase 5-11-6 #6 settings fields,
         // 40..=44 are Phase 5-11-8 Step 8-2 SSH host fields,
         // 45..=49 are Phase 5-11-8 Step 8-3 Sub-phase D Add/Delete + delete confirmation dialog.
         // 50..=56 are Phase 5-11-9 Sub-phase E Keybindings fields + Add/Delete + dialog.
-        // 28..=29 and 57..=99 are reserved for future use.
+        // 60..=99 are SettingsTab (Phase 2c-G moved the base from 18 to 60 to make
+        // room for an 8th category without colliding with SETTINGS_CONTENT_ID = 25).
+        // 18..=24, 28..=29, 57..=59 are now unused / reserved for future use.
+        assert_eq!(decode_node_id(NodeId(18)), NodeIdKind::Unknown);
+        assert_eq!(decode_node_id(NodeId(24)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(28)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(29)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(57)), NodeIdKind::Unknown);
-        assert_eq!(decode_node_id(NodeId(99)), NodeIdKind::Unknown);
+        assert_eq!(decode_node_id(NodeId(59)), NodeIdKind::Unknown);
         // 700M..899M is reserved for future SettingsField dynamic expansion
         // (600M..700M was assigned to SettingsProfileItem in Phase 5-11-7;
         //  900M..1G is SettingsKeyBindingItem in Phase 5-11-9 Sub-phase E).
