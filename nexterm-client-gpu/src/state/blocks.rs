@@ -235,6 +235,45 @@ impl ClientState {
         self.named_blocks.get(id)
     }
 
+    /// Select a block by ID. Returns `true` when the selection actually
+    /// changed. Used by the mouse-click path so border-clicks reach the same
+    /// state mutation as the keyboard navigation does.
+    pub fn select_block_by_id(&mut self, id: BlockId) -> bool {
+        if self.selected_block == Some(id) {
+            return false;
+        }
+        // Validate that the id still exists in the focused pane.
+        let exists = self
+            .focused_pane()
+            .map(|p| p.blocks.iter().any(|b| b.id == id))
+            .unwrap_or(false);
+        if !exists {
+            return false;
+        }
+        self.selected_block = Some(id);
+        true
+    }
+
+    /// Flip the `collapsed` flag on the block with the given ID, regardless
+    /// of which block is currently selected. Used by the chevron-click path.
+    pub fn toggle_block_collapse_by_id(&mut self, id: BlockId) -> bool {
+        let Some(pane_id) = self.focused_pane_id else {
+            return false;
+        };
+        let Some(pane) = self.panes.get_mut(&pane_id) else {
+            return false;
+        };
+        let Some(block) = pane.blocks.iter_mut().find(|b| b.id == id) else {
+            return false;
+        };
+        if block.end_row.is_none() {
+            return false;
+        }
+        block.collapsed = !block.collapsed;
+        pane.content_dirty = true;
+        true
+    }
+
     /// Flip the `collapsed` flag on the currently-selected block.
     ///
     /// Only finished blocks can be collapsed: collapsing a still-running
@@ -764,6 +803,41 @@ mod tests {
         state.set_selected_block_name("temp");
         assert!(state.set_selected_block_name("   "));
         assert!(state.selected_block_name().is_none());
+    }
+
+    // ---- select_block_by_id / toggle_block_collapse_by_id ----------------
+
+    #[test]
+    fn select_block_by_id_changes_selection() {
+        let mut state = state_with_blocks(1, 3);
+        let id = state.panes[&1].blocks[1].id;
+        assert!(state.select_block_by_id(id));
+        assert_eq!(state.selected_block, Some(id));
+    }
+
+    #[test]
+    fn select_block_by_id_returns_false_when_unchanged() {
+        let mut state = state_with_blocks(1, 2);
+        let id = state.panes[&1].blocks[0].id;
+        assert!(state.select_block_by_id(id));
+        assert!(!state.select_block_by_id(id));
+    }
+
+    #[test]
+    fn select_block_by_id_returns_false_for_unknown_block() {
+        let mut state = state_with_blocks(1, 2);
+        assert!(!state.select_block_by_id(0xDEAD_BEEF));
+        assert!(state.selected_block.is_none());
+    }
+
+    #[test]
+    fn toggle_block_collapse_by_id_works_without_selection() {
+        // Mouse path: collapse via chevron on a non-selected block.
+        let mut state = state_with_blocks(1, 2);
+        let id = state.panes[&1].blocks[1].id;
+        assert!(state.selected_block.is_none(), "precondition");
+        assert!(state.toggle_block_collapse_by_id(id));
+        assert!(state.panes[&1].blocks[1].collapsed);
     }
 
     // ---- toggle_selected_block_collapse ----------------------------------

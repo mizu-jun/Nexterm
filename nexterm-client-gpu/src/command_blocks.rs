@@ -170,6 +170,55 @@ pub fn find_block_by_id(blocks: &[CommandBlock], id: BlockId) -> Option<&Command
     blocks.iter().find(|b| b.id == id)
 }
 
+/// Find the block (if any) whose row range contains `abs_row`. Returns the
+/// **first match** in `blocks`-order, which matches the renderer's "earlier
+/// block wins" convention.
+///
+/// A block "contains" `abs_row` when
+/// `b.prompt_row <= abs_row <= b.end_row.unwrap_or(usize::MAX)`. Running
+/// blocks are eligible up to the row at the bottom of the live grid (the
+/// caller is responsible for not asking about rows past the live grid).
+pub fn block_containing_row(blocks: &[CommandBlock], abs_row: usize) -> Option<&CommandBlock> {
+    for b in blocks {
+        let end = b.end_row.unwrap_or(usize::MAX);
+        if abs_row >= b.prompt_row && abs_row <= end {
+            return Some(b);
+        }
+    }
+    None
+}
+
+/// Invert the scrollback-render walk: given a `visual_row` (0-based from the
+/// top of the viewport) and the current `scroll_offset`, return the
+/// **scrollback-absolute row** that the renderer would have drawn at that
+/// position. Returns `None` when `visual_row` falls past the last actually
+/// drawn line (scrollback ran out or all remaining rows are elided).
+///
+/// The walk skips rows inside collapsed blocks, mirroring exactly what
+/// `build_scrollback_verts` does so that a click at pixel-row R maps to the
+/// abs_row that the user *sees* on that line.
+pub fn resolve_clicked_scrollback_row(
+    blocks: &[CommandBlock],
+    scrollback_len: usize,
+    scroll_offset: usize,
+    visual_row: usize,
+) -> Option<usize> {
+    let mut visual = 0usize;
+    let mut sb = scroll_offset;
+    while sb < scrollback_len {
+        if is_row_collapsed(blocks, sb) {
+            sb += 1;
+            continue;
+        }
+        if visual == visual_row {
+            return Some(sb);
+        }
+        visual += 1;
+        sb += 1;
+    }
+    None
+}
+
 /// Pure predicate: does `abs_row` sit inside a collapsed block, and is it a
 /// row that should be elided from the visible scrollback view?
 ///
@@ -869,6 +918,75 @@ mod tests {
         assert!(is_row_collapsed(&blocks, 25));
         assert!(!is_row_collapsed(&blocks, 20));
         assert!(!is_row_collapsed(&blocks, 21));
+    }
+
+    // ---- block_containing_row + resolve_clicked_scrollback_row -----------
+
+    #[test]
+    fn block_containing_row_returns_none_for_empty_blocks() {
+        assert!(block_containing_row(&[], 10).is_none());
+    }
+
+    #[test]
+    fn block_containing_row_returns_none_outside_any_block() {
+        let blocks = vec![finished(1, 1, 10, 20, Some(0))];
+        assert!(block_containing_row(&blocks, 5).is_none());
+        assert!(block_containing_row(&blocks, 21).is_none());
+    }
+
+    #[test]
+    fn block_containing_row_finds_inclusive_endpoints() {
+        let blocks = vec![finished(1, 1, 10, 20, Some(0))];
+        assert_eq!(block_containing_row(&blocks, 10).map(|b| b.id), Some(1));
+        assert_eq!(block_containing_row(&blocks, 20).map(|b| b.id), Some(1));
+        assert_eq!(block_containing_row(&blocks, 15).map(|b| b.id), Some(1));
+    }
+
+    #[test]
+    fn block_containing_row_includes_running_block_to_infinity() {
+        let blocks = vec![running(42, 1, 5)];
+        assert_eq!(block_containing_row(&blocks, 5).map(|b| b.id), Some(42));
+        assert_eq!(block_containing_row(&blocks, 9_999).map(|b| b.id), Some(42));
+        assert!(block_containing_row(&blocks, 0).is_none());
+    }
+
+    #[test]
+    fn resolve_clicked_row_no_collapse_is_identity() {
+        let blocks = vec![finished(1, 1, 0, 10, Some(0))];
+        assert_eq!(
+            resolve_clicked_scrollback_row(&blocks, 50, 5, 3),
+            Some(8),
+            "5 + 3 = 8 with no collapse"
+        );
+    }
+
+    #[test]
+    fn resolve_clicked_row_skips_collapsed_inner_rows() {
+        // Collapsed block at 10..=20 with first output at 11. Visible rows are
+        // 10, 11, 21, 22, ...
+        let blocks = vec![collapsed(1, 1, 10, 11, 20)];
+        // visual=0 → abs=10 (prompt)
+        assert_eq!(
+            resolve_clicked_scrollback_row(&blocks, 100, 10, 0),
+            Some(10)
+        );
+        // visual=1 → abs=11 (first output)
+        assert_eq!(
+            resolve_clicked_scrollback_row(&blocks, 100, 10, 1),
+            Some(11)
+        );
+        // visual=2 → abs=21 (rows 12..=20 skipped)
+        assert_eq!(
+            resolve_clicked_scrollback_row(&blocks, 100, 10, 2),
+            Some(21)
+        );
+    }
+
+    #[test]
+    fn resolve_clicked_row_returns_none_past_scrollback_tail() {
+        let blocks: Vec<CommandBlock> = vec![];
+        // scrollback_len=10, scroll_offset=5 → only 5 rows visible at most.
+        assert!(resolve_clicked_scrollback_row(&blocks, 10, 5, 10).is_none());
     }
 
     // ---- overlay ordering -------------------------------------------------

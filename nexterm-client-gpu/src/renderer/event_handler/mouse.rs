@@ -741,6 +741,19 @@ impl EventHandler {
 
             let col = (px / cell_w) as u16;
             let row = ((py - tab_bar_h_f64).max(0.0) / cell_h) as u16;
+
+            // Phase 2c-E: command-block mouse hit-test. A click inside the
+            // configured left-border width selects the block under the cursor;
+            // a click in the badge cell at the prompt row toggles collapse.
+            // Falls through to normal text selection when the click landed
+            // anywhere else, or when the feature is disabled.
+            if self.handle_block_mouse_click(px, py, tab_bar_h_f64, cell_w, cell_h) {
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+                return;
+            }
+
             self.app.state.mouse_sel.begin(col, row);
             // When mouse reporting is enabled, send the event to the PTY.
             if let Some(conn) = &self.connection {
@@ -753,6 +766,108 @@ impl EventHandler {
                 });
             }
         }
+    }
+
+    /// Phase 2c-E: command-block mouse hit-test.
+    ///
+    /// Returns `true` when the click was consumed by a block interaction:
+    /// - **Left-border**: a click within `BlocksConfig.effective_border_width_px`
+    ///   of the pane's left edge selects the block whose row range covers the
+    ///   clicked row. Idempotent — clicking the already-selected block returns
+    ///   `true` but does not request the same redraw twice.
+    /// - **Status badge / chevron**: a click in the rightmost cell of the row
+    ///   that hosts a block's *prompt* toggles that block's collapse flag.
+    ///   Only available when `show_exit_code_badge` is enabled (no visual cue
+    ///   to click otherwise).
+    ///
+    /// `false` when the feature is disabled, when no block sits under the
+    /// cursor, or when the click landed outside the grid area.
+    fn handle_block_mouse_click(
+        &mut self,
+        px: f64,
+        py: f64,
+        tab_bar_h: f64,
+        cell_w: f64,
+        cell_h: f64,
+    ) -> bool {
+        let cfg = &self.app.config.blocks;
+        if !cfg.enabled {
+            return false;
+        }
+        // Below the tab bar (clicks in the tab bar are already handled above).
+        if py < tab_bar_h {
+            return false;
+        }
+        // The status bar at the bottom occupies the final cell row in the
+        // fallback renderer — exclude clicks there.
+        let win_h = self
+            .window
+            .as_ref()
+            .map(|w| w.inner_size().height as f64)
+            .unwrap_or(0.0);
+        if win_h > 0.0 && py >= win_h - cell_h {
+            return false;
+        }
+        let win_w = self
+            .window
+            .as_ref()
+            .map(|w| w.inner_size().width as f64)
+            .unwrap_or(0.0);
+
+        let Some(pane_id) = self.app.state.focused_pane_id else {
+            return false;
+        };
+        let Some(pane) = self.app.state.panes.get(&pane_id) else {
+            return false;
+        };
+        if pane.blocks.is_empty() {
+            return false;
+        }
+
+        let visual_row = ((py - tab_bar_h) / cell_h) as usize;
+        let abs_row = if pane.scroll_offset > 0 {
+            match crate::command_blocks::resolve_clicked_scrollback_row(
+                &pane.blocks,
+                pane.scrollback.len(),
+                pane.scroll_offset,
+                visual_row,
+            ) {
+                Some(r) => r,
+                None => return false,
+            }
+        } else {
+            pane.scrollback.len() + visual_row
+        };
+
+        let Some(block) = crate::command_blocks::block_containing_row(&pane.blocks, abs_row) else {
+            return false;
+        };
+        let block_id = block.id;
+        let prompt_row = block.prompt_row;
+
+        let border_w = cfg.effective_border_width_px() as f64;
+
+        // 1. Chevron / badge cell: only clickable on the prompt row of the
+        //    block, and only when the badge is actually being rendered.
+        if cfg.show_exit_code_badge && win_w > 0.0 && abs_row == prompt_row {
+            // The renderer places the glyph at `region_w - cell_w * 1.5`, so a
+            // hit zone spanning the rightmost cell catches the click without
+            // demanding pixel-perfect aim.
+            if px >= win_w - cell_w * 2.0 && px < win_w {
+                self.app.state.toggle_block_collapse_by_id(block_id);
+                return true;
+            }
+        }
+
+        // 2. Left border zone: a 1-px sliver is hard to hit, so widen the hit
+        //    zone to at least 6 px regardless of the configured visual width.
+        let border_hit_w = border_w.max(6.0);
+        if px < border_hit_w {
+            self.app.state.select_block_by_id(block_id);
+            return true;
+        }
+
+        false
     }
 
     /// Left button release: finalize selection → copy to clipboard or switch focus.
