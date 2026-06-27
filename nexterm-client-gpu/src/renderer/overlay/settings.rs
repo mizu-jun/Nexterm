@@ -2006,24 +2006,30 @@ impl WgpuState {
             // wired up. Editing still happens through `config.toml` — making
             // these clickable lands in a follow-up.
             SettingsCategory::Blocks => {
+                // Rows 0..=2 are clickable (interactive toggles + width cycle);
+                // row 3 is a static hint and has no hit zone. The labels carry
+                // a leading "›" on clickable rows so the affordance is visible.
                 let lines: [(&str, String); 4] = [
                     (
-                        "Enabled",
-                        if sp.blocks_enabled { "ON" } else { "OFF" }.to_string(),
+                        "› Enabled",
+                        if sp.blocks_enabled { "[ON ]" } else { "[OFF]" }.to_string(),
                     ),
-                    ("Border width (px)", sp.blocks_border_width_px.to_string()),
                     (
-                        "Status badge (✓ / ✗ / ●)",
+                        "› Border width (px) — click to cycle",
+                        format!("[{}]", sp.blocks_border_width_px),
+                    ),
+                    (
+                        "› Status badge (✓ / ✗ / ●)",
                         if sp.blocks_show_exit_code_badge {
-                            "ON"
+                            "[ON ]"
                         } else {
-                            "OFF"
+                            "[OFF]"
                         }
                         .to_string(),
                     ),
                     (
-                        "Editing",
-                        "Edit `config.toml` → [blocks] (live-reload)".to_string(),
+                        "Tip",
+                        "Direct edits to `config.toml` → [blocks] hot-reload too.".to_string(),
                     ),
                 ];
                 for (i, (label, value)) in lines.iter().enumerate() {
@@ -2044,10 +2050,10 @@ impl WgpuState {
                         text_idx,
                     );
                     // Value column: right of the label.
-                    let value_x = content_inner_x + cell_w * 26.0;
+                    let value_x = content_inner_x + cell_w * 30.0;
                     let value_color = match value.as_str() {
-                        "ON" => tokens.semantic_success,
-                        "OFF" => tokens.text_muted,
+                        "[ON ]" => tokens.semantic_success,
+                        "[OFF]" => tokens.text_muted,
                         _ => tokens.text_primary,
                     };
                     add_string_verts(

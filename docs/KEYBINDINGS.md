@@ -63,6 +63,20 @@ assigned via `Ctrl+Shift+L`. Pressing `Enter` selects the block and scrolls
 the focused pane so its prompt row sits at the top of the view; the
 normal `Ctrl+Shift+R` / `Ctrl+Shift+C` shortcuts then apply.
 
+### Right-click context menu
+
+Right-clicking inside a known block prepends 5 block actions (Copy,
+Replay, Toggle collapse, Set name, Remove name) to the existing context
+menu. Outside any block the menu behaves as before.
+
+### Settings panel (Blocks category)
+
+Open the settings panel with `Ctrl+,` and choose the **Blocks** category.
+Rows are clickable: the first toggles `enabled`, the second cycles
+`border_width_px` through `1..=8`, the third toggles
+`show_exit_code_badge`. Changes are written back to `config.toml`
+immediately and hot-reloaded.
+
 ### Block name modal
 
 | Key | Action |

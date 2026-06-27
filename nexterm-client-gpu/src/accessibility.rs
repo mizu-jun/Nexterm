@@ -1969,13 +1969,15 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
             nodes.push((SETTINGS_KEY_DELETE_BTN_ID, delete_btn));
             content_children.push(SETTINGS_KEY_DELETE_BTN_ID);
         }
-        // Phase 2c-G: read-only Blocks page. Surface the three values via
-        // AccessKit so screen-readers can announce the current state. The
-        // page itself ships without editable controls.
+        // Phase 2c follow-up: Blocks page is now interactive (rows 0..=2
+        // toggle / cycle the corresponding `[blocks]` keys; row 3 is a
+        // hint). The description-only fallback from Phase 2c-G is kept so
+        // screen-readers without specific row support still announce the
+        // overall state.
         SettingsCategory::Blocks => {
             content_description = Some(format!(
-                "Command Blocks. Enabled: {}. Border width: {} px. Status badge: {}. \
-                 Editing is currently done through config.toml under [blocks].",
+                "Command Blocks (click rows to edit). Enabled: {}. Border width: {} px. \
+                 Status badge: {}. Direct edits to config.toml [blocks] also live-reload.",
                 if panel.blocks_enabled { "on" } else { "off" },
                 panel.blocks_border_width_px,
                 if panel.blocks_show_exit_code_badge {

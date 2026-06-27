@@ -30,6 +30,11 @@ pub(super) enum SettingsPanelHit {
     /// row 0=opacity / 1=cursor_style / 2=padding_x / 3=padding_y / 4=present_mode.
     /// Clicking on the label area of rows 1 / 4 also cycles the value.
     WindowRow(u8),
+    /// Phase 2c follow-up: click on a row inside the Blocks category.
+    /// row 0 = `blocks_enabled` toggle, row 1 = increment `border_width_px`
+    /// (wraps from 8 back to 1), row 2 = `show_exit_code_badge` toggle.
+    /// The "Editing" hint row (3) intentionally has no hit zone.
+    BlocksRow(u8),
     /// Empty area inside the panel (no-op).
     PanelBackground,
 }
@@ -204,6 +209,20 @@ impl EventHandler {
                     let row_y = labels_top + row_h * row as f32;
                     if cy >= row_y - cell_h * 0.3 && cy <= row_y + cell_h * 2.5 {
                         return SettingsPanelHit::WindowRow(row);
+                    }
+                }
+            }
+            SettingsCategory::Blocks => {
+                // Renderer places 4 lines starting at content_top + cell_h *
+                // (0.5 + i * 1.6). Row 3 is a hint; rows 0..=2 are clickable.
+                for row in 0u8..3 {
+                    let row_y = content_top + cell_h * (0.5 + row as f32 * 1.6);
+                    if cy >= row_y - cell_h * 0.3
+                        && cy <= row_y + cell_h * 1.2
+                        && cx >= content_inner_x
+                        && cx < content_inner_x + content_w
+                    {
+                        return SettingsPanelHit::BlocksRow(row);
                     }
                 }
             }

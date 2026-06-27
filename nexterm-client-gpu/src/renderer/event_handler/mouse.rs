@@ -608,6 +608,30 @@ impl EventHandler {
                         let fy = py as f32;
                         self.app.state.settings_panel.start_drag(fx, fy);
                     }
+                    SettingsPanelHit::BlocksRow(row) => {
+                        // Phase 2c follow-up: interactive Blocks toggles.
+                        // row 0 = enabled, row 1 = border width (cycle 1..=8),
+                        // row 2 = status badge. Each click marks the panel
+                        // dirty so the next Save (or panel close) persists.
+                        let sp = &mut self.app.state.settings_panel;
+                        match row {
+                            0 => sp.blocks_enabled = !sp.blocks_enabled,
+                            1 => {
+                                sp.blocks_border_width_px = if sp.blocks_border_width_px >= 8 {
+                                    1
+                                } else {
+                                    sp.blocks_border_width_px + 1
+                                };
+                            }
+                            2 => {
+                                sp.blocks_show_exit_code_badge = !sp.blocks_show_exit_code_badge;
+                            }
+                            _ => {}
+                        }
+                        sp.dirty = true;
+                        let _ = sp.save_to_toml();
+                        sp.dirty = false;
+                    }
                     SettingsPanelHit::PanelBackground => {
                         // Other clicks inside the panel → do nothing.
                     }

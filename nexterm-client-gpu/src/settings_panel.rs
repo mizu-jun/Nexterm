@@ -1689,6 +1689,11 @@ impl SettingsPanel {
         // auto_check_update
         doc["auto_check_update"] = toml_edit::value(self.auto_check_update);
 
+        // [blocks].enabled / border_width_px / show_exit_code_badge (Phase 2c-G follow-up).
+        doc["blocks"]["enabled"] = toml_edit::value(self.blocks_enabled);
+        doc["blocks"]["border_width_px"] = toml_edit::value(self.blocks_border_width_px as i64);
+        doc["blocks"]["show_exit_code_badge"] = toml_edit::value(self.blocks_show_exit_code_badge);
+
         // Phase 5-11-8 Step 8-2: in-place write-back to `[[hosts]]`.
         //
         // When the existing `ArrayOfTables` is present we update only the
