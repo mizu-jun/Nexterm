@@ -33,6 +33,29 @@ pub enum ContextMenuAction {
     DetachToNewWindow,
     /// Close only the current OS Window (Sprint 5-8 Phase 4-5, CloseOsWindow path #1)
     CloseOsWindow,
+    // ---- Phase 2c-follow-up: command-block items (block-aware right-click) ----
+    /// Copy the prompt + output of the right-clicked block to the clipboard.
+    /// The `block_id` is the `BlockId` (u64) of the block under the cursor.
+    CopyBlock {
+        block_id: u64,
+    },
+    /// Replay the right-clicked block's command line into the focused pane.
+    ReplayBlock {
+        block_id: u64,
+    },
+    /// Toggle the collapsed flag on the right-clicked block.
+    ToggleBlockCollapse {
+        block_id: u64,
+    },
+    /// Open the block-name input modal pre-populated for the right-clicked
+    /// block. Reuses `ClientState::open_block_name_modal_for`.
+    SetBlockName {
+        block_id: u64,
+    },
+    /// Remove the persisted name for the right-clicked block. No-op if none.
+    RemoveBlockName {
+        block_id: u64,
+    },
 }
 
 /// A single entry in the context menu
@@ -155,6 +178,56 @@ impl ContextMenu {
             items,
             hovered: None,
         }
+    }
+
+    /// Phase 2c follow-up: like `new_default` but adds a block-actions
+    /// sub-section at the top when the right-click landed inside a known
+    /// block. `block_id` identifies the target; `has_name` controls whether
+    /// the "Remove name" entry is shown (no point offering it if no name is
+    /// stored). The block-action labels go through the existing i18n keys.
+    pub fn new_for_block(
+        x: f32,
+        y: f32,
+        profiles: &[(String, String)],
+        block_id: u64,
+        has_name: bool,
+    ) -> Self {
+        let mut menu = Self::new_default(x, y, profiles);
+        // Prepend block actions + a separator at the top of the menu so the
+        // block-specific entries are the first thing the user sees.
+        let mut block_items: Vec<ContextMenuItem> = Vec::with_capacity(6);
+        block_items.push(ContextMenuItem::with_hint(
+            fl!("context-menu-block-copy"),
+            "Ctrl+Shift+C",
+            ContextMenuAction::CopyBlock { block_id },
+        ));
+        block_items.push(ContextMenuItem::with_hint(
+            fl!("context-menu-block-replay"),
+            "Ctrl+Shift+R",
+            ContextMenuAction::ReplayBlock { block_id },
+        ));
+        block_items.push(ContextMenuItem::with_hint(
+            fl!("context-menu-block-toggle-collapse"),
+            "Ctrl+Shift+/",
+            ContextMenuAction::ToggleBlockCollapse { block_id },
+        ));
+        block_items.push(ContextMenuItem::with_hint(
+            fl!("context-menu-block-set-name"),
+            "Ctrl+Shift+L",
+            ContextMenuAction::SetBlockName { block_id },
+        ));
+        if has_name {
+            block_items.push(ContextMenuItem::with_hint(
+                fl!("context-menu-block-remove-name"),
+                "Ctrl+Shift+X",
+                ContextMenuAction::RemoveBlockName { block_id },
+            ));
+        }
+        block_items.push(ContextMenuItem::separator());
+
+        // Splice the block items at the start of the existing items list.
+        menu.items.splice(0..0, block_items);
+        menu
     }
 }
 

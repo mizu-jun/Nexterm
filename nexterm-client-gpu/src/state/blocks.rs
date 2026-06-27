@@ -376,6 +376,56 @@ impl ClientState {
         extract_rows(pane, block.prompt_row, end_row)
     }
 
+    /// Phase 2c follow-up: same as `selected_block_text` but takes an
+    /// explicit block id (used by the right-click context menu).
+    pub fn block_text_by_id(&self, id: BlockId) -> Option<String> {
+        let pane = self.focused_pane()?;
+        let block = find_block_by_id(&pane.blocks, id)?;
+        let end_row = block
+            .end_row
+            .unwrap_or_else(|| pane.scrollback.len().saturating_sub(1));
+        extract_rows(pane, block.prompt_row, end_row)
+    }
+
+    /// Phase 2c follow-up: same as `selected_block_replay_command` but
+    /// takes an explicit block id (used by the right-click context menu).
+    pub fn block_replay_command_by_id(&self, id: BlockId) -> Option<String> {
+        let pane = self.focused_pane()?;
+        let block = find_block_by_id(&pane.blocks, id)?;
+        let (start, end_inclusive) = if block.command_row == block.output_row {
+            (block.command_row, block.command_row)
+        } else {
+            (block.command_row, block.output_row.saturating_sub(1))
+        };
+        let raw = extract_rows(pane, start, end_inclusive)?;
+        sanitize_replay_command(&raw)
+    }
+
+    /// Phase 2c follow-up: open the block-name modal for an explicit block
+    /// ID (used by the right-click context menu). Returns `true` when the
+    /// modal opened; fails when the id is not found on the focused pane.
+    pub fn open_block_name_modal_for(&mut self, id: BlockId) -> bool {
+        let Some(pane) = self.focused_pane() else {
+            return false;
+        };
+        if !pane.blocks.iter().any(|b| b.id == id) {
+            return false;
+        }
+        let current = self.named_blocks.get(id).map(|s| s.to_string());
+        self.block_name_modal.open_for(id, current.as_deref());
+        true
+    }
+
+    /// Phase 2c follow-up: remove the persisted name for an explicit block
+    /// ID (used by the right-click context menu).
+    pub fn remove_block_name_by_id(&mut self, id: BlockId) -> bool {
+        let changed = self.named_blocks.remove(id);
+        if changed {
+            self.named_blocks.save();
+        }
+        changed
+    }
+
     /// Open [`BlockNameModal`] for the currently-selected block.
     ///
     /// Returns `true` when the modal was actually opened. Fails (returns

@@ -350,6 +350,34 @@ impl EventHandler {
                     }
                 }
             }
+            // ---- Phase 2c follow-up: block-aware context-menu entries ----
+            ContextMenuAction::CopyBlock { block_id } => {
+                if let Some(text) = self.app.state.block_text_by_id(*block_id)
+                    && let Ok(mut clipboard) = arboard::Clipboard::new()
+                {
+                    let _ = clipboard.set_text(text);
+                }
+            }
+            ContextMenuAction::ReplayBlock { block_id } => {
+                if let Some(cmd) = self.app.state.block_replay_command_by_id(*block_id)
+                    && let Some(conn) = &self.connection
+                {
+                    let mut payload = cmd;
+                    payload.push('\n');
+                    let _ = conn
+                        .send_tx
+                        .try_send(ClientToServer::PasteText { text: payload });
+                }
+            }
+            ContextMenuAction::ToggleBlockCollapse { block_id } => {
+                let _ = self.app.state.toggle_block_collapse_by_id(*block_id);
+            }
+            ContextMenuAction::SetBlockName { block_id } => {
+                let _ = self.app.state.open_block_name_modal_for(*block_id);
+            }
+            ContextMenuAction::RemoveBlockName { block_id } => {
+                let _ = self.app.state.remove_block_name_by_id(*block_id);
+            }
         }
     }
 }

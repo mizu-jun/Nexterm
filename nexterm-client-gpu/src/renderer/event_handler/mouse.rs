@@ -400,6 +400,11 @@ impl EventHandler {
     }
 
     /// Right button press: open the context menu.
+    ///
+    /// Phase 2c follow-up: when the click landed inside a known command
+    /// block we build a block-aware menu via `ContextMenu::new_for_block`
+    /// instead of the plain default. The block-action entries are prepended
+    /// so they are the first thing the user sees.
     pub(super) fn on_mouse_right_pressed(&mut self) {
         if let Some((px, py)) = self.cursor_position {
             let cell_w_ctx = self.app.font.cell_width() as f64;
@@ -411,9 +416,25 @@ impl EventHandler {
                 .iter()
                 .map(|p| (p.name.clone(), p.icon.clone()))
                 .collect();
-            let tmp = ContextMenu::new_default(0.0, 0.0, &profile_list);
+
+            // Determine whether the right-click landed on a known block.
+            let tab_bar_h = if self.app.config.tab_bar.enabled {
+                self.app.config.tab_bar.height as f64
+            } else {
+                0.0
+            };
+            let block_under_cursor: Option<(u64, bool)> =
+                self.block_under_cursor(px, py, tab_bar_h, cell_h_ctx);
+
+            let build = |x: f32, y: f32| match block_under_cursor {
+                Some((id, has_name)) => {
+                    ContextMenu::new_for_block(x, y, &profile_list, id, has_name)
+                }
+                None => ContextMenu::new_default(x, y, &profile_list),
+            };
+
+            let tmp = build(0.0, 0.0);
             let item_count = tmp.items.len();
-            // Compute the menu width with the same logic as the renderer.
             let max_label = tmp
                 .items
                 .iter()
@@ -429,7 +450,6 @@ impl EventHandler {
             let menu_w_px = ((max_label + max_hint + 5) as f64).max(16.0) * cell_w_ctx;
             let menu_h_px = item_count as f64 * cell_h_ctx;
 
-            // Clamp the position so the menu fits within the window.
             let win_w = self
                 .window
                 .as_ref()
@@ -443,12 +463,63 @@ impl EventHandler {
             let menu_x = (px).min(win_w - menu_w_px).max(0.0) as f32;
             let menu_y = (py).min(win_h - menu_h_px).max(0.0) as f32;
 
-            self.app.state.context_menu =
-                Some(ContextMenu::new_default(menu_x, menu_y, &profile_list));
+            self.app.state.context_menu = Some(build(menu_x, menu_y));
             if let Some(w) = &self.window {
                 w.request_redraw();
             }
         }
+    }
+
+    /// Phase 2c follow-up: identify the command block under a (px, py)
+    /// cursor position on the focused pane. Returns `(block_id, has_name)`
+    /// when the click landed inside a block's row range; `None` otherwise.
+    ///
+    /// Mirrors the row-resolution logic in `handle_block_mouse_click` so the
+    /// right-click and left-border-click code paths agree on which block
+    /// the cursor refers to.
+    fn block_under_cursor(
+        &self,
+        px: f64,
+        py: f64,
+        tab_bar_h: f64,
+        cell_h: f64,
+    ) -> Option<(u64, bool)> {
+        let cfg = &self.app.config.blocks;
+        if !cfg.enabled {
+            return None;
+        }
+        if py < tab_bar_h {
+            return None;
+        }
+        let win_h = self
+            .window
+            .as_ref()
+            .map(|w| w.inner_size().height as f64)
+            .unwrap_or(0.0);
+        if win_h > 0.0 && py >= win_h - cell_h {
+            return None;
+        }
+        let _ = px; // px not needed; we treat the entire pane width as in-range.
+        let pane_id = self.app.state.focused_pane_id?;
+        let pane = self.app.state.panes.get(&pane_id)?;
+        if pane.blocks.is_empty() {
+            return None;
+        }
+        let visual_row = ((py - tab_bar_h) / cell_h) as usize;
+        let abs_row = if pane.scroll_offset > 0 {
+            crate::command_blocks::resolve_clicked_scrollback_row(
+                &pane.blocks,
+                pane.scrollback.len(),
+                pane.scroll_offset,
+                visual_row,
+            )?
+        } else {
+            pane.scrollback.len() + visual_row
+        };
+        let block = crate::command_blocks::block_containing_row(&pane.blocks, abs_row)?;
+        let id = block.id;
+        let has_name = self.app.state.named_blocks.get(id).is_some();
+        Some((id, has_name))
     }
 
     /// Left button press: handle tab-bar hits + start selection + mouse report.
