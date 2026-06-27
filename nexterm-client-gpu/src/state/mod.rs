@@ -170,10 +170,20 @@ pub struct ClientState {
     pub tab_close_hit_rects: HashMap<u32, (f32, f32)>,
     /// Click range (x_start, x_end) of the settings button on the tab bar
     pub settings_tab_rect: Option<(f32, f32)>,
+    /// Click range (x_start, x_end) of the `+` new-tab button on the tab bar
+    /// (Sprint 5-15 / UI/UX Modernization v2 Phase 2b). Populated each frame
+    /// by `build_tab_bar_verts` only when `TabBarConfig.show_new_tab_button`
+    /// is on. `None` means the button is hidden or off-screen.
+    pub new_tab_hit_rect: Option<(f32, f32)>,
     /// `pane_id` of the tab the mouse is currently hovering (Sprint 5-7 / UI-1-1).
     /// Updated by `renderer/event_handler/mouse.rs` on mouse-move; the tab-bar
     /// renderer brightens the background for the hovered tab.
     pub hovered_tab_id: Option<u32>,
+    /// OS-reported light/dark preference (Sprint 5-15 / Phase 3).
+    /// `Some(true)` = dark, `Some(false)` = light, `None` = unknown.
+    /// Updated by `WindowEvent::ThemeChanged` and at window creation.
+    /// Consumed via [`nexterm_config::Config::effective_color_scheme`].
+    pub os_dark_mode: Option<bool>,
     /// Time when the key-hint overlay should disappear (Sprint 5-7 / UI-1-4).
     /// On a lone Leader press this is set to two seconds in the future; the
     /// `lifecycle` clears it back to `None` once that time passes. While `Some`,
@@ -434,7 +444,9 @@ impl ClientState {
             tab_tearout_hit_rects: HashMap::new(),
             tab_close_hit_rects: HashMap::new(),
             settings_tab_rect: None,
+            new_tab_hit_rect: None,
             hovered_tab_id: None,
+            os_dark_mode: None,
             key_hint_visible_until: None,
             prefix_pending_until: None,
             update_banner: None,

@@ -7,7 +7,14 @@ use lru::LruCache;
 
 // ---- Vertex types ----
 
-/// Background-quad vertex (position + color).
+/// Background-quad vertex (position + color + optional SDF rounded-rect data).
+///
+/// When `corner_radius == 0.0` the shader takes its flat-rect fast path and
+/// returns `color` unmodified, so legacy callers using `add_px_rect` pay no
+/// fragment-shader cost beyond a single branch. `rect_center` and
+/// `rect_half_size` are in **framebuffer pixel coordinates** (y-down,
+/// origin = top-left), matching WGSL's `@builtin(position).xy` in the
+/// fragment stage so no uniform/push-constant is needed.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub(crate) struct BgVertex {
@@ -15,6 +22,12 @@ pub(crate) struct BgVertex {
     pub position: [f32; 2],
     /// RGBA color in [0, 1].
     pub color: [f32; 4],
+    /// Pixel-space rectangle centre (SDF). Unused when `corner_radius == 0`.
+    pub rect_center: [f32; 2],
+    /// Pixel-space rectangle half-extents (SDF). Unused when `corner_radius == 0`.
+    pub rect_half_size: [f32; 2],
+    /// Corner radius in pixels. `0.0` disables the SDF and produces a flat rect.
+    pub corner_radius: f32,
 }
 
 /// Text vertex (position + UV + color).

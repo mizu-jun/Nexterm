@@ -190,6 +190,15 @@ impl EventHandler {
         self.atlas = Some(atlas);
         self.wgpu_state = Some(wgpu_state);
 
+        // Sprint 5-15 / UI/UX Modernization v2 Phase 3: seed the OS light/dark
+        // preference at startup. `window.theme()` returns `None` on
+        // platforms / backends that do not expose the preference (e.g. some
+        // Wayland compositors), in which case `colors_follow_system` falls
+        // back to the configured scheme.
+        self.app.state.os_dark_mode = window
+            .theme()
+            .map(|t| matches!(t, winit::window::Theme::Dark));
+
         // Sprint 5-8 Phase 4-1 Step 1.5: pin the Quake-mode target OS window to
         // the **primary window**. Even after Phase 4-2 added multiple OS
         // windows, Quake show/hide always goes through the `target_window_id`

@@ -5,7 +5,7 @@
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::state::ClientState;
-use crate::vertex_util::{add_px_rect, add_string_verts};
+use crate::vertex_util::{add_px_rect, add_px_rounded_rect_sdf, add_string_verts};
 
 use super::WgpuState;
 
@@ -159,12 +159,18 @@ impl WgpuState {
     }
 
     /// Build the tab-bar vertices (top row of the window, WezTerm-style).
+    ///
+    /// Sprint 5-15 / UI/UX Modernization v2 Phase 2a: tab backgrounds are
+    /// drawn with the SDF rounded-rect helper so the active and inactive tabs
+    /// render as proper pills. The radius comes from `ui_cfg.chrome_radius()`;
+    /// `0.0` reproduces the flat-rect look from earlier builds.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn build_tab_bar_verts(
         &mut self,
         state: &mut ClientState,
         cfg: &nexterm_config::TabBarConfig,
         _animations_cfg: &nexterm_config::AnimationsConfig,
+        ui_cfg: &nexterm_config::UiConfig,
         tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
@@ -225,7 +231,13 @@ impl WgpuState {
         // Reserve the right-edge settings-button width first (fixed width to avoid emoji width drift)
         let settings_label = " * Settings ";
         let settings_w = 12.0 * cell_w;
-        let tab_area_w = sw - settings_w;
+        // Sprint 5-15 / Phase 2b: optional `+` new-tab button left of Settings.
+        let new_tab_w = if cfg.show_new_tab_button {
+            4.0 * cell_w
+        } else {
+            0.0
+        };
+        let tab_area_w = sw - settings_w - new_tab_w;
 
         // Sprint 5-7 / Phase 2-3: tab display order follows `ClientState.tab_order`
         // (the logical tab order produced by the server from `Window.pane_order`).
@@ -250,6 +262,8 @@ impl WgpuState {
         state.tab_tearout_hit_rects.clear();
         // Phase 2 (UI/UX modernization): clear close `×` button hit regions every frame
         state.tab_close_hit_rects.clear();
+        // Sprint 5-15 / Phase 2b: clear the new-tab `+` button hit region every frame
+        state.new_tab_hit_rect = None;
 
         let mut x_offset = 0.0_f32;
         let text_y = bar_y + (bar_h - cell_h) / 2.0;
@@ -314,9 +328,12 @@ impl WgpuState {
                 inactive_bg
             };
 
-            // Tab background
-            add_px_rect(
-                x_offset, bar_y, label_w, bar_h, tab_bg, sw, sh, bg_verts, bg_idx,
+            // Tab background — Sprint 5-15 / Phase 2a: pill-shaped via the
+            // SDF rounded-rect helper. Radius is bounded by the tab height so
+            // pills never become full ellipses on a tall tab bar.
+            let tab_radius = ui_cfg.chrome_radius().min(bar_h * 0.5);
+            add_px_rounded_rect_sdf(
+                x_offset, bar_y, label_w, bar_h, tab_radius, tab_bg, sw, sh, bg_verts, bg_idx,
             );
             // Draw the accent line (config color) under the active tab.
             // Sprint 5-7 / Phase 3-2: just after a tab switch, fade the accent line in
@@ -506,8 +523,18 @@ impl WgpuState {
                     .min(tab_area_w - ghost_w);
                 // Translucent active color (alpha=0.65 so the tab beneath the drop target is visible)
                 let ghost_bg = [active_bg[0], active_bg[1], active_bg[2], 0.65];
-                add_px_rect(
-                    ghost_x, bar_y, ghost_w, bar_h, ghost_bg, sw, sh, bg_verts, bg_idx,
+                let ghost_radius = ui_cfg.chrome_radius().min(bar_h * 0.5);
+                add_px_rounded_rect_sdf(
+                    ghost_x,
+                    bar_y,
+                    ghost_w,
+                    bar_h,
+                    ghost_radius,
+                    ghost_bg,
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
                 );
                 // Ghost label (the original tab name)
                 let ghost_title = state
@@ -536,6 +563,53 @@ impl WgpuState {
             }
         }
 
+        // Sprint 5-15 / Phase 2b: new-tab `+` pill (placed just before the
+        // Settings button). The renderer registers `state.new_tab_hit_rect`
+        // every frame; `event_handler/mouse.rs` consumes it and dispatches a
+        // `NewPane` IPC on left-click.
+        if cfg.show_new_tab_button && new_tab_w > 0.0 {
+            let new_tab_x = sw - settings_w - new_tab_w;
+            let new_tab_bg = [
+                inactive_bg[0] + 0.04,
+                inactive_bg[1] + 0.04,
+                inactive_bg[2] + 0.06,
+                1.0,
+            ];
+            let new_tab_radius = ui_cfg.chrome_radius().min(bar_h * 0.5);
+            add_px_rounded_rect_sdf(
+                new_tab_x,
+                bar_y,
+                new_tab_w,
+                bar_h,
+                new_tab_radius,
+                new_tab_bg,
+                sw,
+                sh,
+                bg_verts,
+                bg_idx,
+            );
+            // `+` glyph centred within the pill.
+            let plus_label = " + ";
+            let plus_text_x =
+                new_tab_x + (new_tab_w - plus_label.chars().count() as f32 * cell_w).max(0.0) * 0.5;
+            add_string_verts(
+                plus_label,
+                plus_text_x,
+                text_y,
+                tokens.text_secondary,
+                true,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
+            );
+            state.new_tab_hit_rect = Some((new_tab_x, new_tab_x + new_tab_w));
+        }
+
         // Right edge: settings button
         let settings_x = sw - settings_w;
         let settings_open = state.settings_panel.is_open;
@@ -550,11 +624,13 @@ impl WgpuState {
                 1.0,
             ]
         };
-        add_px_rect(
+        let settings_radius = ui_cfg.chrome_radius().min(bar_h * 0.5);
+        add_px_rounded_rect_sdf(
             settings_x,
             bar_y,
             settings_w,
             bar_h,
+            settings_radius,
             settings_bg,
             sw,
             sh,

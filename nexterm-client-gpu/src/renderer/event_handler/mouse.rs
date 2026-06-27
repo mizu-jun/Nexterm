@@ -644,14 +644,20 @@ impl EventHandler {
 
             let cell_w = self.app.font.cell_width() as f64;
             let cell_h = self.app.font.cell_height() as f64;
-            let tab_bar_h_f64 = if self.app.config.tab_bar.enabled {
+            // Sprint 5-15 / UI/UX Modernization v2 Phase 2b: mirror
+            // `render_frame::tab_bar_visible` so clicks in the reclaimed
+            // top-of-window region do not accidentally hit tab-bar logic.
+            let tab_bar_visible = self.app.config.tab_bar.enabled
+                && !(self.app.config.tab_bar.hide_when_single
+                    && self.app.state.pane_layouts.len() <= 1);
+            let tab_bar_h_f64 = if tab_bar_visible {
                 self.app.config.tab_bar.height as f64
             } else {
                 0.0_f64
             };
 
             // Handle clicks in the tab-bar area (py < tab_bar_h).
-            if self.app.config.tab_bar.enabled && py < tab_bar_h_f64 {
+            if tab_bar_visible && py < tab_bar_h_f64 {
                 let px_f32 = px as f32;
                 // Hit test for the settings button.
                 let hit_settings = self
@@ -662,6 +668,26 @@ impl EventHandler {
                     .unwrap_or(false);
                 if hit_settings {
                     self.app.state.settings_panel.is_open = !self.app.state.settings_panel.is_open;
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                } else if self
+                    .app
+                    .state
+                    .new_tab_hit_rect
+                    .map(|(x0, x1)| px_f32 >= x0 && px_f32 < x1)
+                    .unwrap_or(false)
+                {
+                    // Sprint 5-15 / UI/UX Modernization v2 Phase 2b:
+                    // clicking the tab-bar `+` button creates a new pane in
+                    // the current window. Modelled on `SplitVertical` since
+                    // Nexterm renders one tab per pane.
+                    tracing::info!("[+] new-tab button click: dispatching SplitVertical");
+                    if let Some(conn) = &self.connection {
+                        let _ = conn
+                            .send_tx
+                            .try_send(nexterm_proto::ClientToServer::SplitVertical);
+                    }
                     if let Some(w) = &self.window {
                         w.request_redraw();
                     }

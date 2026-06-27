@@ -306,6 +306,20 @@ impl EventHandler {
         self.modifiers = mods;
     }
 
+    /// `WindowEvent::ThemeChanged` — Sprint 5-15 / UI/UX Modernization v2 Phase 3.
+    ///
+    /// Records the OS-reported light/dark preference so the next frame's
+    /// [`nexterm_config::Config::effective_color_scheme`] can pick the
+    /// matching built-in scheme when `colors_follow_system` is on. Triggers
+    /// a redraw so the user sees the new theme immediately.
+    pub(super) fn on_theme_changed(&mut self, theme: winit::window::Theme) {
+        let is_dark = matches!(theme, winit::window::Theme::Dark);
+        self.app.state.os_dark_mode = Some(is_dark);
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+    }
+
     /// `WindowEvent::Ime` — handle IME input for Japanese, Chinese, and others.
     pub(super) fn on_ime(&mut self, ime_event: Ime) {
         // Phase 5-11-8 Step 8-3 (Sub-phase B): while editing an SSH field in the
@@ -480,13 +494,21 @@ impl EventHandler {
 
     /// `WindowEvent::RedrawRequested`
     pub(super) fn on_redraw_requested(&mut self) {
+        // Sprint 5-15 / UI/UX Modernization v2 Phase 3: pick the effective
+        // color scheme by combining the configured `colors` with the
+        // OS-reported light/dark preference. `colors_follow_system = false`
+        // (the default) keeps the configured scheme verbatim.
+        let effective_scheme = self
+            .app
+            .config
+            .effective_color_scheme(self.app.state.os_dark_mode);
         if let (Some(wgpu), Some(atlas)) = (&mut self.wgpu_state, &mut self.atlas)
             && let Err(e) = wgpu.render(
                 &mut self.app.state,
                 &mut self.app.font,
                 atlas,
                 &self.app.config.tab_bar,
-                &self.app.config.colors,
+                &effective_scheme,
                 self.app.config.gpu.fps_limit,
                 self.app.config.window.background_opacity,
                 &self.app.config.cursor_style,

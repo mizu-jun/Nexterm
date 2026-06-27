@@ -542,6 +542,12 @@ impl ApplicationHandler<UserEvent> for EventHandler {
                 // the focused pane.
                 self.on_dropped_file(path);
             }
+            WindowEvent::ThemeChanged(theme) => {
+                // Sprint 5-15 / UI/UX Modernization v2 Phase 3: cache the OS
+                // light/dark preference so the renderer can pick the matching
+                // built-in scheme when `colors_follow_system` is on.
+                self.on_theme_changed(theme);
+            }
             _ => {}
         }
 

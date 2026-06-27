@@ -12,6 +12,10 @@ pub(crate) fn visual_width(s: &str) -> usize {
 }
 
 /// Push four background vertices for the NDC rectangle (and the corresponding triangle indices).
+///
+/// Flat-rect path: SDF fields are zeroed, so the bg shader takes its
+/// `corner_radius <= 0` early-return and produces output identical to the
+/// pre-v2 (pre-Sprint-5-15) renderer.
 pub(crate) fn add_rect_verts(
     x0: f32,
     y0: f32,
@@ -21,24 +25,48 @@ pub(crate) fn add_rect_verts(
     bg_verts: &mut Vec<BgVertex>,
     bg_idx: &mut Vec<u16>,
 ) {
+    push_rect_verts_with_sdf(
+        x0,
+        y0,
+        x1,
+        y1,
+        color,
+        [0.0, 0.0],
+        [0.0, 0.0],
+        0.0,
+        bg_verts,
+        bg_idx,
+    );
+}
+
+/// Inner helper that fills every `BgVertex` field. Used by both the flat
+/// [`add_rect_verts`] and the rounded [`add_px_rounded_rect_sdf`].
+#[allow(clippy::too_many_arguments)]
+fn push_rect_verts_with_sdf(
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    color: [f32; 4],
+    rect_center: [f32; 2],
+    rect_half_size: [f32; 2],
+    corner_radius: f32,
+    bg_verts: &mut Vec<BgVertex>,
+    bg_idx: &mut Vec<u16>,
+) {
     let base = bg_verts.len() as u16;
+    let make = |position| BgVertex {
+        position,
+        color,
+        rect_center,
+        rect_half_size,
+        corner_radius,
+    };
     bg_verts.extend_from_slice(&[
-        BgVertex {
-            position: [x0, y0],
-            color,
-        },
-        BgVertex {
-            position: [x1, y0],
-            color,
-        },
-        BgVertex {
-            position: [x1, y1],
-            color,
-        },
-        BgVertex {
-            position: [x0, y1],
-            color,
-        },
+        make([x0, y0]),
+        make([x1, y0]),
+        make([x1, y1]),
+        make([x0, y1]),
     ]);
     bg_idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
 }
@@ -61,6 +89,72 @@ pub(crate) fn add_px_rect(
     let x1 = (px + pw) / sw * 2.0 - 1.0;
     let y1 = 1.0 - (py + ph) / sh * 2.0;
     add_rect_verts(x0, y0, x1, y1, color, bg_verts, bg_idx);
+}
+
+/// Pixel-space rounded rectangle drawn via the SDF path of the bg shader
+/// (Sprint 5-15 / UI/UX Modernization v2 Phase 1).
+///
+/// Produces sub-pixel-AA rounded corners with a single drawcall. Prefer this
+/// over the legacy [`add_rounded_px_rect`] (a CPU-side three-rect cross that
+/// leaves square holes at the corners) whenever the result is visible chrome.
+/// Passing `radius == 0.0` falls through to a flat rect, matching
+/// [`add_px_rect`] byte-for-byte.
+///
+/// Initially unused — Phase 2 (tab pills) and later phases will be the first
+/// callers. The `dead_code` suppression keeps the Phase 1 landing warning-free.
+#[allow(clippy::too_many_arguments, dead_code)]
+pub(crate) fn add_px_rounded_rect_sdf(
+    px: f32,
+    py: f32,
+    pw: f32,
+    ph: f32,
+    radius: f32,
+    color: [f32; 4],
+    sw: f32,
+    sh: f32,
+    bg_verts: &mut Vec<BgVertex>,
+    bg_idx: &mut Vec<u16>,
+) {
+    let x0 = px / sw * 2.0 - 1.0;
+    let y0 = 1.0 - py / sh * 2.0;
+    let x1 = (px + pw) / sw * 2.0 - 1.0;
+    let y1 = 1.0 - (py + ph) / sh * 2.0;
+    // Clamp the radius to half the shortest side. A negative radius collapses
+    // to zero so the shader takes the flat path instead of producing garbage.
+    let r = radius.max(0.0).min(pw * 0.5).min(ph * 0.5);
+    let rect_center = [px + pw * 0.5, py + ph * 0.5];
+    let rect_half_size = [pw * 0.5, ph * 0.5];
+    push_rect_verts_with_sdf(
+        x0,
+        y0,
+        x1,
+        y1,
+        color,
+        rect_center,
+        rect_half_size,
+        r,
+        bg_verts,
+        bg_idx,
+    );
+}
+
+/// Signed distance from `point` to a rounded rectangle (in pixels).
+///
+/// Pure helper mirroring the WGSL `fs_main` math in
+/// [`crate::shaders::BG_SHADER`]; lets us unit-test the SDF formula without
+/// a GPU. Negative inside, zero on the edge, positive outside.
+#[allow(dead_code)]
+pub(crate) fn signed_rect_distance(
+    point: [f32; 2],
+    rect_center: [f32; 2],
+    rect_half_size: [f32; 2],
+    corner_radius: f32,
+) -> f32 {
+    let dx = (point[0] - rect_center[0]).abs() - rect_half_size[0] + corner_radius;
+    let dy = (point[1] - rect_center[1]).abs() - rect_half_size[1] + corner_radius;
+    let outside_len = (dx.max(0.0).powi(2) + dy.max(0.0).powi(2)).sqrt();
+    let inside_d = dx.max(dy).min(0.0);
+    outside_len + inside_d - corner_radius
 }
 
 /// Draw a pixel-space rectangle with simulated rounded corners via a three-rect cross.
@@ -298,6 +392,131 @@ pub(crate) fn open_url(url: &str) {
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
     {
         let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn approx(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-3
+    }
+
+    // ---- signed_rect_distance ----
+
+    #[test]
+    fn sdf_center_is_negative_min_half_size() {
+        // A point at the rect centre is `half_size_min` units inside the edge
+        // (for a square, exactly `-half_size`).
+        let d = signed_rect_distance([0.0, 0.0], [0.0, 0.0], [10.0, 10.0], 4.0);
+        assert!(approx(d, -10.0), "centre distance was {}", d);
+    }
+
+    #[test]
+    fn sdf_zero_on_rounded_corner_arc() {
+        // The rounded corner arc sits at radius `r` from the inset corner
+        // centre `(half_size - r, half_size - r)`. Pick a 45° point on that
+        // arc; the SDF must report distance 0.
+        let half = 10.0;
+        let r = 4.0;
+        let arc_centre = half - r; // 6.0
+        // 45° on the arc: arc_centre + r * cos(45°)
+        let p = arc_centre + r * std::f32::consts::FRAC_1_SQRT_2;
+        let d = signed_rect_distance([p, p], [0.0, 0.0], [half, half], r);
+        assert!(approx(d, 0.0), "arc point distance was {}", d);
+    }
+
+    #[test]
+    fn sdf_positive_outside() {
+        // A point well outside the rect.
+        let d = signed_rect_distance([15.0, 15.0], [0.0, 0.0], [10.0, 10.0], 4.0);
+        // Expected: sqrt((15-10+4)^2 + (15-10+4)^2) - 4 = sqrt(162) - 4
+        let expected = (162.0_f32).sqrt() - 4.0;
+        assert!(approx(d, expected), "got {}, expected {}", d, expected);
+    }
+
+    #[test]
+    fn sdf_zero_on_straight_edge() {
+        // Mid-edge point (no corner influence). For a rect at origin with
+        // half_size=10, the point (10, 0) sits exactly on the right edge.
+        let d = signed_rect_distance([10.0, 0.0], [0.0, 0.0], [10.0, 10.0], 4.0);
+        assert!(approx(d, 0.0), "edge distance was {}", d);
+    }
+
+    #[test]
+    fn sdf_zero_radius_is_axis_aligned_box() {
+        // With r=0 the SDF degenerates into the axis-aligned box distance.
+        let d = signed_rect_distance([12.0, 0.0], [0.0, 0.0], [10.0, 10.0], 0.0);
+        assert!(approx(d, 2.0), "non-rounded box distance was {}", d);
+    }
+
+    // ---- add_rect_verts / add_px_rounded_rect_sdf ----
+
+    #[test]
+    fn flat_rect_zeroes_sdf_fields() {
+        // Legacy `add_rect_verts` must produce vertices with all SDF fields at
+        // zero so the shader takes its flat-path early-return.
+        let mut v = Vec::new();
+        let mut i = Vec::new();
+        add_rect_verts(-0.5, 0.5, 0.5, -0.5, [1.0, 0.0, 0.0, 1.0], &mut v, &mut i);
+        assert_eq!(v.len(), 4);
+        for vert in &v {
+            assert_eq!(vert.rect_center, [0.0, 0.0]);
+            assert_eq!(vert.rect_half_size, [0.0, 0.0]);
+            assert_eq!(vert.corner_radius, 0.0);
+        }
+        // Index triangulation is unchanged.
+        assert_eq!(i, vec![0, 1, 2, 0, 2, 3]);
+    }
+
+    #[test]
+    fn rounded_helper_populates_pixel_space_sdf_metadata() {
+        // 800×600 screen, rect at (100, 50) with size 200×40, radius 8.
+        let mut v = Vec::new();
+        let mut i = Vec::new();
+        add_px_rounded_rect_sdf(
+            100.0,
+            50.0,
+            200.0,
+            40.0,
+            8.0,
+            [0.1, 0.2, 0.3, 1.0],
+            800.0,
+            600.0,
+            &mut v,
+            &mut i,
+        );
+        assert_eq!(v.len(), 4);
+        for vert in &v {
+            assert_eq!(vert.rect_center, [200.0, 70.0]);
+            assert_eq!(vert.rect_half_size, [100.0, 20.0]);
+            assert_eq!(vert.corner_radius, 8.0);
+        }
+    }
+
+    #[test]
+    fn rounded_helper_clamps_radius_to_half_min_side() {
+        // A 100×20 rect has min half-side 10. A requested radius of 50 must
+        // be clamped to 10 to keep the SDF well-defined.
+        let mut v = Vec::new();
+        let mut i = Vec::new();
+        add_px_rounded_rect_sdf(
+            0.0, 0.0, 100.0, 20.0, 50.0, [1.0; 4], 800.0, 600.0, &mut v, &mut i,
+        );
+        assert_eq!(v.first().map(|x| x.corner_radius), Some(10.0));
+    }
+
+    #[test]
+    fn rounded_helper_clamps_negative_radius_to_zero() {
+        // A negative radius must collapse to zero so the shader takes the
+        // flat path rather than producing garbage.
+        let mut v = Vec::new();
+        let mut i = Vec::new();
+        add_px_rounded_rect_sdf(
+            0.0, 0.0, 100.0, 20.0, -3.0, [1.0; 4], 800.0, 600.0, &mut v, &mut i,
+        );
+        assert_eq!(v.first().map(|x| x.corner_radius), Some(0.0));
     }
 }
 
