@@ -7,14 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-06-27
+
+MINOR release. The headline feature is the **Warp-style command-blocks
+UI** that lands across Phases 2c-A through 2c-G plus two follow-ups
+(right-click context menu and an interactive Blocks settings page).
+PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 are unchanged — the
+feature reuses the existing OSC 133 `SemanticMark` IPC stream from
+Sprint 5-2 / B1 and persists named blocks to a separate file that did
+not exist before.
+
 ### Added — Command Blocks (Warp-style block UI)
 
 Folds the existing OSC 133 `SemanticMark` stream (Sprint 5-2 / B1) into
 addressable command blocks and surfaces them in the UI. The feature is
 gated by the new `[blocks]` section in `config.toml`; with OSC 133
-disabled or unconfigured the renderer no-ops as before. No PROTOCOL or
-SNAPSHOT changes were required — the IPC and persistence machinery
-needed by the feature was already in place.
+disabled or unconfigured the renderer no-ops as before.
 
 - **`CommandBlock` abstraction** (`nexterm-client-gpu/src/command_blocks.rs`):
   pure `extract_command_blocks` folder + `find_block_by_id` /
@@ -58,6 +66,102 @@ needed by the feature was already in place.
 - **Docs**: `docs/plans/blocks-implementation.md` records the phased
   plan and `docs/shell-integration.md` documents the bash / zsh / fish
   prompt snippets required to emit OSC 133.
+
+### Added — Command Blocks Phase 2c-A/B (in-grid overlay + status badge)
+
+- **In-grid block overlay** (`renderer/grid_verts.rs`): the left
+  border + selection tint now also draws while the pane shows the live
+  grid (`scroll_offset == 0`). The viewport top maps to
+  `pane.scrollback.len()` so a running block's border extends to the
+  bottom of the screen as new output streams in.
+- **Status badge** (`✓` / `✗` / `●`): drawn in the right margin at the
+  prompt row, coloured to match the border. Controlled by the new
+  `BlocksConfig.show_exit_code_badge` (on by default).
+- **Multi-pane layout path**: new `build_block_overlay_verts_in_rect`
+  mirror so the overlay also renders in split-pane layouts. Drawn
+  outside the per-pane vertex cache so selection updates do not force
+  a full grid rebuild.
+
+### Added — Command Blocks Phase 2c-C/D (collapse + name-remove)
+
+- `Ctrl+Shift+/` toggles `collapsed` on the selected finished block.
+  The scrollback renderer skips rows inside collapsed blocks (the
+  prompt row + the first output row stay visible), compacting the
+  visual gap so the next block sits directly underneath.
+- `Ctrl+Shift+X` removes the user-assigned name from the selected
+  block (no-op when no name is stored).
+- New pure helper `is_row_collapsed(blocks, abs_row)` plus
+  `toggle_selected_block_collapse` on `ClientState`. Running blocks
+  are refused — their tail is still being written.
+
+### Added — Command Blocks Phase 2c-E (mouse hit-test)
+
+- Clicking inside the configured left-border width selects the block
+  under the cursor (hit zone widens to at least 6 px so the affordance
+  is reachable even with `border_width_px = 1`).
+- Clicking the rightmost cell on a block's prompt row toggles
+  `collapsed` (chevron path; only active when
+  `show_exit_code_badge = true`).
+- Pure helpers `block_containing_row` and
+  `resolve_clicked_scrollback_row` invert the scrollback render walk so
+  click coordinates map to the absolute row the user sees on that line.
+
+### Added — Command Blocks Phase 2c-F (palette `@`-prefix search)
+
+- Opening the palette with `Ctrl+Shift+P` and typing `@` switches into
+  named-block search. The remainder of the query is fuzzy-matched
+  against the names assigned via `Ctrl+Shift+L`.
+- Selecting a result scrolls the focused pane so the matching block's
+  prompt row sits at the top of the viewport, sets `selected_block`,
+  and yields control back to the existing `Ctrl+Shift+R` /
+  `Ctrl+Shift+C` chords for replay / copy.
+- The palette refreshes its named-block list on open, so newly named
+  blocks appear immediately without restarting the palette.
+
+### Added — Command Blocks Phase 2c-G (settings panel category)
+
+- New "Blocks" entry in the settings-panel sidebar shows the three
+  `[blocks]` values and indicates the `config.toml` keys that back
+  them.
+- Fixed a latent NodeId collision: `settings_tab_id_at(idx)` returned
+  `SETTINGS_TAB_BASE + idx`, which previously sat at `18` with only 7
+  slots reserved before `SETTINGS_CONTENT_ID = 25`. The 8th category
+  collided. Moved the base to `60` with 40 slots of headroom for
+  future categories; `decode_node_id` and the round-trip tests are
+  updated accordingly.
+
+### Added — Command Blocks follow-up (block-aware right-click menu)
+
+- Right-clicking inside a known block prepends 5 block actions to the
+  existing context menu: **Copy block** (`Ctrl+Shift+C`), **Replay
+  block** (`Ctrl+Shift+R`), **Toggle collapse** (`Ctrl+Shift+/`),
+  **Name this block...** (`Ctrl+Shift+L`), **Remove block name**
+  (`Ctrl+Shift+X`, hidden when no name is stored).
+- Five new `ContextMenuAction` variants carry the target `BlockId`.
+- New i18n keys translated across all 8 locales: `context-menu-block-
+  copy` / `-replay` / `-toggle-collapse` / `-set-name` / `-remove-name`.
+
+### Added — Command Blocks follow-up (interactive Blocks settings page)
+
+- The Blocks category in the settings panel is now interactive: row 0
+  toggles `enabled`, row 1 cycles `border_width_px` through `1..=8`,
+  row 2 toggles `show_exit_code_badge`. Each click writes back to
+  `config.toml` immediately via `toml_edit`, preserving existing
+  comments and unrelated fields.
+- Direct edits to `config.toml [blocks]` still hot-reload, so the
+  settings-panel and manual-edit paths remain equivalent.
+
+### Tests
+
+- `command_blocks` module: 46 unit tests (+14 from v1.9.6 covering
+  `is_row_collapsed`, `block_containing_row`, and
+  `resolve_clicked_scrollback_row`).
+- `state::blocks` module: 44 unit tests (+12 from v1.9.6 covering
+  `toggle_selected_block_collapse`, `select_block_by_id`,
+  `toggle_block_collapse_by_id`, `collect_named_block_palette_entries`,
+  and `jump_to_block`).
+- `palette` module: +5 tests for `@`-prefix routing.
+- Workspace total: 548 passing.
 
 ## [1.9.6] - 2026-06-20
 
