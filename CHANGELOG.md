@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.1] - 2026-06-27
+
+PATCH release whose sole purpose is to ship the Flatpak build that
+v1.10.0 missed. PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 remain
+unchanged; there are no client-visible behaviour differences from
+v1.10.0.
+
+### Fixed
+
+- **Flatpak vendor manifest** (`pkg/flatpak/cargo-sources.json`): the
+  v1.10.0 release bumped `quinn-proto` 0.11.14 → 0.11.15 to patch
+  RUSTSEC-2026-0185 but did not refresh the Flatpak vendor list, so
+  the Flatpak job failed its `Cargo.lock` consistency check and no
+  `.flatpak` artifact was attached to v1.10.0. This release
+  regenerates the manifest from the current `Cargo.lock`; the only
+  diff is the `quinn-proto-0.11.15` archive entry replacing the 0.11.14
+  one. All other releases (Linux tar/AppImage, macOS arm64/x86_64,
+  Windows msi/zip, SBOM) are identical to v1.10.0.
+
 ## [1.10.0] - 2026-06-27
 
 MINOR release. The headline feature is the **Warp-style command-blocks
