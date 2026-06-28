@@ -618,6 +618,13 @@ impl WgpuState {
         // coordinates (after smooth-motion interpolation).
         cursor_visual_col: f32,
         cursor_visual_row: f32,
+        // Phase 6b (UI/UX v2): true HSB transform parameters for the
+        // inactive-pane look. `None` keeps the pre-Phase-6b behaviour
+        // (flat brightness scale, see fallback path below). `Some` is
+        // populated by `render_frame` whenever this pane is unfocused
+        // and `Config.inactive_pane_hsb.is_active() == true`.
+        // Tuple is `(hue_mul, sat_mul, brightness_mul, animation_t)`.
+        inactive_hsb: Option<(f32, f32, f32, f32)>,
         bg_verts: &mut Vec<BgVertex>,
         bg_idx: &mut Vec<u16>,
         text_verts: &mut Vec<TextVertex>,
@@ -629,9 +636,23 @@ impl WgpuState {
         // `tab_bar_h` already includes `padding_y` (the caller passes `grid_offset_y`)
         let off_x = layout.col_offset as f32 * cell_w;
         let off_y = layout.row_offset as f32 * cell_h + tab_bar_h;
-        // Dim non-focused panes slightly
+        // Phase 6b: when `inactive_hsb` is supplied, apply the WezTerm-style
+        // HSB multiplier per cell. Otherwise fall back to the flat
+        // brightness scale (`0.70`) used since Phase 6.
         let dim = if is_focused { 1.0f32 } else { 0.70f32 };
         let grid = &pane.grid;
+
+        // Pre-flight: when `inactive_hsb` is `Some`, we transform every
+        // cell colour via `apply_hsb_animated_rgba`. This is more work
+        // per cell but avoids needing a second render pass + offscreen
+        // texture; the cost is bounded by the cache (cache invalidates
+        // only when the quantised animation step changes).
+        let transform_cell = |rgba: [f32; 4]| -> [f32; 4] {
+            match inactive_hsb {
+                Some((h, s, b, t)) => crate::color_util::apply_hsb_animated_rgba(rgba, h, s, b, t),
+                None => [rgba[0] * dim, rgba[1] * dim, rgba[2] * dim, rgba[3]],
+            }
+        };
 
         for row in 0..layout.rows.min(grid.height) as usize {
             for col in 0..layout.cols.min(grid.width) as usize {
@@ -641,7 +662,7 @@ impl WgpuState {
                 let px = off_x + col as f32 * cell_w;
                 let py = off_y + row as f32 * cell_h;
                 let bg = resolve_color(&cell.bg, false, palette);
-                let bg = [bg[0] * dim, bg[1] * dim, bg[2] * dim, 1.0];
+                let bg = transform_cell([bg[0], bg[1], bg[2], 1.0]);
                 add_px_rect(px, py, cell_w, cell_h, bg, sw, sh, bg_verts, bg_idx);
                 // Selection highlight overlay (focused pane only)
                 if is_focused && mouse_sel.contains(col as u16, row as u16) {
@@ -650,8 +671,8 @@ impl WgpuState {
                 if cell.ch == ' ' {
                     continue;
                 }
-                let fg = resolve_color(&cell.fg, true, palette);
-                let fg = [fg[0] * dim, fg[1] * dim, fg[2] * dim, fg[3]];
+                let fg_raw = resolve_color(&cell.fg, true, palette);
+                let fg = transform_cell(fg_raw);
                 let fg_u8 = [
                     (fg[0] * 255.0) as u8,
                     (fg[1] * 255.0) as u8,

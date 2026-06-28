@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — UI/UX Modernization v2 Phase 6b (true HSB hue shift)
+
+Follow-up to Phase 6 (PR #17). Replaces the Phase 6 grey-alpha overlay
+approximation with a real per-cell HSB multiplier transform applied
+during vertex construction. No new shader pass / pipeline is needed —
+the `bg_pipeline` already carries per-vertex colour, so the transform
+runs on the CPU when each cell's RGB is resolved. PROTOCOL_VERSION = 8
+and SNAPSHOT_VERSION = 4 remain unchanged.
+
+- **`nexterm-client-gpu/src/color_util.rs`** — new pure helpers
+  `rgb_to_hsv`, `hsv_to_rgb`, `apply_hsb_multiplier` (WezTerm-style
+  multiplier semantics: each HSB component is a *factor*, identity at
+  `1.0`), and `apply_hsb_animated_rgba` (lerps each factor toward
+  identity by `t` so the transition follows the existing
+  spring-driven dim animation).
+- **`renderer/grid_verts.rs`** — `build_grid_verts_in_rect` gains an
+  `inactive_hsb: Option<(f32, f32, f32, f32)>` parameter
+  (`(hue, saturation, brightness, animation_t)`). When `Some`, every
+  cell's bg / fg colour is run through `apply_hsb_animated_rgba`
+  before being pushed into the vertex buffers, so a real hue shift
+  actually moves the cells' hue (previously impossible with a flat
+  alpha overlay). When `None`, the pre-Phase-6b flat-brightness
+  fallback (`* 0.70`) is retained byte-for-byte.
+- **`renderer/render_frame.rs`** — computes
+  `inactive_hsb_for_pane` per pane (only for unfocused panes when
+  `config.inactive_pane_hsb.is_active() == true`) and threads it into
+  `build_grid_verts_in_rect`. `PaneRenderCache` gains an
+  `inactive_hsb_q: u32` key field (quantised `animation_t × 255`) so
+  the per-pane cache rebuilds each spring frame instead of replaying
+  a stale dim colour.
+- **`renderer/ui_verts.rs`** — when `hsb.is_active()`, the legacy
+  per-pane grey-alpha overlay rect is **suppressed**. Drawing it on
+  top of the new per-cell transform would double-dim. The Phase 6
+  helper `InactivePaneHsbConfig::overlay_rgba` stays in the codebase
+  for back-compat / debugging but is no longer rendered.
+- **Tests** (`+8`): HSV round-trip preserves primary colours;
+  identity multipliers `(1, 1, 1)` are a no-op; brightness < 1
+  darkens without touching alpha; saturation 0 collapses to grey;
+  hue multiplier ≠ 1 actually shifts the hue (green `× 2` →
+  blue-dominant); animated endpoints match input at `t = 0` and
+  `apply_hsb_multiplier` at `t = 1`; the lerp midpoint matches the
+  expected interpolated multiplier; alpha is preserved across every
+  combination. Full `cargo test -p nexterm-client-gpu --bins` is
+  green (565 tests, +8 from Phase 6).
+
+Known limitation: the transform runs on the CPU during vertex
+construction, so very large panes with high churn pay an additional
+~one HSV conversion per cell per cache miss. The cost is bounded by
+the existing `PaneRenderCache` and is below the per-frame cost of
+glyph rasterisation, but moving the transform into the bg shader
+remains a future option if a real-time hue sweep ever becomes a
+requirement.
+
 ### Added — UI/UX Modernization v2 Phase 6 (inactive-pane HSB transform)
 
 Picks up after Phases 1–5 in the Sprint 5-15 plan. PROTOCOL_VERSION = 8

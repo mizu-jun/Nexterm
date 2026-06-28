@@ -299,6 +299,37 @@ impl WgpuState {
                                 frame_now,
                             );
 
+                        // Phase 6b (UI/UX v2): when this pane is unfocused
+                        // and `inactive_pane_hsb.is_active() == true`, the
+                        // HSB transform is applied per cell inside
+                        // `build_grid_verts_in_rect` (replacing the legacy
+                        // flat brightness scale). Otherwise pass `None` so
+                        // the renderer keeps the pre-Phase-6b behaviour.
+                        // The `animation_t` lerps the multipliers toward
+                        // identity (1.0) so the transition follows the
+                        // existing spring-driven dim animation.
+                        let inactive_hsb_for_pane = if !is_focused
+                            && config.inactive_pane_hsb.is_active()
+                        {
+                            let raw_alpha = state.animations.pane_dim_alpha(pane_id);
+                            let t = (raw_alpha / crate::animations::MAX_DIM_ALPHA).clamp(0.0, 1.0);
+                            Some((
+                                config.inactive_pane_hsb.hue,
+                                config.inactive_pane_hsb.saturation,
+                                config.inactive_pane_hsb.brightness,
+                                t,
+                            ))
+                        } else {
+                            None
+                        };
+                        // Phase 6b: quantise the animation_t into a u32
+                        // for the render cache key so a mid-spring frame
+                        // invalidates the cache instead of replaying a
+                        // stale dim colour.
+                        let inactive_hsb_q = inactive_hsb_for_pane
+                            .map(|(_, _, _, t)| (t * 255.0).round() as u32)
+                            .unwrap_or(u32::MAX);
+
                         // C4: check whether the cached vertex data can be reused.
                         // A cache hit requires all of: content unchanged, layout
                         // parameters unchanged, and the atlas not yet reset this
@@ -317,6 +348,7 @@ impl WgpuState {
                                         cursor_style,
                                         cursor_visible,
                                         cursor_visual_q,
+                                        inactive_hsb_q,
                                         &state.mouse_sel,
                                     )
                             });
@@ -358,6 +390,7 @@ impl WgpuState {
                                 cursor_visible,
                                 cursor_visual_col,
                                 cursor_visual_row,
+                                inactive_hsb_for_pane,
                                 &mut l_bg_v,
                                 &mut l_bg_i,
                                 &mut l_txt_v,
@@ -394,6 +427,7 @@ impl WgpuState {
                                     cursor_style: cursor_style.clone(),
                                     cursor_visible,
                                     cursor_visual_q,
+                                    inactive_hsb_q,
                                     mouse_sel_start: state.mouse_sel.start,
                                     mouse_sel_end: state.mouse_sel.end,
                                     mouse_sel_dragging: state.mouse_sel.is_dragging,
