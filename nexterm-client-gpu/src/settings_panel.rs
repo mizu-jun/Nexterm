@@ -375,6 +375,13 @@ pub struct SettingsPanel {
     pub font_size: f32,
     /// Selected color-scheme index.
     pub scheme_index: usize,
+    /// Phase 3b (UI/UX v2): index of the colour-scheme dot the mouse is
+    /// currently hovering inside the Theme category. `None` when not
+    /// hovering. Drives the live preview — `render_frame` swaps in the
+    /// hovered scheme transiently without touching `scheme_index` or
+    /// the on-disk TOML, so moving the cursor away reverts cleanly and
+    /// clicking commits via the existing `ThemeColor` hit handler.
+    pub theme_hover_preview: Option<usize>,
     /// Window opacity.
     pub opacity: f32,
     /// Whether the panel has unsaved changes.
@@ -541,6 +548,7 @@ impl SettingsPanel {
             category: SettingsCategory::Font,
             font_size: config.font.size,
             scheme_index,
+            theme_hover_preview: None,
             opacity: config.window.background_opacity,
             dirty: false,
             font_family: config.font.family.clone(),
@@ -596,6 +604,9 @@ impl SettingsPanel {
         self.dirty = false;
         self.font_family_editing = false;
         self.tab_rename_editing = None;
+        // Phase 3b (UI/UX v2): drop any in-flight theme preview so the
+        // next panel open starts on the configured scheme.
+        self.theme_hover_preview = None;
         // Phase 5-11-8 Step 8-3 (Sub-phase A): also leave SSH field-edit mode.
         self.ssh_field_editing = None;
         // Phase 5-11-8 Step 8-3 (Sub-phase D): also close the delete dialog.
@@ -2125,6 +2136,28 @@ fn scheme_name_to_index(colors: &nexterm_config::ColorScheme) -> usize {
     }
 }
 
+/// Inverse of `scheme_name_to_index`: map a 0..=8 slot to a
+/// `BuiltinScheme`. Used by Phase 3b live theme preview to derive a
+/// `ColorScheme` value from a hovered dot index. Pure helper so it
+/// can be unit-tested without instantiating a renderer.
+///
+/// Out-of-range inputs wrap modulo 9 so the caller doesn't need to
+/// clamp ahead of time.
+pub fn index_to_builtin_scheme(idx: usize) -> nexterm_config::BuiltinScheme {
+    use nexterm_config::BuiltinScheme;
+    match idx % 9 {
+        0 => BuiltinScheme::Dark,
+        1 => BuiltinScheme::Light,
+        2 => BuiltinScheme::TokyoNight,
+        3 => BuiltinScheme::Solarized,
+        4 => BuiltinScheme::Gruvbox,
+        5 => BuiltinScheme::Catppuccin,
+        6 => BuiltinScheme::Dracula,
+        7 => BuiltinScheme::Nord,
+        _ => BuiltinScheme::OneDark,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3309,6 +3342,78 @@ mod search_tests {
         let via_method = panel.field_hit_count(&SettingsCategory::Window);
         let via_helper = field_hit_count(&SettingsCategory::Window, "padding");
         assert_eq!(via_method, via_helper);
+    }
+}
+
+#[cfg(test)]
+mod theme_preview_tests {
+    //! Phase 3b (UI/UX v2): live theme preview helpers.
+    use super::*;
+    use nexterm_config::BuiltinScheme;
+
+    /// `index_to_builtin_scheme` must round-trip with the existing
+    /// `scheme_name_to_index` inverse for every slot 0..=8 so the live
+    /// preview cannot select a scheme that the commit path then drops.
+    #[test]
+    fn index_to_scheme_round_trips_with_name_to_index() {
+        for idx in 0..9 {
+            let scheme = index_to_builtin_scheme(idx);
+            let back = scheme_name_to_index(&nexterm_config::ColorScheme::Builtin(scheme));
+            assert_eq!(back, idx, "round-trip mismatch at idx={}", idx);
+        }
+    }
+
+    /// Out-of-range inputs must wrap modulo 9 rather than panic — the
+    /// renderer passes the field value verbatim and we don't want
+    /// stray hover state to crash the frame.
+    #[test]
+    fn index_to_scheme_wraps_out_of_range() {
+        assert_eq!(index_to_builtin_scheme(9), BuiltinScheme::Dark);
+        assert_eq!(index_to_builtin_scheme(17), BuiltinScheme::OneDark);
+        assert_eq!(
+            index_to_builtin_scheme(usize::MAX),
+            index_to_builtin_scheme(usize::MAX % 9)
+        );
+    }
+
+    /// A fresh panel must start with no hover preview so the first
+    /// open frame uses the configured scheme, not a stale value left
+    /// over from a previous session.
+    #[test]
+    fn fresh_panel_has_no_hover_preview() {
+        let panel = SettingsPanel::default();
+        assert_eq!(panel.theme_hover_preview, None);
+    }
+
+    /// `close()` must drop any in-flight hover preview so the next
+    /// open starts on the configured scheme even when the user
+    /// dismissed the panel mid-hover.
+    #[test]
+    fn close_clears_hover_preview() {
+        let mut panel = SettingsPanel {
+            is_open: true,
+            theme_hover_preview: Some(3),
+            ..SettingsPanel::default()
+        };
+        panel.close();
+        assert_eq!(panel.theme_hover_preview, None);
+        assert!(!panel.is_open);
+    }
+
+    /// Commit (setting `scheme_index` from a click handler) must NOT
+    /// rely on `theme_hover_preview` being kept in sync — the commit
+    /// path moves the value into `scheme_index`, and 3b's renderer
+    /// then falls back to the configured scheme on the next frame.
+    /// This guards the click handler's "clear after commit" semantics.
+    #[test]
+    fn scheme_index_is_independent_of_preview() {
+        let panel = SettingsPanel {
+            theme_hover_preview: Some(5),
+            scheme_index: 2,
+            ..SettingsPanel::default()
+        };
+        assert_eq!(panel.scheme_index, 2);
+        assert_eq!(panel.theme_hover_preview, Some(5));
     }
 }
 
