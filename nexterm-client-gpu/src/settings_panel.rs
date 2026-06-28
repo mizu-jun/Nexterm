@@ -1767,30 +1767,247 @@ impl SettingsPanel {
     pub fn filtered_categories(&self) -> Vec<SettingsCategory> {
         filter_categories(&self.search_query, SettingsCategory::ALL)
     }
+
+    /// Number of fields in `cat` that match the current `search_query`.
+    /// Returns `0` when the query is empty so the sidebar can suppress
+    /// the badge cleanly. Phase 4b: drives the `(N)` hit-count after
+    /// the category label.
+    pub fn field_hit_count(&self, cat: &SettingsCategory) -> usize {
+        field_hit_count(cat, &self.search_query)
+    }
 }
 
-/// Static keywords a category should match against in addition to its label.
-/// Used by `filter_categories` so e.g. searching "color" hits `Theme` and
-/// searching "shell" hits `Profiles`.
-fn category_keywords(cat: &SettingsCategory) -> &'static [&'static str] {
+/// A single searchable field inside a category. Phase 4b extends the
+/// Phase 4 category-level filter so a query like "font size" highlights
+/// the Font category with a hit-count badge, instead of only matching
+/// against a small curated keyword list.
+///
+/// `label` is the human-readable label as shown (or close to what is
+/// shown) in the settings panel. `aliases` are extra search terms that
+/// should also hit this field (e.g. "shell" for the `command` field
+/// inside Profiles).
+#[derive(Debug, Clone, Copy)]
+pub struct FieldEntry {
+    pub label: &'static str,
+    pub aliases: &'static [&'static str],
+}
+
+/// Pure catalogue of the searchable fields per category. Used by the
+/// Phase 4b field-level search; intentionally curated rather than
+/// auto-derived from the renderer because the renderer is hand-written
+/// per category and there is no single struct of record. The labels do
+/// not need to match the renderer byte-for-byte; they exist so that
+/// fuzzy queries against the field name or its aliases land on the
+/// right category.
+pub fn category_fields(cat: &SettingsCategory) -> &'static [FieldEntry] {
     match cat {
-        SettingsCategory::Startup => &["startup", "launch", "session"],
-        SettingsCategory::Font => &["font", "family", "size", "ligature"],
-        SettingsCategory::Theme => &["theme", "color", "colors", "scheme", "palette"],
-        SettingsCategory::Window => &[
-            "window", "opacity", "padding", "cursor", "present", "blur", "acrylic",
+        SettingsCategory::Startup => &[
+            FieldEntry {
+                label: "Language",
+                aliases: &["locale", "i18n", "translation"],
+            },
+            FieldEntry {
+                label: "Check for updates on startup",
+                aliases: &["update", "release", "auto-update"],
+            },
+            FieldEntry {
+                label: "Restore previous session",
+                aliases: &["session", "snapshot", "persist"],
+            },
         ],
-        SettingsCategory::Ssh => &["ssh", "host", "remote", "port"],
-        SettingsCategory::Keybindings => &["keybinding", "key", "shortcut", "binding"],
-        SettingsCategory::Profiles => &["profile", "shell", "working", "directory"],
-        SettingsCategory::Blocks => &["block", "command", "warp", "osc133"],
+        SettingsCategory::Font => &[
+            FieldEntry {
+                label: "Family",
+                aliases: &["font", "typeface"],
+            },
+            FieldEntry {
+                label: "Size",
+                aliases: &["font size", "pt", "px"],
+            },
+            FieldEntry {
+                label: "Ligatures",
+                aliases: &["ligature", "harfbuzz"],
+            },
+        ],
+        SettingsCategory::Theme => &[
+            FieldEntry {
+                label: "Theme",
+                aliases: &["color scheme", "palette", "colors"],
+            },
+            FieldEntry {
+                label: "Light theme",
+                aliases: &["light", "day"],
+            },
+            FieldEntry {
+                label: "Dark theme",
+                aliases: &["dark", "night"],
+            },
+            FieldEntry {
+                label: "Follow system theme",
+                aliases: &["os theme", "system", "auto"],
+            },
+        ],
+        SettingsCategory::Window => &[
+            FieldEntry {
+                label: "Opacity",
+                aliases: &["transparency", "alpha"],
+            },
+            FieldEntry {
+                label: "Horizontal padding",
+                aliases: &["padding x", "margin"],
+            },
+            FieldEntry {
+                label: "Vertical padding",
+                aliases: &["padding y", "margin"],
+            },
+            FieldEntry {
+                label: "Cursor style",
+                aliases: &["caret", "block", "beam", "underline"],
+            },
+            FieldEntry {
+                label: "Present mode",
+                aliases: &["vsync", "fifo", "mailbox"],
+            },
+            FieldEntry {
+                label: "Acrylic blur",
+                aliases: &["blur", "acrylic", "windows 11"],
+            },
+            FieldEntry {
+                label: "Background image",
+                aliases: &["wallpaper", "image"],
+            },
+        ],
+        SettingsCategory::Ssh => &[
+            FieldEntry {
+                label: "SSH hosts",
+                aliases: &["remote", "ssh", "host"],
+            },
+            FieldEntry {
+                label: "Name",
+                aliases: &["host name", "alias"],
+            },
+            FieldEntry {
+                label: "Host",
+                aliases: &["hostname", "address"],
+            },
+            FieldEntry {
+                label: "Port",
+                aliases: &["tcp", "ssh port"],
+            },
+            FieldEntry {
+                label: "Username",
+                aliases: &["user", "login"],
+            },
+            FieldEntry {
+                label: "Auth type",
+                aliases: &["authentication", "key", "password", "agent"],
+            },
+        ],
+        SettingsCategory::Keybindings => &[
+            FieldEntry {
+                label: "Key bindings",
+                aliases: &["shortcut", "hotkey", "binding"],
+            },
+            FieldEntry {
+                label: "Action",
+                aliases: &["command"],
+            },
+            FieldEntry {
+                label: "Modifiers",
+                aliases: &["ctrl", "shift", "alt", "cmd"],
+            },
+        ],
+        SettingsCategory::Profiles => &[
+            FieldEntry {
+                label: "Profiles",
+                aliases: &["shell", "session profile"],
+            },
+            FieldEntry {
+                label: "Name",
+                aliases: &["profile name"],
+            },
+            FieldEntry {
+                label: "Command",
+                aliases: &["shell", "executable", "bash", "powershell", "zsh"],
+            },
+            FieldEntry {
+                label: "Working directory",
+                aliases: &["cwd", "start dir"],
+            },
+            FieldEntry {
+                label: "Environment",
+                aliases: &["env", "variable"],
+            },
+        ],
+        SettingsCategory::Blocks => &[
+            FieldEntry {
+                label: "Command blocks",
+                aliases: &["warp", "osc133", "block"],
+            },
+            FieldEntry {
+                label: "Enable blocks",
+                aliases: &["toggle", "on", "off"],
+            },
+            FieldEntry {
+                label: "Block divider style",
+                aliases: &["divider", "separator"],
+            },
+        ],
     }
+}
+
+/// Score `query` against a single field (max of label-score and
+/// best alias-score). Returns `0` when nothing matched.
+fn score_field(
+    matcher: &fuzzy_matcher::skim::SkimMatcherV2,
+    field: &FieldEntry,
+    query: &str,
+) -> i64 {
+    use fuzzy_matcher::FuzzyMatcher;
+    let label_score = matcher.fuzzy_match(field.label, query).unwrap_or(0);
+    let alias_score = field
+        .aliases
+        .iter()
+        .filter_map(|a| matcher.fuzzy_match(a, query))
+        .max()
+        .unwrap_or(0);
+    label_score.max(alias_score)
+}
+
+/// Best field score in a category for the given query. `0` when no
+/// field matched. Used both by `filter_categories` (for ranking) and
+/// `field_hit_count` (for the sidebar badge).
+fn best_field_score(cat: &SettingsCategory, query: &str) -> i64 {
+    use fuzzy_matcher::skim::SkimMatcherV2;
+    let matcher = SkimMatcherV2::default();
+    category_fields(cat)
+        .iter()
+        .map(|f| score_field(&matcher, f, query))
+        .max()
+        .unwrap_or(0)
+}
+
+/// Number of fields in `cat` that match `query` with a positive score.
+/// Drives the `(N)` badge in the sidebar when filtering is active.
+/// Pure function so tests can pin the count behaviour.
+pub fn field_hit_count(cat: &SettingsCategory, query: &str) -> usize {
+    let q = query.trim();
+    if q.is_empty() {
+        return 0;
+    }
+    use fuzzy_matcher::skim::SkimMatcherV2;
+    let matcher = SkimMatcherV2::default();
+    category_fields(cat)
+        .iter()
+        .filter(|f| score_field(&matcher, f, q) > 0)
+        .count()
 }
 
 /// Pure helper that ranks categories for the given fuzzy query. Empty / blank
 /// queries fall through to the canonical order so the sidebar reverts cleanly
-/// when the user clears the search. Match score is the max across the label
-/// and the static keyword set; categories without any positive score are
+/// when the user clears the search. Match score is the max across the
+/// category label and the per-field score (label + aliases) from
+/// `category_fields`; categories without any positive score are
 /// dropped. Stable sort on `(-score, original_index)` keeps the canonical
 /// order as a tiebreaker.
 pub fn filter_categories(query: &str, all: &[SettingsCategory]) -> Vec<SettingsCategory> {
@@ -1805,12 +2022,8 @@ pub fn filter_categories(query: &str, all: &[SettingsCategory]) -> Vec<SettingsC
         .enumerate()
         .filter_map(|(idx, cat)| {
             let label_score = matcher.fuzzy_match(cat.label(), q).unwrap_or(0);
-            let kw_score = category_keywords(cat)
-                .iter()
-                .filter_map(|k| matcher.fuzzy_match(k, q))
-                .max()
-                .unwrap_or(0);
-            let best = label_score.max(kw_score);
+            let field_score = best_field_score(cat, q);
+            let best = label_score.max(field_score);
             if best > 0 {
                 Some((best, idx, cat.clone()))
             } else {
@@ -3003,6 +3216,99 @@ mod search_tests {
         panel.push_search_char('\t');
         panel.push_search_char('a');
         assert_eq!(panel.search_query, "a");
+    }
+
+    // ---- Phase 4b: field-level search tests ----
+
+    /// Every category must declare at least one field; otherwise the
+    /// hit-count badge would never fire for that category.
+    #[test]
+    fn every_category_has_at_least_one_field() {
+        for cat in SettingsCategory::ALL {
+            let fields = category_fields(cat);
+            assert!(
+                !fields.is_empty(),
+                "category {:?} has no searchable fields",
+                cat
+            );
+        }
+    }
+
+    /// Searching for a field label (e.g. "Opacity") must hit the
+    /// matching category through `filter_categories` even when the
+    /// category label itself does not contain the query.
+    #[test]
+    fn field_label_match_finds_category() {
+        let out = filter_categories("opacity", SettingsCategory::ALL);
+        assert!(
+            out.contains(&SettingsCategory::Window),
+            "opacity should reach Window via field label, got {:?}",
+            out
+        );
+    }
+
+    /// Aliases declared on `FieldEntry` (e.g. "bash" for Profiles
+    /// command) must also route the query to the right category.
+    #[test]
+    fn field_alias_match_finds_category() {
+        let out = filter_categories("bash", SettingsCategory::ALL);
+        assert!(
+            out.contains(&SettingsCategory::Profiles),
+            "bash should reach Profiles via the command field alias, got {:?}",
+            out
+        );
+    }
+
+    /// `field_hit_count` must return 0 for empty / blank queries so the
+    /// sidebar can suppress the badge entirely when the user has not
+    /// typed anything.
+    #[test]
+    fn field_hit_count_is_zero_for_empty_query() {
+        for cat in SettingsCategory::ALL {
+            assert_eq!(field_hit_count(cat, ""), 0);
+            assert_eq!(field_hit_count(cat, "   "), 0);
+        }
+    }
+
+    /// Hit count must be positive on the matching category and zero on
+    /// an unrelated one, so the badge appears only where useful.
+    #[test]
+    fn field_hit_count_is_positive_for_matching_category() {
+        let n = field_hit_count(&SettingsCategory::Window, "opacity");
+        assert!(n >= 1, "expected ≥1 hit on Window for 'opacity', got {}", n);
+        assert_eq!(
+            field_hit_count(&SettingsCategory::Ssh, "opacity"),
+            0,
+            "SSH should not match 'opacity'"
+        );
+    }
+
+    /// Hit count must rise when the query is broad enough to match
+    /// multiple fields inside the same category (regression guard so we
+    /// do not collapse to bool semantics).
+    #[test]
+    fn field_hit_count_aggregates_multiple_fields() {
+        // "padding" appears in two field labels (Horizontal padding /
+        // Vertical padding) inside Window.
+        let n = field_hit_count(&SettingsCategory::Window, "padding");
+        assert!(
+            n >= 2,
+            "expected ≥2 hits on Window for 'padding', got {}",
+            n
+        );
+    }
+
+    /// `SettingsPanel::field_hit_count` must agree with the free helper
+    /// (wiring sanity check, mirrors `struct_method_matches_helper`).
+    #[test]
+    fn field_hit_count_struct_method_matches_helper() {
+        let panel = SettingsPanel {
+            search_query: "padding".to_string(),
+            ..SettingsPanel::default()
+        };
+        let via_method = panel.field_hit_count(&SettingsCategory::Window);
+        let via_helper = field_hit_count(&SettingsCategory::Window, "padding");
+        assert_eq!(via_method, via_helper);
     }
 }
 
