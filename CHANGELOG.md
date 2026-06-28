@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — UI/UX Modernization v2 Phase 4b (field-level settings search)
+
+Follow-up to Phase 4 (`docs/plans/ui-ux-modernization-v2.md`). Extends
+the Phase 4 category-level fuzzy filter so queries can hit individual
+fields (e.g. "opacity", "bash", "padding") instead of only matching the
+short curated keyword list. PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION =
+4 remain unchanged.
+
+- **Field catalogue** (`nexterm-client-gpu/src/settings_panel.rs`):
+  replaces the Phase 4 `category_keywords` table with a richer
+  `category_fields` registry that lists `FieldEntry { label, aliases }`
+  per category. `filter_categories` now scores each category as
+  `max(label_score, best_field_score)` so a query like "opacity"
+  ranks Window first via its `Opacity` field, and "bash" ranks Profiles
+  first via the `Command` field aliases.
+- **Sidebar hit-count badge**
+  (`nexterm-client-gpu/src/renderer/overlay/settings.rs`): when a query
+  is active, each remaining category renders as `  ICON  Label (N)`
+  where `N` is the number of fields matching the query in that
+  category. The badge is suppressed when the query is empty so the
+  sidebar looks identical to Phase 4 in the no-search case.
+- **Tests** (`nexterm-client-gpu/src/settings_panel.rs`): 7 new tests
+  (every category declares ≥1 field, field-label match reaches Window
+  via "opacity", alias match reaches Profiles via "bash", hit count is
+  zero for empty/blank queries, hit count is positive on the matching
+  category and zero on an unrelated one, hit count aggregates multiple
+  fields for "padding", `SettingsPanel::field_hit_count` matches the
+  free helper). Full `cargo test -p nexterm-client-gpu --bins` is green
+  (579 tests, +7 from Phase 4).
+
 ### Added — UI/UX Modernization v2 Phase 4 (settings search + mouse pane resize)
 
 Picks up the Sprint 5-15 plan (`docs/plans/ui-ux-modernization-v2.md`)
