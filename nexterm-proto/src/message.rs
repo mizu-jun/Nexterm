@@ -643,6 +643,26 @@ pub enum ServerToClient {
         /// New title string.
         title: String,
     },
+    /// Phase 2c (UI/UX v2): foreground-process change notification.
+    ///
+    /// Broadcast at most once per second per pane by the server's
+    /// session-wide polling ticker; only when the detected name actually
+    /// changes from the previous tick. `process_name = None` means the
+    /// shell is at the prompt (no foreground job) or detection failed —
+    /// the client must clear any previously rendered icon in that case.
+    ///
+    /// Decoupled from `TitleChanged` because the cadence and triggers
+    /// are independent (titles fire on OSC 0/2 escape sequences;
+    /// process names follow the OS process table). Bundling them would
+    /// either re-send unchanged titles every second or force the
+    /// process polling to wait for an OSC 0 escape.
+    ProcessChanged {
+        /// Pane ID whose foreground process changed.
+        pane_id: u32,
+        /// New foreground process name (e.g. `"vim"`, `"ssh"`) or
+        /// `None` when the shell is sitting at the prompt.
+        process_name: Option<String>,
+    },
     /// Desktop notification.
     DesktopNotification {
         /// Source pane ID.
@@ -915,6 +935,28 @@ mod tests {
         let encoded = postcard::to_stdvec(&msg).unwrap();
         let decoded: ServerToClient = postcard::from_bytes(&encoded).unwrap();
         assert_eq!(msg, decoded);
+    }
+
+    /// Phase 2c (UI/UX v2): `ProcessChanged` must postcard-roundtrip for
+    /// both the `Some(name)` (foreground process detected) and `None`
+    /// (shell at prompt) cases so the client sees identical semantics.
+    #[test]
+    fn process_changed_postcard_roundtrip() {
+        let with_name = ServerToClient::ProcessChanged {
+            pane_id: 7,
+            process_name: Some("vim".to_string()),
+        };
+        let encoded = postcard::to_stdvec(&with_name).unwrap();
+        let decoded: ServerToClient = postcard::from_bytes(&encoded).unwrap();
+        assert_eq!(with_name, decoded);
+
+        let none = ServerToClient::ProcessChanged {
+            pane_id: 7,
+            process_name: None,
+        };
+        let encoded = postcard::to_stdvec(&none).unwrap();
+        let decoded: ServerToClient = postcard::from_bytes(&encoded).unwrap();
+        assert_eq!(none, decoded);
     }
 
     #[test]

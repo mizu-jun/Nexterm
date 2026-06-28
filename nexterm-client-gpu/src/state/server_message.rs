@@ -115,6 +115,17 @@ impl ClientState {
                     pane.title = title;
                 }
             }
+            // Phase 2c (UI/UX v2): 1 Hz process-poll update from the
+            // server. Store the new name (or clear it on `None`) so the
+            // tab-bar renderer can prefix the configured Nerd Font glyph.
+            ServerToClient::ProcessChanged {
+                pane_id,
+                process_name,
+            } => {
+                if let Some(pane) = self.panes.get_mut(&pane_id) {
+                    pane.process_name = process_name;
+                }
+            }
             // DesktopNotification and ClipboardWriteRequest are handled by event_handler
             // according to the SecurityConfig policy (state.rs does nothing).
             ServerToClient::DesktopNotification { .. } => {}

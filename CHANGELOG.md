@@ -7,6 +7,119 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — UI/UX Modernization v2 Phase 2c (per-tab process / shell icon)
+
+Closes the last `deferred` item on the Phase 2 tab-bar work
+(`docs/plans/ui-ux-modernization-v2.md`). When
+`tab_bar.show_process_icon = true`, each tab label is prefixed with a
+Nerd Font glyph derived from the pane's foreground process (e.g.
+` vim`, ` ssh`, ` git`). The server polls each pane's foreground
+process at 1 Hz and broadcasts updates only when the name changes;
+the client maps the name to a glyph via a pure in-tree lookup table.
+The full design and decision rationale is documented in
+`docs/plans/phase-2c-process-icon.md`.
+
+**PROTOCOL_VERSION 8 → 9.** Adding a new `ServerToClient` enum
+variant is a wire-format break because postcard tags variants
+positionally; the single-binary `nexterm` ships both halves so the
+synchronised upgrade is automatic for users running the released
+build, but anyone mixing client and server binaries across versions
+will need to upgrade both. SNAPSHOT_VERSION = 4 unchanged.
+
+- **Server-side process inspection**
+  (`nexterm-server/src/pane.rs`): new `Pane::foreground_process_name`
+  with three OS-specific implementations.
+  - Linux: read `/proc/{shell_pid}/stat`, extract `tpgid`, then
+    `/proc/{tpgid}/comm`. Returns `None` when the shell owns the
+    terminal (`tpgid == pgrp`) so the icon clears at the prompt.
+  - macOS: spawn `ps -A -o pid=,ppid=,comm=` once per pane, build
+    a `(pid, ppid, comm)` table, walk down from the shell to the
+    deepest descendant.
+  - Windows: `CreateToolhelp32Snapshot` + `Process32{First,Next}W`
+    to enumerate every process, then the same parent-map descent.
+    Strips trailing `.exe` so the glyph map matches `vim` rather
+    than `vim.exe`. Uses the existing `HandleGuard` pattern from
+    `read_has_foreground_process` to guarantee handle cleanup.
+- **Session-wide polling ticker**
+  (`nexterm-server/src/lib.rs`, `nexterm-server/src/session.rs`):
+  `run_server` spawns one `tokio::time::interval(1s)` task that
+  calls `SessionManager::poll_foreground_processes`. The method
+  snapshots `(pane_id, name, broadcast_tx)` tuples under the
+  session lock, drops the lock, diffs each name against an
+  in-task `HashMap<pane_id, Option<String>>`, and broadcasts
+  `ServerToClient::ProcessChanged` only on change. Stale
+  pane IDs are pruned each tick so the map stays bounded.
+  Polling is **skipped entirely** when
+  `runtime_cfg.tab_bar.show_process_icon = false`, so the
+  default config pays zero OS-inspection cost.
+- **Runtime config plumbing**
+  (`nexterm-server/src/runtime_config.rs`): `RuntimeConfig` gains
+  an `Arc<TabBarConfig>` field so the polling task can hot-reload
+  the `show_process_icon` flag without a server restart.
+- **IPC** (`nexterm-proto/src/message.rs`, `nexterm-proto/src/lib.rs`):
+  new `ServerToClient::ProcessChanged { pane_id, process_name:
+  Option<String> }`. Decoupled from `TitleChanged` because cadence
+  and triggers are independent — bundling them would either resend
+  unchanged titles every second or force process polling to wait
+  for an OSC 0 escape. `PROTOCOL_VERSION` bumped 8 → 9.
+- **Client-side storage**
+  (`nexterm-client-gpu/src/state/pane.rs`,
+  `nexterm-client-gpu/src/state/server_message.rs`,
+  `nexterm-client-tui/src/state.rs`): `PaneState` gains
+  `process_name: Option<String>`; `apply_server_message` handles
+  `ProcessChanged` by writing the field through. The TUI client
+  ignores the message (no tab bar to decorate).
+- **Glyph map**
+  (`nexterm-client-gpu/src/tab_icons.rs`, new module): pure
+  `glyph_for_process(name) -> Option<&'static str>` mapping ≈ 30
+  common process names to Nerd Font codepoints across editors
+  (vim / nvim / emacs / nano / code), network (ssh / mosh),
+  source control (git / lazygit), runtimes (node / python /
+  cargo / go / ruby), containers (docker / kubectl), system
+  tools (htop / less / man), and shells (bash / zsh / fish /
+  pwsh / cmd). Case-insensitive, whitespace-trimmed. Unknown
+  processes return `None` so the absence of a glyph keeps its
+  signal value.
+- **Config schema**
+  (`nexterm-config/src/schema/window.rs`): new
+  `TabBarConfig.show_process_icon: bool` (default `false`).
+  Defaulted off because Nerd Font is not yet a documented runtime
+  dependency and unknown glyphs render as tofu on regular fonts.
+- **Renderer**
+  (`nexterm-client-gpu/src/renderer/ui_verts.rs`): the tab-bar
+  builder reads `process_name` alongside `title` and prepends the
+  glyph when `show_process_icon = true` and the lookup returns
+  `Some`. The number prefix (`[N]`) still applies on top of the
+  glyph for parity with Windows Terminal.
+
+#### Tests (+12 across crates)
+
+- `nexterm-proto` (+1): `ProcessChanged` postcard round-trip for
+  both `Some(name)` and `None` cases.
+- `nexterm-client-gpu` (+5): every canonical key resolves;
+  case-insensitive match (`Code` → same glyph as `code`);
+  whitespace trimmed; unknown processes return `None`; matched
+  glyphs are single non-empty codepoints (layout guard).
+- `nexterm-config` (+0): existing tests cover the new field via
+  `TabBarConfig::default`.
+- `nexterm-server` (+0 unit tests, runtime polling exercised by
+  manual integration testing — see PR description).
+
+`cargo test -p nexterm-client-gpu --bins` is green (614 tests, +5
+from master). `cargo test -p nexterm-proto` round-trips clean.
+`cargo clippy --workspace --all-targets -- -D warnings` clean.
+
+#### Acceptance criteria (manual)
+
+- [ ] Linux: open three panes, run `vim` / `ssh` / shell;
+  icons appear within 1 s and clear on `:q` / `logout`.
+- [ ] Windows: same drill with `pwsh` / `code` / shell.
+- [ ] macOS: same drill with `vim` / `ssh` / `zsh`.
+- [ ] `show_process_icon = false` → no icons; toggle via TOML
+  hot-reload → icons appear without restart.
+- [ ] Kill a shell from outside (`taskkill` / `kill -9`); no
+  panic and the pane's icon clears within 1 s.
+
 ### Added — UI/UX Modernization v2 Phase 3b (live theme preview on hover)
 
 Closes the last `deferred` item on the Phase 3 OS-theme work

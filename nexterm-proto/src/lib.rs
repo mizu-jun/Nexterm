@@ -63,7 +63,12 @@ pub use message::{
 ///     `ServerToClient::ForegroundProcessStatus` at the end of the enums (additive,
 ///     still v8 compatible). Old v8 clients/servers neither send nor receive the new
 ///     variants, so existing v8 connections are unaffected.
-pub const PROTOCOL_VERSION: u32 = 8;
+// Phase 2c (UI/UX v2): bumped 8 → 9 to make room for
+// `ServerToClient::ProcessChanged`. Adding a new postcard enum variant
+// is a wire-format break (postcard tags variants positionally), so the
+// version pin must move in lockstep. Single-binary `nexterm` ships
+// both halves so the synchronised upgrade is automatic for users.
+pub const PROTOCOL_VERSION: u32 = 9;
 
 /// Maximum size (in bytes) of a single IPC message.
 ///

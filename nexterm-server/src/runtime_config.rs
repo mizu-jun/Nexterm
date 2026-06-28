@@ -15,7 +15,7 @@
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use nexterm_config::{Config, HooksConfig, HostConfig, LogConfig};
+use nexterm_config::{Config, HooksConfig, HostConfig, LogConfig, TabBarConfig};
 use tokio::sync::mpsc;
 use tracing::{debug, info};
 
@@ -28,6 +28,10 @@ pub struct RuntimeConfig {
     pub log_config: Arc<LogConfig>,
     /// SSH host configuration.
     pub hosts: Arc<Vec<HostConfig>>,
+    /// Tab-bar configuration (Phase 2c: drives `show_process_icon`,
+    /// which the per-second polling ticker checks to decide whether
+    /// to inspect each pane's foreground process).
+    pub tab_bar: Arc<TabBarConfig>,
 }
 
 impl RuntimeConfig {
@@ -37,6 +41,7 @@ impl RuntimeConfig {
             hooks: Arc::new(cfg.hooks.clone()),
             log_config: Arc::new(cfg.log.clone()),
             hosts: Arc::new(cfg.hosts.clone()),
+            tab_bar: Arc::new(cfg.tab_bar.clone()),
         }
     }
 
@@ -46,11 +51,13 @@ impl RuntimeConfig {
         hooks: Arc<HooksConfig>,
         log_config: Arc<LogConfig>,
         hosts: Arc<Vec<HostConfig>>,
+        tab_bar: Arc<TabBarConfig>,
     ) -> Self {
         Self {
             hooks,
             log_config,
             hosts,
+            tab_bar,
         }
     }
 }
@@ -110,6 +117,7 @@ mod tests {
             Arc::new(HooksConfig::default()),
             Arc::new(LogConfig::default()),
             Arc::new(Vec::new()),
+            Arc::new(TabBarConfig::default()),
         );
         let s = shared(rc);
         let snapshot = s.load();
@@ -122,6 +130,7 @@ mod tests {
             Arc::new(HooksConfig::default()),
             Arc::new(LogConfig::default()),
             Arc::new(Vec::new()),
+            Arc::new(TabBarConfig::default()),
         );
         let s = shared(rc);
         assert!(s.load().hosts.is_empty());
@@ -134,6 +143,7 @@ mod tests {
                 host: "localhost".into(),
                 ..Default::default()
             }]),
+            Arc::new(TabBarConfig::default()),
         );
         s.store(Arc::new(updated));
         assert_eq!(s.load().hosts.len(), 1);

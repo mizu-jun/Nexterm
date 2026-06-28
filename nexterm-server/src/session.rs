@@ -673,6 +673,72 @@ impl SessionManager {
         sessions.values().map(|s| s.info()).collect()
     }
 
+    /// Phase 2c (UI/UX v2): inspect each pane's foreground process and
+    /// broadcast a `ServerToClient::ProcessChanged` whenever the name
+    /// changes versus `last_seen`. Called once per second by the
+    /// server-wide polling task spawned in `run_server`.
+    ///
+    /// Iterates every session × every window × every pane (PTY panes
+    /// only — serial panes have no shell to inspect). For each pane:
+    ///   1. Run `Pane::foreground_process_name()` while holding the
+    ///      session lock. OS-specific cost: ~µs on Linux, ~1 ms on
+    ///      Windows, ~20 ms on macOS (one `ps` invocation per pane).
+    ///   2. Diff against `last_seen.get(&pane_id)`. Broadcast only on
+    ///      change; identical ticks are silent.
+    ///   3. Clean up stale entries (panes that no longer exist) so the
+    ///      map does not grow unbounded across the server's lifetime.
+    ///
+    /// The `last_seen` map is owned by the polling task; passing it in
+    /// keeps `SessionManager` stateless on this axis (no extra `Mutex`).
+    pub async fn poll_foreground_processes(
+        &self,
+        last_seen: &mut std::collections::HashMap<u32, Option<String>>,
+    ) {
+        // Snapshot (pane_id, current_name, broadcast_sender) tuples while
+        // we hold the lock so we can run all broadcasts after dropping it
+        // (broadcast::Sender::send is non-blocking, but we still avoid
+        // holding the lock across the network/async boundary).
+        let mut current: Vec<(u32, Option<String>, broadcast::Sender<ServerToClient>)> = Vec::new();
+        {
+            let sessions = self.sessions.lock().await;
+            for session in sessions.values() {
+                let tx = session.broadcast_sender();
+                for window in session.windows.values() {
+                    for pane_id in window.pane_ids() {
+                        if let Some(pane) = window.pane(pane_id) {
+                            let name = pane.foreground_process_name();
+                            current.push((pane_id, name, tx.clone()));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Track which pane IDs we observed so the cleanup pass can drop
+        // entries for panes that have been removed since the last tick.
+        let mut seen_this_tick: std::collections::HashSet<u32> =
+            std::collections::HashSet::with_capacity(current.len());
+
+        for (pane_id, name, tx) in current {
+            seen_this_tick.insert(pane_id);
+            let changed = last_seen.get(&pane_id) != Some(&name);
+            if changed {
+                last_seen.insert(pane_id, name.clone());
+                // Broadcast::send fails only when there are no receivers,
+                // which is fine — the next attach will pick up the latest
+                // value from `last_seen` semantics via the standard
+                // attach flow. Errors are ignored intentionally.
+                let _ = tx.send(ServerToClient::ProcessChanged {
+                    pane_id,
+                    process_name: name,
+                });
+            }
+        }
+
+        // Drop entries for vanished panes so `last_seen` stays bounded.
+        last_seen.retain(|pane_id, _| seen_this_tick.contains(pane_id));
+    }
+
     /// Create the session if it does not exist; otherwise re-attach to it.
     pub async fn get_or_create_and_attach(&self, name: &str, cols: u16, rows: u16) -> Result<()> {
         let mut sessions = self.sessions.lock().await;

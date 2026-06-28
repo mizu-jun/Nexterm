@@ -239,6 +239,39 @@ async fn run_server_inner(
         }
     });
 
+    // Phase 2c (UI/UX v2): foreground-process polling ticker (1 Hz).
+    //
+    // Inspects every pane's foreground process once per second, broadcasts
+    // `ServerToClient::ProcessChanged` only when the name changes. Gated on
+    // `runtime_cfg.tab_bar.show_process_icon` so users who keep the
+    // default off pay zero OS-inspection cost. The `last_seen` map keeps
+    // the diff state across ticks; `SessionManager::poll_foreground_processes`
+    // prunes vanished panes each tick so memory stays bounded.
+    let process_poll_manager = Arc::clone(&manager);
+    let process_poll_runtime = Arc::clone(&runtime_cfg);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        interval.tick().await; // First tick is immediate; skip it so we
+        // don't broadcast `None` for every fresh shell before it has had
+        // a chance to spawn anything.
+        let mut last_seen: std::collections::HashMap<u32, Option<String>> =
+            std::collections::HashMap::new();
+        loop {
+            interval.tick().await;
+            let show_icons = process_poll_runtime.load().tab_bar.show_process_icon;
+            if !show_icons {
+                // Clear the cache so a re-enable starts fresh and the
+                // client sees a fresh `ProcessChanged` even when the
+                // last-seen name happens to match the current one.
+                last_seen.clear();
+                continue;
+            }
+            process_poll_manager
+                .poll_foreground_processes(&mut last_seen)
+                .await;
+        }
+    });
+
     info!("startup: entering ipc::serve (this is the last step before accept loop)");
     // Run the IPC server and wait for a shutdown signal.
     //

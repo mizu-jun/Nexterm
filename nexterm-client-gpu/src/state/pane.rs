@@ -65,6 +65,13 @@ pub struct PaneState {
     pub has_activity: bool,
     /// Title set via OSC 0/2 (shells and vim set the window title)
     pub title: String,
+    /// Phase 2c (UI/UX v2): foreground process name reported by the
+    /// server's 1 Hz polling ticker (`ServerToClient::ProcessChanged`).
+    /// `None` when the shell is at the prompt, detection failed, or
+    /// the OS does not support process inspection (e.g. BSDs). The
+    /// tab-bar renderer maps this to a Nerd Font glyph through
+    /// [`crate::tab_icons::glyph_for_process`].
+    pub process_name: Option<String>,
     /// Current working directory reported via OSC 7 (Sprint 5-2 / B2)
     ///
     /// Updated when the shell emits `printf '\\033]7;file://...' "$PWD"` or similar.
@@ -118,6 +125,7 @@ impl PaneState {
             text_sizes: Vec::new(),
             has_activity: false,
             title: String::new(),
+            process_name: None,
             cwd: None,
             prompt_anchors: Vec::new(),
             marks: Vec::new(),

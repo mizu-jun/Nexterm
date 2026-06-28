@@ -32,6 +32,7 @@ mod settings_panel;
 mod shaders;
 mod signature_verify;
 mod state;
+mod tab_icons;
 mod update_checker;
 mod vertex_util;
 

@@ -156,8 +156,12 @@ impl ClientState {
             ServerToClient::RecordingStarted { .. } | ServerToClient::RecordingStopped { .. } => {}
             // Window list changes and pane-closed notifications are ignored by the TUI.
             ServerToClient::WindowListChanged { .. } | ServerToClient::PaneClosed { .. } => {}
-            // Title changes and desktop notifications are ignored by the TUI.
-            ServerToClient::TitleChanged { .. } | ServerToClient::DesktopNotification { .. } => {}
+            // Title changes, foreground-process updates (Phase 2c), and
+            // desktop notifications are ignored by the TUI — it has no
+            // tab bar to decorate.
+            ServerToClient::TitleChanged { .. }
+            | ServerToClient::ProcessChanged { .. }
+            | ServerToClient::DesktopNotification { .. } => {}
             // Broadcast mode changes are ignored by the TUI.
             ServerToClient::BroadcastModeChanged { .. } => {}
             // asciicast recording state notifications are ignored by the TUI.
