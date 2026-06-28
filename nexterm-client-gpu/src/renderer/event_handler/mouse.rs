@@ -326,6 +326,26 @@ impl EventHandler {
                 self.app.state.last_cursor_icon = next_cursor;
             }
         }
+        // Phase 3b (UI/UX v2): live theme preview. When the settings
+        // panel is open AND the cursor is hovering a Theme color dot,
+        // mark the dot index in `theme_hover_preview` so the renderer
+        // can swap the colour scheme transiently. Anything else clears
+        // the preview (mouse-leave reverts to the configured scheme).
+        if self.app.state.settings_panel.is_open {
+            let hit = self.hit_test_settings_panel(position.x as f32, position.y as f32);
+            let new_preview = match hit {
+                SettingsPanelHit::ThemeColor(idx) => Some(idx),
+                _ => None,
+            };
+            if self.app.state.settings_panel.theme_hover_preview != new_preview {
+                self.app.state.settings_panel.theme_hover_preview = new_preview;
+            }
+        } else if self.app.state.settings_panel.theme_hover_preview.is_some() {
+            // Panel closed while a preview was active (e.g. Esc dismiss):
+            // clear the stale preview so the next open starts clean.
+            self.app.state.settings_panel.theme_hover_preview = None;
+        }
+
         let col = (position.x / cell_w) as u16;
         let row = ((position.y - tab_bar_h_f64).max(0.0) / cell_h) as u16;
 
@@ -673,9 +693,13 @@ impl EventHandler {
                         });
                     }
                     SettingsPanelHit::ThemeColor(idx) => {
-                        // Click a theme color dot → switch scheme.
+                        // Click a theme color dot → commit. Phase 3b: clear
+                        // the hover preview so the renderer falls back to
+                        // the configured scheme path (now that the commit
+                        // has updated `scheme_index`).
                         self.app.state.settings_panel.scheme_index = idx;
                         self.app.state.settings_panel.dirty = true;
+                        self.app.state.settings_panel.theme_hover_preview = None;
                     }
                     SettingsPanelHit::WindowRow(row) => {
                         // Phase 5-11-6 #6: click on a row inside the Window category.

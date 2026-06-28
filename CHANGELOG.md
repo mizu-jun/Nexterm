@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — UI/UX Modernization v2 Phase 3b (live theme preview on hover)
+
+Closes the last `deferred` item on the Phase 3 OS-theme work
+(`docs/plans/ui-ux-modernization-v2.md`). When the settings panel is
+open and the mouse hovers a colour-scheme dot, the renderer swaps
+the active scheme transiently so the user can audition each palette
+before committing. Moving the cursor away reverts to the configured
+scheme; clicking the dot commits via the existing `ThemeColor`
+hit handler. PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 remain
+unchanged.
+
+- **State** (`nexterm-client-gpu/src/settings_panel.rs`): new
+  `SettingsPanel.theme_hover_preview: Option<usize>` field (panel-
+  local UX state, not persisted) plus the pure inverse helper
+  `index_to_builtin_scheme(idx)` that pairs with the existing
+  `scheme_name_to_index`. The Phase 3b commit clears the preview
+  alongside the existing close-resets in `SettingsPanel::close`.
+- **Mouse hover** (`nexterm-client-gpu/src/renderer/event_handler/
+  mouse.rs`): `on_cursor_moved` runs the existing
+  `hit_test_settings_panel` while the panel is open and updates
+  `theme_hover_preview` based on `SettingsPanelHit::ThemeColor(idx)`
+  (everything else clears it). A `panel-closed-mid-hover` guard
+  resets the preview so a stale value cannot leak across re-opens.
+  The `ThemeColor` click handler now also clears the preview after
+  committing the new index so the renderer drops to the configured
+  scheme on the next frame without a one-frame flicker.
+- **Renderer** (`nexterm-client-gpu/src/renderer/event_handler/
+  window.rs`): `redraw_requested` builds the configured scheme via
+  `Config::effective_color_scheme` exactly as before, then overrides
+  it with `ColorScheme::Builtin(index_to_builtin_scheme(idx))` when
+  `theme_hover_preview` is `Some(idx)` and the panel is open. The
+  `DesignTokens::from_palette` derivation runs per frame, so the
+  swap propagates to every overlay surface without an extra
+  invalidation.
+- **Tests** (`+5`): `index_to_builtin_scheme` round-trips with the
+  existing `scheme_name_to_index` for slots 0..=8; out-of-range
+  inputs wrap modulo 9 instead of panicking; a fresh panel has no
+  hover preview; `close()` clears the preview alongside the other
+  reset state; `scheme_index` and `theme_hover_preview` are
+  independent fields so the click-commit handler's "clear after
+  commit" path is order-safe. `cargo test -p nexterm-client-gpu
+  --bins` is green (609 tests, +5 from master).
+
 ### Added — UI/UX Modernization v2 Phase 6b (true HSB hue shift)
 
 Follow-up to Phase 6 (PR #17). Replaces the Phase 6 grey-alpha overlay

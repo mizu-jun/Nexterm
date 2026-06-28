@@ -498,10 +498,25 @@ impl EventHandler {
         // color scheme by combining the configured `colors` with the
         // OS-reported light/dark preference. `colors_follow_system = false`
         // (the default) keeps the configured scheme verbatim.
-        let effective_scheme = self
+        let configured_scheme = self
             .app
             .config
             .effective_color_scheme(self.app.state.os_dark_mode);
+        // Phase 3b (UI/UX v2): when the settings panel is open and the
+        // mouse is hovering a Theme dot, render with the previewed
+        // scheme instead of the configured one. Mouse-leave clears
+        // `theme_hover_preview`, which reverts the renderer to the
+        // configured scheme on the next frame; clicking a dot commits
+        // via the existing `ThemeColor` hit handler.
+        let effective_scheme = if self.app.state.settings_panel.is_open
+            && let Some(idx) = self.app.state.settings_panel.theme_hover_preview
+        {
+            nexterm_config::ColorScheme::Builtin(crate::settings_panel::index_to_builtin_scheme(
+                idx,
+            ))
+        } else {
+            configured_scheme
+        };
         if let (Some(wgpu), Some(atlas)) = (&mut self.wgpu_state, &mut self.atlas)
             && let Err(e) = wgpu.render(
                 &mut self.app.state,
