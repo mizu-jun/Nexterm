@@ -369,6 +369,7 @@ impl WgpuState {
             txt_v_cap: INIT_TXT_V,
             txt_i_cap: INIT_TXT_I,
             last_frame_at: Instant::now(),
+            cursor_blink_start: Instant::now(),
             pane_cache: HashMap::new(),
         })
     }

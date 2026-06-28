@@ -33,8 +33,8 @@ pub use tokens::{DesignTokens, parse_hex_color, resolve as resolve_color};
 pub use ui::UiConfig;
 pub use web::{AccessLogConfig, OAuthConfig, TlsConfig, WebAuthConfig, WebConfig};
 pub use window::{
-    BackgroundFit, BackgroundImageConfig, CloseAction, CursorStyle, TabBarConfig, WindowConfig,
-    WindowDecorations,
+    BackgroundFit, BackgroundImageConfig, CloseAction, CursorConfig, CursorStyle, GradientConfig,
+    TabBarConfig, WindowConfig, WindowDecorations,
 };
 
 use serde::{Deserialize, Serialize};
@@ -155,6 +155,13 @@ pub struct Config {
     #[serde(default)]
     pub cursor_style: CursorStyle,
 
+    /// Phase 5 (UI/UX v2): cursor blink + smooth-motion configuration.
+    /// Independent of [`cursor_style`] — controls *when* the cursor is drawn
+    /// (blink) and *how it moves between cells* (smooth motion). Defaults
+    /// match the xterm cadence (530 ms blink half-period, smooth motion on).
+    #[serde(default)]
+    pub cursor: CursorConfig,
+
     /// Whether to check the GitHub Releases API for the latest version at
     /// startup (default: `true`).
     #[serde(default = "default_auto_check_update")]
@@ -244,6 +251,7 @@ impl Default for Config {
             gpu: GpuConfig::default(),
             language: default_language(),
             cursor_style: CursorStyle::default(),
+            cursor: CursorConfig::default(),
             auto_check_update: default_auto_check_update(),
             security: SecurityConfig::default(),
             leader_key: default_leader_key(),

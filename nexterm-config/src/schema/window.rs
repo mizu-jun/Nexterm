@@ -209,6 +209,11 @@ pub struct WindowConfig {
     /// background image.
     #[serde(default)]
     pub background_image: Option<BackgroundImageConfig>,
+    /// Phase 5 (UI/UX v2): two-stop linear-gradient background. Mutually
+    /// exclusive with `background_image` — when both are set, the image wins
+    /// (the renderer skips the gradient drawcall). `None` = no gradient.
+    #[serde(default)]
+    pub gradient: Option<GradientConfig>,
     /// Behavior when the OS Window is closed (Sprint 5-7 / Phase 4-1).
     /// One of `prompt` / `detach` / `kill`. Default: `prompt`.
     /// See [`CloseAction`] for details.
@@ -236,8 +241,56 @@ impl Default for WindowConfig {
             padding_x: 0,
             padding_y: 0,
             background_image: None,
+            gradient: None,
             close_action: CloseAction::default(),
         }
+    }
+}
+
+/// Phase 5 (UI/UX v2): linear-gradient background configuration.
+///
+/// Renders a two-stop linear gradient across the entire window. Angle follows
+/// the CSS convention: 0° = bottom → top, 90° = left → right, 180° = top →
+/// bottom, 270° = right → left. Values outside [0, 360) are wrapped.
+///
+/// ```toml
+/// [window.gradient]
+/// from = "#1a1a2e"
+/// to = "#16213e"
+/// angle = 180.0
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GradientConfig {
+    /// Start colour (hex `#RRGGBB` or `#RRGGBBAA`).
+    pub from: String,
+    /// End colour (hex `#RRGGBB` or `#RRGGBBAA`).
+    pub to: String,
+    /// Gradient angle in degrees. Default: 180.0 (top → bottom).
+    #[serde(default = "default_gradient_angle")]
+    pub angle: f32,
+}
+
+fn default_gradient_angle() -> f32 {
+    180.0
+}
+
+impl Default for GradientConfig {
+    fn default() -> Self {
+        Self {
+            from: String::new(),
+            to: String::new(),
+            angle: default_gradient_angle(),
+        }
+    }
+}
+
+impl GradientConfig {
+    /// A gradient is considered enabled only when both stops have non-empty
+    /// hex strings. This keeps `[window.gradient]` sections that exist for
+    /// future editing from rendering an all-black panel.
+    pub fn is_enabled(&self) -> bool {
+        !self.from.trim().is_empty() && !self.to.trim().is_empty()
     }
 }
 
@@ -332,6 +385,81 @@ pub enum CursorStyle {
     Underline,
 }
 
+/// Phase 5 (UI/UX v2): cursor blink + smooth-motion configuration.
+///
+/// Independent of [`CursorStyle`] (block / beam / underline). All fields
+/// default to "on" with the de-facto xterm blink interval so existing users
+/// see the cursor blink the moment they upgrade; users on low-power devices
+/// can disable both by setting the respective fields to `false`.
+///
+/// ```toml
+/// [cursor]
+/// blink_enabled = true
+/// blink_interval_ms = 530
+/// smooth_motion = true
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CursorConfig {
+    /// Whether the cursor blinks. Default: `true` (matches xterm).
+    #[serde(default = "default_blink_enabled")]
+    pub blink_enabled: bool,
+    /// Blink half-period in milliseconds. Default: 530 (the xterm cadence —
+    /// one full on/off cycle is 1060 ms). Values < 50 ms are clamped at
+    /// render time to avoid epileptic flicker.
+    #[serde(default = "default_blink_interval_ms")]
+    pub blink_interval_ms: u32,
+    /// Whether the cursor interpolates smoothly between cells when it moves.
+    /// Default: `true`. When false the cursor snaps immediately, matching
+    /// the pre-Phase-5 behaviour.
+    #[serde(default = "default_smooth_motion")]
+    pub smooth_motion: bool,
+}
+
+fn default_blink_enabled() -> bool {
+    true
+}
+
+fn default_blink_interval_ms() -> u32 {
+    530
+}
+
+fn default_smooth_motion() -> bool {
+    true
+}
+
+impl Default for CursorConfig {
+    fn default() -> Self {
+        Self {
+            blink_enabled: default_blink_enabled(),
+            blink_interval_ms: default_blink_interval_ms(),
+            smooth_motion: default_smooth_motion(),
+        }
+    }
+}
+
+impl CursorConfig {
+    /// Clamp `blink_interval_ms` to a safe minimum so a hostile / typo'd
+    /// value cannot drive the cursor into seizure-inducing flicker. 50 ms
+    /// equals 20 Hz, well below the photosensitive-epilepsy guideline of
+    /// 3 Hz, but a reasonable floor.
+    pub fn safe_blink_interval_ms(&self) -> u32 {
+        self.blink_interval_ms.max(50)
+    }
+
+    /// Returns `true` when the cursor should be drawn for an elapsed time
+    /// of `t_ms` against this config. Pure helper kept on the type so
+    /// renderer code can call it without touching wall-clock state.
+    pub fn is_visible_at(&self, t_ms: u64) -> bool {
+        if !self.blink_enabled {
+            return true;
+        }
+        let interval = self.safe_blink_interval_ms() as u64;
+        // Visible on even half-periods, hidden on odd ones.
+        (t_ms / interval).is_multiple_of(2)
+    }
+}
+
 /// Tab-bar configuration (WezTerm-style).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -416,5 +544,116 @@ impl Default for TabBarConfig {
             hide_when_single: false,
             show_new_tab_button: true,
         }
+    }
+}
+
+#[cfg(test)]
+mod phase5_config_tests {
+    //! Phase 5 (UI/UX v2): CursorConfig + GradientConfig tests.
+    use super::*;
+
+    #[test]
+    fn cursor_config_defaults_are_xterm_compatible() {
+        let c = CursorConfig::default();
+        assert!(c.blink_enabled);
+        assert_eq!(c.blink_interval_ms, 530);
+        assert!(c.smooth_motion);
+    }
+
+    #[test]
+    fn cursor_is_visible_when_blink_disabled() {
+        let c = CursorConfig {
+            blink_enabled: false,
+            ..CursorConfig::default()
+        };
+        // Always visible regardless of elapsed time.
+        for t in [0u64, 100, 530, 1060, 1_000_000] {
+            assert!(c.is_visible_at(t), "blink off at t={} should be visible", t);
+        }
+    }
+
+    #[test]
+    fn cursor_blink_alternates_on_half_period() {
+        let c = CursorConfig {
+            blink_enabled: true,
+            blink_interval_ms: 500,
+            ..CursorConfig::default()
+        };
+        // First half-period: visible.
+        assert!(c.is_visible_at(0));
+        assert!(c.is_visible_at(499));
+        // Second half-period: hidden.
+        assert!(!c.is_visible_at(500));
+        assert!(!c.is_visible_at(999));
+        // Third half-period (= first of next cycle): visible again.
+        assert!(c.is_visible_at(1000));
+        assert!(c.is_visible_at(1499));
+    }
+
+    #[test]
+    fn cursor_blink_interval_floor_protects_against_seizure_speeds() {
+        let c = CursorConfig {
+            blink_enabled: true,
+            blink_interval_ms: 1, // Hostile / typo value.
+            ..CursorConfig::default()
+        };
+        // 1ms gets clamped to 50ms (20 Hz), well above the 3 Hz photosensitive
+        // threshold for healthy use but below the legal seizure trigger.
+        assert_eq!(c.safe_blink_interval_ms(), 50);
+        // Visible at 0ms..49ms, hidden at 50ms..99ms.
+        assert!(c.is_visible_at(49));
+        assert!(!c.is_visible_at(50));
+    }
+
+    #[test]
+    fn gradient_config_defaults_are_disabled() {
+        let g = GradientConfig::default();
+        assert!(!g.is_enabled(), "default should not render a gradient");
+        assert_eq!(g.angle, 180.0);
+    }
+
+    #[test]
+    fn gradient_is_enabled_only_when_both_stops_set() {
+        let g = GradientConfig {
+            from: "#000000".to_string(),
+            to: String::new(),
+            angle: 0.0,
+        };
+        assert!(!g.is_enabled());
+        let g = GradientConfig {
+            from: "#000000".to_string(),
+            to: "#ffffff".to_string(),
+            angle: 0.0,
+        };
+        assert!(g.is_enabled());
+    }
+
+    #[test]
+    fn gradient_round_trips_through_toml() {
+        let toml_str = r##"
+[window.gradient]
+from = "#1a1a2e"
+to = "#16213e"
+angle = 90.0
+"##;
+        let parsed: crate::schema::Config = toml::from_str(toml_str).unwrap();
+        let g = parsed.window.gradient.expect("gradient should parse");
+        assert_eq!(g.from, "#1a1a2e");
+        assert_eq!(g.to, "#16213e");
+        assert!((g.angle - 90.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cursor_config_round_trips_through_toml() {
+        let toml_str = r##"
+[cursor]
+blink_enabled = false
+blink_interval_ms = 250
+smooth_motion = false
+"##;
+        let parsed: crate::schema::Config = toml::from_str(toml_str).unwrap();
+        assert!(!parsed.cursor.blink_enabled);
+        assert_eq!(parsed.cursor.blink_interval_ms, 250);
+        assert!(!parsed.cursor.smooth_motion);
     }
 }

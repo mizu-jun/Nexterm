@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — UI/UX Modernization v2 Phase 5 (gradient background + cursor blink)
+
+Picks up after Phases 1–4 in the Sprint 5-15 plan. PROTOCOL_VERSION = 8 and
+SNAPSHOT_VERSION = 4 are unchanged; the entire feature lives in the client
+renderer + config.
+
+- **Linear-gradient background** (`nexterm-config/src/schema/window.rs`,
+  `nexterm-client-gpu/src/vertex_util.rs`,
+  `nexterm-client-gpu/src/renderer/render_frame.rs`): new
+  `[window.gradient]` config (`from`, `to`, `angle`) renders a two-stop
+  CSS-convention linear gradient across the entire window using
+  per-corner vertex colours on the existing `bg_pipeline` (no new
+  shader). 0° = bottom → top, 90° = left → right, 180° = top → bottom.
+  Mutually exclusive with `background_image` — when both are set, the
+  image wins and the gradient drawcall is skipped. Pure
+  `compute_gradient_t` helper covers the angle math (8 unit tests over
+  the four cardinal angles, a diagonal, angle wrapping, and NaN
+  guard).
+- **Cursor blink** (`nexterm-config/src/schema/window.rs`,
+  `nexterm-client-gpu/src/vertex_util.rs`,
+  `nexterm-client-gpu/src/renderer/{grid_verts,render_frame,wgpu_init,mod}.rs`):
+  new `[cursor]` config with `blink_enabled` (default `true`),
+  `blink_interval_ms` (default 530 — the xterm cadence), and
+  `smooth_motion` (default `true`; the smooth-motion *render path*
+  ships in Phase 5b). Visibility is computed once per frame via the
+  pure `CursorConfig::is_visible_at`, threaded into
+  `build_grid_verts*`, and consumed by the new
+  `draw_cursor_with_visibility` (the original `draw_cursor` is kept
+  as a thin always-visible wrapper for callers that don't care about
+  blink). The blink state is part of the per-pane `PaneRenderCache`
+  key, so toggling visibility correctly invalidates the cached
+  vertex buffers. A safe-floor of 50 ms (20 Hz) guards against
+  hostile / typo `blink_interval_ms` values producing
+  photosensitive-seizure-level flicker. 7 new tests cover the
+  defaults, the visibility schedule, the safe-floor, and TOML
+  round-trip.
+- **Smooth cursor motion** is deferred to Phase 5b. The config flag
+  exists today (so user TOML doesn't break when 5b lands), but the
+  renderer ignores it for now — the cursor still snaps. Implementing
+  it correctly needs per-pane animation tracking; doing that in the
+  same PR would mix unrelated state into the cache-key path.
+
 ### Added — UI/UX Modernization v2 Phase 4b (field-level settings search)
 
 Follow-up to Phase 4 (`docs/plans/ui-ux-modernization-v2.md`). Extends
@@ -85,9 +127,9 @@ SNAPSHOT_VERSION = 4 are unchanged; this PR reuses the existing
 
 ### Plan status
 
-`docs/plans/ui-ux-modernization-v2.md` Phase 4 now reads **shipped**;
-Phases 5 (gradient background + cursor polish) and 6
-(`inactive_pane_hsb`) remain pending.
+`docs/plans/ui-ux-modernization-v2.md` Phase 4 + 4b + Phase 5 now read
+**shipped**; Phase 6 (`inactive_pane_hsb`) and 5b (smooth cursor
+motion) remain pending.
 
 ## [1.10.1] - 2026-06-27
 

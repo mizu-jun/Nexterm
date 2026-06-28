@@ -78,6 +78,10 @@ pub(super) struct PaneRenderCache {
     pub(super) grid_offset_y_bits: u32,
     pub(super) was_focused: bool,
     pub(super) cursor_style: nexterm_config::CursorStyle,
+    /// Phase 5 (UI/UX v2): cursor visibility (blink phase) at cache-fill
+    /// time. Included so a blink-tick invalidates the cache and the cursor
+    /// actually disappears/appears between frames.
+    pub(super) cursor_visible: bool,
     pub(super) mouse_sel_start: (u16, u16),
     pub(super) mouse_sel_end: (u16, u16),
     pub(super) mouse_sel_dragging: bool,
@@ -101,6 +105,7 @@ impl PaneRenderCache {
         grid_offset_y: f32,
         is_focused: bool,
         cursor_style: &nexterm_config::CursorStyle,
+        cursor_visible: bool,
         mouse_sel: &MouseSelection,
     ) -> bool {
         self.col_offset == layout.col_offset
@@ -114,6 +119,7 @@ impl PaneRenderCache {
             && self.grid_offset_y_bits == grid_offset_y.to_bits()
             && self.was_focused == is_focused
             && &self.cursor_style == cursor_style
+            && self.cursor_visible == cursor_visible
             && self.mouse_sel_start == mouse_sel.start
             && self.mouse_sel_end == mouse_sel.end
             && self.mouse_sel_dragging == mouse_sel.is_dragging
@@ -224,6 +230,11 @@ pub(super) struct WgpuState {
     txt_i_cap: u64,
     /// Timestamp of the last frame draw (used for FPS limiting).
     last_frame_at: Instant,
+    /// Phase 5 (UI/UX v2): wall-clock reference for the cursor blink phase.
+    /// Seeded at `WgpuState::new()`; `draw_cursor` queries
+    /// `cursor_blink_start.elapsed().as_millis()` against `CursorConfig`'s
+    /// blink interval to decide whether the cursor is currently shown.
+    pub(super) cursor_blink_start: Instant,
     /// Per-pane CPU vertex cache (C4 partial-redraw optimization).
     ///
     /// Keyed by `pane_id`. Entries are invalidated when the pane's content changes

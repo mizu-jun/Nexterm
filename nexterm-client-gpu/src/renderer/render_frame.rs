@@ -77,6 +77,15 @@ impl WgpuState {
         let anim_enabled = config.animations.scaled_duration_ms(1) > 0;
         state.animations.tick(frame_now, anim_enabled);
 
+        // Phase 5 (UI/UX v2): cursor visibility for this frame. Computed once
+        // here against the wall-clock so every `build_grid_verts*` invocation
+        // below sees the same value (otherwise multi-pane layouts would show
+        // mixed blink phases). When `blink_enabled = false`, this is always
+        // `true` and `draw_cursor_with_visibility` becomes a no-op gate.
+        let cursor_visible = config
+            .cursor
+            .is_visible_at(self.cursor_blink_start.elapsed().as_millis() as u64);
+
         // Clear the atlas reset flag at the start of the frame.
         // Even if the atlas was reset on the previous frame, this frame will redraw
         // using the correct UVs.
@@ -156,6 +165,32 @@ impl WgpuState {
         let mut text_verts: Vec<TextVertex> = Vec::new();
         let mut text_idx: Vec<u16> = Vec::new();
 
+        // ---- Background gradient (Phase 5 / UI-UX v2) ----
+        // Mutually exclusive with the background-image pass: when an image is
+        // configured the renderer skips this drawcall (the image fully covers
+        // the screen anyway). Pushed onto `bg_verts` first so per-cell
+        // backgrounds drawn later naturally layer over the gradient.
+        if self.background.is_none()
+            && let Some(ref grad) = config.window.gradient
+            && grad.is_enabled()
+            && let Some(from) = nexterm_config::parse_hex_color(&grad.from)
+            && let Some(to) = nexterm_config::parse_hex_color(&grad.to)
+        {
+            crate::vertex_util::add_px_gradient_rect(
+                0.0,
+                0.0,
+                sw,
+                sh,
+                from,
+                to,
+                grad.angle,
+                sw,
+                sh,
+                &mut bg_verts,
+                &mut bg_idx,
+            );
+        }
+
         // When layout information is available, draw all panes in their split positions
         if !state.pane_layouts.is_empty() {
             // Render each pane inside its layout rectangle
@@ -219,6 +254,7 @@ impl WgpuState {
                                         grid_offset_y,
                                         is_focused,
                                         cursor_style,
+                                        cursor_visible,
                                         &state.mouse_sel,
                                     )
                             });
@@ -257,6 +293,7 @@ impl WgpuState {
                                 atlas,
                                 palette_ref,
                                 cursor_style,
+                                cursor_visible,
                                 &mut l_bg_v,
                                 &mut l_bg_i,
                                 &mut l_txt_v,
@@ -291,6 +328,7 @@ impl WgpuState {
                                     grid_offset_y_bits: grid_offset_y.to_bits(),
                                     was_focused: is_focused,
                                     cursor_style: cursor_style.clone(),
+                                    cursor_visible,
                                     mouse_sel_start: state.mouse_sel.start,
                                     mouse_sel_end: state.mouse_sel.end,
                                     mouse_sel_dragging: state.mouse_sel.is_dragging,
@@ -389,6 +427,7 @@ impl WgpuState {
                     atlas,
                     palette_ref,
                     cursor_style,
+                    cursor_visible,
                     &mut bg_verts,
                     &mut bg_idx,
                     &mut text_verts,

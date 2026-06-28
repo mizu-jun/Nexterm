@@ -22,12 +22,12 @@ pub use loader::{ConfigLoader, lua_path, toml_path};
 pub use lua_hooks::{HookEvent, LuaHookRunner};
 pub use schema::{
     AccessLogConfig, AnimationIntensity, AnimationsConfig, BackgroundFit, BackgroundImageConfig,
-    BlocksConfig, BuiltinScheme, CloseAction, ColorScheme, Config, ConsentPolicy, CursorStyle,
-    CustomPalette, DesignTokens, FontConfig, GpuConfig, HooksConfig, HostConfig, KeyBinding,
-    LogConfig, MacroConfig, OAuthConfig, PresentModeConfig, Profile, QuakeEdge, QuakeModeConfig,
-    SchemePalette, SecurityConfig, SerialPortConfig, ShellConfig, StatusBarConfig, TabBarConfig,
-    TlsConfig, UiConfig, WebAuthConfig, WebConfig, WindowConfig, WindowDecorations,
-    parse_hex_color, resolve_color,
+    BlocksConfig, BuiltinScheme, CloseAction, ColorScheme, Config, ConsentPolicy, CursorConfig,
+    CursorStyle, CustomPalette, DesignTokens, FontConfig, GpuConfig, GradientConfig, HooksConfig,
+    HostConfig, KeyBinding, LogConfig, MacroConfig, OAuthConfig, PresentModeConfig, Profile,
+    QuakeEdge, QuakeModeConfig, SchemePalette, SecurityConfig, SerialPortConfig, ShellConfig,
+    StatusBarConfig, TabBarConfig, TlsConfig, UiConfig, WebAuthConfig, WebConfig, WindowConfig,
+    WindowDecorations, parse_hex_color, resolve_color,
 };
 pub use status_bar::{StatusBarEvaluator, WidgetContext, evaluate_builtin};
 pub use watcher::{ConfigRx, watch_config};
