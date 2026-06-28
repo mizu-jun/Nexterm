@@ -8,12 +8,13 @@ use unicode_width::UnicodeWidthChar;
 use crate::color_util::resolve_color;
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, GlyphKey, LigatureKey, TextVertex};
-use crate::vertex_util::{add_px_rect, draw_cursor};
+use crate::vertex_util::add_px_rect;
 
 use super::WgpuState;
 
 impl WgpuState {
     /// Build the vertices for the grid contents.
+    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     pub(super) fn build_grid_verts(
         &self,
@@ -28,6 +29,11 @@ impl WgpuState {
         atlas: &mut GlyphAtlas,
         palette: Option<&nexterm_config::SchemePalette>,
         cursor_style: &nexterm_config::CursorStyle,
+        // Phase 5 (UI/UX v2): cursor visibility from the blink phase.
+        // Computed once per frame in `render_frame.rs` against
+        // `CursorConfig.is_visible_at`; passed in so this routine stays
+        // wall-clock-free and unit-testable.
+        cursor_visible: bool,
         bg_verts: &mut Vec<BgVertex>,
         bg_idx: &mut Vec<u16>,
         text_verts: &mut Vec<TextVertex>,
@@ -226,10 +232,11 @@ impl WgpuState {
             }
         }
 
-        // Cursor rectangle (drawn in the configured shape)
+        // Cursor rectangle (drawn in the configured shape; gated by the
+        // Phase 5 blink phase).
         let cx = pane.cursor_col as f32 * cell_w;
         let cy = pane.cursor_row as f32 * cell_h + y_offset;
-        draw_cursor(
+        crate::vertex_util::draw_cursor_with_visibility(
             cursor_style,
             cx,
             cy,
@@ -237,6 +244,7 @@ impl WgpuState {
             cell_h,
             sw,
             sh,
+            cursor_visible,
             bg_verts,
             bg_idx,
         );
@@ -596,6 +604,8 @@ impl WgpuState {
         atlas: &mut GlyphAtlas,
         palette: Option<&nexterm_config::SchemePalette>,
         cursor_style: &nexterm_config::CursorStyle,
+        // Phase 5 (UI/UX v2): cursor visibility from the blink phase.
+        cursor_visible: bool,
         bg_verts: &mut Vec<BgVertex>,
         bg_idx: &mut Vec<u16>,
         text_verts: &mut Vec<TextVertex>,
@@ -686,11 +696,11 @@ impl WgpuState {
             }
         }
 
-        // Cursor (focused pane only)
+        // Cursor (focused pane only; gated by Phase 5 blink visibility).
         if is_focused {
             let cx = off_x + pane.cursor_col as f32 * cell_w;
             let cy = off_y + pane.cursor_row as f32 * cell_h;
-            draw_cursor(
+            crate::vertex_util::draw_cursor_with_visibility(
                 cursor_style,
                 cx,
                 cy,
@@ -698,6 +708,7 @@ impl WgpuState {
                 cell_h,
                 sw,
                 sh,
+                cursor_visible,
                 bg_verts,
                 bg_idx,
             );

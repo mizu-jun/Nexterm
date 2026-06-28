@@ -138,6 +138,105 @@ pub(crate) fn add_px_rounded_rect_sdf(
     );
 }
 
+/// Phase 5 (UI/UX v2): linear-gradient background quad.
+///
+/// Emits a screen-spanning quad with **per-corner colours** derived from the
+/// two gradient stops and the angle (CSS convention; see [`compute_gradient_t`]).
+/// The GPU rasterizer interpolates the colours between corners, so the result
+/// is a true two-stop linear gradient using only the existing `bg_pipeline` —
+/// no new shader or pipeline needed.
+///
+/// Mutually exclusive with the background-image pass: when both are
+/// configured the renderer skips this drawcall (image wins).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn add_px_gradient_rect(
+    px: f32,
+    py: f32,
+    pw: f32,
+    ph: f32,
+    from: [f32; 4],
+    to: [f32; 4],
+    angle_deg: f32,
+    sw: f32,
+    sh: f32,
+    bg_verts: &mut Vec<BgVertex>,
+    bg_idx: &mut Vec<u16>,
+) {
+    let x0 = px / sw * 2.0 - 1.0;
+    let y0 = 1.0 - py / sh * 2.0;
+    let x1 = (px + pw) / sw * 2.0 - 1.0;
+    let y1 = 1.0 - (py + ph) / sh * 2.0;
+    let [t_tl, t_tr, t_br, t_bl] = compute_gradient_t(angle_deg);
+    let lerp = |a: [f32; 4], b: [f32; 4], t: f32| -> [f32; 4] {
+        [
+            a[0] + (b[0] - a[0]) * t,
+            a[1] + (b[1] - a[1]) * t,
+            a[2] + (b[2] - a[2]) * t,
+            a[3] + (b[3] - a[3]) * t,
+        ]
+    };
+    let base = bg_verts.len() as u16;
+    let make = |position: [f32; 2], color: [f32; 4]| BgVertex {
+        position,
+        color,
+        rect_center: [0.0, 0.0],
+        rect_half_size: [0.0, 0.0],
+        corner_radius: 0.0,
+    };
+    bg_verts.extend_from_slice(&[
+        make([x0, y0], lerp(from, to, t_tl)),
+        make([x1, y0], lerp(from, to, t_tr)),
+        make([x1, y1], lerp(from, to, t_br)),
+        make([x0, y1], lerp(from, to, t_bl)),
+    ]);
+    bg_idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+}
+
+/// Pure helper: gradient interpolation `t` for the four corners of a unit
+/// rectangle, given an angle in degrees.
+///
+/// Angle follows the CSS `linear-gradient` convention:
+/// - 0°   = `from` at bottom, `to` at top
+/// - 90°  = `from` at left,   `to` at right
+/// - 180° = `from` at top,    `to` at bottom
+/// - 270° = `from` at right,  `to` at left
+///
+/// Output order: `[top_left, top_right, bottom_right, bottom_left]`. Each
+/// component is in `[0.0, 1.0]` where 0 = `from`, 1 = `to`. Robust against
+/// out-of-range / NaN angles (NaN snaps to 0).
+pub fn compute_gradient_t(angle_deg: f32) -> [f32; 4] {
+    let a = if angle_deg.is_finite() {
+        angle_deg.rem_euclid(360.0)
+    } else {
+        0.0
+    };
+    let rad = a.to_radians();
+    let s = rad.sin();
+    let c = rad.cos();
+    // Project unit-square corners onto the gradient direction
+    // d = (sin a, -cos a). Corners in (x, y) with y-down screen space:
+    //   TL=(0,0)  TR=(1,0)  BR=(1,1)  BL=(0,1)
+    // proj(p) = p.x * sin(a) - p.y * cos(a).
+    let p_tl: f32 = 0.0;
+    let p_tr: f32 = s;
+    let p_br: f32 = s - c;
+    let p_bl: f32 = -c;
+    let min = p_tl.min(p_tr).min(p_br).min(p_bl);
+    let max = p_tl.max(p_tr).max(p_br).max(p_bl);
+    let range = max - min;
+    if range.abs() < 1e-6 {
+        // Degenerate (shouldn't happen given the math above) — fall back to
+        // a vertical gradient.
+        return [0.0, 0.0, 1.0, 1.0];
+    }
+    [
+        (p_tl - min) / range,
+        (p_tr - min) / range,
+        (p_br - min) / range,
+        (p_bl - min) / range,
+    ]
+}
+
 /// Signed distance from `point` to a rounded rectangle (in pixels).
 ///
 /// Pure helper mirroring the WGSL `fs_main` math in
@@ -205,8 +304,7 @@ pub(crate) fn add_rounded_px_rect(
     }
 }
 
-/// Append a cursor rectangle (per the configured cursor style) to the background vertex buffer.
-#[allow(clippy::too_many_arguments)]
+#[allow(dead_code, clippy::too_many_arguments)]
 pub(crate) fn draw_cursor(
     style: &nexterm_config::CursorStyle,
     cx: f32,
@@ -218,6 +316,31 @@ pub(crate) fn draw_cursor(
     bg_verts: &mut Vec<BgVertex>,
     bg_idx: &mut Vec<u16>,
 ) {
+    draw_cursor_with_visibility(
+        style, cx, cy, cell_w, cell_h, sw, sh, true, bg_verts, bg_idx,
+    );
+}
+
+/// Phase 5 (UI/UX v2): variant of [`draw_cursor`] that honours the blink
+/// state. When `visible` is `false` the call is a no-op. Kept as a separate
+/// entry point so the legacy [`draw_cursor`] callers (and its tests) stay
+/// signature-compatible.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_cursor_with_visibility(
+    style: &nexterm_config::CursorStyle,
+    cx: f32,
+    cy: f32,
+    cell_w: f32,
+    cell_h: f32,
+    sw: f32,
+    sh: f32,
+    visible: bool,
+    bg_verts: &mut Vec<BgVertex>,
+    bg_idx: &mut Vec<u16>,
+) {
+    if !visible {
+        return;
+    }
     match style {
         nexterm_config::CursorStyle::Block => {
             add_px_rect(
@@ -396,8 +519,8 @@ pub(crate) fn open_url(url: &str) {
 }
 
 // `grid_to_text` (below this module) is a non-test helper that was placed
-// after `mod tests` historically (pre-Phase-4); `#[allow]` keeps that layout
-// intact instead of forcing an unrelated reshuffle in the Phase 4 PR.
+// after `mod tests` historically; `#[allow]` keeps that layout intact instead
+// of forcing an unrelated reshuffle here.
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
@@ -521,6 +644,95 @@ mod tests {
             0.0, 0.0, 100.0, 20.0, -3.0, [1.0; 4], 800.0, 600.0, &mut v, &mut i,
         );
         assert_eq!(v.first().map(|x| x.corner_radius), Some(0.0));
+    }
+
+    // ---- compute_gradient_t (Phase 5) ----
+
+    fn approx4(a: [f32; 4], b: [f32; 4]) -> bool {
+        a.iter().zip(b.iter()).all(|(x, y)| approx(*x, *y))
+    }
+
+    /// 0° = `from` at bottom, `to` at top → top corners are 1.0, bottom 0.0.
+    #[test]
+    fn gradient_t_zero_degrees_bottom_to_top() {
+        let t = compute_gradient_t(0.0);
+        assert!(approx4(t, [1.0, 1.0, 0.0, 0.0]), "got {:?}", t);
+    }
+
+    /// 90° = left → right → left corners 0.0, right 1.0.
+    #[test]
+    fn gradient_t_ninety_degrees_left_to_right() {
+        let t = compute_gradient_t(90.0);
+        assert!(approx4(t, [0.0, 1.0, 1.0, 0.0]), "got {:?}", t);
+    }
+
+    /// 180° = top → bottom → top corners 0.0, bottom 1.0.
+    #[test]
+    fn gradient_t_one_eighty_degrees_top_to_bottom() {
+        let t = compute_gradient_t(180.0);
+        assert!(approx4(t, [0.0, 0.0, 1.0, 1.0]), "got {:?}", t);
+    }
+
+    /// 45° = bottom-left → top-right → BL = 0.0, TR = 1.0, TL & BR meet at 0.5.
+    #[test]
+    fn gradient_t_forty_five_degrees_diagonal() {
+        let t = compute_gradient_t(45.0);
+        // Order: [TL, TR, BR, BL].
+        assert!(approx(t[1], 1.0), "TR expected 1.0, got {}", t[1]);
+        assert!(approx(t[3], 0.0), "BL expected 0.0, got {}", t[3]);
+        assert!(approx(t[0], 0.5), "TL expected 0.5, got {}", t[0]);
+        assert!(approx(t[2], 0.5), "BR expected 0.5, got {}", t[2]);
+    }
+
+    /// 270° = right → left → mirror of 90° (left corners 1.0, right 0.0).
+    #[test]
+    fn gradient_t_two_seventy_degrees_right_to_left() {
+        let t = compute_gradient_t(270.0);
+        assert!(approx4(t, [1.0, 0.0, 0.0, 1.0]), "got {:?}", t);
+    }
+
+    /// Negative + out-of-range angles wrap modulo 360.
+    #[test]
+    fn gradient_t_angles_wrap_modulo_360() {
+        let a = compute_gradient_t(360.0);
+        let b = compute_gradient_t(0.0);
+        let c = compute_gradient_t(-360.0);
+        assert!(approx4(a, b), "{:?} vs {:?}", a, b);
+        assert!(approx4(c, b), "{:?} vs {:?}", c, b);
+    }
+
+    /// NaN angle must not panic and must produce the 0° result.
+    #[test]
+    fn gradient_t_nan_angle_falls_back() {
+        let t = compute_gradient_t(f32::NAN);
+        assert!(approx4(t, [1.0, 1.0, 0.0, 0.0]), "got {:?}", t);
+    }
+
+    /// `add_px_gradient_rect` writes 4 vertices and 6 indices.
+    #[test]
+    fn gradient_rect_emits_expected_geometry() {
+        let mut v = Vec::new();
+        let mut i = Vec::new();
+        add_px_gradient_rect(
+            0.0,
+            0.0,
+            800.0,
+            600.0,
+            [0.0, 0.0, 0.0, 1.0],
+            [1.0, 1.0, 1.0, 1.0],
+            180.0,
+            800.0,
+            600.0,
+            &mut v,
+            &mut i,
+        );
+        assert_eq!(v.len(), 4);
+        assert_eq!(i.len(), 6);
+        // 180° = top→bottom: top vertices use `from` (black), bottom vertices `to` (white).
+        assert!(v[0].color[0] < 0.01); // TL ≈ black
+        assert!(v[1].color[0] < 0.01); // TR ≈ black
+        assert!(v[2].color[0] > 0.99); // BR ≈ white
+        assert!(v[3].color[0] > 0.99); // BL ≈ white
     }
 }
 
