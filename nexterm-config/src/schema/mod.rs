@@ -15,6 +15,7 @@ pub mod quake;
 pub mod security;
 pub mod shell;
 pub mod tokens;
+pub mod ui;
 pub mod web;
 pub mod window;
 
@@ -29,6 +30,7 @@ pub use quake::{QuakeEdge, QuakeModeConfig};
 pub use security::{ConsentPolicy, SecurityConfig};
 pub use shell::{KeyBinding, MacroConfig, SerialPortConfig, ShellConfig};
 pub use tokens::{DesignTokens, parse_hex_color, resolve as resolve_color};
+pub use ui::UiConfig;
 pub use web::{AccessLogConfig, OAuthConfig, TlsConfig, WebAuthConfig, WebConfig};
 pub use window::{
     BackgroundFit, BackgroundImageConfig, CloseAction, CursorStyle, TabBarConfig, WindowConfig,
@@ -56,6 +58,23 @@ pub struct Config {
     /// Color scheme.
     #[serde(default)]
     pub colors: ColorScheme,
+
+    /// Sprint 5-15 / UI/UX Modernization v2 Phase 3: follow the OS light/dark
+    /// preference at runtime. When `true`, [`colors_light`] is used while the
+    /// OS reports a light theme and [`colors_dark`] is used while it reports
+    /// dark; otherwise [`colors`] is used unchanged.
+    #[serde(default)]
+    pub colors_follow_system: bool,
+
+    /// Built-in scheme to switch to when the OS reports a **light** theme and
+    /// [`colors_follow_system`] is on. `None` falls back to [`BuiltinScheme::Light`].
+    #[serde(default)]
+    pub colors_light: Option<BuiltinScheme>,
+
+    /// Built-in scheme to switch to when the OS reports a **dark** theme and
+    /// [`colors_follow_system`] is on. `None` falls back to [`BuiltinScheme::TokyoNight`].
+    #[serde(default)]
+    pub colors_dark: Option<BuiltinScheme>,
 
     /// Shell configuration.
     #[serde(default)]
@@ -172,6 +191,12 @@ pub struct Config {
     /// to skip the overlay pass entirely.
     #[serde(default)]
     pub blocks: BlocksConfig,
+
+    /// UI chrome appearance (Sprint 5-15 / UI/UX Modernization v2 Phase 1).
+    /// Drives the SDF rounded-rect background pipeline. Setting every radius
+    /// to `0.0` reproduces the pre-v2 flat-rect look.
+    #[serde(default)]
+    pub ui: UiConfig,
 }
 
 fn default_leader_key() -> String {
@@ -197,6 +222,9 @@ impl Default for Config {
             api_version: ApiVersion::default(),
             font: FontConfig::default(),
             colors: ColorScheme::default(),
+            colors_follow_system: false,
+            colors_light: None,
+            colors_dark: None,
             shell: ShellConfig::default(),
             keys: default_keybindings(),
             status_bar: StatusBarConfig::default(),
@@ -222,6 +250,7 @@ impl Default for Config {
             quake_mode: QuakeModeConfig::default(),
             animations: AnimationsConfig::default(),
             blocks: BlocksConfig::default(),
+            ui: UiConfig::default(),
         }
     }
 }
@@ -264,6 +293,29 @@ impl Config {
     /// Clears the active profile and reverts to the default configuration.
     pub fn clear_active_profile(&mut self) {
         self.active_profile = None;
+    }
+
+    /// Resolve the color scheme that should be used for this frame, honouring
+    /// [`colors_follow_system`] (Sprint 5-15 / UI/UX Modernization v2 Phase 3).
+    ///
+    /// * `os_dark` is `Some(true)` when the OS reports a dark theme, `Some(false)`
+    ///   when light, and `None` when the OS theme is unknown (e.g. unsupported
+    ///   platform). When `colors_follow_system` is off or `os_dark` is `None`,
+    ///   the configured [`colors`] is returned verbatim.
+    /// * When following is active and the OS theme is known, the matching
+    ///   [`colors_light`] / [`colors_dark`] override is returned (falling back
+    ///   to [`BuiltinScheme::Light`] / [`BuiltinScheme::TokyoNight`]).
+    pub fn effective_color_scheme(&self, os_dark: Option<bool>) -> ColorScheme {
+        if !self.colors_follow_system {
+            return self.colors.clone();
+        }
+        match os_dark {
+            Some(true) => {
+                ColorScheme::Builtin(self.colors_dark.unwrap_or(BuiltinScheme::TokyoNight))
+            }
+            Some(false) => ColorScheme::Builtin(self.colors_light.unwrap_or(BuiltinScheme::Light)),
+            None => self.colors.clone(),
+        }
     }
 }
 
@@ -546,6 +598,81 @@ layout_mode = "tiling"
         assert!(
             !cfg.allow_http_fallback,
             "the default of allow_http_fallback must be false (no HTTP fallback)"
+        );
+    }
+
+    // ---- Sprint 5-15 / Phase 3: OS theme follow ----
+
+    #[test]
+    fn effective_color_scheme_returns_explicit_colors_when_follow_disabled() {
+        let cfg = Config {
+            colors: ColorScheme::Builtin(BuiltinScheme::Gruvbox),
+            colors_follow_system: false,
+            colors_light: Some(BuiltinScheme::Light),
+            colors_dark: Some(BuiltinScheme::Dark),
+            ..Default::default()
+        };
+        // `colors_light` / `colors_dark` must be ignored.
+        assert_eq!(
+            cfg.effective_color_scheme(Some(true)),
+            ColorScheme::Builtin(BuiltinScheme::Gruvbox)
+        );
+        assert_eq!(
+            cfg.effective_color_scheme(Some(false)),
+            ColorScheme::Builtin(BuiltinScheme::Gruvbox)
+        );
+    }
+
+    #[test]
+    fn effective_color_scheme_follows_os_dark_when_enabled() {
+        let cfg = Config {
+            colors_follow_system: true,
+            colors_light: Some(BuiltinScheme::Solarized),
+            colors_dark: Some(BuiltinScheme::Dracula),
+            ..Default::default()
+        };
+        assert_eq!(
+            cfg.effective_color_scheme(Some(true)),
+            ColorScheme::Builtin(BuiltinScheme::Dracula)
+        );
+        assert_eq!(
+            cfg.effective_color_scheme(Some(false)),
+            ColorScheme::Builtin(BuiltinScheme::Solarized)
+        );
+    }
+
+    #[test]
+    fn effective_color_scheme_falls_back_when_no_override_set() {
+        let cfg = Config {
+            colors_follow_system: true,
+            colors_light: None,
+            colors_dark: None,
+            ..Default::default()
+        };
+        assert_eq!(
+            cfg.effective_color_scheme(Some(true)),
+            ColorScheme::Builtin(BuiltinScheme::TokyoNight)
+        );
+        assert_eq!(
+            cfg.effective_color_scheme(Some(false)),
+            ColorScheme::Builtin(BuiltinScheme::Light)
+        );
+    }
+
+    #[test]
+    fn effective_color_scheme_falls_back_to_colors_when_os_unknown() {
+        // When the OS theme is unknown (None), the configured `colors` is
+        // returned even if `colors_follow_system` is on so the user is never
+        // shown a surprise scheme.
+        let cfg = Config {
+            colors: ColorScheme::Builtin(BuiltinScheme::Nord),
+            colors_follow_system: true,
+            colors_dark: Some(BuiltinScheme::Dracula),
+            ..Default::default()
+        };
+        assert_eq!(
+            cfg.effective_color_scheme(None),
+            ColorScheme::Builtin(BuiltinScheme::Nord)
         );
     }
 

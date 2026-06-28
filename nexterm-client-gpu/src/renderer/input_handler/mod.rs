@@ -502,9 +502,25 @@ impl EventHandler {
                     } else if ssh_editing {
                         // Sub-phase A: cancel SSH field editing (discard buffer)
                         self.app.state.settings_panel.cancel_ssh_field_edit();
+                    } else if self.app.state.settings_panel.search_focused
+                        || self.app.state.settings_panel.is_search_filtering()
+                    {
+                        // Phase 4 (UI/UX v2): first Esc clears the search;
+                        // a second Esc (no query, no focus) closes the panel.
+                        self.app.state.settings_panel.clear_search();
                     } else {
                         self.app.state.settings_panel.close();
                     }
+                }
+                WKeyCode::Backspace if self.app.state.settings_panel.search_focused && !editing => {
+                    // Phase 4: shrink the search query.
+                    self.app.state.settings_panel.pop_search_char();
+                }
+                WKeyCode::Slash if !editing && !self.app.state.settings_panel.search_focused => {
+                    // Phase 4 (UI/UX v2): `/` activates the category search.
+                    // Suppressed when any other edit mode is in flight so the
+                    // existing font / ssh / keybinding inputs are not stolen.
+                    self.app.state.settings_panel.focus_search();
                 }
                 WKeyCode::Enter => {
                     if font_editing {

@@ -26,8 +26,8 @@ pub use schema::{
     CustomPalette, DesignTokens, FontConfig, GpuConfig, HooksConfig, HostConfig, KeyBinding,
     LogConfig, MacroConfig, OAuthConfig, PresentModeConfig, Profile, QuakeEdge, QuakeModeConfig,
     SchemePalette, SecurityConfig, SerialPortConfig, ShellConfig, StatusBarConfig, TabBarConfig,
-    TlsConfig, WebAuthConfig, WebConfig, WindowConfig, WindowDecorations, parse_hex_color,
-    resolve_color,
+    TlsConfig, UiConfig, WebAuthConfig, WebConfig, WindowConfig, WindowDecorations,
+    parse_hex_color, resolve_color,
 };
 pub use status_bar::{StatusBarEvaluator, WidgetContext, evaluate_builtin};
 pub use watcher::{ConfigRx, watch_config};

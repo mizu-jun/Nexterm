@@ -37,6 +37,8 @@ pub(super) enum SettingsPanelHit {
     BlocksRow(u8),
     /// Empty area inside the panel (no-op).
     PanelBackground,
+    /// Phase 4 (UI/UX v2): click landed on the sidebar search input.
+    SearchInput,
 }
 
 impl EventHandler {
@@ -96,14 +98,31 @@ impl EventHandler {
             return SettingsPanelHit::TitleBar;
         }
 
-        // Sidebar category.
+        // Sidebar — first the Phase 4 search input (reserved strip at the
+        // top), then the category list below it.
         let sidebar_top = py + title_h;
+        let search_h = cell_h * 1.6;
+        let categories_top = sidebar_top + search_h;
         let cat_item_h = cell_h * 1.3;
         if cx < px + sidebar_w {
-            let rel_y = cy - sidebar_top;
+            // Search box hit-region (matches the box drawn in overlay/settings.rs).
+            let search_pad = cell_w * 0.5;
+            let search_box_y = sidebar_top + cell_h * 0.2;
+            let search_box_h = cell_h * 1.1;
+            if cx >= px + search_pad
+                && cx < px + sidebar_w - search_pad
+                && cy >= search_box_y
+                && cy < search_box_y + search_box_h
+            {
+                return SettingsPanelHit::SearchInput;
+            }
+            let rel_y = cy - categories_top;
             if rel_y >= 0.0 {
                 let cat_idx = (rel_y / cat_item_h) as usize;
-                if cat_idx < SettingsCategory::ALL.len() {
+                // Bound by `filtered_categories().len()`; the click handler
+                // resolves the index into the same filtered list.
+                let visible = sp.filtered_categories().len();
+                if cat_idx < visible {
                     return SettingsPanelHit::Category(cat_idx);
                 }
             }

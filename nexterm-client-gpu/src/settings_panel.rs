@@ -474,6 +474,14 @@ pub struct SettingsPanel {
     /// `drag_offset = cursor_now - anchor`. Cleared by `end_drag()` on button
     /// release and by `close()`.
     pub drag_anchor: Option<(f32, f32)>,
+    /// Phase 4 (UI/UX v2): fuzzy search query for the category sidebar. Empty
+    /// string disables filtering (default). Edited only while `search_focused`
+    /// is true so panel-wide keyboard navigation keeps working.
+    pub search_query: String,
+    /// Phase 4 (UI/UX v2): whether the search input owns keyboard focus.
+    /// Toggled by `/` (when no other edit mode is active) or by clicking the
+    /// search box. Esc clears focus and the query.
+    pub search_focused: bool,
 }
 
 impl Default for SettingsPanel {
@@ -569,6 +577,9 @@ impl SettingsPanel {
             // Phase 3 (UI 4-tasks): panel renders centered on first open.
             drag_offset: (0.0, 0.0),
             drag_anchor: None,
+            // Phase 4 (UI/UX v2): start with no filter and search defocused.
+            search_query: String::new(),
+            search_focused: false,
         }
     }
 
@@ -1711,6 +1722,104 @@ impl SettingsPanel {
         std::fs::write(&path, doc.to_string())?;
         Ok(())
     }
+
+    // ===== Phase 4 (UI/UX v2): category search =====
+
+    /// Activate the search input. The next character event lands in
+    /// `search_query` instead of being treated as a panel hotkey.
+    pub fn focus_search(&mut self) {
+        self.search_focused = true;
+    }
+
+    /// Deactivate the search input but keep the query (so the filter
+    /// remains visible). Use `clear_search` to drop the query too.
+    pub fn unfocus_search(&mut self) {
+        self.search_focused = false;
+    }
+
+    /// Clear the query and defocus. Triggered by Esc while the search field
+    /// is focused.
+    pub fn clear_search(&mut self) {
+        self.search_query.clear();
+        self.search_focused = false;
+    }
+
+    /// Append a character to the query.
+    pub fn push_search_char(&mut self, ch: char) {
+        if !ch.is_control() {
+            self.search_query.push(ch);
+        }
+    }
+
+    /// Remove the last character from the query.
+    pub fn pop_search_char(&mut self) {
+        self.search_query.pop();
+    }
+
+    /// Whether the search query is currently filtering categories.
+    pub fn is_search_filtering(&self) -> bool {
+        !self.search_query.trim().is_empty()
+    }
+
+    /// Categories visible in the sidebar given the current query. Empty
+    /// query returns every category in the canonical order. Pure function so
+    /// tests can pin the ranking behaviour.
+    pub fn filtered_categories(&self) -> Vec<SettingsCategory> {
+        filter_categories(&self.search_query, SettingsCategory::ALL)
+    }
+}
+
+/// Static keywords a category should match against in addition to its label.
+/// Used by `filter_categories` so e.g. searching "color" hits `Theme` and
+/// searching "shell" hits `Profiles`.
+fn category_keywords(cat: &SettingsCategory) -> &'static [&'static str] {
+    match cat {
+        SettingsCategory::Startup => &["startup", "launch", "session"],
+        SettingsCategory::Font => &["font", "family", "size", "ligature"],
+        SettingsCategory::Theme => &["theme", "color", "colors", "scheme", "palette"],
+        SettingsCategory::Window => &[
+            "window", "opacity", "padding", "cursor", "present", "blur", "acrylic",
+        ],
+        SettingsCategory::Ssh => &["ssh", "host", "remote", "port"],
+        SettingsCategory::Keybindings => &["keybinding", "key", "shortcut", "binding"],
+        SettingsCategory::Profiles => &["profile", "shell", "working", "directory"],
+        SettingsCategory::Blocks => &["block", "command", "warp", "osc133"],
+    }
+}
+
+/// Pure helper that ranks categories for the given fuzzy query. Empty / blank
+/// queries fall through to the canonical order so the sidebar reverts cleanly
+/// when the user clears the search. Match score is the max across the label
+/// and the static keyword set; categories without any positive score are
+/// dropped. Stable sort on `(-score, original_index)` keeps the canonical
+/// order as a tiebreaker.
+pub fn filter_categories(query: &str, all: &[SettingsCategory]) -> Vec<SettingsCategory> {
+    let q = query.trim();
+    if q.is_empty() {
+        return all.to_vec();
+    }
+    use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
+    let matcher = SkimMatcherV2::default();
+    let mut scored: Vec<(i64, usize, SettingsCategory)> = all
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, cat)| {
+            let label_score = matcher.fuzzy_match(cat.label(), q).unwrap_or(0);
+            let kw_score = category_keywords(cat)
+                .iter()
+                .filter_map(|k| matcher.fuzzy_match(k, q))
+                .max()
+                .unwrap_or(0);
+            let best = label_score.max(kw_score);
+            if best > 0 {
+                Some((best, idx, cat.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    scored.into_iter().map(|(_, _, c)| c).collect()
 }
 
 /// Update the `[[hosts]]` array in place (Phase 5-11-8 Step 8-2).
@@ -2803,6 +2912,98 @@ pub fn clamp_panel_position(
     let max_x = (sw - panel_w).max(0.0);
     let max_y = (sh - title_h).max(0.0);
     (raw_x.clamp(0.0, max_x), raw_y.clamp(0.0, max_y))
+}
+
+#[cfg(test)]
+mod search_tests {
+    //! Phase 4 (UI/UX v2): category-search fuzzy-filter tests.
+    use super::*;
+
+    /// Empty / blank queries must return every category in canonical order so
+    /// the sidebar behaves identically to the pre-Phase-4 build.
+    #[test]
+    fn empty_query_returns_canonical_order() {
+        let out = filter_categories("", SettingsCategory::ALL);
+        assert_eq!(out, SettingsCategory::ALL.to_vec());
+        let out = filter_categories("   ", SettingsCategory::ALL);
+        assert_eq!(out, SettingsCategory::ALL.to_vec());
+    }
+
+    /// Exact-label matches must rank the target category first.
+    #[test]
+    fn exact_label_match_ranks_first() {
+        let out = filter_categories("Theme", SettingsCategory::ALL);
+        assert!(!out.is_empty());
+        assert_eq!(out[0], SettingsCategory::Theme);
+    }
+
+    /// Keyword matches (color → Theme) prove the synonym table is consulted.
+    #[test]
+    fn keyword_match_finds_synonym() {
+        let out = filter_categories("color", SettingsCategory::ALL);
+        assert!(
+            out.contains(&SettingsCategory::Theme),
+            "color should match Theme via keyword, got {:?}",
+            out
+        );
+        let out = filter_categories("shell", SettingsCategory::ALL);
+        assert!(
+            out.contains(&SettingsCategory::Profiles),
+            "shell should match Profiles via keyword, got {:?}",
+            out
+        );
+    }
+
+    /// Queries with no fuzzy hit anywhere produce an empty result (so the
+    /// sidebar collapses to "no matches" instead of silently showing
+    /// everything).
+    #[test]
+    fn unmatched_query_returns_empty() {
+        let out = filter_categories("xyzqq_nomatch", SettingsCategory::ALL);
+        assert!(out.is_empty(), "expected empty, got {:?}", out);
+    }
+
+    /// Wiring sanity check: the struct method routes to the free helper and
+    /// returns the same result.
+    #[test]
+    fn struct_method_matches_helper() {
+        let panel = SettingsPanel {
+            search_query: "block".to_string(),
+            ..SettingsPanel::default()
+        };
+        let via_method = panel.filtered_categories();
+        let via_helper = filter_categories("block", SettingsCategory::ALL);
+        assert_eq!(via_method, via_helper);
+    }
+
+    /// Activation toggles must move `search_focused` without mutating the
+    /// query (so the user can defocus to hit Tab then refocus later).
+    #[test]
+    fn focus_helpers_preserve_query() {
+        let mut panel = SettingsPanel::default();
+        panel.push_search_char('c');
+        panel.push_search_char('o');
+        panel.unfocus_search();
+        assert!(!panel.search_focused);
+        assert_eq!(panel.search_query, "co");
+        panel.focus_search();
+        assert!(panel.search_focused);
+        assert_eq!(panel.search_query, "co");
+        panel.clear_search();
+        assert!(!panel.search_focused);
+        assert!(panel.search_query.is_empty());
+    }
+
+    /// Control characters must not land in the query (regression guard for
+    /// when the keyboard handler forwards Enter / Backspace as text).
+    #[test]
+    fn control_chars_are_skipped() {
+        let mut panel = SettingsPanel::default();
+        panel.push_search_char('\n');
+        panel.push_search_char('\t');
+        panel.push_search_char('a');
+        assert_eq!(panel.search_query, "a");
+    }
 }
 
 #[cfg(test)]

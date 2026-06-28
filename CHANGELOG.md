@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — UI/UX Modernization v2 Phase 4 (settings search + mouse pane resize)
+
+Picks up the Sprint 5-15 plan (`docs/plans/ui-ux-modernization-v2.md`)
+after Phases 1–3 shipped in commit `fd7758f`. PROTOCOL_VERSION = 8 and
+SNAPSHOT_VERSION = 4 are unchanged; this PR reuses the existing
+`ClientToServer::ResizeSplit` IPC instead of introducing a new message.
+
+- **Category search in the settings panel**
+  (`nexterm-client-gpu/src/settings_panel.rs`,
+  `nexterm-client-gpu/src/renderer/overlay/settings.rs`,
+  `nexterm-client-gpu/src/renderer/event_handler/{keyboard,settings_panel_hit,mouse}.rs`,
+  `nexterm-client-gpu/src/renderer/input_handler/mod.rs`): the sidebar
+  now hosts a fuzzy-search input at the top. `/` activates it from
+  anywhere in the panel; characters land in `search_query` instead of
+  panel hotkeys; Backspace shrinks the query; the first Esc clears the
+  query and a second Esc closes the panel. Filtering is driven by the
+  pure `filter_categories` helper (uses `SkimMatcherV2` against the
+  category label + a curated keyword list per category — searching
+  "color" finds Theme, "shell" finds Profiles). Field-level filtering
+  inside a category is deferred to a follow-up PR (the panel renderer is
+  a single 2.1 kLoC method and refactoring it cleanly is out of scope
+  for Phase 4).
+- **Mouse-driven pane resize**
+  (`nexterm-client-gpu/src/state/mod.rs`,
+  `nexterm-client-gpu/src/renderer/event_handler/mouse.rs`): the
+  cursor now switches to `EwResize` / `NsResize` when hovering an
+  internal split border, and clicking + dragging the border streams
+  `ResizeSplit { delta }` messages to the server. The pure
+  `hit_test_pane_border` helper walks `pane_layouts` and reports the
+  adjacent pane + axis with a 4-pixel tolerance band on either side of
+  the border; the click handler focuses the adjacent pane so the
+  server's `adjust_ratio_for` (`window/bsp.rs`) targets the right
+  split ancestor. Per-frame pixel deltas are normalised to a ratio
+  delta against the parent split's span and clamped to `±0.5` to match
+  the server-side `clamp 0.1..0.9`. No new IPC message — `ResizeSplit`
+  already existed since Sprint 5-1.
+- **Tests** (`nexterm-client-gpu/src/state/mod.rs`,
+  `nexterm-client-gpu/src/settings_panel.rs`): 7 new tests for
+  `filter_categories` (empty query → canonical order, exact-label
+  match, keyword synonym, no-match → empty, struct/helper parity,
+  focus helpers preserve the query, control chars are skipped) and 7
+  new tests for `hit_test_pane_border` (side-by-side / stacked
+  detection, tolerance band on both sides, grid-origin offset honoured,
+  partial row-range overlap, empty layouts, zero cell metrics). Full
+  `cargo test -p nexterm-client-gpu --bins` is green (572 tests).
+
+### Plan status
+
+`docs/plans/ui-ux-modernization-v2.md` Phase 4 now reads **shipped**;
+Phases 5 (gradient background + cursor polish) and 6
+(`inactive_pane_hsb`) remain pending.
+
 ## [1.10.1] - 2026-06-27
 
 PATCH release whose sole purpose is to ship the Flatpak build that

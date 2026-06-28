@@ -137,8 +137,12 @@ impl WgpuState {
         let cell_w = font.cell_width();
         let cell_h = font.cell_height();
 
-        // Tab bar height (when enabled): used as the y-offset for the terminal content
-        let tab_bar_h = if tab_bar_cfg.enabled {
+        // Sprint 5-15 / UI/UX Modernization v2 Phase 2b: with
+        // `tab_bar.hide_when_single = true`, hide the bar (and reclaim its
+        // height for the grid) when the active window has at most one pane.
+        let tab_bar_visible =
+            tab_bar_cfg.enabled && !(tab_bar_cfg.hide_when_single && state.pane_layouts.len() <= 1);
+        let tab_bar_h = if tab_bar_visible {
             tab_bar_cfg.height as f32
         } else {
             0.0
@@ -627,11 +631,12 @@ impl WgpuState {
         }
 
         // ---- Tab bar (when enabled in the config) ----
-        if tab_bar_cfg.enabled {
+        if tab_bar_visible {
             self.build_tab_bar_verts(
                 state,
                 tab_bar_cfg,
                 &config.animations,
+                &config.ui,
                 &tokens,
                 sw,
                 sh,

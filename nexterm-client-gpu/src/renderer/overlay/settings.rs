@@ -184,10 +184,82 @@ impl WgpuState {
             bg_idx,
         );
 
-        // Sidebar category list
+        // Phase 4 (UI/UX v2): category-search input box. Reserved at the top
+        // of the sidebar; pushes the category list down by `search_h`. The
+        // hit-test in `settings_panel_hit.rs` mirrors the same offset.
+        let search_h = cell_h * 1.6;
+        // Search box background (token-driven). When focused, draw an accent
+        // outline along the bottom edge as a focus indicator.
+        let search_pad = cell_w * 0.5;
+        let search_box_y = sidebar_top + cell_h * 0.2;
+        let search_box_h = cell_h * 1.1;
+        let box_bg = if sp.search_focused {
+            tokens.surface_2
+        } else {
+            tokens.surface_0
+        };
+        add_px_rect(
+            px + search_pad,
+            search_box_y,
+            sidebar_w - search_pad * 2.0,
+            search_box_h,
+            box_bg,
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
+        if sp.search_focused {
+            let ap = tokens.accent_primary;
+            add_px_rect(
+                px + search_pad,
+                search_box_y + search_box_h - 2.0,
+                sidebar_w - search_pad * 2.0,
+                2.0,
+                ap,
+                sw,
+                sh,
+                bg_verts,
+                bg_idx,
+            );
+        }
+        // Search query / placeholder text. `/` is the activation hotkey;
+        // surface it in the placeholder so the affordance is discoverable.
+        let (search_text, search_fg) = if sp.search_query.is_empty() {
+            if sp.search_focused {
+                ("/ Type to filter…".to_string(), tokens.text_secondary)
+            } else {
+                ("/ Search categories".to_string(), tokens.text_secondary)
+            }
+        } else {
+            let cursor = if sp.search_focused { "|" } else { "" };
+            (
+                format!("/ {}{}", sp.search_query, cursor),
+                tokens.text_primary,
+            )
+        };
+        add_string_verts(
+            &search_text,
+            px + search_pad + cell_w * 0.3,
+            search_box_y + cell_h * 0.05,
+            search_fg,
+            false,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
+        );
+
+        // Sidebar category list (rendered below the search input)
+        let categories_top = sidebar_top + search_h;
         let cat_item_h = cell_h * 1.3;
-        for (i, cat) in SettingsCategory::ALL.iter().enumerate() {
-            let item_y = sidebar_top + i as f32 * cat_item_h + cell_h * 0.3;
+        let visible_categories = sp.filtered_categories();
+        for (i, cat) in visible_categories.iter().enumerate() {
+            let item_y = categories_top + i as f32 * cat_item_h + cell_h * 0.3;
             let is_active = &sp.category == cat;
             if is_active {
                 // Active item: token-driven selection background

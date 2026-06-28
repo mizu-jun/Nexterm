@@ -45,6 +45,34 @@ impl EventHandler {
             false
         };
 
+        // Phase 4 (UI/UX v2): character input while the settings-panel
+        // search field is focused. Mirrors the font_family pattern below.
+        // Backspace and Esc are already handled in `handle_key`, so here we
+        // only insert printable characters into `search_query`. The `/`
+        // keystroke that originally activated the field still arrives here
+        // (`Slash` is handled in `handle_key` and consumed), so the `/`
+        // character itself is intentionally not inserted into the query.
+        if !consumed
+            && self.app.state.settings_panel.is_open
+            && self.app.state.settings_panel.search_focused
+        {
+            if let Some(ref t) = text
+                && !self.modifiers.control_key()
+                && !self.modifiers.alt_key()
+            {
+                for ch in t.chars() {
+                    if !ch.is_control() && ch != '/' {
+                        self.app.state.settings_panel.push_search_char(ch);
+                    }
+                }
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+                return;
+            }
+            return;
+        }
+
         // While editing the settings-panel font-family field, append the character to the field.
         if !consumed
             && self.app.state.settings_panel.is_open

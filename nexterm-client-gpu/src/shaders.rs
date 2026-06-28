@@ -1,15 +1,36 @@
 //! WGSL shader constants — background, text, and image render passes.
 
-/// Background-quad shader (passes the vertex color straight through).
+/// Background-quad shader.
+///
+/// Two-mode pipeline (Sprint 5-15 / UI/UX Modernization v2 Phase 1):
+///   * `corner_radius == 0`: classic flat rectangle, fragment is the vertex
+///     color unmodified.
+///   * `corner_radius > 0`: signed-distance-field rounded rectangle with a
+///     1 px smoothstep edge for anti-aliasing. `rect_center` /
+///     `rect_half_size` are in framebuffer pixel coordinates (y-down), the
+///     same space as `@builtin(position).xy` in the fragment stage, so no
+///     uniform / push-constant is required.
+///
+/// **Breaking change for custom shaders**: the `[gpu] custom_bg_shader` hook
+/// now expects the 5-attribute vertex layout. Custom shaders authored before
+/// this change must add the three new attributes (`rect_center`,
+/// `rect_half_size`, `corner_radius`) and may early-return on
+/// `corner_radius <= 0` to retain the v1 behavior.
 pub(crate) const BG_SHADER: &str = r#"
 struct VertexInput {
     @location(0) position: vec2<f32>,
     @location(1) color: vec4<f32>,
+    @location(2) rect_center: vec2<f32>,
+    @location(3) rect_half_size: vec2<f32>,
+    @location(4) corner_radius: f32,
 }
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec4<f32>,
+    @location(1) rect_center: vec2<f32>,
+    @location(2) rect_half_size: vec2<f32>,
+    @location(3) corner_radius: f32,
 }
 
 @vertex
@@ -17,12 +38,24 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     out.clip_position = vec4<f32>(in.position, 0.0, 1.0);
     out.color = in.color;
+    out.rect_center = in.rect_center;
+    out.rect_half_size = in.rect_half_size;
+    out.corner_radius = in.corner_radius;
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return in.color;
+    if (in.corner_radius <= 0.0) {
+        return in.color;
+    }
+    // Standard rounded-box SDF (Inigo Quilez formulation).
+    let p = in.clip_position.xy;
+    let d = abs(p - in.rect_center) - in.rect_half_size + vec2<f32>(in.corner_radius);
+    let dist = length(max(d, vec2<f32>(0.0))) + min(max(d.x, d.y), 0.0) - in.corner_radius;
+    // 1-pixel AA edge.
+    let alpha = 1.0 - smoothstep(-0.5, 0.5, dist);
+    return vec4<f32>(in.color.rgb, in.color.a * alpha);
 }
 "#;
 

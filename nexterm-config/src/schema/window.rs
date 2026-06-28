@@ -375,6 +375,20 @@ pub struct TabBarConfig {
     /// Whether to brighten the tab background on mouse hover.
     #[serde(default = "default_true")]
     pub hover_highlight: bool,
+    /// Hide the tab bar entirely when only one tab is visible
+    /// (WezTerm `hide_tab_bar_if_only_one_tab` equivalent).
+    /// Default: `false` (always show the tab bar).
+    ///
+    /// Sprint 5-15 / UI/UX Modernization v2 Phase 2b.
+    #[serde(default)]
+    pub hide_when_single: bool,
+    /// Render an inline `+` new-tab button on the right side of the tab bar
+    /// (just before the Settings button). Click triggers a `NewPane` IPC.
+    /// Default: `true` for parity with Windows Terminal and modern emulators.
+    ///
+    /// Sprint 5-15 / UI/UX Modernization v2 Phase 2b.
+    #[serde(default = "default_true")]
+    pub show_new_tab_button: bool,
 }
 
 fn default_inactive_text_brightness() -> f32 {
@@ -399,6 +413,8 @@ impl Default for TabBarConfig {
             show_tab_number: false,
             inactive_text_brightness: default_inactive_text_brightness(),
             hover_highlight: true,
+            hide_when_single: false,
+            show_new_tab_button: true,
         }
     }
 }
