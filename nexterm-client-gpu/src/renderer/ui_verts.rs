@@ -87,24 +87,17 @@ impl WgpuState {
         // pair, so the user can dial saturation / brightness in `config.toml`.
         // The spring still drives the transition; we pass it in as
         // `animation_t` (normalised to [0, 1] from MAX_DIM_ALPHA).
+        // Phase 6b (UI/UX v2): when `hsb.is_active()`, the per-cell HSB
+        // transform inside `build_grid_verts_in_rect` already produces
+        // the dimmed look (and a real hue shift). Drawing the legacy
+        // grey-alpha overlay on top of it would double-dim, so this
+        // path is now skipped entirely when HSB is active. The overlay
+        // is retained only as a no-op safety net in case the Phase-6b
+        // CPU transform ever needs to be temporarily bypassed.
         let hsb = &config.inactive_pane_hsb;
         if hsb.is_active() {
-            for layout in state.pane_layouts.values() {
-                let raw_alpha = state.animations.pane_dim_alpha(layout.pane_id);
-                if raw_alpha <= 0.001 {
-                    continue;
-                }
-                let animation_t = (raw_alpha / crate::animations::MAX_DIM_ALPHA).clamp(0.0, 1.0);
-                let overlay = hsb.overlay_rgba(animation_t);
-                if overlay[3] <= 0.001 {
-                    continue;
-                }
-                let px = layout.col_offset as f32 * cell_w;
-                let py = layout.row_offset as f32 * cell_h + tab_bar_h;
-                let pw = layout.cols as f32 * cell_w;
-                let ph = layout.rows as f32 * cell_h;
-                add_px_rect(px, py, pw, ph, overlay, sw, sh, bg_verts, bg_idx);
-            }
+            // Per-cell transform handles the inactive look; nothing to
+            // overlay here.
         }
 
         // 2) Adjacent borders. The focused pane's edges get accent_primary at 3px,

@@ -84,9 +84,13 @@ pub(super) struct PaneRenderCache {
     pub(super) cursor_visible: bool,
     /// Phase 5b (UI/UX v2): quantized visible cursor position so
     /// mid-animation frames invalidate the cache. Format is
-    /// `(quantize_visible(col), quantize_visible(row))` — see
+    /// `(quantize_visible(col), quantize_visible(row))` -- see
     /// `cursor_motion::quantize_visible`.
     pub(super) cursor_visual_q: (u32, u32),
+    /// Phase 6b (UI/UX v2): quantised animation_t for the
+    /// inactive-pane HSB transform. `u32::MAX` is the sentinel for
+    /// "HSB inactive" (focused pane or `hsb.is_active() == false`).
+    pub(super) inactive_hsb_q: u32,
     pub(super) mouse_sel_start: (u16, u16),
     pub(super) mouse_sel_end: (u16, u16),
     pub(super) mouse_sel_dragging: bool,
@@ -112,6 +116,7 @@ impl PaneRenderCache {
         cursor_style: &nexterm_config::CursorStyle,
         cursor_visible: bool,
         cursor_visual_q: (u32, u32),
+        inactive_hsb_q: u32,
         mouse_sel: &MouseSelection,
     ) -> bool {
         self.col_offset == layout.col_offset
@@ -127,6 +132,7 @@ impl PaneRenderCache {
             && &self.cursor_style == cursor_style
             && self.cursor_visible == cursor_visible
             && self.cursor_visual_q == cursor_visual_q
+            && self.inactive_hsb_q == inactive_hsb_q
             && self.mouse_sel_start == mouse_sel.start
             && self.mouse_sel_end == mouse_sel.end
             && self.mouse_sel_dragging == mouse_sel.is_dragging
