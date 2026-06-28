@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-06-28
+
+MINOR release that lands the **UI/UX Modernization v2** plan in full —
+Phases 1–6 plus every follow-up (2c, 3b, 4b, 5b, 6b). The plan
+document at `docs/plans/ui-ux-modernization-v2.md` now reads all
+**shipped**.
+
+**PROTOCOL_VERSION 8 → 9** (Phase 2c adds `ServerToClient::ProcessChanged`).
+SNAPSHOT_VERSION = 4 remains unchanged. Single-binary `nexterm`
+ships both halves so the upgrade is automatic for released-build
+users, but anyone mixing standalone `nexterm-server` and a
+separate client across versions must upgrade both.
+
 ### Added — UI/UX Modernization v2 Phase 2c (per-tab process / shell icon)
 
 Closes the last `deferred` item on the Phase 2 tab-bar work
