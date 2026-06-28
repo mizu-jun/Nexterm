@@ -24,10 +24,10 @@ pub use schema::{
     AccessLogConfig, AnimationIntensity, AnimationsConfig, BackgroundFit, BackgroundImageConfig,
     BlocksConfig, BuiltinScheme, CloseAction, ColorScheme, Config, ConsentPolicy, CursorConfig,
     CursorStyle, CustomPalette, DesignTokens, FontConfig, GpuConfig, GradientConfig, HooksConfig,
-    HostConfig, KeyBinding, LogConfig, MacroConfig, OAuthConfig, PresentModeConfig, Profile,
-    QuakeEdge, QuakeModeConfig, SchemePalette, SecurityConfig, SerialPortConfig, ShellConfig,
-    StatusBarConfig, TabBarConfig, TlsConfig, UiConfig, WebAuthConfig, WebConfig, WindowConfig,
-    WindowDecorations, parse_hex_color, resolve_color,
+    HostConfig, InactivePaneHsbConfig, KeyBinding, LogConfig, MacroConfig, OAuthConfig,
+    PresentModeConfig, Profile, QuakeEdge, QuakeModeConfig, SchemePalette, SecurityConfig,
+    SerialPortConfig, ShellConfig, StatusBarConfig, TabBarConfig, TlsConfig, UiConfig,
+    WebAuthConfig, WebConfig, WindowConfig, WindowDecorations, parse_hex_color, resolve_color,
 };
 pub use status_bar::{StatusBarEvaluator, WidgetContext, evaluate_builtin};
 pub use watcher::{ConfigRx, watch_config};

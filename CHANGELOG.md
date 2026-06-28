@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — UI/UX Modernization v2 Phase 6 (inactive-pane HSB transform)
+
+Picks up after Phases 1–5 in the Sprint 5-15 plan. PROTOCOL_VERSION = 8
+and SNAPSHOT_VERSION = 4 are unchanged; entirely client-side.
+
+- **`[inactive_pane_hsb]` config**
+  (`nexterm-config/src/schema/color.rs`,
+  `nexterm-client-gpu/src/renderer/ui_verts.rs`): replaces the
+  hard-coded black-alpha 0.06 dim overlay with a configurable
+  brightness / saturation knob (defaults `hue = 1.0`, `saturation =
+  0.6`, `brightness = 0.85` matching the WezTerm-style spec from the
+  plan). Spring animation from
+  `AnimationManager::pane_dim_alpha` still drives the focus-change
+  transition — the new pure `InactivePaneHsbConfig::overlay_rgba(t)`
+  helper consumes the spring value as `animation_t` in `[0, 1]` so
+  the existing fade-in/out is preserved.
+- **Approximation honesty**: a true HSB transform requires a
+  post-process shader pass (RGB → HSB → multiply → RGB) which would
+  mean introducing a render-to-texture step. The v1 implementation
+  approximates: `brightness` → overlay alpha, `saturation` → overlay
+  tint toward neutral grey, `hue` → **ignored**. Documented on the
+  struct so readers know what to expect. A real hue shift lands in
+  Phase 6b.
+- **Tests** (`nexterm-config`): 8 new tests cover the defaults,
+  default overlay grey/alpha values at full `t`, animation_t = 0 →
+  invisible, brightness=1 disables dim, saturation=1 produces pure
+  black (matches v1), clamping of out-of-range inputs, `is_active`
+  truthiness, and TOML round-trip. `cargo test -p nexterm-config`
+  is 135 passed + 1 doctest. `cargo test -p nexterm-client-gpu
+  --bins` is 557 passed. `cargo clippy --all-targets -- -D warnings`
+  clean.
+
 ### Added — UI/UX Modernization v2 Phase 5b (smooth cursor motion)
 
 Follow-up to Phase 5 (PR #16). Wires the existing
@@ -168,9 +200,9 @@ SNAPSHOT_VERSION = 4 are unchanged; this PR reuses the existing
 
 ### Plan status
 
-`docs/plans/ui-ux-modernization-v2.md` Phase 4 + 4b + Phase 5 now read
-**shipped**; Phase 6 (`inactive_pane_hsb`) and 5b (smooth cursor
-motion) remain pending.
+`docs/plans/ui-ux-modernization-v2.md` Phases 4, 4b, 5, 5b, and 6
+now read **shipped**. Phase 6b (true HSB hue shift) remains
+pending. The core plan (Phases 1–6) is now complete.
 
 ## [1.10.1] - 2026-06-27
 

@@ -63,6 +63,8 @@ impl WgpuState {
         cell_h: f32,
         tab_bar_h: f32,
         tokens: &nexterm_config::DesignTokens,
+        // Phase 6 (UI/UX v2): consulted for `inactive_pane_hsb`.
+        config: &nexterm_config::Config,
         bg_verts: &mut Vec<BgVertex>,
         bg_idx: &mut Vec<u16>,
     ) {
@@ -80,24 +82,28 @@ impl WgpuState {
         let focus_border_w = 3.0_f32;
         // 1) Dim non-focused panes (only meaningful when >=2 panes).
         // Phase 4 (UI/UX modernization): alpha is spring-animated via AnimationManager.
-        for layout in state.pane_layouts.values() {
-            let alpha = state.animations.pane_dim_alpha(layout.pane_id);
-            if alpha > 0.001 {
+        // Phase 6 (UI/UX v2): overlay colour + alpha are now derived from
+        // [`InactivePaneHsbConfig`] instead of the hard-coded black-alpha
+        // pair, so the user can dial saturation / brightness in `config.toml`.
+        // The spring still drives the transition; we pass it in as
+        // `animation_t` (normalised to [0, 1] from MAX_DIM_ALPHA).
+        let hsb = &config.inactive_pane_hsb;
+        if hsb.is_active() {
+            for layout in state.pane_layouts.values() {
+                let raw_alpha = state.animations.pane_dim_alpha(layout.pane_id);
+                if raw_alpha <= 0.001 {
+                    continue;
+                }
+                let animation_t = (raw_alpha / crate::animations::MAX_DIM_ALPHA).clamp(0.0, 1.0);
+                let overlay = hsb.overlay_rgba(animation_t);
+                if overlay[3] <= 0.001 {
+                    continue;
+                }
                 let px = layout.col_offset as f32 * cell_w;
                 let py = layout.row_offset as f32 * cell_h + tab_bar_h;
                 let pw = layout.cols as f32 * cell_w;
                 let ph = layout.rows as f32 * cell_h;
-                add_px_rect(
-                    px,
-                    py,
-                    pw,
-                    ph,
-                    [0.0, 0.0, 0.0, alpha],
-                    sw,
-                    sh,
-                    bg_verts,
-                    bg_idx,
-                );
+                add_px_rect(px, py, pw, ph, overlay, sw, sh, bg_verts, bg_idx);
             }
         }
 
