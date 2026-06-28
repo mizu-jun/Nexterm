@@ -1,24 +1,18 @@
 # Key Bindings
 
-See [TOML Reference — `[[keys]]`](toml.md#keys--key-bindings) for how to define custom bindings in `nexterm.toml`.
+The canonical, complete key binding catalogue (every default binding, the `[[keys]]` table schema, action names, modifier syntax, and platform notes) lives in:
 
-## Default Key Bindings
+→ **[docs/KEYBINDINGS.md](../../KEYBINDINGS.md)**
 
-| Key | Action |
-|-----|--------|
-| `Ctrl+Shift+\` | Split pane vertically |
-| `Ctrl+Shift+-` | Split pane horizontally |
-| `Ctrl+Shift+P` | Open command palette |
-| `Ctrl+Shift+M` | Open Lua macro picker |
-| `Ctrl+Shift+F` | Search scrollback |
-| `Ctrl+Shift+U` | Open SFTP upload dialog |
-| `Ctrl+Shift+D` | Open SFTP download dialog |
-| `Ctrl+G` | Display pane numbers (navigate by number or arrow keys) |
-| `Ctrl+D` | Detach from session |
+## Quick orientation
 
-## Customizing Key Bindings
+| Need | Where |
+|------|-------|
+| Full default binding table | [docs/KEYBINDINGS.md](../../KEYBINDINGS.md) |
+| How to override / extend bindings in TOML | [docs/KEYBINDINGS.md — Customizing](../../KEYBINDINGS.md) and [docs/CONFIGURATION.md](../../CONFIGURATION.md) |
+| Right-click context menu and pane-number overlay | [docs/KEYBINDINGS.md](../../KEYBINDINGS.md) |
 
-Add `[[keys]]` entries to `nexterm.toml` to override or extend defaults. The `action` value can be any built-in action name or a shell command via the `command` key.
+## Minimal custom binding example
 
 ```toml
 [[keys]]
@@ -29,11 +23,3 @@ action = "SplitVertical"
 key     = "ctrl+alt+g"
 command = "git log --oneline -20"
 ```
-
-## Right-Click Context Menu
-
-Right-clicking inside a GPU client pane shows a context menu with common actions: Copy, Paste, Split Vertical, Split Horizontal, Close Pane, and Display Panes.
-
-## Display Panes Mode
-
-Trigger `Display Panes` (default `Ctrl+G`) to overlay each pane with its number. Type the target pane number or use arrow keys to move focus. Press `Escape` to cancel.
