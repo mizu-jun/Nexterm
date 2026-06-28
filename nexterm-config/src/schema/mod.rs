@@ -21,7 +21,7 @@ pub mod window;
 
 pub use animations::{AnimationIntensity, AnimationsConfig};
 pub use blocks::BlocksConfig;
-pub use color::{BuiltinScheme, ColorScheme, CustomPalette, SchemePalette};
+pub use color::{BuiltinScheme, ColorScheme, CustomPalette, InactivePaneHsbConfig, SchemePalette};
 pub use font::FontConfig;
 pub use gpu::{ApiVersion, GpuConfig, PresentModeConfig, Profile};
 pub use hosts::{HooksConfig, HostConfig};
@@ -75,6 +75,12 @@ pub struct Config {
     /// [`colors_follow_system`] is on. `None` falls back to [`BuiltinScheme::TokyoNight`].
     #[serde(default)]
     pub colors_dark: Option<BuiltinScheme>,
+
+    /// Phase 6 (UI/UX v2): inactive-pane HSB transform (WezTerm-style).
+    /// Replaces the flat-black dim overlay with a configurable
+    /// brightness / saturation knob. See [`InactivePaneHsbConfig`].
+    #[serde(default)]
+    pub inactive_pane_hsb: InactivePaneHsbConfig,
 
     /// Shell configuration.
     #[serde(default)]
@@ -232,6 +238,7 @@ impl Default for Config {
             colors_follow_system: false,
             colors_light: None,
             colors_dark: None,
+            inactive_pane_hsb: InactivePaneHsbConfig::default(),
             shell: ShellConfig::default(),
             keys: default_keybindings(),
             status_bar: StatusBarConfig::default(),

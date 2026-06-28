@@ -412,3 +412,216 @@ impl<'de> Deserialize<'de> for ColorScheme {
 fn parse_builtin_scheme(s: &str) -> BuiltinScheme {
     BuiltinScheme::from_toml_name(s).unwrap_or(BuiltinScheme::Dark)
 }
+
+// =============================================================================
+// Phase 6 (UI/UX v2): inactive-pane HSB transform.
+// =============================================================================
+
+/// WezTerm-style HSB transform for inactive panes. Replaces the v1 flat-black
+/// dim overlay with a configurable brightness / saturation knob.
+///
+/// The renderer keeps the existing spring-animated alpha for the transition
+/// (see [`crate::renderer::animations`] in `nexterm-client-gpu`). Each frame
+/// the overlay colour and alpha are derived from these values via
+/// [`InactivePaneHsbConfig::overlay_rgba`].
+///
+/// ```toml
+/// [inactive_pane_hsb]
+/// hue = 1.0
+/// saturation = 0.6
+/// brightness = 0.85
+/// ```
+///
+/// ## Approximation notes
+///
+/// A true HSB transform requires a post-process shader pass that converts
+/// each pane's pixels from RGB → HSB, scales H/S/B by the configured values,
+/// and converts back. Nexterm's current background pipeline emits flat alpha
+/// overlays only, so this v1 implementation approximates the effect:
+///
+/// - `brightness < 1.0` → black overlay of alpha `1.0 - brightness` (drops the
+///   pane's perceived luminosity by roughly the same factor).
+/// - `saturation < 1.0` → mixes the overlay toward neutral grey (50% grey),
+///   which desaturates the underlying colour.
+/// - `hue != 1.0` → **ignored** in v1. A real hue shift needs the shader pass
+///   mentioned above and lands in Phase 6b.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct InactivePaneHsbConfig {
+    /// Hue multiplier. `1.0` = no shift. Currently a no-op (see struct docs).
+    #[serde(default = "default_hsb_hue")]
+    pub hue: f32,
+    /// Saturation multiplier in `[0.0, 1.0]`. `1.0` = full saturation
+    /// (no overlay tint), `0.0` = grayscale (overlay tints toward 50% grey).
+    #[serde(default = "default_hsb_saturation")]
+    pub saturation: f32,
+    /// Brightness multiplier in `[0.0, 1.0]`. `1.0` = no dim, `0.0` = black.
+    #[serde(default = "default_hsb_brightness")]
+    pub brightness: f32,
+}
+
+fn default_hsb_hue() -> f32 {
+    1.0
+}
+
+fn default_hsb_saturation() -> f32 {
+    0.6
+}
+
+fn default_hsb_brightness() -> f32 {
+    0.85
+}
+
+impl Default for InactivePaneHsbConfig {
+    fn default() -> Self {
+        Self {
+            hue: default_hsb_hue(),
+            saturation: default_hsb_saturation(),
+            brightness: default_hsb_brightness(),
+        }
+    }
+}
+
+impl InactivePaneHsbConfig {
+    /// Convert the HSB config into the RGBA overlay colour the renderer
+    /// should paint over an inactive pane. Pure function for unit-testing.
+    ///
+    /// `animation_t` is the renderer's spring-animated dim progress in
+    /// `[0.0, 1.0]` (0 = fully focused, 1 = fully inactive). Used to fade
+    /// the overlay in/out so the existing transition is preserved.
+    ///
+    /// Returns `[r, g, b, a]` in linear `[0.0, 1.0]` space, suitable for
+    /// `add_px_rect` straight away.
+    pub fn overlay_rgba(&self, animation_t: f32) -> [f32; 4] {
+        let brightness = self.brightness.clamp(0.0, 1.0);
+        let saturation = self.saturation.clamp(0.0, 1.0);
+        let t = animation_t.clamp(0.0, 1.0);
+
+        // Saturation in [0,1]: 1.0 → overlay is pure black (no desat tint),
+        // 0.0 → overlay is 50% grey (maximum desaturation).
+        let desat_mix = 1.0 - saturation;
+        let grey = 0.5 * desat_mix;
+
+        // Brightness → alpha: brightness=1.0 means no dim (alpha 0), 0.0
+        // means full black (alpha 1.0). Scaled by `t` so the spring still
+        // controls the fade-in.
+        let alpha = (1.0 - brightness) * t;
+
+        [grey, grey, grey, alpha]
+    }
+
+    /// Whether the transform produces any visible effect at all. When
+    /// `false`, the renderer can skip the overlay drawcall entirely.
+    pub fn is_active(&self) -> bool {
+        self.brightness < 0.999 || self.saturation < 0.999
+    }
+}
+
+#[cfg(test)]
+mod inactive_pane_hsb_tests {
+    use super::*;
+
+    fn approx(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-4
+    }
+
+    #[test]
+    fn defaults_match_plan_spec() {
+        let c = InactivePaneHsbConfig::default();
+        assert!(approx(c.hue, 1.0));
+        assert!(approx(c.saturation, 0.6));
+        assert!(approx(c.brightness, 0.85));
+    }
+
+    #[test]
+    fn default_overlay_is_partial_grey_at_full_t() {
+        let c = InactivePaneHsbConfig::default();
+        let [r, g, b, a] = c.overlay_rgba(1.0);
+        // saturation=0.6 → desat_mix=0.4 → grey=0.2.
+        assert!(approx(r, 0.2));
+        assert!(approx(g, 0.2));
+        assert!(approx(b, 0.2));
+        // brightness=0.85 → alpha 0.15 at t=1.
+        assert!(approx(a, 0.15));
+    }
+
+    #[test]
+    fn animation_t_zero_produces_invisible_overlay() {
+        let c = InactivePaneHsbConfig::default();
+        let [_, _, _, a] = c.overlay_rgba(0.0);
+        assert!(approx(a, 0.0));
+    }
+
+    #[test]
+    fn brightness_one_disables_dim_at_any_t() {
+        let c = InactivePaneHsbConfig {
+            hue: 1.0,
+            saturation: 0.5,
+            brightness: 1.0,
+        };
+        for t in [0.0_f32, 0.25, 0.5, 1.0] {
+            let [_, _, _, a] = c.overlay_rgba(t);
+            assert!(
+                approx(a, 0.0),
+                "brightness=1.0 must yield alpha 0 at t={}",
+                t
+            );
+        }
+    }
+
+    #[test]
+    fn saturation_one_produces_pure_black_overlay() {
+        let c = InactivePaneHsbConfig {
+            hue: 1.0,
+            saturation: 1.0,
+            brightness: 0.5,
+        };
+        let [r, g, b, a] = c.overlay_rgba(1.0);
+        assert!(approx(r, 0.0));
+        assert!(approx(g, 0.0));
+        assert!(approx(b, 0.0));
+        assert!(approx(a, 0.5));
+    }
+
+    #[test]
+    fn out_of_range_inputs_are_clamped() {
+        let c = InactivePaneHsbConfig {
+            hue: 0.0,
+            saturation: -1.0,
+            brightness: 2.0,
+        };
+        let [r, g, b, a] = c.overlay_rgba(5.0);
+        // saturation clamps to 0 → grey 0.5. brightness clamps to 1 → alpha 0.
+        // t clamps to 1.
+        assert!(approx(r, 0.5));
+        assert!(approx(g, 0.5));
+        assert!(approx(b, 0.5));
+        assert!(approx(a, 0.0));
+    }
+
+    #[test]
+    fn is_active_only_when_visibly_different() {
+        let neutral = InactivePaneHsbConfig {
+            hue: 1.0,
+            saturation: 1.0,
+            brightness: 1.0,
+        };
+        assert!(!neutral.is_active());
+        assert!(InactivePaneHsbConfig::default().is_active());
+    }
+
+    #[test]
+    fn round_trips_through_toml() {
+        let toml_str = r#"
+[inactive_pane_hsb]
+hue = 1.0
+saturation = 0.5
+brightness = 0.75
+"#;
+        let parsed: crate::schema::Config = toml::from_str(toml_str).unwrap();
+        let c = parsed.inactive_pane_hsb;
+        assert!(approx(c.hue, 1.0));
+        assert!(approx(c.saturation, 0.5));
+        assert!(approx(c.brightness, 0.75));
+    }
+}

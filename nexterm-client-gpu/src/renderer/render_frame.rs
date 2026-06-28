@@ -437,6 +437,7 @@ impl WgpuState {
                 cell_h,
                 tab_bar_h,
                 &tokens,
+                config,
                 &mut bg_verts,
                 &mut bg_idx,
             );
