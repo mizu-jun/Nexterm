@@ -299,7 +299,19 @@ impl WgpuState {
                     bg_idx,
                 );
             }
-            let label = format!("  {} {}", cat.icon(), cat.label());
+            // Phase 4b: when a search query is active, append a `(N)` hit
+            // count derived from `category_fields` so users can see at a
+            // glance which category their field-level query landed in.
+            let label = if sp.is_search_filtering() {
+                let n = sp.field_hit_count(cat);
+                if n > 0 {
+                    format!("  {} {} ({})", cat.icon(), cat.label(), n)
+                } else {
+                    format!("  {} {}", cat.icon(), cat.label())
+                }
+            } else {
+                format!("  {} {}", cat.icon(), cat.label())
+            };
             let fg = if is_active {
                 tokens.text_primary
             } else {
