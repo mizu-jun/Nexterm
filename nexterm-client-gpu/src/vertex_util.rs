@@ -395,7 +395,11 @@ pub(crate) fn open_url(url: &str) {
     }
 }
 
+// `grid_to_text` (below this module) is a non-test helper that was placed
+// after `mod tests` historically (pre-Phase-4); `#[allow]` keeps that layout
+// intact instead of forcing an unrelated reshuffle in the Phase 4 PR.
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 

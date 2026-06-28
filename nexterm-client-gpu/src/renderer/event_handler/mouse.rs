@@ -249,6 +249,83 @@ impl EventHandler {
         } else {
             0.0_f64
         };
+
+        // Phase 4 (UI/UX v2): pane-border resize. If a drag is in flight,
+        // convert the cursor delta into a ratio delta and stream it to the
+        // server. Otherwise, hover hit-test sets the resize cursor icon so
+        // the affordance is discoverable.
+        if let Some(mut drag) = self.app.state.pane_resize_drag {
+            let (px_f32, py_f32) = (position.x as f32, position.y as f32);
+            let pixel_delta = match drag.axis {
+                crate::state::PaneResizeAxis::Horizontal => px_f32 - drag.last_cursor.0,
+                crate::state::PaneResizeAxis::Vertical => py_f32 - drag.last_cursor.1,
+            };
+            // span_px is the parent split's total length; clamp the resulting
+            // ratio delta to the same band the server applies (clamp 0.1..0.9
+            // inside adjust_ratio_for, so per-frame deltas above 0.8 are
+            // effectively a no-op anyway).
+            let ratio_delta = (pixel_delta / drag.span_px).clamp(-0.5, 0.5);
+            if ratio_delta.abs() > 0.0005 {
+                if let Some(conn) = &self.connection {
+                    let _ = conn
+                        .send_tx
+                        .try_send(nexterm_proto::ClientToServer::ResizeSplit {
+                            delta: ratio_delta,
+                        });
+                }
+                drag.last_cursor = (px_f32, py_f32);
+                self.app.state.pane_resize_drag = Some(drag);
+                if let Some(w) = &self.window {
+                    w.set_cursor(match drag.axis {
+                        crate::state::PaneResizeAxis::Horizontal => {
+                            winit::window::CursorIcon::EwResize
+                        }
+                        crate::state::PaneResizeAxis::Vertical => {
+                            winit::window::CursorIcon::NsResize
+                        }
+                    });
+                    w.request_redraw();
+                }
+            }
+            return;
+        }
+
+        // Hover hit-test against pane borders for the resize cursor icon.
+        // Skipped while any other modal UI is open or any drag is in flight,
+        // so we don't fight the existing affordances.
+        if !self.app.state.settings_panel.is_open
+            && self.app.state.tab_drag.is_none()
+            && let Some(w) = &self.window
+        {
+            let pad_x = self.app.config.window.padding_x as f32;
+            let pad_y = self.app.config.window.padding_y as f32;
+            let origin_x = pad_x;
+            let origin_y = tab_bar_h_f64 as f32 + pad_y;
+            let hit = if position.y >= origin_y as f64 {
+                crate::state::hit_test_pane_border(
+                    &self.app.state.pane_layouts,
+                    position.x as f32,
+                    position.y as f32,
+                    cell_w as f32,
+                    cell_h as f32,
+                    origin_x,
+                    origin_y,
+                )
+            } else {
+                None
+            };
+            let next_cursor = match hit {
+                Some(h) => match h.axis {
+                    crate::state::PaneResizeAxis::Horizontal => winit::window::CursorIcon::EwResize,
+                    crate::state::PaneResizeAxis::Vertical => winit::window::CursorIcon::NsResize,
+                },
+                None => winit::window::CursorIcon::Default,
+            };
+            if self.app.state.last_cursor_icon != next_cursor {
+                w.set_cursor(next_cursor);
+                self.app.state.last_cursor_icon = next_cursor;
+            }
+        }
         let col = (position.x / cell_w) as u16;
         let row = ((position.y - tab_bar_h_f64).max(0.0) / cell_h) as u16;
 
@@ -535,10 +612,24 @@ impl EventHandler {
                         self.app.state.settings_panel.close();
                     }
                     SettingsPanelHit::Category(idx) => {
-                        // Click on a sidebar category → switch category.
-                        if let Some(cat) = crate::settings_panel::SettingsCategory::ALL.get(idx) {
+                        // Click on a sidebar category → switch category. With
+                        // a non-empty Phase 4 search, the rendered list is the
+                        // filtered subset, so resolve via `filtered_categories`
+                        // to honour the user-visible order.
+                        let filtered = self.app.state.settings_panel.filtered_categories();
+                        if let Some(cat) = filtered.get(idx) {
                             self.app.state.settings_panel.category = cat.clone();
+                            // Clicking a category implicitly defocuses the
+                            // search input so subsequent keyboard navigation
+                            // (Tab / ↑ / ↓) operates on the panel again.
+                            self.app.state.settings_panel.unfocus_search();
                         }
+                    }
+                    SettingsPanelHit::SearchInput => {
+                        // Phase 4 (UI/UX v2): grab keyboard focus for the
+                        // search field. The next keystroke will edit
+                        // `search_query`.
+                        self.app.state.settings_panel.focus_search();
                     }
                     SettingsPanelHit::Slider {
                         slider_type,
@@ -655,6 +746,69 @@ impl EventHandler {
             } else {
                 0.0_f64
             };
+
+            // Phase 4 (UI/UX v2): pane-border resize start. Run before tab
+            // bar / pane click handling so a click inside the tolerance band
+            // of an internal border kicks off a resize drag instead of
+            // landing in the underlying terminal cell. Out-of-terminal areas
+            // (tab bar, padding above grid) cannot host a border, so we
+            // only test when the cursor is in the grid area.
+            let pad_x = self.app.config.window.padding_x as f32;
+            let pad_y = self.app.config.window.padding_y as f32;
+            let origin_x = pad_x;
+            let origin_y = tab_bar_h_f64 as f32 + pad_y;
+            if py >= origin_y as f64
+                && let Some(hit) = crate::state::hit_test_pane_border(
+                    &self.app.state.pane_layouts,
+                    px as f32,
+                    py as f32,
+                    cell_w as f32,
+                    cell_h as f32,
+                    origin_x,
+                    origin_y,
+                )
+            {
+                // Focus the adjacent pane locally + on the server so the
+                // subsequent `ResizeSplit` updates target the right split
+                // ancestor (see `window/bsp.rs::adjust_ratio_for`).
+                self.app.state.set_focused_pane(hit.adjacent_pane_id);
+                if let Some(conn) = &self.connection {
+                    let _ = conn
+                        .send_tx
+                        .try_send(nexterm_proto::ClientToServer::FocusPane {
+                            pane_id: hit.adjacent_pane_id,
+                        });
+                }
+                // Compute the span of the parent split in pixels (used
+                // to convert pixel deltas into ratio deltas). Approximate
+                // it from the adjacent pane's own size — this matches
+                // the typical 50/50 split and is corrected by `clamp` on
+                // the server side regardless.
+                let span_px =
+                    if let Some(layout) = self.app.state.pane_layouts.get(&hit.adjacent_pane_id) {
+                        match hit.axis {
+                            crate::state::PaneResizeAxis::Horizontal => {
+                                layout.cols as f32 * cell_w as f32 * 2.0
+                            }
+                            crate::state::PaneResizeAxis::Vertical => {
+                                layout.rows as f32 * cell_h as f32 * 2.0
+                            }
+                        }
+                    } else {
+                        // Fallback: 256 px guarantees a finite span.
+                        256.0
+                    };
+                self.app.state.pane_resize_drag = Some(crate::state::PaneResizeDrag {
+                    focused_pane_id: hit.adjacent_pane_id,
+                    axis: hit.axis,
+                    span_px: span_px.max(32.0),
+                    last_cursor: (px as f32, py as f32),
+                });
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+                return;
+            }
 
             // Handle clicks in the tab-bar area (py < tab_bar_h).
             if tab_bar_visible && py < tab_bar_h_f64 {
@@ -993,6 +1147,17 @@ impl EventHandler {
 
     /// Left button release: finalize selection → copy to clipboard or switch focus.
     pub(super) fn on_mouse_left_released(&mut self) {
+        // Phase 4 (UI/UX v2): finalize any pane-border resize drag.
+        if self.app.state.pane_resize_drag.take().is_some() {
+            if let Some(w) = &self.window {
+                w.set_cursor(winit::window::CursorIcon::Default);
+                w.request_redraw();
+            }
+            self.app.state.last_cursor_icon = winit::window::CursorIcon::Default;
+            // Do not fall through to other release paths — a border-drag
+            // release is not a click on the underlying terminal cell.
+            return;
+        }
         // End any settings-panel slider drag and save the settings.
         if self.app.state.settings_panel.drag_slider.take().is_some() {
             let _ = self.app.state.settings_panel.save_to_toml();

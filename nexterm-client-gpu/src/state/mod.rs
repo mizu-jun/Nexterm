@@ -233,6 +233,13 @@ pub struct ClientState {
     /// Tab-drag state (Sprint 5-7 / Phase 2-3).
     /// While `Some`, a ghost tab is rendered and the drop reorders on release.
     pub tab_drag: Option<TabDragState>,
+    /// Phase 4 (UI/UX v2): mouse drag on a pane split border. `Some` while the
+    /// left button is held after pressing inside the border hit-tolerance band.
+    pub pane_resize_drag: Option<PaneResizeDrag>,
+    /// Phase 4 (UI/UX v2): last cursor icon we asked winit to display. Avoids
+    /// thrashing the OS cursor by re-issuing identical `set_cursor` calls.
+    /// `winit::window::CursorIcon::Default` mirrors the platform default.
+    pub last_cursor_icon: winit::window::CursorIcon,
     /// Animation manager (Sprint 5-7 / Phase 3-2).
     ///
     /// Records timestamps for tab-switch / pane-add and lets the renderer query
@@ -411,6 +418,167 @@ pub struct TabDragState {
     pub current_screen_pos: Option<(i32, i32)>,
 }
 
+/// Phase 4 (UI/UX v2): in-flight mouse drag on a pane split border.
+///
+/// Captured on `on_mouse_left_pressed` when the cursor falls inside the
+/// hit-tolerance band of an internal pane border, updated in
+/// `on_cursor_moved`, and cleared on `on_mouse_left_released`. Sends
+/// `ClientToServer::ResizeSplit { delta }` deltas while dragging — the server
+/// already supports adjusting the ratio of the Split closest to the focused
+/// pane (`window/bsp.rs::adjust_ratio_for`), so the client focuses one of the
+/// two adjacent panes at drag start and just streams pixel-delta-converted
+/// ratio adjustments.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PaneResizeDrag {
+    /// Pane that received focus at drag start (one of the two panes on either
+    /// side of the border). Snapshot only — the server's idea of focus may
+    /// drift if another event fires mid-drag, but the resize math does not
+    /// need to chase it.
+    pub focused_pane_id: u32,
+    /// Border axis: `Horizontal` means we drag along X (the split is
+    /// vertical / panes are side-by-side); `Vertical` is the opposite.
+    pub axis: PaneResizeAxis,
+    /// Total length of the parent split in pixels at drag start. Used to
+    /// convert pixel motion into a ratio delta in [-1.0, 1.0].
+    pub span_px: f32,
+    /// Cursor position at the previous `on_cursor_moved` callback. Used to
+    /// compute incremental deltas (so each emitted `ResizeSplit` reflects a
+    /// single mouse move, not the cumulative motion).
+    pub last_cursor: (f32, f32),
+}
+
+/// Axis along which a pane border is being dragged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaneResizeAxis {
+    /// Border runs top-to-bottom (vertical line); dragging moves it left/right.
+    Horizontal,
+    /// Border runs left-to-right (horizontal line); dragging moves it up/down.
+    Vertical,
+}
+
+/// Result of hit-testing the cursor against the internal borders of the
+/// tiled pane layout (Phase 4 / UI-UX v2). Encodes which border was hit so
+/// the renderer can show the correct resize cursor (column / row) and the
+/// drag handler can pick the right axis.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PaneBorderHit {
+    /// One of the two panes adjacent to the border. Conventionally the pane
+    /// whose right (or bottom) edge is the border.
+    pub adjacent_pane_id: u32,
+    /// Border axis.
+    pub axis: PaneResizeAxis,
+}
+
+/// Pixel half-width of the border hit-tolerance band. Picked to be a couple
+/// of pixels wider than the border line itself so the affordance is not
+/// pixel-perfect.
+pub const PANE_BORDER_HIT_TOLERANCE: f32 = 4.0;
+
+/// Pure helper that hit-tests `(cursor_x, cursor_y)` against the borders
+/// implied by `layouts`. The cell metrics (`cell_w`, `cell_h`) and the grid
+/// origin (`origin_x`, `origin_y`) are passed in explicitly so the function
+/// stays renderer-agnostic and easy to unit-test.
+///
+/// Strategy:
+/// - For every pair of panes that share a column edge (one pane's right edge
+///   ≈ another pane's left edge, with overlapping row ranges), the gap is a
+///   vertical border → dragging it on the horizontal axis resizes.
+/// - Symmetric for shared row edges → vertical-axis drag.
+///
+/// Returns the first border whose tolerance band contains the cursor, biased
+/// toward vertical borders to make narrow-column resizes easier to grab.
+pub fn hit_test_pane_border(
+    layouts: &HashMap<u32, PaneLayout>,
+    cursor_x: f32,
+    cursor_y: f32,
+    cell_w: f32,
+    cell_h: f32,
+    origin_x: f32,
+    origin_y: f32,
+) -> Option<PaneBorderHit> {
+    if cell_w <= 0.0 || cell_h <= 0.0 {
+        return None;
+    }
+    let tol = PANE_BORDER_HIT_TOLERANCE;
+    // Snapshot layouts for stable iteration order; HashMap order is not
+    // deterministic so we sort by pane_id to keep hit-test results stable
+    // across frames (avoids cursor flicker when two borders coincide).
+    let mut panes: Vec<&PaneLayout> = layouts.values().collect();
+    panes.sort_by_key(|p| p.pane_id);
+
+    // Vertical borders (shared column edge).
+    for a in &panes {
+        let a_right_col = a.col_offset as f32 + a.cols as f32;
+        let border_x = origin_x + a_right_col * cell_w;
+        if (cursor_x - border_x).abs() > tol {
+            continue;
+        }
+        // Find any pane whose left edge sits at `a_right_col` and whose row
+        // range overlaps `a`'s row range (i.e. they share this border).
+        for b in &panes {
+            if b.pane_id == a.pane_id {
+                continue;
+            }
+            if b.col_offset as f32 != a_right_col {
+                continue;
+            }
+            let a_top = a.row_offset;
+            let a_bot = a.row_offset + a.rows;
+            let b_top = b.row_offset;
+            let b_bot = b.row_offset + b.rows;
+            let row_overlap = a_top.max(b_top) < a_bot.min(b_bot);
+            if !row_overlap {
+                continue;
+            }
+            // Convert cursor y to pane-row coordinates; require it to lie
+            // within the overlapping row range.
+            let pane_y_top = origin_y + a_top.max(b_top) as f32 * cell_h;
+            let pane_y_bot = origin_y + a_bot.min(b_bot) as f32 * cell_h;
+            if cursor_y >= pane_y_top && cursor_y < pane_y_bot {
+                return Some(PaneBorderHit {
+                    adjacent_pane_id: a.pane_id,
+                    axis: PaneResizeAxis::Horizontal,
+                });
+            }
+        }
+    }
+
+    // Horizontal borders (shared row edge).
+    for a in &panes {
+        let a_bot_row = a.row_offset as f32 + a.rows as f32;
+        let border_y = origin_y + a_bot_row * cell_h;
+        if (cursor_y - border_y).abs() > tol {
+            continue;
+        }
+        for b in &panes {
+            if b.pane_id == a.pane_id {
+                continue;
+            }
+            if b.row_offset as f32 != a_bot_row {
+                continue;
+            }
+            let a_left = a.col_offset;
+            let a_right = a.col_offset + a.cols;
+            let b_left = b.col_offset;
+            let b_right = b.col_offset + b.cols;
+            let col_overlap = a_left.max(b_left) < a_right.min(b_right);
+            if !col_overlap {
+                continue;
+            }
+            let pane_x_left = origin_x + a_left.max(b_left) as f32 * cell_w;
+            let pane_x_right = origin_x + a_right.min(b_right) as f32 * cell_w;
+            if cursor_x >= pane_x_left && cursor_x < pane_x_right {
+                return Some(PaneBorderHit {
+                    adjacent_pane_id: a.pane_id,
+                    axis: PaneResizeAxis::Vertical,
+                });
+            }
+        }
+    }
+
+    None
+}
+
 impl ClientState {
     pub fn new(cols: u16, rows: u16, scrollback_capacity: usize) -> Self {
         Self {
@@ -457,6 +625,8 @@ impl ClientState {
             pending_quake_action: None,
             tab_order: Vec::new(),
             tab_drag: None,
+            pane_resize_drag: None,
+            last_cursor_icon: winit::window::CursorIcon::Default,
             animations: crate::animations::AnimationManager::new(),
             // Phase 4-4: reflect the focused Window ID on WindowListChanged
             focused_server_window_id: 0,
@@ -585,5 +755,132 @@ impl ClientState {
         } else {
             self.palette.open();
         }
+    }
+}
+
+#[cfg(test)]
+mod pane_border_hit_tests {
+    //! Phase 4 (UI/UX v2): pure hit-test against pane split borders.
+    use super::*;
+
+    fn layout(id: u32, col: u16, row: u16, cols: u16, rows: u16) -> PaneLayout {
+        PaneLayout {
+            pane_id: id,
+            col_offset: col,
+            row_offset: row,
+            cols,
+            rows,
+            is_focused: false,
+        }
+    }
+
+    /// A horizontal 50/50 split: two side-by-side panes. The shared vertical
+    /// border is at the right edge of pane 1 / left edge of pane 2. Clicking
+    /// dead-center on that border with the standard tolerance must hit it.
+    #[test]
+    fn detects_vertical_border_between_side_by_side_panes() {
+        let mut layouts = HashMap::new();
+        layouts.insert(1, layout(1, 0, 0, 40, 24));
+        layouts.insert(2, layout(2, 40, 0, 40, 24));
+        // cell_w=10, cell_h=10; origin at (0,0); border at x=400.
+        let hit = hit_test_pane_border(&layouts, 400.0, 100.0, 10.0, 10.0, 0.0, 0.0)
+            .expect("border at x=400 should be hit");
+        assert_eq!(hit.axis, PaneResizeAxis::Horizontal);
+    }
+
+    /// Same setup, but click far away from the border: must miss.
+    #[test]
+    fn misses_when_far_from_border() {
+        let mut layouts = HashMap::new();
+        layouts.insert(1, layout(1, 0, 0, 40, 24));
+        layouts.insert(2, layout(2, 40, 0, 40, 24));
+        assert!(hit_test_pane_border(&layouts, 200.0, 100.0, 10.0, 10.0, 0.0, 0.0).is_none());
+    }
+
+    /// Tolerance band must be respected on both sides of the border. A click
+    /// at exactly `border_x ± (tol - 0.5)` hits; `border_x ± (tol + 0.5)` misses.
+    #[test]
+    fn respects_tolerance_band_on_both_sides() {
+        let mut layouts = HashMap::new();
+        layouts.insert(1, layout(1, 0, 0, 40, 24));
+        layouts.insert(2, layout(2, 40, 0, 40, 24));
+        let tol = PANE_BORDER_HIT_TOLERANCE;
+        // Inside tolerance.
+        assert!(
+            hit_test_pane_border(&layouts, 400.0 - (tol - 0.5), 100.0, 10.0, 10.0, 0.0, 0.0)
+                .is_some()
+        );
+        assert!(
+            hit_test_pane_border(&layouts, 400.0 + (tol - 0.5), 100.0, 10.0, 10.0, 0.0, 0.0)
+                .is_some()
+        );
+        // Outside tolerance.
+        assert!(
+            hit_test_pane_border(&layouts, 400.0 - (tol + 0.5), 100.0, 10.0, 10.0, 0.0, 0.0)
+                .is_none()
+        );
+        assert!(
+            hit_test_pane_border(&layouts, 400.0 + (tol + 0.5), 100.0, 10.0, 10.0, 0.0, 0.0)
+                .is_none()
+        );
+    }
+
+    /// A vertical 50/50 split: two stacked panes. The shared horizontal
+    /// border must be detected with `Vertical` axis.
+    #[test]
+    fn detects_horizontal_border_between_stacked_panes() {
+        let mut layouts = HashMap::new();
+        layouts.insert(1, layout(1, 0, 0, 80, 12));
+        layouts.insert(2, layout(2, 0, 12, 80, 12));
+        // border y = 12 * cell_h = 120.
+        let hit = hit_test_pane_border(&layouts, 200.0, 120.0, 10.0, 10.0, 0.0, 0.0)
+            .expect("border at y=120 should be hit");
+        assert_eq!(hit.axis, PaneResizeAxis::Vertical);
+    }
+
+    /// Grid-origin offset (tab bar + padding) must shift the border line.
+    /// Without applying it, the click would land in the wrong place.
+    #[test]
+    fn respects_grid_origin_offset() {
+        let mut layouts = HashMap::new();
+        layouts.insert(1, layout(1, 0, 0, 40, 24));
+        layouts.insert(2, layout(2, 40, 0, 40, 24));
+        // origin_y=30 (tab bar 24 + pad 6); border still at x=400 but the
+        // y range must include the offset.
+        let hit = hit_test_pane_border(&layouts, 400.0, 130.0, 10.0, 10.0, 0.0, 30.0)
+            .expect("offset border should still hit");
+        assert_eq!(hit.axis, PaneResizeAxis::Horizontal);
+        // Above the grid (y < origin_y) — should not hit.
+        assert!(hit_test_pane_border(&layouts, 400.0, 10.0, 10.0, 10.0, 0.0, 30.0).is_none());
+    }
+
+    /// L-shaped layout: one pane splits a column but the row ranges only
+    /// partially overlap. The cursor at the overlap region hits; outside it
+    /// misses.
+    #[test]
+    fn requires_row_range_overlap_for_vertical_border() {
+        let mut layouts = HashMap::new();
+        layouts.insert(1, layout(1, 0, 0, 40, 12)); // top-left
+        layouts.insert(2, layout(2, 40, 0, 40, 24)); // right (full height)
+        // Overlap: rows 0..=11 (since 1 ends at row 12). Cursor at y=50 (row 5).
+        assert!(hit_test_pane_border(&layouts, 400.0, 50.0, 10.0, 10.0, 0.0, 0.0).is_some());
+        // Outside overlap: y=180 (row 18) — pane 1 is gone there.
+        assert!(hit_test_pane_border(&layouts, 400.0, 180.0, 10.0, 10.0, 0.0, 0.0).is_none());
+    }
+
+    /// Empty layouts: nothing to hit.
+    #[test]
+    fn empty_layouts_never_hit() {
+        let layouts = HashMap::new();
+        assert!(hit_test_pane_border(&layouts, 100.0, 100.0, 10.0, 10.0, 0.0, 0.0).is_none());
+    }
+
+    /// Degenerate cell metrics must not panic and must not report hits.
+    #[test]
+    fn zero_cell_metrics_return_none() {
+        let mut layouts = HashMap::new();
+        layouts.insert(1, layout(1, 0, 0, 40, 24));
+        assert!(hit_test_pane_border(&layouts, 100.0, 100.0, 0.0, 10.0, 0.0, 0.0).is_none());
+        assert!(hit_test_pane_border(&layouts, 100.0, 100.0, 10.0, 0.0, 0.0, 0.0).is_none());
     }
 }

@@ -205,7 +205,8 @@ Total: 33–47 h (≈ one to two-week sprint).
 | 2c | deferred | Per-tab process / shell icon (Nerd Font). Requires a new IPC field for the active process name. |
 | 3 | **shipped** | `Config.colors_follow_system`, `colors_light`, `colors_dark`; `ClientState.os_dark_mode` seeded at window creation and refreshed on `WindowEvent::ThemeChanged`; `Config::effective_color_scheme` selects the right palette per frame. 4 new unit tests pass. |
 | 3b | deferred | Live theme preview on hover inside the settings panel. |
-| 4 | pending | Settings search + mouse pane resize. |
+| 4 | **shipped** | Category-level fuzzy search in the settings panel sidebar (`/` activates, Esc clears then closes, `filter_categories` helper with SkimMatcherV2 + per-category keyword synonyms). Mouse pane resize via border hit-test (`hit_test_pane_border`, 4 px tolerance) → focus adjacent pane → stream `ClientToServer::ResizeSplit` deltas. Cursor switches to `EwResize` / `NsResize` on hover. 14 new unit tests pass. Reuses existing `ResizeSplit` IPC (no protocol bump). Field-level filtering deferred — the panel renderer would need to be split first. |
+| 4b | deferred | Field-level filtering inside a category (label + value substrings). Requires breaking up the 2.1 kLoC `build_settings_panel_verts` into per-category builders. |
 | 5 | pending | Gradient background + cursor polish. |
 | 6 | pending | `inactive_pane_hsb` (DEC 2026 already in nexterm-vt). |
 
