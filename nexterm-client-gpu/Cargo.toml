@@ -76,5 +76,8 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
+[dev-dependencies]
+proptest = { workspace = true }
+
 [lints]
 workspace = true

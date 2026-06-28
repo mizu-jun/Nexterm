@@ -264,4 +264,112 @@ mod tests {
         let session = extract_session_cookie(&headers);
         assert_eq!(session, None);
     }
+
+    // -------------------------------------------------------------------
+    // Adversarial tests (QA persona: 悪意ある操作者)
+    //
+    // These exercise the deny paths of the auth surface:
+    // - Tampered / forged tokens must never be valid.
+    // - Expired tokens must be rejected once the TTL elapses.
+    // - Concurrent issuance must respect `max_sessions`.
+    // - Cookie parsing must not be fooled by suffix collisions.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn is_valid_rejects_random_unknown_token() {
+        let manager = AuthManager::new(3600, 100);
+        // No session has been issued — any guess must be rejected.
+        assert!(!manager.is_valid("not-a-real-token"));
+        assert!(!manager.is_valid(""));
+        assert!(!manager.is_valid(&"A".repeat(48)));
+    }
+
+    #[test]
+    fn is_valid_rejects_tampered_token() {
+        let manager = AuthManager::new(3600, 100);
+        let token = manager.create_session("password", "alice").expect("token");
+        // Flip one character — must no longer match.
+        let mut tampered: Vec<char> = token.chars().collect();
+        tampered[0] = if tampered[0] == 'A' { 'B' } else { 'A' };
+        let tampered: String = tampered.into_iter().collect();
+        assert!(
+            !manager.is_valid(&tampered),
+            "tampered token must be rejected"
+        );
+        // Original is still valid.
+        assert!(manager.is_valid(&token));
+    }
+
+    #[test]
+    fn expired_session_is_rejected_after_ttl() {
+        // 0-second TTL: every fresh token is considered expired on the next
+        // tick. Using ttl=0 here makes the check deterministic without sleeps.
+        let manager = AuthManager::new(0, 100);
+        let token = manager.create_session("password", "u").expect("token");
+        // The expiry is already in the past — `is_valid` must say so.
+        // (Instant::now() advances by at least a nanosecond between calls.)
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        assert!(
+            !manager.is_valid(&token),
+            "0-TTL tokens must expire immediately"
+        );
+        assert!(manager.session_info(&token).is_none());
+    }
+
+    #[test]
+    fn max_sessions_evicts_oldest_on_overflow() {
+        let manager = AuthManager::new(3600, 2);
+        let t1 = manager.create_session("password", "u1").expect("t1");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let t2 = manager.create_session("password", "u2").expect("t2");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let t3 = manager.create_session("password", "u3").expect("t3");
+        // The oldest (t1) must have been evicted.
+        assert!(!manager.is_valid(&t1), "oldest session must be evicted");
+        assert!(manager.is_valid(&t2));
+        assert!(manager.is_valid(&t3));
+        assert_eq!(manager.active_count(), 2);
+    }
+
+    #[test]
+    fn revoked_token_cannot_be_resurrected() {
+        let manager = AuthManager::new(3600, 100);
+        let token = manager.create_session("password", "u").expect("token");
+        manager.revoke_session(&token);
+        assert!(!manager.is_valid(&token));
+        // Revoking again is a noop, not a panic.
+        manager.revoke_session(&token);
+        manager.revoke_session("never-existed");
+        assert!(!manager.is_valid(&token));
+    }
+
+    #[test]
+    fn cookie_parser_is_not_confused_by_suffix_collision() {
+        // `not_nexterm_session=foo` must not be parsed as our cookie even
+        // though it ends with the same substring.
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "cookie",
+            "not_nexterm_session=tricked; other=ok".parse().unwrap(),
+        );
+        assert_eq!(
+            extract_session_cookie(&headers),
+            None,
+            "suffix collision must not be accepted as the session cookie"
+        );
+    }
+
+    #[test]
+    fn each_session_token_is_unique() {
+        // Two consecutive sessions must produce different tokens (random 48-char alnum).
+        let manager = AuthManager::new(3600, 100);
+        let a = manager.create_session("password", "u").expect("a");
+        let b = manager.create_session("password", "u").expect("b");
+        assert_ne!(a, b, "session tokens must not collide");
+        // Both 48 chars, alphanumeric only.
+        for tok in [&a, &b] {
+            assert_eq!(tok.len(), 48);
+            assert!(tok.chars().all(|c| c.is_ascii_alphanumeric()));
+        }
+    }
 }

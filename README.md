@@ -5,6 +5,9 @@ A terminal multiplexer written in Rust, inspired by tmux/zellij, featuring GPU r
 > **日本語ドキュメント:** [README.ja.md](README.ja.md)
 
 [![CI](https://github.com/mizu-jun/nexterm/actions/workflows/ci.yml/badge.svg)](https://github.com/mizu-jun/nexterm/actions/workflows/ci.yml)
+[![Coverage](https://github.com/mizu-jun/nexterm/actions/workflows/coverage.yml/badge.svg)](https://github.com/mizu-jun/nexterm/actions/workflows/coverage.yml)
+
+See [docs/TESTING_STRATEGY.md](docs/TESTING_STRATEGY.md) for the test taxonomy and the QA-persona × ISO/IEC 25010 coverage matrix.
 
 ## What's New in v1.1.0
 
