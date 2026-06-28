@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — UI/UX Modernization v2 Phase 5b (smooth cursor motion)
+
+Follow-up to Phase 5 (PR #16). Wires the existing
+`CursorConfig.smooth_motion` flag (which Phase 5 added but did not
+consume) into the renderer so the cursor interpolates between cells
+over 80 ms with an ease-out cubic curve instead of snapping.
+PROTOCOL_VERSION = 8 and SNAPSHOT_VERSION = 4 remain unchanged.
+
+- **`cursor_motion.rs` (new module)** — pure helpers
+  (`ease_out_cubic`, `animation_t`, `interpolate`, `update_target`,
+  `visible_position`, `quantize_visible`) and the `CursorMotionState`
+  struct. The duration is centralised as
+  `CURSOR_MOTION_DURATION_MS = 80`. When the server reports a new
+  cursor cell mid-animation, the current visible position is
+  snapshotted as the new `prev` so the motion stays continuous (no
+  jump back to the old cell).
+- **`renderer/mod.rs`, `renderer/render_frame.rs`,
+  `renderer/grid_verts.rs`** — `WgpuState` gains a per-pane
+  `cursor_motion: HashMap<u32, CursorMotionState>` map and a
+  `sample_cursor_motion` helper. `render_frame` advances the state
+  each frame and passes the interpolated visible position into both
+  `build_grid_verts` and `build_grid_verts_in_rect`; the cursor
+  rectangle is now drawn at the interpolated cell coordinate. When
+  `smooth_motion = false` the helper short-circuits to the integer
+  cell so the rendered output is byte-identical to the pre-Phase-5b
+  build.
+- **Cache invalidation** — `PaneRenderCache` gains a `cursor_visual_q:
+  (u32, u32)` key field (sub-cell position quantised to 1/16) so the
+  per-pane vertex cache rebuilds each animation frame instead of
+  re-rendering a stale cursor. The quantisation gives 16 steps per
+  cell, enough to keep all ~5 animation frames at 60 Hz distinct.
+- **Tests** (`+9`): ease-out cubic endpoint identities; `animation_t`
+  clamps to `[0, 1]` and short-circuits on zero duration;
+  interpolation hits endpoints exactly; a fresh state reports its
+  integer cell with zero progress; unchanged-target preserves the
+  state; retargeting mid-animation snapshots the visible position;
+  animation completes at the target after the duration elapses;
+  quantisation is stable at integer positions and distinguishes
+  sub-cell steps. Full `cargo test -p nexterm-client-gpu --bins` is
+  green (574 tests, +9 from Phase 5).
+
 ### Added — UI/UX Modernization v2 Phase 5 (gradient background + cursor blink)
 
 Picks up after Phases 1–4 in the Sprint 5-15 plan. PROTOCOL_VERSION = 8 and

@@ -20,6 +20,52 @@ use super::WgpuState;
 use super::background_pass::build_background_verts;
 use super::image::{ImageEntry, build_image_verts};
 
+impl WgpuState {
+    /// Phase 5b (UI/UX v2): advance the per-pane cursor motion state
+    /// and return the visible cursor position + the cache-key
+    /// quantization for the current frame.
+    ///
+    /// `smooth_motion = false` short-circuits to the integer cell
+    /// position so the cache key is deterministic and the rendered
+    /// output is byte-identical to the pre-Phase-5b build.
+    pub(super) fn sample_cursor_motion(
+        &mut self,
+        pane_id: u32,
+        cursor_col: u16,
+        cursor_row: u16,
+        smooth_motion: bool,
+        now: Instant,
+    ) -> (f32, f32, (u32, u32)) {
+        use crate::cursor_motion::{
+            CURSOR_MOTION_DURATION_MS, CursorMotionState, quantize_visible, update_target,
+            visible_position,
+        };
+
+        if !smooth_motion {
+            // Reset motion state so re-enabling smooth_motion later
+            // does not glide from a stale position.
+            self.cursor_motion.remove(&pane_id);
+            let col = cursor_col as f32;
+            let row = cursor_row as f32;
+            return (col, row, (quantize_visible(col), quantize_visible(row)));
+        }
+
+        let entry = self
+            .cursor_motion
+            .entry(pane_id)
+            .or_insert_with(|| CursorMotionState::new(cursor_col, cursor_row, now));
+        *entry = update_target(
+            *entry,
+            cursor_col,
+            cursor_row,
+            now,
+            CURSOR_MOTION_DURATION_MS,
+        );
+        let (vcol, vrow) = visible_position(*entry, now, CURSOR_MOTION_DURATION_MS);
+        (vcol, vrow, (quantize_visible(vcol), quantize_visible(vrow)))
+    }
+}
+
 /// Append cached (0-relative index) pane vertex data into the frame's main buffers.
 ///
 /// Indices in `src_*_idx` are 0-relative (built against empty local vecs).
@@ -238,6 +284,21 @@ impl WgpuState {
                             &mut text_idx,
                         );
                     } else {
+                        // Phase 5b (UI/UX v2): update / sample the per-pane
+                        // cursor motion state and derive the visible cursor
+                        // position for this frame. When smooth motion is
+                        // disabled, the visible position equals the
+                        // server-reported cell exactly so the cache key is
+                        // deterministic.
+                        let (cursor_visual_col, cursor_visual_row, cursor_visual_q) = self
+                            .sample_cursor_motion(
+                                pane_id,
+                                pane.cursor_col,
+                                pane.cursor_row,
+                                config.cursor.smooth_motion,
+                                frame_now,
+                            );
+
                         // C4: check whether the cached vertex data can be reused.
                         // A cache hit requires all of: content unchanged, layout
                         // parameters unchanged, and the atlas not yet reset this
@@ -255,6 +316,7 @@ impl WgpuState {
                                         is_focused,
                                         cursor_style,
                                         cursor_visible,
+                                        cursor_visual_q,
                                         &state.mouse_sel,
                                     )
                             });
@@ -294,6 +356,8 @@ impl WgpuState {
                                 palette_ref,
                                 cursor_style,
                                 cursor_visible,
+                                cursor_visual_col,
+                                cursor_visual_row,
                                 &mut l_bg_v,
                                 &mut l_bg_i,
                                 &mut l_txt_v,
@@ -329,6 +393,7 @@ impl WgpuState {
                                     was_focused: is_focused,
                                     cursor_style: cursor_style.clone(),
                                     cursor_visible,
+                                    cursor_visual_q,
                                     mouse_sel_start: state.mouse_sel.start,
                                     mouse_sel_end: state.mouse_sel.end,
                                     mouse_sel_dragging: state.mouse_sel.is_dragging,
@@ -415,6 +480,17 @@ impl WgpuState {
                 );
             } else {
                 // ---- Normal grid display ----
+                // Phase 5b: derive visible cursor position from the
+                // motion state for the focused pane (fallback path
+                // when no layout info yet).
+                let fallback_pane_id = state.focused_pane_id.unwrap_or(0);
+                let (cursor_visual_col, cursor_visual_row, _q) = self.sample_cursor_motion(
+                    fallback_pane_id,
+                    pane.cursor_col,
+                    pane.cursor_row,
+                    config.cursor.smooth_motion,
+                    frame_now,
+                );
                 self.build_grid_verts(
                     pane,
                     &state.mouse_sel,
@@ -428,6 +504,8 @@ impl WgpuState {
                     palette_ref,
                     cursor_style,
                     cursor_visible,
+                    cursor_visual_col,
+                    cursor_visual_row,
                     &mut bg_verts,
                     &mut bg_idx,
                     &mut text_verts,

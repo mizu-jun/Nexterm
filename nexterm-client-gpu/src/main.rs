@@ -14,6 +14,7 @@ mod animations;
 mod color_util;
 mod command_blocks;
 mod connection;
+mod cursor_motion;
 mod drop_target;
 mod font;
 mod glyph_atlas;
