@@ -30,6 +30,8 @@ members = ["."]
 [dependencies]
 libfuzzer-sys = "0.4"
 nexterm-vt = { path = ".." }
+nexterm-proto = { path = "../../nexterm-proto" }
+postcard = { version = "1", features = ["alloc"] }
 
 [[bin]]
 name = "vt_parser_input"
@@ -55,6 +57,13 @@ bench = false
 [[bin]]
 name = "osc_url"
 path = "fuzz_targets/osc_url.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ipc_postcard"
+path = "fuzz_targets/ipc_postcard.rs"
 test = false
 doc = false
 bench = false

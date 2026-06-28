@@ -220,4 +220,67 @@ mod tests {
         let results = sb.search("[invalid");
         assert!(results.is_empty());
     }
+
+    // -------------------------------------------------------------------
+    // Property-based invariants (QA persona: データ整合性監査役)
+    //
+    // The scrollback is a ring buffer; the invariants below must hold for
+    // any sequence of pushes regardless of capacity.
+    // -------------------------------------------------------------------
+    use proptest::prelude::*;
+
+    proptest! {
+        /// `len()` never exceeds `capacity`, and equals min(pushed, capacity).
+        #[test]
+        fn len_never_exceeds_capacity(
+            capacity in 1usize..64,
+            pushes in 0usize..256,
+        ) {
+            let mut sb = Scrollback::new(capacity);
+            for i in 0..pushes {
+                sb.push_line(make_line(&format!("row{}", i)));
+            }
+            prop_assert!(sb.len() <= capacity);
+            prop_assert_eq!(sb.len(), pushes.min(capacity));
+        }
+
+        /// `get(i)` is `Some` for every `i < len()` and `None` afterwards.
+        #[test]
+        fn get_is_well_defined_within_len(
+            capacity in 1usize..32,
+            pushes in 0usize..128,
+        ) {
+            let mut sb = Scrollback::new(capacity);
+            for i in 0..pushes {
+                sb.push_line(make_line(&format!("row{}", i)));
+            }
+            for i in 0..sb.len() {
+                prop_assert!(sb.get(i).is_some());
+            }
+            prop_assert!(sb.get(sb.len()).is_none());
+            prop_assert!(sb.get(sb.len() + 1).is_none());
+        }
+
+        /// After more than `capacity` pushes the oldest visible row is the
+        /// `(pushes - capacity)`-th row that was inserted.
+        #[test]
+        fn oldest_row_matches_ring_semantics(
+            capacity in 2usize..16,
+            extra in 0usize..32,
+        ) {
+            let pushes = capacity + extra;
+            let mut sb = Scrollback::new(capacity);
+            for i in 0..pushes {
+                sb.push_line(make_line(&format!("row{}", i)));
+            }
+            let oldest_expected = pushes - capacity;
+            let oldest_actual: String = sb
+                .get(0)
+                .unwrap()
+                .iter()
+                .map(|c| c.ch)
+                .collect();
+            prop_assert_eq!(oldest_actual.trim(), format!("row{}", oldest_expected));
+        }
+    }
 }

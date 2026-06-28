@@ -373,3 +373,172 @@ fn test_v4_multiple_os_windows_roundtrip() {
     assert_eq!(restored.client_os_windows[1].position, (1300, 0));
     assert_eq!(restored.client_os_windows[1].server_window_ids, vec![3u32]);
 }
+
+// ---------------------------------------------------------------------------
+// Migration round-trip tests (QA persona: 移行担当者)
+//
+// Verify that snapshots written by older versions (v1, v2, v3) are loaded by
+// the current code path and migrated to SNAPSHOT_VERSION (=v4). The literal
+// JSON below is the wire shape that a v1.x server would have produced.
+// ---------------------------------------------------------------------------
+
+/// Place a literal JSON string at `<state_dir>/snapshot.json` while swapping
+/// `XDG_STATE_HOME` / `APPDATA` to the tmpdir, then run the closure. Restores
+/// the original environment afterwards.
+fn with_snapshot_json<F: FnOnce()>(json: &str, body: F) {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().expect("tmpdir");
+    let old_xdg = std::env::var("XDG_STATE_HOME").ok();
+    let old_appdata = std::env::var("APPDATA").ok();
+    // SAFETY: serialized via ENV_LOCK and restored at the end of the closure.
+    unsafe {
+        std::env::set_var("XDG_STATE_HOME", dir.path());
+        std::env::set_var("APPDATA", dir.path());
+    }
+    let nexterm_dir = dir.path().join("nexterm");
+    std::fs::create_dir_all(&nexterm_dir).expect("mkdir");
+    std::fs::write(nexterm_dir.join("snapshot.json"), json).expect("write");
+    body();
+    unsafe {
+        match old_xdg {
+            Some(v) => std::env::set_var("XDG_STATE_HOME", v),
+            None => std::env::remove_var("XDG_STATE_HOME"),
+        }
+        match old_appdata {
+            Some(v) => std::env::set_var("APPDATA", v),
+            None => std::env::remove_var("APPDATA"),
+        }
+    }
+}
+
+#[test]
+fn test_migrate_v1_snapshot_to_current() {
+    // v1: no `session_title`, no `workspace_name`, no `current_workspace`,
+    //     no `client_os_windows`. Older servers only emitted these fields.
+    let v1_json = r#"{
+        "version": 1,
+        "saved_at": 1700000000,
+        "sessions": [
+            {
+                "name": "old",
+                "shell": "/bin/bash",
+                "shell_args": [],
+                "cols": 80,
+                "rows": 24,
+                "focused_window_id": 1,
+                "windows": [
+                    {"id": 1, "name": "w1", "focused_pane_id": 1,
+                     "layout": {"Pane": {"pane_id": 1, "cwd": null}}}
+                ]
+            }
+        ]
+    }"#;
+    with_snapshot_json(v1_json, || {
+        let loaded =
+            nexterm_server::persist::load_snapshot().expect("v1 snapshot must load via migration");
+        assert_eq!(
+            loaded.version, SNAPSHOT_VERSION,
+            "version bumped to current"
+        );
+        assert_eq!(loaded.sessions.len(), 1);
+        // v1 -> v2: `session_title` defaults to None.
+        assert!(loaded.sessions[0].session_title.is_none());
+        // v2 -> v3: workspace fields default to "default".
+        assert_eq!(loaded.sessions[0].workspace_name, "default");
+        assert_eq!(loaded.current_workspace, "default");
+        // v3 -> v4: `client_os_windows` defaults to empty.
+        assert!(loaded.client_os_windows.is_empty());
+    });
+}
+
+#[test]
+fn test_migrate_v2_snapshot_to_current() {
+    // v2 added `session_title` (Option<String>). Workspace fields still absent.
+    let v2_json = r#"{
+        "version": 2,
+        "saved_at": 1700000000,
+        "sessions": [
+            {
+                "name": "s",
+                "shell": "/bin/zsh",
+                "shell_args": [],
+                "cols": 80,
+                "rows": 24,
+                "focused_window_id": 1,
+                "session_title": "my-session",
+                "windows": [
+                    {"id": 1, "name": "w", "focused_pane_id": 1,
+                     "layout": {"Pane": {"pane_id": 1, "cwd": null}}}
+                ]
+            }
+        ]
+    }"#;
+    with_snapshot_json(v2_json, || {
+        let loaded =
+            nexterm_server::persist::load_snapshot().expect("v2 snapshot must load via migration");
+        assert_eq!(loaded.version, SNAPSHOT_VERSION);
+        assert_eq!(
+            loaded.sessions[0].session_title.as_deref(),
+            Some("my-session"),
+            "session_title preserved across migration"
+        );
+        assert_eq!(loaded.sessions[0].workspace_name, "default");
+        assert!(loaded.client_os_windows.is_empty());
+    });
+}
+
+#[test]
+fn test_migrate_v3_snapshot_to_current() {
+    // v3 added workspace_name / current_workspace. `client_os_windows` still absent.
+    let v3_json = r#"{
+        "version": 3,
+        "saved_at": 1700000000,
+        "current_workspace": "team-a",
+        "sessions": [
+            {
+                "name": "s",
+                "shell": "/bin/bash",
+                "shell_args": [],
+                "cols": 120,
+                "rows": 30,
+                "focused_window_id": 1,
+                "workspace_name": "team-a",
+                "windows": [
+                    {"id": 1, "name": "w", "focused_pane_id": 1,
+                     "layout": {"Pane": {"pane_id": 1, "cwd": "/home/u"}}}
+                ]
+            }
+        ]
+    }"#;
+    with_snapshot_json(v3_json, || {
+        let loaded =
+            nexterm_server::persist::load_snapshot().expect("v3 snapshot must load via migration");
+        assert_eq!(loaded.version, SNAPSHOT_VERSION);
+        assert_eq!(loaded.current_workspace, "team-a");
+        assert_eq!(loaded.sessions[0].workspace_name, "team-a");
+        // v3 -> v4: client_os_windows starts empty; the server reconstructs a
+        // single OS-window layout at startup.
+        assert!(loaded.client_os_windows.is_empty());
+    });
+}
+
+#[test]
+fn test_too_old_snapshot_is_discarded() {
+    // Below SNAPSHOT_VERSION_MIN (=1): refuse to load and return None.
+    let too_old_version = SNAPSHOT_VERSION_MIN.saturating_sub(1);
+    let json = format!(
+        r#"{{"version": {}, "saved_at": 0, "sessions": []}}"#,
+        too_old_version
+    );
+    with_snapshot_json(&json, || {
+        // When version is 0 (below the minimum) the loader returns None so the
+        // server can start fresh instead of misinterpreting an ancient format.
+        let loaded = nexterm_server::persist::load_snapshot();
+        if too_old_version < SNAPSHOT_VERSION_MIN {
+            assert!(
+                loaded.is_none(),
+                "snapshots below v{SNAPSHOT_VERSION_MIN} must be discarded"
+            );
+        }
+    });
+}
