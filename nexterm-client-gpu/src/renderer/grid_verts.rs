@@ -34,6 +34,13 @@ impl WgpuState {
         // `CursorConfig.is_visible_at`; passed in so this routine stays
         // wall-clock-free and unit-testable.
         cursor_visible: bool,
+        // Phase 5b (UI/UX v2): visible cursor position in cell
+        // coordinates, after smooth-motion interpolation. When smooth
+        // motion is disabled or settled, equals `pane.cursor_col` /
+        // `pane.cursor_row` exactly so the rendered output is
+        // identical to the pre-Phase-5b build.
+        cursor_visual_col: f32,
+        cursor_visual_row: f32,
         bg_verts: &mut Vec<BgVertex>,
         bg_idx: &mut Vec<u16>,
         text_verts: &mut Vec<TextVertex>,
@@ -233,9 +240,10 @@ impl WgpuState {
         }
 
         // Cursor rectangle (drawn in the configured shape; gated by the
-        // Phase 5 blink phase).
-        let cx = pane.cursor_col as f32 * cell_w;
-        let cy = pane.cursor_row as f32 * cell_h + y_offset;
+        // Phase 5 blink phase). Phase 5b: use the interpolated visible
+        // position so motion is smooth when `smooth_motion = true`.
+        let cx = cursor_visual_col * cell_w;
+        let cy = cursor_visual_row * cell_h + y_offset;
         crate::vertex_util::draw_cursor_with_visibility(
             cursor_style,
             cx,
@@ -606,6 +614,10 @@ impl WgpuState {
         cursor_style: &nexterm_config::CursorStyle,
         // Phase 5 (UI/UX v2): cursor visibility from the blink phase.
         cursor_visible: bool,
+        // Phase 5b (UI/UX v2): visible cursor position in cell
+        // coordinates (after smooth-motion interpolation).
+        cursor_visual_col: f32,
+        cursor_visual_row: f32,
         bg_verts: &mut Vec<BgVertex>,
         bg_idx: &mut Vec<u16>,
         text_verts: &mut Vec<TextVertex>,
@@ -697,9 +709,10 @@ impl WgpuState {
         }
 
         // Cursor (focused pane only; gated by Phase 5 blink visibility).
+        // Phase 5b: use the interpolated visible position.
         if is_focused {
-            let cx = off_x + pane.cursor_col as f32 * cell_w;
-            let cy = off_y + pane.cursor_row as f32 * cell_h;
+            let cx = off_x + cursor_visual_col * cell_w;
+            let cy = off_y + cursor_visual_row * cell_h;
             crate::vertex_util::draw_cursor_with_visibility(
                 cursor_style,
                 cx,

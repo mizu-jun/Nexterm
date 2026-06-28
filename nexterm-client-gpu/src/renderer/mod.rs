@@ -82,6 +82,11 @@ pub(super) struct PaneRenderCache {
     /// time. Included so a blink-tick invalidates the cache and the cursor
     /// actually disappears/appears between frames.
     pub(super) cursor_visible: bool,
+    /// Phase 5b (UI/UX v2): quantized visible cursor position so
+    /// mid-animation frames invalidate the cache. Format is
+    /// `(quantize_visible(col), quantize_visible(row))` — see
+    /// `cursor_motion::quantize_visible`.
+    pub(super) cursor_visual_q: (u32, u32),
     pub(super) mouse_sel_start: (u16, u16),
     pub(super) mouse_sel_end: (u16, u16),
     pub(super) mouse_sel_dragging: bool,
@@ -106,6 +111,7 @@ impl PaneRenderCache {
         is_focused: bool,
         cursor_style: &nexterm_config::CursorStyle,
         cursor_visible: bool,
+        cursor_visual_q: (u32, u32),
         mouse_sel: &MouseSelection,
     ) -> bool {
         self.col_offset == layout.col_offset
@@ -120,6 +126,7 @@ impl PaneRenderCache {
             && self.was_focused == is_focused
             && &self.cursor_style == cursor_style
             && self.cursor_visible == cursor_visible
+            && self.cursor_visual_q == cursor_visual_q
             && self.mouse_sel_start == mouse_sel.start
             && self.mouse_sel_end == mouse_sel.end
             && self.mouse_sel_dragging == mouse_sel.is_dragging
@@ -241,6 +248,11 @@ pub(super) struct WgpuState {
     /// (`content_dirty = true`), when layout parameters change, or when the glyph
     /// atlas is cleared mid-frame (`atlas.cleared_this_frame = true`).
     pane_cache: HashMap<u32, PaneRenderCache>,
+    /// Phase 5b (UI/UX v2): per-pane cursor motion state. Drives smooth
+    /// interpolation between cells when `CursorConfig.smooth_motion = true`.
+    /// Keyed by `pane_id`; entries are lazily created on first sight of a
+    /// pane and updated each frame from the server-reported cursor cell.
+    pub(super) cursor_motion: HashMap<u32, crate::cursor_motion::CursorMotionState>,
 }
 
 // ---- Multi OS-window skeleton (Sprint 5-8 Phase 4-1 Step 1.2) ----

@@ -371,6 +371,7 @@ impl WgpuState {
             last_frame_at: Instant::now(),
             cursor_blink_start: Instant::now(),
             pane_cache: HashMap::new(),
+            cursor_motion: HashMap::new(),
         })
     }
 
