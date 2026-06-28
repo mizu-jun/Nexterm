@@ -1248,6 +1248,205 @@ impl Pane {
     fn read_has_foreground_process(&self) -> bool {
         false
     }
+
+    // ------------------------------------------------------------------------
+    // Phase 2c (UI/UX v2): foreground process name lookup.
+    //
+    // Returns the executable name (e.g. "vim", "ssh", "node") of the topmost
+    // foreground descendant of this pane's shell, or `None` when the shell is
+    // sitting at the prompt or detection failed. Used by `SessionManager`'s
+    // 1 Hz ticker to broadcast `ServerToClient::ProcessChanged` updates so
+    // the client can render a Nerd Font glyph next to each tab label.
+    //
+    // Errors / unsupported OSes return `None` instead of panicking, matching
+    // the `has_foreground_process` discipline above.
+    // ------------------------------------------------------------------------
+
+    /// Public entry point. Dispatches to the OS-specific implementation.
+    pub fn foreground_process_name(&self) -> Option<String> {
+        self.read_foreground_process_name()
+    }
+
+    /// Linux: read `/proc/{pid}/stat` for `tpgid`, then `/proc/{tpgid}/comm`.
+    ///
+    /// `tpgid` is the controlling terminal's foreground process group ID. When
+    /// it equals the shell's own `pgrp`, the shell itself owns the terminal —
+    /// the user is at the prompt and there is no foreground job. Returning
+    /// `None` in that case keeps the icon off.
+    ///
+    /// `comm` is truncated to 15 chars by the kernel — that is what the glyph
+    /// map keys against.
+    #[cfg(target_os = "linux")]
+    fn read_foreground_process_name(&self) -> Option<String> {
+        let pid = self.pid?;
+        let stat = std::fs::read_to_string(format!("/proc/{}/stat", pid)).ok()?;
+        // stat format: "pid (comm) state ppid pgrp session tty_nr tpgid flags ..."
+        // `comm` may itself contain spaces and parens, so split on the last ") ".
+        let (_, after) = stat.rsplit_once(") ")?;
+        let fields: Vec<&str> = after.split_whitespace().collect();
+        // [0]=state, [1]=ppid, [2]=pgrp, [3]=session, [4]=tty_nr, [5]=tpgid
+        let pgrp = fields.get(2).and_then(|s| s.parse::<i32>().ok())?;
+        let tpgid = fields.get(5).and_then(|s| s.parse::<i32>().ok())?;
+        // `tpgid <= 0`: no controlling terminal; `tpgid == pgrp`: shell at prompt.
+        if tpgid <= 0 || tpgid == pgrp {
+            return None;
+        }
+        let comm = std::fs::read_to_string(format!("/proc/{}/comm", tpgid)).ok()?;
+        let trimmed = comm.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }
+
+    /// macOS: `ps -A -o pid=,ppid=,comm=` once; walk the parent-map from the
+    /// shell PID and return the deepest descendant's `comm` basename.
+    ///
+    /// Trade-off: spawning `ps` costs ~10-30 ms. The 1 Hz session-wide ticker
+    /// in `SessionManager` calls this per pane, so total cost is bounded by
+    /// `pane_count × 30 ms` per second on macOS. The `ps` fan-out can be
+    /// reused across panes — a future optimisation if pane counts grow.
+    #[cfg(target_os = "macos")]
+    fn read_foreground_process_name(&self) -> Option<String> {
+        let pid = self.pid?;
+        let output = std::process::Command::new("ps")
+            .args(["-A", "-o", "pid=,ppid=,comm="])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // Parse into (pid, ppid, comm) triples.
+        let entries: Vec<(u32, u32, String)> = stdout
+            .lines()
+            .filter_map(|line| {
+                let mut parts = line.split_whitespace();
+                let pid_v = parts.next()?.parse::<u32>().ok()?;
+                let ppid_v = parts.next()?.parse::<u32>().ok()?;
+                // Rest is the comm (may contain spaces / paths).
+                let comm = parts.collect::<Vec<_>>().join(" ");
+                Some((pid_v, ppid_v, comm))
+            })
+            .collect();
+        // Walk down from `pid`, taking the first matching child each step
+        // until no further descendant exists. The leaf is the foreground.
+        let mut current_pid = pid;
+        let mut leaf_comm: Option<String> = None;
+        // Cap iterations to avoid pathological cycles (shouldn't happen).
+        for _ in 0..64 {
+            let child = entries.iter().find(|(_, ppid, _)| *ppid == current_pid);
+            match child {
+                Some((cpid, _, comm)) => {
+                    // Strip leading path so "/usr/bin/vim" → "vim".
+                    let basename = std::path::Path::new(comm.as_str())
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or(comm.as_str())
+                        .to_string();
+                    leaf_comm = Some(basename);
+                    current_pid = *cpid;
+                }
+                None => break,
+            }
+        }
+        leaf_comm
+    }
+
+    /// Windows: enumerate every process with `Toolhelp32Snapshot`, build a
+    /// (pid → first_child) shortcut, and walk from the shell PID to the
+    /// deepest descendant. Strip `.exe` so the glyph map matches "vim"
+    /// rather than "vim.exe".
+    ///
+    /// The snapshot is system-wide; enumerating 1000+ processes typically
+    /// costs ~1 ms. Acceptable at the 1 Hz polling cadence.
+    #[cfg(windows)]
+    fn read_foreground_process_name(&self) -> Option<String> {
+        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+            TH32CS_SNAPPROCESS,
+        };
+
+        let shell_pid = self.pid?;
+
+        // SAFETY: same contract as `read_has_foreground_process` (above) —
+        // the snapshot handle is checked for INVALID_HANDLE_VALUE before
+        // any subsequent API call, and `HandleGuard` closes it on drop.
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+        if snapshot == INVALID_HANDLE_VALUE {
+            return None;
+        }
+        struct HandleGuard(HANDLE);
+        impl Drop for HandleGuard {
+            fn drop(&mut self) {
+                // SAFETY: HANDLE is valid from CreateToolhelp32Snapshot;
+                // the INVALID_HANDLE_VALUE branch returned earlier.
+                unsafe {
+                    CloseHandle(self.0);
+                }
+            }
+        }
+        let _guard = HandleGuard(snapshot);
+
+        // SAFETY: PROCESSENTRY32W is POD; zero-init is fine.
+        let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        // SAFETY: snapshot is valid; entry.dwSize is set.
+        if unsafe { Process32FirstW(snapshot, &mut entry) } == 0 {
+            return None;
+        }
+
+        // Collect every (pid, ppid, exe_name) triple. Building the full list
+        // (instead of streaming a single descent) costs one allocation but
+        // keeps the descent logic identical to the macOS path.
+        let mut entries: Vec<(u32, u32, String)> = Vec::new();
+        loop {
+            // Process32 returns a UTF-16 wide string; the length is implicit
+            // (zero-terminated). Find the terminator and decode the prefix.
+            let name_len = entry
+                .szExeFile
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(entry.szExeFile.len());
+            let exe = String::from_utf16_lossy(&entry.szExeFile[..name_len]);
+            entries.push((entry.th32ProcessID, entry.th32ParentProcessID, exe));
+            // SAFETY: snapshot + entry valid; loop exits on Process32NextW = 0.
+            if unsafe { Process32NextW(snapshot, &mut entry) } == 0 {
+                break;
+            }
+        }
+
+        // Descend from the shell PID. Same logic as macOS.
+        let mut current_pid = shell_pid;
+        let mut leaf: Option<String> = None;
+        for _ in 0..64 {
+            let child = entries.iter().find(|(_, ppid, _)| *ppid == current_pid);
+            match child {
+                Some((cpid, _, name)) => {
+                    // Strip `.exe` (case-insensitive) so "Code.exe" → "Code".
+                    let bare = if let Some(stripped) = name.strip_suffix(".exe") {
+                        stripped
+                    } else if let Some(stripped) = name.strip_suffix(".EXE") {
+                        stripped
+                    } else {
+                        name.as_str()
+                    };
+                    leaf = Some(bare.to_string());
+                    current_pid = *cpid;
+                }
+                None => break,
+            }
+        }
+        leaf
+    }
+
+    /// Other OSes: not supported.
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    fn read_foreground_process_name(&self) -> Option<String> {
+        None
+    }
 }
 
 #[cfg(test)]

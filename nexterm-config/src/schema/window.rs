@@ -517,6 +517,17 @@ pub struct TabBarConfig {
     /// Sprint 5-15 / UI/UX Modernization v2 Phase 2b.
     #[serde(default = "default_true")]
     pub show_new_tab_button: bool,
+    /// Prefix each tab label with a Nerd Font glyph derived from the
+    /// pane's foreground process (e.g.   for `vim`,   for `ssh`).
+    /// Default: `false` because Nerd Font is not a documented runtime
+    /// requirement and unknown glyphs render as tofu on a regular font.
+    ///
+    /// Enabling this also turns on the server's 1 Hz process-polling
+    /// ticker, so disabling it costs zero OS-inspection work.
+    ///
+    /// Sprint 5-15 / UI/UX Modernization v2 Phase 2c.
+    #[serde(default)]
+    pub show_process_icon: bool,
 }
 
 fn default_inactive_text_brightness() -> f32 {
@@ -543,6 +554,7 @@ impl Default for TabBarConfig {
             hover_highlight: true,
             hide_when_single: false,
             show_new_tab_button: true,
+            show_process_icon: false,
         }
     }
 }

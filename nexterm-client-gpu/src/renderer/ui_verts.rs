@@ -270,12 +270,13 @@ impl WgpuState {
         for (i, &pane_id) in pane_ids.iter().enumerate() {
             let is_active = pane_id == focused_id;
             let is_hovered = state.hovered_tab_id == Some(pane_id);
-            // Pick up the activity flag and the title
-            let (has_activity, raw_title) = state
+            // Pick up the activity flag, the title, and the Phase 2c
+            // foreground process name (drives the Nerd Font glyph).
+            let (has_activity, raw_title, process_name) = state
                 .panes
                 .get(&pane_id)
-                .map(|p| (p.has_activity, p.title.clone()))
-                .unwrap_or((false, String::new()));
+                .map(|p| (p.has_activity, p.title.clone(), p.process_name.clone()))
+                .unwrap_or((false, String::new(), None));
 
             // Tab label: show the OSC title if any; otherwise the pane number
             let base_label = if raw_title.is_empty() {
@@ -289,11 +290,24 @@ impl WgpuState {
                     truncated
                 }
             };
-            // Tab number prefix (Windows Terminal style): prepends `[N]` when the option is on
-            let numbered = if cfg.show_tab_number {
-                format!("[{}] {}", i + 1, base_label)
+            // Phase 2c: prepend the Nerd Font glyph when (a) the user
+            // opted in via `tab_bar.show_process_icon` and (b) the
+            // glyph map has an entry for the current foreground
+            // process. Unknown processes render the label as before
+            // (no fallback glyph — the absence is signal).
+            let iconified = if cfg.show_process_icon
+                && let Some(name) = process_name.as_deref()
+                && let Some(glyph) = crate::tab_icons::glyph_for_process(name)
+            {
+                format!("{} {}", glyph, base_label)
             } else {
                 base_label
+            };
+            // Tab number prefix (Windows Terminal style): prepends `[N]` when the option is on
+            let numbered = if cfg.show_tab_number {
+                format!("[{}] {}", i + 1, iconified)
+            } else {
+                iconified
             };
             let label = if has_activity && !is_active {
                 format!(" {} ● ", numbered)
