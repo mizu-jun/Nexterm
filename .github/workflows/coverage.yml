@@ -42,7 +42,7 @@ jobs:
             libudev-dev
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@8c33304bba24d2bcc1ad59d7b76d019e26f7c6cd # v2
+        uses: taiki-e/install-action@bffeee26d4db9be238a4ea78d8826604ebcb594d # v2
         with:
           tool: cargo-llvm-cov
 

@@ -60,7 +60,7 @@ async fn connect_sends_hello_with_current_protocol_version_first() {
     }
 
     let client_kind = ClientKind::Tui;
-    let _conn = Connection::connect(client_kind.clone(), "0.0.0-test".to_string())
+    let _conn = Connection::connect(client_kind, "0.0.0-test".to_string())
         .await
         .expect("connect");
 
