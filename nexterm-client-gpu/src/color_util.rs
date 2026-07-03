@@ -36,6 +36,71 @@ pub(crate) fn resolve_color(
     }
 }
 
+/// Resolve a `ColorScheme` into its concrete `SchemePalette`.
+///
+/// Extracted from `render_frame` (roadmap #10b) so the theme-report path can
+/// reuse the same fg/bg values the renderer draws with. Malformed hex values
+/// in a custom palette fall back to black, matching the renderer's historical
+/// behavior.
+pub(crate) fn scheme_palette(
+    scheme: &nexterm_config::ColorScheme,
+) -> nexterm_config::SchemePalette {
+    match scheme {
+        nexterm_config::ColorScheme::Builtin(s) => s.palette(),
+        nexterm_config::ColorScheme::Custom(p) => {
+            let parse_hex = |s: &str| -> [u8; 3] {
+                let s = s.trim_start_matches('#');
+                let v = u32::from_str_radix(s, 16).unwrap_or(0);
+                [
+                    ((v >> 16) & 0xFF) as u8,
+                    ((v >> 8) & 0xFF) as u8,
+                    (v & 0xFF) as u8,
+                ]
+            };
+            let mut ansi = [[0u8; 3]; 16];
+            for (i, hex) in p.ansi.iter().enumerate().take(16) {
+                ansi[i] = parse_hex(hex);
+            }
+            nexterm_config::SchemePalette {
+                fg: parse_hex(&p.foreground),
+                bg: parse_hex(&p.background),
+                ansi,
+            }
+        }
+    }
+}
+
+/// Like [`resolve_color`], but consults the pane's OSC 4/10/11 dynamic-color
+/// overrides first (roadmap #10b): the dynamic fg/bg beat the scheme
+/// defaults, and OSC 4 palette entries beat both the scheme ANSI palette and
+/// the builtin 256-color table.
+pub(crate) fn resolve_color_with_overrides(
+    color: &nexterm_proto::Color,
+    is_fg: bool,
+    palette: Option<&nexterm_config::SchemePalette>,
+    overrides: Option<&crate::state::PaneColorOverrides>,
+) -> [f32; 4] {
+    use nexterm_proto::Color;
+    let u8_to_f32 = |v: u8| v as f32 / 255.0;
+    if let Some(ov) = overrides {
+        match color {
+            Color::Default => {
+                let dynamic = if is_fg { ov.fg } else { ov.bg };
+                if let Some(c) = dynamic {
+                    return [u8_to_f32(c[0]), u8_to_f32(c[1]), u8_to_f32(c[2]), 1.0];
+                }
+            }
+            Color::Indexed(n) => {
+                if let Some(c) = ov.palette.get(n) {
+                    return [u8_to_f32(c[0]), u8_to_f32(c[1]), u8_to_f32(c[2]), 1.0];
+                }
+            }
+            Color::Rgb(..) => {}
+        }
+    }
+    resolve_color(color, is_fg, palette)
+}
+
 /// ANSI 256-color palette → RGBA in [0, 1].
 pub(crate) fn ansi_256_to_rgb(n: u8) -> [f32; 4] {
     // Basic 16 colors (simple implementation).
@@ -203,6 +268,76 @@ mod tests {
         assert!(fg[0] > 0.5); // foreground is bright
         let bg = resolve_color(&nexterm_proto::Color::Default, false, None);
         assert!(bg[0] < 0.5); // background is dark
+    }
+
+    // ---- Roadmap #10b: OSC dynamic-color overrides ----
+
+    #[test]
+    fn scheme_palette_parses_custom_hex_colors() {
+        let custom = nexterm_config::CustomPalette {
+            foreground: "#aabbcc".to_string(),
+            background: "112233".to_string(), // leading '#' optional
+            cursor: "#ffffff".to_string(),
+            ansi: vec!["#ff0000".to_string()],
+        };
+        let pal = scheme_palette(&nexterm_config::ColorScheme::Custom(custom));
+        assert_eq!(pal.fg, [0xaa, 0xbb, 0xcc]);
+        assert_eq!(pal.bg, [0x11, 0x22, 0x33]);
+        assert_eq!(pal.ansi[0], [0xff, 0x00, 0x00]);
+        // Unspecified / malformed entries fall back to black.
+        assert_eq!(pal.ansi[1], [0, 0, 0]);
+    }
+
+    fn overrides_with(
+        fg: Option<[u8; 3]>,
+        bg: Option<[u8; 3]>,
+        palette: &[(u8, [u8; 3])],
+    ) -> crate::state::PaneColorOverrides {
+        crate::state::PaneColorOverrides {
+            fg,
+            bg,
+            palette: palette.iter().copied().collect(),
+        }
+    }
+
+    #[test]
+    fn dynamic_fg_bg_overrides_beat_the_scheme_defaults() {
+        use nexterm_proto::Color;
+        let ov = overrides_with(Some([255, 0, 0]), Some([0, 0, 255]), &[]);
+        let fg = resolve_color_with_overrides(&Color::Default, true, None, Some(&ov));
+        assert_eq!(fg, [1.0, 0.0, 0.0, 1.0]);
+        let bg = resolve_color_with_overrides(&Color::Default, false, None, Some(&ov));
+        assert_eq!(bg, [0.0, 0.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn palette_overrides_beat_the_builtin_indexed_colors() {
+        use nexterm_proto::Color;
+        let ov = overrides_with(None, None, &[(1, [0, 255, 0]), (196, [1, 2, 3])]);
+        // Overridden entries (both in the 0–15 range and the cube).
+        let c1 = resolve_color_with_overrides(&Color::Indexed(1), true, None, Some(&ov));
+        assert_eq!(c1, [0.0, 1.0, 0.0, 1.0]);
+        let c196 = resolve_color_with_overrides(&Color::Indexed(196), true, None, Some(&ov));
+        assert!(c196[0] < 0.01 && c196[1] < 0.01);
+        // Untouched entries fall through to the builtin palette.
+        let c2 = resolve_color_with_overrides(&Color::Indexed(2), true, None, Some(&ov));
+        assert_eq!(c2, ansi_256_to_rgb(2));
+    }
+
+    #[test]
+    fn no_overrides_behaves_like_resolve_color() {
+        use nexterm_proto::Color;
+        for (color, is_fg) in [
+            (Color::Default, true),
+            (Color::Default, false),
+            (Color::Indexed(42), true),
+            (Color::Rgb(9, 8, 7), true),
+        ] {
+            assert_eq!(
+                resolve_color_with_overrides(&color, is_fg, None, None),
+                resolve_color(&color, is_fg, None),
+            );
+        }
     }
 
     // ---- Phase 6b: HSB helpers ----

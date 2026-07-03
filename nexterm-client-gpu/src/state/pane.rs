@@ -49,6 +49,29 @@ pub struct PlacedImage {
     pub rgba: Vec<u8>,
 }
 
+/// Dynamic-color overrides applied via OSC 4/10/11 (roadmap #10b).
+///
+/// Received as full snapshots (`ServerToClient::PaneColorsChanged`) and
+/// consulted by `color_util::resolve_color_with_overrides` ahead of the
+/// scheme palette during vertex construction.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PaneColorOverrides {
+    /// OSC 10 dynamic foreground (`None` = theme default).
+    pub fg: Option<[u8; 3]>,
+    /// OSC 11 dynamic background (`None` = theme default).
+    pub bg: Option<[u8; 3]>,
+    /// OSC 4 palette overrides keyed by palette index.
+    pub palette: HashMap<u8, [u8; 3]>,
+}
+
+impl PaneColorOverrides {
+    /// True when no override is active (the common case — lets the renderer
+    /// skip the override lookups entirely).
+    pub fn is_empty(&self) -> bool {
+        self.fg.is_none() && self.bg.is_none() && self.palette.is_empty()
+    }
+}
+
 /// Pane rendering state
 pub struct PaneState {
     pub grid: Grid,
@@ -78,6 +101,18 @@ pub struct PaneState {
     /// Used for tab tooltips and inheriting the parent CWD when creating a new pane.
     /// `None` if OSC 7 has never been received.
     pub cwd: Option<String>,
+    /// Pointer shape requested via OSC 22 (PROTOCOL_VERSION 10).
+    ///
+    /// `None` means "no override" (platform default). The renderer applies it
+    /// through [`pointer_shape_to_cursor_icon`] while the cursor hovers the
+    /// grid area; unknown names fall back to the default icon there.
+    pub pointer_shape: Option<String>,
+    /// Dynamic-color overrides from OSC 4/10/11 (roadmap #10b).
+    pub color_overrides: PaneColorOverrides,
+    /// OSC 9;4 progress indicator as `(state, percent)` — `None` when no
+    /// progress is being reported (state 0 clears it). State 1 = normal,
+    /// 2 = error, 3 = indeterminate, 4 = paused. Rendered in the tab bar.
+    pub progress: Option<(u8, u8)>,
     /// Records the scrollback length at the moment an OSC 133 A (PromptStart) mark arrives (Sprint 5-2 / B1)
     ///
     /// Expressed in the same "row index inside scrollback" space as `scroll_offset`.
@@ -127,6 +162,9 @@ impl PaneState {
             title: String::new(),
             process_name: None,
             cwd: None,
+            pointer_shape: None,
+            color_overrides: PaneColorOverrides::default(),
+            progress: None,
             prompt_anchors: Vec::new(),
             marks: Vec::new(),
             blocks: Vec::new(),
@@ -152,5 +190,74 @@ impl PaneState {
         // New output arrived, so snap back to the latest screen
         self.scroll_offset = 0;
         self.content_dirty = true;
+    }
+}
+
+/// Maps an OSC 22 pointer-shape name onto a winit cursor icon.
+///
+/// Names follow the CSS cursor keywords, which is what xterm, WezTerm, and
+/// kitty accept. Unknown names fall back to the platform default.
+pub fn pointer_shape_to_cursor_icon(name: &str) -> winit::window::CursorIcon {
+    use winit::window::CursorIcon;
+    match name {
+        "text" => CursorIcon::Text,
+        "pointer" | "hand" => CursorIcon::Pointer,
+        "crosshair" => CursorIcon::Crosshair,
+        "wait" => CursorIcon::Wait,
+        "progress" => CursorIcon::Progress,
+        "help" => CursorIcon::Help,
+        "not-allowed" => CursorIcon::NotAllowed,
+        "no-drop" => CursorIcon::NoDrop,
+        "move" => CursorIcon::Move,
+        "grab" => CursorIcon::Grab,
+        "grabbing" => CursorIcon::Grabbing,
+        "cell" => CursorIcon::Cell,
+        "vertical-text" => CursorIcon::VerticalText,
+        "alias" => CursorIcon::Alias,
+        "copy" => CursorIcon::Copy,
+        "zoom-in" => CursorIcon::ZoomIn,
+        "zoom-out" => CursorIcon::ZoomOut,
+        "col-resize" => CursorIcon::ColResize,
+        "row-resize" => CursorIcon::RowResize,
+        "e-resize" => CursorIcon::EResize,
+        "w-resize" => CursorIcon::WResize,
+        "n-resize" => CursorIcon::NResize,
+        "s-resize" => CursorIcon::SResize,
+        "ne-resize" => CursorIcon::NeResize,
+        "nw-resize" => CursorIcon::NwResize,
+        "se-resize" => CursorIcon::SeResize,
+        "sw-resize" => CursorIcon::SwResize,
+        "ew-resize" => CursorIcon::EwResize,
+        "ns-resize" => CursorIcon::NsResize,
+        _ => CursorIcon::Default,
+    }
+}
+
+#[cfg(test)]
+mod pointer_shape_tests {
+    use super::pointer_shape_to_cursor_icon;
+    use winit::window::CursorIcon;
+
+    #[test]
+    fn maps_common_css_cursor_names() {
+        assert_eq!(pointer_shape_to_cursor_icon("text"), CursorIcon::Text);
+        assert_eq!(pointer_shape_to_cursor_icon("pointer"), CursorIcon::Pointer);
+        // xterm's historical alias for pointer.
+        assert_eq!(pointer_shape_to_cursor_icon("hand"), CursorIcon::Pointer);
+        assert_eq!(pointer_shape_to_cursor_icon("wait"), CursorIcon::Wait);
+        assert_eq!(
+            pointer_shape_to_cursor_icon("ns-resize"),
+            CursorIcon::NsResize
+        );
+    }
+
+    #[test]
+    fn unknown_names_fall_back_to_default() {
+        assert_eq!(pointer_shape_to_cursor_icon(""), CursorIcon::Default);
+        assert_eq!(pointer_shape_to_cursor_icon("default"), CursorIcon::Default);
+        assert_eq!(
+            pointer_shape_to_cursor_icon("no-such-shape"),
+            CursorIcon::Default
+        );
     }
 }

@@ -478,6 +478,21 @@ impl Session {
             .unwrap_or(0)
     }
 
+    /// Whether the focused pane's application opted in to the kitty
+    /// drag-and-drop protocol (OSC 72).
+    pub fn focused_dnd_enabled(&self) -> bool {
+        self.focused_window()
+            .map(|w| w.focused_dnd_enabled())
+            .unwrap_or(false)
+    }
+
+    /// Offer a drop to the focused pane's application (kitty DnD protocol).
+    pub fn offer_dnd_drop_to_focused(&self, uri_list: String) -> Result<()> {
+        self.focused_window()
+            .ok_or_else(|| anyhow::anyhow!("focused window not found"))?
+            .offer_dnd_drop_to_focused(uri_list)
+    }
+
     /// Resize the whole window (recompute every pane via BSP).
     pub fn resize_focused(&mut self, cols: u16, rows: u16) -> Result<()> {
         self.cols = cols;

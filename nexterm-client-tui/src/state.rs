@@ -159,8 +159,15 @@ impl ClientState {
             // Title changes, foreground-process updates (Phase 2c), and
             // desktop notifications are ignored by the TUI — it has no
             // tab bar to decorate.
+            // Pointer-shape changes (OSC 22) are also ignored — a TUI has no
+            // mouse cursor of its own to restyle. Dynamic-color snapshots
+            // (OSC 4/10/11) are ignored too: the TUI passes colors through to
+            // the host terminal, which applies its own dynamic colors.
             ServerToClient::TitleChanged { .. }
             | ServerToClient::ProcessChanged { .. }
+            | ServerToClient::PointerShapeChanged { .. }
+            | ServerToClient::PaneColorsChanged { .. }
+            | ServerToClient::ProgressChanged { .. }
             | ServerToClient::DesktopNotification { .. } => {}
             // Broadcast mode changes are ignored by the TUI.
             ServerToClient::BroadcastModeChanged { .. } => {}

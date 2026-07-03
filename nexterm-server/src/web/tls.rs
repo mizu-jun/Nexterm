@@ -67,6 +67,27 @@ pub fn load_or_generate(
     Ok((cert_pem.into_bytes(), key_pem.into_bytes()))
 }
 
+/// Parses every certificate in a PEM bundle (G5: rustls-pki-types PemObject
+/// API, the successor of the archived rustls-pemfile crate). Unparseable
+/// entries are skipped.
+pub(in crate::web) fn parse_cert_pem(
+    pem: &[u8],
+) -> Vec<rustls::pki_types::CertificateDer<'static>> {
+    use rustls_pki_types::pem::PemObject;
+    rustls::pki_types::CertificateDer::pem_slice_iter(pem)
+        .filter_map(|r| r.ok())
+        .collect()
+}
+
+/// Parses the first private key (PKCS#1 / PKCS#8 / SEC1) in a PEM bundle.
+/// Returns `None` when no usable key is found.
+pub(in crate::web) fn parse_key_pem(
+    pem: &[u8],
+) -> Option<rustls::pki_types::PrivateKeyDer<'static>> {
+    use rustls_pki_types::pem::PemObject;
+    rustls::pki_types::PrivateKeyDer::from_pem_slice(pem).ok()
+}
+
 /// Write the TLS private key file with owner-only permissions (0600).
 ///
 /// HIGH H-3 mitigation: do not rely on umask; explicitly set 0600 permissions.
@@ -186,6 +207,30 @@ mod tests {
         let result = load_or_generate(Some("/nonexistent/cert.pem"), None);
         // Falling back to auto-generation succeeds.
         assert!(result.is_ok());
+    }
+
+    // ---- G5: rustls-pemfile → rustls-pki-types migration ----
+
+    #[test]
+    fn parse_cert_pem_extracts_certificates() {
+        let certified = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+            .expect("generate self-signed cert");
+        let certs = parse_cert_pem(certified.cert.pem().as_bytes());
+        assert_eq!(certs.len(), 1);
+    }
+
+    #[test]
+    fn parse_key_pem_extracts_the_private_key() {
+        let certified = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+            .expect("generate self-signed cert");
+        let key_pem = certified.key_pair.serialize_pem();
+        assert!(parse_key_pem(key_pem.as_bytes()).is_some());
+    }
+
+    #[test]
+    fn parse_pem_helpers_reject_garbage() {
+        assert!(parse_cert_pem(b"not a certificate").is_empty());
+        assert!(parse_key_pem(b"not a key").is_none());
     }
 
     #[cfg(unix)]

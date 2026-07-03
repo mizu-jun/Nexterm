@@ -272,11 +272,18 @@ impl WgpuState {
             let is_hovered = state.hovered_tab_id == Some(pane_id);
             // Pick up the activity flag, the title, and the Phase 2c
             // foreground process name (drives the Nerd Font glyph).
-            let (has_activity, raw_title, process_name) = state
+            let (has_activity, raw_title, process_name, pane_progress) = state
                 .panes
                 .get(&pane_id)
-                .map(|p| (p.has_activity, p.title.clone(), p.process_name.clone()))
-                .unwrap_or((false, String::new(), None));
+                .map(|p| {
+                    (
+                        p.has_activity,
+                        p.title.clone(),
+                        p.process_name.clone(),
+                        p.progress,
+                    )
+                })
+                .unwrap_or((false, String::new(), None, None));
 
             // Tab label: show the OSC title if any; otherwise the pane number
             let base_label = if raw_title.is_empty() {
@@ -382,6 +389,23 @@ impl WgpuState {
                     accent_w,
                     top_highlight_h,
                     top_hi,
+                    sw,
+                    sh,
+                    bg_verts,
+                    bg_idx,
+                );
+            }
+
+            // OSC 9;4 progress indicator: a thin bar just above the accent
+            // line, colored by state. Drawn for active and inactive tabs
+            // alike so long-running jobs stay visible across tab switches.
+            if let Some((color, frac)) = progress_indicator_style(pane_progress) {
+                add_px_rect(
+                    x_offset,
+                    bar_y + bar_h - accent_h - 3.0,
+                    label_w * frac,
+                    2.0,
+                    color,
                     sw,
                     sh,
                     bg_verts,
@@ -1397,5 +1421,57 @@ impl WgpuState {
             text_verts,
             text_idx,
         );
+    }
+}
+
+/// Maps an OSC 9;4 progress record to a tab-bar indicator `(color, width
+/// fraction)`. Returns `None` when no indicator should be drawn. Pure so it
+/// can be unit-tested without a GPU.
+///
+/// State semantics (ConEmu / Windows Terminal): 1 = normal (green),
+/// 2 = error (red), 4 = paused (amber) — all sized by the percentage;
+/// 3 = indeterminate — full-width dim bar (no meaningful percentage).
+fn progress_indicator_style(progress: Option<(u8, u8)>) -> Option<([f32; 4], f32)> {
+    let (state, percent) = progress?;
+    let frac = (percent.min(100) as f32) / 100.0;
+    match state {
+        1 => Some(([0.30, 0.75, 0.35, 0.90], frac)),
+        2 => Some(([0.85, 0.25, 0.25, 0.90], frac)),
+        3 => Some(([0.55, 0.55, 0.60, 0.60], 1.0)),
+        4 => Some(([0.85, 0.65, 0.20, 0.90], frac)),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod progress_indicator_tests {
+    use super::progress_indicator_style;
+
+    #[test]
+    fn normal_progress_scales_with_the_percentage() {
+        let (color, frac) = progress_indicator_style(Some((1, 50))).expect("indicator");
+        assert!((frac - 0.5).abs() < 1e-6);
+        assert!(color[1] > color[0], "normal state is green-dominant");
+    }
+
+    #[test]
+    fn error_state_is_red_and_indeterminate_is_full_width() {
+        let (color, _) = progress_indicator_style(Some((2, 30))).expect("indicator");
+        assert!(color[0] > color[1], "error state is red-dominant");
+        let (_, frac) = progress_indicator_style(Some((3, 5))).expect("indicator");
+        assert!((frac - 1.0).abs() < 1e-6, "indeterminate ignores percent");
+    }
+
+    #[test]
+    fn none_and_unknown_states_draw_nothing() {
+        assert!(progress_indicator_style(None).is_none());
+        assert!(progress_indicator_style(Some((0, 50))).is_none());
+        assert!(progress_indicator_style(Some((9, 50))).is_none());
+    }
+
+    #[test]
+    fn overlong_percentages_are_clamped() {
+        let (_, frac) = progress_indicator_style(Some((1, 250))).expect("indicator");
+        assert!((frac - 1.0).abs() < 1e-6);
     }
 }

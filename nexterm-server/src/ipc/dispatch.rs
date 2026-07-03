@@ -101,6 +101,7 @@ pub(super) async fn dispatch_inner(msg: &ClientToServer, ctx: &mut DispatchConte
             session_dispatch::handle_delete_workspace(ctx, name, *force).await
         }
         QuakeToggle { action } => session_dispatch::handle_quake_toggle(ctx, action).await,
+        SetThemeColors { fg, bg } => session_dispatch::handle_set_theme_colors(*fg, *bg),
 
         // ----- pane_dispatch -----
         KeyEvent {
@@ -109,6 +110,10 @@ pub(super) async fn dispatch_inner(msg: &ClientToServer, ctx: &mut DispatchConte
             event_type,
         } => pane_dispatch::handle_key_event(ctx, code, *modifiers, *event_type).await,
         PasteText { text } => pane_dispatch::handle_paste_text(ctx, text).await,
+        DndDrop {
+            path,
+            paste_fallback,
+        } => pane_dispatch::handle_dnd_drop(ctx, path, paste_fallback).await,
         MouseReport {
             button,
             col,

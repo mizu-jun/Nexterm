@@ -485,6 +485,31 @@ pub enum ClientToServer {
         /// Server-side window ID to query.
         window_id: u32,
     },
+    /// Report the client's active theme default colors (PROTOCOL_VERSION 10,
+    /// roadmap #10b).
+    ///
+    /// Sent after attach and whenever the user commits a theme change. The
+    /// server forwards the values into each pane's VT screen so OSC 10/11
+    /// queries report the colors that are actually rendered. With multiple
+    /// clients attached, the most recent report wins.
+    SetThemeColors {
+        /// Theme default foreground (8-bit RGB).
+        fg: [u8; 3],
+        /// Theme default background (8-bit RGB).
+        bg: [u8; 3],
+    },
+    /// A file was dropped onto the focused pane (PROTOCOL_VERSION 10).
+    ///
+    /// The server decides how to deliver it: when the pane's application
+    /// opted in to the kitty drag-and-drop protocol (OSC 72 `t=a`), the path
+    /// is offered as a `text/uri-list` drop; otherwise `paste_fallback` is
+    /// pasted exactly like `PasteText` (the pre-DnD behavior).
+    DndDrop {
+        /// Absolute filesystem path of the dropped file.
+        path: String,
+        /// Pre-formatted paste text (quoted path, batching spaces included).
+        paste_fallback: String,
+    },
 }
 
 /// Client kind (identified during the IPC handshake).
@@ -867,6 +892,48 @@ pub enum ServerToClient {
         /// `true` when at least one pane has a foreground process running.
         has_foreground: bool,
     },
+    /// OSC 22 mouse-pointer-shape change (PROTOCOL_VERSION 10).
+    ///
+    /// The shape is the raw (length-capped) name from the escape sequence,
+    /// e.g. `"pointer"`, `"text"`, `"wait"`; `"default"` resets. The client
+    /// maps it onto a platform cursor icon and falls back to the default for
+    /// unknown names. Appended to the end of the enum so existing variant
+    /// discriminants are untouched.
+    PointerShapeChanged {
+        /// Pane ID whose pointer shape changed.
+        pane_id: u32,
+        /// Requested shape name.
+        shape: String,
+    },
+    /// Dynamic-color override snapshot (PROTOCOL_VERSION 10, roadmap #10b).
+    ///
+    /// Broadcast whenever a pane's OSC 4/10/11 color state changes. This is
+    /// the **full** override state, not a delta — the client replaces its
+    /// per-pane override record with the snapshot, so late joiners converge
+    /// on the latest message.
+    PaneColorsChanged {
+        /// Pane ID whose dynamic colors changed.
+        pane_id: u32,
+        /// OSC 10 dynamic foreground (`None` = theme default).
+        fg: Option<[u8; 3]>,
+        /// OSC 11 dynamic background (`None` = theme default).
+        bg: Option<[u8; 3]>,
+        /// OSC 4 palette overrides, sorted by index.
+        palette: Vec<(u8, [u8; 3])>,
+    },
+    /// OSC 9;4 (ConEmu) progress report (PROTOCOL_VERSION 10).
+    ///
+    /// Rendered as a per-tab progress indicator. `state` 0 removes the
+    /// indicator, 1 = normal, 2 = error, 3 = indeterminate, 4 = paused;
+    /// `progress` is a clamped 0–100 percentage.
+    ProgressChanged {
+        /// Pane ID whose progress changed.
+        pane_id: u32,
+        /// Progress state (0–4, see above).
+        state: u8,
+        /// Percentage (0–100).
+        progress: u8,
+    },
 }
 
 /// Session information.
@@ -1112,6 +1179,73 @@ mod tests {
         let enc = postcard::to_stdvec(&empty).unwrap();
         let dec: ClientToServer = postcard::from_bytes(&enc).unwrap();
         assert_eq!(empty, dec);
+    }
+
+    #[test]
+    fn pane_colors_changed_postcard_roundtrip() {
+        // Roadmap #10b — added in PROTOCOL_VERSION 10.
+        let msg = ServerToClient::PaneColorsChanged {
+            pane_id: 3,
+            fg: Some([255, 136, 0]),
+            bg: None,
+            palette: vec![(1, [0x12, 0x34, 0x56]), (196, [255, 0, 0])],
+        };
+        let bytes = postcard::to_allocvec(&msg).expect("serialize PaneColorsChanged");
+        let decoded: ServerToClient =
+            postcard::from_bytes(&bytes).expect("deserialize PaneColorsChanged");
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn set_theme_colors_postcard_roundtrip() {
+        // Roadmap #10b — added in PROTOCOL_VERSION 10.
+        let msg = ClientToServer::SetThemeColors {
+            fg: [0xd9, 0xd9, 0xd9],
+            bg: [0x0d, 0x0d, 0x0d],
+        };
+        let bytes = postcard::to_allocvec(&msg).expect("serialize SetThemeColors");
+        let decoded: ClientToServer =
+            postcard::from_bytes(&bytes).expect("deserialize SetThemeColors");
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn dnd_drop_postcard_roundtrip() {
+        // kitty DnD — added in PROTOCOL_VERSION 10.
+        let msg = ClientToServer::DndDrop {
+            path: "C:/tmp/a.txt".to_string(),
+            paste_fallback: "\"C:/tmp/a.txt\"".to_string(),
+        };
+        let bytes = postcard::to_allocvec(&msg).expect("serialize DndDrop");
+        let decoded: ClientToServer = postcard::from_bytes(&bytes).expect("deserialize DndDrop");
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn progress_changed_postcard_roundtrip() {
+        // OSC 9;4 — added in PROTOCOL_VERSION 10.
+        let msg = ServerToClient::ProgressChanged {
+            pane_id: 5,
+            state: 1,
+            progress: 42,
+        };
+        let bytes = postcard::to_allocvec(&msg).expect("serialize ProgressChanged");
+        let decoded: ServerToClient =
+            postcard::from_bytes(&bytes).expect("deserialize ProgressChanged");
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn pointer_shape_changed_postcard_roundtrip() {
+        // OSC 22 — added in PROTOCOL_VERSION 10.
+        let msg = ServerToClient::PointerShapeChanged {
+            pane_id: 7,
+            shape: "pointer".to_string(),
+        };
+        let bytes = postcard::to_allocvec(&msg).expect("serialize PointerShapeChanged");
+        let decoded: ServerToClient =
+            postcard::from_bytes(&bytes).expect("deserialize PointerShapeChanged");
+        assert_eq!(msg, decoded);
     }
 
     #[test]

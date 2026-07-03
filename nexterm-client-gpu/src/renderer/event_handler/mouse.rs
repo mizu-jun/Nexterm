@@ -319,6 +319,9 @@ impl EventHandler {
                     crate::state::PaneResizeAxis::Horizontal => winit::window::CursorIcon::EwResize,
                     crate::state::PaneResizeAxis::Vertical => winit::window::CursorIcon::NsResize,
                 },
+                // Over the grid area, honor the focused pane's OSC 22 pointer
+                // shape; above the tab bar keep the platform default.
+                None if position.y >= origin_y as f64 => self.app.state.focused_pane_pointer_icon(),
                 None => winit::window::CursorIcon::Default,
             };
             if self.app.state.last_cursor_icon != next_cursor {
@@ -1343,7 +1346,9 @@ impl EventHandler {
     /// `WindowEvent::MouseWheel` — scroll the scrollback with the mouse wheel.
     pub(super) fn on_mouse_wheel(&mut self, delta: MouseScrollDelta) {
         let lines = match delta {
-            MouseScrollDelta::LineDelta(_, y) => (y * 3.0) as i32,
+            MouseScrollDelta::LineDelta(_, y) => {
+                (y * self.app.config.scrolling.effective_multiplier()) as i32
+            }
             MouseScrollDelta::PixelDelta(p) => {
                 // Windows touchpads send PixelDelta. Accumulate and scroll one
                 // row per cell height, carrying the remainder into the next
@@ -1352,6 +1357,26 @@ impl EventHandler {
                 let cell_h = self.app.font.cell_height() as f64;
                 let lines = (self.pixel_scroll_accumulator / cell_h) as i32;
                 self.pixel_scroll_accumulator -= lines as f64 * cell_h;
+                // Momentum: estimate the velocity (rows/s) from the raw pixel
+                // deltas. Only pixel-precision (touchpad) events feed the
+                // estimate — discrete wheels never get inertia.
+                if self.app.config.scrolling.momentum {
+                    let now = Instant::now();
+                    if let Some(prev) = self.scroll_momentum.last_event {
+                        let dt = now.duration_since(prev).as_secs_f64();
+                        if dt > 0.0 && dt < 0.2 {
+                            let inst = (p.y / cell_h) / dt;
+                            let v = &mut self.scroll_momentum.velocity;
+                            *v = 0.6 * *v + 0.4 * inst;
+                        } else {
+                            // A long gap means a new gesture; drop stale speed.
+                            self.scroll_momentum.velocity = 0.0;
+                        }
+                    }
+                    self.scroll_momentum.last_event = Some(now);
+                    self.scroll_momentum.last_tick = None;
+                    self.scroll_momentum.row_accum = 0.0;
+                }
                 lines
             }
         };
@@ -1363,6 +1388,125 @@ impl EventHandler {
         if let Some(w) = &self.window {
             w.request_redraw();
         }
+    }
+
+    /// Advance the touchpad momentum coast (called once per redraw).
+    ///
+    /// While the fingers are still on the pad (events within the grace
+    /// period) this only keeps the redraw loop alive; once events stop and
+    /// the estimated velocity is meaningful, the scroll continues with
+    /// exponential friction until it decays below the stop threshold.
+    pub(super) fn tick_scroll_momentum(&mut self) {
+        if !self.app.config.scrolling.momentum {
+            return;
+        }
+        let Some(last_event) = self.scroll_momentum.last_event else {
+            return;
+        };
+        let now = Instant::now();
+        if now.duration_since(last_event).as_millis() < 60 {
+            // Grace period — the gesture may still be in progress.
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+            return;
+        }
+        if self.scroll_momentum.velocity.abs() < MOMENTUM_STOP_ROWS_PER_SEC {
+            self.scroll_momentum = ScrollMomentum::default();
+            return;
+        }
+        let dt = self
+            .scroll_momentum
+            .last_tick
+            .map(|t| now.duration_since(t).as_secs_f64())
+            .unwrap_or(1.0 / 60.0)
+            .min(0.1);
+        self.scroll_momentum.last_tick = Some(now);
+        let (rows, velocity, row_accum) = momentum_step(
+            self.scroll_momentum.velocity,
+            self.scroll_momentum.row_accum,
+            dt,
+        );
+        self.scroll_momentum.velocity = velocity;
+        self.scroll_momentum.row_accum = row_accum;
+        if rows > 0 {
+            self.app.state.scroll_up(rows as usize);
+        } else if rows < 0 {
+            self.app.state.scroll_down((-rows) as usize);
+        }
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+    }
+}
+
+/// Touchpad momentum-scroll state (config `[scrolling] momentum`).
+#[derive(Default)]
+pub(in crate::renderer) struct ScrollMomentum {
+    /// Estimated velocity in rows/second (EMA over recent PixelDelta events).
+    pub(super) velocity: f64,
+    /// Time of the most recent touchpad scroll event.
+    pub(super) last_event: Option<Instant>,
+    /// Time of the previous momentum tick while coasting.
+    pub(super) last_tick: Option<Instant>,
+    /// Fractional-row accumulator while coasting.
+    pub(super) row_accum: f64,
+}
+
+/// Velocities below this many rows/second stop the coast.
+const MOMENTUM_STOP_ROWS_PER_SEC: f64 = 1.0;
+
+/// One friction step of the momentum coast: the velocity decays
+/// exponentially (to ~5% within one second) and fractional rows carry over
+/// between ticks. Returns `(whole rows to scroll, new velocity, new
+/// fractional accumulator)`. Pure so it can be unit-tested without winit.
+fn momentum_step(velocity: f64, row_accum: f64, dt: f64) -> (i32, f64, f64) {
+    let new_velocity = velocity * 0.05_f64.powf(dt);
+    let total = row_accum + new_velocity * dt;
+    let rows = total.trunc() as i32;
+    (rows, new_velocity, total - rows as f64)
+}
+
+#[cfg(test)]
+mod momentum_tests {
+    use super::momentum_step;
+
+    #[test]
+    fn velocity_decays_exponentially() {
+        let (_, v1, _) = momentum_step(100.0, 0.0, 0.5);
+        let (_, v2, _) = momentum_step(v1, 0.0, 0.5);
+        assert!(v1 < 100.0, "velocity must shrink");
+        assert!(v2 < v1);
+        // ~5% left after a full second of coasting.
+        assert!((v2 - 5.0).abs() < 1.0, "expected ≈5, got {v2}");
+    }
+
+    #[test]
+    fn fractional_rows_carry_over_between_ticks() {
+        // Slow coast: each tick produces less than one row, but the
+        // accumulator eventually crosses a whole row.
+        let mut v = 10.0;
+        let mut accum = 0.0;
+        let mut total_rows = 0;
+        for _ in 0..30 {
+            let (rows, nv, na) = momentum_step(v, accum, 1.0 / 60.0);
+            v = nv;
+            accum = na;
+            total_rows += rows;
+        }
+        // Analytically: ∫10·0.05^t dt over 0.5 s ≈ 2.6 rows.
+        assert!(
+            total_rows >= 2,
+            "expected a couple of rows, got {total_rows}"
+        );
+        assert!(accum.abs() < 1.0, "accumulator keeps only the fraction");
+    }
+
+    #[test]
+    fn negative_velocity_scrolls_the_other_way() {
+        let (rows, v, _) = momentum_step(-120.0, 0.0, 0.1);
+        assert!(rows < 0);
+        assert!(v < 0.0 && v > -120.0);
     }
 }
 

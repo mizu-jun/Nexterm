@@ -25,6 +25,22 @@ pub(super) async fn handle_ping(ctx: &mut DispatchContext<'_>) {
     let _ = ctx.tx.send(ServerToClient::Pong).await;
 }
 
+/// `SetThemeColors` (roadmap #10b): remember the client's theme defaults so
+/// OSC 10/11 queries answer with the rendered colors. Fire-and-forget; the
+/// most recent report wins across clients.
+pub(super) fn handle_set_theme_colors(fg: [u8; 3], bg: [u8; 3]) {
+    crate::pane::set_theme_default_colors(fg, bg);
+    tracing::debug!(
+        "theme default colors reported: fg=#{:02x}{:02x}{:02x} bg=#{:02x}{:02x}{:02x}",
+        fg[0],
+        fg[1],
+        fg[2],
+        bg[0],
+        bg[1],
+        bg[2]
+    );
+}
+
 pub(super) fn handle_hello() {
     // Hello is handled during the handshake phase by handler.rs.
     // Reaching this point means the client violated the protocol (re-sent Hello); ignore it.

@@ -68,7 +68,8 @@ pub use message::{
 // is a wire-format break (postcard tags variants positionally), so the
 // version pin must move in lockstep. Single-binary `nexterm` ships
 // both halves so the synchronised upgrade is automatic for users.
-pub const PROTOCOL_VERSION: u32 = 9;
+// v1.12: bumped 9 → 10 for `ServerToClient::PointerShapeChanged` (OSC 22).
+pub const PROTOCOL_VERSION: u32 = 10;
 
 /// Maximum size (in bytes) of a single IPC message.
 ///

@@ -137,6 +137,8 @@ pub struct EventHandler {
     pub(super) runtime_cfg: Option<nexterm_server::SharedRuntimeConfig>,
     /// Accumulator buffer for touchpad precision scroll (PixelDelta).
     pub(super) pixel_scroll_accumulator: f64,
+    /// Touchpad momentum-scroll state (config `[scrolling] momentum`).
+    pub(super) scroll_momentum: mouse::ScrollMomentum,
     /// Receive channel for notifications from the update checker
     /// (`Some(version)` = new version available).
     pub(super) update_rx: tokio::sync::watch::Receiver<Option<String>>,

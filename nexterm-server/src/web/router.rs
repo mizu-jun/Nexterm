@@ -64,22 +64,14 @@ pub(in crate::web) async fn start_tls_server(
     };
     use std::sync::Arc;
 
-    // Parse the PEM certificate.
-    let certs: Vec<rustls::pki_types::CertificateDer<'static>> = {
-        let mut reader = std::io::BufReader::new(cert_pem.as_slice());
-        rustls_pemfile::certs(&mut reader)
-            .filter_map(|r| r.ok())
-            .collect()
-    };
-    let private_key = {
-        let mut reader = std::io::BufReader::new(key_pem.as_slice());
-        match rustls_pemfile::private_key(&mut reader) {
-            Ok(Some(k)) => k,
-            _ => {
-                warn!("TLS: failed to parse private key; falling back to HTTP.");
-                start_plain_http(addr, app).await;
-                return;
-            }
+    // Parse the PEM certificate (G5: rustls-pki-types PemObject API).
+    let certs = super::tls::parse_cert_pem(&cert_pem);
+    let private_key = match super::tls::parse_key_pem(&key_pem) {
+        Some(k) => k,
+        None => {
+            warn!("TLS: failed to parse private key; falling back to HTTP.");
+            start_plain_http(addr, app).await;
+            return;
         }
     };
 

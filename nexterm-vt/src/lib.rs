@@ -4,11 +4,14 @@
 //! Uses the `vte` crate to parse terminal escape sequences and applies them to a
 //! two-dimensional cell array (the virtual grid).
 
+mod colors;
 pub mod image;
 mod performer;
 mod screen;
 
-pub use screen::{PendingImage, Screen, SemanticMark, SemanticMarkKind};
+pub use screen::{
+    ColorOverrides, DndRequest, PendingImage, Screen, SemanticMark, SemanticMarkKind,
+};
 
 /// Maximum APC buffer size (used for Kitty graphics).
 ///
@@ -945,5 +948,414 @@ mod tests {
         assert_eq!(first.len(), 2);
         let second = parser.screen_mut().take_pending_responses();
         assert!(second.is_empty());
+    }
+
+    // ---- OSC 4 / 10 / 11: dynamic colors (query & set) ----
+    //
+    // Background: vim/neovim probe `OSC 11 ; ?` at startup to auto-detect a
+    // light or dark background, and tools like pywal set palette entries via
+    // OSC 4. Queries are answered through the same `pending_responses` queue
+    // as DA/DSR. Replies use the xterm 16-bit-per-channel form
+    // `rgb:rrrr/gggg/bbbb` and mirror the request terminator (BEL vs ST).
+
+    #[test]
+    fn osc11_query_replies_with_default_background() {
+        // Fallback default background mirrors the client-side Color::Default
+        // fallback (#0d0d0d).
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]11;?\x07");
+        let replies = parser.screen_mut().take_pending_responses();
+        assert_eq!(replies, vec![b"\x1b]11;rgb:0d0d/0d0d/0d0d\x07".to_vec()]);
+    }
+
+    #[test]
+    fn osc10_query_replies_with_default_foreground() {
+        // Fallback default foreground mirrors the client-side fallback (#d9d9d9).
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]10;?\x07");
+        let replies = parser.screen_mut().take_pending_responses();
+        assert_eq!(replies, vec![b"\x1b]10;rgb:d9d9/d9d9/d9d9\x07".to_vec()]);
+    }
+
+    #[test]
+    fn osc11_query_reflects_server_configured_defaults() {
+        // The server wires the active theme colors in via set_default_colors
+        // so queries report what is actually rendered.
+        let mut parser = VtParser::new(80, 24);
+        parser
+            .screen_mut()
+            .set_default_colors([0xaa, 0xbb, 0xcc], [0x11, 0x22, 0x33]);
+        parser.advance(b"\x1b]11;?\x07");
+        let replies = parser.screen_mut().take_pending_responses();
+        assert_eq!(replies, vec![b"\x1b]11;rgb:1111/2222/3333\x07".to_vec()]);
+    }
+
+    #[test]
+    fn osc10_set_then_query_returns_the_new_color() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]10;#ff8800\x07");
+        parser.advance(b"\x1b]10;?\x07");
+        let replies = parser.screen_mut().take_pending_responses();
+        assert_eq!(replies, vec![b"\x1b]10;rgb:ffff/8888/0000\x07".to_vec()]);
+    }
+
+    #[test]
+    fn osc11_set_accepts_xparsecolor_rgb_form() {
+        // `rgb:RR/GG/BB` (8-bit per channel) is the other common spec form.
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]11;rgb:12/34/56\x07");
+        parser.advance(b"\x1b]11;?\x07");
+        let replies = parser.screen_mut().take_pending_responses();
+        assert_eq!(replies, vec![b"\x1b]11;rgb:1212/3434/5656\x07".to_vec()]);
+    }
+
+    #[test]
+    fn osc4_set_then_query_returns_the_palette_entry() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]4;1;#ff0000\x07");
+        parser.advance(b"\x1b]4;1;?\x07");
+        let replies = parser.screen_mut().take_pending_responses();
+        assert_eq!(replies, vec![b"\x1b]4;1;rgb:ffff/0000/0000\x07".to_vec()]);
+    }
+
+    #[test]
+    fn osc4_query_of_an_unset_entry_uses_the_builtin_xterm_palette() {
+        // xterm 256-color palette: index 1 is #cd0000, index 196 (color cube)
+        // is #ff0000, index 244 (grayscale ramp) is #808080.
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]4;1;?\x07");
+        parser.advance(b"\x1b]4;196;?\x07");
+        parser.advance(b"\x1b]4;244;?\x07");
+        let replies = parser.screen_mut().take_pending_responses();
+        assert_eq!(
+            replies,
+            vec![
+                b"\x1b]4;1;rgb:cdcd/0000/0000\x07".to_vec(),
+                b"\x1b]4;196;rgb:ffff/0000/0000\x07".to_vec(),
+                b"\x1b]4;244;rgb:8080/8080/8080\x07".to_vec(),
+            ]
+        );
+    }
+
+    #[test]
+    fn osc4_handles_multiple_pairs_in_one_sequence() {
+        // OSC 4 accepts repeated `index;spec` pairs: set entry 2 and query
+        // entry 3 in a single sequence.
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]4;2;#00ff00;3;?\x07");
+        let replies = parser.screen_mut().take_pending_responses();
+        assert_eq!(replies, vec![b"\x1b]4;3;rgb:cdcd/cdcd/0000\x07".to_vec()]);
+        // The set half of the pair took effect too.
+        parser.advance(b"\x1b]4;2;?\x07");
+        let replies = parser.screen_mut().take_pending_responses();
+        assert_eq!(replies, vec![b"\x1b]4;2;rgb:0000/ffff/0000\x07".to_vec()]);
+    }
+
+    #[test]
+    fn osc104_resets_a_palette_entry_and_osc104_bare_resets_all() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]4;1;#123456\x07\x1b]4;2;#654321\x07");
+        // OSC 104;1 resets only entry 1.
+        parser.advance(b"\x1b]104;1\x07");
+        parser.advance(b"\x1b]4;1;?\x07\x1b]4;2;?\x07");
+        let replies = parser.screen_mut().take_pending_responses();
+        assert_eq!(
+            replies,
+            vec![
+                b"\x1b]4;1;rgb:cdcd/0000/0000\x07".to_vec(),
+                b"\x1b]4;2;rgb:6565/4343/2121\x07".to_vec(),
+            ]
+        );
+        // Bare OSC 104 resets everything.
+        parser.advance(b"\x1b]104\x07");
+        parser.advance(b"\x1b]4;2;?\x07");
+        let replies = parser.screen_mut().take_pending_responses();
+        assert_eq!(replies, vec![b"\x1b]4;2;rgb:0000/cdcd/0000\x07".to_vec()]);
+    }
+
+    #[test]
+    fn osc110_and_111_reset_the_default_colors() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]10;#ff8800\x07\x1b]11;#001122\x07");
+        parser.advance(b"\x1b]110\x07\x1b]111\x07");
+        parser.advance(b"\x1b]10;?\x07\x1b]11;?\x07");
+        let replies = parser.screen_mut().take_pending_responses();
+        assert_eq!(
+            replies,
+            vec![
+                b"\x1b]10;rgb:d9d9/d9d9/d9d9\x07".to_vec(),
+                b"\x1b]11;rgb:0d0d/0d0d/0d0d\x07".to_vec(),
+            ]
+        );
+    }
+
+    #[test]
+    fn st_terminated_color_query_gets_an_st_terminated_reply() {
+        // Requests terminated with ST (ESC \) must be answered with ST, not
+        // BEL — some applications parse the reply terminator strictly.
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]11;?\x1b\\");
+        let replies = parser.screen_mut().take_pending_responses();
+        assert_eq!(replies, vec![b"\x1b]11;rgb:0d0d/0d0d/0d0d\x1b\\".to_vec()]);
+    }
+
+    // ---- OSC 72: kitty drag-and-drop protocol (application side) ----
+    //
+    // Practical subset: support query (t=q, answered immediately through
+    // `pending_responses`), opt-in/out (t=a / t=A), and the data-request /
+    // completion messages (t=r), which are queued for the reader thread to
+    // answer from the pane's stored drop payload. Motion negotiation (t=m)
+    // and remote-machine drops are not implemented in this first release.
+
+    #[test]
+    fn osc72_query_is_echoed_back_with_the_id() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]72;t=q:i=3\x1b\\");
+        let replies = parser.screen_mut().take_pending_responses();
+        assert_eq!(replies, vec![b"\x1b]72;t=q:i=3\x1b\\".to_vec()]);
+    }
+
+    #[test]
+    fn osc72_opt_in_and_out_toggle_dnd() {
+        let mut parser = VtParser::new(80, 24);
+        assert!(!parser.screen().dnd_enabled());
+        parser.advance(b"\x1b]72;t=a;text/uri-list\x1b\\");
+        assert!(parser.screen().dnd_enabled());
+        parser.advance(b"\x1b]72;t=A\x1b\\");
+        assert!(!parser.screen().dnd_enabled());
+    }
+
+    #[test]
+    fn osc72_data_request_and_completion_are_queued() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]72;t=r:x=1\x1b\\");
+        parser.advance(b"\x1b]72;t=r:o=1\x1b\\");
+        assert_eq!(
+            parser.screen_mut().take_pending_dnd_requests(),
+            vec![DndRequest::Data { index: 1 }, DndRequest::Complete]
+        );
+        // Drained after take.
+        assert!(parser.screen_mut().take_pending_dnd_requests().is_empty());
+    }
+
+    #[test]
+    fn osc72_pending_request_queue_is_bounded() {
+        // Memory-DoS guard: a hostile app spamming data requests must not
+        // grow the queue without bound.
+        let mut parser = VtParser::new(80, 24);
+        for _ in 0..64 {
+            parser.advance(b"\x1b]72;t=r:x=1\x1b\\");
+        }
+        assert!(parser.screen_mut().take_pending_dnd_requests().len() <= 8);
+    }
+
+    // ---- OSC 9;4: ConEmu-style progress reporting ----
+    //
+    // Format: ESC ] 9 ; 4 ; state ; progress BEL/ST — state 0 removes the
+    // indicator, 1 = normal, 2 = error, 3 = indeterminate, 4 = paused.
+    // Adopted by Windows Terminal and iTerm2; surfaced in the tab bar.
+
+    #[test]
+    fn osc9_4_reports_progress_state_and_percentage() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]9;4;1;42\x07");
+        assert_eq!(parser.screen_mut().take_pending_progress(), Some((1, 42)));
+        // Drained after take.
+        assert_eq!(parser.screen_mut().take_pending_progress(), None);
+        // State 0 removes the indicator.
+        parser.advance(b"\x1b]9;4;0;0\x07");
+        assert_eq!(parser.screen_mut().take_pending_progress(), Some((0, 0)));
+    }
+
+    #[test]
+    fn osc9_4_clamps_progress_and_rejects_garbage() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]9;4;1;250\x07");
+        assert_eq!(parser.screen_mut().take_pending_progress(), Some((1, 100)));
+        // Unknown state / non-numeric fields are ignored.
+        parser.advance(b"\x1b]9;4;9;50\x07\x1b]9;4;abc;xyz\x07");
+        assert_eq!(parser.screen_mut().take_pending_progress(), None);
+    }
+
+    #[test]
+    fn osc9_4_does_not_leak_into_the_notification_path() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]9;4;1;42\x07");
+        assert_eq!(parser.screen_mut().take_pending_notification(), None);
+        // A plain OSC 9 message still raises a notification.
+        parser.advance(b"\x1b]9;hello\x07");
+        assert_eq!(
+            parser.screen_mut().take_pending_notification(),
+            Some(("Nexterm".to_string(), "hello".to_string()))
+        );
+    }
+
+    // ---- OSC 99: kitty desktop notifications ----
+    //
+    // Practical subset of the kitty spec: `i=` identifier for multi-part
+    // accumulation, `d=` completion flag (default done), `p=title|body`
+    // payload types, `e=1` base64 payloads. Completed notifications feed the
+    // same pending-notification path as OSC 9/777 (client consent UI applies).
+
+    #[test]
+    fn osc99_simple_payload_becomes_a_notification_title() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]99;;Hello\x07");
+        assert_eq!(
+            parser.screen_mut().take_pending_notification(),
+            Some(("Hello".to_string(), String::new()))
+        );
+    }
+
+    #[test]
+    fn osc99_multi_part_title_and_body_accumulate_until_done() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]99;i=1:d=0:p=title;Build finished\x07");
+        // Not complete yet.
+        assert_eq!(parser.screen_mut().take_pending_notification(), None);
+        parser.advance(b"\x1b]99;i=1:d=1:p=body;All 25 suites green\x07");
+        assert_eq!(
+            parser.screen_mut().take_pending_notification(),
+            Some((
+                "Build finished".to_string(),
+                "All 25 suites green".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn osc99_base64_payload_is_decoded() {
+        let mut parser = VtParser::new(80, 24);
+        // "SGVsbG8=" = base64("Hello")
+        parser.advance(b"\x1b]99;e=1;SGVsbG8=\x07");
+        assert_eq!(
+            parser.screen_mut().take_pending_notification(),
+            Some(("Hello".to_string(), String::new()))
+        );
+    }
+
+    #[test]
+    fn osc99_empty_or_unsupported_payloads_produce_no_notification() {
+        let mut parser = VtParser::new(80, 24);
+        // Unsupported payload type (icon) and an empty complete notification.
+        parser.advance(b"\x1b]99;p=icon;abc\x07\x1b]99;;\x07");
+        assert_eq!(parser.screen_mut().take_pending_notification(), None);
+    }
+
+    #[test]
+    fn osc99_pending_identifier_count_is_bounded() {
+        // Memory-DoS guard: a hostile stream opening unlimited `d=0`
+        // identifiers must not grow memory without bound.
+        let mut parser = VtParser::new(80, 24);
+        for i in 0..64 {
+            let seq = format!("\x1b]99;i=id{i}:d=0:p=title;spam\x07");
+            parser.advance(seq.as_bytes());
+        }
+        assert!(parser.screen_mut().osc99_pending_count() <= 4);
+    }
+
+    // ---- OSC 4/10/11 propagation: color-override snapshots (roadmap #10b) ----
+    //
+    // The reader thread drains `take_color_overrides_if_changed` after every
+    // `advance` and broadcasts the full override state to clients so OSC
+    // color sets become visible in the renderer.
+
+    #[test]
+    fn color_set_marks_overrides_changed_and_snapshot_reflects_it() {
+        let mut parser = VtParser::new(80, 24);
+        // Nothing changed yet.
+        assert!(
+            parser
+                .screen_mut()
+                .take_color_overrides_if_changed()
+                .is_none()
+        );
+
+        parser.advance(b"\x1b]10;#ff8800\x07\x1b]4;1;#123456\x07");
+        let snap = parser
+            .screen_mut()
+            .take_color_overrides_if_changed()
+            .expect("set must mark the overrides changed");
+        assert_eq!(snap.fg, Some([0xff, 0x88, 0x00]));
+        assert_eq!(snap.bg, None);
+        assert_eq!(snap.palette, vec![(1, [0x12, 0x34, 0x56])]);
+
+        // Drained: no change until the next mutation.
+        assert!(
+            parser
+                .screen_mut()
+                .take_color_overrides_if_changed()
+                .is_none()
+        );
+
+        // A reset is also a change (fg returns to None).
+        parser.advance(b"\x1b]110\x07");
+        let snap = parser
+            .screen_mut()
+            .take_color_overrides_if_changed()
+            .expect("reset must mark the overrides changed");
+        assert_eq!(snap.fg, None);
+        assert!(snap.palette.len() == 1);
+    }
+
+    #[test]
+    fn color_queries_do_not_mark_overrides_changed() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]10;?\x07\x1b]4;1;?\x07");
+        assert!(
+            parser
+                .screen_mut()
+                .take_color_overrides_if_changed()
+                .is_none()
+        );
+    }
+
+    // ---- OSC 22: mouse pointer shape ----
+    //
+    // Format: ESC ] 22 ; <shape-name> BEL/ST. An empty name resets to the
+    // default shape. The name is forwarded to the client, which maps it onto
+    // a winit CursorIcon (unknown names fall back to the default there).
+
+    #[test]
+    fn osc22_queues_a_pointer_shape_change() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]22;pointer\x07");
+        assert_eq!(
+            parser.screen_mut().take_pending_pointer_shape(),
+            Some("pointer".to_string())
+        );
+        // Drained after take.
+        assert_eq!(parser.screen_mut().take_pending_pointer_shape(), None);
+    }
+
+    #[test]
+    fn osc22_with_an_empty_name_resets_to_default() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]22;\x07");
+        assert_eq!(
+            parser.screen_mut().take_pending_pointer_shape(),
+            Some("default".to_string())
+        );
+    }
+
+    #[test]
+    fn osc22_caps_the_shape_name_length() {
+        // Oversized names are dropped (not truncated) — no real shape name is
+        // this long, so this can only be garbage or an attack.
+        let mut parser = VtParser::new(80, 24);
+        let long = format!("\x1b]22;{}\x07", "a".repeat(1000));
+        parser.advance(long.as_bytes());
+        assert_eq!(parser.screen_mut().take_pending_pointer_shape(), None);
+    }
+
+    #[test]
+    fn invalid_color_specs_are_ignored() {
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"\x1b]10;#zzz\x07\x1b]10;notacolor\x07\x1b]4;999;#ff0000\x07");
+        // No replies queued, defaults untouched.
+        assert!(parser.screen_mut().take_pending_responses().is_empty());
+        parser.advance(b"\x1b]10;?\x07");
+        let replies = parser.screen_mut().take_pending_responses();
+        assert_eq!(replies, vec![b"\x1b]10;rgb:d9d9/d9d9/d9d9\x07".to_vec()]);
     }
 }

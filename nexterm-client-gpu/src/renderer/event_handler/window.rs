@@ -494,6 +494,9 @@ impl EventHandler {
 
     /// `WindowEvent::RedrawRequested`
     pub(super) fn on_redraw_requested(&mut self) {
+        // Touchpad momentum coast (config `[scrolling] momentum`); keeps
+        // requesting redraws while the coast is active.
+        self.tick_scroll_momentum();
         // Sprint 5-15 / UI/UX Modernization v2 Phase 3: pick the effective
         // color scheme by combining the configured `colors` with the
         // OS-reported light/dark preference. `colors_follow_system = false`
@@ -502,6 +505,24 @@ impl EventHandler {
             .app
             .config
             .effective_color_scheme(self.app.state.os_dark_mode);
+        // Roadmap #10b: report the committed theme defaults to the server so
+        // OSC 10/11 queries answer with the rendered colors. Sent only when
+        // the value differs from the last successful report; the transient
+        // hover preview below intentionally never reaches the server.
+        let pal = crate::color_util::scheme_palette(&configured_scheme);
+        let theme = (pal.fg, pal.bg);
+        if self.app.state.last_reported_theme != Some(theme)
+            && let Some(conn) = &self.connection
+            && conn
+                .send_tx
+                .try_send(nexterm_proto::ClientToServer::SetThemeColors {
+                    fg: theme.0,
+                    bg: theme.1,
+                })
+                .is_ok()
+        {
+            self.app.state.last_reported_theme = Some(theme);
+        }
         // Phase 3b (UI/UX v2): when the settings panel is open and the
         // mouse is hovering a Theme dot, render with the previewed
         // scheme instead of the configured one. Mouse-leave clears
@@ -593,8 +614,14 @@ impl EventHandler {
             // Failure is swallowed for the same reason as every other IPC
             // try_send in this module: the channel is unbounded in practice,
             // and a dropped frame is preferable to a panic in the UI thread.
-            let _ = conn.send_tx.try_send(ClientToServer::PasteText { text });
-            tracing::info!("Dropped file pasted as terminal input: {:?}", path);
+            // The server decides the delivery: kitty DnD protocol (OSC 72)
+            // when the focused pane's application opted in, otherwise the
+            // pre-DnD paste behavior via `paste_fallback`.
+            let _ = conn.send_tx.try_send(ClientToServer::DndDrop {
+                path: path.to_string_lossy().into_owned(),
+                paste_fallback: text,
+            });
+            tracing::info!("Dropped file forwarded to the server: {:?}", path);
         } else {
             tracing::warn!(
                 "Dropped file ignored — no server connection yet: {:?}",

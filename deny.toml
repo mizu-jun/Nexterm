@@ -46,9 +46,19 @@ ignore = [
     # RustCrypto/RSA 側で constant-time 実装に移行中（GitHub issues/626）。
     { id = "RUSTSEC-2023-0071", reason = "rsa Marvin Attack; russh 経由、constant-time 実装移行待ち" },
 
-    # rustls-pemfile は 2025 年 8 月にアーカイブ。後継は rustls-pki-types の PemObject API。
-    # 移行作業は別チケットで管理（影響範囲限定: TLS 証明書ロード時のみ）。
-    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained; rustls-pki-types への移行を別途計画" },
+    # RUSTSEC-2025-0134 (rustls-pemfile): G5 で rustls-pki-types の PemObject API へ
+    # 移行済み。ignore エントリは削除済み。
+
+    # ttf-parser 0.25 はメンテナ宣言によりアーカイブ。cosmic-text → fontdb 経由の
+    # 間接依存で、cosmic-text の更新 (監査タスク C7) で解消予定。
+    # フォントは信頼済みローカルファイルのみ読むため実害は限定的。
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser unmaintained; cosmic-text 更新 (C7) 待ち" },
+
+    # quick-xml の DoS 2 件 (重複属性チェックの二次時間 / NsReader の無制限割り当て)。
+    # notify-rust → tauri-winrt-notification / zbus 経由の間接依存で、パースするのは
+    # 自プロセス生成の通知 XML のみ（外部入力なし）。上流の quick-xml 更新待ち。
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml DoS; notify-rust 上流の更新待ち・外部入力をパースしない" },
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml DoS; notify-rust 上流の更新待ち・外部入力をパースしない" },
 
     # RUSTSEC-2025-0141 (bincode 1.x): Sprint 5-1 / G3 で postcard 1.x へ移行済み。
     # ignore エントリは削除済み。

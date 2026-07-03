@@ -138,30 +138,8 @@ impl WgpuState {
         atlas.cleared_this_frame = false;
 
         // Derive the palette from the color scheme (every frame; cost is small)
-        let scheme_palette: Option<nexterm_config::SchemePalette> = match color_scheme {
-            nexterm_config::ColorScheme::Builtin(s) => Some(s.palette()),
-            nexterm_config::ColorScheme::Custom(p) => {
-                // Convert the Custom palette into a SchemePalette
-                let parse_hex = |s: &str| -> [u8; 3] {
-                    let s = s.trim_start_matches('#');
-                    let v = u32::from_str_radix(s, 16).unwrap_or(0);
-                    [
-                        ((v >> 16) & 0xFF) as u8,
-                        ((v >> 8) & 0xFF) as u8,
-                        (v & 0xFF) as u8,
-                    ]
-                };
-                let mut ansi = [[0u8; 3]; 16];
-                for (i, hex) in p.ansi.iter().enumerate().take(16) {
-                    ansi[i] = parse_hex(hex);
-                }
-                Some(nexterm_config::SchemePalette {
-                    fg: parse_hex(&p.foreground),
-                    bg: parse_hex(&p.background),
-                    ansi,
-                })
-            }
-        };
+        let scheme_palette: Option<nexterm_config::SchemePalette> =
+            Some(crate::color_util::scheme_palette(color_scheme));
         let palette_ref = scheme_palette.as_ref();
         // Compute design tokens from the active palette (cheap; runs every frame).
         let tokens = if let Some(p) = scheme_palette.as_ref() {

@@ -115,6 +115,49 @@ impl ClientState {
                     pane.title = title;
                 }
             }
+            // OSC 22 pointer shape (PROTOCOL_VERSION 10). "default" clears
+            // the override; the renderer applies the shape while the cursor
+            // hovers the grid area.
+            ServerToClient::PointerShapeChanged { pane_id, shape } => {
+                if let Some(pane) = self.panes.get_mut(&pane_id) {
+                    pane.pointer_shape = if shape == "default" {
+                        None
+                    } else {
+                        Some(shape)
+                    };
+                }
+            }
+            // OSC 9;4 progress report — state 0 clears the indicator.
+            ServerToClient::ProgressChanged {
+                pane_id,
+                state,
+                progress,
+            } => {
+                if let Some(pane) = self.panes.get_mut(&pane_id) {
+                    pane.progress = if state == 0 {
+                        None
+                    } else {
+                        Some((state, progress))
+                    };
+                }
+            }
+            // OSC 4/10/11 dynamic colors (roadmap #10b). Full snapshot —
+            // replace the override record and invalidate the vertex cache.
+            ServerToClient::PaneColorsChanged {
+                pane_id,
+                fg,
+                bg,
+                palette,
+            } => {
+                if let Some(pane) = self.panes.get_mut(&pane_id) {
+                    pane.color_overrides = crate::state::PaneColorOverrides {
+                        fg,
+                        bg,
+                        palette: palette.into_iter().collect(),
+                    };
+                    pane.content_dirty = true;
+                }
+            }
             // Phase 2c (UI/UX v2): 1 Hz process-poll update from the
             // server. Store the new name (or clear it on `None`) so the
             // tab-bar renderer can prefix the configured Nerd Font glyph.
@@ -467,6 +510,123 @@ mod tests {
         });
         let pane = state.focused_pane().unwrap();
         assert_eq!(pane.grid.rows[0][0].ch, 'X');
+    }
+
+    #[test]
+    fn pointer_shape_changed_updates_the_pane_and_cursor_icon() {
+        // OSC 22 (PROTOCOL_VERSION 10): the shape lands on the pane and the
+        // focused pane's icon accessor maps it onto a winit CursorIcon.
+        let mut state = ClientState::new(80, 24, 1000);
+        state.apply_server_message(ServerToClient::FullRefresh {
+            pane_id: 1,
+            grid: Grid::new(80, 24),
+        });
+        state.apply_server_message(ServerToClient::PointerShapeChanged {
+            pane_id: 1,
+            shape: "pointer".to_string(),
+        });
+        assert_eq!(
+            state.panes[&1].pointer_shape.as_deref(),
+            Some("pointer"),
+            "shape should be stored on the pane"
+        );
+        assert_eq!(
+            state.focused_pane_pointer_icon(),
+            winit::window::CursorIcon::Pointer
+        );
+
+        // "default" clears the override.
+        state.apply_server_message(ServerToClient::PointerShapeChanged {
+            pane_id: 1,
+            shape: "default".to_string(),
+        });
+        assert_eq!(state.panes[&1].pointer_shape, None);
+        assert_eq!(
+            state.focused_pane_pointer_icon(),
+            winit::window::CursorIcon::Default
+        );
+
+        // Unknown pane IDs are ignored without panicking.
+        state.apply_server_message(ServerToClient::PointerShapeChanged {
+            pane_id: 99,
+            shape: "text".to_string(),
+        });
+    }
+
+    #[test]
+    fn progress_changed_updates_the_pane_and_state_zero_clears_it() {
+        let mut state = ClientState::new(80, 24, 1000);
+        state.apply_server_message(ServerToClient::FullRefresh {
+            pane_id: 1,
+            grid: Grid::new(80, 24),
+        });
+        state.apply_server_message(ServerToClient::ProgressChanged {
+            pane_id: 1,
+            state: 1,
+            progress: 42,
+        });
+        assert_eq!(state.panes[&1].progress, Some((1, 42)));
+        state.apply_server_message(ServerToClient::ProgressChanged {
+            pane_id: 1,
+            state: 0,
+            progress: 0,
+        });
+        assert_eq!(state.panes[&1].progress, None);
+    }
+
+    #[test]
+    fn pane_colors_changed_replaces_the_override_state_and_dirties_content() {
+        // Roadmap #10b: the snapshot is a full replacement, and the cached
+        // per-pane vertices must be rebuilt (content_dirty).
+        let mut state = ClientState::new(80, 24, 1000);
+        state.apply_server_message(ServerToClient::FullRefresh {
+            pane_id: 1,
+            grid: Grid::new(80, 24),
+        });
+        state.panes.get_mut(&1).unwrap().content_dirty = false;
+
+        state.apply_server_message(ServerToClient::PaneColorsChanged {
+            pane_id: 1,
+            fg: Some([255, 136, 0]),
+            bg: None,
+            palette: vec![(1, [0x12, 0x34, 0x56])],
+        });
+        let pane = &state.panes[&1];
+        assert_eq!(pane.color_overrides.fg, Some([255, 136, 0]));
+        assert_eq!(pane.color_overrides.bg, None);
+        assert_eq!(
+            pane.color_overrides.palette.get(&1),
+            Some(&[0x12, 0x34, 0x56])
+        );
+        assert!(pane.content_dirty, "vertex cache must be invalidated");
+
+        // A later snapshot replaces (not merges) the previous state.
+        state.apply_server_message(ServerToClient::PaneColorsChanged {
+            pane_id: 1,
+            fg: None,
+            bg: None,
+            palette: vec![],
+        });
+        let pane = &state.panes[&1];
+        assert_eq!(pane.color_overrides.fg, None);
+        assert!(pane.color_overrides.palette.is_empty());
+    }
+
+    #[test]
+    fn unknown_pointer_shapes_fall_back_to_the_default_icon() {
+        let mut state = ClientState::new(80, 24, 1000);
+        state.apply_server_message(ServerToClient::FullRefresh {
+            pane_id: 1,
+            grid: Grid::new(80, 24),
+        });
+        state.apply_server_message(ServerToClient::PointerShapeChanged {
+            pane_id: 1,
+            shape: "no-such-shape".to_string(),
+        });
+        assert_eq!(
+            state.focused_pane_pointer_icon(),
+            winit::window::CursorIcon::Default
+        );
     }
 
     #[test]

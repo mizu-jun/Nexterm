@@ -298,6 +298,107 @@ pub fn new_pane_id() -> u32 {
     NEXT_PANE_ID.fetch_add(1, Ordering::Relaxed)
 }
 
+/// Standard base64 encoding (with padding). Local helper — the workspace has
+/// a decoder in `nexterm-vt` but no encoder dependency.
+fn base64_encode(data: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b = [
+            chunk[0],
+            chunk.get(1).copied().unwrap_or(0),
+            chunk.get(2).copied().unwrap_or(0),
+        ];
+        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        out.push(ALPHABET[(n >> 18) as usize & 63] as char);
+        out.push(ALPHABET[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+/// Maximum OSC 72 payload bytes per escape (protocol limit; applies to the
+/// base64-encoded form).
+const DND_CHUNK_BYTES: usize = 4096;
+
+/// Builds the OSC 72 replies for one data request (kitty DnD protocol).
+///
+/// Only MIME index 1 (`text/uri-list`, the single type we offer) is served;
+/// anything else — including a request with no stored payload — gets a
+/// `t=R` error reply with a POSIX error name. Successful payloads are
+/// base64-encoded and chunked at [`DND_CHUNK_BYTES`], ending with an empty
+/// `m=0` escape.
+fn build_dnd_data_replies(index: u32, payload: Option<&str>) -> Vec<Vec<u8>> {
+    let payload = match (index, payload) {
+        (1, Some(p)) => p,
+        _ => {
+            return vec![format!("\x1b]72;t=R:x={index};ENOENT\x1b\\").into_bytes()];
+        }
+    };
+    let encoded = base64_encode(payload.as_bytes());
+    let mut replies: Vec<Vec<u8>> = encoded
+        .as_bytes()
+        .chunks(DND_CHUNK_BYTES)
+        .map(|chunk| {
+            let mut r = format!("\x1b]72;t=r:x={index}:m=1;").into_bytes();
+            r.extend_from_slice(chunk);
+            r.extend_from_slice(b"\x1b\\");
+            r
+        })
+        .collect();
+    replies.push(format!("\x1b]72;t=r:x={index}:m=0;\x1b\\").into_bytes());
+    replies
+}
+
+/// Converts an absolute filesystem path into a `text/uri-list` entry
+/// (a percent-encoded `file://` URI). Windows drive paths become
+/// `file:///C:/...` with forward slashes.
+pub fn path_to_file_uri(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    let mut uri = String::from("file://");
+    if !normalized.starts_with('/') {
+        // Windows drive form (`C:/...`) needs the extra root slash.
+        uri.push('/');
+    }
+    for b in normalized.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' => uri.push(b as char),
+            b'/' | b':' | b'-' | b'_' | b'.' | b'~' => uri.push(b as char),
+            _ => uri.push_str(&format!("%{b:02X}")),
+        }
+    }
+    uri
+}
+
+/// Process-global theme default colors reported by the client
+/// (`ClientToServer::SetThemeColors`, roadmap #10b).
+///
+/// The theme is process-global by design — the most recent client report
+/// wins, exactly like the message semantics — so a global cell avoids
+/// threading a handle through every `Pane::spawn*` call site. Each PTY
+/// reader applies the value to its `Screen` before parsing a burst, so OSC
+/// 10/11 queries answer with the colors that are actually rendered.
+pub fn theme_default_colors() -> &'static Mutex<Option<([u8; 3], [u8; 3])>> {
+    static THEME_DEFAULT_COLORS: Mutex<Option<([u8; 3], [u8; 3])>> = Mutex::new(None);
+    &THEME_DEFAULT_COLORS
+}
+
+/// Store the client-reported theme defaults (called from the IPC dispatcher).
+pub fn set_theme_default_colors(fg: [u8; 3], bg: [u8; 3]) {
+    if let Ok(mut guard) = theme_default_colors().lock() {
+        *guard = Some((fg, bg));
+    }
+}
+
 /// Update the ID counter after restoring from a snapshot.
 ///
 /// Bumps the counter to at least the highest restored pane ID + 1 to avoid ID collisions.
@@ -365,6 +466,13 @@ pub struct Pane {
     /// `None` when OSC 7 has never been received (callers fall back to `working_dir()` =
     /// `/proc/{pid}/cwd`).
     pub current_cwd: Arc<Mutex<Option<std::path::PathBuf>>>,
+    /// Whether the running application opted in to the kitty drag-and-drop
+    /// protocol (OSC 72 `t=a`). Mirrored from the VT screen by the reader
+    /// thread; consulted by the IPC dispatcher on a file drop.
+    dnd_enabled: Arc<std::sync::atomic::AtomicBool>,
+    /// Stored drop payload (`text/uri-list`) awaiting the application's
+    /// OSC 72 data request; cleared on completion.
+    dnd_payload: Arc<Mutex<Option<String>>>,
     /// Most recent full grid snapshot maintained by the PTY reader thread
     /// (v1.9.3 fix).
     ///
@@ -539,6 +647,14 @@ impl Pane {
 
         // Share the OSC 7 CWD via `Arc<Mutex<Option<PathBuf>>>` (Sprint 5-2 / B2).
         let current_cwd: Arc<Mutex<Option<std::path::PathBuf>>> = Arc::new(Mutex::new(None));
+
+        // kitty drag-and-drop protocol (OSC 72): opt-in flag mirror + stored
+        // drop payload, both shared with the reader thread.
+        let dnd_enabled: Arc<std::sync::atomic::AtomicBool> =
+            Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let dnd_enabled_clone = Arc::clone(&dnd_enabled);
+        let dnd_payload: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let dnd_payload_clone = Arc::clone(&dnd_payload);
         let current_cwd_clone = Arc::clone(&current_cwd);
 
         // Share the latest full-grid snapshot (v1.9.3 fix). Initialised as an
@@ -594,6 +710,15 @@ impl Pane {
                             );
                             logged_first_output = true;
                         }
+                        // Roadmap #10b — apply the client-reported theme
+                        // defaults before parsing so OSC 10/11 queries inside
+                        // this burst answer with the rendered colors.
+                        // Idempotent and cheap (one mutex read per burst).
+                        if let Ok(guard) = theme_default_colors().lock()
+                            && let Some((fg, bg)) = *guard
+                        {
+                            parser.screen_mut().set_default_colors(fg, bg);
+                        }
                         parser.advance(&buf[..n]);
 
                         // v1.9.5 — drain Primary/Secondary DA + DSR replies
@@ -639,6 +764,37 @@ impl Pane {
                             parser.screen().keyboard_protocol_flags(),
                             std::sync::atomic::Ordering::Relaxed,
                         );
+
+                        // Mirror the kitty DnD opt-in flag (OSC 72 t=a / t=A)
+                        // and answer queued data requests from the stored
+                        // drop payload.
+                        dnd_enabled_clone.store(
+                            parser.screen().dnd_enabled(),
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        for req in parser.screen_mut().take_pending_dnd_requests() {
+                            let replies = match req {
+                                nexterm_vt::DndRequest::Data { index } => {
+                                    let payload =
+                                        dnd_payload_clone.lock().ok().and_then(|g| g.clone());
+                                    build_dnd_data_replies(index, payload.as_deref())
+                                }
+                                nexterm_vt::DndRequest::Complete => {
+                                    if let Ok(mut g) = dnd_payload_clone.lock() {
+                                        *g = None;
+                                    }
+                                    Vec::new()
+                                }
+                            };
+                            if !replies.is_empty()
+                                && let Ok(mut w) = writer_clone.lock()
+                            {
+                                for r in &replies {
+                                    let _ = w.write_all(r);
+                                }
+                                let _ = w.flush();
+                            }
+                        }
 
                         // If recording, write the raw byte sequence to the log file.
                         if let Ok(mut guard) = log_writer_clone.lock()
@@ -705,6 +861,36 @@ impl Pane {
                         // Send a title-change notification (OSC 0/1/2).
                         if let Some(title) = parser.screen_mut().take_pending_title() {
                             let msg = ServerToClient::TitleChanged { pane_id, title };
+                            send_msg(&shared_tx_clone, msg);
+                        }
+
+                        // Send a pointer-shape change (OSC 22).
+                        if let Some(shape) = parser.screen_mut().take_pending_pointer_shape() {
+                            let msg = ServerToClient::PointerShapeChanged { pane_id, shape };
+                            send_msg(&shared_tx_clone, msg);
+                        }
+
+                        // Send an OSC 9;4 progress report.
+                        if let Some((state, progress)) = parser.screen_mut().take_pending_progress()
+                        {
+                            let msg = ServerToClient::ProgressChanged {
+                                pane_id,
+                                state,
+                                progress,
+                            };
+                            send_msg(&shared_tx_clone, msg);
+                        }
+
+                        // Send a dynamic-color override snapshot (OSC 4/10/11,
+                        // roadmap #10b).
+                        if let Some(colors) = parser.screen_mut().take_color_overrides_if_changed()
+                        {
+                            let msg = ServerToClient::PaneColorsChanged {
+                                pane_id,
+                                fg: colors.fg,
+                                bg: colors.bg,
+                                palette: colors.palette,
+                            };
                             send_msg(&shared_tx_clone, msg);
                         }
 
@@ -822,7 +1008,28 @@ impl Pane {
             keyboard_protocol_flags,
             current_cwd,
             latest_grid,
+            dnd_enabled,
+            dnd_payload,
         })
+    }
+
+    /// Whether the running application opted in to the kitty drag-and-drop
+    /// protocol (OSC 72 `t=a`).
+    pub fn dnd_enabled(&self) -> bool {
+        self.dnd_enabled.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Offer a drop to the opted-in application (kitty DnD protocol).
+    ///
+    /// Stores the `text/uri-list` payload for the application's upcoming
+    /// data request and sends the drop event. Coordinates are reported as
+    /// (0,0): winit does not expose the drop position, and the protocol
+    /// treats coordinates as advisory.
+    pub fn offer_dnd_drop(&self, uri_list: String) -> Result<()> {
+        if let Ok(mut guard) = self.dnd_payload.lock() {
+            *guard = Some(uri_list);
+        }
+        self.write_input(b"\x1b]72;t=M:x=0:y=0:o=1;text/uri-list\x1b\\")
     }
 
     /// Return the most recent CWD reported via OSC 7 (`None` if never received).
@@ -1637,5 +1844,57 @@ mod tests {
             marker,
             dump.chars().take(200).collect::<String>()
         );
+    }
+}
+
+#[cfg(test)]
+mod dnd_tests {
+    use super::{base64_encode, build_dnd_data_replies, path_to_file_uri};
+
+    #[test]
+    fn base64_matches_known_vectors() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+    }
+
+    #[test]
+    fn data_replies_are_chunked_and_terminated() {
+        // A payload whose base64 form exceeds one chunk must produce
+        // multiple m=1 escapes followed by the empty m=0 terminator.
+        let payload = "x".repeat(6000); // → 8000 base64 bytes → 2 chunks
+        let replies = build_dnd_data_replies(1, Some(&payload));
+        assert_eq!(replies.len(), 3);
+        assert!(replies[0].starts_with(b"\x1b]72;t=r:x=1:m=1;"));
+        assert!(replies[1].starts_with(b"\x1b]72;t=r:x=1:m=1;"));
+        assert_eq!(replies[2], b"\x1b]72;t=r:x=1:m=0;\x1b\\".to_vec());
+        // Every escape stays within the protocol payload limit.
+        for r in &replies {
+            assert!(r.len() <= 4096 + 32, "oversized escape: {}", r.len());
+        }
+    }
+
+    #[test]
+    fn unknown_index_or_missing_payload_get_an_error_reply() {
+        let replies = build_dnd_data_replies(2, Some("data"));
+        assert_eq!(replies, vec![b"\x1b]72;t=R:x=2;ENOENT\x1b\\".to_vec()]);
+        let replies = build_dnd_data_replies(1, None);
+        assert_eq!(replies, vec![b"\x1b]72;t=R:x=1;ENOENT\x1b\\".to_vec()]);
+    }
+
+    #[test]
+    fn file_uris_are_percent_encoded_per_platform_shape() {
+        assert_eq!(
+            path_to_file_uri(r"C:\Users\alice\my file.txt"),
+            "file:///C:/Users/alice/my%20file.txt"
+        );
+        assert_eq!(
+            path_to_file_uri("/home/alice/a.txt"),
+            "file:///home/alice/a.txt"
+        );
+        // Non-ASCII bytes are percent-encoded (UTF-8, e.g. "é" = C3 A9).
+        assert_eq!(path_to_file_uri("/tmp/é"), "file:///tmp/%C3%A9");
     }
 }

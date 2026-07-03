@@ -866,6 +866,23 @@ impl Window {
             .unwrap_or(0)
     }
 
+    /// Whether the focused pane's application opted in to the kitty
+    /// drag-and-drop protocol (OSC 72).
+    pub fn focused_dnd_enabled(&self) -> bool {
+        self.panes
+            .get(&self.focused_pane_id)
+            .map(|p| p.dnd_enabled())
+            .unwrap_or(false)
+    }
+
+    /// Offer a drop to the focused pane's application (kitty DnD protocol).
+    pub fn offer_dnd_drop_to_focused(&self, uri_list: String) -> anyhow::Result<()> {
+        self.panes
+            .get(&self.focused_pane_id)
+            .ok_or_else(|| anyhow::anyhow!("focused pane not found"))?
+            .offer_dnd_drop(uri_list)
+    }
+
     /// Resize only the focused pane (backward compatibility, single-pane use).
     #[allow(dead_code)]
     pub fn resize_focused(&mut self, cols: u16, rows: u16) -> Result<()> {

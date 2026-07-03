@@ -337,6 +337,80 @@ pub struct Screen {
     /// a terminal reply before drawing the prompt; without this queue the
     /// queries were silently dropped.
     pending_responses: Vec<Vec<u8>>,
+    /// Configured default foreground (OSC 110 reset target). Wired from the
+    /// active theme by the server via [`set_default_colors`]; falls back to
+    /// the client-side `Color::Default` fallback otherwise.
+    configured_fg: [u8; 3],
+    /// Configured default background (OSC 111 reset target).
+    configured_bg: [u8; 3],
+    /// Dynamic foreground set by OSC 10 (`None` = use `configured_fg`).
+    dynamic_fg: Option<[u8; 3]>,
+    /// Dynamic background set by OSC 11 (`None` = use `configured_bg`).
+    dynamic_bg: Option<[u8; 3]>,
+    /// Palette entries overridden by OSC 4, keyed by palette index. The key
+    /// type bounds the map at 256 entries, so it cannot grow unboundedly.
+    palette_overrides: std::collections::HashMap<u8, [u8; 3]>,
+    /// Pending OSC 22 mouse-pointer-shape change (drained by the reader
+    /// thread and forwarded to the client, which maps the name onto a
+    /// platform cursor icon).
+    pending_pointer_shape: Option<String>,
+    /// True when a dynamic color (OSC 4/10/11 set or 104/110/111 reset)
+    /// changed since the last `take_color_overrides_if_changed` drain.
+    color_overrides_changed: bool,
+    /// In-flight OSC 99 notifications keyed by identifier (`d=0` parts
+    /// accumulate here until the closing `d=1` arrives). Bounded by
+    /// [`MAX_OSC99_PENDING`]; excess identifiers are dropped.
+    osc99_pending: std::collections::HashMap<String, (String, String)>,
+    /// Pending OSC 9;4 progress report as `(state, percent)` — state 0
+    /// removes the indicator, 1 = normal, 2 = error, 3 = indeterminate,
+    /// 4 = paused. Drained by the reader thread.
+    pending_progress: Option<(u8, u8)>,
+    /// Whether the running application opted in to the kitty drag-and-drop
+    /// protocol (OSC 72 `t=a` / `t=A`). Mirrored into the pane's
+    /// `AtomicBool` by the reader thread.
+    dnd_enabled: bool,
+    /// Queued OSC 72 data-request / completion messages, drained and
+    /// answered by the reader thread. Bounded by [`MAX_DND_REQUESTS`].
+    pending_dnd_requests: Vec<DndRequest>,
+}
+
+/// One application→terminal message of the kitty drag-and-drop protocol
+/// that must be answered outside the parser (the reader thread owns the
+/// drop payload).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DndRequest {
+    /// `t=r:x=N` — the application requests the payload for MIME index `N`
+    /// (1-based).
+    Data {
+        /// Requested MIME index.
+        index: u32,
+    },
+    /// `t=r:o=N` — the application finished the drop (any final operation);
+    /// the stored payload can be released.
+    Complete,
+}
+
+/// Cap on queued OSC 72 requests (memory-DoS guard; a real application has
+/// at most a couple in flight).
+const MAX_DND_REQUESTS: usize = 8;
+
+/// Maximum number of concurrently accumulating OSC 99 notifications
+/// (memory-DoS guard — real applications use one at a time).
+const MAX_OSC99_PENDING: usize = 4;
+
+/// Snapshot of the dynamic-color override state (roadmap #10b).
+///
+/// Drained by the reader thread and broadcast to clients as a full
+/// (idempotent) replacement, so a late-joining client converges by applying
+/// the most recent snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColorOverrides {
+    /// OSC 10 dynamic foreground (`None` = theme default).
+    pub fg: Option<[u8; 3]>,
+    /// OSC 11 dynamic background (`None` = theme default).
+    pub bg: Option<[u8; 3]>,
+    /// OSC 4 palette overrides, sorted by index for deterministic output.
+    pub palette: Vec<(u8, [u8; 3])>,
 }
 
 impl Screen {
@@ -378,6 +452,17 @@ impl Screen {
             keyboard_protocol_flags: 0,
             keyboard_protocol_stack: Vec::new(),
             pending_responses: Vec::new(),
+            configured_fg: crate::colors::FALLBACK_FG,
+            configured_bg: crate::colors::FALLBACK_BG,
+            dynamic_fg: None,
+            dynamic_bg: None,
+            palette_overrides: std::collections::HashMap::new(),
+            pending_pointer_shape: None,
+            color_overrides_changed: false,
+            osc99_pending: std::collections::HashMap::new(),
+            pending_progress: None,
+            dnd_enabled: false,
+            pending_dnd_requests: Vec::new(),
         }
     }
 
@@ -1097,6 +1182,256 @@ impl Screen {
     /// reply (`ESC [ … final-byte`) and must be written to the PTY as-is.
     pub fn take_pending_responses(&mut self) -> Vec<Vec<u8>> {
         std::mem::take(&mut self.pending_responses)
+    }
+
+    /// Sets the configured default foreground/background (the OSC 110/111
+    /// reset targets). The server calls this with the active theme colors so
+    /// OSC 10/11 queries report what is actually rendered.
+    pub fn set_default_colors(&mut self, fg: [u8; 3], bg: [u8; 3]) {
+        self.configured_fg = fg;
+        self.configured_bg = bg;
+    }
+
+    /// Effective default foreground: the OSC 10 dynamic color if set,
+    /// otherwise the configured default.
+    pub fn effective_fg(&self) -> [u8; 3] {
+        self.dynamic_fg.unwrap_or(self.configured_fg)
+    }
+
+    /// Effective default background: the OSC 11 dynamic color if set,
+    /// otherwise the configured default.
+    pub fn effective_bg(&self) -> [u8; 3] {
+        self.dynamic_bg.unwrap_or(self.configured_bg)
+    }
+
+    /// Sets the dynamic foreground (OSC 10). `None` resets it (OSC 110).
+    pub(crate) fn set_dynamic_fg(&mut self, color: Option<[u8; 3]>) {
+        self.dynamic_fg = color;
+        self.color_overrides_changed = true;
+    }
+
+    /// Sets the dynamic background (OSC 11). `None` resets it (OSC 111).
+    pub(crate) fn set_dynamic_bg(&mut self, color: Option<[u8; 3]>) {
+        self.dynamic_bg = color;
+        self.color_overrides_changed = true;
+    }
+
+    /// Effective palette entry: the OSC 4 override if present, otherwise the
+    /// builtin xterm 256-color palette.
+    pub fn palette_color(&self, index: u8) -> [u8; 3] {
+        self.palette_overrides
+            .get(&index)
+            .copied()
+            .unwrap_or_else(|| crate::colors::builtin_palette_color(index))
+    }
+
+    /// Overrides one palette entry (OSC 4).
+    pub(crate) fn set_palette_entry(&mut self, index: u8, color: [u8; 3]) {
+        self.palette_overrides.insert(index, color);
+        self.color_overrides_changed = true;
+    }
+
+    /// Resets one palette entry (OSC 104 with an index).
+    pub(crate) fn reset_palette_entry(&mut self, index: u8) {
+        if self.palette_overrides.remove(&index).is_some() {
+            self.color_overrides_changed = true;
+        }
+    }
+
+    /// Resets every palette entry (bare OSC 104).
+    pub(crate) fn reset_palette_all(&mut self) {
+        if !self.palette_overrides.is_empty() {
+            self.color_overrides_changed = true;
+        }
+        self.palette_overrides.clear();
+    }
+
+    /// Returns the full dynamic-color override snapshot when anything changed
+    /// since the previous call, `None` otherwise. Drained by the reader
+    /// thread after every `advance` (same cadence as `take_pending_title`).
+    pub fn take_color_overrides_if_changed(&mut self) -> Option<ColorOverrides> {
+        if !self.color_overrides_changed {
+            return None;
+        }
+        self.color_overrides_changed = false;
+        let mut palette: Vec<(u8, [u8; 3])> = self
+            .palette_overrides
+            .iter()
+            .map(|(&idx, &c)| (idx, c))
+            .collect();
+        palette.sort_by_key(|(idx, _)| *idx);
+        Some(ColorOverrides {
+            fg: self.dynamic_fg,
+            bg: self.dynamic_bg,
+            palette,
+        })
+    }
+
+    /// Handles one OSC 99 (kitty desktop notification) escape.
+    ///
+    /// Supported metadata keys: `i` (identifier), `d` (done, default 1),
+    /// `p` (payload type: `title` / `body`; everything else is ignored),
+    /// `e=1` (base64-encoded payload). Completed notifications with any
+    /// content feed the same pending-notification path as OSC 9/777, so the
+    /// client-side consent policy applies unchanged.
+    pub(crate) fn handle_osc99(&mut self, metadata: &str, payload: &[u8]) {
+        const MAX_OSC99_ID_LEN: usize = 64;
+        let mut id = "0";
+        let mut done = true;
+        let mut ptype = "title";
+        let mut base64 = false;
+        for part in metadata.split(':') {
+            let Some((k, v)) = part.split_once('=') else {
+                continue;
+            };
+            match k {
+                "i" => id = v,
+                "d" => done = v != "0",
+                "p" => ptype = v,
+                "e" => base64 = v == "1",
+                _ => {} // Unknown keys (icons, buttons, …) are ignored.
+            }
+        }
+        if id.len() > MAX_OSC99_ID_LEN {
+            return;
+        }
+
+        let text = if base64 {
+            match crate::image::base64_decode(payload).and_then(|d| String::from_utf8(d).ok()) {
+                Some(t) => t,
+                None => return,
+            }
+        } else {
+            match std::str::from_utf8(payload) {
+                Ok(t) => t.to_string(),
+                Err(_) => return,
+            }
+        };
+
+        let mut entry = self.osc99_pending.remove(id).unwrap_or_default();
+        match ptype {
+            "title" => entry.0.push_str(&text),
+            "body" => entry.1.push_str(&text),
+            _ => {} // Unsupported payload types are dropped.
+        }
+        // Per-field cap; `set_pending_notification` sanitizes again below.
+        entry.0 = sanitize_osc_string(entry.0, MAX_NOTIFICATION_LEN);
+        entry.1 = sanitize_osc_string(entry.1, MAX_NOTIFICATION_LEN);
+
+        if done {
+            if !entry.0.is_empty() || !entry.1.is_empty() {
+                let title = if entry.0.is_empty() {
+                    "Nexterm".to_string()
+                } else {
+                    entry.0
+                };
+                self.set_pending_notification(title, entry.1);
+            }
+        } else if self.osc99_pending.len() < MAX_OSC99_PENDING {
+            self.osc99_pending.insert(id.to_string(), entry);
+        }
+    }
+
+    /// Number of in-flight OSC 99 notifications (bounded; exposed for tests).
+    pub fn osc99_pending_count(&self) -> usize {
+        self.osc99_pending.len()
+    }
+
+    /// Handles an OSC 9;4 (ConEmu progress) report. Unknown states and
+    /// non-numeric fields are ignored; the percentage is clamped to 100.
+    pub(crate) fn handle_osc9_progress(&mut self, state: &str, progress: &str) {
+        let Ok(state) = state.trim().parse::<u8>() else {
+            return;
+        };
+        if state > 4 {
+            return;
+        }
+        let progress = progress.trim().parse::<u8>().unwrap_or(0).min(100);
+        self.pending_progress = Some((state, progress));
+    }
+
+    /// Drains the pending OSC 9;4 progress report.
+    pub fn take_pending_progress(&mut self) -> Option<(u8, u8)> {
+        self.pending_progress.take()
+    }
+
+    /// Handles one OSC 72 (kitty drag-and-drop) escape from the application.
+    ///
+    /// `t=q` is answered immediately through the response queue; `t=a`/`t=A`
+    /// toggle the opt-in flag; `t=r` messages are queued for the reader
+    /// thread, which owns the drop payload. Unsupported message types
+    /// (motion negotiation, remote drops) are ignored.
+    pub(crate) fn handle_osc72(&mut self, metadata: &str) {
+        let mut msg_type = "a";
+        let mut id: Option<&str> = None;
+        let mut index: Option<u32> = None;
+        let mut operation: Option<&str> = None;
+        for part in metadata.split(':') {
+            let Some((k, v)) = part.split_once('=') else {
+                continue;
+            };
+            match k {
+                "t" => msg_type = v,
+                "i" => id = Some(v),
+                "x" => index = v.trim().parse::<u32>().ok(),
+                "o" => operation = Some(v),
+                _ => {}
+            }
+        }
+        match msg_type {
+            // Support query — echo the id back verbatim (length-capped).
+            "q" => {
+                let id = id.unwrap_or("0");
+                if id.len() > 32 || !id.bytes().all(|b| b.is_ascii_digit() || b == b'-') {
+                    return;
+                }
+                self.push_pending_response(format!("\x1b]72;t=q:i={id}\x1b\\").into_bytes());
+            }
+            "a" => self.dnd_enabled = true,
+            "A" => self.dnd_enabled = false,
+            "r" => {
+                if self.pending_dnd_requests.len() >= MAX_DND_REQUESTS {
+                    return;
+                }
+                if let Some(index) = index.filter(|&i| i >= 1) {
+                    self.pending_dnd_requests.push(DndRequest::Data { index });
+                } else if operation.is_some() {
+                    self.pending_dnd_requests.push(DndRequest::Complete);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Whether the application opted in to receive drag-and-drop events.
+    pub fn dnd_enabled(&self) -> bool {
+        self.dnd_enabled
+    }
+
+    /// Drains the queued OSC 72 data-request / completion messages.
+    pub fn take_pending_dnd_requests(&mut self) -> Vec<DndRequest> {
+        std::mem::take(&mut self.pending_dnd_requests)
+    }
+
+    /// Queues an OSC 22 pointer-shape change. An empty name means "reset to
+    /// the default shape". Oversized names are dropped outright — no real
+    /// shape name is anywhere near the cap, so they can only be garbage.
+    pub(crate) fn set_pending_pointer_shape(&mut self, name: &str) {
+        const MAX_POINTER_SHAPE_LEN: usize = 64;
+        let name = name.trim();
+        if name.len() > MAX_POINTER_SHAPE_LEN {
+            return;
+        }
+        self.pending_pointer_shape = Some(if name.is_empty() {
+            "default".to_string()
+        } else {
+            name.to_string()
+        });
+    }
+
+    /// Drains the pending OSC 22 pointer-shape change.
+    pub fn take_pending_pointer_shape(&mut self) -> Option<String> {
+        self.pending_pointer_shape.take()
     }
 
     /// Returns the bracketed paste (DEC ?2004) state.

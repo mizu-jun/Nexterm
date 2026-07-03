@@ -51,6 +51,43 @@ pub(super) async fn handle_paste_text(ctx: &mut DispatchContext<'_>, text: &str)
     }
 }
 
+/// `DndDrop`: deliver a dropped file to the focused pane — via the kitty
+/// drag-and-drop protocol when the application opted in (OSC 72 `t=a`),
+/// otherwise by pasting the pre-formatted fallback text (the pre-DnD
+/// behavior, bracketed-paste aware).
+pub(super) async fn handle_dnd_drop(
+    ctx: &mut DispatchContext<'_>,
+    path: &str,
+    paste_fallback: &str,
+) {
+    let dnd_enabled = if let Some(ref name) = *ctx.current_session {
+        let arc = ctx.manager.sessions();
+        let sessions = arc.lock().await;
+        sessions
+            .get(name)
+            .map(|s| s.focused_dnd_enabled())
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    if !dnd_enabled {
+        handle_paste_text(ctx, paste_fallback).await;
+        return;
+    }
+
+    if let Some(ref name) = *ctx.current_session {
+        let arc = ctx.manager.sessions();
+        let sessions = arc.lock().await;
+        if let Some(s) = sessions.get(name) {
+            let uri_list = crate::pane::path_to_file_uri(path);
+            if let Err(e) = s.offer_dnd_drop_to_focused(uri_list) {
+                error!("DnD drop offer error: {}", e);
+            }
+        }
+    }
+}
+
 pub(super) async fn handle_mouse_report(
     ctx: &mut DispatchContext<'_>,
     button: u8,

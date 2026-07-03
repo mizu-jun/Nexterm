@@ -40,7 +40,9 @@ pub use menus::{
     ContextMenu, ContextMenuAction, ContextMenuItem, FileTransferDialog, QuickSelectMatch,
     QuickSelectState,
 };
-pub use pane::{FloatRect, PaneState, PlacedImage};
+pub use pane::{
+    FloatRect, PaneColorOverrides, PaneState, PlacedImage, pointer_shape_to_cursor_icon,
+};
 pub use search::SearchState;
 #[allow(unused_imports)]
 pub use selection::{CopyModeState, DetectedUrl, MouseSelection, ViMode, detect_urls_in_row};
@@ -240,6 +242,11 @@ pub struct ClientState {
     /// thrashing the OS cursor by re-issuing identical `set_cursor` calls.
     /// `winit::window::CursorIcon::Default` mirrors the platform default.
     pub last_cursor_icon: winit::window::CursorIcon,
+    /// Last theme default colors reported to the server via `SetThemeColors`
+    /// (roadmap #10b). Compared each redraw against the committed scheme so a
+    /// report goes out only when the theme actually changes. `None` = not
+    /// reported yet (e.g. the connection was not established).
+    pub last_reported_theme: Option<([u8; 3], [u8; 3])>,
     /// Animation manager (Sprint 5-7 / Phase 3-2).
     ///
     /// Records timestamps for tab-switch / pane-add and lets the renderer query
@@ -627,6 +634,7 @@ impl ClientState {
             tab_drag: None,
             pane_resize_drag: None,
             last_cursor_icon: winit::window::CursorIcon::Default,
+            last_reported_theme: None,
             animations: crate::animations::AnimationManager::new(),
             // Phase 4-4: reflect the focused Window ID on WindowListChanged
             focused_server_window_id: 0,
@@ -746,6 +754,16 @@ impl ClientState {
 
     pub fn focused_pane_mut(&mut self) -> Option<&mut PaneState> {
         self.focused_pane_id.and_then(|id| self.panes.get_mut(&id))
+    }
+
+    /// Cursor icon requested by the focused pane via OSC 22, or the platform
+    /// default when no pane is focused / no override is active. Applied by
+    /// the mouse handler while hovering the grid area.
+    pub fn focused_pane_pointer_icon(&self) -> winit::window::CursorIcon {
+        self.focused_pane()
+            .and_then(|p| p.pointer_shape.as_deref())
+            .map(pointer_shape_to_cursor_icon)
+            .unwrap_or(winit::window::CursorIcon::Default)
     }
 
     /// Toggle the command palette

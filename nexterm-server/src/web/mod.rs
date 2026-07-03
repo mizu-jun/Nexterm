@@ -50,6 +50,9 @@ mod rate_limit;
 mod router;
 mod tls;
 
+#[cfg(test)]
+mod integration_tests;
+
 use std::sync::{Arc, Mutex};
 
 use nexterm_config::WebConfig;

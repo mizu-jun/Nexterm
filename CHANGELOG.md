@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Phase 1 of the competitive-gap roadmap (`docs/plans/gap-roadmap-2026h2.md`):
+debt payoff plus low-cost / high-compatibility protocol work.
+
+**PROTOCOL_VERSION 9 → 10** (`ServerToClient::PointerShapeChanged` +
+`ServerToClient::PaneColorsChanged` + `ClientToServer::SetThemeColors`).
+Single-binary `nexterm` ships both halves so the upgrade is automatic;
+anyone mixing standalone `nexterm-server` and a separate client across
+versions must upgrade both. SNAPSHOT_VERSION = 4 unchanged.
+
+### Added
+
+- **OSC 4 / 10 / 11 dynamic colors (query & set)**: the VT layer now answers
+  color queries (`ESC ] 11 ; ? BEL` etc.) through the same PTY write-back
+  path as DA/DSR, fixing background auto-detection in vim/neovim. Sets are
+  tracked per pane (palette overrides + dynamic fg/bg) and OSC 104/110/111
+  reset them. Replies mirror the request terminator (BEL vs ST).
+- **Dynamic colors end-to-end (roadmap #10b)**: OSC 4/10/11 sets now reach
+  the renderer — the server broadcasts full override snapshots
+  (`PaneColorsChanged`) and the GPU client applies them ahead of the scheme
+  palette during vertex construction (tools like pywal now restyle live).
+  The client also reports its committed theme defaults (`SetThemeColors`)
+  so OSC 10/11 queries answer with the colors that are actually rendered
+  (vim/neovim light-dark detection now sees the real theme).
+- **OSC 22 mouse pointer shape**: applications can now restyle the mouse
+  cursor (`ESC ] 22 ; pointer BEL`, CSS cursor keywords; empty name resets).
+  The GPU client applies the shape while hovering the grid area; unknown
+  names fall back to the platform default. WezTerm / kitty parity.
+- **OSC 9;4 progress reporting (ConEmu / Windows Terminal parity)**: shells
+  and tools reporting progress (`ESC ] 9 ; 4 ; state ; percent`) now show a
+  thin per-tab progress bar — green for normal, red for error, amber for
+  paused, full-width dim for indeterminate. State 0 clears the indicator.
+  Ships as `ServerToClient::ProgressChanged` (PROTOCOL_VERSION 10).
+- **OSC 99 desktop notifications (kitty protocol)**: the practical subset —
+  `i=` multi-part accumulation, `d=` completion, `p=title/body`, `e=1`
+  base64 — feeding the same consent-gated notification path as OSC 9/777.
+  In-flight identifiers are bounded (memory-DoS guard).
+- **kitty drag-and-drop protocol (OSC 72, kitty 0.47 parity)**: applications
+  can opt in (`t=a`) to receive file drops as proper DnD events instead of
+  path pastes. Supported subset: support query (`t=q`, echoed reply),
+  opt-in/out, drop delivery (`t=M` with `text/uri-list`), chunked base64
+  data responses (`t=r`, 4096-byte chunks), error replies (`t=R;ENOENT`),
+  and completion. Applications that never opt in keep the existing
+  quoted-path paste behavior. Motion negotiation (`t=m`) and
+  remote-machine drops are not yet implemented. Ships as
+  `ClientToServer::DndDrop` (PROTOCOL_VERSION 10).
+- **`[scrolling]` config section + touchpad momentum**: `multiplier`
+  (rows per wheel notch, default 3.0 — previously hard-coded) and
+  `momentum` (kitty-style inertial coasting after the fingers lift,
+  default **off** because Windows precision touchpads and macOS already
+  synthesize OS-level inertia; mainly benefits Linux/X11). Momentum only
+  ever applies to pixel-precision touchpad events — discrete wheels are
+  unaffected.
+- **Web Terminal auth integration tests (audit G4)**: 12 axum-level tests
+  drive real HTTP requests through the full router — TOTP login/logout,
+  session-cookie lifecycle, replay rejection (CRITICAL #6 guard), login
+  rate limiting (CRITICAL #2 guard), setup endpoints, disabled-OAuth
+  behavior, and security-header presence. Closes the last HIGH item from
+  audit round 2.
+- **Lua sandbox fuzz target (audit G6)**: new `lua_sandbox` cargo-fuzz
+  target feeds arbitrary chunks through `sandboxed_lua()` and
+  `apply_lua_table_to_config()` with memory and instruction limits; wired
+  into the nightly fuzz workflow.
+
+### Changed
+
+- **rustls-pemfile → rustls-pki-types (audit G5)**: TLS certificate / key
+  parsing now uses the maintained PemObject API; the RUSTSEC-2025-0134
+  `deny.toml` ignore is gone and the archived crate is out of the
+  dependency graph. `tower` was aligned to 0.5 (the version axum links).
+- **Advisory triage**: `anyhow` and `quick-xml` were updated to clear
+  RUSTSEC-2026-0190; the upstream-blocked RUSTSEC-2026-0192 (ttf-parser via
+  cosmic-text) and RUSTSEC-2026-0194/0195 (quick-xml via notify-rust) are
+  documented as reasoned ignores in `deny.toml`.
+
 ## [1.11.0] - 2026-06-28
 
 MINOR release that lands the **UI/UX Modernization v2** plan in full —

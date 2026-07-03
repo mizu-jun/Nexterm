@@ -12,6 +12,7 @@ pub mod gpu;
 pub mod hosts;
 pub mod log;
 pub mod quake;
+pub mod scrolling;
 pub mod security;
 pub mod shell;
 pub mod tokens;
@@ -27,6 +28,7 @@ pub use gpu::{ApiVersion, GpuConfig, PresentModeConfig, Profile};
 pub use hosts::{HooksConfig, HostConfig};
 pub use log::{LogConfig, StatusBarConfig};
 pub use quake::{QuakeEdge, QuakeModeConfig};
+pub use scrolling::ScrollingConfig;
 pub use security::{ConsentPolicy, SecurityConfig};
 pub use shell::{KeyBinding, MacroConfig, SerialPortConfig, ShellConfig};
 pub use tokens::{DesignTokens, parse_hex_color, resolve as resolve_color};
@@ -210,6 +212,10 @@ pub struct Config {
     /// to `0.0` reproduces the pre-v2 flat-rect look.
     #[serde(default)]
     pub ui: UiConfig,
+
+    /// Scrolling behavior (wheel multiplier + optional touchpad momentum).
+    #[serde(default)]
+    pub scrolling: ScrollingConfig,
 }
 
 fn default_leader_key() -> String {
@@ -266,6 +272,7 @@ impl Default for Config {
             animations: AnimationsConfig::default(),
             blocks: BlocksConfig::default(),
             ui: UiConfig::default(),
+            scrolling: ScrollingConfig::default(),
         }
     }
 }

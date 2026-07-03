@@ -85,6 +85,7 @@ impl NextermApp {
             server_shutdown_tx,
             runtime_cfg,
             pixel_scroll_accumulator: 0.0,
+            scroll_momentum: Default::default(),
             update_rx,
             quake,
             // Sprint 5-8 Phase 4-1 Step 1.2 .. Phase 4-4: multi OS-window support

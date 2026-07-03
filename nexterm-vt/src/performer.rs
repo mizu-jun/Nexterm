@@ -4,6 +4,12 @@ use vte::Perform;
 
 use crate::screen::{Screen, SemanticMarkKind};
 
+/// OSC replies mirror the terminator style of the request (BEL vs ST) —
+/// some applications parse the reply terminator strictly.
+fn osc_terminator(bell_terminated: bool) -> &'static str {
+    if bell_terminated { "\x07" } else { "\x1b\\" }
+}
+
 impl Perform for Screen {
     /// Writes a printable character.
     fn print(&mut self, c: char) {
@@ -223,7 +229,7 @@ impl Perform for Screen {
         }
     }
 
-    fn osc_dispatch(&mut self, params: &[&[u8]], _bell_terminated: bool) {
+    fn osc_dispatch(&mut self, params: &[&[u8]], bell_terminated: bool) {
         // `params[0]` is the code; `params[1..]` is the payload.
         if params.is_empty() {
             return;
@@ -272,12 +278,26 @@ impl Perform for Screen {
                     self.set_hyperlink(Some(uri.to_string()));
                 }
             }
-            // OSC 9: iTerm2-compatible desktop notification.
-            // Format: ESC ] 9 ; <message> BEL
+            // OSC 9: iTerm2-compatible desktop notification, plus the
+            // ConEmu progress sub-command.
+            // Notification: ESC ] 9 ; <message> BEL
+            // Progress:     ESC ] 9 ; 4 ; <state> ; <progress> BEL/ST
             "9" => {
                 if let Some(msg_bytes) = params.get(1)
                     && let Ok(msg) = std::str::from_utf8(msg_bytes)
                 {
+                    if msg.trim() == "4" && params.len() >= 3 {
+                        let state = params
+                            .get(2)
+                            .and_then(|b| std::str::from_utf8(b).ok())
+                            .unwrap_or("");
+                        let progress = params
+                            .get(3)
+                            .and_then(|b| std::str::from_utf8(b).ok())
+                            .unwrap_or("0");
+                        self.handle_osc9_progress(state, progress);
+                        return;
+                    }
                     self.set_pending_notification("Nexterm".to_string(), msg.to_string());
                 }
             }
@@ -323,6 +343,30 @@ impl Perform for Screen {
                     self.queue_clipboard_write(text);
                 }
             }
+            // OSC 72: kitty drag-and-drop protocol.
+            // Format: ESC ] 72 ; metadata [; payload] BEL/ST
+            // Only the metadata matters for the supported subset (query,
+            // opt-in/out, data request, completion).
+            "72" => {
+                let metadata = params
+                    .get(1)
+                    .and_then(|b| std::str::from_utf8(b).ok())
+                    .unwrap_or("");
+                self.handle_osc72(metadata);
+            }
+            // OSC 99: kitty desktop notification protocol.
+            // Format: ESC ] 99 ; metadata ; payload BEL/ST
+            // metadata is a colon-separated key=value list (i/d/p/e supported).
+            // The payload may itself contain `;`, so re-join the remaining
+            // OSC parameters before handing them to the screen.
+            "99" => {
+                let metadata = params
+                    .get(1)
+                    .and_then(|b| std::str::from_utf8(b).ok())
+                    .unwrap_or("");
+                let payload = params.get(2..).unwrap_or(&[]).join(&b';');
+                self.handle_osc99(metadata, &payload);
+            }
             // OSC 777: rxvt-compatible desktop notification.
             // Format: ESC ] 777 ; notify ; <title> ; <body> BEL/ST
             "777" => {
@@ -358,6 +402,91 @@ impl Perform for Screen {
             "1337" => {
                 self.handle_iterm2_osc(params);
             }
+            // OSC 4: 256-color palette set/query.
+            // Format: ESC ] 4 ; index ; spec [; index ; spec …] BEL/ST
+            // A spec of `?` is a query answered via `pending_responses`
+            // (same PTY write-back path as DA/DSR). Response size is bounded:
+            // one reply per query pair and vte caps the OSC parameter count.
+            "4" => {
+                let mut pairs = params[1..].chunks_exact(2);
+                for pair in &mut pairs {
+                    let Some(index) = std::str::from_utf8(pair[0])
+                        .ok()
+                        .and_then(|s| s.trim().parse::<u8>().ok())
+                    else {
+                        continue;
+                    };
+                    let Ok(spec) = std::str::from_utf8(pair[1]) else {
+                        continue;
+                    };
+                    if spec.trim() == "?" {
+                        let reply = format!(
+                            "\x1b]4;{};{}{}",
+                            index,
+                            crate::colors::format_rgb_reply(self.palette_color(index)),
+                            osc_terminator(bell_terminated),
+                        );
+                        self.push_pending_response(reply.into_bytes());
+                    } else if let Some(color) = crate::colors::parse_color_spec(spec) {
+                        self.set_palette_entry(index, color);
+                    }
+                }
+            }
+            // OSC 10 / 11: default foreground / background set/query.
+            // Format: ESC ] 10 ; spec BEL/ST — `?` queries the current value.
+            "10" | "11" => {
+                let Some(spec) = params.get(1).and_then(|b| std::str::from_utf8(b).ok()) else {
+                    return;
+                };
+                let is_fg = code == "10";
+                if spec.trim() == "?" {
+                    let color = if is_fg {
+                        self.effective_fg()
+                    } else {
+                        self.effective_bg()
+                    };
+                    let reply = format!(
+                        "\x1b]{};{}{}",
+                        code,
+                        crate::colors::format_rgb_reply(color),
+                        osc_terminator(bell_terminated),
+                    );
+                    self.push_pending_response(reply.into_bytes());
+                } else if let Some(color) = crate::colors::parse_color_spec(spec) {
+                    if is_fg {
+                        self.set_dynamic_fg(Some(color));
+                    } else {
+                        self.set_dynamic_bg(Some(color));
+                    }
+                }
+            }
+            // OSC 22: mouse pointer shape (xterm extension, WezTerm/kitty parity).
+            // Format: ESC ] 22 ; <shape-name> BEL/ST — empty name resets.
+            "22" => {
+                let name = params
+                    .get(1)
+                    .and_then(|b| std::str::from_utf8(b).ok())
+                    .unwrap_or("");
+                self.set_pending_pointer_shape(name);
+            }
+            // OSC 104: reset palette entries (all of them when no index is given).
+            "104" => {
+                if params.len() <= 1 {
+                    self.reset_palette_all();
+                    return;
+                }
+                for raw in &params[1..] {
+                    if let Some(index) = std::str::from_utf8(raw)
+                        .ok()
+                        .and_then(|s| s.trim().parse::<u8>().ok())
+                    {
+                        self.reset_palette_entry(index);
+                    }
+                }
+            }
+            // OSC 110 / 111: reset the default foreground / background.
+            "110" => self.set_dynamic_fg(None),
+            "111" => self.set_dynamic_bg(None),
             // OSC 133: semantic zone markers (prompt / command / output marking).
             // Format: ESC ] 133 ; <A|B|C|D[;exit_code]> ST
             "133" => {

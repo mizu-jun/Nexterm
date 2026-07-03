@@ -12,6 +12,8 @@ decoders, and the OSC handlers do not panic, exhaust memory, or hang on arbitrar
 | `sixel_decode` | `image::decode_sixel()` | Oversized repeat counts, malformed colour maps |
 | `kitty_image` | `image::decode_kitty()` | Oversized width/height, malformed base64 |
 | `osc_url` | OSC 8 / 52 / 133 paths | Oversized URLs, unknown schemes, missing terminators |
+| `ipc_postcard` | `nexterm-proto` postcard decode | Malformed / truncated IPC frames |
+| `lua_sandbox` | `nexterm-config` `sandboxed_lua()` + `apply_lua_table_to_config()` | Sandbox escapes, loader crashes, memory exhaustion, runaway scripts |
 
 ## Local execution
 
@@ -27,6 +29,8 @@ cargo +nightly fuzz run vt_parser_input -- -max_total_time=60
 cargo +nightly fuzz run sixel_decode    -- -max_total_time=60
 cargo +nightly fuzz run kitty_image     -- -max_total_time=60
 cargo +nightly fuzz run osc_url         -- -max_total_time=60
+cargo +nightly fuzz run ipc_postcard    -- -max_total_time=60
+cargo +nightly fuzz run lua_sandbox     -- -max_total_time=60
 
 # Run indefinitely (crash-hunting mode)
 cargo +nightly fuzz run vt_parser_input

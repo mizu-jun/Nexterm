@@ -5,7 +5,7 @@
 
 use unicode_width::UnicodeWidthChar;
 
-use crate::color_util::resolve_color;
+use crate::color_util::resolve_color_with_overrides;
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, GlyphKey, LigatureKey, TextVertex};
 use crate::vertex_util::add_px_rect;
@@ -49,6 +49,9 @@ impl WgpuState {
         // Selection highlight color (semi-transparent blue)
         const SEL_COLOR: [f32; 4] = [0.25, 0.55, 1.0, 0.40];
 
+        // OSC 4/10/11 dynamic-color overrides (roadmap #10b); `None` in the
+        // common no-override case so the lookups are skipped entirely.
+        let overrides = (!pane.color_overrides.is_empty()).then_some(&pane.color_overrides);
         let grid = &pane.grid;
         for row in 0..grid.height as usize {
             let py = row as f32 * cell_h + y_offset;
@@ -59,7 +62,7 @@ impl WgpuState {
                     continue;
                 };
                 let px = col as f32 * cell_w;
-                let bg = resolve_color(&cell.bg, false, palette);
+                let bg = resolve_color_with_overrides(&cell.bg, false, palette, overrides);
                 add_px_rect(px, py, cell_w, cell_h, bg, sw, sh, bg_verts, bg_idx);
                 if mouse_sel.contains(col as u16, row as u16) {
                     add_px_rect(px, py, cell_w, cell_h, SEL_COLOR, sw, sh, bg_verts, bg_idx);
@@ -78,7 +81,7 @@ impl WgpuState {
                         if cell.ch == ' ' {
                             return None;
                         }
-                        let fg = resolve_color(&cell.fg, true, palette);
+                        let fg = resolve_color_with_overrides(&cell.fg, true, palette, overrides);
                         let fg_u8 = [
                             (fg[0] * 255.0) as u8,
                             (fg[1] * 255.0) as u8,
@@ -108,7 +111,7 @@ impl WgpuState {
                         let Some(cell) = grid.get(col as u16, row as u16) else {
                             continue;
                         };
-                        let fg = resolve_color(&cell.fg, true, palette);
+                        let fg = resolve_color_with_overrides(&cell.fg, true, palette, overrides);
                         let fg_u8 = [
                             (fg[0] * 255.0) as u8,
                             (fg[1] * 255.0) as u8,
@@ -183,7 +186,7 @@ impl WgpuState {
                     continue;
                 }
                 let px = col as f32 * cell_w;
-                let fg = resolve_color(&cell.fg, true, palette);
+                let fg = resolve_color_with_overrides(&cell.fg, true, palette, overrides);
                 let fg_u8 = [
                     (fg[0] * 255.0) as u8,
                     (fg[1] * 255.0) as u8,
@@ -276,6 +279,8 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
+        // OSC 4/10/11 dynamic-color overrides (roadmap #10b).
+        let overrides = (!pane.color_overrides.is_empty()).then_some(&pane.color_overrides);
         // Effective number of display rows, also excluding the status bar (bottom 1 cell)
         let visible_rows = ((sh - y_offset - cell_h) / cell_h).max(0.0) as usize;
         let offset = pane.scroll_offset;
@@ -297,13 +302,13 @@ impl WgpuState {
             for (col, cell) in line.iter().enumerate() {
                 let px = col as f32 * cell_w;
                 // Slightly darken the background for scrollback rows
-                let bg = resolve_color(&cell.bg, false, palette);
+                let bg = resolve_color_with_overrides(&cell.bg, false, palette, overrides);
                 let dim_bg = [bg[0] * 0.75, bg[1] * 0.75, bg[2] * 0.75, 1.0];
                 add_px_rect(px, py, cell_w, cell_h, dim_bg, sw, sh, bg_verts, bg_idx);
                 if cell.ch == ' ' {
                     continue;
                 }
-                let fg = resolve_color(&cell.fg, true, palette);
+                let fg = resolve_color_with_overrides(&cell.fg, true, palette, overrides);
                 let fg_u8 = [
                     (fg[0] * 255.0) as u8,
                     (fg[1] * 255.0) as u8,
@@ -636,6 +641,8 @@ impl WgpuState {
         // `tab_bar_h` already includes `padding_y` (the caller passes `grid_offset_y`)
         let off_x = layout.col_offset as f32 * cell_w;
         let off_y = layout.row_offset as f32 * cell_h + tab_bar_h;
+        // OSC 4/10/11 dynamic-color overrides (roadmap #10b).
+        let overrides = (!pane.color_overrides.is_empty()).then_some(&pane.color_overrides);
         // Phase 6b: when `inactive_hsb` is supplied, apply the WezTerm-style
         // HSB multiplier per cell. Otherwise fall back to the flat
         // brightness scale (`0.70`) used since Phase 6.
@@ -661,7 +668,7 @@ impl WgpuState {
                 };
                 let px = off_x + col as f32 * cell_w;
                 let py = off_y + row as f32 * cell_h;
-                let bg = resolve_color(&cell.bg, false, palette);
+                let bg = resolve_color_with_overrides(&cell.bg, false, palette, overrides);
                 let bg = transform_cell([bg[0], bg[1], bg[2], 1.0]);
                 add_px_rect(px, py, cell_w, cell_h, bg, sw, sh, bg_verts, bg_idx);
                 // Selection highlight overlay (focused pane only)
@@ -671,7 +678,7 @@ impl WgpuState {
                 if cell.ch == ' ' {
                     continue;
                 }
-                let fg_raw = resolve_color(&cell.fg, true, palette);
+                let fg_raw = resolve_color_with_overrides(&cell.fg, true, palette, overrides);
                 let fg = transform_cell(fg_raw);
                 let fg_u8 = [
                     (fg[0] * 255.0) as u8,
@@ -768,6 +775,8 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
+        // OSC 4/10/11 dynamic-color overrides (roadmap #10b).
+        let overrides = (!pane.color_overrides.is_empty()).then_some(&pane.color_overrides);
         let off_x = layout.col_offset as f32 * cell_w;
         let off_y = layout.row_offset as f32 * cell_h + tab_bar_h;
         let offset = pane.scroll_offset;
@@ -788,13 +797,13 @@ impl WgpuState {
             let py = off_y + visual_row as f32 * cell_h;
             for (col, cell) in line.iter().enumerate().take(layout.cols as usize) {
                 let px = off_x + col as f32 * cell_w;
-                let bg = resolve_color(&cell.bg, false, palette);
+                let bg = resolve_color_with_overrides(&cell.bg, false, palette, overrides);
                 let dim_bg = [bg[0] * 0.75, bg[1] * 0.75, bg[2] * 0.75, 1.0];
                 add_px_rect(px, py, cell_w, cell_h, dim_bg, sw, sh, bg_verts, bg_idx);
                 if cell.ch == ' ' {
                     continue;
                 }
-                let fg = resolve_color(&cell.fg, true, palette);
+                let fg = resolve_color_with_overrides(&cell.fg, true, palette, overrides);
                 let fg_u8 = [
                     (fg[0] * 255.0) as u8,
                     (fg[1] * 255.0) as u8,

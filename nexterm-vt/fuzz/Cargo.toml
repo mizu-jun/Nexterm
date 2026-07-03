@@ -31,6 +31,8 @@ members = ["."]
 libfuzzer-sys = "0.4"
 nexterm-vt = { path = ".." }
 nexterm-proto = { path = "../../nexterm-proto" }
+nexterm-config = { path = "../../nexterm-config" }
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
 postcard = { version = "1", features = ["alloc"] }
 
 [[bin]]
@@ -64,6 +66,13 @@ bench = false
 [[bin]]
 name = "ipc_postcard"
 path = "fuzz_targets/ipc_postcard.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lua_sandbox"
+path = "fuzz_targets/lua_sandbox.rs"
 test = false
 doc = false
 bench = false
