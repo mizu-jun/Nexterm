@@ -75,7 +75,13 @@ jobs:
         # cargo-audit は `~/.cargo/audit.toml` (グローバル) しか読まないため、
         # CI では --ignore フラグで明示する。
         # RUSTSEC-2023-0071: rsa Marvin Attack (russh 0.60 経由、constant-time 実装移行待ち)
-        run: cargo audit --ignore RUSTSEC-2023-0071
+        # RUSTSEC-2026-0194/0195: quick-xml DoS (notify-rust 経由・外部入力をパースしない。
+        #   上流の quick-xml 0.41 対応待ち)
+        run: >-
+          cargo audit
+          --ignore RUSTSEC-2023-0071
+          --ignore RUSTSEC-2026-0194
+          --ignore RUSTSEC-2026-0195
 
   # Sprint 4-3: cargo-deny によるライセンス・依存ポリシーチェック
   # 設定: deny.toml
