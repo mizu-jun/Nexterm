@@ -261,6 +261,9 @@ impl EventHandler {
                     session_name: "main".to_string(),
                 });
                 let _ = conn.send_tx.try_send(ClientToServer::Resize { cols, rows });
+                // Roadmap Phase 3: fetch the workspace set so the palette's
+                // switch/create entries are populated from the start.
+                let _ = conn.send_tx.try_send(ClientToServer::ListWorkspaces);
                 // Phase 1 (UI 4-tasks) diagnostic: records exactly what cols/rows
                 // we attached with so the log can distinguish "client computed
                 // wrong" from "server applied wrong".

@@ -219,6 +219,10 @@ pub struct ClientState {
     /// Updated whenever `WorkspaceList` / `WorkspaceSwitched` arrives from the server.
     /// Read by the `workspace` built-in widget in the status bar.
     pub current_workspace: String,
+    /// Full workspace set as `(name, is_active)` pairs (roadmap Phase 3).
+    /// Kept in sync with `WorkspaceList` / `WorkspaceSwitched` and used to
+    /// build the palette's dynamic switch/create actions.
+    pub workspaces: Vec<(String, bool)>,
     /// Pending queue for Quake-mode toggle requests (Sprint 5-7 / Phase 2-2).
     ///
     /// `apply_server_message` populates this on `QuakeToggleRequest` and the
@@ -629,6 +633,7 @@ impl ClientState {
             pending_consent: None,
             session_consent_overrides: SessionConsentOverrides::default(),
             current_workspace: "default".to_string(),
+            workspaces: Vec::new(),
             pending_quake_action: None,
             tab_order: Vec::new(),
             tab_drag: None,
@@ -754,6 +759,14 @@ impl ClientState {
 
     pub fn focused_pane_mut(&mut self) -> Option<&mut PaneState> {
         self.focused_pane_id.and_then(|id| self.panes.get_mut(&id))
+    }
+
+    /// Rebuild the palette's dynamic workspace actions from
+    /// [`workspaces`](Self::workspaces) (roadmap Phase 3). Called whenever
+    /// the workspace set or the active workspace changes.
+    pub fn refresh_workspace_palette_actions(&mut self) {
+        let actions = crate::palette::build_workspace_actions(&self.workspaces);
+        self.palette.set_workspace_actions(actions);
     }
 
     /// Cursor icon requested by the focused pane via OSC 22, or the platform

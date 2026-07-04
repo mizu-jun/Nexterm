@@ -251,6 +251,42 @@ impl EventHandler {
                     let _ = self.app.state.jump_to_block(id);
                 }
             }
+            // Roadmap Phase 3: palette workspace actions. The switch entry
+            // carries the target name; the server answers with
+            // `WorkspaceSwitched` + `WorkspaceList`, which refresh the
+            // palette entries.
+            other if other.starts_with("WorkspaceSwitch:") => {
+                let name = other["WorkspaceSwitch:".len()..].to_string();
+                if let Some(conn) = &self.connection {
+                    let _ = conn
+                        .send_tx
+                        .try_send(ClientToServer::SwitchWorkspace { name });
+                }
+            }
+            // Creates `workspace-N` with the first free N, then switches to
+            // it (kitty-style: a fresh workspace becomes active right away).
+            // The generated name can be renamed later via `nexterm-ctl`.
+            "WorkspaceCreate" => {
+                let taken: Vec<&str> = self
+                    .app
+                    .state
+                    .workspaces
+                    .iter()
+                    .map(|(n, _)| n.as_str())
+                    .collect();
+                let name = (1..)
+                    .map(|i| format!("workspace-{i}"))
+                    .find(|c| !taken.contains(&c.as_str()))
+                    .expect("unbounded counter always finds a free name");
+                if let Some(conn) = &self.connection {
+                    let _ = conn
+                        .send_tx
+                        .try_send(ClientToServer::CreateWorkspace { name: name.clone() });
+                    let _ = conn
+                        .send_tx
+                        .try_send(ClientToServer::SwitchWorkspace { name });
+                }
+            }
             _ => debug!("Execute action: {}", action),
         }
     }

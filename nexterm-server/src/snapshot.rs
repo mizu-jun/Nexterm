@@ -25,6 +25,9 @@
 //! - v4: Sprint 5-8 / Phase 4-5 — add `ServerSnapshot.client_os_windows` to save the client-side
 //!   OS window placement (position, size, set of attached server windows). v3 and earlier
 //!   snapshots fill the field with an empty `Vec` and restore as a single-OS-window setup.
+//! - v5: roadmap Phase 3 — add `ServerSnapshot.known_workspaces` so workspaces without any
+//!   session (and an empty active workspace) survive restarts. v4 and earlier snapshots fill
+//!   the field with an empty `Vec` and reconstruct the set from the sessions, exactly as before.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -33,7 +36,7 @@ use std::path::PathBuf;
 ///
 /// Bumped whenever the format changes.
 /// Older snapshots are migrated by `persist::load_snapshot`.
-pub const SNAPSHOT_VERSION: u32 = 4;
+pub const SNAPSHOT_VERSION: u32 = 5;
 
 /// Minimum supported version retained for backward-compatible reading (v1).
 ///
@@ -66,6 +69,13 @@ pub struct ServerSnapshot {
     /// An empty `Vec` restores as a single-OS-window setup (v3 and earlier compatibility).
     #[serde(default)]
     pub client_os_windows: Vec<OsWindowSnapshot>,
+    /// Every known workspace name at save time (added in v5).
+    ///
+    /// Includes workspaces with no sessions, so they survive restarts. An
+    /// empty `Vec` (v4 and earlier) reconstructs the set from the sessions'
+    /// `workspace_name` fields, matching the pre-v5 behavior.
+    #[serde(default)]
+    pub known_workspaces: Vec<String>,
 }
 
 /// Snapshot of a client-side OS window (added in v4).

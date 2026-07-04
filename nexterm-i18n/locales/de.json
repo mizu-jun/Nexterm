@@ -28,6 +28,8 @@
   "ctl-record-started": "Aufzeichnung gestartet: Sitzung '{session}' Bereich {pane_id} → {path}",
   "ctl-record-stopped": "Aufzeichnung gestoppt: Sitzung '{session}' Bereich {pane_id}",
   "palette-split-vertical": "Vertikal teilen",
+  "palette-workspace-switch": "Arbeitsbereich: zu {name} wechseln",
+  "palette-workspace-create": "Arbeitsbereich: neu erstellen",
   "palette-split-horizontal": "Horizontal teilen",
   "palette-focus-next": "Nächster Bereich",
   "palette-focus-prev": "Vorheriger Bereich",

@@ -28,6 +28,8 @@
   "ctl-record-started": "セッション '{session}' ペイン {pane_id} の録音を開始しました → {path}",
   "ctl-record-stopped": "セッション '{session}' ペイン {pane_id} の録音を停止しました",
   "palette-split-vertical": "垂直分割",
+  "palette-workspace-switch": "ワークスペース: {name} に切替",
+  "palette-workspace-create": "ワークスペース: 新規作成",
   "palette-split-horizontal": "水平分割",
   "palette-focus-next": "次のペインへ",
   "palette-focus-prev": "前のペインへ",

@@ -1071,7 +1071,10 @@ impl SessionManager {
     /// Convert every session into a snapshot.
     pub async fn to_snapshot(&self) -> ServerSnapshot {
         let sessions = self.sessions.lock().await;
-        let current_workspace = self.workspace_state.lock().await.current.clone();
+        let (current_workspace, known_workspaces) = {
+            let state = self.workspace_state.lock().await;
+            (state.current.clone(), state.known.clone())
+        };
         let saved_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -1086,6 +1089,7 @@ impl SessionManager {
             // received from the client (for now an empty array preserves v4 compatibility; a
             // dedicated IPC for this will land later).
             client_os_windows: Vec::new(),
+            known_workspaces,
         }
     }
 
@@ -1130,10 +1134,17 @@ impl SessionManager {
         }
         drop(sessions);
 
-        // Restore workspace state.
+        // Restore workspace state. v5 snapshots carry the full known set
+        // (including empty workspaces); older files fall back to the set
+        // derived from the restored sessions.
         let mut state = self.workspace_state.lock().await;
-        for ws in restored_workspaces {
-            if !state.known.iter().any(|w| w == &ws) {
+        for ws in snap
+            .known_workspaces
+            .iter()
+            .cloned()
+            .chain(restored_workspaces)
+        {
+            if !ws.is_empty() && !state.known.iter().any(|w| w == &ws) {
                 state.known.push(ws);
             }
         }
@@ -1163,6 +1174,51 @@ mod tests {
         let manager = SessionManager::new(nexterm_config::ShellConfig::default());
         let list = manager.list_sessions().await;
         assert!(list.is_empty());
+    }
+
+    // ---- Roadmap Phase 3: workspace persistence (SNAPSHOT v5) ----
+
+    #[tokio::test]
+    async fn empty_workspaces_survive_a_snapshot_roundtrip() {
+        // Before v5, only workspaces referenced by at least one session were
+        // reconstructed on restore; empty workspaces (and an empty current
+        // workspace) silently disappeared across restarts.
+        let mgr = SessionManager::new(nexterm_config::ShellConfig::default());
+        mgr.create_workspace("empty-ws").await.expect("create");
+        mgr.switch_workspace("empty-ws").await.expect("switch");
+
+        let snap = mgr.to_snapshot().await;
+        assert!(
+            snap.known_workspaces.contains(&"empty-ws".to_string()),
+            "known workspaces must be persisted"
+        );
+
+        let fresh = SessionManager::new(nexterm_config::ShellConfig::default());
+        fresh.restore_from_snapshot(&snap).await;
+        let (current, list) = fresh.list_workspaces().await;
+        assert_eq!(current, "empty-ws");
+        assert!(list.iter().any(|w| w.name == "empty-ws"));
+        // `default` always survives too.
+        assert!(
+            list.iter()
+                .any(|w| w.name == crate::snapshot::DEFAULT_WORKSPACE)
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_tolerates_snapshots_without_known_workspaces() {
+        // A pre-v5 snapshot (no `known_workspaces` field) must restore
+        // exactly as before: workspaces are derived from the sessions.
+        let mgr = SessionManager::new(nexterm_config::ShellConfig::default());
+        let mut snap = mgr.to_snapshot().await;
+        snap.known_workspaces = Vec::new(); // simulate a migrated old file
+        snap.current_workspace = "ghost".to_string();
+
+        let fresh = SessionManager::new(nexterm_config::ShellConfig::default());
+        fresh.restore_from_snapshot(&snap).await;
+        let (current, _) = fresh.list_workspaces().await;
+        // Unknown current falls back to default, exactly like v3/v4.
+        assert_eq!(current, crate::snapshot::DEFAULT_WORKSPACE);
     }
 
     #[tokio::test]

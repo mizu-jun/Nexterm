@@ -345,15 +345,26 @@ impl ClientState {
                     pane.cwd = Some(cwd);
                 }
             }
-            // Sprint 5-7 / Phase 2-1: workspace list / switch notification
+            // Sprint 5-7 / Phase 2-1: workspace list / switch notification.
+            // Roadmap Phase 3: keep the full list and refresh the palette's
+            // dynamic workspace actions so switch/create entries stay current.
             ServerToClient::WorkspaceList {
                 current,
-                workspaces: _,
+                workspaces,
             } => {
                 self.current_workspace = current;
+                self.workspaces = workspaces
+                    .into_iter()
+                    .map(|w| (w.name, w.is_active))
+                    .collect();
+                self.refresh_workspace_palette_actions();
             }
             ServerToClient::WorkspaceSwitched { name } => {
+                for (ws_name, is_active) in &mut self.workspaces {
+                    *is_active = ws_name == &name;
+                }
                 self.current_workspace = name;
+                self.refresh_workspace_palette_actions();
             }
             // Sprint 5-7 / Phase 2-2: Quake mode toggle request.
             //
@@ -551,6 +562,53 @@ mod tests {
             pane_id: 99,
             shape: "text".to_string(),
         });
+    }
+
+    #[test]
+    fn workspace_list_refreshes_the_palette_actions() {
+        // Roadmap Phase 3: receiving the workspace set must surface
+        // switch/create entries in the palette, and a switch notification
+        // must update which entry is hidden (the active one).
+        let mut state = ClientState::new(80, 24, 1000);
+        state.apply_server_message(ServerToClient::WorkspaceList {
+            current: "default".to_string(),
+            workspaces: vec![
+                nexterm_proto::WorkspaceInfo {
+                    name: "default".to_string(),
+                    session_count: 1,
+                    is_active: true,
+                },
+                nexterm_proto::WorkspaceInfo {
+                    name: "dev".to_string(),
+                    session_count: 0,
+                    is_active: false,
+                },
+            ],
+        });
+        assert_eq!(state.current_workspace, "default");
+        let actions: Vec<String> = state
+            .palette
+            .filtered()
+            .iter()
+            .map(|a| a.action.clone())
+            .collect();
+        assert!(actions.contains(&"WorkspaceSwitch:dev".to_string()));
+        assert!(!actions.contains(&"WorkspaceSwitch:default".to_string()));
+        assert!(actions.contains(&"WorkspaceCreate".to_string()));
+
+        // After switching, the hidden entry flips.
+        state.apply_server_message(ServerToClient::WorkspaceSwitched {
+            name: "dev".to_string(),
+        });
+        assert_eq!(state.current_workspace, "dev");
+        let actions: Vec<String> = state
+            .palette
+            .filtered()
+            .iter()
+            .map(|a| a.action.clone())
+            .collect();
+        assert!(actions.contains(&"WorkspaceSwitch:default".to_string()));
+        assert!(!actions.contains(&"WorkspaceSwitch:dev".to_string()));
     }
 
     #[test]

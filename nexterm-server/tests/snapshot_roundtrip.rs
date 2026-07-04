@@ -24,6 +24,7 @@ fn minimal_snapshot() -> ServerSnapshot {
         sessions: vec![],
         saved_at: 1_700_000_000,
         current_workspace: "default".to_string(),
+        known_workspaces: vec![],
         client_os_windows: vec![],
     }
 }
@@ -71,6 +72,7 @@ fn test_session_snapshot_roundtrip() {
         sessions: vec![session],
         saved_at: 42,
         current_workspace: "default".to_string(),
+        known_workspaces: vec![],
         client_os_windows: vec![],
     };
 
@@ -142,6 +144,7 @@ fn test_persist_save_and_load() {
         sessions: vec![session_with_single_pane()],
         saved_at: 999,
         current_workspace: "default".to_string(),
+        known_workspaces: vec![],
         client_os_windows: vec![OsWindowSnapshot {
             position: (100, 50),
             size: (1280, 720),
@@ -226,7 +229,7 @@ fn test_load_snapshot_returns_none_when_missing() {
 #[test]
 fn test_snapshot_version_is_current() {
     assert_eq!(
-        SNAPSHOT_VERSION, 4,
+        SNAPSHOT_VERSION, 5,
         "スキーマバージョンが変更された場合は移行処理を追加すること"
     );
     assert_eq!(SNAPSHOT_VERSION_MIN, 1, "最低サポートバージョンは 1 のまま");
@@ -328,6 +331,7 @@ fn test_os_window_snapshot_roundtrip() {
         sessions: vec![],
         saved_at: 0,
         current_workspace: "default".to_string(),
+        known_workspaces: vec![],
         client_os_windows: vec![os_window.clone()],
     };
 
@@ -350,6 +354,7 @@ fn test_v4_multiple_os_windows_roundtrip() {
         sessions: vec![],
         saved_at: 7,
         current_workspace: "default".to_string(),
+        known_workspaces: vec![],
         client_os_windows: vec![
             OsWindowSnapshot {
                 position: (0, 0),

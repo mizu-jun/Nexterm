@@ -28,6 +28,8 @@
   "ctl-record-started": "녹화 시작됨: 세션 '{session}' 창 {pane_id} → {path}",
   "ctl-record-stopped": "녹화 중지됨: 세션 '{session}' 창 {pane_id}",
   "palette-split-vertical": "수직 분할",
+  "palette-workspace-switch": "워크스페이스: {name}(으)로 전환",
+  "palette-workspace-create": "워크스페이스: 새로 만들기",
   "palette-split-horizontal": "수평 분할",
   "palette-focus-next": "다음 창",
   "palette-focus-prev": "이전 창",

@@ -28,6 +28,8 @@
   "ctl-record-started": "Enregistrement démarré : session '{session}' volet {pane_id} → {path}",
   "ctl-record-stopped": "Enregistrement arrêté : session '{session}' volet {pane_id}",
   "palette-split-vertical": "Division verticale",
+  "palette-workspace-switch": "Espace de travail : basculer vers {name}",
+  "palette-workspace-create": "Espace de travail : créer",
   "palette-split-horizontal": "Division horizontale",
   "palette-focus-next": "Volet suivant",
   "palette-focus-prev": "Volet précédent",

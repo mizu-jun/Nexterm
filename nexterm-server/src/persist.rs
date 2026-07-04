@@ -221,6 +221,7 @@ mod tests {
             sessions: Vec::new(),
             saved_at: 0,
             current_workspace: "default".to_string(),
+            known_workspaces: vec![],
             client_os_windows: Vec::new(),
         };
 

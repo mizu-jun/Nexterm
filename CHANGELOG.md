@@ -7,8 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Phase 1 of the competitive-gap roadmap (`docs/plans/gap-roadmap-2026h2.md`):
-debt payoff plus low-cost / high-compatibility protocol work.
+Phases 1–3 of the competitive-gap roadmap (`docs/plans/gap-roadmap-2026h2.md`):
+debt payoff, low-cost / high-compatibility protocol work, and named
+workspaces.
+
+**SNAPSHOT_VERSION 4 → 5** (`ServerSnapshot.known_workspaces` added so
+workspaces without sessions survive restarts). v4 and earlier snapshot files
+auto-migrate; the workspace set is reconstructed from the sessions exactly
+as before.
 
 **PROTOCOL_VERSION 9 → 10** (`ServerToClient::PointerShapeChanged` +
 `ServerToClient::PaneColorsChanged` + `ClientToServer::SetThemeColors`).
@@ -43,6 +49,13 @@ versions must upgrade both. SNAPSHOT_VERSION = 4 unchanged.
   `i=` multi-part accumulation, `d=` completion, `p=title/body`, `e=1`
   base64 — feeding the same consent-gated notification path as OSC 9/777.
   In-flight identifiers are bounded (memory-DoS guard).
+- **Named workspaces in the command palette (roadmap Phase 3)**: the
+  palette now offers "Workspace: switch to <name>" entries for every
+  non-active workspace and a "Workspace: create new" entry
+  (auto-named `workspace-N`, switched to immediately). The workspace set is
+  fetched on attach and refreshed on every change, participates in fuzzy
+  ranking and usage history, and is localized in all 8 languages. Empty
+  workspaces now survive restarts (SNAPSHOT_VERSION 5).
 - **kitty drag-and-drop protocol (OSC 72, kitty 0.47 parity)**: applications
   can opt in (`t=a`) to receive file drops as proper DnD events instead of
   path pastes. Supported subset: support query (`t=q`, echoed reply),

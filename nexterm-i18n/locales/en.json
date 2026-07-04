@@ -28,6 +28,8 @@
   "ctl-record-started": "Recording started for session '{session}' pane {pane_id} → {path}",
   "ctl-record-stopped": "Recording stopped for session '{session}' pane {pane_id}",
   "palette-split-vertical": "Split Vertical",
+  "palette-workspace-switch": "Workspace: switch to {name}",
+  "palette-workspace-create": "Workspace: create new",
   "palette-split-horizontal": "Split Horizontal",
   "palette-focus-next": "Focus Next Pane",
   "palette-focus-prev": "Focus Previous Pane",

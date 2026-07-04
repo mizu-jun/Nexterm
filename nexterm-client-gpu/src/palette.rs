@@ -56,12 +56,18 @@ pub struct CommandPalette {
     /// host from `NamedBlockStore` + the focused pane's block list) instead
     /// of the static action list. Action ids are `"BlockSelect:<u64>"`.
     named_block_actions: Vec<PaletteAction>,
+    /// Roadmap Phase 3: number of built-in actions at the head of `actions`.
+    /// Entries beyond this index are dynamic workspace actions, replaced
+    /// wholesale by [`set_workspace_actions`](Self::set_workspace_actions)
+    /// so they participate in normal fuzzy ranking and history.
+    static_len: usize,
 }
 
 impl CommandPalette {
     /// Build a palette with the default actions (translated for the current locale).
     pub fn new() -> Self {
         let actions = default_actions();
+        let static_len = actions.len();
         Self {
             actions,
             query: String::new(),
@@ -70,6 +76,7 @@ impl CommandPalette {
             matcher: SkimMatcherV2::default(),
             history: PaletteHistory::new(),
             named_block_actions: Vec::new(),
+            static_len,
         }
     }
 
@@ -172,6 +179,15 @@ impl CommandPalette {
         self.named_block_actions = actions;
     }
 
+    /// Roadmap Phase 3: replace the dynamic workspace actions (the tail of
+    /// `actions` past `static_len`). Callers refresh this whenever a
+    /// `WorkspaceList` / `WorkspaceSwitched` message arrives, so the palette
+    /// always offers switch entries for the current workspace set.
+    pub fn set_workspace_actions(&mut self, actions: Vec<PaletteAction>) {
+        self.actions.truncate(self.static_len);
+        self.actions.extend(actions);
+    }
+
     /// Record a "used" event and persist the history (Sprint 5-7 / Phase 3-3).
     pub fn record_use(&mut self, action: &str) {
         let now = SystemTime::now()
@@ -216,6 +232,27 @@ where
             action: format!("BlockSelect:{}", id),
         })
         .collect()
+}
+
+/// Roadmap Phase 3: build the dynamic workspace palette actions.
+///
+/// Input pairs are `(workspace name, is_active)`. Every non-active workspace
+/// becomes a `"WorkspaceSwitch:<name>"` entry, plus one `"WorkspaceCreate"`
+/// entry at the end. Pure — no I/O; labels are translated via i18n.
+pub fn build_workspace_actions(workspaces: &[(String, bool)]) -> Vec<PaletteAction> {
+    let mut actions: Vec<PaletteAction> = workspaces
+        .iter()
+        .filter(|(_, is_active)| !is_active)
+        .map(|(name, _)| PaletteAction {
+            label: fl!("palette-workspace-switch", name = name),
+            action: format!("WorkspaceSwitch:{}", name),
+        })
+        .collect();
+    actions.push(PaletteAction {
+        label: fl!("palette-workspace-create"),
+        action: "WorkspaceCreate".to_string(),
+    });
+    actions
 }
 
 /// Return the default action list (already translated via i18n).
@@ -798,6 +835,55 @@ mod tests {
         unsafe {
             std::env::remove_var("__NEXTERM_TEST_PALETTE_HISTORY_PATH__");
         }
+    }
+
+    // ---- Roadmap Phase 3: workspace actions ----------------------------
+
+    #[test]
+    fn build_workspace_actions_skips_the_active_workspace() {
+        let acts = build_workspace_actions(&[
+            ("default".to_string(), true),
+            ("dev".to_string(), false),
+            ("ops".to_string(), false),
+        ]);
+        // Two switch entries (non-active only) + one create entry.
+        assert_eq!(acts.len(), 3);
+        assert!(acts.iter().any(|a| a.action == "WorkspaceSwitch:dev"));
+        assert!(acts.iter().any(|a| a.action == "WorkspaceSwitch:ops"));
+        assert!(
+            !acts.iter().any(|a| a.action == "WorkspaceSwitch:default"),
+            "no switch entry for the already-active workspace"
+        );
+        assert!(acts.iter().any(|a| a.action == "WorkspaceCreate"));
+        // Labels embed the workspace name.
+        let dev = acts
+            .iter()
+            .find(|a| a.action == "WorkspaceSwitch:dev")
+            .unwrap();
+        assert!(dev.label.contains("dev"), "label: {}", dev.label);
+    }
+
+    #[test]
+    fn workspace_actions_participate_in_normal_filtering() {
+        let mut p = CommandPalette::new();
+        p.set_workspace_actions(build_workspace_actions(&[
+            ("default".to_string(), true),
+            ("dev".to_string(), false),
+        ]));
+        p.query = String::new();
+        let results = p.filtered();
+        assert!(results.iter().any(|a| a.action == "WorkspaceSwitch:dev"));
+        assert!(results.iter().any(|a| a.action == "WorkspaceCreate"));
+
+        // Replacing the list drops stale entries instead of accumulating.
+        p.set_workspace_actions(build_workspace_actions(&[("default".to_string(), true)]));
+        let results = p.filtered();
+        assert!(
+            !results.iter().any(|a| a.action == "WorkspaceSwitch:dev"),
+            "stale workspace entries must not accumulate"
+        );
+        // Static actions are untouched by the replacement.
+        assert!(results.iter().any(|a| a.action == "SplitVertical"));
     }
 
     // ---- Phase 2c-F: @ prefix named-block search -----------------------

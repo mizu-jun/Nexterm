@@ -28,6 +28,8 @@
   "ctl-record-started": "Registrazione avviata: sessione '{session}' riquadro {pane_id} → {path}",
   "ctl-record-stopped": "Registrazione arrestata: sessione '{session}' riquadro {pane_id}",
   "palette-split-vertical": "Dividi verticalmente",
+  "palette-workspace-switch": "Area di lavoro: passa a {name}",
+  "palette-workspace-create": "Area di lavoro: crea nuova",
   "palette-split-horizontal": "Dividi orizzontalmente",
   "palette-focus-next": "Pannello successivo",
   "palette-focus-prev": "Pannello precedente",

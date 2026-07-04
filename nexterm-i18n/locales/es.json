@@ -28,6 +28,8 @@
   "ctl-record-started": "Grabación iniciada: sesión '{session}' panel {pane_id} → {path}",
   "ctl-record-stopped": "Grabación detenida: sesión '{session}' panel {pane_id}",
   "palette-split-vertical": "División vertical",
+  "palette-workspace-switch": "Espacio de trabajo: cambiar a {name}",
+  "palette-workspace-create": "Espacio de trabajo: crear nuevo",
   "palette-split-horizontal": "División horizontal",
   "palette-focus-next": "Panel siguiente",
   "palette-focus-prev": "Panel anterior",
