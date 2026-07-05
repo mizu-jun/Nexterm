@@ -52,11 +52,7 @@ pub(super) async fn handle_attach(ctx: &mut DispatchContext<'_>, session_name: &
     let tx = ctx.tx.clone();
 
     // If the session does not exist, create and attach to a new one.
-    let is_new_session = {
-        let arc = manager.sessions();
-        let sessions = arc.lock().await;
-        !sessions.contains_key(session_name)
-    };
+    let is_new_session = { manager.session_arc(session_name).await.is_none() };
     match manager.get_or_create_and_attach(session_name, 80, 24).await {
         Ok(()) => {
             *ctx.current_session = Some(session_name.to_string());
@@ -73,9 +69,12 @@ pub(super) async fn handle_attach(ctx: &mut DispatchContext<'_>, session_name: &
             // session" symptom: the PTY reader produces the shell prompt
             // diff in the gap and the client never receives it.
             let bcast_rx = {
-                let arc = manager.sessions();
-                let sessions = arc.lock().await;
-                sessions.get(session_name).map(|s| s.attach())
+                if let Some(session_arc) = manager.session_arc(session_name).await {
+                    let s = session_arc.lock().await;
+                    Some(s.attach())
+                } else {
+                    None
+                }
             };
             if let Some(mut bcast_rx) = bcast_rx {
                 let fwd_tx = tx.clone();
@@ -104,11 +103,17 @@ pub(super) async fn handle_attach(ctx: &mut DispatchContext<'_>, session_name: &
                                     n
                                 );
                                 let refreshes = {
-                                    let sessions = resync_sessions.lock().await;
-                                    sessions
-                                        .get(&resync_name)
-                                        .map(|s| s.focused_window_full_refresh())
-                                        .unwrap_or_default()
+                                    if let Some(session_arc) = {
+                                        let arc = resync_sessions.clone();
+                                        // Fetch the Arc<Mutex<Session>> once
+                                        let map = arc.lock().await;
+                                        map.get(&resync_name).cloned()
+                                    } {
+                                        let s = session_arc.lock().await;
+                                        s.focused_window_full_refresh()
+                                    } else {
+                                        Default::default()
+                                    }
                                 };
                                 let mut disconnected = false;
                                 for (pane_id, grid) in refreshes {
@@ -139,13 +144,14 @@ pub(super) async fn handle_attach(ctx: &mut DispatchContext<'_>, session_name: &
 
             // Send a Full Refresh.
             let refresh = {
-                let arc = manager.sessions();
-                let sessions = arc.lock().await;
-                sessions.get(session_name).and_then(|s| {
+                if let Some(session_arc) = manager.session_arc(session_name).await {
+                    let s = session_arc.lock().await;
                     // C2: serial-aware — a focused serial pane must also refresh.
                     s.focused_window()
                         .and_then(|w| w.focused_pane_full_refresh())
-                })
+                } else {
+                    None
+                }
             };
             // v1.9.4 — if the focused pane's grid is still blank when we
             // attach (typical for a freshly restored session where the
@@ -170,11 +176,9 @@ pub(super) async fn handle_attach(ctx: &mut DispatchContext<'_>, session_name: &
                     grid.cursor_row
                 );
                 let should_nudge = grid.width > 0 && grid.height > 0 && is_blank_grid(grid);
-                if should_nudge {
-                    let arc = manager.sessions();
-                    let sessions = arc.lock().await;
-                    if let Some(s) = sessions.get(session_name)
-                        && let Some(w) = s.focused_window()
+                if should_nudge && let Some(session_arc) = manager.session_arc(session_name).await {
+                    let s = session_arc.lock().await;
+                    if let Some(w) = s.focused_window()
                         && let Some(p) = w.pane(w.focused_pane_id())
                     {
                         match p.write_input(b"\r") {
@@ -196,12 +200,13 @@ pub(super) async fn handle_attach(ctx: &mut DispatchContext<'_>, session_name: &
 
             // Send a layout-changed notification (positions and sizes of every pane).
             let layout_msg = {
-                let arc = manager.sessions();
-                let sessions = arc.lock().await;
-                sessions.get(session_name).and_then(|s| {
+                if let Some(session_arc) = manager.session_arc(session_name).await {
+                    let s = session_arc.lock().await;
                     s.focused_window()
                         .map(|w| w.layout_changed_msg(s.cols, s.rows))
-                })
+                } else {
+                    None
+                }
             };
             if let Some(msg) = layout_msg {
                 let _ = tx.send(msg).await;
@@ -239,13 +244,12 @@ pub(super) async fn handle_attach(ctx: &mut DispatchContext<'_>, session_name: &
 }
 
 pub(super) async fn handle_detach(ctx: &mut DispatchContext<'_>) {
-    if let Some(name) = ctx.current_session.take() {
-        let arc = ctx.manager.sessions();
-        let mut sessions = arc.lock().await;
-        if let Some(s) = sessions.get_mut(&name) {
-            s.detach_all();
-            info!("detached session '{}'", name);
-        }
+    if let Some(name) = ctx.current_session.take()
+        && let Some(session_arc) = ctx.manager.session_arc(&name).await
+    {
+        let mut s = session_arc.lock().await;
+        s.detach_all();
+        info!("detached session '{}'", name);
     }
 }
 
@@ -386,16 +390,15 @@ pub(super) async fn handle_stop_asciicast(ctx: &mut DispatchContext<'_>, session
 }
 
 pub(super) async fn handle_set_broadcast(ctx: &mut DispatchContext<'_>, enabled: bool) {
-    if let Some(ref name) = *ctx.current_session {
-        let arc = ctx.manager.sessions();
-        let mut sessions = arc.lock().await;
-        if let Some(s) = sessions.get_mut(name) {
-            s.set_broadcast(enabled);
-            let _ = ctx
-                .tx
-                .send(ServerToClient::BroadcastModeChanged { enabled })
-                .await;
-        }
+    if let Some(ref name) = *ctx.current_session
+        && let Some(session_arc) = ctx.manager.session_arc(name).await
+    {
+        let mut s = session_arc.lock().await;
+        s.set_broadcast(enabled);
+        let _ = ctx
+            .tx
+            .send(ServerToClient::BroadcastModeChanged { enabled })
+            .await;
     }
 }
 

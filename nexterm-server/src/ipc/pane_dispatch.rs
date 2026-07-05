@@ -12,41 +12,39 @@ pub(super) async fn handle_key_event(
     modifiers: Modifiers,
     event_type: u8,
 ) {
-    if let Some(ref name) = *ctx.current_session {
-        let arc = ctx.manager.sessions();
-        let sessions = arc.lock().await;
-        if let Some(s) = sessions.get(name) {
-            let flags = s.focused_keyboard_protocol_flags();
-            let bytes = if flags != 0 {
-                super::key::kitty_key_to_bytes(code, modifiers, event_type, flags)
-            } else {
-                super::key::key_to_bytes(code, modifiers)
-            };
-            if !bytes.is_empty()
-                && let Err(e) = s.write_to_focused(&bytes)
-            {
-                error!("PTY write error: {}", e);
-            }
+    if let Some(ref name) = *ctx.current_session
+        && let Some(session_arc) = ctx.manager.session_arc(name).await
+    {
+        let s = session_arc.lock().await;
+        let flags = s.focused_keyboard_protocol_flags();
+        let bytes = if flags != 0 {
+            super::key::kitty_key_to_bytes(code, modifiers, event_type, flags)
+        } else {
+            super::key::key_to_bytes(code, modifiers)
+        };
+        if !bytes.is_empty()
+            && let Err(e) = s.write_to_focused(&bytes)
+        {
+            error!("PTY write error: {}", e);
         }
     }
 }
 
 pub(super) async fn handle_paste_text(ctx: &mut DispatchContext<'_>, text: &str) {
-    if let Some(ref name) = *ctx.current_session {
-        let arc = ctx.manager.sessions();
-        let sessions = arc.lock().await;
-        if let Some(s) = sessions.get(name) {
-            let data: Vec<u8> = if s.focused_bracketed_paste_mode() {
-                let mut v = b"\x1b[200~".to_vec();
-                v.extend_from_slice(text.as_bytes());
-                v.extend_from_slice(b"\x1b[201~");
-                v
-            } else {
-                text.as_bytes().to_vec()
-            };
-            if let Err(e) = s.write_to_focused(&data) {
-                error!("paste error: {}", e);
-            }
+    if let Some(ref name) = *ctx.current_session
+        && let Some(session_arc) = ctx.manager.session_arc(name).await
+    {
+        let s = session_arc.lock().await;
+        let data: Vec<u8> = if s.focused_bracketed_paste_mode() {
+            let mut v = b"\x1b[200~".to_vec();
+            v.extend_from_slice(text.as_bytes());
+            v.extend_from_slice(b"\x1b[201~");
+            v
+        } else {
+            text.as_bytes().to_vec()
+        };
+        if let Err(e) = s.write_to_focused(&data) {
+            error!("paste error: {}", e);
         }
     }
 }
@@ -61,12 +59,13 @@ pub(super) async fn handle_dnd_drop(
     paste_fallback: &str,
 ) {
     let dnd_enabled = if let Some(ref name) = *ctx.current_session {
-        let arc = ctx.manager.sessions();
-        let sessions = arc.lock().await;
-        sessions
-            .get(name)
-            .map(|s| s.focused_dnd_enabled())
-            .unwrap_or(false)
+        match ctx.manager.session_arc(name).await {
+            Some(session_arc) => {
+                let s = session_arc.lock().await;
+                s.focused_dnd_enabled()
+            }
+            None => false,
+        }
     } else {
         false
     };
@@ -76,14 +75,13 @@ pub(super) async fn handle_dnd_drop(
         return;
     }
 
-    if let Some(ref name) = *ctx.current_session {
-        let arc = ctx.manager.sessions();
-        let sessions = arc.lock().await;
-        if let Some(s) = sessions.get(name) {
-            let uri_list = crate::pane::path_to_file_uri(path);
-            if let Err(e) = s.offer_dnd_drop_to_focused(uri_list) {
-                error!("DnD drop offer error: {}", e);
-            }
+    if let Some(ref name) = *ctx.current_session
+        && let Some(session_arc) = ctx.manager.session_arc(name).await
+    {
+        let s = session_arc.lock().await;
+        let uri_list = crate::pane::path_to_file_uri(path);
+        if let Err(e) = s.offer_dnd_drop_to_focused(uri_list) {
+            error!("DnD drop offer error: {}", e);
         }
     }
 }
@@ -96,18 +94,17 @@ pub(super) async fn handle_mouse_report(
     pressed: bool,
     motion: bool,
 ) {
-    if let Some(ref name) = *ctx.current_session {
-        let arc = ctx.manager.sessions();
-        let sessions = arc.lock().await;
-        if let Some(s) = sessions.get(name) {
-            let mode = s.focused_mouse_mode();
-            if mode > 0 {
-                let suffix = if pressed || motion { b'M' } else { b'm' };
-                let cb = button as u32 + if motion { 32 } else { 0 };
-                let seq = format!("\x1b[<{};{};{}{}", cb, col + 1, row + 1, suffix as char);
-                if let Err(e) = s.write_to_focused(seq.as_bytes()) {
-                    error!("mouse report send error: {}", e);
-                }
+    if let Some(ref name) = *ctx.current_session
+        && let Some(session_arc) = ctx.manager.session_arc(name).await
+    {
+        let s = session_arc.lock().await;
+        let mode = s.focused_mouse_mode();
+        if mode > 0 {
+            let suffix = if pressed || motion { b'M' } else { b'm' };
+            let cb = button as u32 + if motion { 32 } else { 0 };
+            let seq = format!("\x1b[<{};{};{}{}", cb, col + 1, row + 1, suffix as char);
+            if let Err(e) = s.write_to_focused(seq.as_bytes()) {
+                error!("mouse report send error: {}", e);
             }
         }
     }
@@ -116,9 +113,8 @@ pub(super) async fn handle_mouse_report(
 pub(super) async fn handle_focus_next_pane(ctx: &mut DispatchContext<'_>) {
     if let Some(ref name) = *ctx.current_session {
         let layout_msg = {
-            let arc = ctx.manager.sessions();
-            let mut sessions = arc.lock().await;
-            if let Some(s) = sessions.get_mut(name) {
+            if let Some(session_arc) = ctx.manager.session_arc(name).await {
+                let mut s = session_arc.lock().await;
                 let cols = s.cols;
                 let rows = s.rows;
                 if let Some(w) = s.focused_window_mut() {
@@ -140,9 +136,8 @@ pub(super) async fn handle_focus_next_pane(ctx: &mut DispatchContext<'_>) {
 pub(super) async fn handle_focus_prev_pane(ctx: &mut DispatchContext<'_>) {
     if let Some(ref name) = *ctx.current_session {
         let layout_msg = {
-            let arc = ctx.manager.sessions();
-            let mut sessions = arc.lock().await;
-            if let Some(s) = sessions.get_mut(name) {
+            if let Some(session_arc) = ctx.manager.session_arc(name).await {
+                let mut s = session_arc.lock().await;
                 let cols = s.cols;
                 let rows = s.rows;
                 if let Some(w) = s.focused_window_mut() {
@@ -164,9 +159,8 @@ pub(super) async fn handle_focus_prev_pane(ctx: &mut DispatchContext<'_>) {
 pub(super) async fn handle_focus_pane(ctx: &mut DispatchContext<'_>, pane_id: u32) {
     if let Some(ref name) = *ctx.current_session {
         let layout_msg = {
-            let arc = ctx.manager.sessions();
-            let mut sessions = arc.lock().await;
-            if let Some(s) = sessions.get_mut(name) {
+            if let Some(session_arc) = ctx.manager.session_arc(name).await {
+                let mut s = session_arc.lock().await;
                 let cols = s.cols;
                 let rows = s.rows;
                 if let Some(w) = s.focused_window_mut() {
@@ -188,9 +182,8 @@ pub(super) async fn handle_focus_pane(ctx: &mut DispatchContext<'_>, pane_id: u3
 pub(super) async fn handle_close_pane(ctx: &mut DispatchContext<'_>) {
     if let Some(ref name) = *ctx.current_session {
         let result = {
-            let arc = ctx.manager.sessions();
-            let mut sessions = arc.lock().await;
-            if let Some(s) = sessions.get_mut(name) {
+            if let Some(session_arc) = ctx.manager.session_arc(name).await {
+                let mut s = session_arc.lock().await;
                 let cols = s.cols;
                 let rows = s.rows;
                 s.focused_window_mut()
@@ -202,12 +195,13 @@ pub(super) async fn handle_close_pane(ctx: &mut DispatchContext<'_>) {
         match result {
             Some(Ok(removed_id)) => {
                 let layout_msg = {
-                    let arc = ctx.manager.sessions();
-                    let sessions = arc.lock().await;
-                    sessions.get(name).and_then(|s| {
+                    if let Some(session_arc) = ctx.manager.session_arc(name).await {
+                        let s = session_arc.lock().await;
                         s.focused_window()
                             .map(|w| w.layout_changed_msg(s.cols, s.rows))
-                    })
+                    } else {
+                        None
+                    }
                 };
                 let _ = ctx
                     .tx
@@ -235,9 +229,8 @@ pub(super) async fn handle_close_pane(ctx: &mut DispatchContext<'_>) {
 pub(super) async fn handle_toggle_zoom(ctx: &mut DispatchContext<'_>) {
     if let Some(ref name) = *ctx.current_session {
         let result = {
-            let arc = ctx.manager.sessions();
-            let mut sessions = arc.lock().await;
-            if let Some(s) = sessions.get_mut(name) {
+            if let Some(session_arc) = ctx.manager.session_arc(name).await {
+                let mut s = session_arc.lock().await;
                 let cols = s.cols;
                 let rows = s.rows;
                 s.focused_window_mut().map(|w| {
@@ -263,9 +256,8 @@ pub(super) async fn handle_toggle_zoom(ctx: &mut DispatchContext<'_>) {
 pub(super) async fn handle_reorder_panes(ctx: &mut DispatchContext<'_>, pane_ids: &[u32]) {
     if let Some(ref name) = *ctx.current_session {
         let layout_msg = {
-            let arc = ctx.manager.sessions();
-            let mut sessions = arc.lock().await;
-            if let Some(s) = sessions.get_mut(name) {
+            if let Some(session_arc) = ctx.manager.session_arc(name).await {
+                let mut s = session_arc.lock().await;
                 let cols = s.cols;
                 let rows = s.rows;
                 if let Some(w) = s.focused_window_mut() {
@@ -290,9 +282,8 @@ pub(super) async fn handle_reorder_panes(ctx: &mut DispatchContext<'_>, pane_ids
 pub(super) async fn handle_swap_pane(ctx: &mut DispatchContext<'_>, target_pane_id: u32) {
     if let Some(ref name) = *ctx.current_session {
         let layout_msg = {
-            let arc = ctx.manager.sessions();
-            let mut sessions = arc.lock().await;
-            if let Some(s) = sessions.get_mut(name) {
+            if let Some(session_arc) = ctx.manager.session_arc(name).await {
+                let mut s = session_arc.lock().await;
                 let cols = s.cols;
                 let rows = s.rows;
                 if let Some(w) = s.focused_window_mut() {
@@ -314,9 +305,8 @@ pub(super) async fn handle_swap_pane(ctx: &mut DispatchContext<'_>, target_pane_
 pub(super) async fn handle_break_pane(ctx: &mut DispatchContext<'_>) {
     if let Some(ref name) = *ctx.current_session {
         let result = {
-            let arc = ctx.manager.sessions();
-            let mut sessions = arc.lock().await;
-            if let Some(s) = sessions.get_mut(name) {
+            if let Some(session_arc) = ctx.manager.session_arc(name).await {
+                let mut s = session_arc.lock().await;
                 let cols = s.cols;
                 let rows = s.rows;
                 let old_layout = s.focused_window().map(|w| w.layout_changed_msg(cols, rows));
@@ -355,9 +345,8 @@ pub(super) async fn handle_break_pane(ctx: &mut DispatchContext<'_>) {
 pub(super) async fn handle_join_pane(ctx: &mut DispatchContext<'_>, target_window_id: u32) {
     if let Some(ref name) = *ctx.current_session {
         let result = {
-            let arc = ctx.manager.sessions();
-            let mut sessions = arc.lock().await;
-            if let Some(s) = sessions.get_mut(name) {
+            if let Some(session_arc) = ctx.manager.session_arc(name).await {
+                let mut s = session_arc.lock().await;
                 let cols = s.cols;
                 let rows = s.rows;
                 s.join_pane(target_window_id).ok().map(|pane_id| {
@@ -378,16 +367,17 @@ pub(super) async fn handle_join_pane(ctx: &mut DispatchContext<'_>, target_windo
                 let _ = ctx.tx.send(msg).await;
             }
             let refresh = {
-                let arc = ctx.manager.sessions();
-                let sessions = arc.lock().await;
-                sessions.get(name).and_then(|s| {
+                if let Some(session_arc) = ctx.manager.session_arc(name).await {
+                    let s = session_arc.lock().await;
                     s.focused_window().and_then(|w| {
                         w.pane(pane_id).map(|p| ServerToClient::FullRefresh {
                             pane_id,
                             grid: p.make_full_refresh(),
                         })
                     })
-                })
+                } else {
+                    None
+                }
             };
             if let Some(r) = refresh {
                 let _ = ctx.tx.send(r).await;
@@ -416,11 +406,10 @@ pub(super) async fn handle_move_pane_to_window(
         return;
     };
     let result = {
-        let arc = ctx.manager.sessions();
-        let mut sessions = arc.lock().await;
-        let Some(s) = sessions.get_mut(name) else {
+        let Some(session_arc) = ctx.manager.session_arc(name).await else {
             return;
         };
+        let mut s = session_arc.lock().await;
         let cols = s.cols;
         let rows = s.rows;
         match s.move_pane(pane_id, target_window_id, insert_at) {
@@ -470,16 +459,17 @@ pub(super) async fn handle_move_pane_to_window(
         }
         // Send FullRefresh for the moved pane to trigger a screen redraw.
         let refresh = {
-            let arc = ctx.manager.sessions();
-            let sessions = arc.lock().await;
-            sessions.get(name).and_then(|s: &crate::session::Session| {
+            if let Some(session_arc) = ctx.manager.session_arc(name).await {
+                let s = session_arc.lock().await;
                 s.window(new_window_id).and_then(|w| {
                     w.pane(moved_pane_id).map(|p| ServerToClient::FullRefresh {
                         pane_id: moved_pane_id,
                         grid: p.make_full_refresh(),
                     })
                 })
-            })
+            } else {
+                None
+            }
         };
         if let Some(r) = refresh {
             let _ = ctx.tx.send(r).await;
@@ -490,9 +480,8 @@ pub(super) async fn handle_move_pane_to_window(
 pub(super) async fn handle_open_floating_pane(ctx: &mut DispatchContext<'_>) {
     if let Some(ref name) = *ctx.current_session {
         let result = {
-            let arc = ctx.manager.sessions();
-            let mut sessions = arc.lock().await;
-            if let Some(s) = sessions.get_mut(name) {
+            if let Some(session_arc) = ctx.manager.session_arc(name).await {
+                let mut s = session_arc.lock().await;
                 let cols = s.cols;
                 let rows = s.rows;
                 let shell = s.shell().to_string();
@@ -533,12 +522,13 @@ pub(super) async fn handle_open_floating_pane(ctx: &mut DispatchContext<'_>) {
 pub(super) async fn handle_close_floating_pane(ctx: &mut DispatchContext<'_>, pane_id: u32) {
     if let Some(ref name) = *ctx.current_session {
         let closed = {
-            let arc = ctx.manager.sessions();
-            let mut sessions = arc.lock().await;
-            sessions.get_mut(name).and_then(|s| {
+            if let Some(session_arc) = ctx.manager.session_arc(name).await {
+                let mut s = session_arc.lock().await;
                 s.focused_window_mut()
                     .map(|w| w.close_floating_pane(pane_id))
-            })
+            } else {
+                None
+            }
         };
         if closed == Some(true) {
             let _ = ctx
@@ -557,12 +547,13 @@ pub(super) async fn handle_move_floating_pane(
 ) {
     if let Some(ref name) = *ctx.current_session {
         let rect_opt = {
-            let arc = ctx.manager.sessions();
-            let mut sessions = arc.lock().await;
-            sessions.get_mut(name).and_then(|s| {
+            if let Some(session_arc) = ctx.manager.session_arc(name).await {
+                let mut s = session_arc.lock().await;
                 s.focused_window_mut()
                     .and_then(|w| w.move_floating_pane(pane_id, col_off, row_off))
-            })
+            } else {
+                None
+            }
         };
         if let Some(rect) = rect_opt {
             let _ = ctx
@@ -587,12 +578,13 @@ pub(super) async fn handle_resize_floating_pane(
 ) {
     if let Some(ref name) = *ctx.current_session {
         let rect_opt = {
-            let arc = ctx.manager.sessions();
-            let mut sessions = arc.lock().await;
-            sessions.get_mut(name).and_then(|s| {
+            if let Some(session_arc) = ctx.manager.session_arc(name).await {
+                let mut s = session_arc.lock().await;
                 s.focused_window_mut()
                     .and_then(|w| w.resize_floating_pane(pane_id, cols, rows))
-            })
+            } else {
+                None
+            }
         };
         if let Some(rect) = rect_opt {
             let _ = ctx

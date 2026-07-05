@@ -587,8 +587,20 @@ impl Session {
 }
 
 /// Session manager (manages every session).
+///
+/// Audit round 3 (P7): each session is wrapped in its own `Arc<Mutex<Session>>`
+/// so an operation on one session does not block operations on others. The outer
+/// map lock is held only briefly — to look up and clone a session's `Arc` — and
+/// is never held across a `Session` lock.
+///
+/// Lock order (CRITICAL, deadlock prevention):
+/// 1. `sessions` (outer map) — always shortest, released before touching a session.
+/// 2. `Session` (per-session) — may be held across `.await`.
+/// 3. `workspace_state` — never acquired while holding a `Session` lock.
+///
+/// Never reverse this order.
 pub struct SessionManager {
-    sessions: Arc<Mutex<HashMap<String, Session>>>,
+    sessions: Arc<Mutex<HashMap<String, Arc<Mutex<Session>>>>>,
     /// Default shell configuration (loaded from config files).
     shell_config: nexterm_config::ShellConfig,
     /// WASM plugin manager (accepts load/unload commands over IPC).
@@ -663,8 +675,21 @@ impl SessionManager {
     }
 
     /// Return an `Arc` to the sessions map (used by IPC handlers).
-    pub fn sessions(&self) -> Arc<Mutex<HashMap<String, Session>>> {
+    ///
+    /// Prefer [`SessionManager::session_arc`] for by-name access; this raw map
+    /// handle is for callers that must enumerate every session.
+    pub fn sessions(&self) -> Arc<Mutex<HashMap<String, Arc<Mutex<Session>>>>> {
         Arc::clone(&self.sessions)
+    }
+
+    /// Look up a session by name and return its `Arc<Mutex<Session>>`.
+    ///
+    /// Holds the outer map lock only for the lookup + clone, then releases it, so
+    /// the caller locks just the one session (audit round 3, P7). This is the
+    /// canonical by-name access path and enforces the map → session lock order.
+    pub async fn session_arc(&self, name: &str) -> Option<Arc<Mutex<Session>>> {
+        let sessions = self.sessions.lock().await;
+        sessions.get(name).map(Arc::clone)
     }
 
     /// Create a new session.
@@ -678,7 +703,7 @@ impl SessionManager {
         let args = self.shell_config.args.clone();
         let workspace = self.workspace_state.lock().await.current.clone();
         let session = Session::new_in_workspace(name.clone(), cols, rows, shell, args, workspace)?;
-        sessions.insert(name.clone(), session);
+        sessions.insert(name.clone(), Arc::new(Mutex::new(session)));
         info!("created session '{}'", name);
         Ok(())
     }
@@ -686,19 +711,28 @@ impl SessionManager {
     /// Attach to an existing session (returns a `broadcast::Receiver`).
     #[allow(dead_code)]
     pub async fn attach_session(&self, name: &str) -> Result<broadcast::Receiver<ServerToClient>> {
-        let sessions = self.sessions.lock().await;
-        let session = sessions
-            .get(name)
+        let session_arc = self
+            .session_arc(name)
+            .await
             .ok_or_else(|| anyhow::anyhow!("session '{}' not found", name))?;
-        let rx = session.attach();
+        let rx = session_arc.lock().await.attach();
         info!("attached to session '{}'", name);
         Ok(rx)
     }
 
     /// Return the list of sessions.
     pub async fn list_sessions(&self) -> Vec<SessionInfo> {
-        let sessions = self.sessions.lock().await;
-        sessions.values().map(|s| s.info()).collect()
+        // Clone the session Arcs under the map lock, then lock each session in
+        // turn (P7: never hold the map lock while touching a session).
+        let session_arcs: Vec<Arc<Mutex<Session>>> = {
+            let sessions = self.sessions.lock().await;
+            sessions.values().cloned().collect()
+        };
+        let mut infos = Vec::with_capacity(session_arcs.len());
+        for session_arc in session_arcs {
+            infos.push(session_arc.lock().await.info());
+        }
+        infos
     }
 
     /// Phase 2c (UI/UX v2): inspect each pane's foreground process and
@@ -730,7 +764,12 @@ impl SessionManager {
         pane_id: u32,
     ) -> Option<(nexterm_proto::Grid, Vec<Vec<nexterm_proto::Cell>>)> {
         let sessions = self.sessions.try_lock().ok()?;
-        for session in sessions.values() {
+        for session_arc in sessions.values() {
+            // Best-effort, non-blocking: skip a session that is momentarily
+            // locked rather than blocking the synchronous plugin host (P7).
+            let Ok(session) = session_arc.try_lock() else {
+                continue;
+            };
             for window in session.windows.values() {
                 if let Some(pane) = window.pane(pane_id) {
                     return Some((pane.make_full_refresh(), pane.scrollback_snapshot()));
@@ -749,16 +788,20 @@ impl SessionManager {
         // (broadcast::Sender::send is non-blocking, but we still avoid
         // holding the lock across the network/async boundary).
         let mut current: Vec<(u32, Option<String>, broadcast::Sender<ServerToClient>)> = Vec::new();
-        {
+        // Clone the session Arcs under the map lock, then lock each session in
+        // turn (P7: the map lock is not held while inspecting panes).
+        let session_arcs: Vec<Arc<Mutex<Session>>> = {
             let sessions = self.sessions.lock().await;
-            for session in sessions.values() {
-                let tx = session.broadcast_sender();
-                for window in session.windows.values() {
-                    for pane_id in window.pane_ids() {
-                        if let Some(pane) = window.pane(pane_id) {
-                            let name = pane.foreground_process_name();
-                            current.push((pane_id, name, tx.clone()));
-                        }
+            sessions.values().cloned().collect()
+        };
+        for session_arc in session_arcs {
+            let session = session_arc.lock().await;
+            let tx = session.broadcast_sender();
+            for window in session.windows.values() {
+                for pane_id in window.pane_ids() {
+                    if let Some(pane) = window.pane(pane_id) {
+                        let name = pane.foreground_process_name();
+                        current.push((pane_id, name, tx.clone()));
                     }
                 }
             }
@@ -800,7 +843,7 @@ impl SessionManager {
             let workspace = self.workspace_state.lock().await.current.clone();
             let session =
                 Session::new_in_workspace(name.to_string(), cols, rows, shell, args, workspace)?;
-            sessions.insert(name.to_string(), session);
+            sessions.insert(name.to_string(), Arc::new(Mutex::new(session)));
             info!("created new session '{}'", name);
         }
         Ok(())
@@ -819,10 +862,11 @@ impl SessionManager {
 
     /// Start recording the session's focused pane.
     pub async fn start_recording(&self, name: &str, path: &str) -> Result<u32> {
-        let sessions = self.sessions.lock().await;
-        let session = sessions
-            .get(name)
+        let session_arc = self
+            .session_arc(name)
+            .await
             .ok_or_else(|| anyhow::anyhow!("session '{}' not found", name))?;
+        let session = session_arc.lock().await;
         let window = session
             .focused_window()
             .ok_or_else(|| anyhow::anyhow!("window not found"))?;
@@ -839,10 +883,11 @@ impl SessionManager {
         base_dir: &str,
         log_config: &nexterm_config::LogConfig,
     ) -> Result<u32> {
-        let sessions = self.sessions.lock().await;
-        let session = sessions
-            .get(session_name)
+        let session_arc = self
+            .session_arc(session_name)
+            .await
             .ok_or_else(|| anyhow::anyhow!("session '{}' not found", session_name))?;
+        let session = session_arc.lock().await;
         let window = session
             .focused_window()
             .ok_or_else(|| anyhow::anyhow!("window not found"))?;
@@ -855,10 +900,11 @@ impl SessionManager {
 
     /// Stop recording the session's focused pane (fully implemented in Phase 5-A).
     pub async fn stop_recording(&self, name: &str) -> Result<u32> {
-        let sessions = self.sessions.lock().await;
-        let session = sessions
-            .get(name)
+        let session_arc = self
+            .session_arc(name)
+            .await
             .ok_or_else(|| anyhow::anyhow!("session '{}' not found", name))?;
+        let session = session_arc.lock().await;
         let window = session
             .focused_window()
             .ok_or_else(|| anyhow::anyhow!("window not found"))?;
@@ -868,10 +914,11 @@ impl SessionManager {
 
     /// Start an asciicast recording on the session's focused pane.
     pub async fn start_asciicast(&self, name: &str, path: &str) -> Result<u32> {
-        let sessions = self.sessions.lock().await;
-        let session = sessions
-            .get(name)
+        let session_arc = self
+            .session_arc(name)
+            .await
             .ok_or_else(|| anyhow::anyhow!("session '{}' not found", name))?;
+        let session = session_arc.lock().await;
         let window = session
             .focused_window()
             .ok_or_else(|| anyhow::anyhow!("window not found"))?;
@@ -881,10 +928,11 @@ impl SessionManager {
 
     /// Stop the asciicast recording on the session's focused pane.
     pub async fn stop_asciicast(&self, name: &str) -> Result<u32> {
-        let sessions = self.sessions.lock().await;
-        let session = sessions
-            .get(name)
+        let session_arc = self
+            .session_arc(name)
+            .await
             .ok_or_else(|| anyhow::anyhow!("session '{}' not found", name))?;
+        let session = session_arc.lock().await;
         let window = session
             .focused_window()
             .ok_or_else(|| anyhow::anyhow!("window not found"))?;
@@ -902,10 +950,11 @@ impl SessionManager {
         stop_bits: u8,
         parity: &str,
     ) -> Result<u32> {
-        let mut sessions = self.sessions.lock().await;
-        let session = sessions
-            .get_mut(session_name)
+        let session_arc = self
+            .session_arc(session_name)
+            .await
             .ok_or_else(|| anyhow::anyhow!("session '{}' not found", session_name))?;
+        let mut session = session_arc.lock().await;
         let cols = session.cols;
         let rows = session.rows;
         let tx = session.broadcast_sender();
@@ -933,14 +982,17 @@ impl SessionManager {
     /// Sessions with no receivers (no attached clients) silently ignore the send.
     /// Returns the number of broadcast channels reached (= session count).
     pub async fn broadcast_quake_request(&self, action: &str) -> usize {
-        let sessions = self.sessions.lock().await;
+        let session_arcs: Vec<Arc<Mutex<Session>>> = {
+            let sessions = self.sessions.lock().await;
+            sessions.values().cloned().collect()
+        };
         let mut delivered = 0;
-        for session in sessions.values() {
-            let _ = session
-                .broadcast_sender()
-                .send(ServerToClient::QuakeToggleRequest {
+        for session_arc in &session_arcs {
+            let _ = session_arc.lock().await.broadcast_sender().send(
+                ServerToClient::QuakeToggleRequest {
                     action: action.to_string(),
-                });
+                },
+            );
             delivered += 1;
         }
         delivered
@@ -959,15 +1011,20 @@ impl SessionManager {
     /// Session counts per workspace are aggregated from `sessions` via `workspace_name`.
     /// Known workspaces remain in the set even with zero sessions (kept until explicitly deleted).
     pub async fn list_workspaces(&self) -> (String, Vec<WorkspaceInfo>) {
-        let state = self.workspace_state.lock().await;
-        let sessions = self.sessions.lock().await;
-
-        // Aggregate session counts.
+        // Aggregate session counts first, releasing each session lock before we
+        // touch workspace_state (P7: never hold a session lock and
+        // workspace_state at the same time).
+        let session_arcs: Vec<Arc<Mutex<Session>>> = {
+            let sessions = self.sessions.lock().await;
+            sessions.values().cloned().collect()
+        };
         let mut counts: HashMap<String, u32> = HashMap::new();
-        for session in sessions.values() {
-            *counts.entry(session.workspace_name.clone()).or_insert(0) += 1;
+        for session_arc in &session_arcs {
+            let ws = session_arc.lock().await.workspace_name.clone();
+            *counts.entry(ws).or_insert(0) += 1;
         }
 
+        let state = self.workspace_state.lock().await;
         let workspaces = state
             .known
             .iter()
@@ -1043,9 +1100,16 @@ impl SessionManager {
         if state.current == from {
             state.current = to_trimmed.to_string();
         }
+        // Release workspace_state before touching any session lock (P7).
+        drop(state);
+
         // Update `workspace_name` on every session too.
-        let mut sessions = self.sessions.lock().await;
-        for session in sessions.values_mut() {
+        let session_arcs: Vec<Arc<Mutex<Session>>> = {
+            let sessions = self.sessions.lock().await;
+            sessions.values().cloned().collect()
+        };
+        for session_arc in &session_arcs {
+            let mut session = session_arc.lock().await;
             if session.workspace_name == from {
                 session.workspace_name = to_trimmed.to_string();
             }
@@ -1066,36 +1130,49 @@ impl SessionManager {
                 DEFAULT_WORKSPACE
             );
         }
-        let mut state = self.workspace_state.lock().await;
-        if !state.known.iter().any(|w| w == name) {
-            bail!("workspace '{}' not found", name);
+        // Count sessions in this workspace first, releasing each session lock
+        // before touching workspace_state (P7: no overlapping session +
+        // workspace_state locks). Admin ops are not concurrent, so the small
+        // count→migrate window is acceptable.
+        let session_arcs: Vec<Arc<Mutex<Session>>> = {
+            let sessions = self.sessions.lock().await;
+            sessions.values().cloned().collect()
+        };
+        let mut session_count = 0usize;
+        for session_arc in &session_arcs {
+            if session_arc.lock().await.workspace_name == name {
+                session_count += 1;
+            }
         }
-        // Check the number of sessions belonging to it.
-        let mut sessions = self.sessions.lock().await;
-        let session_count = sessions
-            .values()
-            .filter(|s| s.workspace_name == name)
-            .count();
-        if session_count > 0 && !force {
-            bail!(
-                "workspace '{}' still has {} session(s); retry with force=true",
-                name,
-                session_count
-            );
+
+        {
+            let mut state = self.workspace_state.lock().await;
+            if !state.known.iter().any(|w| w == name) {
+                bail!("workspace '{}' not found", name);
+            }
+            if session_count > 0 && !force {
+                bail!(
+                    "workspace '{}' still has {} session(s); retry with force=true",
+                    name,
+                    session_count
+                );
+            }
+            // Remove from `known`.
+            state.known.retain(|w| w != name);
+            // If it was current, revert to default.
+            if state.current == name {
+                state.current = DEFAULT_WORKSPACE.to_string();
+            }
         }
-        // force=true: migrate sessions to default.
+
+        // force=true: migrate sessions to default (workspace_state released).
         if force {
-            for session in sessions.values_mut() {
+            for session_arc in &session_arcs {
+                let mut session = session_arc.lock().await;
                 if session.workspace_name == name {
                     session.workspace_name = DEFAULT_WORKSPACE.to_string();
                 }
             }
-        }
-        // Remove from `known`.
-        state.known.retain(|w| w != name);
-        // If it was current, revert to default.
-        if state.current == name {
-            state.current = DEFAULT_WORKSPACE.to_string();
         }
         info!("deleted workspace '{}' (force={})", name, force);
         Ok(())
@@ -1105,7 +1182,13 @@ impl SessionManager {
 
     /// Convert every session into a snapshot.
     pub async fn to_snapshot(&self) -> ServerSnapshot {
-        let sessions = self.sessions.lock().await;
+        // Clone the session Arcs under the map lock, then read workspace_state,
+        // then lock each session in turn — the three locks are never held
+        // simultaneously (P7). Lock order: map → workspace_state → per-session.
+        let session_arcs: Vec<Arc<Mutex<Session>>> = {
+            let sessions = self.sessions.lock().await;
+            sessions.values().cloned().collect()
+        };
         let (current_workspace, known_workspaces) = {
             let state = self.workspace_state.lock().await;
             (state.current.clone(), state.known.clone())
@@ -1114,9 +1197,13 @@ impl SessionManager {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
+        let mut session_snaps = Vec::with_capacity(session_arcs.len());
+        for session_arc in &session_arcs {
+            session_snaps.push(session_arc.lock().await.to_snapshot());
+        }
         ServerSnapshot {
             version: SNAPSHOT_VERSION,
-            sessions: sessions.values().map(|s| s.to_snapshot()).collect(),
+            sessions: session_snaps,
             saved_at,
             current_workspace,
             // OS window placement is client-side state, so server-side `to_snapshot` returns an
@@ -1158,7 +1245,7 @@ impl SessionManager {
                     if !ws.is_empty() && !restored_workspaces.contains(&ws) {
                         restored_workspaces.push(ws);
                     }
-                    sessions.insert(sess_snap.name.clone(), session);
+                    sessions.insert(sess_snap.name.clone(), Arc::new(Mutex::new(session)));
                     restored.push(sess_snap.name.clone());
                     info!("restored session '{}'", sess_snap.name);
                 }
@@ -1480,5 +1567,39 @@ mod tests {
         assert!(result.is_ok());
 
         assert_eq!(manager.list_sessions().await.len(), 0);
+    }
+
+    /// Audit round 3 (P7): drive the manager's locking paths concurrently to
+    /// prove the map / per-session / workspace_state lock order does not
+    /// deadlock. Runs without spawning PTYs, so it is a normal CI test (unlike
+    /// the session-creating tests above). A deadlock would hang a task past the
+    /// timeout and fail the test instead of blocking forever.
+    #[tokio::test]
+    async fn concurrent_manager_ops_do_not_deadlock() {
+        let manager = Arc::new(SessionManager::new(nexterm_config::ShellConfig::default()));
+        let mut handles = Vec::new();
+        for i in 0..8 {
+            let m = Arc::clone(&manager);
+            handles.push(tokio::spawn(async move {
+                let ws = format!("ws-{i}");
+                // Mix of paths that lock workspace_state, the sessions map, and
+                // both (rename/delete restructured to never hold them together).
+                let _ = m.create_workspace(&ws).await;
+                let _ = m.list_workspaces().await;
+                let _ = m.list_sessions().await;
+                let _ = m.session_arc("does-not-exist").await;
+                let _ = m.to_snapshot().await;
+                let _ = m.switch_workspace(&ws).await;
+                let renamed = format!("{ws}-r");
+                let _ = m.rename_workspace(&ws, &renamed).await;
+                let _ = m.delete_workspace(&renamed, true).await;
+            }));
+        }
+        for h in handles {
+            tokio::time::timeout(std::time::Duration::from_secs(10), h)
+                .await
+                .expect("manager op did not finish within 10s (possible deadlock)")
+                .expect("manager op task panicked");
+        }
     }
 }

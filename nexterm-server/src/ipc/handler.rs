@@ -148,10 +148,8 @@ where
         h.abort();
     }
     if let Some(ref name) = current_session {
-        let arc = manager.sessions();
-        let mut sessions = arc.lock().await;
-        if let Some(session) = sessions.get_mut(name) {
-            session.detach_one(&tx);
+        if let Some(session_arc) = manager.session_arc(name).await {
+            session_arc.lock().await.detach_one(&tx);
             info!("detached from session '{}' on disconnect", name);
         }
         // on_detach hook (on disconnect, using the latest snapshot's hooks).

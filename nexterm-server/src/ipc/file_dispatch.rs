@@ -12,11 +12,11 @@ pub(super) async fn handle_save_template(ctx: &mut DispatchContext<'_>, name: &s
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("not attached to any session"))?;
         let (window_titles, pane_counts) = {
-            let arc = manager.sessions();
-            let sessions = arc.lock().await;
-            let session = sessions
-                .get(session_name)
+            let session_arc = manager
+                .session_arc(session_name)
+                .await
                 .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_name))?;
+            let session = session_arc.lock().await;
             let info = session.window_list();
             let titles: Vec<String> = info.iter().map(|w| w.name.clone()).collect();
             let counts: Vec<usize> = info.iter().map(|w| w.pane_count as usize).collect();
@@ -310,13 +310,12 @@ pub(super) async fn handle_run_macro(
 ) {
     if let Some(ref name) = *ctx.current_session {
         let manager = ctx.manager;
-        let focused_pane_id = {
-            let arc = manager.sessions();
-            let sessions = arc.lock().await;
-            sessions
-                .get(name)
-                .and_then(|s| s.focused_window())
-                .map(|w| w.focused_pane_id())
+        let focused_pane_id = match manager.session_arc(name).await {
+            Some(session_arc) => {
+                let s = session_arc.lock().await;
+                s.focused_window().map(|w| w.focused_pane_id())
+            }
+            None => None,
         };
         if let Some(pane_id) = focused_pane_id {
             tracing::info!("RunMacro: {} (fn={})", display_name, macro_fn);
@@ -329,11 +328,11 @@ pub(super) async fn handle_run_macro(
             .await
             .unwrap_or(None);
 
-            if let Some(text) = output {
-                let arc = manager.sessions();
-                let sessions = arc.lock().await;
-                if let Some(session) = sessions.get(name)
-                    && let Some(window) = session.focused_window()
+            if let Some(text) = output
+                && let Some(session_arc) = manager.session_arc(name).await
+            {
+                let session = session_arc.lock().await;
+                if let Some(window) = session.focused_window()
                     && let Some(pane) = window.pane(pane_id)
                 {
                     let _ = pane.write_input(text.as_bytes());
@@ -365,13 +364,13 @@ pub(super) async fn handle_connect_serial(
                         port: port.to_string(),
                     })
                     .await;
-                let layout_msg = {
-                    let arc = ctx.manager.sessions();
-                    let sessions = arc.lock().await;
-                    sessions.get(name).and_then(|s| {
+                let layout_msg = match ctx.manager.session_arc(name).await {
+                    Some(session_arc) => {
+                        let s = session_arc.lock().await;
                         s.focused_window()
                             .map(|w| w.layout_changed_msg(s.cols, s.rows))
-                    })
+                    }
+                    None => None,
                 };
                 if let Some(msg) = layout_msg {
                     let _ = ctx.tx.send(msg).await;

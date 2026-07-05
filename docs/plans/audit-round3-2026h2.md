@@ -9,9 +9,21 @@
 
 ## Implementation status
 
-- **Done:** P1, B1, P2, R1 (PR #26), P4 (PR #27), S1 and C2 (this change).
+- **Done:** P1, B1, P2, R1 (PR #26), P4 (PR #27), S1 and C2 (PR #28), P7 (this change).
 - **Deferred (still tracked below):** P3 and P6 (need profiling), P5 and R5/A5
-  (require a `PROTOCOL_VERSION` bump), P7 (large lock-architecture refactor).
+  (require a `PROTOCOL_VERSION` bump).
+
+### P7 note
+
+Reworked `SessionManager` from `Arc<Mutex<HashMap<String, Session>>>` to
+`Arc<Mutex<HashMap<String, Arc<Mutex<Session>>>>>`. The outer map lock is now
+held only to look up and clone a session's `Arc` (`session_arc()`), released
+before the per-session lock. Lock order is map → session → workspace_state, and
+no two of {session, workspace_state} are ever held together (rename/delete/
+snapshot restructured accordingly). A PTY-free concurrency test
+(`concurrent_manager_ops_do_not_deadlock`) drives the locking paths from 8 tasks
+under a timeout to catch deadlocks in CI. Per-session (window/pane) lock
+granularity is left as a future item.
 
 ### C2 note
 
