@@ -137,6 +137,23 @@ impl Session {
         self.windows.get_mut(&self.focused_window_id)
     }
 
+    /// Build a full refresh for every pane in the focused window.
+    ///
+    /// Used to resync a client after its broadcast receiver lagged and dropped
+    /// `GridDiff` messages (audit round 3, finding P4). A single dropped diff can
+    /// leave the screen permanently corrupt, so on overflow the forwarder replays
+    /// the current grid of each pane instead of silently continuing.
+    pub fn focused_window_full_refresh(&self) -> Vec<(u32, nexterm_proto::Grid)> {
+        match self.focused_window() {
+            Some(window) => window
+                .pane_ids()
+                .into_iter()
+                .filter_map(|id| window.pane(id).map(|p| (p.id, p.make_full_refresh())))
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
     /// Attach a client and return its `broadcast::Receiver`.
     ///
     /// Supports multiple simultaneous clients. PTY output is automatically delivered to every
@@ -1398,6 +1415,30 @@ mod tests {
         assert_eq!(session.rows, 24);
         assert_eq!(session.windows.len(), 1);
         assert!(!session.broadcast);
+    }
+
+    #[tokio::test]
+    #[ignore = "spawns a PTY; hangs on interactive shell close in regular CI"]
+    async fn focused_window_full_refresh_covers_every_pane() {
+        // Audit round 3 (P4): the lag-resync path replays a full refresh for
+        // each pane in the focused window. Verify one entry per pane, keyed by id.
+        let shell = nexterm_config::ShellConfig::default();
+        let session =
+            Session::new("resync".to_string(), 80, 24, shell.program, shell.args).unwrap();
+
+        let expected_ids = session
+            .focused_window()
+            .map(|w| w.pane_ids())
+            .unwrap_or_default();
+        assert!(!expected_ids.is_empty(), "a new session has one pane");
+
+        let refreshes = session.focused_window_full_refresh();
+        assert_eq!(refreshes.len(), expected_ids.len());
+        for (pane_id, grid) in &refreshes {
+            assert!(expected_ids.contains(pane_id));
+            assert_eq!(grid.width, 80);
+            assert_eq!(grid.height, 24);
+        }
     }
 
     #[tokio::test]

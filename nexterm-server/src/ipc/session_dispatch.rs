@@ -79,6 +79,10 @@ pub(super) async fn handle_attach(ctx: &mut DispatchContext<'_>, session_name: &
             };
             if let Some(mut bcast_rx) = bcast_rx {
                 let fwd_tx = tx.clone();
+                // Captured so the forwarder can rebuild a full refresh when the
+                // broadcast receiver lags (audit round 3, P4).
+                let resync_sessions = manager.sessions();
+                let resync_name = session_name.to_string();
                 if let Some(h) = ctx.bcast_forwarder.take() {
                     let _: () = h.abort();
                 }
@@ -91,10 +95,35 @@ pub(super) async fn handle_attach(ctx: &mut DispatchContext<'_>, session_name: &
                                 }
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                // The client fell behind and lost `n` messages;
+                                // a dropped GridDiff would leave the screen
+                                // corrupt, so replay the current grid of every
+                                // pane in the focused window to resync (P4).
                                 tracing::warn!(
-                                    "broadcast: skipped {} messages (buffer overflow)",
+                                    "broadcast: client lagged by {} messages; resyncing with full refresh",
                                     n
                                 );
+                                let refreshes = {
+                                    let sessions = resync_sessions.lock().await;
+                                    sessions
+                                        .get(&resync_name)
+                                        .map(|s| s.focused_window_full_refresh())
+                                        .unwrap_or_default()
+                                };
+                                let mut disconnected = false;
+                                for (pane_id, grid) in refreshes {
+                                    if fwd_tx
+                                        .send(ServerToClient::FullRefresh { pane_id, grid })
+                                        .await
+                                        .is_err()
+                                    {
+                                        disconnected = true;
+                                        break;
+                                    }
+                                }
+                                if disconnected {
+                                    break;
+                                }
                                 continue;
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
