@@ -176,6 +176,7 @@ Full reference:
 
 | Document | Contents |
 |----------|----------|
+| [docs/PRODUCT.md](docs/PRODUCT.md) | Product requirements — vision, target users, differentiation, non-goals |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Crate layout, process model, render pipeline, IPC, BSP |
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | IPC protocol spec (message types, framing, handshake) |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Full TOML / Lua configuration reference |
