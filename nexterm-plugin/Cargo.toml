@@ -18,6 +18,8 @@ wasmi = "0.38"
 
 [dev-dependencies]
 tempfile = "3"
+# F2: compile WAT fixtures to real WASM binaries for host end-to-end tests.
+wat = { workspace = true }
 
 [lints]
 workspace = true

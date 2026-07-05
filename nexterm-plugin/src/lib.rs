@@ -62,7 +62,17 @@
 ///
 /// The value that a plugin declares via the `nexterm_api_version` export must
 /// either equal this value or be at least [`MIN_SUPPORTED_API_VERSION`].
-pub const PLUGIN_API_VERSION: u32 = 2;
+///
+/// ## v3 (current, recommended)
+///
+/// Adds the read host imports `read_pane` / `read_grid` / `read_scrollback`
+/// (F3 / ADR-0008). They are gated by the server-side `plugin_read` policy
+/// (default deny) and are scoped, per hook, to the pane the plugin is currently
+/// handling. v1/v2 plugins never call them (they do not import them).
+pub const PLUGIN_API_VERSION: u32 = 3;
+
+/// Lowest plugin ABI version that may call the v3 read host imports.
+const MIN_READ_API_VERSION: u32 = 3;
 
 /// Lowest API version accepted for load (for backwards compatibility).
 ///
@@ -181,6 +191,44 @@ pub fn sanitize_for_plugin(input: &[u8]) -> Vec<u8> {
 /// Host callback exposed to plugins (e.g. pane writes).
 pub type WritePaneFn = Arc<dyn Fn(u32, &[u8]) + Send + Sync>;
 
+/// The kind of read requested by a plugin via the v3 read host imports
+/// (F3 / ADR-0008).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadKind {
+    /// Visible screen as UTF-8 text (rows LF-joined, trailing blanks trimmed).
+    PaneText,
+    /// Visible screen as a compact structured cell dump (see ADR-0008 §3).
+    Grid,
+    /// Scrollback lines as UTF-8 text (LF-joined), newest last.
+    Scrollback {
+        /// First scrollback line to return (0 = oldest retained).
+        start_line: u32,
+        /// Maximum number of lines to return.
+        max_lines: u32,
+    },
+}
+
+/// Outcome of a plugin read request. The host maps each variant to the ABI
+/// return-code convention documented in ADR-0008.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadOutcome {
+    /// Reads are disabled by the `plugin_read` policy (maps to `-4`).
+    Denied,
+    /// The requested pane does not exist (maps to `-2`).
+    UnknownPane,
+    /// The requested data (written into the plugin's buffer).
+    Data(Vec<u8>),
+}
+
+/// Host callback that serves plugin read requests (F3 / ADR-0008).
+///
+/// The server-provided implementation is responsible for the **policy** gate
+/// (`plugin_read` allow/deny) and **pane existence**, in that order, per the
+/// ADR. The host layer enforces the ABI-version gate and the per-hook pane
+/// allow-list before calling this. The default (when the server never installs
+/// one) denies every read.
+pub type ReadFn = Arc<dyn Fn(u32, ReadKind) -> ReadOutcome + Send + Sync>;
+
 /// One plugin's runtime instance.
 struct PluginInstance {
     /// Path to the plugin file (for debugging).
@@ -202,14 +250,78 @@ struct PluginInstance {
 struct HostState {
     /// Pane-write callback.
     write_pane: WritePaneFn,
+    /// Pane-read callback (F3 / ADR-0008). Defaults to denying every read.
+    read_fn: ReadFn,
     /// Log buffer (strings received via the `nexterm.log` import).
     log_buf: Vec<String>,
-    /// Pane IDs that `write_pane` is permitted to write to during the current
-    /// hook invocation. Only consulted for v2 plugins. An empty set means no
-    /// pane may be written to.
+    /// Pane IDs that `write_pane` / the read imports are permitted to touch
+    /// during the current hook invocation. Only consulted for v2+ plugins. An
+    /// empty set means no pane may be written to or read.
     allowed_panes: HashSet<u32>,
-    /// API version of the plugin (needed to bypass `allowed_panes` for v1).
+    /// API version of the plugin (needed to bypass `allowed_panes` for v1 and
+    /// to gate the v3 read imports).
     api_version: u32,
+}
+
+/// The default read callback installed until the server provides a real one:
+/// every read is denied.
+fn deny_all_reads() -> ReadFn {
+    Arc::new(|_pane_id: u32, _kind: ReadKind| ReadOutcome::Denied)
+}
+
+/// Shared implementation of the v3 read host imports (F3 / ADR-0008).
+///
+/// Guard order (ADR-0008): ABI-version gate → per-hook pane allow-list → the
+/// server callback (which applies the policy gate then the existence gate). The
+/// callback short-circuiting on policy before existence is what prevents a
+/// plugin from probing pane existence while reads are disabled.
+fn perform_plugin_read(
+    mut caller: wasmi::Caller<'_, HostState>,
+    pane_id: i32,
+    kind: ReadKind,
+    out_ptr: i32,
+    out_max: i32,
+) -> i32 {
+    if out_ptr < 0 || out_max < 0 {
+        return -3;
+    }
+    let pane_u = pane_id as u32;
+
+    // ABI-version gate + per-hook pane allow-list gate.
+    {
+        let state = caller.data();
+        if state.api_version < MIN_READ_API_VERSION {
+            return -1; // reads require ABI v3+
+        }
+        if !state.allowed_panes.contains(&pane_u) {
+            // Out of scope for this hook (empty during on_command). Does not
+            // reveal pane existence or policy state.
+            return -2;
+        }
+    }
+
+    // Policy + existence gate live in the server-provided callback.
+    let read_fn = Arc::clone(&caller.data().read_fn);
+    let bytes = match read_fn(pane_u, kind) {
+        ReadOutcome::Denied => return -4,
+        ReadOutcome::UnknownPane => return -2,
+        ReadOutcome::Data(b) => b,
+    };
+
+    if bytes.len() > out_max as usize {
+        return -3; // caller buffer too small
+    }
+    let Some(mem) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
+        return -3;
+    };
+    let start = out_ptr as usize;
+    if start.saturating_add(bytes.len()) > mem.data_size(&caller) {
+        return -3; // would write past linear memory
+    }
+    if mem.write(&mut caller, start, &bytes).is_err() {
+        return -3;
+    }
+    bytes.len() as i32
 }
 
 // ---- Plugin manager -------------------------------------------------------
@@ -219,6 +331,8 @@ pub struct PluginManager {
     engine: Engine,
     plugins: Mutex<Vec<PluginInstance>>,
     write_pane: WritePaneFn,
+    /// Pane-read callback shared into every loaded plugin (F3 / ADR-0008).
+    read_fn: ReadFn,
 }
 
 impl PluginManager {
@@ -243,7 +357,17 @@ impl PluginManager {
             engine,
             plugins: Mutex::new(Vec::new()),
             write_pane,
+            read_fn: deny_all_reads(),
         }
+    }
+
+    /// Install the pane-read callback (F3 / ADR-0008).
+    ///
+    /// The server calls this at startup with a closure that enforces the
+    /// `plugin_read` policy and looks up pane contents. Plugins loaded after
+    /// this call use the new callback; the default until then denies all reads.
+    pub fn set_read_fn(&mut self, read_fn: ReadFn) {
+        self.read_fn = read_fn;
     }
 
     /// Load a WASM file and register it as a plugin.
@@ -255,10 +379,12 @@ impl PluginManager {
             .with_context(|| format!("failed to compile WASM module: {}", path.display()))?;
 
         let write_pane = Arc::clone(&self.write_pane);
+        let read_fn = Arc::clone(&self.read_fn);
         let mut store = Store::new(
             &self.engine,
             HostState {
                 write_pane,
+                read_fn,
                 log_buf: Vec::new(),
                 allowed_panes: HashSet::new(),
                 // Provisional value; finalized after reading `nexterm_api_version`.
@@ -323,6 +449,50 @@ impl PluginManager {
                         (caller.data().write_pane)(pane_u, &bytes);
                     }
                 }
+            },
+        )?;
+
+        // Host imports: v3 read API (F3 / ADR-0008).
+        //
+        // read_pane(pane_id, out_ptr, out_max) -> i32
+        // read_grid(pane_id, out_ptr, out_max) -> i32
+        // read_scrollback(pane_id, start_line, max_lines, out_ptr, out_max) -> i32
+        //
+        // Return: bytes written (>= 0), or a negative error code
+        // (-1 wrong ABI, -2 unknown/out-of-scope pane, -3 buffer too small,
+        // -4 disabled by policy). v1/v2 plugins do not import these.
+        linker.func_wrap(
+            "nexterm",
+            "read_pane",
+            |caller: wasmi::Caller<'_, HostState>, pane_id: i32, out_ptr: i32, out_max: i32| {
+                perform_plugin_read(caller, pane_id, ReadKind::PaneText, out_ptr, out_max)
+            },
+        )?;
+        linker.func_wrap(
+            "nexterm",
+            "read_grid",
+            |caller: wasmi::Caller<'_, HostState>, pane_id: i32, out_ptr: i32, out_max: i32| {
+                perform_plugin_read(caller, pane_id, ReadKind::Grid, out_ptr, out_max)
+            },
+        )?;
+        linker.func_wrap(
+            "nexterm",
+            "read_scrollback",
+            |caller: wasmi::Caller<'_, HostState>,
+             pane_id: i32,
+             start_line: i32,
+             max_lines: i32,
+             out_ptr: i32,
+             out_max: i32| {
+                // Clamp negatives to 0: a hostile/buggy plugin passing e.g.
+                // i32::MIN reads from the start with an empty window rather than
+                // wrapping to a huge u32. `max_lines` is further clamped to the
+                // configured scrollback retention inside the read callback.
+                let kind = ReadKind::Scrollback {
+                    start_line: start_line.max(0) as u32,
+                    max_lines: max_lines.max(0) as u32,
+                };
+                perform_plugin_read(caller, pane_id, kind, out_ptr, out_max)
             },
         )?;
 
@@ -863,10 +1033,12 @@ mod tests {
 
     #[test]
     fn test_plugin_api_version_constant() {
-        assert_eq!(PLUGIN_API_VERSION, 2);
+        assert_eq!(PLUGIN_API_VERSION, 3);
         assert_eq!(MIN_SUPPORTED_API_VERSION, 1);
+        assert_eq!(MIN_READ_API_VERSION, 3);
         // const assert: guarantees the compatibility invariant.
         const _: () = assert!(MIN_SUPPORTED_API_VERSION <= PLUGIN_API_VERSION);
+        const _: () = assert!(MIN_READ_API_VERSION <= PLUGIN_API_VERSION);
     }
 
     #[test]

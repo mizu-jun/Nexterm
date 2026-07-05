@@ -259,6 +259,13 @@ pub struct Screen {
     grid: Grid,
     /// Per-row dirty flags (`true` = changed).
     dirty: Vec<bool>,
+    /// Lines that have just scrolled off the top of the primary screen, in
+    /// chronological order. Drained every burst by the PTY reader thread via
+    /// [`Screen::take_scrolled_off_lines`] and appended to the pane-side
+    /// scrollback mirror. Only a full-screen scroll (`scroll_top == 0`) on the
+    /// primary buffer contributes; the alternate screen never does (matches
+    /// xterm / kitty). Retention/cap lives on the pane mirror, not here.
+    pending_scrollback: Vec<Vec<Cell>>,
     /// Cursor column (0-based).
     cursor_col: u16,
     /// Cursor row (0-based).
@@ -420,6 +427,7 @@ impl Screen {
         Self {
             grid: Grid::new(cols, rows),
             dirty: vec![false; rows as usize],
+            pending_scrollback: Vec::new(),
             cursor_col: 0,
             cursor_row: 0,
             current_fg: Color::Default,
@@ -569,6 +577,13 @@ impl Screen {
         g
     }
 
+    /// Drains the lines that have scrolled off the top since the last call, in
+    /// chronological order. The PTY reader thread calls this every burst and
+    /// appends the result to the pane-side scrollback mirror.
+    pub fn take_scrolled_off_lines(&mut self) -> Vec<Vec<Cell>> {
+        std::mem::take(&mut self.pending_scrollback)
+    }
+
     /// Handles a resize (content is copied as much as the new size allows).
     pub fn resize(&mut self, new_cols: u16, new_rows: u16) {
         let mut new_grid = Grid::new(new_cols, new_rows);
@@ -642,6 +657,16 @@ impl Screen {
     fn scroll_up(&mut self) {
         let top = self.scroll_top as usize;
         let bottom = self.scroll_bottom as usize;
+        // Retain the line leaving the top of the screen as scrollback, but only
+        // for a full-screen scroll on the primary buffer. A restricted scroll
+        // region (DECSTBM) or the alternate screen is app-managed and must not
+        // contribute to scrollback (matches xterm / kitty behavior).
+        if !self.alt_mode
+            && self.scroll_top == 0
+            && let Some(row) = self.grid.rows.get(top)
+        {
+            self.pending_scrollback.push(row.clone());
+        }
         // Copy each row in the region up by one (avoiding direct index access
         // to prevent panics).
         for r in top..bottom {

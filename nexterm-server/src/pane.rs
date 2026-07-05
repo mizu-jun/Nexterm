@@ -3,10 +3,11 @@
 //! The PTY output channel is held as `Arc<broadcast::Sender>`.
 //! Broadcasting allows sending to multiple clients simultaneously, and no swap is needed on reattach.
 
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
 use std::path::Path;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -15,8 +16,13 @@ use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySyste
 use tokio::sync::broadcast;
 use tracing::{debug, error, info};
 
-use nexterm_proto::{Grid, ServerToClient};
+use nexterm_proto::{Cell, Grid, ServerToClient};
 use nexterm_vt::VtParser;
+
+/// Default cap on the per-pane scrollback mirror (lines). The server plumbs the
+/// `scrollback_lines` config value over this via [`Pane::set_scrollback_limit`];
+/// this constant is the fallback before that is called.
+const DEFAULT_PANE_SCROLLBACK_LINES: usize = 10_000;
 
 static NEXT_PANE_ID: AtomicU32 = AtomicU32::new(1);
 
@@ -484,6 +490,22 @@ pub struct Pane {
     /// after every burst lets `make_full_refresh` hand the late-attaching
     /// client the actual current screen instead of a fresh empty grid.
     latest_grid: Arc<Mutex<Grid>>,
+    /// Per-pane scrollback mirror (F3 / ADR-0008), oldest line first.
+    ///
+    /// The PTY reader owns the `VtParser`, which emits lines as they scroll off
+    /// the top of the primary screen. The reader appends those to this mirror
+    /// every burst (capped at `scrollback_limit`, oldest dropped), so the
+    /// main-thread plugin read API (`read_scrollback`) can serve history that
+    /// would otherwise stay trapped in the reader thread. The visible screen is
+    /// served from `latest_grid`; this covers only what has scrolled away.
+    latest_scrollback: Arc<Mutex<VecDeque<Vec<Cell>>>>,
+    /// Retention cap for `latest_scrollback` (shared with the reader thread).
+    //
+    // `allow(dead_code)`: mutated only through `set_scrollback_limit()`, which
+    // the server does not call yet (the mirror uses its default cap); the
+    // Unix-only scrollback test exercises it. Remove once config plumbs it.
+    #[allow(dead_code)]
+    scrollback_limit: Arc<AtomicUsize>,
 }
 
 impl Pane {
@@ -661,6 +683,16 @@ impl Pane {
         // empty grid; the reader thread overwrites it as bytes arrive.
         let latest_grid: Arc<Mutex<Grid>> = Arc::new(Mutex::new(Grid::new(cols, rows)));
         let latest_grid_clone = Arc::clone(&latest_grid);
+
+        // Per-pane scrollback mirror (F3 / ADR-0008). The reader thread appends
+        // scrolled-off lines here every burst so the main-thread read API can
+        // serve them.
+        let latest_scrollback: Arc<Mutex<VecDeque<Vec<Cell>>>> =
+            Arc::new(Mutex::new(VecDeque::new()));
+        let latest_scrollback_clone = Arc::clone(&latest_scrollback);
+        let scrollback_limit: Arc<AtomicUsize> =
+            Arc::new(AtomicUsize::new(DEFAULT_PANE_SCROLLBACK_LINES));
+        let scrollback_limit_clone = Arc::clone(&scrollback_limit);
 
         // Launch the PTY reader thread.
         tokio::task::spawn_blocking(move || {
@@ -843,6 +875,24 @@ impl Pane {
                                 *g = parser.screen().full_refresh_grid();
                             }
                             let (cursor_col, cursor_row) = parser.screen().cursor();
+
+                            // F3 / ADR-0008: move lines that scrolled off during
+                            // this burst into the pane-side scrollback mirror,
+                            // capped at the configured limit (oldest dropped).
+                            let scrolled = parser.screen_mut().take_scrolled_off_lines();
+                            if !scrolled.is_empty()
+                                && let Ok(mut sb) = latest_scrollback_clone.lock()
+                            {
+                                let limit = scrollback_limit_clone.load(Ordering::Relaxed);
+                                if limit == 0 {
+                                    sb.clear();
+                                } else {
+                                    sb.extend(scrolled);
+                                    while sb.len() > limit {
+                                        sb.pop_front();
+                                    }
+                                }
+                            }
                             let msg = ServerToClient::GridDiff {
                                 pane_id,
                                 dirty_rows: dirty,
@@ -1008,9 +1058,31 @@ impl Pane {
             keyboard_protocol_flags,
             current_cwd,
             latest_grid,
+            latest_scrollback,
+            scrollback_limit,
             dnd_enabled,
             dnd_payload,
         })
+    }
+
+    /// Sets the scrollback mirror retention cap (lines). The server calls this
+    /// from the `scrollback_lines` config value; 0 disables scrollback
+    /// retention. Trimming to a smaller cap happens on the next burst.
+    // `allow(dead_code)`: consumed by F3 Phase 3 server wiring (and by the
+    // Unix-only scrollback test). Remove the allow when Phase 3 lands.
+    #[allow(dead_code)]
+    pub fn set_scrollback_limit(&self, limit: usize) {
+        self.scrollback_limit.store(limit, Ordering::Relaxed);
+    }
+
+    /// Returns a snapshot of the pane's scrollback mirror, oldest line first
+    /// (F3 / ADR-0008). Used by `SessionManager::pane_snapshot` to serve the
+    /// plugin `read_scrollback` host import.
+    pub fn scrollback_snapshot(&self) -> Vec<Vec<Cell>> {
+        match self.latest_scrollback.lock() {
+            Ok(sb) => sb.iter().cloned().collect(),
+            Err(poisoned) => poisoned.into_inner().iter().cloned().collect(),
+        }
     }
 
     /// Whether the running application opted in to the kitty drag-and-drop
@@ -1844,6 +1916,44 @@ mod tests {
             marker,
             dump.chars().take(200).collect::<String>()
         );
+    }
+
+    /// F3 / ADR-0008: lines that scroll off the top must land in the pane's
+    /// scrollback mirror so the main-thread read API can serve them.
+    #[cfg(not(windows))]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn scrollback_mirror_captures_scrolled_off_lines() {
+        use std::time::{Duration, Instant};
+
+        // Print 40 numbered lines into a 6-row terminal so ~34 lines scroll off.
+        let (shell, args): (&str, Vec<String>) = (
+            "/bin/sh",
+            vec![
+                "-c".into(),
+                "for i in $(seq 1 40); do echo LINE$i; done".into(),
+            ],
+        );
+        let (tx, _rx) = tokio::sync::broadcast::channel::<ServerToClient>(2048);
+        let pane = Pane::spawn_with_id(1, 20, 6, tx, shell, &args).expect("spawn failed");
+        pane.set_scrollback_limit(1000);
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let sb = pane.scrollback_snapshot();
+            let text: String = sb.iter().flat_map(|row| row.iter().map(|c| c.ch)).collect();
+            // The earliest lines must have scrolled into the mirror.
+            if text.contains("LINE1") && text.contains("LINE30") {
+                return;
+            }
+            if Instant::now() >= deadline {
+                panic!(
+                    "scrollback mirror missing expected lines within 5 s ({} lines captured): {:?}",
+                    sb.len(),
+                    text.chars().take(200).collect::<String>()
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
     }
 }
 

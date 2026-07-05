@@ -120,6 +120,12 @@ arc-swap = "1"
 # dev-dependencies としてのみ使うため、各クレートで dev-deps に展開する。
 proptest = "1"
 
+# F2: plugin host end-to-end integration tests. Compiles WAT (WebAssembly Text)
+# fixtures to real WASM binaries at test time via `wat::parse_str`, avoiding a
+# wasm32 build toolchain in CI (pure-Rust, works on all 3 OS matrix targets).
+# dev-dependencies only; expanded per crate that needs plugin fixtures.
+wat = "1"
+
 # Sprint 5-3 / C5: criterion ベンチマーク（VT advance / Sixel デコード / スクロール等）
 # dev-dependencies としてのみ使う。`cargo bench -p <crate> --bench <name>` で実行。
 # CI ではベンチを走らせず、ローカル / ベンチ専用ジョブのみで使用する想定。

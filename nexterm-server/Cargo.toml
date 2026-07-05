@@ -83,6 +83,8 @@ windows-sys = { version = "0.59", features = [
 tempfile = "3"
 # Sprint 4-4: BSP レイアウト・タイリング・スナップショット往復のプロパティテスト
 proptest = { workspace = true }
+# F2: compile WAT fixtures to real WASM for plugin IPC dispatch integration tests.
+wat = { workspace = true }
 
 [lints]
 workspace = true

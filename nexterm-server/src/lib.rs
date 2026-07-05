@@ -6,6 +6,7 @@ mod hooks;
 mod ipc;
 mod pane;
 pub mod persist;
+mod plugin_read;
 pub mod runtime_config;
 mod serial;
 mod session;
@@ -165,7 +166,16 @@ async fn run_server_inner(
                 .as_deref()
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(nexterm_plugin::default_plugin_dir);
-            let mgr = nexterm_plugin::PluginManager::new(std::sync::Arc::new(|_pane_id, _data| {}));
+            let mut mgr =
+                nexterm_plugin::PluginManager::new(std::sync::Arc::new(|_pane_id, _data| {}));
+            // F3 / ADR-0008: install the pane-read callback (policy-gated,
+            // default deny) so v3 plugins can read pane/grid/scrollback.
+            mgr.set_read_fn(crate::plugin_read::build_read_fn(
+                Arc::clone(&manager),
+                cfg.security.plugin_read,
+                cfg.security.plugin_read_max_bytes,
+                cfg.scrollback_lines,
+            ));
             if plugin_dir.exists() {
                 info!(
                     "startup: loading WASM plugins from {}...",

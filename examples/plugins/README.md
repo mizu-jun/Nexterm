@@ -1,6 +1,6 @@
 # Nexterm WASM Plugin Examples
 
-Four ready-to-build sample plugins demonstrating the Nexterm WASM plugin API.
+Five ready-to-build sample plugins demonstrating the Nexterm WASM plugin API.
 
 ## Prerequisites
 
@@ -12,7 +12,7 @@ rustup target add wasm32-unknown-unknown
 
 ```sh
 # From this directory
-for dir in echo-suppress error-detector command-counter timestamp-injector; do
+for dir in echo-suppress error-detector command-counter timestamp-injector screen-digest; do
   (cd "$dir" && cargo build --release --target wasm32-unknown-unknown)
 done
 ```
@@ -23,6 +23,7 @@ echo-suppress/target/wasm32-unknown-unknown/release/echo_suppress.wasm
 error-detector/target/wasm32-unknown-unknown/release/error_detector.wasm
 command-counter/target/wasm32-unknown-unknown/release/command_counter.wasm
 timestamp-injector/target/wasm32-unknown-unknown/release/timestamp_injector.wasm
+screen-digest/target/wasm32-unknown-unknown/release/screen_digest.wasm
 ```
 
 ## Install
@@ -79,6 +80,23 @@ Custom commands:
 - `:ts-on`  — enable timestamp injection
 - `:ts-off` — disable timestamp injection
 
+### screen-digest ⭐ (v3 read API demo)
+
+Demonstrates the **v3 read API** (`read_pane`; F3 / ADR-0008). On each command
+completion (OSC 133 `D` mark) it reads the visible pane text and logs a digest
+(non-blank line count and character count). It never writes to the pane.
+
+The read API is gated by the server-side `plugin_read` consent policy, which
+defaults to **`deny`**. To let this plugin read the pane, opt in explicitly:
+
+```toml
+[security]
+plugin_read = "allow"
+```
+
+While `plugin_read` is `deny` (or `prompt`, currently treated as `deny`),
+`read_pane` returns `-4` and the digest reports nothing.
+
 ---
 
 ## Writing Your Own Plugin
@@ -90,16 +108,24 @@ Any language that compiles to `wasm32-unknown-unknown` works.
 | Export | Signature | Notes |
 |--------|-----------|-------|
 | `nexterm_init` | `() -> ()` | Optional. Called once on load. |
-| `nexterm_on_output` | `(ptr: i32, len: i32, pane_id: i32) -> i32` | Return 0 = pass through, 1 = suppress |
+| `nexterm_on_output` | `(pane_id: i32, ptr: i32, len: i32) -> i32` | `pane_id` is passed **first**. Return 0 = pass through, 1 = suppress |
 | `nexterm_on_command` | `(ptr: i32, len: i32) -> i32` | Return 0 = handled, 1 = not handled |
 
 ### Host imports (`nexterm` module)
 
 | Import | Signature | Notes |
 |--------|-----------|-------|
-| `nexterm.api_version` | `() -> i32` | Returns `PLUGIN_API_VERSION` (host current: `2`) |
+| `nexterm.api_version` | `() -> i32` | Returns `PLUGIN_API_VERSION` (host current: `3`) |
 | `nexterm.log` | `(ptr: i32, len: i32)` | Write to nexterm log |
 | `nexterm.write_pane` | `(pane_id: i32, ptr: i32, len: i32)` | Write text to a pane |
+| `nexterm.read_pane` | `(pane_id: i32, out_ptr: i32, out_max: i32) -> i32` | **v3.** Copy visible pane text into `out_ptr`. Returns bytes written, or a negative error code (see below) |
+| `nexterm.read_grid` | `(pane_id: i32, out_ptr: i32, out_max: i32) -> i32` | **v3.** Copy the structured grid dump (ADR-0008 §3 wire format) |
+| `nexterm.read_scrollback` | `(pane_id: i32, start_line: i32, max_lines: i32, out_ptr: i32, out_max: i32) -> i32` | **v3.** Copy `max_lines` of scrollback text starting at `start_line` |
+
+The v3 read imports are gated by the server-side `plugin_read` policy
+(default `deny`) and are scoped, per hook, to the pane the plugin is currently
+handling. Negative return codes: `-1` wrong ABI, `-2` unknown/out-of-scope
+pane, `-3` output buffer too small, `-4` disabled by the `plugin_read` policy.
 
 ### Optional exports
 
@@ -146,6 +172,39 @@ Aligned with the host's `PLUGIN_API_VERSION = 2`, the four sample plugins have b
 ### End-of-life for v1 support
 
 Plugin v1 support **will be removed at the v2.0 release**. Until then v1 plugins can still
-be loaded, but a deprecation warning is logged. Write new plugins against v2.
+be loaded, but a deprecation warning is logged. Write new plugins against v2 or v3.
+
+---
+
+## Plugin API v2 → v3 (F3 / ADR-0008)
+
+`PLUGIN_API_VERSION` is now **3**. v3 is a **superset** of v2: v2 plugins keep
+working unchanged. v3 only *adds* the read host imports — a plugin opts in by
+exporting `nexterm_api_version() -> 3` and importing one or more of
+`read_pane` / `read_grid` / `read_scrollback`.
+
+### What v3 adds
+
+| Item | v2 | v3 |
+|------|----|----|
+| `nexterm_api_version` | returns `2` | returns `3` |
+| Read host imports | absent | `read_pane` / `read_grid` / `read_scrollback` |
+| Read consent | n/a | server-side `plugin_read` policy (default **`deny`**) |
+| Read scope | n/a | per hook, limited to the pane being handled |
+
+### Enabling reads
+
+The read API is a new information-egress channel, so it stays off unless the
+operator opts in:
+
+```toml
+[security]
+plugin_read = "allow"          # default is "deny"; "prompt" is treated as "deny" for now
+plugin_read_max_bytes = 1048576 # optional cap per read (default 1 MiB)
+```
+
+See `screen-digest` above for a minimal `read_pane` example, and
+[docs/adr/0008-plugin-read-api.md](../../docs/adr/0008-plugin-read-api.md) for
+the trust-boundary rationale and the grid dump wire format.
 
 See [docs/plugin-api.md](../../docs/plugin-api.md) for the full API reference.

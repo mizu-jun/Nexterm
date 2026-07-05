@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Phases 1–3 of the competitive-gap roadmap (`docs/plans/gap-roadmap-2026h2.md`):
-debt payoff, low-cost / high-compatibility protocol work, and named
-workspaces.
+Phases 1–4 of the competitive-gap roadmap (`docs/plans/gap-roadmap-2026h2.md`):
+debt payoff, low-cost / high-compatibility protocol work, named workspaces,
+and the Plugin API v2 → v3 expansion (plugin host end-to-end tests + the
+consent-gated read API).
+
+**PLUGIN_API_VERSION 2 → 3** (adds the `read_pane` / `read_grid` /
+`read_scrollback` host imports; `MIN_READ_API_VERSION = 3`). Non-breaking:
+v1/v2 plugins load and run unchanged, and the read imports stay off until
+the operator sets `security.plugin_read = "allow"`.
 
 **SNAPSHOT_VERSION 4 → 5** (`ServerSnapshot.known_workspaces` added so
 workspaces without sessions survive restarts). v4 and earlier snapshot files
@@ -82,6 +88,35 @@ versions must upgrade both. SNAPSHOT_VERSION = 4 unchanged.
   target feeds arbitrary chunks through `sandboxed_lua()` and
   `apply_lua_table_to_config()` with memory and instruction limits; wired
   into the nightly fuzz workflow.
+- **Plugin host end-to-end integration tests (roadmap F2)**: 18 new tests
+  exercise the WASM plugin host against real modules for the first time —
+  the previous suite only covered invalid/empty modules and the no-plugin
+  path. WAT fixtures are compiled to real WASM at test time via the new
+  `wat` dev-dependency (no wasm32 toolchain required on CI). Coverage:
+  the full `load → on_output/on_command → reload → unload` lifecycle,
+  v2 input sanitization actually reaching the plugin, the `write_pane`
+  pane-id allow list (v2 deny / v1 bypass), suppress return values, v1 raw
+  delivery, fuel-exhaustion trapping (host survives an infinite-loop
+  plugin), `nexterm_meta` readout, and the `ListPlugins` / `LoadPlugin` /
+  `UnloadPlugin` / `ReloadPlugin` IPC dispatch handlers driven through a
+  real `SessionManager`.
+- **Plugin read API — `PLUGIN_API_VERSION` 2 → 3 (roadmap F3 / ADR-0008)**:
+  v3 plugins can read terminal contents through three new host imports —
+  `read_pane` (visible text), `read_grid` (structured cell dump), and
+  `read_scrollback` (history text). v3 is a **superset** of v2, so existing
+  v2 plugins run unchanged. Reads are gated by a new `security.plugin_read`
+  consent policy that defaults to **`deny`** (fail-safe; `prompt` is treated
+  as `deny` for now since a server-side plugin call has no synchronous
+  prompt path) and by `security.plugin_read_max_bytes` (default 1 MiB, cap
+  per read). Access is scoped per hook to the pane the plugin is currently
+  handling; out-of-scope panes, wrong ABI, undersized buffers, and disabled
+  policy return distinct negative error codes. To back `read_scrollback`,
+  `nexterm-vt` gained a scrollback emit path (`take_scrolled_off_lines`) and
+  each pane keeps a bounded (10k-line) mirror of scrolled-off lines. New
+  sample `examples/plugins/screen-digest/` demonstrates `read_pane`. Full
+  design and the grid dump wire format are in
+  `docs/adr/0008-plugin-read-api.md`; the ABI reference is in
+  `docs/plugin-api.md`.
 
 ### Changed
 

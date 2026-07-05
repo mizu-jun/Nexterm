@@ -48,6 +48,31 @@ pub struct SecurityConfig {
     /// is truncated.
     #[serde(default = "default_notification_max_bytes")]
     pub notification_max_bytes: usize,
+
+    /// Whether WASM plugins may read terminal contents via the v3 read API
+    /// (`read_pane` / `read_grid` / `read_scrollback`; F3 / ADR-0008).
+    ///
+    /// Unlike the OSC policies this defaults to **`deny`**: the read API is a
+    /// new information-egress channel and stays off unless the operator opts
+    /// in. There is no synchronous prompt path for a server-side plugin call,
+    /// so **`prompt` is treated as `deny`** (fail-safe); interactive plugin
+    /// consent may arrive in a future release.
+    #[serde(default = "default_plugin_read")]
+    pub plugin_read: ConsentPolicy,
+
+    /// Maximum size (bytes) a single plugin read may return. Larger results are
+    /// truncated at a UTF-8 boundary (text) or byte boundary (grid dump).
+    #[serde(default = "default_plugin_read_max_bytes")]
+    pub plugin_read_max_bytes: usize,
+}
+
+fn default_plugin_read() -> ConsentPolicy {
+    // Fail-safe: the plugin read API is off unless explicitly enabled.
+    ConsentPolicy::Deny
+}
+
+fn default_plugin_read_max_bytes() -> usize {
+    1024 * 1024 // 1 MiB, mirroring osc52_max_bytes.
 }
 
 fn default_osc52_max_bytes() -> usize {
@@ -68,6 +93,8 @@ impl Default for SecurityConfig {
             osc_notification: ConsentPolicy::default(),
             osc52_max_bytes: default_osc52_max_bytes(),
             notification_max_bytes: default_notification_max_bytes(),
+            plugin_read: default_plugin_read(),
+            plugin_read_max_bytes: default_plugin_read_max_bytes(),
         }
     }
 }
@@ -112,9 +139,18 @@ osc_notification = "prompt"
             osc_notification: ConsentPolicy::Prompt,
             osc52_max_bytes: 2048,
             notification_max_bytes: 1024,
+            plugin_read: ConsentPolicy::Allow,
+            plugin_read_max_bytes: 4096,
         };
         let s = toml::to_string(&cfg).unwrap();
         let parsed: SecurityConfig = toml::from_str(&s).unwrap();
         assert_eq!(cfg, parsed);
+    }
+
+    #[test]
+    fn plugin_read_defaults_to_deny() {
+        let cfg = SecurityConfig::default();
+        assert_eq!(cfg.plugin_read, ConsentPolicy::Deny);
+        assert_eq!(cfg.plugin_read_max_bytes, 1024 * 1024);
     }
 }

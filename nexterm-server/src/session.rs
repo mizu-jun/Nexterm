@@ -705,6 +705,28 @@ impl SessionManager {
     ///
     /// The `last_seen` map is owned by the polling task; passing it in
     /// keeps `SessionManager` stateless on this axis (no extra `Mutex`).
+    /// Snapshot a pane's visible grid + scrollback for the plugin read API
+    /// (F3 / ADR-0008).
+    ///
+    /// Uses a **non-blocking** `try_lock` on the sessions map so it is safe to
+    /// call from the synchronous WASM plugin host. Returns `None` if the pane
+    /// does not exist or the map is momentarily contended (the read then fails
+    /// closed as `UnknownPane`, which is acceptable for a best-effort read).
+    pub fn pane_snapshot(
+        &self,
+        pane_id: u32,
+    ) -> Option<(nexterm_proto::Grid, Vec<Vec<nexterm_proto::Cell>>)> {
+        let sessions = self.sessions.try_lock().ok()?;
+        for session in sessions.values() {
+            for window in session.windows.values() {
+                if let Some(pane) = window.pane(pane_id) {
+                    return Some((pane.make_full_refresh(), pane.scrollback_snapshot()));
+                }
+            }
+        }
+        None
+    }
+
     pub async fn poll_foreground_processes(
         &self,
         last_seen: &mut std::collections::HashMap<u32, Option<String>>,

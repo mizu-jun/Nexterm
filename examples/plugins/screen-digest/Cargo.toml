@@ -1,0 +1,15 @@
+# Standalone crate: not part of the root workspace (built for wasm32 out of tree).
+[workspace]
+
+[package]
+name = "screen-digest"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

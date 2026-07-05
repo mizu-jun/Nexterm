@@ -1358,4 +1358,49 @@ mod tests {
         let replies = parser.screen_mut().take_pending_responses();
         assert_eq!(replies, vec![b"\x1b]10;rgb:d9d9/d9d9/d9d9\x07".to_vec()]);
     }
+
+    // ---- Scrollback emission (F3 / ADR-0008) ----
+
+    /// Reconstruct a scrollback line's text, trimming trailing blanks.
+    fn line_text(cells: &[nexterm_proto::Cell]) -> String {
+        let s: String = cells.iter().map(|c| c.ch).collect();
+        s.trim_end().to_string()
+    }
+
+    #[test]
+    fn scrolled_off_lines_are_emitted_in_order() {
+        // 3-row screen; feed 5 lines so the first two scroll off.
+        let mut parser = VtParser::new(10, 3);
+        parser.advance(b"a\r\nb\r\nc\r\nd\r\ne");
+
+        let lines = parser.screen_mut().take_scrolled_off_lines();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(line_text(&lines[0]), "a");
+        assert_eq!(line_text(&lines[1]), "b");
+        // The visible top row is now 'c'.
+        assert_eq!(parser.screen().grid().get(0, 0).unwrap().ch, 'c');
+    }
+
+    #[test]
+    fn take_scrolled_off_lines_drains_the_queue() {
+        let mut parser = VtParser::new(10, 2);
+        parser.advance(b"1\r\n2\r\n3"); // one line scrolls off
+        assert_eq!(parser.screen_mut().take_scrolled_off_lines().len(), 1);
+        // Draining leaves the queue empty until more lines scroll off.
+        assert!(parser.screen_mut().take_scrolled_off_lines().is_empty());
+        parser.advance(b"\r\n4"); // another line scrolls off
+        assert_eq!(parser.screen_mut().take_scrolled_off_lines().len(), 1);
+    }
+
+    #[test]
+    fn alternate_screen_does_not_emit_scrollback() {
+        let mut parser = VtParser::new(10, 2);
+        // Enter the alternate screen (DEC private mode 1049), then scroll.
+        parser.advance(b"\x1b[?1049h");
+        parser.advance(b"x\r\ny\r\nz");
+        assert!(
+            parser.screen_mut().take_scrolled_off_lines().is_empty(),
+            "alt-screen scrolling must not emit scrollback"
+        );
+    }
 }
