@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-07-05
+
 Phases 1–4 of the competitive-gap roadmap (`docs/plans/gap-roadmap-2026h2.md`):
 debt payoff, low-cost / high-compatibility protocol work, named workspaces,
 and the Plugin API v2 → v3 expansion (plugin host end-to-end tests + the
@@ -117,6 +119,14 @@ versions must upgrade both. SNAPSHOT_VERSION = 4 unchanged.
   design and the grid dump wire format are in
   `docs/adr/0008-plugin-read-api.md`; the ABI reference is in
   `docs/plugin-api.md`.
+- **Settings panel "Security" category**: the `[security]` config section is
+  now editable in the `Ctrl+,` panel instead of only by hand-editing
+  `config.toml`. It exposes the four consent policies (external URL, OSC 52
+  clipboard, OSC 9/777 notification, plugin read) as allow/deny/prompt
+  cyclers and the three byte-size caps as decimal inputs, with keyboard,
+  mouse, and AccessKit support. `save_to_toml` writes the seven keys back via
+  `toml_edit`. The panel edits the persistent defaults; the runtime
+  per-session consent overrides are unchanged and independent.
 
 ### Changed
 
@@ -128,6 +138,23 @@ versions must upgrade both. SNAPSHOT_VERSION = 4 unchanged.
   RUSTSEC-2026-0190; the upstream-blocked RUSTSEC-2026-0192 (ttf-parser via
   cosmic-text) and RUSTSEC-2026-0194/0195 (quick-xml via notify-rust) are
   documented as reasoned ignores in `deny.toml`.
+
+### Fixed
+
+- **Example plugin `nexterm_on_output` argument order**: the four bundled
+  sample plugins declared the hook as `(ptr, len, pane_id)`, but the host
+  calls it as `(pane_id, ptr, len)`; they now match. Each example also gained
+  an empty `[workspace]` table so it builds standalone for
+  `wasm32-unknown-unknown`. (The examples are separate wasm crates and are
+  not built in CI, so the mismatch had gone unnoticed.)
+
+### Security
+
+- **`cmov` 0.5.3 → 0.5.4 (CVE-2026-50185, GHSA-3rjw-m598-pq24, medium)**:
+  a transitive dependency of the SSH stack (`russh` → `rsa` /
+  `elliptic-curve` → `ctutils`) that backs constant-time comparisons could
+  return wrong results on aarch64 when the input registers' high bits were
+  set. Bumped to the patched release.
 
 ## [1.11.0] - 2026-06-28
 
