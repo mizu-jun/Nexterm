@@ -2,6 +2,19 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ドキュメントマップと役割分担
+
+永続ドキュメントはそれぞれ 1 つの役割を持つ。新しい内容はその役割を持つファイルに書き、他のファイルに重複させないこと。
+
+| ドキュメント | 役割 | 更新タイミング |
+|---|---|---|
+| `CLAUDE.md` | Claude Code への作業ルール（どう作業するか） | ルール変更時。陳腐化した項目は削除 |
+| `docs/PRODUCT.md` | 製品要求・ビジョン・非目標（何をなぜ作るか） | マイナー/メジャーリリース節目でレビュー |
+| `docs/ARCHITECTURE.md` | システム設計（どう作られているか） | 構造変更時 |
+| `docs/adr/` | 個別の設計判断の記録（なぜそう決めたか） | 追記のみ。採択済み ADR は書き換えない |
+| `docs/plans/` | フェーズ付き作業計画・進捗（作業単位のステアリングファイル） | 作業中は随時。完了後は `plans/archive/` へ |
+| `CHANGELOG.md` | リリース履歴 | リリース時 |
+
 ## ビルドコマンド
 
 ```bash
@@ -186,7 +199,7 @@ v1.4.0 で旧 `nexterm-launcher` クレートを削除。v0.9.3 でシングル�
 
 CIは`.github/workflows/ci.yml`で`master`ブランチへの push / PR をトリガーとして設定済み。Linux / macOS / Windows の3 OS マトリクスで `cargo test` / `cargo clippy -- -D warnings` / `cargo fmt --check` を実行する。
 
-バージョンバンプは`Cargo.toml`の`[workspace.package] version`を更新すること（個別クレートのCargo.tomlではなく、ワークスペースルートのみ）。ワークスペースは Rust 2024 edition (`edition = "2024"`) を使用しているため、ビルドには Rust 1.85 以降が必要。
+バージョンバンプは`Cargo.toml`の`[workspace.package] version`を更新すること（個別クレートのCargo.tomlではなく、ワークスペースルートのみ）。ワークスペースは Rust 2024 edition (`edition = "2024"`) を使用しているため、ビルドには Rust 1.85 以降が必要。マイナー/メジャーバージョンを上げる際は `docs/PRODUCT.md` もレビューすること（"Last reviewed" 行の更新と、出荷済み・取り下げ済み要求の反映）。
 
 Flatpakビルドは`.github/workflows/flatpak.yml`で`ubuntu-latest`ランナー上で実行する。`container:`ブロックを使うと`apt-get`が利用できなくなるため使用しないこと。`flatpak remote-add`・`flatpak install`・`flatpak-builder`にはすべて`--user`フラグが必要（CI環境ではシステム操作の権限がない）。
 

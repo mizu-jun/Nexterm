@@ -26,6 +26,19 @@ When adding a new document, default to English and only create a `*.ja.md` compa
 
 **Rule of thumb:** if a human will read it inside a terminal session with Claude, write Japanese; if it will land in the repo or on GitHub for the world to see, write English.
 
+## Documentation Map & Roles
+
+Each persistent document has one job. Write new content in the file that owns that job; do not duplicate it elsewhere.
+
+| Document | Role | When it changes |
+|---|---|---|
+| `CLAUDE.md` | Working rules for Claude Code (*how to work here*) | When a rule changes; delete stale entries |
+| `docs/PRODUCT.md` | Product requirements, vision, non-goals (*what & why to build*) | Reviewed at each minor/major release |
+| `docs/ARCHITECTURE.md` | System design (*how it is built*) | When the structure changes |
+| `docs/adr/` | Individual design decisions (*why we decided*) | Append-only; never rewrite accepted ADRs |
+| `docs/plans/` | Phased work plans with status/progress (steering files for units of work) | Continuously while the work is active; move to `plans/archive/` when done |
+| `CHANGELOG.md` | Release history | At each release |
+
 ## Build Commands
 
 ```bash
@@ -212,7 +225,7 @@ Releases are automated by `.github/workflows/release.yml` and triggered by pushi
 
 CI is configured at `.github/workflows/ci.yml` and runs on push/PR against `master`. The 3-OS matrix (Linux / macOS / Windows) runs `cargo test`, `cargo clippy -- -D warnings`, and `cargo fmt --check`.
 
-Bump the version in `Cargo.toml` under `[workspace.package] version` only (not in individual crate `Cargo.toml` files). The workspace uses Rust 2024 edition (`edition = "2024"`), so Rust 1.85+ is required.
+Bump the version in `Cargo.toml` under `[workspace.package] version` only (not in individual crate `Cargo.toml` files). The workspace uses Rust 2024 edition (`edition = "2024"`), so Rust 1.85+ is required. When bumping a minor or major version, also review `docs/PRODUCT.md` (update the "Last reviewed" line and reconcile any shipped or dropped requirements).
 
 The Flatpak build (`.github/workflows/flatpak.yml`) runs on `ubuntu-latest`. Do not use a `container:` block — it disables `apt-get`. `flatpak remote-add`, `flatpak install`, and `flatpak-builder` all require the `--user` flag (CI has no system-level privileges).
 

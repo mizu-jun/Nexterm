@@ -176,6 +176,7 @@ background_opacity = 0.95
 
 | ドキュメント | 内容 |
 |--------------|------|
+| [docs/PRODUCT.md](docs/PRODUCT.md) | 製品要求 — ビジョン、ターゲットユーザー、差別化、非目標（英語） |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | クレート構成、プロセスモデル、描画パイプライン、IPC、BSP |
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | IPC プロトコル仕様（メッセージ型、フレーミング、ハンドシェイク） |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | TOML / Lua 設定の完全リファレンス |
