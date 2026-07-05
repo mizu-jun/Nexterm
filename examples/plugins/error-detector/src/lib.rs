@@ -68,7 +68,7 @@ pub extern "C" fn nexterm_init() {
 /// 0 = 出力をそのまま通過させる（プラグインは表示を変えない）
 /// 1 = 出力を抑制する（今回は常に 0）
 #[no_mangle]
-pub extern "C" fn nexterm_on_output(output_ptr: *const u8, output_len: usize, pane_id: i32) -> i32 {
+pub extern "C" fn nexterm_on_output(pane_id: i32, output_ptr: *const u8, output_len: usize) -> i32 {
     // SAFETY: サーバーは有効な UTF-8 バッファへのポインタを渡す
     let bytes = unsafe { std::slice::from_raw_parts(output_ptr, output_len) };
     let text = std::str::from_utf8(bytes).unwrap_or("");

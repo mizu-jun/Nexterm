@@ -249,7 +249,7 @@ pub extern "C" fn nexterm_on_output(
 }
 ```
 
-> Note: the host calls this with arguments `(pane_id, ptr, len)` in that order — `pane_id` first. Refer to `examples/plugins/screen-digest/` for the canonical signature. (Some older bundled samples still declare the parameters in the legacy `(ptr, len, pane_id)` order and are pending a fix.)
+> Note: the host calls this with arguments `(pane_id, ptr, len)` in that order — `pane_id` first. All bundled samples use this signature; refer to any of them (e.g. `examples/plugins/screen-digest/`) as a reference.
 
 ### `nexterm_on_command` (optional)
 

@@ -97,9 +97,9 @@ pub extern "C" fn nexterm_init() {
 /// 0 = 通過, 1 = 抑制
 #[no_mangle]
 pub extern "C" fn nexterm_on_output(
+    _pane_id: i32,
     output_ptr: *const u8,
     output_len: usize,
-    _pane_id: i32,
 ) -> i32 {
     // SAFETY: サーバーは有効な UTF-8 バッファへのポインタを渡す
     let bytes = unsafe { std::slice::from_raw_parts(output_ptr, output_len) };

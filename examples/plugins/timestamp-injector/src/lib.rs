@@ -80,7 +80,7 @@ pub extern "C" fn nexterm_init() {
 /// 有効な場合は各行の先頭に "HH:MM:SS.mmm | " を付加する。
 /// 前回のタイムスタンプから 100ms 未満の場合は付加しない（ちらつき防止）。
 #[no_mangle]
-pub extern "C" fn nexterm_on_output(output_ptr: *const u8, output_len: usize, pane_id: i32) -> i32 {
+pub extern "C" fn nexterm_on_output(pane_id: i32, output_ptr: *const u8, output_len: usize) -> i32 {
     if !ENABLED.load(Ordering::Relaxed) {
         return 0;
     }

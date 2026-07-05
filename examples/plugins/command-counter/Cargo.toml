@@ -1,3 +1,6 @@
+# Standalone crate: not part of the root workspace (built for wasm32 out of tree).
+[workspace]
+
 [package]
 name = "command-counter"
 version = "0.2.0"
