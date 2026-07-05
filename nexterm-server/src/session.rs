@@ -144,14 +144,10 @@ impl Session {
     /// leave the screen permanently corrupt, so on overflow the forwarder replays
     /// the current grid of each pane instead of silently continuing.
     pub fn focused_window_full_refresh(&self) -> Vec<(u32, nexterm_proto::Grid)> {
-        match self.focused_window() {
-            Some(window) => window
-                .pane_ids()
-                .into_iter()
-                .filter_map(|id| window.pane(id).map(|p| (p.id, p.make_full_refresh())))
-                .collect(),
-            None => Vec::new(),
-        }
+        // Includes serial panes as well as PTY panes (audit round 3, C2).
+        self.focused_window()
+            .map(|window| window.all_full_refreshes())
+            .unwrap_or_default()
     }
 
     /// Attach a client and return its `broadcast::Receiver`.

@@ -44,12 +44,17 @@ fn parse_stop_bits(stop_bits: u8) -> serialport::StopBits {
 /// Pane backed by a serial port.
 pub struct SerialPane {
     pub id: u32,
-    #[allow(dead_code)]
     pub cols: u16,
-    #[allow(dead_code)]
     pub rows: u16,
     /// Write handle to the serial port.
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    /// Latest full-grid snapshot maintained by the reader thread.
+    ///
+    /// Audit round 3 (C2): mirrors the PTY `Pane` design (v1.9.3). Without this,
+    /// `make_full_refresh` returned a blank grid and any output emitted before a
+    /// client attached was lost (broadcast drops messages with no receivers), so
+    /// the pane stayed blank until the next byte arrived.
+    latest_grid: Arc<Mutex<Grid>>,
 }
 
 impl SerialPane {
@@ -87,6 +92,9 @@ impl SerialPane {
         let writer: Arc<Mutex<Box<dyn Write + Send>>> =
             Arc::new(Mutex::new(Box::new(serial_write)));
 
+        let latest_grid: Arc<Mutex<Grid>> = Arc::new(Mutex::new(Grid::new(cols, rows)));
+        let latest_grid_reader = Arc::clone(&latest_grid);
+
         // Send the initial grid via broadcast.
         let _ = tx.send(ServerToClient::FullRefresh {
             pane_id,
@@ -115,6 +123,17 @@ impl SerialPane {
                             let dirty = parser.screen_mut().take_dirty_rows();
                             if !dirty.is_empty() {
                                 let (cursor_col, cursor_row) = parser.screen().cursor();
+                                // C2: keep the snapshot fresh so a client that
+                                // attaches after this burst sees the current
+                                // screen via `make_full_refresh`. Apply only the
+                                // changed rows (audit round 3, P1 pattern).
+                                if let Ok(mut g) = latest_grid_reader.lock() {
+                                    for d in &dirty {
+                                        g.apply_dirty_row(d);
+                                    }
+                                    g.cursor_col = cursor_col;
+                                    g.cursor_row = cursor_row;
+                                }
                                 let _ = tx_clone.send(ServerToClient::GridDiff {
                                     pane_id,
                                     dirty_rows: dirty,
@@ -146,6 +165,7 @@ impl SerialPane {
             cols,
             rows,
             writer,
+            latest_grid,
         })
     }
 
@@ -165,9 +185,14 @@ impl SerialPane {
     }
 
     /// Build a Full Refresh grid.
-    #[allow(dead_code)]
+    ///
+    /// Returns a clone of the snapshot maintained by the reader thread. Falls
+    /// back to an empty grid if the shared lock is poisoned (audit round 3, C2).
     pub fn make_full_refresh(&self) -> Grid {
-        Grid::new(self.cols, self.rows)
+        match self.latest_grid.lock() {
+            Ok(g) => g.clone(),
+            Err(_) => Grid::new(self.cols, self.rows),
+        }
     }
 
     /// Working directory is always `None` (a serial port has no CWD).

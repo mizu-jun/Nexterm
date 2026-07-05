@@ -9,8 +9,19 @@
 
 ## Implementation status
 
-- **Done:** P1, B1, P2, R1 (PR #26, squashed to `master`), P4 (this change).
-- **Deferred (still tracked below):** P3, C2, P5, P6, P7, S1 (LOW), R5/A5.
+- **Done:** P1, B1, P2, R1 (PR #26), P4 (PR #27), S1 and C2 (this change).
+- **Deferred (still tracked below):** P3 and P6 (need profiling), P5 and R5/A5
+  (require a `PROTOCOL_VERSION` bump), P7 (large lock-architecture refactor).
+
+### C2 note
+
+C2 was reclassified from LOW/dormant to a reachable bug: `SerialPane::spawn` is
+wired into `Window::add_serial_pane`, so serial panes are live. The fix mirrors
+the PTY `Pane` grid snapshot (a reader-maintained `latest_grid` applied via
+`Grid::apply_dirty_row`) and threads serial panes through the attach and lag
+-resync refresh paths (`Window::focused_pane_full_refresh` /
+`all_full_refreshes`). DA/DSR write-back is not added — serial devices do not run
+the PSReadLine handshake that made it necessary for ConPTY.
 
 ## Baseline statistics
 

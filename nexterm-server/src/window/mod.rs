@@ -16,7 +16,7 @@ use anyhow::Result;
 use tokio::sync::broadcast;
 use tracing::info;
 
-use nexterm_proto::{PaneLayout, ServerToClient};
+use nexterm_proto::{Grid, PaneLayout, ServerToClient};
 
 use crate::pane::Pane;
 use crate::serial::SerialPane;
@@ -548,6 +548,35 @@ impl Window {
     /// Return a reference to the pane with the given id.
     pub fn pane(&self, id: u32) -> Option<&Pane> {
         self.panes.get(&id)
+    }
+
+    /// Build a full refresh for the focused pane, whether it is a PTY or a
+    /// serial pane (audit round 3, C2 — the attach path previously only looked
+    /// at PTY panes, so a focused serial pane rendered blank).
+    pub fn focused_pane_full_refresh(&self) -> Option<(u32, Grid)> {
+        let id = self.focused_pane_id;
+        if let Some(p) = self.panes.get(&id) {
+            Some((p.id, p.make_full_refresh()))
+        } else {
+            self.serial_panes
+                .get(&id)
+                .map(|sp| (sp.id, sp.make_full_refresh()))
+        }
+    }
+
+    /// Build a full refresh for every pane (PTY and serial) in this window.
+    ///
+    /// Used to resync a lagged client (audit round 3, P4) so serial panes are
+    /// included alongside PTY panes.
+    pub fn all_full_refreshes(&self) -> Vec<(u32, Grid)> {
+        let mut out = Vec::with_capacity(self.panes.len() + self.serial_panes.len());
+        for p in self.panes.values() {
+            out.push((p.id, p.make_full_refresh()));
+        }
+        for sp in self.serial_panes.values() {
+            out.push((sp.id, sp.make_full_refresh()));
+        }
+        out
     }
 
     /// Remove the focused pane from the BSP tree.
