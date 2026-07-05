@@ -28,3 +28,9 @@ workspace = true
 [[bench]]
 name = "vt_throughput"
 harness = false
+
+# Audit round 3 (P1/P2): grid snapshot refresh cost.
+# Run with: cargo bench -p nexterm-vt --bench grid_snapshot
+[[bench]]
+name = "grid_snapshot"
+harness = false

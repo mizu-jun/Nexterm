@@ -866,15 +866,32 @@ impl Pane {
                                 );
                                 logged_first_diff = true;
                             }
-                            // v1.9.3 fix: refresh the full-grid snapshot so a
+                            let (cursor_col, cursor_row) = parser.screen().cursor();
+
+                            // v1.9.3 fix: keep the full-grid snapshot fresh so a
                             // client attaching after this burst still sees the
                             // current screen via `make_full_refresh`. Without
                             // this the parser state is trapped in the reader
                             // thread and late-attachers get an empty grid.
+                            //
+                            // Audit round 3 (P1): apply only the changed rows
+                            // instead of cloning the entire parser grid on every
+                            // burst. Under heavy output (`yes`, `cat largefile`)
+                            // the full clone copied every cell each time; here we
+                            // touch only the dirty rows we already computed. The
+                            // reader's parser is never resized, so `latest_grid`
+                            // and the dirty rows always share dimensions. Cursor
+                            // and hyperlinks are synced too because `GridDiff`
+                            // carries neither, so a late attach relies on this
+                            // snapshot for both.
                             if let Ok(mut g) = latest_grid_clone.lock() {
-                                *g = parser.screen().full_refresh_grid();
+                                for d in &dirty {
+                                    g.apply_dirty_row(d);
+                                }
+                                g.cursor_col = cursor_col;
+                                g.cursor_row = cursor_row;
+                                g.hyperlinks.clone_from(&parser.screen().grid().hyperlinks);
                             }
-                            let (cursor_col, cursor_row) = parser.screen().cursor();
 
                             // F3 / ADR-0008: move lines that scrolled off during
                             // this burst into the pane-side scrollback mirror,

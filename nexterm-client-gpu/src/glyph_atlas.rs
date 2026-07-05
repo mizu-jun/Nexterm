@@ -157,8 +157,11 @@ impl GlyphAtlas {
         });
 
         // LRU capacity upper bound: size*size divided by the smallest glyph area (8×8).
-        let lru_cap = NonZeroUsize::new(((size * size) / 64).max(256) as usize)
-            .expect("lru capacity is non-zero");
+        // Audit round 3 (R1): use u64 math so a large configured atlas size cannot
+        // overflow the u32 multiplication (debug panic / release wrap).
+        let atlas_sq = (size as u64).saturating_mul(size as u64);
+        let lru_cap = NonZeroUsize::new((atlas_sq / 64).max(256).min(usize::MAX as u64) as usize)
+            .unwrap_or(NonZeroUsize::MIN);
 
         Self {
             texture,
@@ -203,9 +206,12 @@ impl GlyphAtlas {
     /// This is a pure function that can be called without a GPU device, making
     /// it straightforward to unit-test independently.
     fn lru_cap_from_cell(atlas_size: u32, cell_w: u32, cell_h: u32) -> NonZeroUsize {
-        let cell_area = (cell_w as u64 * cell_h as u64).max(1) as u32;
-        NonZeroUsize::new(((atlas_size * atlas_size) / cell_area).max(256) as usize)
-            .expect("lru capacity is non-zero")
+        // Audit round 3 (R1): guard against u32 overflow in atlas_size * atlas_size
+        // and cell_w * cell_h (atlas_size is user-configurable via gpu.atlas_size).
+        let atlas_sq = (atlas_size as u64).saturating_mul(atlas_size as u64);
+        let cell_area = (cell_w as u64).saturating_mul(cell_h as u64).max(1);
+        let cap = (atlas_sq / cell_area).max(256).min(usize::MAX as u64) as usize;
+        NonZeroUsize::new(cap).unwrap_or(NonZeroUsize::MIN)
     }
 
     /// Update LRU capacity based on the actual font cell dimensions.
@@ -416,5 +422,24 @@ mod tests {
         let cap1 = GlyphAtlas::lru_cap_from_cell(1024, 16, 32).get();
         let cap2 = GlyphAtlas::lru_cap_from_cell(2048, 16, 32).get();
         assert_eq!(cap2, cap1 * 4);
+    }
+
+    #[test]
+    fn lru_cap_survives_overflowing_atlas_size() {
+        // Audit round 3 (R1): atlas_size is user-configurable; a value whose
+        // square overflows u32 (>= 65536) must not panic or wrap. It should
+        // simply yield a large, valid capacity via saturating u64 math.
+        let cap = GlyphAtlas::lru_cap_from_cell(100_000, 8, 8);
+        assert!(cap.get() >= 256);
+        // 100_000^2 / 64 must be computed in u64, not a wrapped u32.
+        let expected = ((100_000u64 * 100_000) / 64) as usize;
+        assert_eq!(cap.get(), expected);
+    }
+
+    #[test]
+    fn lru_cap_handles_zero_cell_dimensions() {
+        // Degenerate cell dimensions must not divide by zero.
+        let cap = GlyphAtlas::lru_cap_from_cell(1024, 0, 0);
+        assert!(cap.get() >= 256);
     }
 }

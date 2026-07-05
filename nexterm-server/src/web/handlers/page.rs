@@ -76,12 +76,7 @@ fn serve_login_html(state: &AppState) -> Response {
 
 /// GET /setup — initial TOTP setup page.
 pub(in crate::web) async fn serve_setup(State(state): State<AppState>) -> Response {
-    if state
-        .pending_setup
-        .lock()
-        .expect("pending_setup mutex poisoned")
-        .is_none()
-    {
+    if crate::lock_recover(&state.pending_setup, "pending_setup").is_none() {
         return redirect("/");
     }
     serve_asset("setup.html")

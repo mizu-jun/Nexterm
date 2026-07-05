@@ -132,10 +132,7 @@ struct SetupUrlResponse {
 
 /// GET /auth/setup-url — return the otpauth:// URL and the secret for setup.
 pub(in crate::web) async fn handle_setup_url(State(state): State<AppState>) -> Response {
-    let guard = state
-        .pending_setup
-        .lock()
-        .expect("pending_setup mutex poisoned");
+    let guard = crate::lock_recover(&state.pending_setup, "pending_setup");
     match guard.as_ref() {
         Some(ps) => Json(SetupUrlResponse {
             url: ps.totp.get_url(),
@@ -154,10 +151,7 @@ pub(in crate::web) async fn handle_setup_verify(
 ) -> Response {
     let addr = client_ip(&headers);
     let (secret_clone, is_valid) = {
-        let guard = state
-            .pending_setup
-            .lock()
-            .expect("pending_setup mutex poisoned");
+        let guard = crate::lock_recover(&state.pending_setup, "pending_setup");
         match guard.as_ref() {
             Some(ps) => (ps.secret.clone(), ps.totp.verify(&form.code)),
             None => return redirect("/?setup=done"),
@@ -178,10 +172,7 @@ pub(in crate::web) async fn handle_setup_verify(
     match otp::TotpManager::from_secret(&secret_clone, &state.issuer) {
         Ok(mgr) => {
             *state.totp.write().await = Some(mgr);
-            *state
-                .pending_setup
-                .lock()
-                .expect("pending_setup mutex poisoned") = None;
+            *crate::lock_recover(&state.pending_setup, "pending_setup") = None;
             info!("TOTP setup completed ({})", addr);
         }
         Err(e) => {
