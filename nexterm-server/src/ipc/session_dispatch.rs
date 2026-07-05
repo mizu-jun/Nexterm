@@ -142,10 +142,9 @@ pub(super) async fn handle_attach(ctx: &mut DispatchContext<'_>, session_name: &
                 let arc = manager.sessions();
                 let sessions = arc.lock().await;
                 sessions.get(session_name).and_then(|s| {
-                    s.focused_window().and_then(|w| {
-                        let pid = w.focused_pane_id();
-                        w.pane(pid).map(|p| (p.id, p.make_full_refresh()))
-                    })
+                    // C2: serial-aware — a focused serial pane must also refresh.
+                    s.focused_window()
+                        .and_then(|w| w.focused_pane_full_refresh())
                 })
             };
             // v1.9.4 — if the focused pane's grid is still blank when we

@@ -83,12 +83,25 @@ impl AuthManager {
     }
 
     /// Check whether a session token is still valid.
+    ///
+    /// Audit round 3 (S1): compare against every stored token in constant time
+    /// so the response does not reveal, via timing, how much of a guessed token
+    /// matched. This is defense-in-depth — tokens are 48 random alphanumeric
+    /// chars behind a keyed `HashMap` — but keeps the auth gate branch-free.
     pub fn is_valid(&self, token: &str) -> bool {
+        use subtle::{Choice, ConstantTimeEq};
+
         let sessions = crate::lock_recover(&self.sessions, "session store");
-        sessions
-            .get(token)
-            .map(|entry| Instant::now() < entry.expiry)
-            .unwrap_or(false)
+        let now = Instant::now();
+        let token_bytes = token.as_bytes();
+
+        let mut valid = Choice::from(0u8);
+        for (stored, entry) in sessions.iter() {
+            let token_match = stored.as_bytes().ct_eq(token_bytes);
+            let not_expired = Choice::from((now < entry.expiry) as u8);
+            valid |= token_match & not_expired;
+        }
+        valid.into()
     }
 
     /// Return session metadata (for the access log).
