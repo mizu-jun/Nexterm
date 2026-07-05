@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-07-06
+
+Audit round 3 (`docs/plans/audit-round3-2026h2.md`): reliability, performance,
+and encapsulation improvements found by a security / performance / correctness
+review of 1.12.0. No protocol or snapshot version change — fully compatible with
+1.12.0 peers.
+
+### Performance
+- The PTY reader now applies only the changed rows to its `latest_grid` snapshot
+  each output burst instead of cloning the whole grid. A single-row update drops
+  from ~19 µs to ~0.5 µs in a criterion bench (`nexterm-vt/benches/grid_snapshot`),
+  cutting memory-bandwidth pressure under heavy output.
+- `Screen::take_dirty_rows` pre-sizes its result to avoid repeated reallocation
+  on full-screen repaints.
+
+### Fixed
+- Recover from a poisoned `std::sync::Mutex` instead of cascading into a
+  process-wide panic (plugin manager, web session / OAuth / TOTP-setup locks).
+- Resync a client with a full refresh when its broadcast receiver lags, instead
+  of leaving the screen corrupt until an unrelated refresh (both the native IPC
+  and WebSocket forwarders).
+- Serial panes no longer render blank: they maintain a live grid snapshot and are
+  included in the attach and lag-resync refresh paths.
+- Guard the glyph-atlas LRU capacity math against `u32` overflow for a large
+  configured `gpu.atlas_size`.
+
+### Changed
+- `SessionManager` now uses per-session locking
+  (`HashMap<String, Arc<Mutex<Session>>>`), so an operation on one session no
+  longer blocks every other session behind a single global lock.
+- Encapsulated the raw bits of `Attrs` and `Modifiers` behind
+  `new` / `bits` / `insert` / `remove` (ADR-0009). No wire change.
+
+### Security
+- Session-token validation is now constant-time (defense-in-depth for the web
+  terminal auth gate).
+
 ## [1.12.0] - 2026-07-05
 
 Phases 1–4 of the competitive-gap roadmap (`docs/plans/gap-roadmap-2026h2.md`):
