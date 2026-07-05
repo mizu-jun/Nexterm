@@ -750,6 +750,19 @@ impl EventHandler {
                         let _ = sp.save_to_toml();
                         sp.dirty = false;
                     }
+                    SettingsPanelHit::SecurityRow(row) => {
+                        // Click focuses the row. Policy rows (0..=3) cycle
+                        // forward; byte-cap rows (4..=6) start decimal editing.
+                        // Like the Window cyclers, changes persist on Save/close
+                        // rather than auto-saving.
+                        let sp = &mut self.app.state.settings_panel;
+                        sp.security_field_focus = row;
+                        if row <= 3 {
+                            sp.security_field_increase();
+                        } else {
+                            sp.begin_security_edit();
+                        }
+                    }
                     SettingsPanelHit::PanelBackground => {
                         // Other clicks inside the panel → do nothing.
                     }

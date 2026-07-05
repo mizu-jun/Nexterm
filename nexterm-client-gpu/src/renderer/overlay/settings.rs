@@ -28,7 +28,7 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
-        use crate::settings_panel::SettingsCategory;
+        use crate::settings_panel::{SettingsCategory, SettingsPanel};
 
         let sp = &state.settings_panel;
         if !sp.is_open {
@@ -2156,6 +2156,98 @@ impl WgpuState {
                         text_idx,
                     );
                 }
+            }
+            SettingsCategory::Security => {
+                // 7 fields: 4 consent-policy cyclers (< allow/deny/prompt >)
+                // followed by 3 decimal byte-cap inputs. See
+                // SettingsPanel::SECURITY_FIELD_COUNT.
+                let focus = sp.security_field_focus;
+                let value_x = content_inner_x + cell_w * 26.0;
+                for i in 0u8..SettingsPanel::SECURITY_FIELD_COUNT {
+                    let y = content_top + cell_h * (0.5 + i as f32 * 1.4);
+                    if focus == i {
+                        add_px_rect(
+                            content_inner_x - cell_w * 0.3,
+                            y - cell_h * 0.1,
+                            content_w - cell_w * 0.7,
+                            cell_h * 1.2,
+                            tokens.surface_2,
+                            sw,
+                            sh,
+                            bg_verts,
+                            bg_idx,
+                        );
+                    }
+                    let label_color = if focus == i {
+                        tokens.text_primary
+                    } else {
+                        tokens.text_secondary
+                    };
+                    add_string_verts(
+                        SettingsPanel::security_field_label(i),
+                        content_inner_x,
+                        y,
+                        label_color,
+                        focus == i,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
+                    );
+                    // Value column: a policy cycler for 0..=3, a decimal cap for
+                    // 4..=6 (showing the in-flight edit buffer when editing).
+                    let value = if let Some(policy) = sp.security_policy_at(i) {
+                        format!("< {} >", SettingsPanel::consent_label(policy))
+                    } else if focus == i
+                        && let Some(state) = sp.security_field_editing.as_ref()
+                    {
+                        format!("{}|", state.buffer)
+                    } else {
+                        sp.security_bytes_at(i).unwrap_or(0).to_string()
+                    };
+                    add_string_verts(
+                        &value,
+                        value_x,
+                        y,
+                        if focus == i {
+                            tokens.text_primary
+                        } else {
+                            tokens.text_secondary
+                        },
+                        focus == i,
+                        sw,
+                        sh,
+                        cell_w,
+                        font,
+                        atlas,
+                        &self.queue,
+                        text_verts,
+                        text_idx,
+                    );
+                }
+                // Footer note: the plugin_read policy has no synchronous prompt
+                // path yet, so `prompt` currently behaves as `deny`.
+                let note_y =
+                    content_top + cell_h * (0.5 + SettingsPanel::SECURITY_FIELD_COUNT as f32 * 1.4);
+                add_string_verts(
+                    "Note: plugin read \"prompt\" behaves as \"deny\" for now.",
+                    content_inner_x,
+                    note_y,
+                    tokens.text_muted,
+                    false,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
+                );
             }
         }
 

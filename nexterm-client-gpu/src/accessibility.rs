@@ -1987,6 +1987,22 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
                 },
             ));
         }
+        SettingsCategory::Security => {
+            use crate::settings_panel::SettingsPanel;
+            content_description = Some(format!(
+                "Security consent policies (Up/Down to move, Left/Right to cycle a policy, \
+                 Enter to edit a byte cap). External URL: {}. OSC 52 clipboard: {}. \
+                 Notification: {}. Plugin read: {} (prompt behaves as deny for now). \
+                 OSC 52 max bytes: {}. Notification max bytes: {}. Plugin read max bytes: {}.",
+                SettingsPanel::consent_label(panel.sec_external_url),
+                SettingsPanel::consent_label(panel.sec_osc52_clipboard),
+                SettingsPanel::consent_label(panel.sec_osc_notification),
+                SettingsPanel::consent_label(panel.sec_plugin_read),
+                panel.sec_osc52_max_bytes,
+                panel.sec_notification_max_bytes,
+                panel.sec_plugin_read_max_bytes,
+            ));
+        }
     }
 
     let mut content = Node::new(Role::Group);

@@ -121,6 +121,33 @@ impl EventHandler {
             return;
         }
 
+        // Character input while editing a Security byte-cap field. Only ASCII
+        // digits are accepted (the method filters); other keys are absorbed so
+        // they do not reach the server.
+        if !consumed
+            && self.app.state.settings_panel.is_open
+            && self
+                .app
+                .state
+                .settings_panel
+                .security_field_editing
+                .is_some()
+        {
+            if let Some(ref t) = text
+                && !self.modifiers.control_key()
+                && !self.modifiers.alt_key()
+            {
+                for ch in t.chars() {
+                    self.app.state.settings_panel.security_field_insert_char(ch);
+                }
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+                return;
+            }
+            return;
+        }
+
         // Phase 5-11-9 Sub-phase B: character input while editing a key
         // binding in Text mode. Record mode is handled by `handle_key` and
         // never reaches here (the key is consumed before character lookup).

@@ -417,8 +417,19 @@ impl EventHandler {
             let key_recording = self.app.state.settings_panel.is_key_recording();
             let key_text_editing = self.app.state.settings_panel.is_key_text_editing();
             let key_editing = key_recording || key_text_editing;
-            let editing =
-                font_editing || ssh_editing || dialog_open || key_dialog_open || key_editing;
+            // Security category: byte-cap decimal edit mode.
+            let security_editing = self
+                .app
+                .state
+                .settings_panel
+                .security_field_editing
+                .is_some();
+            let editing = font_editing
+                || ssh_editing
+                || dialog_open
+                || key_dialog_open
+                || key_editing
+                || security_editing;
             match code {
                 // ===== Sub-phase D: dedicated handling while the delete dialog is open (highest priority) =====
                 WKeyCode::Escape if dialog_open => {
@@ -502,6 +513,9 @@ impl EventHandler {
                     } else if ssh_editing {
                         // Sub-phase A: cancel SSH field editing (discard buffer)
                         self.app.state.settings_panel.cancel_ssh_field_edit();
+                    } else if security_editing {
+                        // Discard the in-flight Security byte-cap edit.
+                        self.app.state.settings_panel.cancel_security_edit();
                     } else if self.app.state.settings_panel.search_focused
                         || self.app.state.settings_panel.is_search_filtering()
                     {
@@ -529,6 +543,9 @@ impl EventHandler {
                     } else if ssh_editing {
                         // Sub-phase A: commit SSH field editing (write the buffer back into host)
                         self.app.state.settings_panel.commit_ssh_field_edit();
+                    } else if security_editing {
+                        // Commit the Security byte-cap decimal edit.
+                        self.app.state.settings_panel.commit_security_edit();
                     } else {
                         // Sub-phase A: in the SSH category, focus on fields (1/2/4) enters edit mode.
                         // Sub-phase D: focus=6 (Add) calls add_ssh_host (which starts editing internally).
@@ -576,6 +593,11 @@ impl EventHandler {
                             // confirmation dialog. With an empty list it is
                             // treated as disabled.
                             sp.open_key_delete_dialog();
+                        } else if sp.category == SettingsCategory::Security
+                            && matches!(sp.security_field_focus, 4..=6)
+                        {
+                            // Enter on a byte-cap field starts decimal editing.
+                            sp.begin_security_edit();
                         } else {
                             let _ = sp.save_to_toml();
                             sp.close();
@@ -587,6 +609,9 @@ impl EventHandler {
                 }
                 WKeyCode::Backspace if ssh_editing => {
                     self.app.state.settings_panel.ssh_field_backspace();
+                }
+                WKeyCode::Backspace if security_editing => {
+                    self.app.state.settings_panel.security_field_backspace();
                 }
                 WKeyCode::Delete if ssh_editing => {
                     self.app.state.settings_panel.ssh_field_delete();
@@ -649,11 +674,21 @@ impl EventHandler {
                             sp.next_category();
                             sp.key_field_focus = 0;
                         }
+                    } else if sp.category == SettingsCategory::Security
+                        && code == WKeyCode::ArrowDown
+                    {
+                        // ↓ walks the Security fields; past the last one, fall
+                        // through to the next category.
+                        if !sp.next_security_field() {
+                            sp.next_category();
+                            sp.security_field_focus = 0;
+                        }
                     } else {
                         sp.next_category();
                         sp.window_field_focus = 0;
                         sp.ssh_field_focus = 0;
                         sp.key_field_focus = 0;
+                        sp.security_field_focus = 0;
                     }
                 }
                 WKeyCode::ArrowUp if !editing => {
@@ -690,6 +725,14 @@ impl EventHandler {
                                 sp.key_field_focus = 0;
                             }
                         }
+                        SettingsCategory::Security => {
+                            // ↑ moves back through the Security fields; at the
+                            // top, fall back to the previous category.
+                            if !sp.prev_security_field() {
+                                sp.prev_category();
+                                sp.security_field_focus = 0;
+                            }
+                        }
                         _ => sp.prev_category(),
                     }
                 }
@@ -723,6 +766,11 @@ impl EventHandler {
                                 sp.next_key_action();
                             }
                         }
+                        // Security: → cycles the focused consent policy forward
+                        // (no-op on the byte-cap fields).
+                        SettingsCategory::Security => {
+                            self.app.state.settings_panel.security_field_increase()
+                        }
                         _ => {}
                     }
                 }
@@ -755,6 +803,11 @@ impl EventHandler {
                             if sp.key_field_focus == 2 {
                                 sp.prev_key_action();
                             }
+                        }
+                        // Security: ← cycles the focused consent policy backward
+                        // (no-op on the byte-cap fields).
+                        SettingsCategory::Security => {
+                            self.app.state.settings_panel.security_field_decrease()
                         }
                         _ => {}
                     }

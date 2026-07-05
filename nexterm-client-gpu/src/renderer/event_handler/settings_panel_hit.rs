@@ -35,6 +35,10 @@ pub(super) enum SettingsPanelHit {
     /// (wraps from 8 back to 1), row 2 = `show_exit_code_badge` toggle.
     /// The "Editing" hint row (3) intentionally has no hit zone.
     BlocksRow(u8),
+    /// Click on a row inside the Security category. row 0..=3 are consent-policy
+    /// cyclers (click cycles forward), 4..=6 are byte-cap fields (click focuses
+    /// and starts editing). The footer note row has no hit zone.
+    SecurityRow(u8),
     /// Empty area inside the panel (no-op).
     PanelBackground,
     /// Phase 4 (UI/UX v2): click landed on the sidebar search input.
@@ -242,6 +246,20 @@ impl EventHandler {
                         && cx < content_inner_x + content_w
                     {
                         return SettingsPanelHit::BlocksRow(row);
+                    }
+                }
+            }
+            SettingsCategory::Security => {
+                // Renderer places 7 field rows at content_top + cell_h *
+                // (0.5 + i * 1.4); the footer note row has no hit zone.
+                for row in 0u8..crate::settings_panel::SettingsPanel::SECURITY_FIELD_COUNT {
+                    let row_y = content_top + cell_h * (0.5 + row as f32 * 1.4);
+                    if cy >= row_y - cell_h * 0.3
+                        && cy <= row_y + cell_h * 1.2
+                        && cx >= content_inner_x
+                        && cx < content_inner_x + content_w
+                    {
+                        return SettingsPanelHit::SecurityRow(row);
                     }
                 }
             }
