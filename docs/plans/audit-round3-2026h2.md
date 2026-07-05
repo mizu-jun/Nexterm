@@ -7,6 +7,11 @@
 - **Predecessors:** Round 1 (completed at v1.1.0), Round 2 (70 items, most HIGH resolved).
   This round only reports findings not already tracked or resolved there.
 
+## Implementation status
+
+- **Done:** P1, B1, P2, R1 (PR #26, squashed to `master`), P4 (this change).
+- **Deferred (still tracked below):** P3, C2, P5, P6, P7, S1 (LOW), R5/A5.
+
 ## Baseline statistics
 
 | Metric | Value | Note |

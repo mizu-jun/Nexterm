@@ -123,7 +123,32 @@ async fn handle_socket(mut socket: WebSocket, manager: Arc<SessionManager>, sess
                             }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        // The browser fell behind and lost `n` diffs; replay the
+                        // focused window's panes so the terminal resyncs instead
+                        // of rendering on top of a corrupt screen (audit round 3, P4).
+                        warn!("WebSocket: client lagged by {} messages; resyncing", n);
+                        let refreshes = {
+                            let sessions = sessions_arc.lock().await;
+                            sessions
+                                .get(&session_name)
+                                .map(|s| s.focused_window_full_refresh())
+                                .unwrap_or_default()
+                        };
+                        let mut disconnected = false;
+                        for (pane_id, grid) in refreshes {
+                            let msg = nexterm_proto::ServerToClient::FullRefresh { pane_id, grid };
+                            if let Some(text) = pty_message_to_text(&msg)
+                                && socket.send(Message::Text(text)).await.is_err()
+                            {
+                                disconnected = true;
+                                break;
+                            }
+                        }
+                        if disconnected {
+                            break;
+                        }
+                    }
                 }
             }
             result = socket.recv() => {
