@@ -291,8 +291,8 @@ mod tests {
 
     #[test]
     fn attr_bits_packs_flags() {
-        assert_eq!(attr_bits(Attrs(Attrs::BOLD)), 0b0001);
-        assert_eq!(attr_bits(Attrs(Attrs::UNDERLINE)), 0b0100);
-        assert_eq!(attr_bits(Attrs(Attrs::BOLD | Attrs::REVERSE)), 0b1001);
+        assert_eq!(attr_bits(Attrs::new(Attrs::BOLD)), 0b0001);
+        assert_eq!(attr_bits(Attrs::new(Attrs::UNDERLINE)), 0b0100);
+        assert_eq!(attr_bits(Attrs::new(Attrs::BOLD | Attrs::REVERSE)), 0b1001);
     }
 }

@@ -52,9 +52,13 @@ pub(super) fn key_to_bytes(code: &KeyCode, mods: Modifiers) -> Vec<u8> {
 /// Bits: Shift=1, Alt=2, Ctrl=4, Super/Meta=8. No modifiers → param=1.
 fn kitty_mods_param(mods: Modifiers) -> u8 {
     let shift = if mods.is_shift() { 1u8 } else { 0 };
-    let alt = if mods.0 & Modifiers::ALT != 0 { 2u8 } else { 0 };
+    let alt = if mods.bits() & Modifiers::ALT != 0 {
+        2u8
+    } else {
+        0
+    };
     let ctrl = if mods.is_ctrl() { 4u8 } else { 0 };
-    let meta = if mods.0 & Modifiers::META != 0 {
+    let meta = if mods.bits() & Modifiers::META != 0 {
         8u8
     } else {
         0
@@ -120,7 +124,7 @@ pub(super) fn kitty_key_to_bytes(
     // Determine the codepoint and mods_param.
     let (codepoint, extra_mods) = match code {
         KeyCode::Char(ch) => (*ch as u32, mods),
-        KeyCode::BackTab => (9, Modifiers(mods.0 | Modifiers::SHIFT)),
+        KeyCode::BackTab => (9, Modifiers::new(mods.bits() | Modifiers::SHIFT)),
         _ => {
             if let Some(cp) = kitty_functional_codepoint(code) {
                 (cp, mods)
@@ -170,19 +174,19 @@ mod tests {
 
     #[test]
     fn kitty_mods_shift() {
-        let mods = Modifiers(Modifiers::SHIFT);
+        let mods = Modifiers::new(Modifiers::SHIFT);
         assert_eq!(kitty_mods_param(mods), 2); // shift(1) + 1 = 2
     }
 
     #[test]
     fn kitty_mods_ctrl() {
-        let mods = Modifiers(Modifiers::CTRL);
+        let mods = Modifiers::new(Modifiers::CTRL);
         assert_eq!(kitty_mods_param(mods), 5); // ctrl(4) + 1 = 5
     }
 
     #[test]
     fn kitty_mods_ctrl_shift() {
-        let mods = Modifiers(Modifiers::CTRL | Modifiers::SHIFT);
+        let mods = Modifiers::new(Modifiers::CTRL | Modifiers::SHIFT);
         assert_eq!(kitty_mods_param(mods), 6); // (shift(1)|ctrl(4)) + 1 = 6
     }
 
@@ -198,7 +202,12 @@ mod tests {
     #[test]
     fn kitty_char_ctrl_press() {
         // Ctrl+'a' → codepoint 97, mods_param = 5 → `\x1b[97;5u`
-        let bytes = kitty_key_to_bytes(&KeyCode::Char('a'), Modifiers(Modifiers::CTRL), 1, 0x01);
+        let bytes = kitty_key_to_bytes(
+            &KeyCode::Char('a'),
+            Modifiers::new(Modifiers::CTRL),
+            1,
+            0x01,
+        );
         assert_eq!(bytes, b"\x1b[97;5u");
     }
 
@@ -250,7 +259,7 @@ mod tests {
 
     #[test]
     fn ctrl_a_returns_0x01() {
-        let mods = Modifiers(Modifiers::CTRL);
+        let mods = Modifiers::new(Modifiers::CTRL);
         assert_eq!(key_to_bytes(&KeyCode::Char('a'), mods), vec![0x01]);
     }
 

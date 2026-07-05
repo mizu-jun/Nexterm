@@ -157,7 +157,7 @@ mod tests {
                 ch: 'Z',
                 fg: Color::Indexed(1),
                 bg: Color::Default,
-                attrs: Attrs(Attrs::BOLD),
+                attrs: Attrs::new(Attrs::BOLD),
             },
         );
         let encoded = postcard::to_stdvec(&grid).unwrap();
@@ -196,7 +196,7 @@ mod tests {
                     ch: 'B',
                     fg: Color::Rgb(255, 0, 0),
                     bg: Color::Default,
-                    attrs: Attrs(Attrs::BOLD),
+                    attrs: Attrs::new(Attrs::BOLD),
                 },
             ],
         };

@@ -125,7 +125,7 @@ fn convert_modifiers(m: KeyModifiers) -> Modifiers {
     if m.contains(KeyModifiers::ALT) {
         bits |= Modifiers::ALT;
     }
-    Modifiers(bits)
+    Modifiers::new(bits)
 }
 
 /// Convert a crossterm `KeyCode` into a nexterm `KeyCode`.
@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn prefix_key_vertical_split() {
-        let result = handle_prefix_key(CKC::Char('%'), Modifiers(0)).unwrap();
+        let result = handle_prefix_key(CKC::Char('%'), Modifiers::new(0)).unwrap();
         assert!(matches!(
             result,
             Some(Action::PrefixCommand(ClientToServer::SplitVertical))
@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn prefix_key_horizontal_split() {
-        let result = handle_prefix_key(CKC::Char('"'), Modifiers(0)).unwrap();
+        let result = handle_prefix_key(CKC::Char('"'), Modifiers::new(0)).unwrap();
         assert!(matches!(
             result,
             Some(Action::PrefixCommand(ClientToServer::SplitHorizontal))
@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn prefix_key_close() {
-        let result = handle_prefix_key(CKC::Char('x'), Modifiers(0)).unwrap();
+        let result = handle_prefix_key(CKC::Char('x'), Modifiers::new(0)).unwrap();
         assert!(matches!(
             result,
             Some(Action::PrefixCommand(ClientToServer::ClosePane))
@@ -206,19 +206,19 @@ mod tests {
 
     #[test]
     fn prefix_key_help() {
-        let result = handle_prefix_key(CKC::Char('?'), Modifiers(0)).unwrap();
+        let result = handle_prefix_key(CKC::Char('?'), Modifiers::new(0)).unwrap();
         assert!(matches!(result, Some(Action::ToggleHelp)));
     }
 
     #[test]
     fn prefix_key_esc_cancels() {
-        let result = handle_prefix_key(CKC::Esc, Modifiers(0)).unwrap();
+        let result = handle_prefix_key(CKC::Esc, Modifiers::new(0)).unwrap();
         assert!(matches!(result, Some(Action::CancelPrefix)));
     }
 
     #[test]
     fn prefix_key_unknown_cancels() {
-        let result = handle_prefix_key(CKC::Char('Z'), Modifiers(0)).unwrap();
+        let result = handle_prefix_key(CKC::Char('Z'), Modifiers::new(0)).unwrap();
         assert!(matches!(result, Some(Action::CancelPrefix)));
     }
 }

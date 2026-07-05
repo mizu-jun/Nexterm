@@ -104,7 +104,7 @@ pub(crate) fn proto_modifiers(state: ModifiersState) -> nexterm_proto::Modifiers
     if state.super_key() {
         bits |= nexterm_proto::Modifiers::META;
     }
-    nexterm_proto::Modifiers(bits)
+    nexterm_proto::Modifiers::new(bits)
 }
 
 /// Match a config keybinding string (e.g. `"ctrl+shift+p"`) against a winit key event.

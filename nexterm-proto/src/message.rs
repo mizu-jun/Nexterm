@@ -11,8 +11,13 @@ fn default_key_event_type() -> u8 {
 }
 
 /// Bit flags for keyboard modifier keys.
+///
+/// The raw bits are private (audit round 3, A5/R5); construct with
+/// [`Modifiers::new`] and read with [`Modifiers::bits`]. The postcard wire
+/// format is unchanged (a newtype struct still serializes as its inner `u8`),
+/// so this needs no `PROTOCOL_VERSION` bump.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct Modifiers(pub u8);
+pub struct Modifiers(u8);
 
 impl Modifiers {
     /// Bit mask for the Shift key.
@@ -24,6 +29,16 @@ impl Modifiers {
     /// Bit mask for the Meta / Super / Windows key.
     pub const META: u8 = 0b1000;
 
+    /// Construct from a raw bit mask.
+    pub const fn new(bits: u8) -> Self {
+        Self(bits)
+    }
+
+    /// Return the raw bit mask.
+    pub const fn bits(self) -> u8 {
+        self.0
+    }
+
     /// Returns whether the Ctrl key is held.
     pub fn is_ctrl(self) -> bool {
         self.0 & Self::CTRL != 0
@@ -31,6 +46,14 @@ impl Modifiers {
     /// Returns whether the Shift key is held.
     pub fn is_shift(self) -> bool {
         self.0 & Self::SHIFT != 0
+    }
+    /// Returns whether the Alt / Option key is held.
+    pub fn is_alt(self) -> bool {
+        self.0 & Self::ALT != 0
+    }
+    /// Returns whether the Meta / Super / Windows key is held.
+    pub fn is_meta(self) -> bool {
+        self.0 & Self::META != 0
     }
 }
 

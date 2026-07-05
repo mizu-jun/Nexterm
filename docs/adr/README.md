@@ -32,6 +32,7 @@ When in doubt, write one — even a short note tends to be more useful than no n
 | [0006](0006-postcard-vs-bincode.md) | IPC serializer: bincode 1.x → postcard | Accepted | 2026-05-12 (retroactive) |
 | [0007](0007-snapshot-v1-deprecation.md) | Snapshot v1 removal timing (raise `SNAPSHOT_VERSION_MIN` to 2 at v2.0.0) | Accepted | 2026-05-12 |
 | [0008](0008-plugin-read-api.md) | Plugin read API (read_pane / read_grid / read_scrollback) and its trust boundary | Accepted | 2026-07-04 |
+| [0009](0009-encapsulate-bitflag-newtypes.md) | Encapsulate the raw bits of `Attrs` / `Modifiers` (no `PROTOCOL_VERSION` bump — wire unchanged) | Accepted | 2026-07-06 |
 
 ## How to add a new ADR
 

@@ -700,15 +700,15 @@ impl Screen {
                     self.current_bg = Color::Default;
                     self.current_attrs = Attrs::default();
                 }
-                1 => self.current_attrs.0 |= Attrs::BOLD,
-                3 => self.current_attrs.0 |= Attrs::ITALIC,
-                4 => self.current_attrs.0 |= Attrs::UNDERLINE,
-                5 => self.current_attrs.0 |= Attrs::BLINK,
-                7 => self.current_attrs.0 |= Attrs::REVERSE,
-                9 => self.current_attrs.0 |= Attrs::STRIKETHROUGH,
-                22 => self.current_attrs.0 &= !Attrs::BOLD,
-                24 => self.current_attrs.0 &= !Attrs::UNDERLINE,
-                27 => self.current_attrs.0 &= !Attrs::REVERSE,
+                1 => self.current_attrs.insert(Attrs::BOLD),
+                3 => self.current_attrs.insert(Attrs::ITALIC),
+                4 => self.current_attrs.insert(Attrs::UNDERLINE),
+                5 => self.current_attrs.insert(Attrs::BLINK),
+                7 => self.current_attrs.insert(Attrs::REVERSE),
+                9 => self.current_attrs.insert(Attrs::STRIKETHROUGH),
+                22 => self.current_attrs.remove(Attrs::BOLD),
+                24 => self.current_attrs.remove(Attrs::UNDERLINE),
+                27 => self.current_attrs.remove(Attrs::REVERSE),
                 // Foreground: 30..=37 (ANSI), 38 (extended), 39 (default).
                 30..=37 => self.current_fg = Color::Indexed(params[i] as u8 - 30),
                 38 => {
