@@ -101,12 +101,9 @@ async fn handle_socket(mut socket: WebSocket, manager: Arc<SessionManager>, sess
         .get_or_create_and_attach(&session_name, 80, 24)
         .await;
 
-    let sessions_arc = manager.sessions();
-    let mut rx = {
-        let sessions = sessions_arc.lock().await;
-        if let Some(session) = sessions.get(&session_name) {
-            session.attach()
-        } else {
+    let mut rx = match manager.session_arc(&session_name).await {
+        Some(session_arc) => session_arc.lock().await.attach(),
+        None => {
             warn!("WebSocket: session '{}' not found", session_name);
             return;
         }
@@ -128,12 +125,11 @@ async fn handle_socket(mut socket: WebSocket, manager: Arc<SessionManager>, sess
                         // focused window's panes so the terminal resyncs instead
                         // of rendering on top of a corrupt screen (audit round 3, P4).
                         warn!("WebSocket: client lagged by {} messages; resyncing", n);
-                        let refreshes = {
-                            let sessions = sessions_arc.lock().await;
-                            sessions
-                                .get(&session_name)
-                                .map(|s| s.focused_window_full_refresh())
-                                .unwrap_or_default()
+                        let refreshes = match manager.session_arc(&session_name).await {
+                            Some(session_arc) => {
+                                session_arc.lock().await.focused_window_full_refresh()
+                            }
+                            None => Vec::new(),
                         };
                         let mut disconnected = false;
                         for (pane_id, grid) in refreshes {
@@ -154,15 +150,13 @@ async fn handle_socket(mut socket: WebSocket, manager: Arc<SessionManager>, sess
             result = socket.recv() => {
                 match result {
                     Some(Ok(Message::Text(text))) => {
-                        let sessions = sessions_arc.lock().await;
-                        if let Some(session) = sessions.get(&session_name) {
-                            let _ = session.write_to_focused(text.as_bytes());
+                        if let Some(session_arc) = manager.session_arc(&session_name).await {
+                            let _ = session_arc.lock().await.write_to_focused(text.as_bytes());
                         }
                     }
                     Some(Ok(Message::Binary(data))) => {
-                        let sessions = sessions_arc.lock().await;
-                        if let Some(session) = sessions.get(&session_name) {
-                            let _ = session.write_to_focused(&data);
+                        if let Some(session_arc) = manager.session_arc(&session_name).await {
+                            let _ = session_arc.lock().await.write_to_focused(&data);
                         }
                     }
                     Some(Ok(Message::Close(_))) | None => break,
