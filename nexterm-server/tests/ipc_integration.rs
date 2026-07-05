@@ -71,7 +71,7 @@ fn test_list_sessions_roundtrip() {
 fn test_key_event_roundtrip() {
     let msg = ClientToServer::KeyEvent {
         code: KeyCode::Char('a'),
-        modifiers: Modifiers(Modifiers::CTRL),
+        modifiers: Modifiers::new(Modifiers::CTRL),
         event_type: 1,
     };
 
@@ -155,14 +155,14 @@ fn test_modifiers_default_has_no_flags() {
 
 #[test]
 fn test_modifiers_ctrl_flag() {
-    let mods = Modifiers(Modifiers::CTRL);
+    let mods = Modifiers::new(Modifiers::CTRL);
     assert!(mods.is_ctrl());
     assert!(!mods.is_shift());
 }
 
 #[test]
 fn test_modifiers_combined_flags() {
-    let mods = Modifiers(Modifiers::CTRL | Modifiers::SHIFT);
+    let mods = Modifiers::new(Modifiers::CTRL | Modifiers::SHIFT);
     assert!(mods.is_ctrl());
     assert!(mods.is_shift());
 }

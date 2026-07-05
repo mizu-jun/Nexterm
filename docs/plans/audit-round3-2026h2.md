@@ -9,9 +9,16 @@
 
 ## Implementation status
 
-- **Done:** P1, B1, P2, R1 (PR #26), P4 (PR #27), S1 and C2 (PR #28), P7 (this change).
-- **Deferred (still tracked below):** P3 and P6 (need profiling), P5 and R5/A5
-  (require a `PROTOCOL_VERSION` bump).
+- **Done:** P1, B1, P2, R1 (PR #26), P4 (PR #27), S1 and C2 (PR #28), P7 (PR #29),
+  R5/A5 (this change; ADR-0009).
+- **Deferred (still tracked below):** P3 and P6 (need profiling).
+- **Dropped:** P5 — the premise (WebSocket bandwidth) does not hold: the web
+  terminal already flattens `GridDiff` to char-only `Message::Text`
+  (`ws.rs::pty_message_to_text`), so cell-attribute RLE would not touch the web
+  path, and the postcard path it *would* affect is local IPC where the audit
+  itself rated the gain negligible. Real web-bandwidth work would be WebSocket
+  permessage-deflate instead. R5/A5 needed no `PROTOCOL_VERSION` bump after all
+  (a newtype serializes identically whether its field is public) — see ADR-0009.
 
 ### P7 note
 

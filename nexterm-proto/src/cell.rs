@@ -3,8 +3,14 @@
 use serde::{Deserialize, Serialize};
 
 /// Character attributes for a cell (bit flags).
+///
+/// The raw bits are private (audit round 3, A5/R5); construct with
+/// [`Attrs::new`], read with [`Attrs::bits`], and toggle flags with
+/// [`Attrs::insert`] / [`Attrs::remove`]. The postcard wire format is unchanged
+/// (a newtype struct still serializes as its inner `u8`), so this needs no
+/// `PROTOCOL_VERSION` bump.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct Attrs(pub u8);
+pub struct Attrs(u8);
 
 impl Attrs {
     /// SGR 1: bold.
@@ -19,6 +25,26 @@ impl Attrs {
     pub const REVERSE: u8 = 0b0001_0000;
     /// SGR 9: strikethrough.
     pub const STRIKETHROUGH: u8 = 0b0010_0000;
+
+    /// Construct from a raw bit mask.
+    pub const fn new(bits: u8) -> Self {
+        Self(bits)
+    }
+
+    /// Return the raw bit mask.
+    pub const fn bits(self) -> u8 {
+        self.0
+    }
+
+    /// Set the given flag bits.
+    pub fn insert(&mut self, flags: u8) {
+        self.0 |= flags;
+    }
+
+    /// Clear the given flag bits.
+    pub fn remove(&mut self, flags: u8) {
+        self.0 &= !flags;
+    }
 
     /// Returns whether the bold flag is set.
     pub fn is_bold(self) -> bool {
