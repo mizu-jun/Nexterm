@@ -10,7 +10,7 @@
 //! - `take_dirty_rows`: draining dirty rows after a full-screen repaint, to show
 //!   the `Vec::with_capacity` change carries no regression.
 
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use nexterm_proto::Grid;
 use nexterm_vt::VtParser;
 use std::hint::black_box;
