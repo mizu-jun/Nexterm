@@ -545,7 +545,11 @@ impl Screen {
         if self.synchronized_output {
             return Vec::new();
         }
-        let mut result = Vec::new();
+        // Audit round 3 (P2): size the result once from the dirty-row count so a
+        // full-screen update (clear + redraw, vim scroll) does not reallocate the
+        // Vec repeatedly as rows are pushed.
+        let dirty_count = self.dirty.iter().filter(|d| **d).count();
+        let mut result = Vec::with_capacity(dirty_count);
         for (row_idx, dirty) in self.dirty.iter_mut().enumerate() {
             if *dirty {
                 let cells = self.grid.rows[row_idx].clone();

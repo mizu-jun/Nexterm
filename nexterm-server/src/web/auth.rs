@@ -54,7 +54,7 @@ impl AuthManager {
             .collect();
 
         let expiry = Instant::now() + self.ttl;
-        let mut sessions = self.sessions.lock().expect("session store mutex poisoned");
+        let mut sessions = crate::lock_recover(&self.sessions, "session store");
 
         // Purge expired sessions up front.
         sessions.retain(|_, v| Instant::now() < v.expiry);
@@ -84,7 +84,7 @@ impl AuthManager {
 
     /// Check whether a session token is still valid.
     pub fn is_valid(&self, token: &str) -> bool {
-        let sessions = self.sessions.lock().expect("session store mutex poisoned");
+        let sessions = crate::lock_recover(&self.sessions, "session store");
         sessions
             .get(token)
             .map(|entry| Instant::now() < entry.expiry)
@@ -93,7 +93,7 @@ impl AuthManager {
 
     /// Return session metadata (for the access log).
     pub fn session_info(&self, token: &str) -> Option<(String, String)> {
-        let sessions = self.sessions.lock().expect("session store mutex poisoned");
+        let sessions = crate::lock_recover(&self.sessions, "session store");
         sessions.get(token).and_then(|entry| {
             if Instant::now() < entry.expiry {
                 Some((entry.auth_method.clone(), entry.user_id.clone()))
@@ -105,16 +105,13 @@ impl AuthManager {
 
     /// Explicitly remove a session (used for logout).
     pub fn revoke_session(&self, token: &str) {
-        self.sessions
-            .lock()
-            .expect("session store mutex poisoned")
-            .remove(token);
+        crate::lock_recover(&self.sessions, "session store").remove(token);
     }
 
     /// Return the number of active sessions (excluding expired ones).
     #[allow(dead_code)]
     pub fn active_count(&self) -> usize {
-        let sessions = self.sessions.lock().expect("session store mutex poisoned");
+        let sessions = crate::lock_recover(&self.sessions, "session store");
         sessions
             .values()
             .filter(|v| Instant::now() < v.expiry)

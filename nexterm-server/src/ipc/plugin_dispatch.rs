@@ -14,10 +14,7 @@ pub(super) async fn handle_list_plugins(
 ) {
     // Drop the lock before any await (MutexGuard is not Send).
     let paths = {
-        let lock = manager
-            .plugin_manager
-            .lock()
-            .expect("plugin_manager poisoned");
+        let lock = crate::lock_recover(&manager.plugin_manager, "plugin_manager");
         lock.as_ref()
             .map(|m| {
                 m.plugin_paths()
@@ -37,10 +34,7 @@ pub(super) async fn handle_load_plugin(
     path: &str,
 ) {
     let result = {
-        let mut lock = manager
-            .plugin_manager
-            .lock()
-            .expect("plugin_manager poisoned");
+        let mut lock = crate::lock_recover(&manager.plugin_manager, "plugin_manager");
         match lock.as_mut() {
             Some(m) => m.load(std::path::Path::new(path)),
             None => Err(anyhow::anyhow!("plugin manager is not initialized")),
@@ -72,10 +66,7 @@ pub(super) async fn handle_unload_plugin(
     path: &str,
 ) {
     let result = {
-        let mut lock = manager
-            .plugin_manager
-            .lock()
-            .expect("plugin_manager poisoned");
+        let mut lock = crate::lock_recover(&manager.plugin_manager, "plugin_manager");
         match lock.as_mut() {
             Some(m) => m.unload(std::path::Path::new(path)),
             None => Err(anyhow::anyhow!("plugin manager is not initialized")),
@@ -114,10 +105,7 @@ pub(super) async fn handle_reload_plugin(
     path: &str,
 ) {
     let result = {
-        let mut lock = manager
-            .plugin_manager
-            .lock()
-            .expect("plugin_manager poisoned");
+        let mut lock = crate::lock_recover(&manager.plugin_manager, "plugin_manager");
         match lock.as_mut() {
             Some(m) => m.reload(std::path::Path::new(path)),
             None => Err(anyhow::anyhow!("plugin manager is not initialized")),

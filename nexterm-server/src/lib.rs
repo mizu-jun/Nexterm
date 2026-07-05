@@ -29,6 +29,23 @@ pub use runtime_config::{
 use session::SessionManager;
 use snapshot::ServerSnapshot;
 
+/// Lock a [`std::sync::Mutex`], recovering the inner value instead of panicking
+/// when the lock was poisoned by a panic in another holder.
+///
+/// A poisoned lock means a previous holder panicked mid-update, so the guarded
+/// data may be inconsistent. For a long-running terminal server the pragmatic
+/// choice is to log and keep serving rather than let one panic cascade into a
+/// process-wide crash on every subsequent lock (audit round 3, finding B1).
+pub(crate) fn lock_recover<'a, T>(
+    mutex: &'a std::sync::Mutex<T>,
+    context: &str,
+) -> std::sync::MutexGuard<'a, T> {
+    mutex.lock().unwrap_or_else(|poisoned| {
+        warn!("{context}: mutex poisoned; recovering inner state");
+        poisoned.into_inner()
+    })
+}
+
 /// Run the main logic of `nexterm-server`, loading the config file from disk.
 ///
 /// Use this entry point when running as a standalone `nexterm-server` binary.
@@ -369,4 +386,29 @@ async fn shutdown_signal() {
         .await
         .expect("failed to install Ctrl+C handler");
     info!("received Ctrl+C");
+}
+
+#[cfg(test)]
+mod lock_recover_tests {
+    use super::lock_recover;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn recovers_a_poisoned_mutex_without_panicking() {
+        let mutex = Arc::new(Mutex::new(41));
+        // Poison the mutex: panic while holding the guard on another thread.
+        let poison = Arc::clone(&mutex);
+        let _ = std::thread::spawn(move || {
+            let _guard = poison.lock().expect("first lock cannot be poisoned yet");
+            panic!("intentional panic to poison the mutex");
+        })
+        .join();
+
+        assert!(mutex.lock().is_err(), "mutex should now be poisoned");
+
+        // The recovering helper still yields a usable guard.
+        let mut guard = lock_recover(&mutex, "test store");
+        *guard += 1;
+        assert_eq!(*guard, 42);
+    }
 }

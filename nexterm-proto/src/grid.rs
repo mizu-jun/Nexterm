@@ -82,6 +82,24 @@ impl Grid {
         }
     }
 
+    /// Applies a differential [`DirtyRow`] onto this grid in place.
+    ///
+    /// This is the incremental counterpart to cloning the whole grid: the PTY
+    /// reader keeps a `latest_grid` snapshot fresh for late-attaching clients by
+    /// applying only the rows that changed, instead of copying every cell on
+    /// each output burst (audit round 3, finding P1). Out-of-bounds rows are
+    /// ignored; if the row widths differ, only the overlapping prefix is copied.
+    pub fn apply_dirty_row(&mut self, dirty: &DirtyRow) {
+        if let Some(row) = self.rows.get_mut(dirty.row as usize) {
+            if row.len() == dirty.cells.len() {
+                row.clone_from(&dirty.cells);
+            } else {
+                let n = row.len().min(dirty.cells.len());
+                row[..n].clone_from_slice(&dirty.cells[..n]);
+            }
+        }
+    }
+
     /// Copies the contents of row `src` into row `dst` (out-of-bounds indices are
     /// ignored instead of panicking).
     pub fn copy_row(&mut self, dst: u16, src: u16) {
@@ -185,6 +203,115 @@ mod tests {
         let encoded = postcard::to_stdvec(&row).unwrap();
         let decoded: DirtyRow = postcard::from_bytes(&encoded).unwrap();
         assert_eq!(row, decoded);
+    }
+
+    #[test]
+    fn apply_dirty_row_updates_only_target_row() {
+        let mut grid = Grid::new(4, 3);
+        let cells = vec![
+            Cell {
+                ch: 'w',
+                ..Cell::default()
+            },
+            Cell {
+                ch: 'x',
+                ..Cell::default()
+            },
+            Cell {
+                ch: 'y',
+                ..Cell::default()
+            },
+            Cell {
+                ch: 'z',
+                ..Cell::default()
+            },
+        ];
+        grid.apply_dirty_row(&DirtyRow { row: 1, cells });
+        // Row 1 reflects the new content.
+        assert_eq!(grid.get(0, 1).unwrap().ch, 'w');
+        assert_eq!(grid.get(3, 1).unwrap().ch, 'z');
+        // Other rows stay blank.
+        assert_eq!(grid.get(0, 0).unwrap().ch, ' ');
+        assert_eq!(grid.get(0, 2).unwrap().ch, ' ');
+    }
+
+    #[test]
+    fn apply_dirty_row_matches_incremental_and_full_snapshot() {
+        // Applying every dirty row of a screen incrementally must yield the same
+        // grid content as a one-shot full copy would (audit round 3, P1 parity).
+        let mut incremental = Grid::new(3, 2);
+        let mut full = Grid::new(3, 2);
+        let rows = [
+            DirtyRow {
+                row: 0,
+                cells: vec![
+                    Cell {
+                        ch: 'a',
+                        ..Cell::default()
+                    };
+                    3
+                ],
+            },
+            DirtyRow {
+                row: 1,
+                cells: vec![
+                    Cell {
+                        ch: 'b',
+                        ..Cell::default()
+                    };
+                    3
+                ],
+            },
+        ];
+        for d in &rows {
+            incremental.apply_dirty_row(d);
+        }
+        for d in &rows {
+            full.rows[d.row as usize] = d.cells.clone();
+        }
+        assert_eq!(incremental.rows, full.rows);
+    }
+
+    #[test]
+    fn apply_dirty_row_ignores_out_of_bounds_row() {
+        let mut grid = Grid::new(2, 2);
+        // Row index beyond height must be a no-op, not a panic.
+        grid.apply_dirty_row(&DirtyRow {
+            row: 99,
+            cells: vec![
+                Cell {
+                    ch: 'X',
+                    ..Cell::default()
+                };
+                2
+            ],
+        });
+        assert_eq!(grid.get(0, 0).unwrap().ch, ' ');
+    }
+
+    #[test]
+    fn apply_dirty_row_copies_overlapping_prefix_on_width_mismatch() {
+        let mut grid = Grid::new(2, 1);
+        // A wider dirty row: only the first 2 cells fit; no panic.
+        grid.apply_dirty_row(&DirtyRow {
+            row: 0,
+            cells: vec![
+                Cell {
+                    ch: 'p',
+                    ..Cell::default()
+                },
+                Cell {
+                    ch: 'q',
+                    ..Cell::default()
+                },
+                Cell {
+                    ch: 'r',
+                    ..Cell::default()
+                },
+            ],
+        });
+        assert_eq!(grid.get(0, 0).unwrap().ch, 'p');
+        assert_eq!(grid.get(1, 0).unwrap().ch, 'q');
     }
 
     #[test]

@@ -93,10 +93,7 @@ impl OAuthManager {
 
         // Persist the state token (auto-expires in 10 minutes).
         let expiry = Instant::now() + STATE_TTL;
-        let mut states = self
-            .pending_states
-            .lock()
-            .expect("OAuth pending_states mutex poisoned");
+        let mut states = crate::lock_recover(&self.pending_states, "OAuth pending_states");
         // Sweep stale entries.
         states.retain(|_, v| Instant::now() < *v);
         states.insert(csrf_token.secret().clone(), expiry);
@@ -117,10 +114,7 @@ impl OAuthManager {
     ) -> anyhow::Result<(OAuthUser, String)> {
         // Validate state (CSRF defense).
         {
-            let mut states = self
-                .pending_states
-                .lock()
-                .expect("OAuth pending_states mutex poisoned");
+            let mut states = crate::lock_recover(&self.pending_states, "OAuth pending_states");
             match states.remove(&state) {
                 Some(expiry) if Instant::now() < expiry => {
                     // Valid state.

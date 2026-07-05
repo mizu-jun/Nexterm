@@ -623,7 +623,7 @@ impl SessionManager {
 
     /// Set the plugin manager (called at server startup).
     pub fn set_plugin_manager(&self, mgr: nexterm_plugin::PluginManager) {
-        let mut lock = self.plugin_manager.lock().expect("plugin_manager poisoned");
+        let mut lock = crate::lock_recover(&self.plugin_manager, "plugin_manager");
         *lock = Some(mgr);
     }
 
