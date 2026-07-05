@@ -4,3 +4,7 @@
 # 現実装の制限（BSP の右偏りツリーで指数サイズ要求）に合わせて proptest 側で
 # 入力範囲を絞ったため、旧シードは新仕様では到達不能。コミット不要。
 proptest-regressions/
+
+# Claude Code scheduler runtime lock (per-session sessionId / pid); not a
+# repository artifact.
+.claude/scheduled_tasks.lock
