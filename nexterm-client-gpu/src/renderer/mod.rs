@@ -211,6 +211,9 @@ pub(super) struct WgpuState {
     pub(super) queue: wgpu::Queue,
     surface: wgpu::Surface<'static>,
     surface_config: wgpu::SurfaceConfiguration,
+    /// Present modes supported by the adapter (captured once at init so
+    /// `set_present_mode` can re-select without re-querying the surface).
+    present_modes: Vec<wgpu::PresentMode>,
     bg_pipeline: wgpu::RenderPipeline,
     text_pipeline: wgpu::RenderPipeline,
     text_bind_group_layout: wgpu::BindGroupLayout,

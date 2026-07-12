@@ -352,6 +352,7 @@ impl WgpuState {
             queue,
             surface,
             surface_config,
+            present_modes: surface_caps.present_modes,
             bg_pipeline,
             text_pipeline,
             text_bind_group_layout,
@@ -382,6 +383,17 @@ impl WgpuState {
         self.surface_config.width = new_size.width;
         self.surface_config.height = new_size.height;
         self.surface.configure(&self.device, &self.surface_config);
+    }
+
+    /// Re-select the present mode from an updated `GpuConfig` (config hot-reload)
+    /// and reconfigure the surface if it actually changed. Reuses the adapter's
+    /// supported modes captured at `WgpuState::new` instead of re-querying them.
+    pub(super) fn set_present_mode(&mut self, gpu_cfg: &nexterm_config::GpuConfig) {
+        let pm = select_present_mode(&gpu_cfg.present_mode, &self.present_modes);
+        if pm != self.surface_config.present_mode {
+            self.surface_config.present_mode = pm;
+            self.surface.configure(&self.device, &self.surface_config);
+        }
     }
 }
 

@@ -52,6 +52,32 @@ impl Scrollback {
         self.len
     }
 
+    /// Change the retained capacity (config hot-reload). Keeps the most
+    /// recent rows; when shrinking, the oldest rows beyond the new capacity
+    /// are discarded. A no-op when `new_capacity == capacity`.
+    ///
+    /// Rebuilds the ring from scratch: the buffer is small relative to a
+    /// config reload's frequency, so simplicity is preferred over an
+    /// in-place ring resize.
+    pub fn set_capacity(&mut self, new_capacity: usize) {
+        let new_capacity = new_capacity.max(1);
+        if new_capacity == self.capacity {
+            return;
+        }
+
+        // Collect rows in logical (oldest-first) order, keeping only the
+        // most recent `new_capacity` of them.
+        let keep_from = self.len.saturating_sub(new_capacity);
+        let kept: Vec<Vec<Cell>> = (keep_from..self.len)
+            .filter_map(|idx| self.get(idx).cloned())
+            .collect();
+
+        self.capacity = new_capacity;
+        self.len = kept.len();
+        self.lines = kept;
+        self.head = self.len % self.capacity;
+    }
+
     /// Return whether the buffer is empty.
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
@@ -219,6 +245,89 @@ mod tests {
         sb.push_line(make_line("test"));
         let results = sb.search("[invalid");
         assert!(results.is_empty());
+    }
+
+    fn line_text(line: &[Cell]) -> String {
+        line.iter().map(|c| c.ch).collect::<String>()
+    }
+
+    #[test]
+    fn set_capacity_grow_preserves_existing_rows() {
+        let mut sb = Scrollback::new(3);
+        sb.push_line(make_line("a"));
+        sb.push_line(make_line("b"));
+        sb.push_line(make_line("c"));
+
+        sb.set_capacity(10);
+
+        assert_eq!(sb.len(), 3);
+        assert_eq!(line_text(sb.get(0).unwrap()), "a");
+        assert_eq!(line_text(sb.get(1).unwrap()), "b");
+        assert_eq!(line_text(sb.get(2).unwrap()), "c");
+
+        // The grown buffer must accept new rows without overwriting old ones early.
+        sb.push_line(make_line("d"));
+        assert_eq!(sb.len(), 4);
+        assert_eq!(line_text(sb.get(3).unwrap()), "d");
+    }
+
+    #[test]
+    fn set_capacity_shrink_keeps_most_recent_rows() {
+        let mut sb = Scrollback::new(100);
+        for i in 0..10 {
+            sb.push_line(make_line(&format!("row{i}")));
+        }
+
+        sb.set_capacity(3);
+
+        assert_eq!(sb.len(), 3);
+        assert_eq!(line_text(sb.get(0).unwrap()), "row7");
+        assert_eq!(line_text(sb.get(1).unwrap()), "row8");
+        assert_eq!(line_text(sb.get(2).unwrap()), "row9");
+    }
+
+    #[test]
+    fn set_capacity_same_value_is_noop() {
+        let mut sb = Scrollback::new(5);
+        sb.push_line(make_line("only"));
+        sb.set_capacity(5);
+        assert_eq!(sb.len(), 1);
+        assert_eq!(line_text(sb.get(0).unwrap()), "only");
+    }
+
+    #[test]
+    fn set_capacity_shrink_below_current_len_but_above_zero() {
+        let mut sb = Scrollback::new(50);
+        sb.push_line(make_line("x"));
+        sb.push_line(make_line("y"));
+
+        // len (2) exceeds the new capacity (1): only the newest row survives.
+        sb.set_capacity(1);
+
+        assert_eq!(sb.len(), 1);
+        assert_eq!(line_text(sb.get(0).unwrap()), "y");
+    }
+
+    #[test]
+    fn set_capacity_resize_from_wrapped_state() {
+        let mut sb = Scrollback::new(3);
+        // Push past capacity so the ring wraps at least once.
+        for i in 0..7 {
+            sb.push_line(make_line(&format!("row{i}")));
+        }
+        // Ring currently holds row4, row5, row6 (oldest to newest).
+        assert_eq!(line_text(sb.get(0).unwrap()), "row4");
+
+        sb.set_capacity(2);
+        assert_eq!(sb.len(), 2);
+        assert_eq!(line_text(sb.get(0).unwrap()), "row5");
+        assert_eq!(line_text(sb.get(1).unwrap()), "row6");
+
+        // The resized ring must still behave correctly for further pushes.
+        sb.push_line(make_line("row7"));
+        assert_eq!(sb.len(), 2);
+        assert_eq!(line_text(sb.get(0).unwrap()), "row6");
+        assert_eq!(line_text(sb.get(1).unwrap()), "row7");
     }
 
     // -------------------------------------------------------------------
