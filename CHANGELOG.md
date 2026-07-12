@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-07-12
+
+Windows console-flash fix and a Windows-Terminal-inspired settings-panel
+overhaul, plus wider live config hot-reload. Fully compatible with 1.13.0 peers
+(no protocol or snapshot version change).
+
+### Added
+- Settings panel: 16 previously config-only fields are now editable from the UI
+  (cursor blink, scrollback lines, startup shell, tab-bar toggles, animations,
+  block editing, active profile, window decorations, close action, GPU fps
+  limit, follow-system colors, font ligatures, font fallbacks, leader key).
+- Settings panel is now fully localized across all 8 locales (121 new
+  `settings-*` keys) with a key-set parity test; non-en/ja strings are a
+  first pass pending native review.
+- Settings panel gained scrolling (wheel / PageUp-Down) so long categories are
+  no longer capped at 12 rows.
+- Live config hot-reload now also covers `language`, `window.decorations`,
+  `gpu.present_mode`, and `scrollback_lines` (existing panes resized) — no
+  restart required. Fonts and per-frame settings were already live.
+
+### Changed
+- Settings panel redesigned into a Windows-Terminal-style two-column layout
+  (category sidebar + label/control rows) with dynamic, resize-following widths.
+- The panel stays fully opaque while open and its decorations are audited to
+  WCAG 4.5:1 contrast, fixing the previous half-transparent, hard-to-read look.
+- Large settings modules were split for maintainability (state and rendering
+  each into focused sub-modules, all under the 800-line guideline).
+
+### Fixed
+- Windows: eliminated the brief black console window that could flash from
+  internal subprocess spawns (cwd probe, URL openers, WSL probe, shell hooks)
+  by passing `CREATE_NO_WINDOW`.
+- Settings panel text no longer overflows the panel (CJK-aware truncation +
+  a GPU scissor clip around the scroll viewport).
+- Fixed a flaky test where two modules shared a process-global env var behind
+  separate mutexes.
+
 ## [1.13.0] - 2026-07-06
 
 Audit round 3 (`docs/plans/audit-round3-2026h2.md`): reliability, performance,

@@ -1,7 +1,7 @@
 # Nexterm Product Requirements
 
 - Status: living document, reviewed at each minor/major release (alongside `CHANGELOG.md`)
-- Last reviewed: 2026-07-06 (v1.13.0)
+- Last reviewed: 2026-07-12 (v1.14.0)
 - Owner: @mizu-jun
 
 This document defines **what Nexterm is and why** — vision, target users, product
