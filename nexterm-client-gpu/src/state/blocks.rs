@@ -498,8 +498,10 @@ mod tests {
 
     /// Lock used by the tests that exercise the on-disk named-block store.
     /// We re-point the store at a tempfile per test so the assertions are
-    /// hermetic, but only one test at a time may hold the env var.
-    static STORE_ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    /// hermetic, but only one test at a time may hold the env var. The mutex
+    /// is shared with `crate::named_blocks` because the env var is
+    /// process-global — a per-module lock cannot prevent cross-module races.
+    use crate::named_blocks::TEST_STORE_ENV_MUTEX;
 
     struct StoreEnvGuard {
         _lock: std::sync::MutexGuard<'static, ()>,
@@ -508,11 +510,11 @@ mod tests {
 
     impl StoreEnvGuard {
         fn new(tag: &str) -> Self {
-            let lock = STORE_ENV_MUTEX.lock().expect("test mutex poisoned");
+            let lock = TEST_STORE_ENV_MUTEX.lock().expect("test mutex poisoned");
             let mut path = std::env::temp_dir();
             path.push(format!("nexterm-state-blocks-test-{}.json", tag));
             let _ = std::fs::remove_file(&path);
-            // SAFETY: tests are serialised by STORE_ENV_MUTEX.
+            // SAFETY: tests are serialised by TEST_STORE_ENV_MUTEX.
             unsafe {
                 std::env::set_var("__NEXTERM_TEST_NAMED_BLOCKS_PATH__", &path);
             }
@@ -522,7 +524,7 @@ mod tests {
 
     impl Drop for StoreEnvGuard {
         fn drop(&mut self) {
-            // SAFETY: tests are serialised by STORE_ENV_MUTEX.
+            // SAFETY: tests are serialised by TEST_STORE_ENV_MUTEX.
             unsafe {
                 std::env::remove_var("__NEXTERM_TEST_NAMED_BLOCKS_PATH__");
             }

@@ -78,7 +78,14 @@ pub(crate) fn open_releases_url() {
     #[cfg(target_os = "linux")]
     let _ = std::process::Command::new("xdg-open").arg(url).spawn();
     #[cfg(windows)]
-    let _ = std::process::Command::new("cmd")
-        .args(["/c", "start", url])
-        .spawn();
+    {
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+        // Without CREATE_NO_WINDOW a GUI-subsystem process spawning a console
+        // app briefly flashes a black console window.
+        let _ = std::process::Command::new("cmd")
+            .args(["/c", "start", url])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn();
+    }
 }

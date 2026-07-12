@@ -13,16 +13,20 @@ pub fn fire(cmd: &str, session: &str, pane_id: Option<u32>) {
     let cmd = cmd.to_string();
     let session = session.to_string();
     tokio::spawn(async move {
-        let mut child = match tokio::process::Command::new("sh")
+        let mut command = tokio::process::Command::new("sh");
+        command
             .arg("-c")
             .arg(&cmd)
             .env("NEXTERM_SESSION", &session)
             .env(
                 "NEXTERM_PANE_ID",
                 pane_id.map(|id| id.to_string()).unwrap_or_default(),
-            )
-            .spawn()
-        {
+            );
+        // Without CREATE_NO_WINDOW a GUI-subsystem process spawning a console
+        // app briefly flashes a black console window.
+        #[cfg(windows)]
+        command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+        let mut child = match command.spawn() {
             Ok(c) => c,
             Err(e) => {
                 warn!("failed to launch hook '{}': {}", cmd, e);

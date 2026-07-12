@@ -234,4 +234,38 @@ mod tests {
         assert!(translations.contains_key("zh-CN"));
         assert!(translations.contains_key("ko"));
     }
+
+    /// Every non-English locale must translate exactly the same key set as
+    /// `en` (the canonical source of truth). This catches both missing keys
+    /// (a string added to `en.json` but forgotten elsewhere) and stray keys
+    /// (a typo'd key that silently never resolves). Failure messages list
+    /// the offending keys so a diff is actionable without opening each file.
+    #[test]
+    fn test_all_locales_have_same_keys_as_en() {
+        let translations = &*TRANSLATIONS;
+        let en_keys: std::collections::BTreeSet<&String> = translations
+            .get("en")
+            .expect("en locale must exist")
+            .keys()
+            .collect();
+
+        for (locale, _) in LOCALE_DATA {
+            if *locale == "en" {
+                continue;
+            }
+            let locale_keys: std::collections::BTreeSet<&String> = translations
+                .get(locale)
+                .unwrap_or_else(|| panic!("locale '{locale}' must exist"))
+                .keys()
+                .collect();
+
+            let missing: Vec<_> = en_keys.difference(&locale_keys).collect();
+            let extra: Vec<_> = locale_keys.difference(&en_keys).collect();
+
+            assert!(
+                missing.is_empty() && extra.is_empty(),
+                "locale '{locale}' key set diverges from en: missing={missing:?}, extra={extra:?}"
+            );
+        }
+    }
 }

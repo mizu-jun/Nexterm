@@ -128,11 +128,9 @@ pub(crate) fn parse_osc7_cwd(input: &str) -> Option<String> {
     // Strip the `file://` prefix and skip the host segment (`//host/path`).
     let after_scheme = if let Some(rest) = input.strip_prefix("file://") {
         // Advance to the `/path` part (the first `/`, regardless of whether the
-        // host segment is empty).
-        match rest.find('/') {
-            Some(idx) => &rest[idx..],
-            None => return None, // No path.
-        }
+        // host segment is empty). No `/` means there is no path.
+        let idx = rest.find('/')?;
+        &rest[idx..]
     } else {
         input
     };

@@ -28,6 +28,7 @@ mod platform;
 mod quake;
 mod renderer;
 mod scrollback;
+mod settings;
 mod settings_panel;
 mod shaders;
 mod signature_verify;

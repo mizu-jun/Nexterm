@@ -19,6 +19,7 @@ use super::PaneRenderCache;
 use super::WgpuState;
 use super::background_pass::build_background_verts;
 use super::image::{ImageEntry, build_image_verts};
+use super::overlay::SettingsPanelScrollMetrics;
 
 impl WgpuState {
     /// Phase 5b (UI/UX v2): advance the per-pane cursor motion state
@@ -939,8 +940,15 @@ impl WgpuState {
         }
 
         // ---- Settings panel (opened with Ctrl+,) ----
+        // Phase B1: `build_settings_panel_verts` only has shared access to
+        // `state` (it is called from many sites, most without `&mut`), so it
+        // cannot write the content height it measures back into
+        // `settings_panel.scroll` itself. It returns the measurement instead;
+        // here — where `state` is `&mut` — we feed it back and stash the
+        // scissor rect + index ranges for the main render pass below.
+        let mut settings_scroll_clip: Option<SettingsPanelScrollMetrics> = None;
         if state.settings_panel.is_open {
-            self.build_settings_panel_verts(
+            let metrics = self.build_settings_panel_verts(
                 state,
                 &tokens,
                 sw,
@@ -954,6 +962,12 @@ impl WgpuState {
                 &mut text_verts,
                 &mut text_idx,
             );
+            if let Some(m) = metrics {
+                state.settings_panel.scroll.content_h_px = m.content_h_px;
+                state.settings_panel.scroll.viewport_h_px = m.viewport_h_px;
+                state.settings_panel.scroll.clamp();
+                settings_scroll_clip = Some(m);
+            }
         }
 
         // ---- Context menu (on right-click) ----
@@ -1254,18 +1268,64 @@ impl WgpuState {
                 occlusion_query_set: None,
             });
 
+            // Phase B1: when the settings panel has scrollable content, its
+            // index range is drawn with a scissor rect covering only its
+            // content viewport, so rows scrolled above/below the panel's
+            // content area are clipped instead of bleeding into the title
+            // bar / footer / rest of the frame. Everything outside that
+            // range (panel chrome, other overlays, the terminal grid) draws
+            // as one full-surface call, same as before this feature.
+            let full_scissor = (0, 0, self.surface_config.width, self.surface_config.height);
             if !bg_idx.is_empty() {
                 pass.set_pipeline(&self.bg_pipeline);
                 pass.set_vertex_buffer(0, self.buf_bg_v.slice(..));
                 pass.set_index_buffer(self.buf_bg_i.slice(..), wgpu::IndexFormat::Uint16);
-                pass.draw_indexed(0..bg_idx.len() as u32, 0, 0..1);
+                let clip = settings_scroll_clip
+                    .as_ref()
+                    .and_then(|m| m.scissor.map(|s| (s, m.bg_range)));
+                match clip {
+                    Some(((sx, sy, sw_r, sh_r), (start, end))) if start < end => {
+                        if start > 0 {
+                            pass.draw_indexed(0..start as u32, 0, 0..1);
+                        }
+                        pass.set_scissor_rect(sx, sy, sw_r, sh_r);
+                        pass.draw_indexed(start as u32..end as u32, 0, 0..1);
+                        let (x, y, w, h) = full_scissor;
+                        pass.set_scissor_rect(x, y, w, h);
+                        if end < bg_idx.len() {
+                            pass.draw_indexed(end as u32..bg_idx.len() as u32, 0, 0..1);
+                        }
+                    }
+                    _ => {
+                        pass.draw_indexed(0..bg_idx.len() as u32, 0, 0..1);
+                    }
+                }
             }
             if !text_idx.is_empty() {
                 pass.set_pipeline(&self.text_pipeline);
                 pass.set_bind_group(0, &text_bind_group, &[]);
                 pass.set_vertex_buffer(0, self.buf_txt_v.slice(..));
                 pass.set_index_buffer(self.buf_txt_i.slice(..), wgpu::IndexFormat::Uint16);
-                pass.draw_indexed(0..text_idx.len() as u32, 0, 0..1);
+                let clip = settings_scroll_clip
+                    .as_ref()
+                    .and_then(|m| m.scissor.map(|s| (s, m.text_range)));
+                match clip {
+                    Some(((sx, sy, sw_r, sh_r), (start, end))) if start < end => {
+                        if start > 0 {
+                            pass.draw_indexed(0..start as u32, 0, 0..1);
+                        }
+                        pass.set_scissor_rect(sx, sy, sw_r, sh_r);
+                        pass.draw_indexed(start as u32..end as u32, 0, 0..1);
+                        let (x, y, w, h) = full_scissor;
+                        pass.set_scissor_rect(x, y, w, h);
+                        if end < text_idx.len() {
+                            pass.draw_indexed(end as u32..text_idx.len() as u32, 0, 0..1);
+                        }
+                    }
+                    _ => {
+                        pass.draw_indexed(0..text_idx.len() as u32, 0, 0..1);
+                    }
+                }
             }
         }
 

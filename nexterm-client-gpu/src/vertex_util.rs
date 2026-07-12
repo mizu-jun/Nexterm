@@ -11,6 +11,44 @@ pub(crate) fn visual_width(s: &str) -> usize {
     s.chars().map(|c| c.width().unwrap_or(1)).sum()
 }
 
+/// Truncate a string so it fits within `max_width_px` when rendered with
+/// `cell_w`-wide cells, appending `…` when anything was cut off.
+///
+/// Width is measured in display cells via [`visual_width`] (CJK full-width
+/// characters count as 2), matching how [`add_string_verts`] advances glyphs.
+#[allow(dead_code)] // Wired up by the settings-panel layout overhaul (Phase B2).
+pub(crate) fn truncate_to_width(s: &str, max_width_px: f32, cell_w: f32) -> String {
+    if cell_w <= 0.0 || max_width_px <= 0.0 {
+        return String::new();
+    }
+    truncate_to_cols(s, (max_width_px / cell_w).floor() as usize)
+}
+
+/// Cell-count variant of [`truncate_to_width`].
+#[allow(dead_code)] // Wired up by the settings-panel layout overhaul (Phase B2).
+pub(crate) fn truncate_to_cols(s: &str, max_cols: usize) -> String {
+    if visual_width(s) <= max_cols {
+        return s.to_string();
+    }
+    if max_cols == 0 {
+        return String::new();
+    }
+    // Reserve one cell for the ellipsis.
+    let budget = max_cols - 1;
+    let mut out = String::new();
+    let mut used = 0usize;
+    for ch in s.chars() {
+        let w = ch.width().unwrap_or(1);
+        if used + w > budget {
+            break;
+        }
+        out.push(ch);
+        used += w;
+    }
+    out.push('…');
+    out
+}
+
 /// Push four background vertices for the NDC rectangle (and the corresponding triangle indices).
 ///
 /// Flat-rect path: SDF fields are zeroed, so the bg shader takes its
@@ -504,8 +542,13 @@ pub(crate) fn open_url(url: &str) {
     info!("Opening URL: {}", url);
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+        // Without CREATE_NO_WINDOW a GUI-subsystem process spawning a console
+        // app briefly flashes a black console window.
         let _ = std::process::Command::new("cmd")
             .args(["/c", "start", "", url])
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn();
     }
     #[cfg(target_os = "macos")]
@@ -528,6 +571,56 @@ mod tests {
 
     fn approx(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-3
+    }
+
+    // ---- truncate_to_width / truncate_to_cols ----
+
+    #[test]
+    fn truncate_noop_when_fits() {
+        assert_eq!(truncate_to_cols("hello", 5), "hello");
+        assert_eq!(truncate_to_cols("hello", 10), "hello");
+        assert_eq!(truncate_to_cols("", 4), "");
+    }
+
+    #[test]
+    fn truncate_ascii_overflow_appends_ellipsis() {
+        // 6 cols: 5 chars budget for text minus 1 reserved for the ellipsis.
+        assert_eq!(truncate_to_cols("hello world", 6), "hello…");
+        assert_eq!(visual_width(&truncate_to_cols("hello world", 6)), 6);
+    }
+
+    #[test]
+    fn truncate_cjk_counts_double_width() {
+        // Each CJK char is 2 cells; "日本語表示" is 10 cells.
+        assert_eq!(truncate_to_cols("日本語表示", 10), "日本語表示");
+        // 7 cols: budget 6 -> 3 CJK chars (6 cells) + ellipsis = 7 cells.
+        assert_eq!(truncate_to_cols("日本語表示", 7), "日本語…");
+        // 6 cols: budget 5 -> only 2 CJK chars fit (4 cells) + ellipsis = 5 cells.
+        assert_eq!(truncate_to_cols("日本語表示", 6), "日本…");
+    }
+
+    #[test]
+    fn truncate_mixed_ascii_cjk() {
+        // "ssh 接続" = 4 + 4 = 8 cells.
+        assert_eq!(truncate_to_cols("ssh 接続", 8), "ssh 接続");
+        assert_eq!(truncate_to_cols("ssh 接続", 7), "ssh 接…");
+    }
+
+    #[test]
+    fn truncate_zero_and_tiny_budgets() {
+        assert_eq!(truncate_to_cols("abc", 0), "");
+        // Budget 1: nothing fits besides the ellipsis itself.
+        assert_eq!(truncate_to_cols("abc", 1), "…");
+    }
+
+    #[test]
+    fn truncate_px_wrapper_converts_cells() {
+        // 60px at 10px/cell = 6 cols.
+        assert_eq!(truncate_to_width("hello world", 60.0, 10.0), "hello…");
+        assert_eq!(truncate_to_width("hi", 60.0, 10.0), "hi");
+        // Degenerate inputs yield an empty string.
+        assert_eq!(truncate_to_width("abc", 0.0, 10.0), "");
+        assert_eq!(truncate_to_width("abc", 10.0, 0.0), "");
     }
 
     // ---- signed_rect_distance ----

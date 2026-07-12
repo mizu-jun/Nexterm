@@ -18,3 +18,8 @@ mod key_hint;
 mod picker;
 mod settings;
 mod util;
+
+// Phase B1: `render_frame.rs` needs this to apply the settings panel's
+// measured content height back onto `SettingsPanel::scroll` and to scissor
+// the scrollable content when drawing.
+pub(in crate::renderer) use settings::SettingsPanelScrollMetrics;
