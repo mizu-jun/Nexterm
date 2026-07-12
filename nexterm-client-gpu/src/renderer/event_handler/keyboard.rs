@@ -148,6 +148,80 @@ impl EventHandler {
             return;
         }
 
+        // Phase B4: character input while editing the Startup category's
+        // shell program/args fields. Mirrors the SSH field pattern above.
+        if !consumed
+            && self.app.state.settings_panel.is_open
+            && self.app.state.settings_panel.shell_field_editing.is_some()
+        {
+            if let Some(ref t) = text
+                && !self.modifiers.control_key()
+                && !self.modifiers.alt_key()
+            {
+                for ch in t.chars() {
+                    if !ch.is_control() {
+                        self.app.state.settings_panel.shell_field_insert_char(ch);
+                    }
+                }
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+                return;
+            }
+            return;
+        }
+
+        // Phase B4-P2: character input while editing the Font category's
+        // font_fallbacks field. Mirrors the shell field pattern above.
+        if !consumed
+            && self.app.state.settings_panel.is_open
+            && self
+                .app
+                .state
+                .settings_panel
+                .font_fallbacks_editing
+                .is_some()
+        {
+            if let Some(ref t) = text
+                && !self.modifiers.control_key()
+                && !self.modifiers.alt_key()
+            {
+                for ch in t.chars() {
+                    if !ch.is_control() {
+                        self.app.state.settings_panel.font_fallbacks_insert_char(ch);
+                    }
+                }
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+                return;
+            }
+            return;
+        }
+
+        // Phase B4-P2: character input while editing the Keybindings
+        // category's leader_key field. Mirrors the shell field pattern above.
+        if !consumed
+            && self.app.state.settings_panel.is_open
+            && self.app.state.settings_panel.leader_key_editing.is_some()
+        {
+            if let Some(ref t) = text
+                && !self.modifiers.control_key()
+                && !self.modifiers.alt_key()
+            {
+                for ch in t.chars() {
+                    if !ch.is_control() {
+                        self.app.state.settings_panel.leader_key_insert_char(ch);
+                    }
+                }
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+                return;
+            }
+            return;
+        }
+
         // Phase 5-11-9 Sub-phase B: character input while editing a key
         // binding in Text mode. Record mode is handled by `handle_key` and
         // never reaches here (the key is consumed before character lookup).

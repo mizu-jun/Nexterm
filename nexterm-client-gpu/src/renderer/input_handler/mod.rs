@@ -345,13 +345,15 @@ impl EventHandler {
             return true;
         }
 
-        // PageUp / PageDown: scroll the scrollback
-        if code == WKeyCode::PageUp {
+        // PageUp / PageDown: scroll the scrollback. Skipped while the
+        // settings panel is open — it handles its own PageUp/PageDown inside
+        // the "settings panel is open" block below instead.
+        if code == WKeyCode::PageUp && !self.app.state.settings_panel.is_open {
             let scroll_lines = self.app.state.rows as usize / 2;
             self.app.state.scroll_up(scroll_lines);
             return true;
         }
-        if code == WKeyCode::PageDown {
+        if code == WKeyCode::PageDown && !self.app.state.settings_panel.is_open {
             let scroll_lines = self.app.state.rows as usize / 2;
             self.app.state.scroll_down(scroll_lines);
             return true;
@@ -424,12 +426,26 @@ impl EventHandler {
                 .settings_panel
                 .security_field_editing
                 .is_some();
+            // Phase B4: Startup-category shell program/args edit mode.
+            let shell_editing = self.app.state.settings_panel.shell_field_editing.is_some();
+            // Phase B4-P2: Font-category font_fallbacks edit mode.
+            let font_fallbacks_editing = self
+                .app
+                .state
+                .settings_panel
+                .font_fallbacks_editing
+                .is_some();
+            // Phase B4-P2: Keybindings-category leader_key edit mode.
+            let leader_key_editing = self.app.state.settings_panel.leader_key_editing.is_some();
             let editing = font_editing
                 || ssh_editing
                 || dialog_open
                 || key_dialog_open
                 || key_editing
-                || security_editing;
+                || security_editing
+                || shell_editing
+                || font_fallbacks_editing
+                || leader_key_editing;
             match code {
                 // ===== Sub-phase D: dedicated handling while the delete dialog is open (highest priority) =====
                 WKeyCode::Escape if dialog_open => {
@@ -516,6 +532,15 @@ impl EventHandler {
                     } else if security_editing {
                         // Discard the in-flight Security byte-cap edit.
                         self.app.state.settings_panel.cancel_security_edit();
+                    } else if shell_editing {
+                        // Phase B4: discard the in-flight shell program/args edit.
+                        self.app.state.settings_panel.cancel_shell_field_edit();
+                    } else if font_fallbacks_editing {
+                        // Phase B4-P2: discard the in-flight font_fallbacks edit.
+                        self.app.state.settings_panel.cancel_font_fallbacks_edit();
+                    } else if leader_key_editing {
+                        // Phase B4-P2: discard the in-flight leader_key edit.
+                        self.app.state.settings_panel.cancel_leader_key_edit();
                     } else if self.app.state.settings_panel.search_focused
                         || self.app.state.settings_panel.is_search_filtering()
                     {
@@ -546,6 +571,15 @@ impl EventHandler {
                     } else if security_editing {
                         // Commit the Security byte-cap decimal edit.
                         self.app.state.settings_panel.commit_security_edit();
+                    } else if shell_editing {
+                        // Phase B4: commit the in-flight shell program/args edit.
+                        self.app.state.settings_panel.commit_shell_field_edit();
+                    } else if font_fallbacks_editing {
+                        // Phase B4-P2: commit the in-flight font_fallbacks edit.
+                        self.app.state.settings_panel.commit_font_fallbacks_edit();
+                    } else if leader_key_editing {
+                        // Phase B4-P2: commit the in-flight leader_key edit.
+                        self.app.state.settings_panel.commit_leader_key_edit();
                     } else {
                         // Sub-phase A: in the SSH category, focus on fields (1/2/4) enters edit mode.
                         // Sub-phase D: focus=6 (Add) calls add_ssh_host (which starts editing internally).
@@ -598,6 +632,21 @@ impl EventHandler {
                         {
                             // Enter on a byte-cap field starts decimal editing.
                             sp.begin_security_edit();
+                        } else if sp.category == SettingsCategory::Startup
+                            && matches!(sp.startup_field_focus, 2 | 3)
+                        {
+                            // Phase B4: Enter on the shell program/args field
+                            // starts editing.
+                            sp.begin_shell_field_edit();
+                        } else if sp.category == SettingsCategory::Font && sp.font_field_focus == 3
+                        {
+                            // Phase B4-P2: Enter on the font_fallbacks field starts editing.
+                            sp.begin_font_fallbacks_edit();
+                        } else if sp.category == SettingsCategory::Keybindings
+                            && sp.key_field_focus == 5
+                        {
+                            // Phase B4-P2: Enter on the leader_key field starts editing.
+                            sp.begin_leader_key_edit();
                         } else {
                             let _ = sp.save_to_toml();
                             sp.close();
@@ -613,14 +662,64 @@ impl EventHandler {
                 WKeyCode::Backspace if security_editing => {
                     self.app.state.settings_panel.security_field_backspace();
                 }
+                WKeyCode::Backspace if shell_editing => {
+                    self.app.state.settings_panel.shell_field_backspace();
+                }
+                WKeyCode::Backspace if font_fallbacks_editing => {
+                    self.app.state.settings_panel.font_fallbacks_backspace();
+                }
+                WKeyCode::Backspace if leader_key_editing => {
+                    self.app.state.settings_panel.leader_key_backspace();
+                }
                 WKeyCode::Delete if ssh_editing => {
                     self.app.state.settings_panel.ssh_field_delete();
+                }
+                WKeyCode::Delete if shell_editing => {
+                    self.app.state.settings_panel.shell_field_delete();
+                }
+                WKeyCode::Delete if font_fallbacks_editing => {
+                    self.app.state.settings_panel.font_fallbacks_delete();
+                }
+                WKeyCode::Delete if leader_key_editing => {
+                    self.app.state.settings_panel.leader_key_delete();
+                }
+                // Phase B1: PageUp/PageDown scroll the content area by ~90%
+                // of a viewport page. `viewport_h_px` is populated by the
+                // renderer every frame; before the first frame it is 0.0, so
+                // `scroll_by` is a harmless no-op (nothing to scroll yet).
+                WKeyCode::PageUp => {
+                    let sp = &mut self.app.state.settings_panel;
+                    let page = (sp.scroll.viewport_h_px * 0.9).max(1.0);
+                    sp.scroll.scroll_by(-page);
+                }
+                WKeyCode::PageDown => {
+                    let sp = &mut self.app.state.settings_panel;
+                    let page = (sp.scroll.viewport_h_px * 0.9).max(1.0);
+                    sp.scroll.scroll_by(page);
                 }
                 WKeyCode::Home if ssh_editing => {
                     self.app.state.settings_panel.ssh_field_move_home();
                 }
                 WKeyCode::End if ssh_editing => {
                     self.app.state.settings_panel.ssh_field_move_end();
+                }
+                WKeyCode::Home if shell_editing => {
+                    self.app.state.settings_panel.shell_field_move_home();
+                }
+                WKeyCode::End if shell_editing => {
+                    self.app.state.settings_panel.shell_field_move_end();
+                }
+                WKeyCode::Home if font_fallbacks_editing => {
+                    self.app.state.settings_panel.font_fallbacks_move_home();
+                }
+                WKeyCode::End if font_fallbacks_editing => {
+                    self.app.state.settings_panel.font_fallbacks_move_end();
+                }
+                WKeyCode::Home if leader_key_editing => {
+                    self.app.state.settings_panel.leader_key_move_home();
+                }
+                WKeyCode::End if leader_key_editing => {
+                    self.app.state.settings_panel.leader_key_move_end();
                 }
                 // F key toggles font-family edit mode in the Font category
                 WKeyCode::KeyF if !editing => {
@@ -657,18 +756,22 @@ impl EventHandler {
                     {
                         // Phase 5-11-9 Sub-phase A: ↓ walks key_field_focus 0 → 1 → 2.
                         // Sub-phase D extends the range to 3 (Add) and 4 (Delete).
-                        //   - When the list is empty: 0 (ListBox) → 3 (Add) → next category.
-                        //     Delete (4) is treated as disabled and skipped.
-                        //   - With entries: 0 → 1 → 2 → 3 → 4 → next category.
+                        // Phase B4-P2 appends 5 (leader_key), always present regardless
+                        // of whether the binding list is empty (unlike 1/2/4).
+                        //   - When the list is empty: 0 (ListBox) → 3 (Add) → 5 (leader_key)
+                        //     → next category. Delete (4) is treated as disabled and skipped.
+                        //   - With entries: 0 → 1 → 2 → 3 → 4 → 5 → next category.
                         if sp.keybindings.is_empty() {
                             if sp.key_field_focus < 3 {
                                 // 0 → 3 directly (skip 1/2 which require a selected binding).
                                 sp.key_field_focus = 3;
+                            } else if sp.key_field_focus < 5 {
+                                sp.key_field_focus = 5;
                             } else {
                                 sp.next_category();
                                 sp.key_field_focus = 0;
                             }
-                        } else if sp.key_field_focus < 4 {
+                        } else if sp.key_field_focus < 5 {
                             sp.key_field_focus += 1;
                         } else {
                             sp.next_category();
@@ -683,19 +786,58 @@ impl EventHandler {
                             sp.next_category();
                             sp.security_field_focus = 0;
                         }
+                    } else if sp.category == SettingsCategory::Startup
+                        && code == WKeyCode::ArrowDown
+                    {
+                        // Phase B4: ↓ walks startup_field_focus 0 -> 1 -> 2 -> 3.
+                        if !sp.next_startup_field() {
+                            sp.next_category();
+                            sp.startup_field_focus = 0;
+                        }
+                    } else if sp.category == SettingsCategory::Font && code == WKeyCode::ArrowDown {
+                        // Phase B4-P2: ↓ walks font_field_focus 0 -> 1 -> 2 -> 3.
+                        if !sp.next_font_field() {
+                            sp.next_category();
+                            sp.font_field_focus = 0;
+                        }
+                    } else if sp.category == SettingsCategory::Theme && code == WKeyCode::ArrowDown
+                    {
+                        // Phase B4-P2: ↓ walks theme_field_focus 0 -> 1.
+                        if !sp.next_theme_field() {
+                            sp.next_category();
+                            sp.theme_field_focus = 0;
+                        }
                     } else {
                         sp.next_category();
                         sp.window_field_focus = 0;
                         sp.ssh_field_focus = 0;
                         sp.key_field_focus = 0;
                         sp.security_field_focus = 0;
+                        sp.startup_field_focus = 0;
+                        sp.font_field_focus = 0;
+                        sp.theme_field_focus = 0;
                     }
                 }
                 WKeyCode::ArrowUp if !editing => {
                     use crate::settings_panel::SettingsCategory;
                     let sp = &mut self.app.state.settings_panel;
                     match &sp.category {
-                        SettingsCategory::Font => sp.increase_font_size(),
+                        SettingsCategory::Font => {
+                            // Phase B4-P2: ↑ navigates between fields. At the
+                            // top, fall back to the previous category.
+                            if !sp.prev_font_field() {
+                                sp.prev_category();
+                                sp.font_field_focus = 0;
+                            }
+                        }
+                        SettingsCategory::Theme => {
+                            // Phase B4-P2: ↑ navigates between fields. At the
+                            // top, fall back to the previous category.
+                            if !sp.prev_theme_field() {
+                                sp.prev_category();
+                                sp.theme_field_focus = 0;
+                            }
+                        }
                         SettingsCategory::Window => {
                             // Phase 5-11-6 #6: ↑ navigates between fields. At the top, fall back to the previous category.
                             if !sp.prev_window_field() {
@@ -733,20 +875,58 @@ impl EventHandler {
                                 sp.security_field_focus = 0;
                             }
                         }
+                        SettingsCategory::Startup => {
+                            // Phase B4: ↑ moves startup_field_focus back by one.
+                            if !sp.prev_startup_field() {
+                                sp.prev_category();
+                                sp.startup_field_focus = 0;
+                            }
+                        }
                         _ => sp.prev_category(),
                     }
                 }
                 WKeyCode::ArrowRight if ssh_editing => {
                     self.app.state.settings_panel.ssh_field_move_right();
                 }
+                WKeyCode::ArrowRight if shell_editing => {
+                    self.app.state.settings_panel.shell_field_move_right();
+                }
+                WKeyCode::ArrowRight if font_fallbacks_editing => {
+                    self.app.state.settings_panel.font_fallbacks_move_right();
+                }
+                WKeyCode::ArrowRight if leader_key_editing => {
+                    self.app.state.settings_panel.leader_key_move_right();
+                }
                 WKeyCode::ArrowRight if !editing => {
                     use crate::settings_panel::SettingsCategory;
                     match &self.app.state.settings_panel.category {
-                        SettingsCategory::Theme => self.app.state.settings_panel.next_scheme(),
-                        SettingsCategory::Startup => self.app.state.settings_panel.next_language(),
+                        // Phase B4-P2: Theme field 0 (scheme) cycles forward, matching
+                        // the pre-existing behavior; field 1 toggles colors_follow_system.
+                        SettingsCategory::Theme => {
+                            let sp = &mut self.app.state.settings_panel;
+                            match sp.theme_field_focus {
+                                1 => sp.toggle_colors_follow_system(),
+                                _ => sp.next_scheme(),
+                            }
+                        }
+                        // Phase B4: Left/Right only cycles the language when
+                        // `startup_field_focus == 0`; other fields use Enter to edit.
+                        SettingsCategory::Startup => {
+                            if self.app.state.settings_panel.startup_field_focus == 0 {
+                                self.app.state.settings_panel.next_language();
+                            }
+                        }
                         // Phase 5-11-6 #6: Window category — increment the value of the focused field
                         SettingsCategory::Window => {
                             self.app.state.settings_panel.window_field_increase()
+                        }
+                        // Phase B4-P2: Font category — increment the value of the focused field.
+                        SettingsCategory::Font => {
+                            self.app.state.settings_panel.font_field_increase()
+                        }
+                        // Phase B4: Profiles category — cycle the active profile forward.
+                        SettingsCategory::Profiles => {
+                            self.app.state.settings_panel.next_active_profile()
                         }
                         // Phase 5-11-8 Step 8-3 (Sub-phase C): allow → / ← to inc-dec / cycle
                         // SSH `port` (SpinButton) and `auth_type` (ComboBox).
@@ -777,14 +957,41 @@ impl EventHandler {
                 WKeyCode::ArrowLeft if ssh_editing => {
                     self.app.state.settings_panel.ssh_field_move_left();
                 }
+                WKeyCode::ArrowLeft if shell_editing => {
+                    self.app.state.settings_panel.shell_field_move_left();
+                }
+                WKeyCode::ArrowLeft if font_fallbacks_editing => {
+                    self.app.state.settings_panel.font_fallbacks_move_left();
+                }
+                WKeyCode::ArrowLeft if leader_key_editing => {
+                    self.app.state.settings_panel.leader_key_move_left();
+                }
                 WKeyCode::ArrowLeft if !editing => {
                     use crate::settings_panel::SettingsCategory;
                     match &self.app.state.settings_panel.category {
-                        SettingsCategory::Theme => self.app.state.settings_panel.prev_scheme(),
-                        SettingsCategory::Startup => self.app.state.settings_panel.prev_language(),
+                        SettingsCategory::Theme => {
+                            let sp = &mut self.app.state.settings_panel;
+                            match sp.theme_field_focus {
+                                1 => sp.toggle_colors_follow_system(),
+                                _ => sp.prev_scheme(),
+                            }
+                        }
+                        SettingsCategory::Startup => {
+                            if self.app.state.settings_panel.startup_field_focus == 0 {
+                                self.app.state.settings_panel.prev_language();
+                            }
+                        }
                         // Phase 5-11-6 #6: Window category — decrement the value of the focused field
                         SettingsCategory::Window => {
                             self.app.state.settings_panel.window_field_decrease()
+                        }
+                        // Phase B4-P2: Font category — decrement the value of the focused field.
+                        SettingsCategory::Font => {
+                            self.app.state.settings_panel.font_field_decrease()
+                        }
+                        // Phase B4: Profiles category — cycle the active profile backward.
+                        SettingsCategory::Profiles => {
+                            self.app.state.settings_panel.prev_active_profile()
                         }
                         // Phase 5-11-8 Step 8-3 (Sub-phase C): allow ← to decrement / reverse-cycle
                         // SSH `port` (SpinButton) and `auth_type` (ComboBox).

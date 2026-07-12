@@ -646,6 +646,9 @@ impl EventHandler {
                             // search input so subsequent keyboard navigation
                             // (Tab / ↑ / ↓) operates on the panel again.
                             self.app.state.settings_panel.unfocus_search();
+                            // Phase B1: the new category has its own content
+                            // height, so any prior scroll offset is stale.
+                            self.app.state.settings_panel.scroll.reset();
                         }
                     }
                     SettingsPanelHit::SearchInput => {
@@ -705,13 +708,23 @@ impl EventHandler {
                         self.app.state.settings_panel.theme_hover_preview = None;
                     }
                     SettingsPanelHit::WindowRow(row) => {
-                        // Phase 5-11-6 #6: click on a row inside the Window category.
-                        // Change focus; clicking the label of rows 1/4 also cycles the value.
+                        // Phase 5-11-6 #6 / Phase B4 / Phase B4-P2: click on a row inside
+                        // the Window category. Change focus; clicking the label of rows
+                        // 1/4/5/7/8/9/10/11/12 also changes the value (toggle or cycle).
+                        // Row 13 (fps_limit) is numeric — click only focuses, matching
+                        // the padding_x/y (2/3) and scrollback_lines (6) convention.
                         let sp = &mut self.app.state.settings_panel;
                         sp.window_field_focus = row;
                         match row {
                             1 => sp.next_cursor_style(),
                             4 => sp.next_present_mode(),
+                            5 => sp.toggle_cursor_blink(),
+                            7 => sp.toggle_show_tab_number(),
+                            8 => sp.toggle_show_new_tab_button(),
+                            9 => sp.toggle_animations_enabled(),
+                            10 => sp.next_animations_intensity(),
+                            11 => sp.next_window_decorations(),
+                            12 => sp.next_window_close_action(),
                             _ => {}
                         }
                     }
@@ -1358,6 +1371,12 @@ impl EventHandler {
 
     /// `WindowEvent::MouseWheel` — scroll the scrollback with the mouse wheel.
     pub(super) fn on_mouse_wheel(&mut self, delta: MouseScrollDelta) {
+        // Phase B1: while the settings panel is open, the wheel scrolls its
+        // content area instead of the terminal scrollback underneath it.
+        if self.app.state.settings_panel.is_open {
+            self.on_settings_panel_wheel(delta);
+            return;
+        }
         let lines = match delta {
             MouseScrollDelta::LineDelta(_, y) => {
                 (y * self.app.config.scrolling.effective_multiplier()) as i32
@@ -1398,6 +1417,23 @@ impl EventHandler {
         } else if lines < 0 {
             self.app.state.scroll_down((-lines) as usize);
         }
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+    }
+
+    /// Phase B1: route mouse-wheel scrolling to the settings panel's content
+    /// area. Mirrors the line/pixel handling in `on_mouse_wheel` but drives
+    /// `ScrollState` instead of the terminal scrollback. Wheel-up (positive
+    /// `y`) scrolls toward the top of the content, matching typical GUI
+    /// scroll-area convention.
+    pub(super) fn on_settings_panel_wheel(&mut self, delta: MouseScrollDelta) {
+        let cell_h = self.app.font.cell_height();
+        let delta_px = match delta {
+            MouseScrollDelta::LineDelta(_, y) => -y * cell_h * 3.0,
+            MouseScrollDelta::PixelDelta(p) => -p.y as f32,
+        };
+        self.app.state.settings_panel.scroll.scroll_by(delta_px);
         if let Some(w) = &self.window {
             w.request_redraw();
         }

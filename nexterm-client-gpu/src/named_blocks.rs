@@ -283,14 +283,16 @@ fn write_atomic_secure(path: &std::path::Path, content: &[u8]) -> std::io::Resul
     Ok(())
 }
 
+/// Serialises every test — across modules — that re-points the store via the
+/// `__NEXTERM_TEST_NAMED_BLOCKS_PATH__` env var. The env var is process-global,
+/// so a per-module mutex is not enough: two modules each holding their own
+/// lock can still race on it under parallel test execution.
+#[cfg(test)]
+pub(crate) static TEST_STORE_ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    // Tests mutate the `__NEXTERM_TEST_NAMED_BLOCKS_PATH__` env var, so we
-    // serialise them to avoid cross-test interference.
-    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     struct TestPath {
         _guard: std::sync::MutexGuard<'static, ()>,
@@ -299,12 +301,12 @@ mod tests {
 
     impl TestPath {
         fn new(name: &str) -> Self {
-            let guard = ENV_MUTEX.lock().expect("test mutex poisoned");
+            let guard = TEST_STORE_ENV_MUTEX.lock().expect("test mutex poisoned");
             let mut path = std::env::temp_dir();
             path.push(format!("nexterm-named-blocks-test-{}.json", name));
             // Start clean
             let _ = std::fs::remove_file(&path);
-            // SAFETY: tests are serialised by ENV_MUTEX, so the env mutation is
+            // SAFETY: tests are serialised by TEST_STORE_ENV_MUTEX, so the env mutation is
             // race-free for this process.
             unsafe {
                 std::env::set_var("__NEXTERM_TEST_NAMED_BLOCKS_PATH__", &path);
@@ -318,7 +320,7 @@ mod tests {
 
     impl Drop for TestPath {
         fn drop(&mut self) {
-            // SAFETY: tests are serialised by ENV_MUTEX.
+            // SAFETY: tests are serialised by TEST_STORE_ENV_MUTEX.
             unsafe {
                 std::env::remove_var("__NEXTERM_TEST_NAMED_BLOCKS_PATH__");
             }

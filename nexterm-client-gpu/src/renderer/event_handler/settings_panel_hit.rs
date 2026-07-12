@@ -26,9 +26,13 @@ pub(super) enum SettingsPanelHit {
     },
     /// Theme color dot.
     ThemeColor(usize),
-    /// Phase 5-11-6 #6: click on a row inside the Window category (changes focus + optional action).
-    /// row 0=opacity / 1=cursor_style / 2=padding_x / 3=padding_y / 4=present_mode.
-    /// Clicking on the label area of rows 1 / 4 also cycles the value.
+    /// Phase 5-11-6 #6 / Phase B4: click on a row inside the Window category
+    /// (changes focus + optional action).
+    /// row 0=opacity / 1=cursor_style / 2=padding_x / 3=padding_y / 4=present_mode /
+    /// 5=cursor blink / 6=scrollback_lines / 7=show_tab_number /
+    /// 8=show_new_tab_button / 9=animations enabled / 10=animations intensity.
+    /// Clicking on the label area of rows 1 / 4 / 5 / 7 / 8 / 9 / 10 also
+    /// changes the value (toggle or cycle).
     WindowRow(u8),
     /// Phase 2c follow-up: click on a row inside the Blocks category.
     /// row 0 = `blocks_enabled` toggle, row 1 = increment `border_width_px`
@@ -228,7 +232,10 @@ impl EventHandler {
 
                 // Row click detection (label area = each row's y..y+row_h).
                 // Clicking the label of rows 1 / 4 is expected to cycle the value (handled on the mouse side).
-                for row in 0u8..5 {
+                // Phase B4: extended to 11 rows (5=cursor blink / 6=scrollback_lines /
+                // 7=show_tab_number / 8=show_new_tab_button / 9=animations enabled /
+                // 10=animations intensity). See `SettingsPanel::WINDOW_FIELD_COUNT`.
+                for row in 0u8..crate::settings_panel::SettingsPanel::WINDOW_FIELD_COUNT {
                     let row_y = labels_top + row_h * row as f32;
                     if cy >= row_y - cell_h * 0.3 && cy <= row_y + cell_h * 2.5 {
                         return SettingsPanelHit::WindowRow(row);

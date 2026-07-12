@@ -242,9 +242,80 @@ pub(crate) fn apply_hsb_animated_rgba(
     apply_hsb_multiplier(rgba, h, s, b)
 }
 
+/// WCAG 2.x relative luminance of a linear-ish sRGB color (components in [0, 1]).
+///
+/// Uses the standard sRGB transfer function per
+/// <https://www.w3.org/TR/WCAG21/#dfn-relative-luminance>.
+pub(crate) fn relative_luminance(rgb: [f32; 3]) -> f32 {
+    let lin = |c: f32| {
+        let c = c.clamp(0.0, 1.0);
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2])
+}
+
+/// WCAG 2.x contrast ratio between two opaque colors, in [1, 21].
+///
+/// Overlay text must reach at least 4.5:1 against its effective background
+/// (project accessibility guideline).
+pub(crate) fn contrast_ratio(fg: [f32; 3], bg: [f32; 3]) -> f32 {
+    let l1 = relative_luminance(fg);
+    let l2 = relative_luminance(bg);
+    let (hi, lo) = if l1 >= l2 { (l1, l2) } else { (l2, l1) };
+    (hi + 0.05) / (lo + 0.05)
+}
+
+/// Composite a straight-alpha RGBA color over an opaque background, returning
+/// the effective opaque color. Used to evaluate the contrast of semi-transparent
+/// overlay decorations against panel surfaces.
+pub(crate) fn composite_over(fg: [f32; 4], bg: [f32; 3]) -> [f32; 3] {
+    let a = fg[3].clamp(0.0, 1.0);
+    [
+        fg[0] * a + bg[0] * (1.0 - a),
+        fg[1] * a + bg[1] * (1.0 - a),
+        fg[2] * a + bg[2] * (1.0 - a),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contrast_black_on_white_is_21() {
+        let r = contrast_ratio([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        assert!((r - 21.0).abs() < 0.01, "got {r}");
+    }
+
+    #[test]
+    fn contrast_is_symmetric_and_identity_is_1() {
+        let a = [0.2, 0.4, 0.6];
+        let b = [0.9, 0.9, 0.9];
+        assert_eq!(contrast_ratio(a, b), contrast_ratio(b, a));
+        assert!((contrast_ratio(a, a) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn contrast_gray_on_white_matches_wcag_reference() {
+        // #767676 on white is the canonical ~4.54:1 WCAG boundary example.
+        let g = 118.0 / 255.0;
+        let r = contrast_ratio([g, g, g], [1.0, 1.0, 1.0]);
+        assert!((r - 4.54).abs() < 0.05, "got {r}");
+    }
+
+    #[test]
+    fn composite_over_blends_alpha() {
+        // 50% white over black = mid gray.
+        let out = composite_over([1.0, 1.0, 1.0, 0.5], [0.0, 0.0, 0.0]);
+        assert!(out.iter().all(|c| (c - 0.5).abs() < 1e-6));
+        // Fully opaque ignores the background.
+        let out = composite_over([0.3, 0.2, 0.1, 1.0], [1.0, 1.0, 1.0]);
+        assert_eq!(out, [0.3, 0.2, 0.1]);
+    }
 
     #[test]
     fn ansi256_basic_16_colors_convert() {

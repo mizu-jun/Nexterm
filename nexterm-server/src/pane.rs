@@ -1361,8 +1361,13 @@ impl Pane {
             "(Get-Process -Id {} -ErrorAction SilentlyContinue).Path | Split-Path -Parent",
             pid
         );
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
         let output = std::process::Command::new("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            // Without CREATE_NO_WINDOW a GUI-subsystem process spawning a console
+            // app briefly flashes a black console window.
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
             .ok()?;
         if output.status.success() {

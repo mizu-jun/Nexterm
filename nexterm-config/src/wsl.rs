@@ -41,9 +41,19 @@ pub fn detect_distros() -> Vec<Profile> {
 
 #[cfg(windows)]
 fn detect_distros_windows() -> Vec<Profile> {
+    use std::os::windows::process::CommandExt;
     use std::process::Command;
 
-    let output = match Command::new("wsl.exe").args(["-l", "-q"]).output() {
+    // CREATE_NO_WINDOW: without it a GUI-subsystem process spawning a console
+    // app briefly flashes a black console window (local constant to avoid a
+    // windows-sys dependency in this crate).
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let output = match Command::new("wsl.exe")
+        .args(["-l", "-q"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
         Ok(o) => o,
         Err(_) => return Vec::new(),
     };
