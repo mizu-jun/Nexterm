@@ -513,6 +513,16 @@ impl EventHandler {
             }
             // When the font size changes, rebuild the glyph atlas as well.
             let font_changed = self.app.config.font != new_config.font;
+            // Capture the previous values of everything else that is applied
+            // imperatively below (i.e. not simply read from `self.app.config`
+            // every frame), before the wholesale config swap overwrites them.
+            let language_changed = self.app.config.language != new_config.language;
+            let decorations_changed =
+                self.app.config.window.decorations != new_config.window.decorations;
+            let present_mode_changed =
+                self.app.config.gpu.present_mode != new_config.gpu.present_mode;
+            let scrollback_changed =
+                self.app.config.scrollback_lines != new_config.scrollback_lines;
             self.app.config = new_config;
             if font_changed {
                 self.app.font = crate::font::FontManager::new(
@@ -532,6 +542,32 @@ impl EventHandler {
                     self.atlas = Some(atlas);
                 }
             }
+
+            // Apply the remaining settings that were previously only read at
+            // startup. These used to require a restart; now they take effect
+            // on the next config save.
+            if language_changed {
+                nexterm_i18n::set_locale(&self.app.config.language);
+            }
+            if decorations_changed && let Some(w) = &self.window {
+                use nexterm_config::WindowDecorations;
+                let decorations =
+                    !matches!(self.app.config.window.decorations, WindowDecorations::None);
+                w.set_decorations(decorations);
+            }
+            if present_mode_changed && let Some(wgpu) = &mut self.wgpu_state {
+                wgpu.set_present_mode(&self.app.config.gpu);
+            }
+            if scrollback_changed {
+                let new_capacity = self.app.config.scrollback_lines;
+                for pane in self.app.state.panes.values_mut() {
+                    pane.scrollback.set_capacity(new_capacity);
+                }
+                // New panes created after this reload should use the updated
+                // default capacity as well.
+                self.app.state.scrollback_capacity = new_capacity;
+            }
+
             had_messages = true;
         }
 
