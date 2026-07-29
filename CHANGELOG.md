@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Windows-Terminal-like new-tab profile dropdown: a `▾` button next to the
+  tab-bar `+` opens a menu listing the configured `[[profiles]]` and the WSL
+  distros detected at startup; selecting one opens a new tab running that
+  profile's shell, working directory, and environment (new
+  `ClientToServer::SplitWithShell` IPC message).
+- Context-menu profile entries now actually launch the profile's shell
+  (previously they opened a plain split and only logged the profile name).
+- Profiles that set only `working_dir` / `env` (no `[profiles.shell]`) now
+  open a new tab with the session default shell in that directory.
+
+### Changed
+- **PROTOCOL_VERSION 10 → 11** for `SplitWithShell`. The single-binary
+  `nexterm` upgrades both halves at once; standalone `nexterm-server`
+  deployments must be updated together with clients.
+
 ## [1.14.0] - 2026-07-12
 
 Windows console-flash fix and a Windows-Terminal-inspired settings-panel

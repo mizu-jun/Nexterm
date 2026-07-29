@@ -215,7 +215,13 @@ impl Window {
     ///
     /// `total_cols`/`total_rows` represent the full window size. Computes the per-pane size from the
     /// new layout before spawning the pane.
-    pub fn add_pane(
+    /// Add a pane to the BSP tree and spawn its PTY. `cwd_override` /
+    /// `env` support PROTOCOL_VERSION 11 `SplitWithShell` (profile /
+    /// WSL-distro launches); when `cwd_override` is `None` the new pane
+    /// inherits the parent pane's CWD as usual, and plain splits pass
+    /// `(None, &[])`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_pane_with_options(
         &mut self,
         total_cols: u16,
         total_rows: u16,
@@ -223,6 +229,8 @@ impl Window {
         shell: &str,
         args: &[String],
         dir: SplitDir,
+        cwd_override: Option<&std::path::Path>,
+        env: &[(String, String)],
     ) -> Result<u32> {
         // 1. Reserve a new ID up front and insert it into the tree.
         let new_id = crate::pane::new_pane_id();
@@ -243,17 +251,25 @@ impl Window {
             });
 
         // 3. Spawn the new pane with the computed size.
-        // Sprint 5-2 / B2: inherit the parent pane's CWD (OSC 7 first, fall back to /proc/{pid}/cwd).
+        // Sprint 5-2 / B2: inherit the parent pane's CWD (OSC 7 first, fall
+        // back to /proc/{pid}/cwd) unless the caller supplied an override.
         let parent_cwd = self
             .panes
             .get(&self.focused_pane_id)
             .and_then(|p| p.osc7_cwd().or_else(|| p.working_dir()));
-        let pane = match parent_cwd {
-            Some(ref cwd) => {
-                Pane::spawn_with_cwd(new_id, new_rect.cols, new_rect.rows, tx, shell, args, cwd)?
-            }
-            None => Pane::spawn_with_id(new_id, new_rect.cols, new_rect.rows, tx, shell, args)?,
-        };
+        let effective_cwd = cwd_override
+            .map(std::path::Path::to_path_buf)
+            .or(parent_cwd);
+        let pane = Pane::spawn_with_options(
+            new_id,
+            new_rect.cols,
+            new_rect.rows,
+            tx,
+            shell,
+            args,
+            effective_cwd.as_deref(),
+            env,
+        )?;
         self.panes.insert(new_id, pane);
         self.focused_pane_id = new_id;
         // Tab order: append at the end (new tab appears to the right of existing tabs).

@@ -229,6 +229,80 @@ impl ContextMenu {
         menu.items.splice(0..0, block_items);
         menu
     }
+
+    /// Build the new-tab dropdown opened by the tab-bar `▾` button
+    /// (Windows-Terminal-like profile dropdown).
+    ///
+    /// `profiles`: (name, icon) pairs — the configured `Config.profiles`
+    /// followed by the WSL distros detected at startup. The return value is
+    /// stored in `ClientState.context_menu`, so it reuses the existing
+    /// context-menu rendering and hit-testing machinery unchanged.
+    pub fn new_tab_dropdown(x: f32, y: f32, profiles: &[(String, String)]) -> Self {
+        let mut items = vec![ContextMenuItem::with_hint(
+            fl!("tab-dropdown-new-tab"),
+            "Ctrl+B  %",
+            ContextMenuAction::SplitVertical,
+        )];
+        if !profiles.is_empty() {
+            items.push(ContextMenuItem::separator());
+            for (name, icon) in profiles {
+                let label = if icon.is_empty() {
+                    format!("> {}", name)
+                } else {
+                    format!("{} {}", icon, name)
+                };
+                items.push(ContextMenuItem::new(
+                    label,
+                    ContextMenuAction::OpenProfile {
+                        profile_name: name.clone(),
+                    },
+                ));
+            }
+        }
+        items.push(ContextMenuItem::separator());
+        items.push(ContextMenuItem::with_hint(
+            fl!("palette-show-settings"),
+            "Ctrl+,",
+            ContextMenuAction::OpenSettings,
+        ));
+        Self {
+            x,
+            y,
+            items,
+            hovered: None,
+        }
+    }
+}
+
+/// Resolve a configuration profile into the IPC message that opens a new tab
+/// running it (PROTOCOL_VERSION 11 `SplitWithShell`).
+///
+/// * Profiles that override nothing spawn-related (no `[profiles.shell]`,
+///   no `working_dir`, no `env`) fall back to a plain `SplitVertical` —
+///   font/color-only profiles still get a new tab with the session shell.
+/// * Otherwise the profile's shell (or `default_shell` when absent) is sent
+///   together with the cwd / env overrides. `env` is sorted because
+///   `HashMap` iteration order is unstable.
+pub fn split_message_for_profile(
+    profile: &nexterm_config::Profile,
+    default_shell: &nexterm_config::ShellConfig,
+) -> nexterm_proto::ClientToServer {
+    if profile.shell.is_none() && profile.working_dir.is_none() && profile.env.is_empty() {
+        return nexterm_proto::ClientToServer::SplitVertical;
+    }
+    let shell = profile.shell.as_ref().unwrap_or(default_shell);
+    let mut env: Vec<(String, String)> = profile
+        .env
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    env.sort();
+    nexterm_proto::ClientToServer::SplitWithShell {
+        program: shell.program.clone(),
+        args: shell.args.clone(),
+        cwd: profile.working_dir.clone(),
+        env,
+    }
 }
 
 // ---- File transfer dialog ----
@@ -445,5 +519,139 @@ fn index_to_label(i: usize, total: usize, chars: &[char]) -> String {
         chars[first].to_string()
     } else {
         format!("{}{}", chars[second - 1], chars[first])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nexterm_config::{Profile, ShellConfig};
+    use nexterm_proto::ClientToServer;
+
+    fn default_shell() -> ShellConfig {
+        ShellConfig {
+            program: "/bin/bash".to_string(),
+            args: vec!["-l".to_string()],
+        }
+    }
+
+    // ---- split_message_for_profile ----
+
+    #[test]
+    fn font_only_profile_falls_back_to_plain_split() {
+        // A profile that overrides nothing spawn-related must not force a
+        // shell override; the session default shell handles it server-side.
+        let profile = Profile {
+            name: "big-font".to_string(),
+            ..Default::default()
+        };
+        let msg = split_message_for_profile(&profile, &default_shell());
+        assert_eq!(msg, ClientToServer::SplitVertical);
+    }
+
+    #[test]
+    fn shell_profile_maps_to_split_with_shell() {
+        let profile = Profile {
+            name: "fish".to_string(),
+            shell: Some(ShellConfig {
+                program: "/usr/bin/fish".to_string(),
+                args: vec!["--login".to_string()],
+            }),
+            working_dir: Some("/tmp".to_string()),
+            ..Default::default()
+        };
+        let msg = split_message_for_profile(&profile, &default_shell());
+        match msg {
+            ClientToServer::SplitWithShell {
+                program,
+                args,
+                cwd,
+                env,
+            } => {
+                assert_eq!(program, "/usr/bin/fish");
+                assert_eq!(args, vec!["--login".to_string()]);
+                assert_eq!(cwd.as_deref(), Some("/tmp"));
+                assert!(env.is_empty());
+            }
+            other => panic!("expected SplitWithShell, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn cwd_only_profile_uses_the_default_shell() {
+        // working_dir without [profiles.shell] must still open a new tab in
+        // that directory, running the session default shell.
+        let profile = Profile {
+            name: "project".to_string(),
+            working_dir: Some("/home/user/project".to_string()),
+            ..Default::default()
+        };
+        let msg = split_message_for_profile(&profile, &default_shell());
+        match msg {
+            ClientToServer::SplitWithShell {
+                program, args, cwd, ..
+            } => {
+                assert_eq!(program, "/bin/bash");
+                assert_eq!(args, vec!["-l".to_string()]);
+                assert_eq!(cwd.as_deref(), Some("/home/user/project"));
+            }
+            other => panic!("expected SplitWithShell, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn profile_env_is_sorted_for_determinism() {
+        let mut profile = Profile {
+            name: "env".to_string(),
+            shell: Some(default_shell()),
+            ..Default::default()
+        };
+        profile.env.insert("ZZZ".to_string(), "1".to_string());
+        profile.env.insert("AAA".to_string(), "2".to_string());
+        let msg = split_message_for_profile(&profile, &default_shell());
+        match msg {
+            ClientToServer::SplitWithShell { env, .. } => {
+                assert_eq!(
+                    env,
+                    vec![
+                        ("AAA".to_string(), "2".to_string()),
+                        ("ZZZ".to_string(), "1".to_string()),
+                    ]
+                );
+            }
+            other => panic!("expected SplitWithShell, got {:?}", other),
+        }
+    }
+
+    // ---- ContextMenu::new_tab_dropdown ----
+
+    #[test]
+    fn dropdown_without_profiles_has_new_tab_and_settings() {
+        let menu = ContextMenu::new_tab_dropdown(10.0, 20.0, &[]);
+        assert_eq!(menu.items.len(), 3); // new tab / separator / settings
+        assert_eq!(menu.items[0].action, ContextMenuAction::SplitVertical);
+        assert_eq!(menu.items[1].action, ContextMenuAction::Separator);
+        assert_eq!(menu.items[2].action, ContextMenuAction::OpenSettings);
+    }
+
+    #[test]
+    fn dropdown_lists_profiles_between_separators() {
+        let profiles = vec![
+            ("dev".to_string(), String::new()),
+            ("Ubuntu".to_string(), "@".to_string()),
+        ];
+        let menu = ContextMenu::new_tab_dropdown(0.0, 0.0, &profiles);
+        // new tab / sep / dev / Ubuntu / sep / settings
+        assert_eq!(menu.items.len(), 6);
+        assert_eq!(
+            menu.items[2].action,
+            ContextMenuAction::OpenProfile {
+                profile_name: "dev".to_string()
+            }
+        );
+        // Empty icon gets the "> " prefix; a real icon is prepended verbatim.
+        assert_eq!(menu.items[2].label, "> dev");
+        assert_eq!(menu.items[3].label, "@ Ubuntu");
+        assert_eq!(menu.items[5].action, ContextMenuAction::OpenSettings);
     }
 }

@@ -342,23 +342,23 @@ impl EventHandler {
                 self.app.state.settings_panel.open();
             }
             ContextMenuAction::OpenProfile { profile_name } => {
-                // Split a new pane using the profile's shell config
-                if let Some(prof) = self
+                // Open a new tab running the profile's shell / cwd / env
+                // (PROTOCOL_VERSION 11 `SplitWithShell`). Searches the
+                // configured profiles first, then the WSL distros detected
+                // at startup (the new-tab dropdown lists both).
+                let profile = self
                     .app
                     .config
                     .profiles
                     .iter()
+                    .chain(self.app.state.wsl_profiles.iter())
                     .find(|p| &p.name == profile_name)
-                    && let Some(shell) = &prof.shell
-                    && let Some(conn) = &self.connection
-                {
-                    // First split vertically, then pass the shell path through env vars
-                    // instead of ConnectSsh (today we just SplitVertical and log the profile config).
-                    let _ = conn.send_tx.try_send(ClientToServer::SplitVertical);
-                    info!(
-                        "requested launch of profile '{}' shell '{}'",
-                        profile_name, shell.program
-                    );
+                    .cloned();
+                if let (Some(prof), Some(conn)) = (profile, &self.connection) {
+                    let msg =
+                        crate::state::split_message_for_profile(&prof, &self.app.config.shell);
+                    info!("opening profile '{}' as a new tab: {:?}", profile_name, msg);
+                    let _ = conn.send_tx.try_send(msg);
                 }
             }
             ContextMenuAction::Separator => {

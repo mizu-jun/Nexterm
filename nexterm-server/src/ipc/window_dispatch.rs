@@ -24,18 +24,58 @@ pub(super) async fn handle_resize(ctx: &mut DispatchContext<'_>, cols: u16, rows
     }
 }
 
+/// Shell override for `ClientToServer::SplitWithShell` (PROTOCOL_VERSION 11):
+/// the client resolves a profile / WSL distro into a concrete command line
+/// and the server spawns it verbatim instead of the session default shell.
+pub(super) struct ShellOverride {
+    pub program: String,
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
+    pub env: Vec<(String, String)>,
+}
+
 pub(super) async fn handle_split(ctx: &mut DispatchContext<'_>, dir: SplitDir) {
+    handle_split_with(ctx, dir, None).await;
+}
+
+pub(super) async fn handle_split_with(
+    ctx: &mut DispatchContext<'_>,
+    dir: SplitDir,
+    shell_override: Option<ShellOverride>,
+) {
     if let Some(ref name) = *ctx.current_session {
         let session_name = name.clone();
         let split_result = if let Some(session_arc) = ctx.manager.session_arc(&session_name).await {
             let mut s = session_arc.lock().await;
             let cols = s.cols;
             let rows = s.rows;
-            let shell = s.shell().to_string();
-            let args = s.shell_args().to_vec();
+            let (shell, args, cwd, env) = match &shell_override {
+                Some(o) => (
+                    o.program.clone(),
+                    o.args.clone(),
+                    o.cwd.clone(),
+                    o.env.clone(),
+                ),
+                None => (
+                    s.shell().to_string(),
+                    s.shell_args().to_vec(),
+                    None,
+                    Vec::new(),
+                ),
+            };
             let pane_tx = s.broadcast_sender();
-            s.focused_window_mut()
-                .map(|w| w.add_pane(cols, rows, pane_tx, &shell, &args, dir))
+            s.focused_window_mut().map(|w| {
+                w.add_pane_with_options(
+                    cols,
+                    rows,
+                    pane_tx,
+                    &shell,
+                    &args,
+                    dir,
+                    cwd.as_deref().map(std::path::Path::new),
+                    &env,
+                )
+            })
         } else {
             None
         };

@@ -38,7 +38,7 @@ pub use consent::{ConsentDialog, ConsentKind, SessionConsentOverrides};
 #[allow(unused_imports)]
 pub use menus::{
     ContextMenu, ContextMenuAction, ContextMenuItem, FileTransferDialog, QuickSelectMatch,
-    QuickSelectState,
+    QuickSelectState, split_message_for_profile,
 };
 pub use pane::{
     FloatRect, PaneColorOverrides, PaneState, PlacedImage, pointer_shape_to_cursor_icon,
@@ -177,6 +177,15 @@ pub struct ClientState {
     /// by `build_tab_bar_verts` only when `TabBarConfig.show_new_tab_button`
     /// is on. `None` means the button is hidden or off-screen.
     pub new_tab_hit_rect: Option<(f32, f32)>,
+    /// Click range (x_start, x_end) of the `▾` new-tab dropdown button on the
+    /// tab bar (Windows-Terminal-like profile dropdown, P1). Populated each
+    /// frame by `build_tab_bar_verts` only when
+    /// `TabBarConfig.show_new_tab_button` is on.
+    pub new_tab_dropdown_hit_rect: Option<(f32, f32)>,
+    /// WSL distros detected at startup (`nexterm_config::wsl::detect_distros`),
+    /// shown in the new-tab dropdown after the configured profiles. Cached
+    /// once because detection shells out to `wsl.exe` on Windows.
+    pub wsl_profiles: Vec<nexterm_config::Profile>,
     /// `pane_id` of the tab the mouse is currently hovering (Sprint 5-7 / UI-1-1).
     /// Updated by `renderer/event_handler/mouse.rs` on mouse-move; the tab-bar
     /// renderer brightens the background for the hovered tab.
@@ -624,6 +633,8 @@ impl ClientState {
             tab_close_hit_rects: HashMap::new(),
             settings_tab_rect: None,
             new_tab_hit_rect: None,
+            new_tab_dropdown_hit_rect: None,
+            wsl_profiles: Vec::new(),
             hovered_tab_id: None,
             os_dark_mode: None,
             key_hint_visible_until: None,
