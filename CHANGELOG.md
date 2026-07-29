@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Settings panel: an "Open config.toml" link in the footer bar opens the
+  configuration file with the OS default editor (Windows Terminal's
+  "Open JSON file" equivalent). Creates the file first when it does not
+  exist yet.
+
 ## [1.14.0] - 2026-07-12
 
 Windows console-flash fix and a Windows-Terminal-inspired settings-panel
