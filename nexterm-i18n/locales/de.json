@@ -100,6 +100,7 @@
   "settings-panel-footer-hint": "  Enter=Speichern  Esc=Abbrechen  Tab=Nächste Kategorie",
   "settings-open-config-file": "config.toml öffnen",
   "settings-reset-category": "Standard wiederherstellen",
+  "settings-key-conflict": "Diese Taste ist auch {action} zugewiesen",
   "settings-search-placeholder-typing": "/ Zum Filtern tippen…",
   "settings-search-placeholder-idle": "/ Kategorien durchsuchen",
   "settings-startup-language": "Sprache",

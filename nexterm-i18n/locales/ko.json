@@ -100,6 +100,7 @@
   "settings-panel-footer-hint": "  Enter=저장  Esc=취소  Tab=다음 카테고리",
   "settings-open-config-file": "config.toml 열기",
   "settings-reset-category": "기본값으로 재설정",
+  "settings-key-conflict": "이 키는 {action}에도 할당되어 있습니다",
   "settings-search-placeholder-typing": "/ 입력하여 필터링…",
   "settings-search-placeholder-idle": "/ 카테고리 검색",
   "settings-startup-language": "언어",

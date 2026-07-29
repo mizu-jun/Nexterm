@@ -100,6 +100,7 @@
   "settings-panel-footer-hint": "  Enter=保存  Esc=キャンセル  Tab=次のカテゴリ",
   "settings-open-config-file": "config.toml を開く",
   "settings-reset-category": "既定値に戻す",
+  "settings-key-conflict": "このキーは {action} にも割り当てられています",
   "settings-search-placeholder-typing": "/ 入力して絞り込み…",
   "settings-search-placeholder-idle": "/ カテゴリを検索",
   "settings-startup-language": "言語",

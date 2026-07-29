@@ -100,6 +100,7 @@
   "settings-panel-footer-hint": "  Invio=Salva  Esc=Annulla  Tab=Categoria successiva",
   "settings-open-config-file": "Apri config.toml",
   "settings-reset-category": "Ripristina predefiniti",
+  "settings-key-conflict": "Questo tasto è assegnato anche a {action}",
   "settings-search-placeholder-typing": "/ Digita per filtrare…",
   "settings-search-placeholder-idle": "/ Cerca categorie",
   "settings-startup-language": "Lingua",

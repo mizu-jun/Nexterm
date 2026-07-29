@@ -100,6 +100,7 @@
   "settings-panel-footer-hint": "  Enter=保存  Esc=取消  Tab=下一分类",
   "settings-open-config-file": "打开 config.toml",
   "settings-reset-category": "恢复默认值",
+  "settings-key-conflict": "此按键也已绑定到 {action}",
   "settings-search-placeholder-typing": "/ 输入以筛选…",
   "settings-search-placeholder-idle": "/ 搜索分类",
   "settings-startup-language": "语言",
