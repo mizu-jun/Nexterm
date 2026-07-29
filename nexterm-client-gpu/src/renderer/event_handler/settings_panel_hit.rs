@@ -209,9 +209,18 @@ impl EventHandler {
                 //   Geometry mirrors overlay/settings.rs: labels_top = content_top + cell_h*0.6, row_h = cell_h*3.2.
                 let labels_top = content_top + cell_h * 0.6;
                 let row_h = cell_h * 3.2;
+                // P2-B: search collapse — rows sit at compacted slot
+                // positions; derive Y from the same `visible` list the
+                // renderer uses so both stay aligned. Collapsed rows
+                // (slot = None) have no hit region at all.
+                let visible = sp.visible_window_rows();
+                let slot_y = |row: usize| {
+                    crate::settings_panel::slot_of(&visible, row)
+                        .map(|s| labels_top + row_h * s as f32)
+                };
 
                 // Row 0: opacity slider.
-                let opacity_bar_y = labels_top + cell_h * 1.4;
+                let opacity_bar_y = slot_y(0).map(|y| y + cell_h * 1.4).unwrap_or(f32::MIN);
                 if cy >= opacity_bar_y - cell_h * 0.5
                     && cy <= opacity_bar_y + cell_h
                     && cx >= content_inner_x
@@ -227,7 +236,7 @@ impl EventHandler {
                 }
 
                 // Row 2: padding_x slider.
-                let px_bar_y = labels_top + row_h * 2.0 + cell_h * 1.4;
+                let px_bar_y = slot_y(2).map(|y| y + cell_h * 1.4).unwrap_or(f32::MIN);
                 let px_bar_w = bar_w * 0.6;
                 if cy >= px_bar_y - cell_h * 0.5
                     && cy <= px_bar_y + cell_h
@@ -244,7 +253,7 @@ impl EventHandler {
                 }
 
                 // Row 3: padding_y slider.
-                let py_bar_y = labels_top + row_h * 3.0 + cell_h * 1.4;
+                let py_bar_y = slot_y(3).map(|y| y + cell_h * 1.4).unwrap_or(f32::MIN);
                 let py_bar_w = bar_w * 0.6;
                 if cy >= py_bar_y - cell_h * 0.5
                     && cy <= py_bar_y + cell_h
@@ -266,37 +275,44 @@ impl EventHandler {
                 // 7=show_tab_number / 8=show_new_tab_button / 9=animations enabled /
                 // 10=animations intensity). See `SettingsPanel::WINDOW_FIELD_COUNT`.
                 for row in 0u8..crate::settings_panel::SettingsPanel::WINDOW_FIELD_COUNT {
-                    let row_y = labels_top + row_h * row as f32;
+                    // P2-B: collapsed rows have no hit region.
+                    let Some(row_y) = slot_y(row as usize) else {
+                        continue;
+                    };
                     if cy >= row_y - cell_h * 0.3 && cy <= row_y + cell_h * 2.5 {
                         return SettingsPanelHit::WindowRow(row);
                     }
                 }
             }
             SettingsCategory::Blocks => {
-                // Renderer places 4 lines starting at content_top + cell_h *
-                // (0.5 + i * 1.6). Row 3 is a hint; rows 0..=2 are clickable.
-                for row in 0u8..3 {
-                    let row_y = content_top + cell_h * (0.5 + row as f32 * 1.6);
+                // Renderer places the visible rows starting at content_top +
+                // cell_h * (0.5 + slot * 1.6); the trailing hint row has no
+                // hit zone. P2-B: search collapse compacts the rows, so Y
+                // derives from the same `visible_blocks_rows` list.
+                for (slot, &row) in sp.visible_blocks_rows().iter().enumerate() {
+                    let row_y = content_top + cell_h * (0.5 + slot as f32 * 1.6);
                     if cy >= row_y - cell_h * 0.3
                         && cy <= row_y + cell_h * 1.2
                         && cx >= content_inner_x
                         && cx < content_inner_x + content_w
                     {
-                        return SettingsPanelHit::BlocksRow(row);
+                        return SettingsPanelHit::BlocksRow(row as u8);
                     }
                 }
             }
             SettingsCategory::Security => {
-                // Renderer places 7 field rows at content_top + cell_h *
-                // (0.5 + i * 1.4); the footer note row has no hit zone.
-                for row in 0u8..crate::settings_panel::SettingsPanel::SECURITY_FIELD_COUNT {
-                    let row_y = content_top + cell_h * (0.5 + row as f32 * 1.4);
+                // Renderer places the visible field rows at content_top +
+                // cell_h * (0.5 + slot * 1.4); the footer note row has no
+                // hit zone. P2-B: search collapse compacts the rows, so Y
+                // derives from the same `visible_security_rows` list.
+                for (slot, &row) in sp.visible_security_rows().iter().enumerate() {
+                    let row_y = content_top + cell_h * (0.5 + slot as f32 * 1.4);
                     if cy >= row_y - cell_h * 0.3
                         && cy <= row_y + cell_h * 1.2
                         && cx >= content_inner_x
                         && cx < content_inner_x + content_w
                     {
-                        return SettingsPanelHit::SecurityRow(row);
+                        return SettingsPanelHit::SecurityRow(row as u8);
                     }
                 }
             }

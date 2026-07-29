@@ -54,10 +54,14 @@ pub(in crate::renderer) fn draw_blocks_tab(
             .to_string(),
         ),
     ];
-    for (i, (label, value)) in rows.iter().enumerate() {
+    // P2-B: search collapse — only matching rows render, compacted to the
+    // top. The hit-test derives Y from the same list.
+    let visible = sp.visible_blocks_rows();
+    for (slot, &row) in visible.iter().enumerate() {
+        let (label, value) = &rows[row];
         // Row geometry mirrors `settings_panel_hit.rs::BlocksRow` exactly —
         // keep both in sync.
-        let y = content_top + cell_h * (0.5 + i as f32 * 1.6);
+        let y = content_top + cell_h * (0.5 + slot as f32 * 1.6);
         let value_color = match value.as_str() {
             "[ON ]" => tokens.semantic_success,
             "[OFF]" => ensure_readable(tokens.text_muted, tokens.surface_2, MIN_TEXT_CONTRAST),
@@ -90,8 +94,9 @@ pub(in crate::renderer) fn draw_blocks_tab(
         );
     }
 
-    // Tip (row 3, no hit zone)
-    let tip_y = content_top + cell_h * (0.5 + 3.0 * 1.6);
+    // Tip (final row, no hit zone) — placed after the visible rows so it
+    // moves up with the collapsed layout.
+    let tip_y = content_top + cell_h * (0.5 + visible.len() as f32 * 1.6);
     add_string_verts(
         &nexterm_i18n::fl!("settings-blocks-tip"),
         content_inner_x,

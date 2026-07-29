@@ -74,5 +74,9 @@ plus a warning when the chord collides with an existing binding.
   — rendered-label fuzzy highlight (localized labels searchable), per-category
   "Reset defaults" footer link (value categories only), i18n ×8, i18n locale
   test race fixed with a test mutex. Row *collapse* (P2-B row model) is next.
-- [ ] P2-B row-model refactor → collapse non-matching rows (approved 2026-07-29)
+- [x] P2-B search collapse (same PR as P2-A) — `settings/row_filter.rs`
+  visible-row/slot model; Window (14 rows incl. sliders), Security, and
+  Blocks draw + hit-test both derive Y from the same visible list. Font /
+  Startup / Theme keep highlight-only (3–4 short rows, nothing to collapse);
+  list categories (SSH / Keybindings / Profiles) are out of scope.
 - [ ] P3 keybinding recorder
