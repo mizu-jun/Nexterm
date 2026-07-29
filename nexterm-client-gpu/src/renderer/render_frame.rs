@@ -834,6 +834,17 @@ impl WgpuState {
             );
         }
 
+        // ---- Overlay layer boundary ----
+        // Everything pushed into `bg_verts` / `text_verts` from here on is a
+        // floating overlay (SFTP dialog, pickers, modals, command palette,
+        // settings panel, context menu, key hints, IME preedit). The main
+        // render pass draws "grid bg → grid text → overlay bg → overlay
+        // text": with a single bg call followed by a single text call, the
+        // terminal glyphs would be drawn after the overlay backgrounds and
+        // bleed through every panel.
+        let overlay_bg_start = bg_idx.len();
+        let overlay_text_start = text_idx.len();
+
         // ---- SFTP file transfer dialog (when open) ----
         if state.file_transfer.is_open {
             self.build_file_transfer_verts(
@@ -1268,62 +1279,54 @@ impl WgpuState {
                 occlusion_query_set: None,
             });
 
+            // The frame is drawn in two layers (see the overlay layer
+            // boundary marker in the vertex-build section above): the grid
+            // layer (terminal cells, tab bar, in-grid overlays) first, then
+            // the overlay layer (floating panels). Within each layer,
+            // backgrounds go before glyphs. This keeps overlay backgrounds
+            // on top of the terminal text they cover.
+            //
             // Phase B1: when the settings panel has scrollable content, its
             // index range is drawn with a scissor rect covering only its
             // content viewport, so rows scrolled above/below the panel's
             // content area are clipped instead of bleeding into the title
-            // bar / footer / rest of the frame. Everything outside that
-            // range (panel chrome, other overlays, the terminal grid) draws
-            // as one full-surface call, same as before this feature.
+            // bar / footer / rest of the frame. That range always lives in
+            // the overlay layer, so only the overlay segments carry a clip.
             let full_scissor = (0, 0, self.surface_config.width, self.surface_config.height);
-            if !bg_idx.is_empty() {
-                pass.set_pipeline(&self.bg_pipeline);
-                pass.set_vertex_buffer(0, self.buf_bg_v.slice(..));
-                pass.set_index_buffer(self.buf_bg_i.slice(..), wgpu::IndexFormat::Uint16);
-                let clip = settings_scroll_clip
-                    .as_ref()
-                    .and_then(|m| m.scissor.map(|s| (s, m.bg_range)));
-                match clip {
-                    Some(((sx, sy, sw_r, sh_r), (start, end))) if start < end => {
-                        if start > 0 {
-                            pass.draw_indexed(0..start as u32, 0, 0..1);
-                        }
+            let bg_clip = settings_scroll_clip
+                .as_ref()
+                .and_then(|m| m.scissor.map(|s| (s, m.bg_range)));
+            let text_clip = settings_scroll_clip
+                .as_ref()
+                .and_then(|m| m.scissor.map(|s| (s, m.text_range)));
+            let bg_layers = [
+                split_scissored_range(0, overlay_bg_start, None),
+                split_scissored_range(overlay_bg_start, bg_idx.len(), bg_clip),
+            ];
+            let text_layers = [
+                split_scissored_range(0, overlay_text_start, None),
+                split_scissored_range(overlay_text_start, text_idx.len(), text_clip),
+            ];
+            for layer in 0..bg_layers.len() {
+                if !bg_layers[layer].is_empty() {
+                    pass.set_pipeline(&self.bg_pipeline);
+                    pass.set_vertex_buffer(0, self.buf_bg_v.slice(..));
+                    pass.set_index_buffer(self.buf_bg_i.slice(..), wgpu::IndexFormat::Uint16);
+                    for (range, scissor) in &bg_layers[layer] {
+                        let (sx, sy, sw_r, sh_r) = scissor.unwrap_or(full_scissor);
                         pass.set_scissor_rect(sx, sy, sw_r, sh_r);
-                        pass.draw_indexed(start as u32..end as u32, 0, 0..1);
-                        let (x, y, w, h) = full_scissor;
-                        pass.set_scissor_rect(x, y, w, h);
-                        if end < bg_idx.len() {
-                            pass.draw_indexed(end as u32..bg_idx.len() as u32, 0, 0..1);
-                        }
-                    }
-                    _ => {
-                        pass.draw_indexed(0..bg_idx.len() as u32, 0, 0..1);
+                        pass.draw_indexed(range.clone(), 0, 0..1);
                     }
                 }
-            }
-            if !text_idx.is_empty() {
-                pass.set_pipeline(&self.text_pipeline);
-                pass.set_bind_group(0, &text_bind_group, &[]);
-                pass.set_vertex_buffer(0, self.buf_txt_v.slice(..));
-                pass.set_index_buffer(self.buf_txt_i.slice(..), wgpu::IndexFormat::Uint16);
-                let clip = settings_scroll_clip
-                    .as_ref()
-                    .and_then(|m| m.scissor.map(|s| (s, m.text_range)));
-                match clip {
-                    Some(((sx, sy, sw_r, sh_r), (start, end))) if start < end => {
-                        if start > 0 {
-                            pass.draw_indexed(0..start as u32, 0, 0..1);
-                        }
+                if !text_layers[layer].is_empty() {
+                    pass.set_pipeline(&self.text_pipeline);
+                    pass.set_bind_group(0, &text_bind_group, &[]);
+                    pass.set_vertex_buffer(0, self.buf_txt_v.slice(..));
+                    pass.set_index_buffer(self.buf_txt_i.slice(..), wgpu::IndexFormat::Uint16);
+                    for (range, scissor) in &text_layers[layer] {
+                        let (sx, sy, sw_r, sh_r) = scissor.unwrap_or(full_scissor);
                         pass.set_scissor_rect(sx, sy, sw_r, sh_r);
-                        pass.draw_indexed(start as u32..end as u32, 0, 0..1);
-                        let (x, y, w, h) = full_scissor;
-                        pass.set_scissor_rect(x, y, w, h);
-                        if end < text_idx.len() {
-                            pass.draw_indexed(end as u32..text_idx.len() as u32, 0, 0..1);
-                        }
-                    }
-                    _ => {
-                        pass.draw_indexed(0..text_idx.len() as u32, 0, 0..1);
+                        pass.draw_indexed(range.clone(), 0, 0..1);
                     }
                 }
             }
@@ -1543,5 +1546,126 @@ impl WgpuState {
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
         Ok(())
+    }
+}
+
+/// One contiguous `draw_indexed` call: an index range plus the scissor rect
+/// to apply while drawing it (`None` = full surface).
+type DrawSegment = (std::ops::Range<u32>, Option<(u32, u32, u32, u32)>);
+
+/// Scissor rect (physical pixels) plus the `[start..end)` index sub-range
+/// that must be drawn with it.
+type ScissoredClip = ((u32, u32, u32, u32), (usize, usize));
+
+/// Split the index range `[lo..hi)` into draw segments around an optional
+/// scissored sub-range.
+///
+/// `clip` carries a scissor rect and the `[start..end)` index range that
+/// must be drawn with it (the settings panel's scrollable content). The
+/// sub-range is clamped to `[lo..hi)`; when it is empty or falls entirely
+/// outside, the whole range is emitted as a single unscissored segment.
+/// An empty `[lo..hi)` yields no segments.
+fn split_scissored_range(lo: usize, hi: usize, clip: Option<ScissoredClip>) -> Vec<DrawSegment> {
+    if lo >= hi {
+        return Vec::new();
+    }
+    if let Some((scissor, (start, end))) = clip {
+        let start = start.clamp(lo, hi);
+        let end = end.clamp(lo, hi);
+        if start < end {
+            let mut segments = Vec::new();
+            if lo < start {
+                segments.push((lo as u32..start as u32, None));
+            }
+            segments.push((start as u32..end as u32, Some(scissor)));
+            if end < hi {
+                segments.push((end as u32..hi as u32, None));
+            }
+            return segments;
+        }
+    }
+    vec![(lo as u32..hi as u32, None)]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_scissored_range;
+
+    const SCISSOR: (u32, u32, u32, u32) = (10, 20, 300, 400);
+
+    #[test]
+    fn empty_range_yields_no_segments() {
+        assert!(split_scissored_range(0, 0, None).is_empty());
+        assert!(split_scissored_range(5, 5, Some((SCISSOR, (5, 5)))).is_empty());
+        // `lo > hi` must not panic either (defensive; never produced by render()).
+        assert!(split_scissored_range(7, 3, None).is_empty());
+    }
+
+    #[test]
+    fn no_clip_yields_single_full_segment() {
+        assert_eq!(split_scissored_range(0, 12, None), vec![(0..12, None)]);
+        assert_eq!(split_scissored_range(4, 12, None), vec![(4..12, None)]);
+    }
+
+    #[test]
+    fn clip_inside_range_yields_three_segments() {
+        assert_eq!(
+            split_scissored_range(0, 100, Some((SCISSOR, (30, 60)))),
+            vec![(0..30, None), (30..60, Some(SCISSOR)), (60..100, None)]
+        );
+        // Same, with a non-zero layer start.
+        assert_eq!(
+            split_scissored_range(20, 100, Some((SCISSOR, (30, 60)))),
+            vec![(20..30, None), (30..60, Some(SCISSOR)), (60..100, None)]
+        );
+    }
+
+    #[test]
+    fn clip_at_range_edges_omits_empty_segments() {
+        assert_eq!(
+            split_scissored_range(10, 50, Some((SCISSOR, (10, 30)))),
+            vec![(10..30, Some(SCISSOR)), (30..50, None)]
+        );
+        assert_eq!(
+            split_scissored_range(10, 50, Some((SCISSOR, (30, 50)))),
+            vec![(10..30, None), (30..50, Some(SCISSOR))]
+        );
+        assert_eq!(
+            split_scissored_range(10, 50, Some((SCISSOR, (10, 50)))),
+            vec![(10..50, Some(SCISSOR))]
+        );
+    }
+
+    #[test]
+    fn empty_clip_range_yields_single_segment() {
+        assert_eq!(
+            split_scissored_range(0, 40, Some((SCISSOR, (25, 25)))),
+            vec![(0..40, None)]
+        );
+    }
+
+    #[test]
+    fn clip_outside_range_is_clamped_away() {
+        // Entirely below `lo` / above `hi`: clamps to an empty sub-range.
+        assert_eq!(
+            split_scissored_range(50, 80, Some((SCISSOR, (10, 40)))),
+            vec![(50..80, None)]
+        );
+        assert_eq!(
+            split_scissored_range(50, 80, Some((SCISSOR, (80, 120)))),
+            vec![(50..80, None)]
+        );
+    }
+
+    #[test]
+    fn clip_straddling_range_bounds_is_clamped() {
+        assert_eq!(
+            split_scissored_range(50, 80, Some((SCISSOR, (30, 60)))),
+            vec![(50..60, Some(SCISSOR)), (60..80, None)]
+        );
+        assert_eq!(
+            split_scissored_range(50, 80, Some((SCISSOR, (70, 120)))),
+            vec![(50..70, None), (70..80, Some(SCISSOR))]
+        );
     }
 }

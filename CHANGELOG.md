@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Terminal text no longer bleeds through the settings panel, command
+  palette, host manager, and every other floating overlay. The main render
+  pass previously drew all background quads and then all glyphs in one go,
+  so grid glyphs painted over overlay backgrounds; the frame is now drawn
+  in two layers (grid, then overlays), each background-before-text.
+
 ## [1.15.0] - 2026-07-29
 
 Windows-Terminal-inspired new-tab profile dropdown, settings search (row
