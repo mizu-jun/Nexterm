@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Settings panel: while a search query is active, rows whose visible label
+  matches the query are highlighted in the accent colour — and because the
+  match runs against the rendered (localized) label, a Japanese UI can be
+  searched in Japanese.
+- Settings panel: in the Window / Security / Blocks categories, a search
+  query now also collapses non-matching rows (Windows Terminal 1.25-style
+  settings search) — matching rows compact to the top and the hit regions
+  follow. A query that matches nothing keeps every row visible.
+- Settings panel: a "Reset defaults" link in the footer restores the current
+  category's fields to their default values (applied on Save; Cancel still
+  reverts). Hidden for the list-based SSH / Keybindings / Profiles categories,
+  where a reset would delete user data.
 - Settings panel: an "Open config.toml" link in the footer bar opens the
   configuration file with the OS default editor (Windows Terminal's
   "Open JSON file" equivalent). Creates the file first when it does not

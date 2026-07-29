@@ -158,6 +158,8 @@ pub(in crate::renderer) fn draw_startup_tab(
     };
     let program_row_y = content_top + cell_h * 5.8;
     draw_label_control_row(
+        sp,
+        tokens,
         content_inner_x,
         program_row_y,
         cell_h * 1.2,
@@ -192,6 +194,8 @@ pub(in crate::renderer) fn draw_startup_tab(
     };
     let args_row_y = content_top + cell_h * 7.2;
     draw_label_control_row(
+        sp,
+        tokens,
         content_inner_x,
         args_row_y,
         cell_h * 1.2,

@@ -56,6 +56,23 @@ pub(in crate::renderer) fn ensure_readable(
     }
 }
 
+/// P2-A (WT-like UX): label colour override while a field-level search
+/// query is active. Rows whose rendered label fuzzy-matches the query pop
+/// out in the accent colour (contrast-corrected); everything else keeps
+/// its `base` colour. With an idle search this is a pass-through.
+pub(in crate::renderer) fn search_label_color(
+    sp: &crate::settings_panel::SettingsPanel,
+    label: &str,
+    base: [f32; 4],
+    tokens: &nexterm_config::DesignTokens,
+) -> [f32; 4] {
+    if sp.label_matches_search(label) {
+        ensure_readable(tokens.accent_primary, tokens.surface_2, MIN_TEXT_CONTRAST)
+    } else {
+        base
+    }
+}
+
 /// Draw a section header line (bold, no control column, not truncated to a
 /// control width since it spans the full content width).
 #[allow(clippy::too_many_arguments)]
@@ -87,6 +104,8 @@ pub(in crate::renderer) fn draw_section_header(
 /// the existing focus-highlight visual language used throughout the panel.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::renderer) fn draw_label_control_row(
+    sp: &crate::settings_panel::SettingsPanel,
+    tokens: &nexterm_config::DesignTokens,
     content_inner_x: f32,
     row_y: f32,
     row_h: f32,
@@ -124,6 +143,8 @@ pub(in crate::renderer) fn draw_label_control_row(
         );
     }
 
+    // P2-A: matching rows pop out in the accent colour while searching.
+    let label_color = search_label_color(sp, label, label_color, tokens);
     let label_text = truncate_to_width(label, layout.label_w, cell_w);
     add_string_verts(
         &label_text,

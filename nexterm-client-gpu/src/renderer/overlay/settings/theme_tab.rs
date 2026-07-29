@@ -6,7 +6,7 @@ use crate::settings_panel::SettingsPanel;
 use crate::vertex_util::{add_px_rect, add_string_verts, truncate_to_cols};
 
 use super::layout::compute_row_layout;
-use super::row::{MIN_TEXT_CONTRAST, ensure_readable};
+use super::row::{MIN_TEXT_CONTRAST, ensure_readable, search_label_color};
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::renderer) fn draw_theme_tab(
@@ -61,7 +61,7 @@ pub(in crate::renderer) fn draw_theme_tab(
         &label,
         content_inner_x,
         scheme_row_y,
-        scheme_color,
+        search_label_color(sp, &label, scheme_color, tokens),
         focus == 0,
         sw,
         sh,
@@ -197,7 +197,7 @@ pub(in crate::renderer) fn draw_theme_tab(
         &follow_label,
         content_inner_x,
         follow_row_y,
-        follow_color,
+        search_label_color(sp, &follow_label, follow_color, tokens),
         focus == 1,
         sw,
         sh,

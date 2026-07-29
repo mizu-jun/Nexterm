@@ -408,6 +408,30 @@ pub fn filter_categories(query: &str, all: &[SettingsCategory]) -> Vec<SettingsC
     scored.into_iter().map(|(_, _, c)| c).collect()
 }
 
+/// P2-A (WT-like UX): fuzzy test of a *rendered* row label against the
+/// search query, driving the per-row accent highlight in the settings
+/// panel. Unlike `category_fields` (an English-only curated catalogue used
+/// for sidebar ranking), this matches the label text the user actually
+/// sees — so localized labels match localized queries. Empty / blank
+/// queries never match (no highlight when the search is idle).
+pub fn label_matches_query(label: &str, query: &str) -> bool {
+    let q = query.trim();
+    if q.is_empty() {
+        return false;
+    }
+    use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
+    let matcher = SkimMatcherV2::default();
+    matcher.fuzzy_match(label, q).unwrap_or(0) > 0
+}
+
+impl SettingsPanel {
+    /// Whether `label` (a rendered row label) matches the active search
+    /// query — see [`label_matches_query`].
+    pub fn label_matches_search(&self, label: &str) -> bool {
+        label_matches_query(label, &self.search_query)
+    }
+}
+
 #[cfg(test)]
 mod search_tests {
     //! Phase 4 (UI/UX v2): category-search fuzzy-filter tests.
@@ -591,5 +615,40 @@ mod search_tests {
         let via_method = panel.field_hit_count(&SettingsCategory::Window);
         let via_helper = field_hit_count(&SettingsCategory::Window, "padding");
         assert_eq!(via_method, via_helper);
+    }
+}
+
+#[cfg(test)]
+mod label_match_tests {
+    //! P2-A: rendered-label fuzzy-match tests for the row highlight.
+    use super::*;
+
+    #[test]
+    fn empty_or_blank_query_never_matches() {
+        assert!(!label_matches_query("Opacity", ""));
+        assert!(!label_matches_query("Opacity", "   "));
+    }
+
+    #[test]
+    fn substring_and_fuzzy_queries_match() {
+        assert!(label_matches_query("Opacity: 90%", "opac"));
+        assert!(label_matches_query("Horizontal padding", "hpad"));
+        assert!(!label_matches_query("Opacity", "scrollback"));
+    }
+
+    #[test]
+    fn localized_labels_match_localized_queries() {
+        // The highlight matches what the user sees, so a Japanese UI can be
+        // searched in Japanese (the curated English catalogue cannot).
+        assert!(label_matches_query("不透明度", "不透明"));
+        assert!(!label_matches_query("不透明度", "フォント"));
+    }
+
+    #[test]
+    fn panel_method_uses_the_live_query() {
+        let mut sp = SettingsPanel::default();
+        assert!(!sp.label_matches_search("Opacity"));
+        sp.search_query = "opa".to_string();
+        assert!(sp.label_matches_search("Opacity"));
     }
 }

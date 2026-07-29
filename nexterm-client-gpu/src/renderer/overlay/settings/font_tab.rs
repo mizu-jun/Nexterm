@@ -123,6 +123,8 @@ pub(in crate::renderer) fn draw_font_tab(
     let size_value = format!("{:.1}pt", sp.font_size);
     let size_focused = focus == 1;
     draw_label_control_row(
+        sp,
+        tokens,
         content_inner_x,
         size_row_y,
         cell_h * 1.2,
@@ -194,6 +196,8 @@ pub(in crate::renderer) fn draw_font_tab(
     let lig_row_y = content_top + cell_h * 6.0;
     let lig_value = if sp.font_ligatures { "[ON ]" } else { "[OFF]" };
     draw_label_control_row(
+        sp,
+        tokens,
         content_inner_x,
         lig_row_y,
         cell_h * 1.2,
@@ -231,6 +235,8 @@ pub(in crate::renderer) fn draw_font_tab(
         None => sp.font_fallbacks_text.clone(),
     };
     draw_label_control_row(
+        sp,
+        tokens,
         content_inner_x,
         fb_row_y,
         cell_h * 1.2,

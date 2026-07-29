@@ -33,8 +33,12 @@ pub(in crate::renderer) fn draw_security_tab(
     let layout = compute_row_layout(content_w, cell_w);
     let focus = sp.security_field_focus;
 
-    for i in 0u8..SettingsPanel::SECURITY_FIELD_COUNT {
-        let y = content_top + cell_h * (0.5 + i as f32 * 1.4);
+    // P2-B: search collapse — only matching rows render, compacted to the
+    // top. The hit-test derives Y from the same list.
+    let visible = sp.visible_security_rows();
+    for (slot, &row) in visible.iter().enumerate() {
+        let i = row as u8;
+        let y = content_top + cell_h * (0.5 + slot as f32 * 1.4);
         let is_focused = focus == i;
         let label_color = if is_focused {
             tokens.text_primary
@@ -49,6 +53,8 @@ pub(in crate::renderer) fn draw_security_tab(
             sp.security_bytes_at(i).unwrap_or(0).to_string()
         };
         draw_label_control_row(
+            sp,
+            tokens,
             content_inner_x,
             y,
             cell_h * 1.2,
