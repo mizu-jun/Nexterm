@@ -100,6 +100,7 @@
   "settings-panel-footer-hint": "  Intro=Guardar  Esc=Cancelar  Tab=Siguiente categoría",
   "settings-open-config-file": "Abrir config.toml",
   "settings-reset-category": "Restablecer valores",
+  "settings-key-conflict": "Esta tecla también está asignada a {action}",
   "settings-search-placeholder-typing": "/ Escriba para filtrar…",
   "settings-search-placeholder-idle": "/ Buscar categorías",
   "settings-startup-language": "Idioma",
