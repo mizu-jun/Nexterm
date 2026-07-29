@@ -499,6 +499,69 @@ impl EventHandler {
         }
     }
 
+    /// P1 (WT-like UX): open the new-tab profile dropdown just below the
+    /// tab bar, left-aligned with the `▾` button (clamped to the window).
+    /// Lists the configured `Config.profiles` followed by the WSL distros
+    /// detected at startup, and reuses the context-menu machinery for
+    /// rendering, hover, and click dispatch.
+    fn open_new_tab_dropdown(&mut self, anchor_x: f64) {
+        let cell_w = self.app.font.cell_width() as f64;
+        let cell_h = self.app.font.cell_height() as f64;
+        let mut profile_list: Vec<(String, String)> = self
+            .app
+            .config
+            .profiles
+            .iter()
+            .map(|p| (p.name.clone(), p.icon.clone()))
+            .collect();
+        profile_list.extend(
+            self.app
+                .state
+                .wsl_profiles
+                .iter()
+                .map(|p| (p.name.clone(), p.icon.clone())),
+        );
+
+        let tmp = ContextMenu::new_tab_dropdown(0.0, 0.0, &profile_list);
+        let item_count = tmp.items.len();
+        let max_label = tmp
+            .items
+            .iter()
+            .map(|i| visual_width(&i.label))
+            .max()
+            .unwrap_or(8);
+        let max_hint = tmp
+            .items
+            .iter()
+            .map(|i| visual_width(&i.hint))
+            .max()
+            .unwrap_or(0);
+        let menu_w_px = ((max_label + max_hint + 5) as f64).max(16.0) * cell_w;
+        let menu_h_px = item_count as f64 * cell_h;
+        let win_w = self
+            .window
+            .as_ref()
+            .map(|w| w.inner_size().width as f64)
+            .unwrap_or(800.0);
+        let win_h = self
+            .window
+            .as_ref()
+            .map(|w| w.inner_size().height as f64)
+            .unwrap_or(600.0);
+        let tab_bar_h = if self.app.config.tab_bar.enabled {
+            self.app.config.tab_bar.height as f64
+        } else {
+            0.0
+        };
+        let menu_x = anchor_x.min(win_w - menu_w_px).max(0.0) as f32;
+        let menu_y = tab_bar_h.min(win_h - menu_h_px).max(0.0) as f32;
+        self.app.state.context_menu =
+            Some(ContextMenu::new_tab_dropdown(menu_x, menu_y, &profile_list));
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+    }
+
     /// Right button press: open the context menu.
     ///
     /// Phase 2c follow-up: when the click landed inside a known command
@@ -898,6 +961,13 @@ impl EventHandler {
                     if let Some(w) = &self.window {
                         w.request_redraw();
                     }
+                } else if let Some((dd_x0, dd_x1)) = self.app.state.new_tab_dropdown_hit_rect
+                    && px_f32 >= dd_x0
+                    && px_f32 < dd_x1
+                {
+                    // P1 (WT-like UX): the `▾` button opens the new-tab
+                    // profile dropdown (configured profiles + WSL distros).
+                    self.open_new_tab_dropdown(dd_x0 as f64);
                 } else if let Some(close_pane_id) = self
                     .app
                     .state

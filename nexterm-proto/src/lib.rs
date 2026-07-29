@@ -69,7 +69,10 @@ pub use message::{
 // version pin must move in lockstep. Single-binary `nexterm` ships
 // both halves so the synchronised upgrade is automatic for users.
 // v1.12: bumped 9 → 10 for `ServerToClient::PointerShapeChanged` (OSC 22).
-pub const PROTOCOL_VERSION: u32 = 10;
+// v1.15: bumped 10 → 11 for `ClientToServer::SplitWithShell` (new-tab profile
+// dropdown; the client resolves profiles / WSL distros into a concrete
+// command line and the server spawns it verbatim).
+pub const PROTOCOL_VERSION: u32 = 11;
 
 /// Maximum size (in bytes) of a single IPC message.
 ///

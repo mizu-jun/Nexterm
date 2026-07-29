@@ -76,6 +76,7 @@
   "close_window_button_cancel": "Cancel",
   "context-menu-detach-to-new-window": "Detach to new window",
   "context-menu-close-this-os-window": "Close this window only",
+  "tab-dropdown-new-tab": "New Tab",
   "context-menu-block-copy": "Copy block",
   "context-menu-block-replay": "Replay block",
   "context-menu-block-toggle-collapse": "Collapse / expand block",

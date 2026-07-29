@@ -517,7 +517,16 @@ impl Pane {
         shell: &str,
         args: &[String],
     ) -> Result<Self> {
-        Self::spawn_impl(new_pane_id(), cols, rows, initial_tx, shell, args, None)
+        Self::spawn_impl(
+            new_pane_id(),
+            cols,
+            rows,
+            initial_tx,
+            shell,
+            args,
+            None,
+            &[],
+        )
     }
 
     /// Create a pane with the specified ID (used to fix the ID up front when splitting via BSP).
@@ -529,7 +538,7 @@ impl Pane {
         shell: &str,
         args: &[String],
     ) -> Result<Self> {
-        Self::spawn_impl(id, cols, rows, initial_tx, shell, args, None)
+        Self::spawn_impl(id, cols, rows, initial_tx, shell, args, None, &[])
     }
 
     /// Create a pane with a specific ID and working directory (used to restore a snapshot).
@@ -550,19 +559,42 @@ impl Pane {
         args: &[String],
         cwd: &Path,
     ) -> Result<Self> {
-        let effective_cwd: Option<&Path> = if cwd_is_usable(cwd) {
-            Some(cwd)
-        } else {
-            tracing::warn!(
-                "restored cwd is missing or not a directory ({}); falling back to $HOME",
-                cwd.display()
-            );
-            None
-        };
-        Self::spawn_impl(id, cols, rows, initial_tx, shell, args, effective_cwd)
+        Self::spawn_with_options(id, cols, rows, initial_tx, shell, args, Some(cwd), &[])
     }
 
-    /// Internal PTY launch implementation (CWD is optional).
+    /// Create a pane with a specific ID, an optional working directory, and
+    /// extra environment variables (PROTOCOL_VERSION 11 `SplitWithShell`:
+    /// profile / WSL-distro launches from the new-tab dropdown).
+    ///
+    /// An unusable `cwd` falls back to `$HOME` / `%USERPROFILE%` exactly like
+    /// [`Pane::spawn_with_cwd`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn_with_options(
+        id: u32,
+        cols: u16,
+        rows: u16,
+        initial_tx: broadcast::Sender<ServerToClient>,
+        shell: &str,
+        args: &[String],
+        cwd: Option<&Path>,
+        env: &[(String, String)],
+    ) -> Result<Self> {
+        let effective_cwd: Option<&Path> = match cwd {
+            Some(c) if cwd_is_usable(c) => Some(c),
+            Some(c) => {
+                tracing::warn!(
+                    "requested cwd is missing or not a directory ({}); falling back to $HOME",
+                    c.display()
+                );
+                None
+            }
+            None => None,
+        };
+        Self::spawn_impl(id, cols, rows, initial_tx, shell, args, effective_cwd, env)
+    }
+
+    /// Internal PTY launch implementation (CWD and extra env are optional).
+    #[allow(clippy::too_many_arguments)]
     fn spawn_impl(
         id: u32,
         cols: u16,
@@ -571,6 +603,7 @@ impl Pane {
         shell: &str,
         args: &[String],
         cwd: Option<&Path>,
+        env: &[(String, String)],
     ) -> Result<Self> {
         let pty_system = NativePtySystem::default();
 
@@ -591,6 +624,9 @@ impl Pane {
 
         let mut cmd = CommandBuilder::new(shell);
         cmd.args(args);
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
         // Fall back to the user's home directory if no explicit CWD is given.
         let home_buf: Option<std::path::PathBuf> = cwd
             .is_none()

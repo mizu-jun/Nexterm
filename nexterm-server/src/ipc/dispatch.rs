@@ -162,6 +162,24 @@ pub(super) async fn dispatch_inner(msg: &ClientToServer, ctx: &mut DispatchConte
         Resize { cols, rows } => window_dispatch::handle_resize(ctx, *cols, *rows).await,
         SplitVertical => window_dispatch::handle_split(ctx, SplitDir::Vertical).await,
         SplitHorizontal => window_dispatch::handle_split(ctx, SplitDir::Horizontal).await,
+        SplitWithShell {
+            program,
+            args,
+            cwd,
+            env,
+        } => {
+            window_dispatch::handle_split_with(
+                ctx,
+                SplitDir::Vertical,
+                Some(window_dispatch::ShellOverride {
+                    program: program.clone(),
+                    args: args.clone(),
+                    cwd: cwd.clone(),
+                    env: env.clone(),
+                }),
+            )
+            .await
+        }
         ResizeSplit { delta } => window_dispatch::handle_resize_split(ctx, *delta).await,
         NewWindow => window_dispatch::handle_new_window(ctx).await,
         CloseWindow { window_id } => window_dispatch::handle_close_window(ctx, *window_id).await,

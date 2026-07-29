@@ -42,6 +42,10 @@ impl NextermApp {
         state.macro_picker = crate::macro_picker::MacroPicker::new(config.macros.clone());
         // Initialize the settings panel from the config values
         state.settings_panel = crate::settings_panel::SettingsPanel::new(&config);
+        // Detect WSL distros once at startup for the new-tab profile dropdown
+        // (no-op / empty on non-Windows; `wsl.exe` is spawned with
+        // CREATE_NO_WINDOW so no console flashes).
+        state.wsl_profiles = nexterm_config::wsl::detect_distros();
         Ok(Self {
             config,
             state,

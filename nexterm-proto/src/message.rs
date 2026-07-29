@@ -533,6 +533,27 @@ pub enum ClientToServer {
         /// Pre-formatted paste text (quoted path, batching spaces included).
         paste_fallback: String,
     },
+    /// Create a pane (vertical split) running an explicit shell instead of the
+    /// session default (PROTOCOL_VERSION 11).
+    ///
+    /// Sent by the new-tab profile dropdown and the context-menu profile
+    /// entries: the client resolves a `Profile` (or a detected WSL distro)
+    /// into a concrete command line and ships it here, so the server does not
+    /// need to know about client-side profile state.
+    SplitWithShell {
+        /// Shell / program to launch (e.g. `/usr/bin/fish`, `wsl.exe`).
+        program: String,
+        /// Arguments passed to the program.
+        #[serde(default)]
+        args: Vec<String>,
+        /// Initial working directory (`None` = the server-side default,
+        /// which falls back to the user's home directory).
+        #[serde(default)]
+        cwd: Option<String>,
+        /// Extra environment variables set for the child process.
+        #[serde(default)]
+        env: Vec<(String, String)>,
+    },
 }
 
 /// Client kind (identified during the IPC handshake).
@@ -1047,6 +1068,32 @@ mod tests {
         let encoded = postcard::to_stdvec(&none).unwrap();
         let decoded: ServerToClient = postcard::from_bytes(&encoded).unwrap();
         assert_eq!(none, decoded);
+    }
+
+    /// PROTOCOL_VERSION 11: `SplitWithShell` must postcard-roundtrip both in
+    /// its minimal form (bare program) and with every optional field set,
+    /// since profile launches routinely carry cwd + env overrides.
+    #[test]
+    fn split_with_shell_postcard_roundtrip() {
+        let minimal = ClientToServer::SplitWithShell {
+            program: "/usr/bin/fish".to_string(),
+            args: Vec::new(),
+            cwd: None,
+            env: Vec::new(),
+        };
+        let encoded = postcard::to_stdvec(&minimal).unwrap();
+        let decoded: ClientToServer = postcard::from_bytes(&encoded).unwrap();
+        assert_eq!(minimal, decoded);
+
+        let full = ClientToServer::SplitWithShell {
+            program: "wsl.exe".to_string(),
+            args: vec!["-d".to_string(), "Ubuntu".to_string()],
+            cwd: Some("/home/user/project".to_string()),
+            env: vec![("FOO".to_string(), "bar".to_string())],
+        };
+        let encoded = postcard::to_stdvec(&full).unwrap();
+        let decoded: ClientToServer = postcard::from_bytes(&encoded).unwrap();
+        assert_eq!(full, decoded);
     }
 
     #[test]
