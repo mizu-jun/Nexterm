@@ -236,7 +236,13 @@ impl WgpuState {
         } else {
             0.0
         };
-        let tab_area_w = sw - settings_w - new_tab_w;
+        // P1 (WT-like UX): `▾` profile-dropdown button rendered right of `+`.
+        let dropdown_w = if cfg.show_new_tab_button {
+            3.0 * cell_w
+        } else {
+            0.0
+        };
+        let tab_area_w = sw - settings_w - new_tab_w - dropdown_w;
 
         // Sprint 5-7 / Phase 2-3: tab display order follows `ClientState.tab_order`
         // (the logical tab order produced by the server from `Window.pane_order`).
@@ -263,6 +269,8 @@ impl WgpuState {
         state.tab_close_hit_rects.clear();
         // Sprint 5-15 / Phase 2b: clear the new-tab `+` button hit region every frame
         state.new_tab_hit_rect = None;
+        // P1 (WT-like UX): clear the new-tab `▾` dropdown button hit region too
+        state.new_tab_dropdown_hit_rect = None;
 
         let mut x_offset = 0.0_f32;
         let text_y = bar_y + (bar_h - cell_h) / 2.0;
@@ -605,7 +613,7 @@ impl WgpuState {
         // every frame; `event_handler/mouse.rs` consumes it and dispatches a
         // `NewPane` IPC on left-click.
         if cfg.show_new_tab_button && new_tab_w > 0.0 {
-            let new_tab_x = sw - settings_w - new_tab_w;
+            let new_tab_x = sw - settings_w - dropdown_w - new_tab_w;
             let new_tab_bg = [
                 inactive_bg[0] + 0.04,
                 inactive_bg[1] + 0.04,
@@ -645,6 +653,42 @@ impl WgpuState {
                 text_idx,
             );
             state.new_tab_hit_rect = Some((new_tab_x, new_tab_x + new_tab_w));
+
+            // P1 (WT-like UX): `▾` profile-dropdown pill right of `+`.
+            // Clicking it opens `ContextMenu::new_tab_dropdown` (profiles +
+            // WSL distros); the hit rect is consumed by `mouse.rs`.
+            let dropdown_x = sw - settings_w - dropdown_w;
+            add_px_rounded_rect_sdf(
+                dropdown_x,
+                bar_y,
+                dropdown_w,
+                bar_h,
+                new_tab_radius,
+                new_tab_bg,
+                sw,
+                sh,
+                bg_verts,
+                bg_idx,
+            );
+            let chevron_label = "▾";
+            let chevron_text_x = dropdown_x
+                + (dropdown_w - chevron_label.chars().count() as f32 * cell_w).max(0.0) * 0.5;
+            add_string_verts(
+                chevron_label,
+                chevron_text_x,
+                text_y,
+                tokens.text_secondary,
+                true,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
+            );
+            state.new_tab_dropdown_hit_rect = Some((dropdown_x, dropdown_x + dropdown_w));
         }
 
         // Right edge: settings button

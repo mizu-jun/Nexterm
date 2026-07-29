@@ -76,6 +76,7 @@
   "close_window_button_cancel": "取消",
   "context-menu-detach-to-new-window": "分离到新窗口",
   "context-menu-close-this-os-window": "仅关闭此窗口",
+  "tab-dropdown-new-tab": "新建标签页",
   "context-menu-block-copy": "复制块",
   "context-menu-block-replay": "重新执行块",
   "context-menu-block-toggle-collapse": "折叠/展开块",

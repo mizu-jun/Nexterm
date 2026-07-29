@@ -76,6 +76,7 @@
   "close_window_button_cancel": "キャンセル",
   "context-menu-detach-to-new-window": "新規ウィンドウに分離",
   "context-menu-close-this-os-window": "このウィンドウだけ閉じる",
+  "tab-dropdown-new-tab": "新しいタブ",
   "context-menu-block-copy": "ブロックをコピー",
   "context-menu-block-replay": "ブロックを再実行",
   "context-menu-block-toggle-collapse": "ブロックを折りたたみ／展開",
