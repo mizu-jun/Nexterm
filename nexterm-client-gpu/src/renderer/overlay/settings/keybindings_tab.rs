@@ -519,6 +519,33 @@ fn draw_leader_key_row(
         text_verts,
         text_idx,
     );
+
+    // P3 (WT-like UX): duplicate-chord warning. When the selected binding's
+    // key is also assigned to another binding, surface it right under the
+    // hint line so a Record-mode capture gets immediate feedback. Warn-only
+    // by design — duplicates stay saveable (the first match wins at dispatch
+    // time), matching Windows Terminal's non-blocking warning.
+    if let Some(other) = sp.selected_key_conflict() {
+        let warn = format!(
+            "⚠ {}",
+            nexterm_i18n::fl!("settings-key-conflict", action = other.action.clone())
+        );
+        add_string_verts(
+            &warn,
+            content_inner_x,
+            row_y + cell_h * 2.5,
+            ensure_readable(tokens.semantic_warning, tokens.surface_2, MIN_TEXT_CONTRAST),
+            false,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            queue,
+            text_verts,
+            text_idx,
+        );
+    }
 }
 
 /// Delete-confirmation modal, drawn centered over the whole panel.

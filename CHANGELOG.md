@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Settings panel: the Keybindings category now warns when the selected
+  binding's key chord is also assigned to another binding (non-blocking,
+  Windows Terminal-style). Record-mode captures get immediate feedback.
 - Settings panel: while a search query is active, rows whose visible label
   matches the query are highlighted in the accent colour — and because the
   match runs against the rendered (localized) label, a Japanese UI can be

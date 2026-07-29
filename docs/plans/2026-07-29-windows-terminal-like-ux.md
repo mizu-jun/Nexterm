@@ -79,4 +79,9 @@ plus a warning when the chord collides with an existing binding.
   Blocks draw + hit-test both derive Y from the same visible list. Font /
   Startup / Theme keep highlight-only (3–4 short rows, nothing to collapse);
   list categories (SSH / Keybindings / Profiles) are out of scope.
-- [ ] P3 keybinding recorder
+- [x] P3 keybinding conflict warning (`feat/keybinding-conflict-warning`,
+  stacked on P2) — the press-to-record recorder already existed
+  (`KeyEditMode::Record`, Enter → capture → write-back), so P3 reduced to
+  duplicate-chord detection: pure `find_key_conflict` (case-insensitive,
+  whitespace-normalized) + a non-blocking `semantic_warning` line under the
+  keybindings list, `settings-key-conflict` ×8 locales.

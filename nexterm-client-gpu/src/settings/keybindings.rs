@@ -146,6 +146,14 @@ impl SettingsPanel {
         true
     }
 
+    /// P3 (WT-like UX): the binding whose key chord collides with the
+    /// currently selected one, if any — see [`find_key_conflict`]. Drives
+    /// the warning line under the keybindings list.
+    pub fn selected_key_conflict(&self) -> Option<&KeyBindingEntry> {
+        find_key_conflict(&self.keybindings, self.selected_key_index)
+            .and_then(|i| self.keybindings.get(i))
+    }
+
     /// Cycle the selected binding's `action` to the next entry in
     /// `KEYBINDING_ACTIONS`. Returns `true` when the value was updated.
     /// No-op when no binding is selected.
@@ -296,6 +304,28 @@ impl SettingsPanel {
     pub fn is_key_text_editing(&self) -> bool {
         matches!(self.key_editing, Some(KeyEditMode::Text(_)))
     }
+}
+
+/// P3 (WT-like UX): index of another binding using the same key chord as
+/// `bindings[idx]` (case-insensitive, whitespace-normalized), or `None`.
+/// Pure so the duplicate rule can be pinned by tests.
+pub fn find_key_conflict(bindings: &[KeyBindingEntry], idx: usize) -> Option<usize> {
+    let target = bindings.get(idx)?;
+    let norm = |s: &str| {
+        s.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+    let key = norm(&target.key);
+    if key.is_empty() {
+        return None;
+    }
+    bindings
+        .iter()
+        .enumerate()
+        .find(|(i, b)| *i != idx && norm(&b.key) == key)
+        .map(|(i, _)| i)
 }
 
 #[cfg(test)]
@@ -620,5 +650,48 @@ mod tests {
         panel.close();
         assert!(!panel.key_delete_dialog_open);
         assert!(!panel.key_delete_dialog_confirm_focused);
+    }
+}
+
+#[cfg(test)]
+mod conflict_tests {
+    //! P3: duplicate-chord detection tests.
+    use super::*;
+
+    fn kb(key: &str, action: &str) -> KeyBindingEntry {
+        KeyBindingEntry {
+            key: key.to_string(),
+            action: action.to_string(),
+        }
+    }
+
+    #[test]
+    fn detects_case_insensitive_duplicates() {
+        let bindings = vec![
+            kb("Ctrl+Shift+P", "CommandPalette"),
+            kb("ctrl+shift+p", "Quit"),
+        ];
+        assert_eq!(find_key_conflict(&bindings, 0), Some(1));
+        assert_eq!(find_key_conflict(&bindings, 1), Some(0));
+    }
+
+    #[test]
+    fn normalizes_prefix_chord_whitespace() {
+        let bindings = vec![kb("ctrl+b  d", "Detach"), kb("ctrl+b d", "ClosePane")];
+        assert_eq!(find_key_conflict(&bindings, 0), Some(1));
+    }
+
+    #[test]
+    fn unique_keys_and_empty_keys_do_not_conflict() {
+        let bindings = vec![
+            kb("ctrl+a", "SelectAll"),
+            kb("ctrl+b", "Quit"),
+            kb("", "Detach"),
+        ];
+        assert_eq!(find_key_conflict(&bindings, 0), None);
+        // An empty (still-unset) key must never report a conflict.
+        assert_eq!(find_key_conflict(&bindings, 2), None);
+        // Out-of-range index is a no-op.
+        assert_eq!(find_key_conflict(&bindings, 9), None);
     }
 }
