@@ -17,6 +17,7 @@ mod font;
 mod keybindings;
 mod keybindings_edit;
 mod profiles;
+mod reset;
 mod save;
 mod scroll;
 mod security;

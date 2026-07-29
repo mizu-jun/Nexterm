@@ -45,6 +45,9 @@ pub(super) enum SettingsPanelHit {
     SecurityRow(u8),
     /// P4 (WT-like UX): the "Open config.toml" link in the footer bar.
     OpenConfigFile,
+    /// P2-A (WT-like UX): the "reset category to defaults" link in the
+    /// footer bar (only shown for resettable categories).
+    ResetCategory,
     /// Empty area inside the panel (no-op).
     PanelBackground,
     /// Phase 4 (UI/UX v2): click landed on the sidebar search input.
@@ -119,6 +122,16 @@ impl EventHandler {
             let label_w = crate::vertex_util::visual_width(&label) as f32 * cell_w;
             if cx >= px + panel_w - label_w - cell_w {
                 return SettingsPanelHit::OpenConfigFile;
+            }
+            // P2-A: "reset category to defaults" link, left of the
+            // open-config link (mirrors `overlay/settings/mod.rs`).
+            if sp.category_resettable() {
+                let reset_label = format!("↺ {}", nexterm_i18n::fl!("settings-reset-category"));
+                let reset_w = crate::vertex_util::visual_width(&reset_label) as f32 * cell_w;
+                let reset_x = px + panel_w - label_w - cell_w * 3.0 - reset_w;
+                if cx >= reset_x && cx < reset_x + reset_w + cell_w {
+                    return SettingsPanelHit::ResetCategory;
+                }
             }
             return SettingsPanelHit::PanelBackground;
         }

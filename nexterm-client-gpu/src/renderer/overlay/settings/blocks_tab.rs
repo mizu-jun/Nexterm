@@ -64,6 +64,8 @@ pub(in crate::renderer) fn draw_blocks_tab(
             _ => tokens.text_primary,
         };
         draw_label_control_row(
+            sp,
+            tokens,
             content_inner_x,
             y,
             cell_h * 1.2,

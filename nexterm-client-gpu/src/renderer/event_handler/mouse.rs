@@ -702,6 +702,16 @@ impl EventHandler {
                         // default editor (WT's "Open JSON file" equivalent).
                         crate::platform::open_config_file();
                     }
+                    SettingsPanelHit::ResetCategory => {
+                        // P2-A: reset the current category's panel fields to
+                        // their defaults; the change reaches disk only via
+                        // the existing save path (Cancel still reverts).
+                        if self.app.state.settings_panel.reset_category_to_defaults()
+                            && let Some(w) = &self.window
+                        {
+                            w.request_redraw();
+                        }
+                    }
                     SettingsPanelHit::Category(idx) => {
                         // Click on a sidebar category → switch category. With
                         // a non-empty Phase 4 search, the rendered list is the

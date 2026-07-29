@@ -624,15 +624,16 @@ impl WgpuState {
         // `settings_panel_hit.rs` mirrors this exact geometry.
         let open_label = format!("↗ {}", nexterm_i18n::fl!("settings-open-config-file"));
         let open_label_w = crate::vertex_util::visual_width(&open_label) as f32 * cell_w;
+        let link_color = row::ensure_readable(
+            tokens.accent_primary,
+            tokens.surface_0,
+            row::MIN_TEXT_CONTRAST,
+        );
         add_string_verts(
             &open_label,
             px + panel_w - open_label_w - cell_w,
             bottom_y + cell_h * 0.3,
-            row::ensure_readable(
-                tokens.accent_primary,
-                tokens.surface_0,
-                row::MIN_TEXT_CONTRAST,
-            ),
+            link_color,
             false,
             sw,
             sh,
@@ -643,6 +644,30 @@ impl WgpuState {
             text_verts,
             text_idx,
         );
+
+        // P2-A (WT-like UX): "reset category to defaults" link, left of the
+        // open-config link. Hidden for the list-based categories (SSH /
+        // Keybindings / Profiles) where a reset would delete user data.
+        // The hit-test mirrors this geometry too.
+        if sp.category_resettable() {
+            let reset_label = format!("↺ {}", nexterm_i18n::fl!("settings-reset-category"));
+            let reset_label_w = crate::vertex_util::visual_width(&reset_label) as f32 * cell_w;
+            add_string_verts(
+                &reset_label,
+                px + panel_w - open_label_w - cell_w * 3.0 - reset_label_w,
+                bottom_y + cell_h * 0.3,
+                link_color,
+                false,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
+            );
+        }
 
         // Phase B3: the open/close animation is expressed purely through
         // `slide_offset` (position) above — there used to also be a

@@ -68,6 +68,11 @@ plus a warning when the chord collides with an existing binding.
   `▾` dropdown reusing `ContextMenu`, WSL distros cached at startup, real
   `OpenProfile` launch, `tab-dropdown-new-tab` key ×8 locales. Note: the
   `ProfileEntry` dead-code suspicion was confirmed — `OpenProfile` was a stub.
-- [ ] P4 settings convenience pack
-- [ ] P2 row-level settings search
+- [x] P4 settings convenience pack (PR #39) — "Open config.toml" footer link;
+  per-field restore-default folded into P2.
+- [x] P2-A search highlight + category reset (`feat/settings-search-highlight`)
+  — rendered-label fuzzy highlight (localized labels searchable), per-category
+  "Reset defaults" footer link (value categories only), i18n ×8, i18n locale
+  test race fixed with a test mutex. Row *collapse* (P2-B row model) is next.
+- [ ] P2-B row-model refactor → collapse non-matching rows (approved 2026-07-29)
 - [ ] P3 keybinding recorder

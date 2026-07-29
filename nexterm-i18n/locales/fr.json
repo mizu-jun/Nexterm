@@ -99,6 +99,7 @@
   "settings-panel-title": " * Paramètres Nexterm",
   "settings-panel-footer-hint": "  Entrée=Enregistrer  Échap=Annuler  Tab=Catégorie suivante",
   "settings-open-config-file": "Ouvrir config.toml",
+  "settings-reset-category": "Rétablir les défauts",
   "settings-search-placeholder-typing": "/ Tapez pour filtrer…",
   "settings-search-placeholder-idle": "/ Rechercher des catégories",
   "settings-startup-language": "Langue",

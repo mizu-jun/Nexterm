@@ -49,6 +49,8 @@ pub(in crate::renderer) fn draw_security_tab(
             sp.security_bytes_at(i).unwrap_or(0).to_string()
         };
         draw_label_control_row(
+            sp,
+            tokens,
             content_inner_x,
             y,
             cell_h * 1.2,

@@ -163,6 +163,20 @@ fn normalize_locale(locale: &str) -> String {
 mod tests {
     use super::*;
 
+    /// The current locale is process-global (`set_locale` / `locale`), so
+    /// tests that mutate it race each other under the parallel test runner
+    /// (surfaced as an intermittent `test_set_and_get_locale` failure).
+    /// Every locale-mutating test takes this lock first.
+    static LOCALE_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Lock helper that survives a poisoned mutex (a prior panicking test
+    /// must not cascade into every later locale test).
+    fn locale_lock() -> std::sync::MutexGuard<'static, ()> {
+        LOCALE_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     #[test]
     fn test_t_fallback_to_key() {
         // A missing key returns the key itself.
@@ -172,6 +186,7 @@ mod tests {
 
     #[test]
     fn test_t_en_translation() {
+        let _guard = locale_lock();
         set_locale("en");
         let result = t("ctl-no-sessions");
         assert!(!result.is_empty());
@@ -180,6 +195,7 @@ mod tests {
 
     #[test]
     fn test_t_args_interpolation() {
+        let _guard = locale_lock();
         set_locale("en");
         let result = t_args(
             "ctl-session-created",
@@ -201,6 +217,7 @@ mod tests {
 
     #[test]
     fn test_set_and_get_locale() {
+        let _guard = locale_lock();
         set_locale("ja");
         assert_eq!(locale(), "ja");
         set_locale("en"); // reset after the test
@@ -208,6 +225,7 @@ mod tests {
 
     #[test]
     fn test_fl_macro_no_args() {
+        let _guard = locale_lock();
         set_locale("en");
         let result = fl!("ctl-no-sessions");
         assert!(!result.is_empty());
@@ -215,6 +233,7 @@ mod tests {
 
     #[test]
     fn test_fl_macro_with_args() {
+        let _guard = locale_lock();
         set_locale("en");
         let name = "my-session";
         let result = fl!("ctl-session-created", name = name);
