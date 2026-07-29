@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-07-29
+
+Windows-Terminal-inspired new-tab profile dropdown, settings search (row
+highlight + collapse), per-category reset, and a keybinding conflict
+warning. Requires the standalone `nexterm-server` to be upgraded together
+with clients (protocol bump below); the single-binary `nexterm` upgrades
+both halves atomically.
+
 ### Added
 - Settings panel: the Keybindings category now warns when the selected
   binding's key chord is also assigned to another binding (non-blocking,
