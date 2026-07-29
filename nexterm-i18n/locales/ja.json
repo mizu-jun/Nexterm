@@ -98,6 +98,7 @@
   "settings-category-security": "セキュリティ",
   "settings-panel-title": " * Nexterm 設定",
   "settings-panel-footer-hint": "  Enter=保存  Esc=キャンセル  Tab=次のカテゴリ",
+  "settings-open-config-file": "config.toml を開く",
   "settings-search-placeholder-typing": "/ 入力して絞り込み…",
   "settings-search-placeholder-idle": "/ カテゴリを検索",
   "settings-startup-language": "言語",

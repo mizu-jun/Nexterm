@@ -697,6 +697,11 @@ impl EventHandler {
                         // Click outside the panel → close the panel.
                         self.app.state.settings_panel.close();
                     }
+                    SettingsPanelHit::OpenConfigFile => {
+                        // P4 (WT-like UX): open config.toml with the OS
+                        // default editor (WT's "Open JSON file" equivalent).
+                        crate::platform::open_config_file();
+                    }
                     SettingsPanelHit::Category(idx) => {
                         // Click on a sidebar category → switch category. With
                         // a non-empty Phase 4 search, the rendered list is the

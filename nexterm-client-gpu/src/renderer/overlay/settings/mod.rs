@@ -619,6 +619,31 @@ impl WgpuState {
             text_idx,
         );
 
+        // P4 (WT-like UX): right-aligned "Open config.toml" link (WT's
+        // "Open JSON file" equivalent). The hit-test in
+        // `settings_panel_hit.rs` mirrors this exact geometry.
+        let open_label = format!("↗ {}", nexterm_i18n::fl!("settings-open-config-file"));
+        let open_label_w = crate::vertex_util::visual_width(&open_label) as f32 * cell_w;
+        add_string_verts(
+            &open_label,
+            px + panel_w - open_label_w - cell_w,
+            bottom_y + cell_h * 0.3,
+            row::ensure_readable(
+                tokens.accent_primary,
+                tokens.surface_0,
+                row::MIN_TEXT_CONTRAST,
+            ),
+            false,
+            sw,
+            sh,
+            cell_w,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
+        );
+
         // Phase B3: the open/close animation is expressed purely through
         // `slide_offset` (position) above — there used to also be a
         // translucent "fade-in" wash drawn over the entire panel here,

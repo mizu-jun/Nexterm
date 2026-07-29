@@ -98,6 +98,7 @@
   "settings-category-security": "Security",
   "settings-panel-title": " * Nexterm Settings",
   "settings-panel-footer-hint": "  Enter=Save  Esc=Cancel  Tab=Next category",
+  "settings-open-config-file": "Open config.toml",
   "settings-search-placeholder-typing": "/ Type to filter…",
   "settings-search-placeholder-idle": "/ Search categories",
   "settings-startup-language": "Language",

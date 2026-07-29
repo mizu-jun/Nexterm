@@ -43,6 +43,8 @@ pub(super) enum SettingsPanelHit {
     /// cyclers (click cycles forward), 4..=6 are byte-cap fields (click focuses
     /// and starts editing). The footer note row has no hit zone.
     SecurityRow(u8),
+    /// P4 (WT-like UX): the "Open config.toml" link in the footer bar.
+    OpenConfigFile,
     /// Empty area inside the panel (no-op).
     PanelBackground,
     /// Phase 4 (UI/UX v2): click landed on the sidebar search input.
@@ -104,6 +106,21 @@ impl EventHandler {
         let title_h = cell_h * 1.4;
         if cy < py + title_h {
             return SettingsPanelHit::TitleBar;
+        }
+
+        // Footer bar — mirrors the `bottom_y` formula in
+        // `overlay/settings/mod.rs`. The right-aligned "Open config.toml"
+        // link is the only clickable region; the rest is a no-op. Checked
+        // before the sidebar branch because the footer spans the full panel
+        // width below the sidebar.
+        let footer_y = py + panel_h - cell_h * 1.5;
+        if cy >= footer_y {
+            let label = format!("↗ {}", nexterm_i18n::fl!("settings-open-config-file"));
+            let label_w = crate::vertex_util::visual_width(&label) as f32 * cell_w;
+            if cx >= px + panel_w - label_w - cell_w {
+                return SettingsPanelHit::OpenConfigFile;
+            }
+            return SettingsPanelHit::PanelBackground;
         }
 
         // Sidebar — first the Phase 4 search input (reserved strip at the

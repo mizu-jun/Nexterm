@@ -70,6 +70,41 @@ pub(crate) fn cursor_screen_pos() -> Option<(i32, i32)> {
     }
 }
 
+/// Open `config.toml` with the OS default handler (P4, WT's "Open JSON
+/// file" equivalent). Creates an empty file first when it does not exist
+/// yet, so the editor does not error out on a missing path.
+pub(crate) fn open_config_file() {
+    let path = nexterm_config::toml_path();
+    if !path.exists() {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Err(e) = std::fs::write(&path, "") {
+            tracing::warn!("failed to create {}: {}", path.display(), e);
+            return;
+        }
+    }
+    let path_str = path.to_string_lossy().to_string();
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(&path_str).spawn();
+    #[cfg(target_os = "linux")]
+    let _ = std::process::Command::new("xdg-open")
+        .arg(&path_str)
+        .spawn();
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+        // Without CREATE_NO_WINDOW a GUI-subsystem process spawning a console
+        // app briefly flashes a black console window. `start ""` keeps paths
+        // with spaces from being consumed as the window title.
+        let _ = std::process::Command::new("cmd")
+            .args(["/c", "start", "", &path_str])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn();
+    }
+}
+
 /// Open the GitHub releases page in the default browser.
 pub(crate) fn open_releases_url() {
     let url = "https://github.com/mizu-jun/nexterm/releases/latest";

@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Settings panel: an "Open config.toml" link in the footer bar opens the
+  configuration file with the OS default editor (Windows Terminal's
+  "Open JSON file" equivalent). Creates the file first when it does not
+  exist yet.
 - Windows-Terminal-like new-tab profile dropdown: a `▾` button next to the
   tab-bar `+` opens a menu listing the configured `[[profiles]]` and the WSL
   distros detected at startup; selecting one opens a new tab running that

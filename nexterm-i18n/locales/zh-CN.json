@@ -98,6 +98,7 @@
   "settings-category-security": "安全",
   "settings-panel-title": " * Nexterm 设置",
   "settings-panel-footer-hint": "  Enter=保存  Esc=取消  Tab=下一分类",
+  "settings-open-config-file": "打开 config.toml",
   "settings-search-placeholder-typing": "/ 输入以筛选…",
   "settings-search-placeholder-idle": "/ 搜索分类",
   "settings-startup-language": "语言",
