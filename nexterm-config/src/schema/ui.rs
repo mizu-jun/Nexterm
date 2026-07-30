@@ -10,14 +10,14 @@ use serde::{Deserialize, Serialize};
 ///
 /// ```toml
 /// [ui]
-/// corner_radius_chrome  = 6.0   # tab pills, focused-pane outline
+/// corner_radius_chrome  = 10.0  # tab pills, focused-pane outline
 /// corner_radius_overlay = 10.0  # command palette, settings panel, dialogs
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
     /// Corner radius in pixels for chrome surfaces (tab pills, focused-pane
-    /// outline, banners). Default `6.0`. `0.0` disables rounding.
+    /// outline, banners). Default `10.0`. `0.0` disables rounding.
     pub corner_radius_chrome: f32,
     /// Corner radius in pixels for overlay panels (command palette, settings
     /// panel, dialogs). Default `10.0`. `0.0` disables rounding.
@@ -27,7 +27,10 @@ pub struct UiConfig {
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
-            corner_radius_chrome: 6.0,
+            // 10 px brings the pill tabs and the `+` / `▾` / Settings
+            // buttons in line with the Windows Terminal-era rounding
+            // (6 px read as barely-rounded rectangles at 1x DPI).
+            corner_radius_chrome: 10.0,
             corner_radius_overlay: 10.0,
         }
     }
@@ -52,7 +55,7 @@ mod tests {
     #[test]
     fn default_values() {
         let cfg = UiConfig::default();
-        assert!((cfg.corner_radius_chrome - 6.0).abs() < f32::EPSILON);
+        assert!((cfg.corner_radius_chrome - 10.0).abs() < f32::EPSILON);
         assert!((cfg.corner_radius_overlay - 10.0).abs() < f32::EPSILON);
     }
 
@@ -84,7 +87,7 @@ corner_radius_overlay = 12.0
 language = "ja"
 "#;
         let parsed: super::super::Config = toml::from_str(toml_str).unwrap();
-        assert!((parsed.ui.corner_radius_chrome - 6.0).abs() < f32::EPSILON);
+        assert!((parsed.ui.corner_radius_chrome - 10.0).abs() < f32::EPSILON);
     }
 
     #[test]

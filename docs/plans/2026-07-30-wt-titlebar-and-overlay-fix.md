@@ -76,10 +76,16 @@ windows keep native decorations (mouse handling is not window-id aware).
 
 ### PR4 — Tab bar polish
 
-- [ ] `corner_radius_chrome` default 6.0 → 10.0
-- [ ] `draw_overlay_panel`: legacy `add_rounded_px_rect` →
-      `add_px_rounded_rect_sdf`, fixed radius → `ui_cfg.chrome_radius()`
-      (visual regression pass over all overlays)
+- [x] `corner_radius_chrome` default 6.0 → 10.0
+- [x] `draw_overlay_panel`: legacy `add_rounded_px_rect` →
+      `add_px_rounded_rect_sdf` (the legacy helper had no callers left
+      and was removed). Visual regression pass over all overlays is part
+      of the manual QA round.
+- [~] Wiring the hard-coded panel radius (6.0 at every call site) to the
+      existing `[ui] corner_radius_overlay` setting was descoped: it
+      needs a `ui_cfg` parameter through ~10 overlay builder signatures.
+      Tracked as a separate cleanup — today the setting exists but only
+      the default value is honoured visually.
 
 ## Out of scope
 
