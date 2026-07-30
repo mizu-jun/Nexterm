@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   previous CPU approximation left square notches at the corners.
 
 ### Added
+- Windows 11 snap layouts: hovering the custom title bar's maximize
+  button (`decorations = "notitle"`) now shows the snap-layout flyout.
+  The window procedure is subclassed to answer `WM_NCHITTEST` with
+  `HTMAXBUTTON` over the button, Windows Terminal-style; hover and click
+  keep working through the reconstructed non-client mouse messages.
 - Custom title bar on Linux/macOS: right-clicking the tab bar with
   `decorations = "notitle"` opens an in-app system menu (maximize or
   restore / minimize / close — localized in all 8 languages) where

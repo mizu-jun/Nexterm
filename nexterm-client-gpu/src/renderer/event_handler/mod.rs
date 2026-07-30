@@ -70,6 +70,18 @@ pub enum UserEvent {
     /// native close button (`WindowEvent::CloseRequested`), so
     /// `window.close_action` (prompt / detach / quit) is honoured.
     RequestClose { window_id: WindowId },
+    /// Custom title bar (Windows): completed click on the maximize button.
+    /// The button lives in the non-client area (`WM_NCHITTEST` →
+    /// `HTMAXBUTTON`, which is what makes DWM offer snap layouts), so winit
+    /// never sees the click; `snap_layout::subclass_proc` reconstructs it
+    /// from `WM_NCLBUTTONUP` and forwards it here.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    SnapMaximizeToggle { window_id: WindowId },
+    /// Custom title bar (Windows): hover transition over the non-client
+    /// maximize button, reconstructed from `WM_NCMOUSEMOVE` /
+    /// `WM_NCMOUSELEAVE` (winit's `CursorMoved` does not fire there).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    SnapMaximizeHover { window_id: WindowId, hovered: bool },
     /// Sprint 5-11-1 / H1 PoC: event from the AccessKit platform adapter.
     ///
     /// Delivered when a screen reader connects (`InitialTreeRequested`), when
@@ -466,6 +478,30 @@ impl ApplicationHandler<UserEvent> for EventHandler {
             }
             UserEvent::RequestClose { window_id } => {
                 self.on_close_requested(event_loop, window_id);
+            }
+            UserEvent::SnapMaximizeToggle { window_id } => {
+                // Same guard as the client-area click path (mouse.rs): Quake
+                // mode owns the window geometry, a maximize toggle would
+                // fight its manual size management. Only the primary window
+                // has a custom title bar, so ignore other IDs defensively.
+                if !self.quake.visible
+                    && let Some(w) = &self.window
+                    && w.id() == window_id
+                {
+                    w.set_maximized(!w.is_maximized());
+                    w.request_redraw();
+                }
+            }
+            UserEvent::SnapMaximizeHover { window_id, hovered } => {
+                if let Some(w) = &self.window
+                    && w.id() == window_id
+                {
+                    let new_hover = hovered.then_some(crate::state::WindowButton::Maximize);
+                    if self.app.state.hovered_window_button != new_hover {
+                        self.app.state.hovered_window_button = new_hover;
+                        w.request_redraw();
+                    }
+                }
             }
             // Sprint 5-11-1 / H1 PoC: AccessKit event.
             // Sprint 5-11-2 Step 2-4: pass event_loop along to dispatch ActionRequested.

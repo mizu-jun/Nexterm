@@ -33,6 +33,8 @@ mod settings;
 mod settings_panel;
 mod shaders;
 mod signature_verify;
+#[cfg(windows)]
+mod snap_layout;
 mod state;
 mod tab_icons;
 mod update_checker;
