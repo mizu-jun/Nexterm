@@ -134,9 +134,14 @@ source), so a `SetWindowSubclass` hook composes cleanly.
 
 ### PR6 — `decorations = "notitle"` as the default
 
-- [ ] `WindowConfig::default()` / `WindowDecorations::Default` →
-      `NoTitle` on Windows/Linux; macOS keeps `Full` (winit's
-      `drag_resize_window` is unimplemented there — a borderless window
-      would not be resizable).
-- [ ] Template comment + docs + tests + CHANGELOG (breaking-change note:
-      set `decorations = "full"` to restore the native title bar).
+- [x] `WindowDecorations::default()` → `NoTitle` on Windows/Linux;
+      macOS keeps `Full` (winit's `drag_resize_window` is unimplemented
+      there — a borderless window would not be resizable). Implemented
+      as a hand-written platform-aware `impl Default` (the derive can't
+      branch on cfg); `WindowConfig::default()` follows it.
+- [x] Template comment (`loader.rs`), `docs/CONFIGURATION.md`,
+      `docs/ARCHITECTURE.md`, CHANGELOG breaking-change note (set
+      `decorations = "full"` to restore the native title bar).
+- [x] Tests: platform-default assertion (enum + omitted TOML key); the
+      settings-panel cycle test now starts from an explicit variant
+      instead of the platform-dependent default.

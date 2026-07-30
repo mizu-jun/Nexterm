@@ -466,6 +466,10 @@ mod tests {
     fn save_writes_window_decorations() {
         let config = Config::default();
         let mut panel = SettingsPanel::new(&config);
+        // Start from an explicit variant: the default is platform-dependent
+        // (notitle; full on macOS), and this test is about the cycle order
+        // and the TOML write-back, not the default.
+        panel.window_decorations = nexterm_config::WindowDecorations::Full;
         panel.next_window_decorations();
         assert_eq!(
             panel.window_decorations,
