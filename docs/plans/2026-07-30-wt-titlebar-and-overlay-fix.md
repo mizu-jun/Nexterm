@@ -94,7 +94,49 @@ windows keep native decorations (mouse handling is not window-id aware).
 
 ## Out of scope
 
-Windows 11 snap-layout flyout (`WM_NCHITTEST` hook), `WM_NCCALCSIZE`-based
-overhang fix, macOS custom chrome (future phase 3: transparent-titlebar +
-traffic lights via `WindowAttributesExtMacOS`), `notitle` for secondary OS
-windows, move/size items in the system menu, per-button colour config.
+`WM_NCCALCSIZE`-based overhang fix, macOS custom chrome (future phase 3:
+transparent-titlebar + traffic lights via `WindowAttributesExtMacOS`),
+`notitle` for secondary OS windows, move/size items in the system menu,
+per-button colour config.
+
+## Follow-up (requested 2026-07-30, after PR1–PR4 shipped)
+
+Two items originally descoped were requested as follow-up work.
+
+### PR5 — Windows 11 snap layouts (`WM_NCHITTEST` subclass)
+
+DWM shows the snap-layout flyout only where `WM_NCHITTEST` answers
+`HTMAXBUTTON`; a borderless winit window answers `HTCLIENT` everywhere.
+winit 0.30 passes `WM_NCHITTEST` straight to `DefWindowProc` and treats
+`WM_NCLBUTTONDOWN` specially only for `HTCAPTION` (verified in the vendored
+source), so a `SetWindowSubclass` hook composes cleanly.
+
+- [x] `snap_layout.rs` (cfg(windows)): `SetWindowSubclass` on the primary
+      window; `WM_NCHITTEST` → `HTMAXBUTTON` over the maximize button's
+      rectangle. The button becomes non-client, so hover/click are
+      reconstructed from `WM_NCMOUSEMOVE`/`WM_NCMOUSELEAVE` (with
+      `TrackMouseEvent` TME_NONCLIENT) and `WM_NCLBUTTONDOWN/UP`
+      (swallowed; UP toggles) and forwarded as UserEvents.
+- [x] `UserEvent::SnapMaximizeToggle` (Quake-guarded, same as the
+      client-area path) + `SnapMaximizeHover` (drives
+      `hovered_window_button` for the hover fill).
+- [x] Renderer publishes the button rect (physical px, tab-bar band)
+      after every frame; `None` keeps the hook dormant, so `full`/`none`
+      decorations and hidden tab bars are unaffected.
+- [x] windows-sys features: `Win32_Graphics_Gdi`, `Win32_UI_Shell`,
+      `Win32_UI_Input_KeyboardAndMouse`. All call signatures type-checked
+      against the vendored crate for `x86_64-pc-windows-msvc` (a full
+      workspace cross-check is blocked by aws-lc-sys's C build).
+- [x] Unit tests: lparam → signed screen coords (negative-monitor case),
+      half-open rect containment.
+- [ ] Manual (Windows 11): hover maximize button → flyout appears; zone
+      pick snaps the window; click still toggles; hover fill tracks.
+
+### PR6 — `decorations = "notitle"` as the default
+
+- [ ] `WindowConfig::default()` / `WindowDecorations::Default` →
+      `NoTitle` on Windows/Linux; macOS keeps `Full` (winit's
+      `drag_resize_window` is unimplemented there — a borderless window
+      would not be resizable).
+- [ ] Template comment + docs + tests + CHANGELOG (breaking-change note:
+      set `decorations = "full"` to restore the native title bar).

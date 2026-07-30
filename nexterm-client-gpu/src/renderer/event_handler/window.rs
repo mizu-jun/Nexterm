@@ -572,6 +572,25 @@ impl EventHandler {
             warn!("Render error: {}", e);
         }
 
+        // Feed the maximize button's rectangle (re-registered by the render
+        // pass just above) to the snap-layout hit-test hook. `None` (native
+        // title bar, hidden tab bar) keeps the hook dormant. The y range is
+        // the tab bar band, matching the mouse handler's hit test.
+        #[cfg(windows)]
+        if let Some(w) = &self.window {
+            let bar_h = if self.app.config.tab_bar.enabled {
+                self.app.config.tab_bar.height as f32
+            } else {
+                0.0
+            };
+            let rect = self
+                .app
+                .state
+                .window_maximize_hit_rect
+                .map(|(x0, x1)| (x0, 0.0, x1, bar_h));
+            crate::snap_layout::update_max_button_rect(w, rect);
+        }
+
         // Dynamic GlyphAtlas growth: when full, recreate at 2× the size.
         // Temporarily move atlas out to avoid borrow conflicts.
         if let Some(mut atlas) = self.atlas.take() {

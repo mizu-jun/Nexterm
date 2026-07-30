@@ -107,6 +107,14 @@ impl EventHandler {
         #[cfg(windows)]
         crate::platform::apply_acrylic_blur(&window);
 
+        // Windows 11 snap layouts: subclass the window procedure so the
+        // custom title bar's maximize button can answer WM_NCHITTEST with
+        // HTMAXBUTTON. Installed unconditionally — the hook stays dormant
+        // (no button rectangle registered) while the native title bar is in
+        // use.
+        #[cfg(windows)]
+        crate::snap_layout::install(&window, self.proxy.clone());
+
         // Initialize wgpu asynchronously (requires a tokio runtime).
         let mut wgpu_state = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current()
