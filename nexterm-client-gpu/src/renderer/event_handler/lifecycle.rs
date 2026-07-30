@@ -34,10 +34,9 @@ impl EventHandler {
     /// `ApplicationHandler::resumed` implementation.
     pub(super) fn on_resumed(&mut self, event_loop: &ActiveEventLoop) {
         // Create the window (apply transparency, blur, and decorations per config).
-        use nexterm_config::WindowDecorations;
         let win_cfg = &self.app.config.window;
         let transparent = win_cfg.background_opacity < 1.0;
-        let decorations = !matches!(win_cfg.decorations, WindowDecorations::None);
+        let decorations = win_cfg.decorations.wants_os_chrome();
 
         // Sprint 5-11-1 / H1 PoC: the AccessKit Adapter must be created
         // **before the window is made visible** (see the docs for
@@ -550,10 +549,7 @@ impl EventHandler {
                 nexterm_i18n::set_locale(&self.app.config.language);
             }
             if decorations_changed && let Some(w) = &self.window {
-                use nexterm_config::WindowDecorations;
-                let decorations =
-                    !matches!(self.app.config.window.decorations, WindowDecorations::None);
-                w.set_decorations(decorations);
+                w.set_decorations(self.app.config.window.decorations.wants_os_chrome());
             }
             if present_mode_changed && let Some(wgpu) = &mut self.wgpu_state {
                 wgpu.set_present_mode(&self.app.config.gpu);

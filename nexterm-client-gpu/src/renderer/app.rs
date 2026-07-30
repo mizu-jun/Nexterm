@@ -86,6 +86,7 @@ impl NextermApp {
             shader_reload_rx,
             _shader_watcher,
             last_tab_click: None,
+            last_chrome_click: None,
             server_shutdown_tx,
             runtime_cfg,
             pixel_scroll_accumulator: 0.0,

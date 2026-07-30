@@ -322,7 +322,11 @@ pub fn show_window(window: &Window, cfg: &QuakeModeConfig) -> Option<NormalWindo
     let saved = NormalWindowState {
         position: window.outer_position().ok(),
         size: window.outer_size(),
-        decorations: true, // normal mode assumes decorations are on
+        // Capture the actual state instead of assuming `true`: with
+        // `decorations = "none"` / `"notitle"` the normal-mode window is
+        // borderless, and restoring `true` would resurrect the native
+        // title bar after one Quake toggle.
+        decorations: window.is_decorated(),
     };
 
     // Target monitor (prefer the primary).

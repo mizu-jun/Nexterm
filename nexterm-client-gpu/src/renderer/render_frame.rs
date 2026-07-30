@@ -109,6 +109,10 @@ impl WgpuState {
         padding_y: f32,
         // Sprint 5-7 / UI-1-4: reference to the full config for the key-hint overlay
         config: &nexterm_config::Config,
+        // Custom title bar: the window buttons swap the maximize glyph for
+        // the restore glyph while maximized (sampled by the caller — this
+        // struct does not hold the winit window).
+        is_maximized: bool,
     ) -> Result<()> {
         // FPS limiting: skip if the time elapsed since the previous frame is less than 1/fps
         if fps_limit > 0 {
@@ -763,12 +767,15 @@ impl WgpuState {
 
         // ---- Tab bar (when enabled in the config) ----
         if tab_bar_visible {
+            let custom_titlebar = config.window.decorations.wants_custom_titlebar();
             self.build_tab_bar_verts(
                 state,
                 tab_bar_cfg,
                 &config.animations,
                 &config.ui,
                 &tokens,
+                custom_titlebar,
+                is_maximized,
                 sw,
                 sh,
                 cell_w,

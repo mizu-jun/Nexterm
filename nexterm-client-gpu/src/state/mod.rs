@@ -182,6 +182,19 @@ pub struct ClientState {
     /// frame by `build_tab_bar_verts` only when
     /// `TabBarConfig.show_new_tab_button` is on.
     pub new_tab_dropdown_hit_rect: Option<(f32, f32)>,
+    /// Click ranges (x_start, x_end) of the minimize / maximize / close
+    /// window buttons drawn at the right edge of the tab bar when
+    /// `window.decorations = "notitle"` (custom title bar). Populated each
+    /// frame by `build_tab_bar_verts`; `None` while the buttons are hidden.
+    pub window_minimize_hit_rect: Option<(f32, f32)>,
+    /// See [`Self::window_minimize_hit_rect`].
+    pub window_maximize_hit_rect: Option<(f32, f32)>,
+    /// See [`Self::window_minimize_hit_rect`].
+    pub window_close_hit_rect: Option<(f32, f32)>,
+    /// Window button the cursor is currently over (custom title bar only).
+    /// Updated on mouse-move; the renderer highlights the hovered button
+    /// (the close button gets the semantic error colour, WT-style).
+    pub hovered_window_button: Option<WindowButton>,
     /// WSL distros detected at startup (`nexterm_config::wsl::detect_distros`),
     /// shown in the new-tab dropdown after the configured profiles. Cached
     /// once because detection shells out to `wsl.exe` on Windows.
@@ -397,6 +410,16 @@ pub struct CloseWindowDialog {
     pub cancel_label: String,
     /// Currently highlighted button (0 = Kill, 1 = Cancel; 0xFE = Kill confirmed, 0xFF = Cancel confirmed)
     pub selected_button: u8,
+}
+
+/// Window buttons drawn on the tab bar when the custom title bar is active
+/// (`window.decorations = "notitle"`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowButton {
+    Minimize,
+    /// Toggles between maximize and restore depending on the window state.
+    Maximize,
+    Close,
 }
 
 /// Tab-drag state (Sprint 5-7 / Phase 2-3)
@@ -634,6 +657,10 @@ impl ClientState {
             settings_tab_rect: None,
             new_tab_hit_rect: None,
             new_tab_dropdown_hit_rect: None,
+            window_minimize_hit_rect: None,
+            window_maximize_hit_rect: None,
+            window_close_hit_rect: None,
+            hovered_window_button: None,
             wsl_profiles: Vec::new(),
             hovered_tab_id: None,
             os_dark_mode: None,

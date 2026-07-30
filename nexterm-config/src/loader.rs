@@ -400,7 +400,7 @@ enabled = true
 # [window]
 # background_opacity = 0.92
 # macos_window_background_blur = 20
-# decorations = "default"
+# decorations = "full"   # "full" | "none" | "notitle" (tab bar becomes the title bar)
 
 # [[hosts]]
 # name = "production"

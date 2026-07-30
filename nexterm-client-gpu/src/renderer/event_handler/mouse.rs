@@ -290,40 +290,58 @@ impl EventHandler {
             return;
         }
 
-        // Hover hit-test against pane borders for the resize cursor icon.
-        // Skipped while any other modal UI is open or any drag is in flight,
-        // so we don't fight the existing affordances.
-        if !self.app.state.settings_panel.is_open
-            && self.app.state.tab_drag.is_none()
+        // Hover hit-test for the cursor icon. Skipped while a drag is in
+        // flight so we don't fight the existing affordances. Priority:
+        // window outline (custom title bar resize) → settings panel
+        // (default) → pane borders → OSC 22 pointer shape.
+        if self.app.state.tab_drag.is_none()
             && let Some(w) = &self.window
         {
             let pad_x = self.app.config.window.padding_x as f32;
             let pad_y = self.app.config.window.padding_y as f32;
             let origin_x = pad_x;
             let origin_y = tab_bar_h_f64 as f32 + pad_y;
-            let hit = if position.y >= origin_y as f64 {
-                crate::state::hit_test_pane_border(
-                    &self.app.state.pane_layouts,
-                    position.x as f32,
-                    position.y as f32,
-                    cell_w as f32,
-                    cell_h as f32,
-                    origin_x,
-                    origin_y,
-                )
-            } else {
-                None
-            };
-            let next_cursor = match hit {
-                Some(h) => match h.axis {
-                    crate::state::PaneResizeAxis::Horizontal => winit::window::CursorIcon::EwResize,
-                    crate::state::PaneResizeAxis::Vertical => winit::window::CursorIcon::NsResize,
-                },
-                // Over the grid area, honor the focused pane's OSC 22 pointer
-                // shape; above the tab bar keep the platform default.
-                None if position.y >= origin_y as f64 => self.app.state.focused_pane_pointer_icon(),
-                None => winit::window::CursorIcon::Default,
-            };
+            let next_cursor =
+                if let Some(dir) = self.custom_titlebar_resize_edge(position.x, position.y) {
+                    // The window outline is never covered by UI, so it wins
+                    // even while the settings panel is open.
+                    crate::chrome_resize::resize_cursor(dir)
+                } else if self.app.state.settings_panel.is_open {
+                    // Keep the default cursor over the settings panel; this
+                    // also clears a stale resize cursor when the pointer
+                    // leaves the outline.
+                    winit::window::CursorIcon::Default
+                } else {
+                    let hit = if position.y >= origin_y as f64 {
+                        crate::state::hit_test_pane_border(
+                            &self.app.state.pane_layouts,
+                            position.x as f32,
+                            position.y as f32,
+                            cell_w as f32,
+                            cell_h as f32,
+                            origin_x,
+                            origin_y,
+                        )
+                    } else {
+                        None
+                    };
+                    match hit {
+                        Some(h) => match h.axis {
+                            crate::state::PaneResizeAxis::Horizontal => {
+                                winit::window::CursorIcon::EwResize
+                            }
+                            crate::state::PaneResizeAxis::Vertical => {
+                                winit::window::CursorIcon::NsResize
+                            }
+                        },
+                        // Over the grid area, honor the focused pane's OSC 22 pointer
+                        // shape; above the tab bar keep the platform default.
+                        None if position.y >= origin_y as f64 => {
+                            self.app.state.focused_pane_pointer_icon()
+                        }
+                        None => winit::window::CursorIcon::Default,
+                    }
+                };
             if self.app.state.last_cursor_icon != next_cursor {
                 w.set_cursor(next_cursor);
                 self.app.state.last_cursor_icon = next_cursor;
@@ -370,6 +388,31 @@ impl EventHandler {
         };
         if prev_hovered != new_hovered {
             self.app.state.hovered_tab_id = new_hovered;
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+        }
+
+        // Custom title bar: hover tracking for the window buttons (the
+        // renderer fills the hovered one — close gets the error colour).
+        let prev_button = self.app.state.hovered_window_button;
+        let new_button = if position.y < tab_bar_h_f64 {
+            let px = position.x as f32;
+            let hit = |rect: Option<(f32, f32)>| rect.is_some_and(|(x0, x1)| px >= x0 && px < x1);
+            if hit(self.app.state.window_minimize_hit_rect) {
+                Some(crate::state::WindowButton::Minimize)
+            } else if hit(self.app.state.window_maximize_hit_rect) {
+                Some(crate::state::WindowButton::Maximize)
+            } else if hit(self.app.state.window_close_hit_rect) {
+                Some(crate::state::WindowButton::Close)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if prev_button != new_button {
+            self.app.state.hovered_window_button = new_button;
             if let Some(w) = &self.window {
                 w.request_redraw();
             }
@@ -570,6 +613,26 @@ impl EventHandler {
     /// so they are the first thing the user sees.
     pub(super) fn on_mouse_right_pressed(&mut self) {
         if let Some((px, py)) = self.cursor_position {
+            // Custom title bar: right-click on the tab bar opens the native
+            // window/system menu (restore, move, size, minimize, maximize,
+            // close). winit only supports `show_window_menu` on Windows;
+            // other platforms keep the in-app context menu until the
+            // follow-up phase adds an equivalent.
+            #[cfg(windows)]
+            {
+                let tab_bar_h = if self.app.config.tab_bar.enabled {
+                    self.app.config.tab_bar.height as f64
+                } else {
+                    0.0
+                };
+                if self.app.config.window.decorations.wants_custom_titlebar()
+                    && py < tab_bar_h
+                    && let Some(w) = &self.window
+                {
+                    w.show_window_menu(winit::dpi::PhysicalPosition::new(px, py));
+                    return;
+                }
+            }
             let cell_w_ctx = self.app.font.cell_width() as f64;
             let cell_h_ctx = self.app.font.cell_height() as f64;
             let profile_list: Vec<(String, String)> = self
@@ -686,8 +749,62 @@ impl EventHandler {
     }
 
     /// Left button press: handle tab-bar hits + start selection + mouse report.
+    /// Resize-edge hit test for the custom title bar
+    /// (`window.decorations = "notitle"`). Returns `None` when the custom
+    /// title bar is off, the window is maximized (a maximized window is not
+    /// resizable by its edges), or the cursor is not on the window outline.
+    fn custom_titlebar_resize_edge(
+        &self,
+        px: f64,
+        py: f64,
+    ) -> Option<winit::window::ResizeDirection> {
+        if !self.app.config.window.decorations.wants_custom_titlebar() {
+            return None;
+        }
+        let w = self.window.as_ref()?;
+        if w.is_maximized() {
+            return None;
+        }
+        let size = w.inner_size();
+        let border_px = 6.0 * w.scale_factor() as f32;
+        let chrome_h = if self.app.config.tab_bar.enabled {
+            self.app.config.tab_bar.height as f32
+        } else {
+            0.0
+        };
+        let excluded: Vec<(f32, f32)> = [
+            self.app.state.window_minimize_hit_rect,
+            self.app.state.window_maximize_hit_rect,
+            self.app.state.window_close_hit_rect,
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        crate::chrome_resize::resize_edge_at(
+            px as f32,
+            py as f32,
+            size.width as f32,
+            size.height as f32,
+            border_px,
+            chrome_h,
+            &excluded,
+        )
+    }
+
     pub(super) fn on_mouse_left_pressed(&mut self) {
         if let Some((px, py)) = self.cursor_position {
+            // Custom title bar: a press on the window outline starts an
+            // OS-driven resize. Checked before every other hit test — the
+            // grab band overlaps the tab bar's top edge and the settings
+            // panel's "click outside closes" region.
+            if let Some(dir) = self.custom_titlebar_resize_edge(px, py) {
+                if let Some(w) = &self.window
+                    && let Err(e) = w.drag_resize_window(dir)
+                {
+                    tracing::warn!("drag_resize_window failed: {e}");
+                }
+                return;
+            }
             // When the settings panel is open, run the hit test first.
             if self.app.state.settings_panel.is_open {
                 let hit = self.hit_test_settings_panel(px as f32, py as f32);
@@ -944,6 +1061,14 @@ impl EventHandler {
             // Handle clicks in the tab-bar area (py < tab_bar_h).
             if tab_bar_visible && py < tab_bar_h_f64 {
                 let px_f32 = px as f32;
+                let hit_rect = |rect: Option<(f32, f32)>| {
+                    rect.is_some_and(|(x0, x1)| px_f32 >= x0 && px_f32 < x1)
+                };
+                // Custom title bar: window buttons first (they occupy the
+                // true right edge, outside every other tab-bar control).
+                let hit_minimize = hit_rect(self.app.state.window_minimize_hit_rect);
+                let hit_maximize = hit_rect(self.app.state.window_maximize_hit_rect);
+                let hit_close = hit_rect(self.app.state.window_close_hit_rect);
                 // Hit test for the settings button.
                 let hit_settings = self
                     .app
@@ -951,7 +1076,32 @@ impl EventHandler {
                     .settings_tab_rect
                     .map(|(x0, x1)| px_f32 >= x0 && px_f32 < x1)
                     .unwrap_or(false);
-                if hit_settings {
+                if hit_minimize {
+                    if let Some(w) = &self.window {
+                        w.set_minimized(true);
+                    }
+                } else if hit_maximize {
+                    // Skip while Quake mode drives the window geometry — a
+                    // maximize toggle would fight its manual size management.
+                    if !self.quake.visible
+                        && let Some(w) = &self.window
+                    {
+                        w.set_maximized(!w.is_maximized());
+                        w.request_redraw();
+                    }
+                } else if hit_close {
+                    // Same path as the native close button so
+                    // `window.close_action` (prompt / detach / quit) applies.
+                    if let Some(w) = &self.window
+                        && let Err(e) =
+                            self.proxy
+                                .send_event(crate::renderer::UserEvent::RequestClose {
+                                    window_id: w.id(),
+                                })
+                    {
+                        tracing::warn!("failed to send RequestClose UserEvent: {}", e);
+                    }
+                } else if hit_settings {
                     self.app.state.settings_panel.is_open = !self.app.state.settings_panel.is_open;
                     if let Some(w) = &self.window {
                         w.request_redraw();
@@ -1144,8 +1294,28 @@ impl EventHandler {
                         // drag-move loop that ends when the button is released —
                         // we therefore do *not* need an `on_mouse_left_released`
                         // counterpart for it.
-                        if let Some(w) = &self.window {
-                            let _ = w.drag_window();
+                        //
+                        // Custom title bar: a double-click on the blank chrome
+                        // toggles maximize, like a native title bar. Disabled
+                        // while Quake mode drives the window geometry.
+                        let now = Instant::now();
+                        let is_double_click = self
+                            .last_chrome_click
+                            .map(|t| now.duration_since(t) < Duration::from_millis(300))
+                            .unwrap_or(false);
+                        let custom_titlebar =
+                            self.app.config.window.decorations.wants_custom_titlebar();
+                        if custom_titlebar && is_double_click && !self.quake.visible {
+                            self.last_chrome_click = None;
+                            if let Some(w) = &self.window {
+                                w.set_maximized(!w.is_maximized());
+                                w.request_redraw();
+                            }
+                        } else {
+                            self.last_chrome_click = Some(now);
+                            if let Some(w) = &self.window {
+                                let _ = w.drag_window();
+                            }
                         }
                     }
                 }
