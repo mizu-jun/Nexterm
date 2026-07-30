@@ -127,15 +127,15 @@ Evaluation occurs **every 1 second** (inside the GPU client's `about_to_wait` ho
 |-----|------|---------|-------------|
 | `background_opacity` | float | `1.0` | Window background opacity (0.0 = fully transparent, 1.0 = opaque). A compositor is required for transparency |
 | `macos_window_background_blur` | u32 | `0` | macOS window background blur intensity (0 = disabled) |
-| `decorations` | String | `"full"` | Window decoration style |
+| `decorations` | String | `"notitle"` (`"full"` on macOS) | Window decoration style |
 
 #### `decorations` Values
 
 | Value | Description |
 |-------|-------------|
-| `"full"` | Show the OS-native title bar and borders |
+| `"full"` | Show the OS-native title bar and borders (default on macOS) |
 | `"none"` | Hide title bar and borders (borderless) |
-| `"notitle"` | Hide title bar only |
+| `"notitle"` | Windows Terminal-style custom title bar: borderless, the tab bar doubles as the title bar (window buttons, drag-to-move, double-click maximize, edge resize). Default on Windows/Linux |
 
 ```toml
 [window]
@@ -628,7 +628,7 @@ widgets = ['os.date("%H:%M:%S")', '"nexterm"']
 [window]
 background_opacity = 0.95
 macos_window_background_blur = 0
-decorations = "full"
+decorations = "notitle"
 
 [tab_bar]
 enabled = true

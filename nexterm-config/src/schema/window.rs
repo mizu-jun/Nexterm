@@ -3,11 +3,10 @@
 use serde::{Deserialize, Serialize};
 
 /// Window decoration mode.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WindowDecorations {
     /// Show the OS-native title bar and borders.
-    #[default]
     Full,
     /// No title bar and no borders (borderless).
     None,
@@ -17,6 +16,20 @@ pub enum WindowDecorations {
     /// but drop the title bar" is not expressible; this mode instead
     /// replaces the native chrome entirely, Windows Terminal-style.
     NoTitle,
+}
+
+impl Default for WindowDecorations {
+    /// Windows and Linux default to the Windows Terminal-style custom
+    /// title bar. macOS keeps the native chrome: winit's
+    /// `drag_resize_window` is unimplemented there, so a borderless
+    /// window could not be resized at all.
+    fn default() -> Self {
+        if cfg!(target_os = "macos") {
+            WindowDecorations::Full
+        } else {
+            WindowDecorations::NoTitle
+        }
+    }
 }
 
 impl WindowDecorations {
@@ -64,6 +77,23 @@ mod window_decorations_tests {
                 toml::from_str(&toml_str).expect("parse decorations key");
             assert_eq!(parsed.window.decorations, variant);
         }
+    }
+
+    #[test]
+    fn default_is_notitle_except_on_macos() {
+        let expected = if cfg!(target_os = "macos") {
+            // A borderless window cannot be resized on macOS
+            // (`drag_resize_window` is unimplemented in winit), so the
+            // native chrome stays the default there.
+            WindowDecorations::Full
+        } else {
+            WindowDecorations::NoTitle
+        };
+        assert_eq!(WindowDecorations::default(), expected);
+        // An omitted key in the TOML follows the same platform default.
+        let parsed: super::super::Config =
+            toml::from_str("[window]\n").expect("parse empty window table");
+        assert_eq!(parsed.window.decorations, expected);
     }
 }
 
@@ -288,7 +318,7 @@ impl Default for WindowConfig {
         Self {
             background_opacity: default_background_opacity(),
             macos_window_background_blur: 0,
-            decorations: WindowDecorations::Full,
+            decorations: WindowDecorations::default(),
             layout_mode: default_layout_mode(),
             padding_x: 0,
             padding_y: 0,

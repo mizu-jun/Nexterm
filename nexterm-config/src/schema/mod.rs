@@ -590,7 +590,10 @@ separator = " | "
         let w = WindowConfig::default();
         assert!((w.background_opacity - 0.95).abs() < f32::EPSILON);
         assert_eq!(w.macos_window_background_blur, 0);
-        assert_eq!(w.decorations, WindowDecorations::Full);
+        // The concrete platform default (notitle; full on macOS) is covered
+        // by `window::window_decorations_tests`; here just pin that
+        // WindowConfig follows the enum's default.
+        assert_eq!(w.decorations, WindowDecorations::default());
         assert_eq!(w.layout_mode, "bsp");
     }
 

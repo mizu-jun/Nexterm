@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`window.decorations` now defaults to `"notitle"`** — the Windows
+  Terminal-style custom title bar (tab bar with window buttons,
+  drag-to-move, double-click maximize, edge resize) is the out-of-box
+  look on Windows and Linux. Set `decorations = "full"` in `config.toml`
+  to restore the native title bar. macOS keeps `"full"` as its default
+  because winit cannot start an interactive resize there, which would
+  leave a borderless window unresizable. Configs that set the key
+  explicitly are unaffected.
 - Tab pills and the `+` / `▾` / Settings buttons default to a 10 px
   corner radius (was 6 px, which read as barely rounded at 1x DPI);
   override via `[ui] corner_radius_chrome` as before.
