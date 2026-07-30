@@ -51,13 +51,24 @@ Linux / macOS / Windows** — something WT structurally cannot do.
   (settings panel only, `overlay/settings/row.rs:42`).
 - Windows backdrop: `DWMWA_SYSTEMBACKDROP_TYPE = 4` (Mica Alt), applied
   unconditionally (`platform.rs:12`, called from `lifecycle.rs:109`).
+- Shipped 2026-07-30 while this plan was in review (parallel plan
+  `plans/2026-07-30-wt-titlebar-and-overlay-fix.md`):
+  - Overlay draw order: the frame renders in two layers (grid, then
+    overlays), so grid glyphs no longer bleed through panels (#44).
+  - `decorations = "notitle"` implemented as a WT-style custom title bar:
+    borderless window, tab bar doubling as the title bar, min/max/close
+    buttons exposed to AccessKit, double-click maximize, native system
+    menu on Windows. Opt-in (default stays `"full"`); snap layouts are
+    **not** included; secondary windows keep native decorations (#46).
+  - SDF rounded corners for every overlay panel and chrome corner radius
+    default 6 → 10 px; the legacy three-rect helper was removed (#47).
 
 ## Identified gaps
 
 | ID  | Gap | Evidence | Impact |
 |-----|-----|----------|--------|
 | G1  | Pipelines blend straight alpha while the surface is `CompositeAlphaMode::PreMultiplied` (Issue #35) | `renderer/wgpu_init.rs:172,246,294`; comment at `overlay/settings/mod.rs:98-109` | ★★★ blocks all translucency work |
-| G2  | Two rounded-rect systems; the legacy 3-rect one visibly breaks above 8 px radius | `vertex_util.rs:302` vs `:144`; `overlay/util.rs:83-114` | ★★ |
+| G2  | Two rounded-rect systems; the legacy 3-rect one visibly breaks above 8 px radius — **closed by #47 (2026-07-30)** | `vertex_util.rs:302` vs `:144`; `overlay/util.rs:83-114` | ★★ |
 | G3  | Shadows are flat single-color offset quads; no softness, no elevation scale | `overlay/util.rs:82-94` | ★★★ |
 | G4  | Tokens cover color only; spacing/typography/motion/elevation are ad-hoc constants | `tokens.rs:27-81`; `row.rs:132-135` (`cell_w * 0.6` …) | ★★★ |
 | G5  | No shared widgets: 7 per-tab focus counters; draw / input / AccessKit triple-defined per control | `settings/mod.rs`; `input_handler/mod.rs:590-780`; `accessibility.rs:1590-1824` | ★★★ |
@@ -88,6 +99,10 @@ All values verified against Microsoft Learn (see References).
 ### P0 — Compositing correctness + SDF unification (S–M)
 
 Fixes G1 (Issue #35) and G2 before anything translucent is built on top.
+
+> **Status 2026-07-30:** the SDF-unification half (G2) shipped separately
+> in #47; the compositing contract (G1) is PR #45. The section below is
+> kept as originally scoped for the record.
 
 **Compositing contract** (the rule every later phase relies on): all fragment
 shaders output **premultiplied alpha**; all pipelines use
@@ -220,6 +235,14 @@ contextual UI; InfoBar = non-blocking status.
 Principle: Familiar (WT-style tabs-in-titlebar silhouette). High risk —
 gated behind a spike.
 
+> **Status 2026-07-30:** the base implementation shipped early as
+> `decorations = "notitle"` (#46): borderless + tab-bar-as-title-bar +
+> caption buttons, opt-in, default unchanged. Remaining P7 scope: the
+> Windows 11 snap-layouts spike below (unchanged — still the gate),
+> Fluent-spec caption-button states/metrics (32 px bar, 5 states),
+> macOS traffic-light coexistence, Linux CSD documentation, and the
+> decision whether `notitle` becomes the default.
+
 - **Spike first (go/no-go gate)**: winit 0.30 does not expose
   `WM_NCHITTEST`; snap layouts on Windows 11 require subclassing the window
   proc (`SetWindowLongPtrW(GWLP_WNDPROC)`) and coexisting with winit's
@@ -281,7 +304,8 @@ gated behind a spike.
 
 ## Progress
 
-- [ ] P0 compositing contract + SDF unification
+- [x] P0 (SDF half) rounded-rect unification — shipped via #47 (2026-07-30)
+- [ ] P0 (compositing half) premultiplied-alpha contract — PR #45
 - [ ] P1a metric tokens (`metrics.rs`)
 - [ ] P1b widget layer + Theme/Window tab migration + tooltip
 - [ ] P1c remaining tabs + hard-coded color migration
@@ -293,8 +317,9 @@ gated behind a spike.
 - [ ] P4 icon font + chrome type ramp
 - [ ] P5 contrast everywhere + high-contrast scheme
 - [ ] P6 InfoBar + consent reclassification
-- [ ] P7 spike (go/no-go)
-- [ ] P7 full custom title bar
+- [x] P7 base `notitle` custom title bar — shipped early via #46 (2026-07-30)
+- [ ] P7 spike: Windows 11 snap layouts (go/no-go)
+- [ ] P7 remainder (Fluent button states/metrics, macOS/Linux parity, default-on decision)
 
 ## References
 
