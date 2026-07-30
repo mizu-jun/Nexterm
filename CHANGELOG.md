@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-07-31
+
 ### Changed
 - **`window.decorations` now defaults to `"notitle"`** — the Windows
   Terminal-style custom title bar (tab bar with window buttons,
@@ -42,9 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   double-click on blank chrome toggles maximize, the window outline
   resizes with directional cursors, and right-clicking the tab bar opens
   the native system menu (Windows). Previously `"notitle"` parsed but
-  behaved exactly like `"full"`. The default stays `"full"`; secondary
-  OS windows keep native decorations. The three buttons are exposed to
-  screen readers as AccessKit `Button` nodes.
+  behaved exactly like `"full"`. Secondary OS windows keep native
+  decorations. The three buttons are exposed to screen readers as
+  AccessKit `Button` nodes.
 
 ### Fixed
 - Terminal text no longer bleeds through the settings panel, command
