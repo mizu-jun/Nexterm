@@ -66,12 +66,17 @@ windows keep native decorations (mouse handling is not window-id aware).
 
 ### PR3 — Custom title bar, phase 2 (non-Windows menu; Linux-verified)
 
-- [ ] `ContextMenu::new_window_system_menu` (restore/minimize/maximize/
-      close; move/size intentionally omitted) + item-composition test
-- [ ] `ContextMenuAction::{RestoreWindow, MinimizeWindow,
-      ToggleMaximizeWindow}` (close reuses `CloseOsWindow`)
-- [ ] `warn!` on `drag_window` / `drag_resize_window` errors (Wayland)
-- [ ] i18n: `context-menu-window-{restore,minimize,maximize}` ×8 locales
+- [x] `ContextMenu::new_window_system_menu` (maximize-or-restore /
+      minimize / close; move/size intentionally omitted) +
+      item-composition test. Reuses the existing right-click sizing and
+      clamping logic in `on_mouse_right_pressed`.
+- [x] Actions: `MinimizeWindow` + `ToggleMaximizeWindow` (one toggle
+      variant instead of the planned separate Restore/Maximize — the
+      menu shows whichever label applies) + `RequestCloseWindow`
+      (routes through `UserEvent::RequestClose` so `close_action`
+      applies; the planned `CloseOsWindow` reuse would have bypassed it)
+- [x] `warn!` on `drag_window` / `drag_resize_window` errors (Wayland)
+- [x] i18n: `context-menu-window-{restore,minimize,maximize}` ×8 locales
 - [ ] Manual smoke: X11 + Wayland (GNOME/KDE)
 
 ### PR4 — Tab bar polish

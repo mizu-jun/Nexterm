@@ -614,10 +614,9 @@ impl EventHandler {
     pub(super) fn on_mouse_right_pressed(&mut self) {
         if let Some((px, py)) = self.cursor_position {
             // Custom title bar: right-click on the tab bar opens the native
-            // window/system menu (restore, move, size, minimize, maximize,
-            // close). winit only supports `show_window_menu` on Windows;
-            // other platforms keep the in-app context menu until the
-            // follow-up phase adds an equivalent.
+            // window/system menu on Windows (the only platform where winit
+            // supports `show_window_menu`). Other platforms fall through to
+            // the in-app `ContextMenu::new_window_system_menu` below.
             #[cfg(windows)]
             {
                 let tab_bar_h = if self.app.config.tab_bar.enabled {
@@ -652,11 +651,24 @@ impl EventHandler {
             let block_under_cursor: Option<(u64, bool)> =
                 self.block_under_cursor(px, py, tab_bar_h, cell_h_ctx);
 
-            let build = |x: f32, y: f32| match block_under_cursor {
-                Some((id, has_name)) => {
-                    ContextMenu::new_for_block(x, y, &profile_list, id, has_name)
+            // Custom title bar on non-Windows: the tab bar right-click gets
+            // the in-app system-menu replacement (maximize-or-restore /
+            // minimize / close). On Windows the native menu already
+            // returned above, so this arm is effectively non-Windows only.
+            let on_custom_titlebar = self.app.config.window.decorations.wants_custom_titlebar()
+                && py < tab_bar_h
+                && tab_bar_h > 0.0;
+            let is_maximized = self.window.as_ref().is_some_and(|w| w.is_maximized());
+            let build = |x: f32, y: f32| {
+                if on_custom_titlebar {
+                    return ContextMenu::new_window_system_menu(x, y, is_maximized);
                 }
-                None => ContextMenu::new_default(x, y, &profile_list),
+                match block_under_cursor {
+                    Some((id, has_name)) => {
+                        ContextMenu::new_for_block(x, y, &profile_list, id, has_name)
+                    }
+                    None => ContextMenu::new_default(x, y, &profile_list),
+                }
             };
 
             let tmp = build(0.0, 0.0);
@@ -1313,8 +1325,15 @@ impl EventHandler {
                             }
                         } else {
                             self.last_chrome_click = Some(now);
-                            if let Some(w) = &self.window {
-                                let _ = w.drag_window();
+                            if let Some(w) = &self.window
+                                && let Err(e) = w.drag_window()
+                            {
+                                // Backends without an OS drag-move loop
+                                // (some Wayland compositors, headless) fail
+                                // silently otherwise — surface it in the log
+                                // so "the title bar doesn't drag" reports
+                                // are diagnosable.
+                                tracing::warn!("drag_window failed: {e}");
                             }
                         }
                     }
