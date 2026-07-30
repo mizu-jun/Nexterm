@@ -62,6 +62,10 @@ pub(super) fn wrap_text(s: &str, max_cols: usize) -> Vec<String> {
 /// All colors are taken from `tokens` so the panel adapts to the active color scheme.
 /// The border ring is drawn by overdrawing the background with a slightly larger rect
 /// using `tokens.border_default` at reduced opacity.
+///
+/// Corners are rendered with the same SDF rounded-rect used by the tab bar's
+/// pills, so panel and chrome rounding match in quality (the previous
+/// three-rect CPU approximation left visible notches at the corners).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn draw_overlay_panel(
     px: f32,
@@ -76,17 +80,17 @@ pub(super) fn draw_overlay_panel(
     bg_verts: &mut Vec<crate::glyph_atlas::BgVertex>,
     bg_idx: &mut Vec<u16>,
 ) {
-    use crate::vertex_util::add_rounded_px_rect;
+    use crate::vertex_util::add_px_rounded_rect_sdf;
 
     // 1. Drop shadow (solid dark, offset down-right).
     let shadow = [0.0f32, 0.0, 0.0, 0.55];
-    add_rounded_px_rect(
+    add_px_rounded_rect_sdf(
         px + shadow_offset,
         py + shadow_offset,
         pw,
         ph,
-        shadow,
         radius,
+        shadow,
         sw,
         sh,
         bg_verts,
@@ -96,13 +100,13 @@ pub(super) fn draw_overlay_panel(
     // 2. Border ring — 1 px wider on every side, tokens.border_default at ~18% alpha.
     let bd = tokens.border_default;
     let border_color = [bd[0], bd[1], bd[2], 0.18];
-    add_rounded_px_rect(
+    add_px_rounded_rect_sdf(
         px - 1.0,
         py - 1.0,
         pw + 2.0,
         ph + 2.0,
-        border_color,
         radius + 1.0,
+        border_color,
         sw,
         sh,
         bg_verts,
@@ -111,5 +115,5 @@ pub(super) fn draw_overlay_panel(
 
     // 3. Panel background — tokens.surface_2, fully opaque.
     let bg = tokens.surface_2;
-    add_rounded_px_rect(px, py, pw, ph, bg, radius, sw, sh, bg_verts, bg_idx);
+    add_px_rounded_rect_sdf(px, py, pw, ph, radius, bg, sw, sh, bg_verts, bg_idx);
 }

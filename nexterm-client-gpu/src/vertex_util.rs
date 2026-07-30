@@ -132,15 +132,12 @@ pub(crate) fn add_px_rect(
 /// Pixel-space rounded rectangle drawn via the SDF path of the bg shader
 /// (Sprint 5-15 / UI/UX Modernization v2 Phase 1).
 ///
-/// Produces sub-pixel-AA rounded corners with a single drawcall. Prefer this
-/// over the legacy [`add_rounded_px_rect`] (a CPU-side three-rect cross that
-/// leaves square holes at the corners) whenever the result is visible chrome.
-/// Passing `radius == 0.0` falls through to a flat rect, matching
-/// [`add_px_rect`] byte-for-byte.
-///
-/// Initially unused — Phase 2 (tab pills) and later phases will be the first
-/// callers. The `dead_code` suppression keeps the Phase 1 landing warning-free.
-#[allow(clippy::too_many_arguments, dead_code)]
+/// Produces sub-pixel-AA rounded corners with a single drawcall. This is the
+/// only rounded-rect primitive: the legacy `add_rounded_px_rect` (a CPU-side
+/// three-rect cross that left square holes at the corners) was removed once
+/// the last overlay chrome migrated here. Passing `radius == 0.0` falls
+/// through to a flat rect, matching [`add_px_rect`] byte-for-byte.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn add_px_rounded_rect_sdf(
     px: f32,
     py: f32,
@@ -292,54 +289,6 @@ pub(crate) fn signed_rect_distance(
     let outside_len = (dx.max(0.0).powi(2) + dy.max(0.0).powi(2)).sqrt();
     let inside_d = dx.max(dy).min(0.0);
     outside_len + inside_d - corner_radius
-}
-
-/// Draw a pixel-space rectangle with simulated rounded corners via a three-rect cross.
-///
-/// Approximates corner cutoffs at `radius` pixels without any shader changes.
-/// Accurate enough at ≤ 8 px radius for dialog/overlay chrome.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn add_rounded_px_rect(
-    px: f32,
-    py: f32,
-    pw: f32,
-    ph: f32,
-    color: [f32; 4],
-    radius: f32,
-    sw: f32,
-    sh: f32,
-    bg_verts: &mut Vec<BgVertex>,
-    bg_idx: &mut Vec<u16>,
-) {
-    let r = radius.min(pw * 0.5).min(ph * 0.5);
-    // Center vertical band — full height minus the two corner caps.
-    add_px_rect(
-        px,
-        py + r,
-        pw,
-        ph - 2.0 * r,
-        color,
-        sw,
-        sh,
-        bg_verts,
-        bg_idx,
-    );
-    if r > 0.0 {
-        // Top horizontal strip (inset by radius on both sides).
-        add_px_rect(px + r, py, pw - 2.0 * r, r, color, sw, sh, bg_verts, bg_idx);
-        // Bottom horizontal strip.
-        add_px_rect(
-            px + r,
-            py + ph - r,
-            pw - 2.0 * r,
-            r,
-            color,
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
-    }
 }
 
 #[allow(dead_code, clippy::too_many_arguments)]

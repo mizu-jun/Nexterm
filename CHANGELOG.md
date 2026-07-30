@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Tab pills and the `+` / `▾` / Settings buttons default to a 10 px
+  corner radius (was 6 px, which read as barely rounded at 1x DPI);
+  override via `[ui] corner_radius_chrome` as before.
+- Every overlay panel (dialogs, pickers, the settings panel) now draws
+  its rounded corners with the SDF primitive used by the tab pills; the
+  previous CPU approximation left square notches at the corners.
+
 ### Added
 - `window.decorations = "notitle"` now actually works, as a Windows
   Terminal-style custom title bar: the window is borderless and the tab
