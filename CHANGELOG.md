@@ -7,12 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `window.decorations = "notitle"` now actually works, as a Windows
+  Terminal-style custom title bar: the window is borderless and the tab
+  bar doubles as the title bar — minimize / maximize (restore) / close
+  buttons at the right edge (hover fill; close uses the error colour),
+  double-click on blank chrome toggles maximize, the window outline
+  resizes with directional cursors, and right-clicking the tab bar opens
+  the native system menu (Windows). Previously `"notitle"` parsed but
+  behaved exactly like `"full"`. The default stays `"full"`; secondary
+  OS windows keep native decorations. The three buttons are exposed to
+  screen readers as AccessKit `Button` nodes.
+
 ### Fixed
 - Terminal text no longer bleeds through the settings panel, command
   palette, host manager, and every other floating overlay. The main render
   pass previously drew all background quads and then all glyphs in one go,
   so grid glyphs painted over overlay backgrounds; the frame is now drawn
   in two layers (grid, then overlays), each background-before-text.
+- Quake mode no longer resurrects the native title bar for
+  `decorations = "none"` / `"notitle"` users: the saved normal-mode state
+  hard-coded `decorations: true` instead of capturing the actual state.
+- The IME candidate window now accounts for the tab bar height and the
+  window padding; it used to float one tab-bar height above the cursor.
+- The generated config template suggested `decorations = "default"`,
+  which is not a valid value (now `"full"`, with the choices listed).
 
 ## [1.15.0] - 2026-07-29
 

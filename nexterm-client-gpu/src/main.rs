@@ -11,6 +11,7 @@
 // Sprint 5-11-1 / H1 PoC: scaffolding for screen-reader support (accesskit node tree).
 mod accessibility;
 mod animations;
+mod chrome_resize;
 mod color_util;
 mod command_blocks;
 mod connection;

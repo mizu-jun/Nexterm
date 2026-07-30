@@ -22,7 +22,9 @@
 //! - Phase 5-11-4: OSC 133-linked review mode
 //! - Phase 5-11-5: settings UI + i18n + documentation
 
-use accesskit::{Live, Node, NodeId, Role, TextPosition, TextSelection, Tree, TreeId, TreeUpdate};
+use accesskit::{
+    Action, Live, Node, NodeId, Role, TextPosition, TextSelection, Tree, TreeId, TreeUpdate,
+};
 
 use crate::host_manager::HostManager;
 use crate::macro_picker::MacroPicker;
@@ -209,6 +211,17 @@ pub const SETTINGS_KEY_DELETE_CONFIRM_BTN_ID: NodeId = NodeId(55);
 
 /// Phase 5-11-9 Sub-phase E - "Cancel" button in the Keybindings delete dialog.
 pub const SETTINGS_KEY_DELETE_CANCEL_BTN_ID: NodeId = NodeId(56);
+
+// ===== Custom title bar window buttons (`window.decorations = "notitle"`) =====
+
+/// Tab bar: minimize window button.
+pub const WINDOW_MINIMIZE_BTN_ID: NodeId = NodeId(57);
+
+/// Tab bar: maximize / restore window button.
+pub const WINDOW_MAXIMIZE_BTN_ID: NodeId = NodeId(58);
+
+/// Tab bar: close window button.
+pub const WINDOW_CLOSE_BTN_ID: NodeId = NodeId(59);
 
 // 57..99 reserved for future fields.
 
@@ -601,6 +614,12 @@ pub enum NodeIdKind {
     SettingsTabList,
     /// Settings panel: a category tab (`idx` in `SettingsCategory::ALL`).
     SettingsTab { idx: usize },
+    /// Custom title bar: minimize window button.
+    WindowMinimizeButton,
+    /// Custom title bar: maximize / restore window button.
+    WindowMaximizeButton,
+    /// Custom title bar: close window button.
+    WindowCloseButton,
     /// Settings panel: content container for the current category.
     SettingsContent,
     /// Settings panel: font family input field.
@@ -699,7 +718,8 @@ pub enum NodeIdKind {
 /// | 40..44 | settings fields Phase 5-11-8 Step 8-2 (SshFieldName / Host / Port / Username / AuthType) |
 /// | 45..49 | settings fields Phase 5-11-8 Step 8-3 (SshAddBtn / SshDeleteBtn / SshDeleteDialog / SshDeleteConfirmBtn / SshDeleteCancelBtn) |
 /// | 50..56 | settings fields Phase 5-11-9 Sub-phase E (KeyFieldKey / KeyFieldAction / KeyAddBtn / KeyDeleteBtn / KeyDeleteDialog / KeyDeleteConfirmBtn / KeyDeleteCancelBtn) |
-/// | 57..99 | reserved |
+/// | 57..59 | custom title bar window buttons (Minimize / Maximize / Close) |
+/// | 60..99 | `SettingsTab { idx: id - 60 }` (also listed above) |
 /// | 100M..200M | `PaletteItem { idx: id - 100M }` |
 /// | 200M..300M | `HostItem { idx: id - 200M }` |
 /// | 300M..400M | `MacroItem { idx: id - 300M }` |
@@ -772,6 +792,10 @@ pub fn decode_node_id(id: NodeId) -> NodeIdKind {
         54 => NodeIdKind::SettingsKeyDeleteDialog,
         55 => NodeIdKind::SettingsKeyDeleteConfirmBtn,
         56 => NodeIdKind::SettingsKeyDeleteCancelBtn,
+        // Custom title bar window buttons.
+        57 => NodeIdKind::WindowMinimizeButton,
+        58 => NodeIdKind::WindowMaximizeButton,
+        59 => NodeIdKind::WindowCloseButton,
         _ => decode_dynamic(raw),
     }
 }
@@ -1023,8 +1047,36 @@ fn build_base_nodes(state: &ClientState) -> (Vec<(NodeId, Node)>, Vec<NodeId>, N
     // ===== TAB_BAR node =====
     let mut tab_bar = Node::new(Role::TabList);
     tab_bar.set_label("Terminal tabs");
-    let tab_child_ids: Vec<NodeId> = tab_order.iter().copied().map(tab_node_id).collect();
+    let mut tab_child_ids: Vec<NodeId> = tab_order.iter().copied().map(tab_node_id).collect();
+    // Custom title bar: expose the window buttons after the tabs. The hit
+    // rects double as the "buttons are visible this frame" signal, so the
+    // a11y tree needs no separate config plumbing.
+    let window_buttons_visible = state.window_close_hit_rect.is_some();
+    if window_buttons_visible {
+        tab_child_ids.extend([
+            WINDOW_MINIMIZE_BTN_ID,
+            WINDOW_MAXIMIZE_BTN_ID,
+            WINDOW_CLOSE_BTN_ID,
+        ]);
+    }
     tab_bar.set_children(tab_child_ids);
+
+    // ===== Window button nodes (custom title bar) =====
+    let mut window_button_nodes: Vec<(NodeId, Node)> = Vec::new();
+    if window_buttons_visible {
+        // Labels stay English like every other node in this tree
+        // (localizing the a11y tree is tracked as a separate task).
+        for (id, label) in [
+            (WINDOW_MINIMIZE_BTN_ID, "Minimize window"),
+            (WINDOW_MAXIMIZE_BTN_ID, "Maximize or restore window"),
+            (WINDOW_CLOSE_BTN_ID, "Close window"),
+        ] {
+            let mut btn = Node::new(Role::Button);
+            btn.set_label(label);
+            btn.add_action(Action::Click);
+            window_button_nodes.push((id, btn));
+        }
+    }
 
     // ===== Per-tab nodes =====
     let mut tab_nodes: Vec<(NodeId, Node)> = Vec::with_capacity(tab_order.len());
@@ -1189,6 +1241,7 @@ fn build_base_nodes(state: &ClientState) -> (Vec<(NodeId, Node)>, Vec<NodeId>, N
     nodes.push((TAB_BAR_ID, tab_bar));
     nodes.push((PANE_AREA_ID, pane_area));
     nodes.extend(tab_nodes);
+    nodes.extend(window_button_nodes);
     nodes.extend(pane_nodes);
     nodes.push((PANE_INPUT_BUFFER_ID, input_buffer));
 
@@ -3569,13 +3622,12 @@ mod tests {
         // 50..=56 are Phase 5-11-9 Sub-phase E Keybindings fields + Add/Delete + dialog.
         // 60..=99 are SettingsTab (Phase 2c-G moved the base from 18 to 60 to make
         // room for an 8th category without colliding with SETTINGS_CONTENT_ID = 25).
-        // 18..=24, 28..=29, 57..=59 are now unused / reserved for future use.
+        // 57..=59 are the custom title bar window buttons.
+        // 18..=24, 28..=29 are now unused / reserved for future use.
         assert_eq!(decode_node_id(NodeId(18)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(24)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(28)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(29)), NodeIdKind::Unknown);
-        assert_eq!(decode_node_id(NodeId(57)), NodeIdKind::Unknown);
-        assert_eq!(decode_node_id(NodeId(59)), NodeIdKind::Unknown);
         // 700M..899M is reserved for future SettingsField dynamic expansion
         // (600M..700M was assigned to SettingsProfileItem in Phase 5-11-7;
         //  900M..1G is SettingsKeyBindingItem in Phase 5-11-9 Sub-phase E).
@@ -5997,9 +6049,19 @@ mod tests {
             decode_node_id(SETTINGS_SSH_DELETE_CANCEL_BTN_ID),
             NodeIdKind::SettingsSshDeleteCancelBtn
         );
-        // NodeId(57) is reserved (50..=56 are now assigned to the Keybindings panel
-        // in Phase 5-11-9 Sub-phase E).
-        assert_eq!(decode_node_id(NodeId(57)), NodeIdKind::Unknown);
+        // NodeId(57..=59) belong to the custom title bar window buttons.
+        assert_eq!(
+            decode_node_id(WINDOW_MINIMIZE_BTN_ID),
+            NodeIdKind::WindowMinimizeButton
+        );
+        assert_eq!(
+            decode_node_id(WINDOW_MAXIMIZE_BTN_ID),
+            NodeIdKind::WindowMaximizeButton
+        );
+        assert_eq!(
+            decode_node_id(WINDOW_CLOSE_BTN_ID),
+            NodeIdKind::WindowCloseButton
+        );
     }
 
     /// build_tree exposes the 5 fields of the selected host.

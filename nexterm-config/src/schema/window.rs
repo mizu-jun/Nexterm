@@ -11,8 +11,60 @@ pub enum WindowDecorations {
     Full,
     /// No title bar and no borders (borderless).
     None,
-    /// Hide only the title bar.
+    /// Borderless, with the tab bar acting as the title bar (window
+    /// buttons, drag-to-move, double-click maximize, edge resize).
+    /// winit's decoration toggle is all-or-nothing, so "keep the borders
+    /// but drop the title bar" is not expressible; this mode instead
+    /// replaces the native chrome entirely, Windows Terminal-style.
     NoTitle,
+}
+
+impl WindowDecorations {
+    /// Whether the OS draws its native chrome (title bar + borders).
+    /// `None` and `NoTitle` are both borderless; only `Full` keeps the
+    /// native decorations.
+    pub fn wants_os_chrome(&self) -> bool {
+        matches!(self, WindowDecorations::Full)
+    }
+
+    /// Whether the tab bar must double as the window title bar (window
+    /// buttons + maximize/resize affordances). Only `NoTitle`.
+    pub fn wants_custom_titlebar(&self) -> bool {
+        matches!(self, WindowDecorations::NoTitle)
+    }
+}
+
+#[cfg(test)]
+mod window_decorations_tests {
+    use super::*;
+
+    #[test]
+    fn only_full_wants_os_chrome() {
+        assert!(WindowDecorations::Full.wants_os_chrome());
+        assert!(!WindowDecorations::None.wants_os_chrome());
+        assert!(!WindowDecorations::NoTitle.wants_os_chrome());
+    }
+
+    #[test]
+    fn only_notitle_wants_custom_titlebar() {
+        assert!(!WindowDecorations::Full.wants_custom_titlebar());
+        assert!(!WindowDecorations::None.wants_custom_titlebar());
+        assert!(WindowDecorations::NoTitle.wants_custom_titlebar());
+    }
+
+    #[test]
+    fn toml_keys_parse_to_the_matching_variant() {
+        for (key, variant) in [
+            ("full", WindowDecorations::Full),
+            ("none", WindowDecorations::None),
+            ("notitle", WindowDecorations::NoTitle),
+        ] {
+            let toml_str = format!("[window]\ndecorations = \"{key}\"\n");
+            let parsed: super::super::Config =
+                toml::from_str(&toml_str).expect("parse decorations key");
+            assert_eq!(parsed.window.decorations, variant);
+        }
+    }
 }
 
 /// Background-image fit mode (Sprint 5-7 / Phase 3-1).

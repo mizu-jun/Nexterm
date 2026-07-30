@@ -171,6 +171,10 @@ impl WgpuState {
         _animations_cfg: &nexterm_config::AnimationsConfig,
         ui_cfg: &nexterm_config::UiConfig,
         tokens: &nexterm_config::DesignTokens,
+        // Custom title bar (`window.decorations = "notitle"`): draw the
+        // minimize / maximize / close buttons at the right edge.
+        custom_titlebar: bool,
+        is_maximized: bool,
         sw: f32,
         sh: f32,
         cell_w: f32,
@@ -227,6 +231,16 @@ impl WgpuState {
         let padding = cell_w;
         let sep = cfg.separator.clone();
 
+        // Custom title bar: the window buttons occupy the true right edge
+        // (outside the Settings pill, where every native title bar puts
+        // them), so reserve their width before anything else. Widths are
+        // `cell_w`-relative, which keeps them DPI-scaled for free.
+        let window_button_w = 4.0 * cell_w;
+        let window_buttons_w = if custom_titlebar {
+            3.0 * window_button_w
+        } else {
+            0.0
+        };
         // Reserve the right-edge settings-button width first (fixed width to avoid emoji width drift)
         let settings_label = " * Settings ";
         let settings_w = 12.0 * cell_w;
@@ -242,7 +256,7 @@ impl WgpuState {
         } else {
             0.0
         };
-        let tab_area_w = sw - settings_w - new_tab_w - dropdown_w;
+        let tab_area_w = sw - window_buttons_w - settings_w - new_tab_w - dropdown_w;
 
         // Sprint 5-7 / Phase 2-3: tab display order follows `ClientState.tab_order`
         // (the logical tab order produced by the server from `Window.pane_order`).
@@ -613,7 +627,7 @@ impl WgpuState {
         // every frame; `event_handler/mouse.rs` consumes it and dispatches a
         // `NewPane` IPC on left-click.
         if cfg.show_new_tab_button && new_tab_w > 0.0 {
-            let new_tab_x = sw - settings_w - dropdown_w - new_tab_w;
+            let new_tab_x = sw - window_buttons_w - settings_w - dropdown_w - new_tab_w;
             let new_tab_bg = [
                 inactive_bg[0] + 0.04,
                 inactive_bg[1] + 0.04,
@@ -657,7 +671,7 @@ impl WgpuState {
             // P1 (WT-like UX): `▾` profile-dropdown pill right of `+`.
             // Clicking it opens `ContextMenu::new_tab_dropdown` (profiles +
             // WSL distros); the hit rect is consumed by `mouse.rs`.
-            let dropdown_x = sw - settings_w - dropdown_w;
+            let dropdown_x = sw - window_buttons_w - settings_w - dropdown_w;
             add_px_rounded_rect_sdf(
                 dropdown_x,
                 bar_y,
@@ -691,8 +705,9 @@ impl WgpuState {
             state.new_tab_dropdown_hit_rect = Some((dropdown_x, dropdown_x + dropdown_w));
         }
 
-        // Right edge: settings button
-        let settings_x = sw - settings_w;
+        // Right edge: settings button (left of the window buttons when the
+        // custom title bar is active).
+        let settings_x = sw - window_buttons_w - settings_w;
         let settings_open = state.settings_panel.is_open;
         let settings_bg = if settings_open {
             active_bg
@@ -739,7 +754,81 @@ impl WgpuState {
             text_idx,
         );
         // Record the click rectangle of the settings button.
-        state.settings_tab_rect = Some((settings_x, sw));
+        state.settings_tab_rect = Some((settings_x, settings_x + settings_w));
+
+        // Custom title bar: minimize / maximize / close buttons at the far
+        // right. They sit flat on the bar (no permanent fill); the hovered
+        // button gets a fill — the close button the semantic error colour,
+        // Windows Terminal-style. Hit rects are re-registered every frame
+        // like every other tab-bar control.
+        state.window_minimize_hit_rect = None;
+        state.window_maximize_hit_rect = None;
+        state.window_close_hit_rect = None;
+        if custom_titlebar {
+            use crate::state::WindowButton;
+            let radius = ui_cfg.chrome_radius().min(bar_h * 0.5);
+            let buttons = [
+                (WindowButton::Minimize, "─"),
+                (WindowButton::Maximize, if is_maximized { "❐" } else { "□" }),
+                (WindowButton::Close, "×"),
+            ];
+            for (i, &(button, glyph)) in buttons.iter().enumerate() {
+                let bx = sw - (3 - i) as f32 * window_button_w;
+                let hovered = state.hovered_window_button == Some(button);
+                if hovered {
+                    let bg = if button == WindowButton::Close {
+                        tokens.semantic_error
+                    } else {
+                        [
+                            (inactive_bg[0] + 0.08).min(1.0),
+                            (inactive_bg[1] + 0.08).min(1.0),
+                            (inactive_bg[2] + 0.10).min(1.0),
+                            1.0,
+                        ]
+                    };
+                    add_px_rounded_rect_sdf(
+                        bx,
+                        bar_y,
+                        window_button_w,
+                        bar_h,
+                        radius,
+                        bg,
+                        sw,
+                        sh,
+                        bg_verts,
+                        bg_idx,
+                    );
+                }
+                let fg = if hovered {
+                    tokens.text_primary
+                } else {
+                    tokens.text_secondary
+                };
+                let glyph_x =
+                    bx + (window_button_w - glyph.chars().count() as f32 * cell_w).max(0.0) * 0.5;
+                add_string_verts(
+                    glyph,
+                    glyph_x,
+                    text_y,
+                    fg,
+                    true,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
+                );
+                let rect = Some((bx, bx + window_button_w));
+                match button {
+                    WindowButton::Minimize => state.window_minimize_hit_rect = rect,
+                    WindowButton::Maximize => state.window_maximize_hit_rect = rect,
+                    WindowButton::Close => state.window_close_hit_rect = rect,
+                }
+            }
+        }
 
         // When renaming a tab, display an inline edit field at the tab's position.
         if let Some(rename_id) = state.settings_panel.tab_rename_editing

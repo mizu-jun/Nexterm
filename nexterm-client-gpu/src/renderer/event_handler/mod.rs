@@ -66,6 +66,10 @@ pub enum UserEvent {
     /// only" action.
     #[allow(dead_code)]
     CloseOsWindow { window_id: WindowId },
+    /// Custom title bar close button: route through the same path as the
+    /// native close button (`WindowEvent::CloseRequested`), so
+    /// `window.close_action` (prompt / detach / quit) is honoured.
+    RequestClose { window_id: WindowId },
     /// Sprint 5-11-1 / H1 PoC: event from the AccessKit platform adapter.
     ///
     /// Delivered when a screen reader connects (`InitialTreeRequested`), when
@@ -118,6 +122,9 @@ pub struct EventHandler {
     pub(super) _shader_watcher: Option<notify::RecommendedWatcher>,
     /// Tab double-click detection (last click time and pane ID).
     pub(super) last_tab_click: Option<(Instant, u32)>,
+    /// Double-click detection on the tab bar's blank area (custom title
+    /// bar: toggles maximize, like a native title bar).
+    pub(super) last_chrome_click: Option<Instant>,
     /// Shutdown channel for the embedded server thread (Sprint 5-13 / v1.7.7).
     ///
     /// Send `()` to ask the server task to stop cleanly. Replaces the previous
@@ -289,11 +296,16 @@ impl EventHandler {
         pos: Option<PhysicalPosition<i32>>,
         server_window_id: u32,
     ) -> Option<WindowId> {
-        use nexterm_config::WindowDecorations;
-
         let win_cfg = &self.app.config.window;
         let transparent = win_cfg.background_opacity < 1.0;
-        let decorations = !matches!(win_cfg.decorations, WindowDecorations::None);
+        // Secondary OS windows never get the custom title bar: the mouse
+        // handlers only act on the primary window, so a `notitle` secondary
+        // window would have no working buttons, drag, or resize. `NoTitle`
+        // therefore falls back to native decorations here; only an explicit
+        // `none` stays borderless (its drag_window fallback is primary-only
+        // too, but that is pre-existing behaviour).
+        let decorations =
+            win_cfg.decorations.wants_os_chrome() || win_cfg.decorations.wants_custom_titlebar();
 
         // Sprint 5-11-2 Step 2-3: the AccessKit Adapter must be created **before** the window is made visible.
         // Same `with_visible(false)` → Adapter init → `set_visible(true)` sequence as `on_resumed`.
@@ -451,6 +463,9 @@ impl ApplicationHandler<UserEvent> for EventHandler {
             }
             UserEvent::CloseOsWindow { window_id } => {
                 self.close_os_window(event_loop, window_id);
+            }
+            UserEvent::RequestClose { window_id } => {
+                self.on_close_requested(event_loop, window_id);
             }
             // Sprint 5-11-1 / H1 PoC: AccessKit event.
             // Sprint 5-11-2 Step 2-4: pass event_loop along to dispatch ActionRequested.

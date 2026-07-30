@@ -414,11 +414,22 @@ impl EventHandler {
             }
         }
         // Update the IME cursor area to follow the focused pane's cursor.
+        // The grid origin is offset by the tab bar and the window padding
+        // (same formula as `grid_offset_x/y` in `render_frame.rs`); without
+        // the offset the IME candidate window floats one tab-bar height
+        // above the actual cursor row.
         if let Some(pane) = self.app.state.focused_pane() {
             let cell_w = self.app.font.cell_width();
             let cell_h = self.app.font.cell_height();
-            let ime_x = pane.cursor_col as f32 * cell_w;
-            let ime_y = (pane.cursor_row + 1) as f32 * cell_h;
+            let tab_bar_h = if self.app.config.tab_bar.enabled {
+                self.app.config.tab_bar.height as f32
+            } else {
+                0.0
+            };
+            let pad_x = self.app.config.window.padding_x as f32;
+            let pad_y = self.app.config.window.padding_y as f32;
+            let ime_x = pad_x + pane.cursor_col as f32 * cell_w;
+            let ime_y = tab_bar_h + pad_y + (pane.cursor_row + 1) as f32 * cell_h;
             if let Some(w) = &self.window {
                 w.set_ime_cursor_area(
                     winit::dpi::PhysicalPosition::new(ime_x as i32, ime_y as i32),
@@ -538,6 +549,10 @@ impl EventHandler {
         } else {
             configured_scheme
         };
+        // The tab bar's window buttons swap the maximize glyph for the
+        // restore glyph while maximized; WgpuState does not hold the winit
+        // window, so sample the state here.
+        let is_maximized = self.window.as_ref().is_some_and(|w| w.is_maximized());
         if let (Some(wgpu), Some(atlas)) = (&mut self.wgpu_state, &mut self.atlas)
             && let Err(e) = wgpu.render(
                 &mut self.app.state,
@@ -551,6 +566,7 @@ impl EventHandler {
                 self.app.config.window.padding_x as f32,
                 self.app.config.window.padding_y as f32,
                 &self.app.config,
+                is_maximized,
             )
         {
             warn!("Render error: {}", e);

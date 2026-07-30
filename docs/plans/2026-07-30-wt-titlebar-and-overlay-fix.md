@@ -41,21 +41,28 @@ title bar". Add `wants_os_chrome()` / `wants_custom_titlebar()` to
 (`lifecycle.rs`, `event_handler/mod.rs` spawn + hot-reload). Secondary OS
 windows keep native decorations (mouse handling is not window-id aware).
 
-- [ ] `WindowDecorations` helper methods + exhaustive tests
-- [ ] Window buttons `─` / `□`(`❐` when maximized) / `×` in
-      `build_tab_bar_verts` (SDF pill pattern, `cell_w`-relative widths),
-      hit rects in `ClientState`, dispatch in `mouse.rs`
-- [ ] Double-click on tab-bar blank space toggles maximize
+- [x] `WindowDecorations` helper methods + exhaustive tests
+- [x] Window buttons `─` / `□`(`❐` when maximized) / `×` in
+      `build_tab_bar_verts` (flat, hover-filled via SDF pill; widths are
+      `cell_w`-relative), hit rects in `ClientState`, dispatch in `mouse.rs`
+- [x] Double-click on tab-bar blank space toggles maximize
       (`last_chrome_click`, disabled while Quake is visible)
-- [ ] Edge resize: `chrome_resize.rs` (`ResizeEdge` + `resize_edge_at`,
-      pure + tested) → cursor shape + `drag_resize_window()`
-- [ ] Right-click on blank chrome: `show_window_menu()` (`#[cfg(windows)]`)
-- [ ] Maximized: +8 px padding compensation (borderless overhang)
-- [ ] Fix `quake.rs` hard-coded `decorations: true` (existing bug)
-- [ ] Fix IME candidate position missing `grid_offset` (existing bug)
-- [ ] Fix `loader.rs` template comment `decorations = "default"` → `"full"`
-- [ ] AccessKit `Role::Button` nodes for the three buttons
-- [ ] i18n: `titlebar-button-{minimize,maximize,restore,close}` ×8 locales
+- [x] Edge resize: `chrome_resize.rs` (pure `resize_edge_at` +
+      `resize_cursor`, unit-tested) → cursor shape + `drag_resize_window()`
+- [x] Right-click on the tab bar: `show_window_menu()` (`#[cfg(windows)]`)
+- [x] Fix `quake.rs` hard-coded `decorations: true` (existing bug; now
+      captures `window.is_decorated()`)
+- [x] Fix IME candidate position missing `grid_offset` (existing bug)
+- [x] Fix `loader.rs` template comment `decorations = "default"` → `"full"`
+- [x] AccessKit `Role::Button` nodes for the three buttons (labels stay
+      English like the rest of the tree; localizing the a11y tree is a
+      separate task — the planned i18n keys were dropped with it)
+- [~] Maximized overhang compensation: intentionally NOT implemented.
+      winit 0.30.13 does not clamp undecorated maximize
+      (WM_GETMINMAXINFO only honours user min/max sizes), but whether the
+      DWM overhang actually clips the grid is only observable on real
+      Windows. Verify during manual QA; add the padding compensation as a
+      follow-up if the edges clip.
 
 ### PR3 — Custom title bar, phase 2 (non-Windows menu; Linux-verified)
 

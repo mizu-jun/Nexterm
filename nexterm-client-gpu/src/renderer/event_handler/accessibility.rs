@@ -197,6 +197,30 @@ impl EventHandler {
                 self.request_redraw_if_window();
             }
 
+            // ===== Custom title bar window buttons =====
+            (Action::Click, NodeIdKind::WindowMinimizeButton) => {
+                info!("AccessKit: minimize window button clicked");
+                if let Some(w) = &self.window {
+                    w.set_minimized(true);
+                }
+            }
+            (Action::Click, NodeIdKind::WindowMaximizeButton) => {
+                info!("AccessKit: maximize/restore window button clicked");
+                if !self.quake.visible
+                    && let Some(w) = &self.window
+                {
+                    w.set_maximized(!w.is_maximized());
+                    self.request_redraw_if_window();
+                }
+            }
+            (Action::Click, NodeIdKind::WindowCloseButton) => {
+                info!("AccessKit: close window button clicked");
+                if let Some(wid) = self.window.as_ref().map(|w| w.id()) {
+                    // Same path as the native close button (close_action applies).
+                    self.on_close_requested(event_loop, wid);
+                }
+            }
+
             // ===== Close-confirmation dialog =====
             (Action::Click | Action::Focus, NodeIdKind::CloseDialogKill) => {
                 info!("AccessKit: CloseDialog Kill button confirmed");
