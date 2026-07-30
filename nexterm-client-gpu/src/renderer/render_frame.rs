@@ -1197,6 +1197,10 @@ impl WgpuState {
         // so this is an independent pass.
         {
             let clear_bg = scheme_palette.as_ref().map(|p| p.bg).unwrap_or([0, 0, 0]);
+            // Reflect the `background_opacity` setting in alpha (transparent
+            // terminal support). The surface is PreMultiplied, so RGB must be
+            // scaled by the same alpha.
+            let clear_a = background_opacity as f64;
             let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("clear_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1204,11 +1208,10 @@ impl WgpuState {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: clear_bg[0] as f64 / 255.0,
-                            g: clear_bg[1] as f64 / 255.0,
-                            b: clear_bg[2] as f64 / 255.0,
-                            // Reflect the `background_opacity` setting in alpha (transparent terminal support)
-                            a: background_opacity as f64,
+                            r: clear_bg[0] as f64 / 255.0 * clear_a,
+                            g: clear_bg[1] as f64 / 255.0 * clear_a,
+                            b: clear_bg[2] as f64 / 255.0 * clear_a,
+                            a: clear_a,
                         }),
                         store: wgpu::StoreOp::Store,
                     },

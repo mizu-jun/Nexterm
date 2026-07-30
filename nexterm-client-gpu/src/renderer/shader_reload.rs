@@ -88,7 +88,18 @@ impl WgpuState {
                     buffers: &[wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<BgVertex>() as u64,
                         step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4],
+                        // Must mirror the 5-attribute layout in `wgpu_init.rs`
+                        // (position + color + SDF rect_center / rect_half_size /
+                        // corner_radius); the built-in shader consumes all five,
+                        // so the previous 2-attribute layout failed pipeline
+                        // validation on reload.
+                        attributes: &wgpu::vertex_attr_array![
+                            0 => Float32x2,
+                            1 => Float32x4,
+                            2 => Float32x2,
+                            3 => Float32x2,
+                            4 => Float32,
+                        ],
                     }],
                     compilation_options: Default::default(),
                 },
@@ -97,8 +108,8 @@ impl WgpuState {
                     entry_point: "fs_main",
                     targets: &[Some(wgpu::ColorTargetState {
                         format,
-                        // Enable alpha blending (the image overlay pipeline does the same)
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        // Premultiplied-alpha contract (UI/UX v3 P0) — matches `wgpu_init.rs`.
+                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                     compilation_options: Default::default(),
@@ -145,7 +156,7 @@ impl WgpuState {
                 entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: Default::default(),

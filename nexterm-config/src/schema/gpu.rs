@@ -110,7 +110,13 @@ pub struct GpuConfig {
     /// built-in shader when omitted).
     ///
     /// The shader must implement `@vertex fn vs_main` / `@fragment fn fs_main`.
-    /// Vertex input: `position: vec2<f32>`, `color: vec4<f32>`.
+    /// Vertex input (5 attributes): `position: vec2<f32>`, `color: vec4<f32>`,
+    /// `rect_center: vec2<f32>`, `rect_half_size: vec2<f32>`,
+    /// `corner_radius: f32`.
+    ///
+    /// **Breaking change (UI/UX v3 P0)**: the fragment output must be
+    /// premultiplied alpha (`rgb * a`) — pipelines blend with
+    /// `PREMULTIPLIED_ALPHA_BLENDING` against a `PreMultiplied` surface.
     ///
     /// Example: `custom_bg_shader = "~/.config/nexterm/shaders/crt.wgsl"`.
     #[serde(default)]
@@ -121,6 +127,9 @@ pub struct GpuConfig {
     /// Vertex input: `position: vec2<f32>`, `uv: vec2<f32>`, `color: vec4<f32>`.
     /// Bindings: `@group(0) @binding(0)` is `glyph_texture`,
     /// `@binding(1)` is `glyph_sampler`.
+    ///
+    /// **Breaking change (UI/UX v3 P0)**: the fragment output must be
+    /// premultiplied alpha (`rgb * a`), same as `custom_bg_shader`.
     #[serde(default)]
     pub custom_text_shader: Option<String>,
 
