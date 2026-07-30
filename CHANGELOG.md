@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   previous CPU approximation left square notches at the corners.
 
 ### Added
+- Custom title bar on Linux/macOS: right-clicking the tab bar with
+  `decorations = "notitle"` opens an in-app system menu (maximize or
+  restore / minimize / close — localized in all 8 languages) where
+  winit's native `show_window_menu` is Windows-only. "Close" honours
+  `window.close_action`. `drag_window` / `drag_resize_window` failures
+  (some Wayland compositors) are now logged instead of silently ignored.
 - `window.decorations = "notitle"` now actually works, as a Windows
   Terminal-style custom title bar: the window is borderless and the tab
   bar doubles as the title bar — minimize / maximize (restore) / close

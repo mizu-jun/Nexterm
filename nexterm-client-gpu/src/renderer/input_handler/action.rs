@@ -386,6 +386,32 @@ impl EventHandler {
                     }
                 }
             }
+            // ---- Custom title bar system menu (non-Windows fallback) ----
+            ContextMenuAction::MinimizeWindow => {
+                if let Some(w) = &self.window {
+                    w.set_minimized(true);
+                }
+            }
+            ContextMenuAction::ToggleMaximizeWindow => {
+                // Same guard as the tab-bar maximize button: don't fight
+                // Quake mode's manual window geometry.
+                if !self.quake.visible
+                    && let Some(w) = &self.window
+                {
+                    w.set_maximized(!w.is_maximized());
+                    w.request_redraw();
+                }
+            }
+            ContextMenuAction::RequestCloseWindow => {
+                // Native-close path, so `window.close_action` applies.
+                if let Some(w) = &self.window
+                    && let Err(e) = self
+                        .proxy
+                        .send_event(crate::renderer::UserEvent::RequestClose { window_id: w.id() })
+                {
+                    tracing::warn!("failed to send RequestClose UserEvent: {}", e);
+                }
+            }
             // ---- Phase 2c follow-up: block-aware context-menu entries ----
             ContextMenuAction::CopyBlock { block_id } => {
                 if let Some(text) = self.app.state.block_text_by_id(*block_id)

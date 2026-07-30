@@ -33,6 +33,15 @@ pub enum ContextMenuAction {
     DetachToNewWindow,
     /// Close only the current OS Window (Sprint 5-8 Phase 4-5, CloseOsWindow path #1)
     CloseOsWindow,
+    // ---- Custom title bar system menu (non-Windows fallback) ----
+    /// Minimize the OS window.
+    MinimizeWindow,
+    /// Maximize the OS window, or restore it when already maximized.
+    ToggleMaximizeWindow,
+    /// Close the OS window through the native-close path, so
+    /// `window.close_action` (prompt / detach / quit) still applies —
+    /// unlike [`Self::CloseOsWindow`], which destroys the window directly.
+    RequestCloseWindow,
     // ---- Phase 2c-follow-up: command-block items (block-aware right-click) ----
     /// Copy the prompt + output of the right-clicked block to the clipboard.
     /// The `block_id` is the `BlockId` (u64) of the block under the cursor.
@@ -265,6 +274,39 @@ impl ContextMenu {
             "Ctrl+,",
             ContextMenuAction::OpenSettings,
         ));
+        Self {
+            x,
+            y,
+            items,
+            hovered: None,
+        }
+    }
+
+    /// System-menu replacement for the custom title bar on platforms where
+    /// winit's `show_window_menu` is unsupported (everything but Windows).
+    ///
+    /// Mirrors the native menu's core: maximize *or* restore (depending on
+    /// the current state), minimize, and close. "Move" / "Size" are
+    /// intentionally omitted — they would need a keyboard-driven move/resize
+    /// mode that is not worth the cost next to the drag/edge affordances.
+    pub fn new_window_system_menu(x: f32, y: f32, is_maximized: bool) -> Self {
+        let maximize_label = if is_maximized {
+            fl!("context-menu-window-restore")
+        } else {
+            fl!("context-menu-window-maximize")
+        };
+        let items = vec![
+            ContextMenuItem::new(maximize_label, ContextMenuAction::ToggleMaximizeWindow),
+            ContextMenuItem::new(
+                fl!("context-menu-window-minimize"),
+                ContextMenuAction::MinimizeWindow,
+            ),
+            ContextMenuItem::separator(),
+            ContextMenuItem::new(
+                fl!("context-menu-close-this-os-window"),
+                ContextMenuAction::RequestCloseWindow,
+            ),
+        ];
         Self {
             x,
             y,
@@ -621,6 +663,32 @@ mod tests {
             }
             other => panic!("expected SplitWithShell, got {:?}", other),
         }
+    }
+
+    // ---- ContextMenu::new_window_system_menu ----
+
+    #[test]
+    fn window_system_menu_toggles_between_maximize_and_restore() {
+        // Not maximized: maximize / minimize / separator / close.
+        let menu = ContextMenu::new_window_system_menu(10.0, 20.0, false);
+        assert_eq!(menu.items.len(), 4);
+        assert_eq!(
+            menu.items[0].action,
+            ContextMenuAction::ToggleMaximizeWindow
+        );
+        assert_eq!(menu.items[1].action, ContextMenuAction::MinimizeWindow);
+        assert_eq!(menu.items[2].action, ContextMenuAction::Separator);
+        assert_eq!(menu.items[3].action, ContextMenuAction::RequestCloseWindow);
+
+        // Maximized: same shape, but the first label switches to "restore"
+        // (same toggle action either way).
+        let maximized = ContextMenu::new_window_system_menu(0.0, 0.0, true);
+        assert_eq!(maximized.items.len(), 4);
+        assert_eq!(
+            maximized.items[0].action,
+            ContextMenuAction::ToggleMaximizeWindow
+        );
+        assert_ne!(menu.items[0].label, maximized.items[0].label);
     }
 
     // ---- ContextMenu::new_tab_dropdown ----
