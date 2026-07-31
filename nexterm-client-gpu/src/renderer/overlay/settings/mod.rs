@@ -95,17 +95,13 @@ impl WgpuState {
         // Open/close animation: smoothly via ease-out cubic
         let eased = sp.eased_progress();
 
-        // Known issue (Phase B3): with `window.background_opacity < 1.0`
-        // the surface is composited with `CompositeAlphaMode::PreMultiplied`
-        // (see `renderer/wgpu_init.rs`) while every pipeline blends with
-        // straight-alpha `wgpu::BlendState::ALPHA_BLENDING`. That mismatch
-        // only distorts pixels whose *final* alpha is < 1.0 — fully opaque
-        // draws (alpha = 1.0) are unaffected regardless of the mismatch.
-        // The mitigation below is therefore to keep the settings panel's
+        // Note: the historical straight-alpha vs `PreMultiplied`-surface
+        // mismatch (issue #35, "Phase B3 known issue") was fixed in UI/UX v3
+        // P0 — shaders now emit premultiplied alpha and every pipeline blends
+        // with `PREMULTIPLIED_ALPHA_BLENDING`. Keeping the settings panel's
         // own surfaces (scrim once visible, panel/sidebar/title/bottom-bar
-        // backgrounds) fully opaque while the panel is open, rather than
-        // to fix the blend-mode mismatch itself — that is a separate,
-        // pipeline-wide fix (tracked as follow-up work, out of scope here).
+        // backgrounds) fully opaque remains a deliberate readability choice
+        // on translucent terminals, no longer a blending workaround.
         //
         // Full-screen scrim behind the panel, so translucent terminal
         // backgrounds (`window.background_opacity < 1.0`, Acrylic) don't
@@ -673,8 +669,8 @@ impl WgpuState {
         // `slide_offset` (position) above — there used to also be a
         // translucent "fade-in" wash drawn over the entire panel here,
         // which made the panel (and any text already drawn on it) read as
-        // half-transparent for most of the open animation, on top of the
-        // PreMultiplied-vs-straight-alpha blending issue described above.
+        // half-transparent for most of the open animation (worsened, at the
+        // time, by the since-fixed blending mismatch noted above).
         // The panel/sidebar/title/bottom-bar backgrounds are already drawn
         // fully opaque regardless of `eased`, so removing the fade wash is
         // enough to keep the panel opaque and legible throughout the

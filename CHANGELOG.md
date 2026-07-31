@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- GPU compositing contract (UI/UX v3 P0): every built-in shader now outputs
+  premultiplied alpha and every pipeline blends with
+  `PREMULTIPLIED_ALPHA_BLENDING`, matching the surface's
+  `CompositeAlphaMode::PreMultiplied`. **Breaking for `[gpu]
+  custom_bg_shader` / `custom_text_shader`**: custom shaders must premultiply
+  their fragment output (`rgb * a`). (#35)
+
+### Fixed
+- Translucent windows (`window.background_opacity < 1.0`) no longer look
+  washed out: the clear color and all blending honor the premultiplied
+  surface. (#35)
+- `window.background_image.opacity` had no effect — the image shader ignored
+  the per-vertex tint that carries it. It is now applied.
+- Shader hot reload rebuilt the background pipeline with the pre-v1.11
+  2-attribute vertex layout; reloading with the built-in (or any
+  5-attribute) shader would fail pipeline validation. The reload path now
+  mirrors the startup layout.
+
 ## [1.16.0] - 2026-07-31
 
 ### Changed
