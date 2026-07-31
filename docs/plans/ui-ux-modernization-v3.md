@@ -1,6 +1,7 @@
 # UI/UX Modernization v3 — Fluent Design Foundation
 
-Status: approved 2026-07-30. Target releases: v1.16–v1.21+.
+Status: approved 2026-07-30; last reconciled 2026-07-31 (v1.16.0 shipped
+#46–#50 in parallel). Target releases: v1.17–v1.21+.
 Execution order: P0 → P1 → P2 → {P3, P4, P5 parallelizable} → P6 → P7.
 Source: successor to `plans/archive/ui-ux-modernization-v2.md` and
 `plans/archive/2026-07-29-windows-terminal-like-ux.md`.
@@ -51,23 +52,32 @@ Linux / macOS / Windows** — something WT structurally cannot do.
   (settings panel only, `overlay/settings/row.rs:42`).
 - Windows backdrop: `DWMWA_SYSTEMBACKDROP_TYPE = 4` (Mica Alt), applied
   unconditionally (`platform.rs:12`, called from `lifecycle.rs:109`).
-- Shipped 2026-07-30 while this plan was in review (parallel plan
-  `plans/2026-07-30-wt-titlebar-and-overlay-fix.md`):
+- Shipped 2026-07-30/31 while this plan was in review (parallel plan
+  `plans/archive/2026-07-30-wt-titlebar-and-overlay-fix.md`), all released
+  as **v1.16.0 (2026-07-31)**:
   - Overlay draw order: the frame renders in two layers (grid, then
     overlays), so grid glyphs no longer bleed through panels (#44).
   - `decorations = "notitle"` implemented as a WT-style custom title bar:
     borderless window, tab bar doubling as the title bar, min/max/close
     buttons exposed to AccessKit, double-click maximize, native system
-    menu on Windows. Opt-in (default stays `"full"`); snap layouts are
-    **not** included; secondary windows keep native decorations (#46).
+    menu on Windows. Secondary windows keep native decorations (#46).
   - SDF rounded corners for every overlay panel and chrome corner radius
     default 6 → 10 px; the legacy three-rect helper was removed (#47).
+  - In-app system menu for the custom title bar on Linux/macOS (8-locale,
+    honours `window.close_action`); Wayland `drag_window` /
+    `drag_resize_window` failures are logged instead of swallowed (#48).
+  - Windows 11 snap layouts on the custom maximize button: the window proc
+    is subclassed to answer `WM_NCHITTEST` with `HTMAXBUTTON` — the P7
+    spike question, answered in production (#49).
+  - `window.decorations` now defaults to `"notitle"` on Windows/Linux;
+    macOS keeps `"full"` (winit cannot start an interactive resize
+    there) (#50).
 
 ## Identified gaps
 
 | ID  | Gap | Evidence | Impact |
 |-----|-----|----------|--------|
-| G1  | Pipelines blend straight alpha while the surface is `CompositeAlphaMode::PreMultiplied` (Issue #35) | `renderer/wgpu_init.rs:172,246,294`; comment at `overlay/settings/mod.rs:98-109` | ★★★ blocks all translucency work |
+| G1  | Pipelines blend straight alpha while the surface is `CompositeAlphaMode::PreMultiplied` (Issue #35) — **closed by #45 (2026-07-31)** | `renderer/wgpu_init.rs:172,246,294`; comment at `overlay/settings/mod.rs:98-109` | ★★★ blocks all translucency work |
 | G2  | Two rounded-rect systems; the legacy 3-rect one visibly breaks above 8 px radius — **closed by #47 (2026-07-30)** | `vertex_util.rs:302` vs `:144`; `overlay/util.rs:83-114` | ★★ |
 | G3  | Shadows are flat single-color offset quads; no softness, no elevation scale | `overlay/util.rs:82-94` | ★★★ |
 | G4  | Tokens cover color only; spacing/typography/motion/elevation are ad-hoc constants | `tokens.rs:27-81`; `row.rs:132-135` (`cell_w * 0.6` …) | ★★★ |
@@ -100,9 +110,9 @@ All values verified against Microsoft Learn (see References).
 
 Fixes G1 (Issue #35) and G2 before anything translucent is built on top.
 
-> **Status 2026-07-30:** the SDF-unification half (G2) shipped separately
-> in #47; the compositing contract (G1) is PR #45. The section below is
-> kept as originally scoped for the record.
+> **Status 2026-07-31: P0 is complete.** The SDF-unification half (G2)
+> shipped separately in #47; the compositing contract (G1) shipped in #45.
+> The section below is kept as originally scoped for the record.
 
 **Compositing contract** (the rule every later phase relies on): all fragment
 shaders output **premultiplied alpha**; all pipelines use
@@ -235,13 +245,17 @@ contextual UI; InfoBar = non-blocking status.
 Principle: Familiar (WT-style tabs-in-titlebar silhouette). High risk —
 gated behind a spike.
 
-> **Status 2026-07-30:** the base implementation shipped early as
-> `decorations = "notitle"` (#46): borderless + tab-bar-as-title-bar +
-> caption buttons, opt-in, default unchanged. Remaining P7 scope: the
-> Windows 11 snap-layouts spike below (unchanged — still the gate),
-> Fluent-spec caption-button states/metrics (32 px bar, 5 states),
-> macOS traffic-light coexistence, Linux CSD documentation, and the
-> decision whether `notitle` becomes the default.
+> **Status 2026-07-31: P7 has effectively shipped ahead of schedule**
+> (v1.16.0). #46 delivered the base `notitle` title bar; #48 the in-app
+> system menu for Linux/macOS; #49 answered the spike question in
+> production (WndProc subclassing + `WM_NCHITTEST`/`HTMAXBUTTON` snap
+> layouts coexist with winit's pump); #50 made `notitle` the
+> Windows/Linux default. The spike gate below is **closed**. Remaining
+> scope is absorbed into earlier phases: Fluent-spec caption-button
+> states/metrics (32 px bar, 5 states) → P1 widget layer + P3 state
+> motion; macOS traffic-light coexistence → revisit with P5; Linux CSD
+> limitations → the P1-adjacent CONFIGURATION.md inventory PR. The
+> section below is kept as originally scoped for the record.
 
 - **Spike first (go/no-go gate)**: winit 0.30 does not expose
   `WM_NCHITTEST`; snap layouts on Windows 11 require subclassing the window
@@ -282,8 +296,8 @@ gated behind a spike.
   against regression. The debt itself stays tracked in its own plan.
 - **macOS backdrop dependency**: adding `window-vibrancy`/objc2 needs a
   license + maintenance check and a flatpak sources regeneration.
-- **P7 WndProc subclassing**: unsafe, environment-sensitive; that is why it
-  is spike-gated and last.
+- **P7 WndProc subclassing**: unsafe, environment-sensitive; proven in
+  production by #49 (spike closed 2026-07-31).
 - **Vertex-identity regression tests** will legitimately change in P0/P1;
   update them deliberately, never delete them.
 - **Translation quality** beyond en/ja needs native review eventually
@@ -293,19 +307,20 @@ gated behind a spike.
 
 | Phase | Release |
 |---|---|
-| P0 | v1.16 |
-| P1 | v1.16–v1.17 |
-| P2 | v1.17–v1.18 |
-| P3 | v1.18 |
-| P4 | v1.18–v1.19 |
-| P5 | v1.19 |
-| P6 | v1.20 |
-| P7 | spike during v1.20, ship v1.21+ |
+| P0 | v1.17 (v1.16.0 shipped 2026-07-31 carrying #46–#50, before P0 merged) |
+| P1 | v1.17–v1.18 |
+| P2 | v1.18–v1.19 |
+| P3 | v1.19 |
+| P4 | v1.19–v1.20 |
+| P5 | v1.20 |
+| P6 | v1.21 |
+| P7 | mostly shipped in v1.16.0 (#46/#48/#49/#50); remainder folds into P1/P3/P5 |
 
 ## Progress
 
 - [x] P0 (SDF half) rounded-rect unification — shipped via #47 (2026-07-30)
-- [ ] P0 (compositing half) premultiplied-alpha contract — PR #45
+- [x] P0 (compositing half) premultiplied-alpha contract — shipped via #45
+      (2026-07-31; on-device visual checks listed in the PR remain pending)
 - [ ] P1a metric tokens (`metrics.rs`)
 - [ ] P1b widget layer + Theme/Window tab migration + tooltip
 - [ ] P1c remaining tabs + hard-coded color migration
@@ -318,8 +333,9 @@ gated behind a spike.
 - [ ] P5 contrast everywhere + high-contrast scheme
 - [ ] P6 InfoBar + consent reclassification
 - [x] P7 base `notitle` custom title bar — shipped early via #46 (2026-07-30)
-- [ ] P7 spike: Windows 11 snap layouts (go/no-go)
-- [ ] P7 remainder (Fluent button states/metrics, macOS/Linux parity, default-on decision)
+- [x] P7 spike: Windows 11 snap layouts — answered in production via #49 (2026-07-31)
+- [x] P7 default-on decision — `notitle` default on Windows/Linux via #50 (2026-07-31)
+- [ ] P7 remainder — absorbed into P1 (button widget), P3 (state motion), P5 (macOS coexistence)
 
 ## References
 
