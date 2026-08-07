@@ -11,6 +11,7 @@ pub mod font;
 pub mod gpu;
 pub mod hosts;
 pub mod log;
+pub mod metrics;
 pub mod quake;
 pub mod scrolling;
 pub mod security;
@@ -27,6 +28,10 @@ pub use font::FontConfig;
 pub use gpu::{ApiVersion, GpuConfig, PresentModeConfig, Profile};
 pub use hosts::{HooksConfig, HostConfig};
 pub use log::{LogConfig, StatusBarConfig};
+pub use metrics::{
+    CubicBezier, ElevationScale, MetricTokens, MotionTokens, RadiusTokens, SpacingRamp, TypeRamp,
+    TypeStyle,
+};
 pub use quake::{QuakeEdge, QuakeModeConfig};
 pub use scrolling::ScrollingConfig;
 pub use security::{ConsentPolicy, SecurityConfig};
