@@ -26,6 +26,10 @@ pub(super) enum SettingsPanelHit {
     },
     /// Theme color dot.
     ThemeColor(usize),
+    /// UI/UX v3 P1b: click on a non-swatch row of the Theme category. The
+    /// payload is the widget index (`THEME_SCHEME` / `THEME_FOLLOW_SYSTEM`);
+    /// clicking focuses the row and, for the toggle, flips it.
+    ThemeRow(u8),
     /// Phase 5-11-6 #6 / Phase B4: click on a row inside the Window category
     /// (changes focus + optional action).
     /// row 0=opacity / 1=cursor_style / 2=padding_x / 3=padding_y / 4=present_mode /
@@ -190,17 +194,28 @@ impl EventHandler {
                 }
             }
             SettingsCategory::Theme => {
-                // Theme color dots.
-                let dot_y = content_top + cell_h * 2.5;
-                let dot_gap = (content_w - cell_w * 2.0) / 9.0;
-                let dot_size = cell_w * 1.2;
-                if cy >= dot_y && cy <= dot_y + cell_h {
-                    for i in 0..9_usize {
-                        let dot_x = content_inner_x + i as f32 * dot_gap;
-                        if cx >= dot_x && cx <= dot_x + dot_size {
-                            return SettingsPanelHit::ThemeColor(i);
-                        }
+                // UI/UX v3 P1b: the Theme tab is built from widget specs, so
+                // the geometry lives in exactly one place and this branch
+                // just hit-tests what the renderer drew.
+                use crate::renderer::overlay::widgets::settings_theme::{
+                    TabGeometry, build_theme_widgets, swatch_index_of,
+                };
+                let specs = build_theme_widgets(
+                    sp,
+                    &TabGeometry {
+                        content_top,
+                        content_inner_x,
+                        content_w,
+                        cell_w,
+                        cell_h,
+                    },
+                );
+                if let Some(id) = crate::renderer::overlay::widgets::spec::hit_test(&specs, cx, cy)
+                {
+                    if let Some(i) = swatch_index_of(id) {
+                        return SettingsPanelHit::ThemeColor(i);
                     }
+                    return SettingsPanelHit::ThemeRow(id.index);
                 }
             }
             SettingsCategory::Window => {

@@ -10,10 +10,10 @@
 //! (epx, i.e. DPI-independent units); call [`MetricTokens::scaled`] with the
 //! window's `scale_factor()` to obtain physical pixels.
 //!
-//! Radii are the one exception: they are bridged from the existing
-//! [`UiConfig`] knobs so that `corner_radius_chrome` / `corner_radius_overlay`
-//! keep working exactly as before. The Fluent reference radii are still
-//! exposed as [`RadiusTokens::FLUENT_CONTROL`] / [`RadiusTokens::FLUENT_SURFACE`].
+//! Radii are the one exception: the two that users could already configure
+//! are bridged from [`UiConfig`], so `corner_radius_chrome` and
+//! `corner_radius_overlay` keep working exactly as before. The per-control
+//! radius is new and takes Fluent's value directly — see [`RadiusTokens`].
 
 use super::UiConfig;
 
@@ -57,15 +57,22 @@ impl Default for SpacingRamp {
 
 /// Corner radii, in epx.
 ///
-/// The effective values come from [`UiConfig`] (default 10 epx for both) so
-/// that existing user configs are honoured; the Fluent reference values are
-/// available as associated constants for new surfaces that want them.
+/// The two radii that users could already configure keep coming from
+/// [`UiConfig`], so existing configs are honoured. `control` is genuinely new
+/// — there was never a per-control knob to be compatible with — so it takes
+/// the Fluent reference value directly.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RadiusTokens {
     /// In-page controls: buttons, toggles, input fields, tooltips.
+    /// Fluent's 4 epx; deliberately *not* the tab-pill radius, which is a
+    /// much rounder chrome accent rather than a control shape.
     pub control: f32,
     /// Top-level surfaces: overlay panels, dialogs, flyouts.
+    /// Bridged from `UiConfig.corner_radius_overlay`.
     pub surface: f32,
+    /// Tab pills, focused-pane outline, banners.
+    /// Bridged from `UiConfig.corner_radius_chrome`.
+    pub chrome_pill: f32,
 }
 
 impl RadiusTokens {
@@ -74,14 +81,14 @@ impl RadiusTokens {
     /// Fluent reference radius for top-level surfaces (8 epx).
     pub const FLUENT_SURFACE: f32 = 8.0;
 
-    /// Bridge the legacy [`UiConfig`] radii into token form.
+    /// Bridge the existing [`UiConfig`] radii into token form.
     ///
-    /// `corner_radius_chrome` drives controls, `corner_radius_overlay` drives
-    /// surfaces. Both are clamped to non-negative by `UiConfig`.
+    /// Both config values are clamped to non-negative by `UiConfig`.
     pub fn from_ui(ui: &UiConfig) -> Self {
         Self {
-            control: ui.chrome_radius(),
+            control: Self::FLUENT_CONTROL,
             surface: ui.overlay_radius(),
+            chrome_pill: ui.chrome_radius(),
         }
     }
 }
@@ -380,6 +387,7 @@ impl MetricTokens {
             radius: RadiusTokens {
                 control: self.radius.control * s,
                 surface: self.radius.surface * s,
+                chrome_pill: self.radius.chrome_pill * s,
             },
             type_ramp: TypeRamp {
                 caption: scale_type(self.type_ramp.caption, s),
@@ -432,8 +440,21 @@ mod tests {
             corner_radius_overlay: 14.0,
         };
         let r = RadiusTokens::from_ui(&ui);
-        assert_eq!(r.control, 6.0);
         assert_eq!(r.surface, 14.0);
+        assert_eq!(r.chrome_pill, 6.0);
+    }
+
+    #[test]
+    fn control_radius_is_the_fluent_value_not_the_pill_radius() {
+        // The tab-pill radius is a chrome accent, not a control shape; wiring
+        // it into `control` would make buttons and toggles far too round.
+        let ui = UiConfig {
+            corner_radius_chrome: 10.0,
+            corner_radius_overlay: 10.0,
+        };
+        let r = RadiusTokens::from_ui(&ui);
+        assert_eq!(r.control, RadiusTokens::FLUENT_CONTROL);
+        assert_ne!(r.control, r.chrome_pill);
     }
 
     #[test]
@@ -443,17 +464,17 @@ mod tests {
             corner_radius_overlay: -1.0,
         };
         let r = RadiusTokens::from_ui(&ui);
-        assert_eq!(r.control, 0.0);
         assert_eq!(r.surface, 0.0);
+        assert_eq!(r.chrome_pill, 0.0);
     }
 
     #[test]
-    fn default_radius_keeps_the_shipped_10_px_look() {
-        // Backward compatibility: the token default must not silently retheme
-        // existing installs to the Fluent 4/8 values.
+    fn default_radius_keeps_the_shipped_10_px_surfaces() {
+        // Backward compatibility: configurable surfaces must not silently
+        // retheme to the Fluent 8 value on existing installs.
         let r = RadiusTokens::default();
-        assert_eq!(r.control, 10.0);
         assert_eq!(r.surface, 10.0);
+        assert_eq!(r.chrome_pill, 10.0);
         assert_eq!(RadiusTokens::FLUENT_CONTROL, 4.0);
         assert_eq!(RadiusTokens::FLUENT_SURFACE, 8.0);
     }
@@ -546,6 +567,7 @@ mod tests {
         let t = MetricTokens::default().scaled(2.0);
         assert_eq!(t.spacing.m, 32.0);
         assert_eq!(t.radius.surface, 20.0);
+        assert_eq!(t.radius.control, RadiusTokens::FLUENT_CONTROL * 2.0);
         assert_eq!(t.type_ramp.body.size, 28.0);
         assert_eq!(t.type_ramp.body.weight, WEIGHT_REGULAR);
         assert_eq!(t.elevation.flyout, 64.0);
@@ -567,7 +589,7 @@ mod tests {
             corner_radius_overlay: 8.0,
         };
         let t = MetricTokens::from_ui(&ui);
-        assert_eq!(t.radius.control, 4.0);
+        assert_eq!(t.radius.chrome_pill, 4.0);
         assert_eq!(t.radius.surface, 8.0);
         assert_eq!(t.spacing, SpacingRamp::default());
         assert_eq!(t.motion, MotionTokens::default());

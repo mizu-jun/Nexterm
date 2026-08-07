@@ -361,6 +361,29 @@ impl EventHandler {
             if self.app.state.settings_panel.theme_hover_preview != new_preview {
                 self.app.state.settings_panel.theme_hover_preview = new_preview;
             }
+
+            // UI/UX v3 P1b: dwell tracking for tooltips. Only migrated
+            // categories report a widget; everything else clears the dwell so
+            // no stale tooltip lingers.
+            use crate::renderer::overlay::widgets::settings_theme::{
+                THEME_CATEGORY, THEME_SWATCH_BASE,
+            };
+            let hovered = match hit {
+                SettingsPanelHit::ThemeColor(i) => {
+                    Some((THEME_CATEGORY, THEME_SWATCH_BASE + i as u8))
+                }
+                SettingsPanelHit::ThemeRow(index) => Some((THEME_CATEGORY, index)),
+                _ => None,
+            };
+            let sp = &mut self.app.state.settings_panel;
+            sp.hover_widget = hovered.map(|(category, index)| {
+                crate::settings_panel::HoverDwell::enter(
+                    sp.hover_widget,
+                    category,
+                    index,
+                    std::time::Instant::now(),
+                )
+            });
         } else if self.app.state.settings_panel.theme_hover_preview.is_some() {
             // Panel closed while a preview was active (e.g. Esc dismiss):
             // clear the stale preview so the next open starts clean.
@@ -913,6 +936,18 @@ impl EventHandler {
                         self.app.state.settings_panel.scheme_index = idx;
                         self.app.state.settings_panel.dirty = true;
                         self.app.state.settings_panel.theme_hover_preview = None;
+                    }
+                    SettingsPanelHit::ThemeRow(index) => {
+                        // UI/UX v3 P1b: click focuses the row; clicking the
+                        // follow-system row also flips it, matching the
+                        // toggle-on-click convention the Window rows use.
+                        use crate::renderer::overlay::widgets::settings_theme::THEME_FOLLOW_SYSTEM;
+                        let sp = &mut self.app.state.settings_panel;
+                        sp.theme_field_focus = index;
+                        if index == THEME_FOLLOW_SYSTEM {
+                            sp.colors_follow_system = !sp.colors_follow_system;
+                            sp.dirty = true;
+                        }
                     }
                     SettingsPanelHit::WindowRow(row) => {
                         // Phase 5-11-6 #6 / Phase B4 / Phase B4-P2: click on a row inside

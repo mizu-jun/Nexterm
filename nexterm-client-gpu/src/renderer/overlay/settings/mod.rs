@@ -25,9 +25,13 @@ use super::super::WgpuState;
 mod blocks_tab;
 mod font_tab;
 mod keybindings_tab;
-mod layout;
+// `pub(super)`: the sibling `widgets` module lays its controls out on the
+// same label/control column split.
+pub(super) mod layout;
 mod profiles_tab;
-mod row;
+// `pub(super)` so the sibling `widgets` module can reuse the contrast helper
+// (`ensure_readable`) instead of duplicating the WCAG correction.
+pub(super) mod row;
 mod security_tab;
 mod sidebar;
 mod ssh_tab;
@@ -252,6 +256,13 @@ impl WgpuState {
             text_idx,
         );
 
+        // Metric tokens for the widget layer. The panel does not have
+        // `UiConfig` plumbed through yet, and the migrated widgets only read
+        // `radius.control`, which is the config-independent Fluent value — so
+        // the defaults are exact here. Plumbing follows when the panel's own
+        // surfaces move onto `radius.surface`.
+        let metrics = nexterm_config::MetricTokens::default();
+
         // Content area
         let content_top = py + title_h + cell_h * 0.5;
         let content_inner_x = content_x + cell_w;
@@ -300,6 +311,7 @@ impl WgpuState {
                 SettingsCategory::Theme => theme_tab::draw_theme_tab(
                     sp,
                     tokens,
+                    &metrics,
                     content_top,
                     content_inner_x,
                     content_w,
@@ -499,6 +511,29 @@ impl WgpuState {
         text_verts.extend(content_text_verts);
         text_idx.extend(content_text_idx.iter().map(|i| i + text_base));
         let text_range_end = text_idx.len();
+
+        // UI/UX v3 P1b: tooltips draw into the *outer*, unscissored buffers so
+        // one anchored to a row near the viewport edge is not clipped in half.
+        // The anchor is the widget rect translated by the scroll offset.
+        theme_tab::draw_theme_tooltip(
+            sp,
+            tokens,
+            &metrics,
+            content_top - offset_px,
+            content_inner_x,
+            content_w,
+            sw,
+            sh,
+            cell_w,
+            cell_h,
+            font,
+            atlas,
+            &self.queue,
+            bg_verts,
+            bg_idx,
+            text_verts,
+            text_idx,
+        );
 
         // Scrollbar: fixed to the content viewport (not scrolled with the
         // content), drawn only when the content overflows. Track spans the
