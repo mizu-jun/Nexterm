@@ -42,7 +42,7 @@ impl SettingsPanel {
     }
 
     /// Total number of fields in the Font category.
-    pub const FONT_FIELD_COUNT: u8 = 4;
+    pub const FONT_FIELD_COUNT: u16 = 4;
 
     /// Move focus to the next field (stops at the last one).
     pub fn next_font_field(&mut self) -> bool {

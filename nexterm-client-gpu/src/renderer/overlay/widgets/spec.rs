@@ -61,36 +61,43 @@ impl WidgetRect {
 /// frames even when rows are collapsed by the search filter, which is what
 /// lets focus survive a re-layout — and what will let the seven per-tab
 /// focus counters collapse into a single `focused_widget_id`.
+///
+/// `index` is 16-bit rather than 8-bit because the list-shaped categories
+/// (Ssh, Keybindings, Profiles) index one widget per list entry, and those
+/// lists are user-populated with no upper bound. A `u8` would silently stop
+/// addressing entries past the 256th with no diagnostic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct WidgetId {
     /// Owning settings category.
     pub category: u8,
     /// Position within the category.
-    pub index: u8,
+    pub index: u16,
 }
 
 impl WidgetId {
     /// Build an id.
-    pub fn new(category: u8, index: u8) -> Self {
+    pub fn new(category: u8, index: u16) -> Self {
         Self { category, index }
     }
 
     /// Flatten to a single integer, used as the AccessKit `NodeId` offset.
     ///
-    /// Injective, so two widgets can never collide on one node id.
+    /// Injective, so two widgets can never collide on one node id. The widest
+    /// value is `0xFF_FFFF`, well inside the 100M-wide node-id range reserved
+    /// for `SETTINGS_WIDGET_BASE`.
     pub fn as_u32(&self) -> u32 {
-        ((self.category as u32) << 8) | self.index as u32
+        ((self.category as u32) << 16) | self.index as u32
     }
 
     /// Inverse of [`Self::as_u32`].
     ///
-    /// Returns `None` when the value carries bits outside the two packed
-    /// bytes, i.e. it was never produced by `as_u32`.
+    /// Returns `None` when the value carries bits above the packed category
+    /// byte, i.e. it was never produced by `as_u32`.
     pub fn from_u32(raw: u32) -> Option<Self> {
-        if raw > 0xFFFF {
+        if raw > 0xFF_FFFF {
             return None;
         }
-        Some(Self::new((raw >> 8) as u8, (raw & 0xFF) as u8))
+        Some(Self::new((raw >> 16) as u8, (raw & 0xFFFF) as u16))
     }
 }
 
@@ -102,8 +109,8 @@ impl WidgetId {
 ///
 /// The enum is deliberately complete rather than grown tab by tab: it is the
 /// vocabulary the whole layer is written against, and `draw_widget` already
-/// paints every arm. `Label`, `Slider` and `Text` have no producer until the
-/// Window tab migrates.
+/// paints every arm. `ListItem`, `Button` and `KeyCapture` have no producer
+/// until the list-shaped tabs (Profiles, Ssh, Keybindings) migrate.
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum WidgetKind {
@@ -143,6 +150,24 @@ pub(crate) enum WidgetKind {
         value: String,
         /// Whether the field is being edited (shows a caret).
         editing: bool,
+        /// Caret position as a byte offset into `value`, when editing.
+        ///
+        /// Carried rather than assumed to be end-of-string because the edit
+        /// buffers behind these fields (`TextInputState`) support Home/End and
+        /// arrow-key movement, and place IME preedit text at the caret. A
+        /// `None` while editing means "put it at the end".
+        caret: Option<usize>,
+    },
+    /// Key-combination capture, as used by the Keybindings tab.
+    ///
+    /// Distinct from [`WidgetKind::Text`] because recording is not text entry:
+    /// the control swallows the next key press instead of appending it, and a
+    /// screen reader has to announce that difference.
+    KeyCapture {
+        /// Current combination, e.g. `ctrl+shift+p`.
+        value: String,
+        /// Whether the control is waiting for a key press.
+        recording: bool,
     },
     /// A colour swatch, e.g. a theme preview dot.
     Swatch {
@@ -150,6 +175,21 @@ pub(crate) enum WidgetKind {
         color: [f32; 4],
         /// Whether this swatch is the active choice.
         selected: bool,
+    },
+    /// One entry of a list, spanning the row rather than sitting in a control
+    /// column. Selection is list state, not focus: the keyboard can rest on a
+    /// different row than the one that is selected.
+    ListItem {
+        /// Whether this entry is the list's current selection.
+        selected: bool,
+    },
+    /// A push button, e.g. the Add / Delete pair under a list.
+    ///
+    /// Carries no value; activating it is the whole interaction. A disabled
+    /// button (no entry to delete) is expressed with `WidgetDesc::enabled`.
+    Button {
+        /// Whether the action destroys data, which the visuals warn about.
+        destructive: bool,
     },
 }
 
@@ -242,6 +282,7 @@ impl WidgetDesc {
             WidgetKind::Cycle { value } => Some(value.clone()),
             WidgetKind::Slider { display, .. } => Some(display.clone()),
             WidgetKind::Text { value, .. } => Some(value.clone()),
+            WidgetKind::KeyCapture { value, .. } => Some(value.clone()),
             WidgetKind::Swatch { selected, .. } => Some(
                 if *selected {
                     "selected"
@@ -250,6 +291,9 @@ impl WidgetDesc {
                 }
                 .to_string(),
             ),
+            // A list entry's label is its value, and a button has none at all;
+            // repeating the label here would make a reader say it twice.
+            WidgetKind::ListItem { .. } | WidgetKind::Button { .. } => None,
         }
     }
 
@@ -322,14 +366,14 @@ pub(crate) fn hit_test(specs: &[WidgetSpec], px: f32, py: f32) -> Option<WidgetI
 mod tests {
     use super::*;
 
-    fn row(index: u8, kind: WidgetKind, y: f32) -> WidgetSpec {
+    fn row(index: u16, kind: WidgetKind, y: f32) -> WidgetSpec {
         WidgetDesc::new(WidgetId::new(1, index), kind, format!("row {index}")).place(
             WidgetRect::new(0.0, y, 200.0, 20.0),
             WidgetRect::new(100.0, y, 100.0, 20.0),
         )
     }
 
-    fn toggle(index: u8, y: f32) -> WidgetSpec {
+    fn toggle(index: u16, y: f32) -> WidgetSpec {
         row(index, WidgetKind::Toggle { on: false }, y)
     }
 
@@ -369,6 +413,31 @@ mod tests {
             }
             .is_interactive()
         );
+    }
+
+    #[test]
+    fn widget_ids_round_trip_through_their_packed_form() {
+        for id in [
+            WidgetId::new(0, 0),
+            WidgetId::new(3, 13),
+            // Past the old u8 index ceiling: a list-shaped category addresses
+            // one widget per entry, and those lists have no upper bound.
+            WidgetId::new(9, 256),
+            WidgetId::new(u8::MAX, u16::MAX),
+        ] {
+            assert_eq!(WidgetId::from_u32(id.as_u32()), Some(id));
+        }
+    }
+
+    #[test]
+    fn packed_ids_are_injective_across_category_boundaries() {
+        // The last index of one category must not collide with the first of
+        // the next, which is what a too-narrow shift would cause.
+        assert_ne!(
+            WidgetId::new(1, u16::MAX).as_u32(),
+            WidgetId::new(2, 0).as_u32()
+        );
+        assert!(WidgetId::from_u32(0x0100_0000).is_none());
     }
 
     #[test]

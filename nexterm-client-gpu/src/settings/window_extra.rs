@@ -10,7 +10,7 @@ use nexterm_i18n::fl;
 
 impl SettingsPanel {
     /// Total number of fields in the Window category.
-    pub const WINDOW_FIELD_COUNT: u8 = 14;
+    pub const WINDOW_FIELD_COUNT: u16 = 14;
 
     /// Move focus to the next field (stops at the last one).
     /// Returns `true` if focus moved; `false` if already on the last field

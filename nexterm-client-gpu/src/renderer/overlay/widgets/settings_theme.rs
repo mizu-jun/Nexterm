@@ -19,12 +19,12 @@ use super::spec::{WidgetDesc, WidgetId, WidgetKind, WidgetRect, WidgetSpec};
 /// `SettingsCategory::ALL` index of the Theme category.
 pub(crate) const THEME_CATEGORY: u8 = 2;
 /// Widget index of the color-scheme cycler.
-pub(crate) const THEME_SCHEME: u8 = 0;
+pub(crate) const THEME_SCHEME: u16 = 0;
 /// Widget index of the "follow system theme" toggle.
-pub(crate) const THEME_FOLLOW_SYSTEM: u8 = 1;
+pub(crate) const THEME_FOLLOW_SYSTEM: u16 = 1;
 /// First widget index of the nine color-scheme swatches. The gap above the
 /// row indices leaves room for future rows without renumbering the swatches.
-pub(crate) const THEME_SWATCH_BASE: u8 = 10;
+pub(crate) const THEME_SWATCH_BASE: u16 = 10;
 
 /// The nine built-in schemes previewed as swatches, with the representative
 /// background color drawn in each chip.
@@ -126,7 +126,7 @@ pub(crate) fn theme_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
     for (i, (name, color)) in SWATCHES.iter().enumerate() {
         out.push(
             WidgetDesc::new(
-                WidgetId::new(THEME_CATEGORY, THEME_SWATCH_BASE + i as u8),
+                WidgetId::new(THEME_CATEGORY, THEME_SWATCH_BASE + i as u16),
                 WidgetKind::Swatch {
                     color: *color,
                     selected: sp.scheme_index == i,
@@ -189,7 +189,7 @@ pub(crate) fn build_theme_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<Wi
 /// `dispatch_settings_action` uses. This is the same state transition the
 /// mouse and keyboard paths perform, so a screen reader and a click stay in
 /// agreement.
-pub(crate) fn apply_theme_action(sp: &mut SettingsPanel, index: u8, action: WidgetAction) -> bool {
+pub(crate) fn apply_theme_action(sp: &mut SettingsPanel, index: u16, action: WidgetAction) -> bool {
     // Nothing in this tab is numeric or typed.
     if matches!(action, WidgetAction::SetValue(_) | WidgetAction::SetText(_)) {
         return false;

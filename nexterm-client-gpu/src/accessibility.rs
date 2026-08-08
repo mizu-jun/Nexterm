@@ -618,7 +618,7 @@ pub enum NodeIdKind {
         /// Owning settings category.
         category: u8,
         /// Widget index within that category.
-        index: u8,
+        index: u16,
     },
     /// Pane row node (Sprint 5-11-3, identified by `pane_id` and `row`).
     PaneRow { pane_id: u32, row: u16 },
@@ -703,7 +703,7 @@ pub enum NodeIdKind {
 /// | 400M..500M | `ContextItem { idx: id - 400M }` |
 /// | 500M..600M | `QuickSelectItem { idx: id - 500M }` |
 /// | 600M..700M | `SettingsProfileItem { idx: id - 600M }` (Phase 5-11-7) |
-/// | 700M..800M | `SettingsWidget { category, index }` — `SETTINGS_WIDGET_BASE + WidgetId::as_u32()` (UI/UX v3 P1b/P1c) |
+/// | 700M..800M | `SettingsWidget { category, index }` — `SETTINGS_WIDGET_BASE + WidgetId::as_u32()` (UI/UX v3 P1b/P1c). Widest encodable offset is `0xFF_FFFF` ≈ 16.8M, so the 100M-wide slot has room to spare |
 /// | 800M..900M | `SettingsSshHostItem { idx: id - 800M }` (Phase 5-11-8 Step 8-1) |
 /// | 900M..1G | `SettingsKeyBindingItem { idx: id - 900M }` (Phase 5-11-9 Sub-phase E) |
 /// | 1G..1G+u32::MAX | `Tab { pane_id: id - 1G }` |
@@ -1570,9 +1570,14 @@ fn widget_node(desc: &crate::renderer::overlay::widgets::spec::WidgetDesc) -> No
         WidgetKind::Cycle { .. } => Role::ComboBox,
         WidgetKind::Slider { .. } => Role::Slider,
         WidgetKind::Text { .. } => Role::TextInput,
+        // A key capture reads as a text input too: its value is a string the
+        // user replaces, even though the replacement arrives as a key press.
+        WidgetKind::KeyCapture { .. } => Role::TextInput,
         // A swatch is one choice among the scheme strip, which is what a
         // radio button models.
         WidgetKind::Swatch { .. } => Role::RadioButton,
+        WidgetKind::ListItem { .. } => Role::ListBoxOption,
+        WidgetKind::Button { .. } => Role::Button,
     });
     node.set_label(desc.label.clone());
     if let Some(value) = desc.value_text() {
@@ -1587,7 +1592,9 @@ fn widget_node(desc: &crate::renderer::overlay::widgets::spec::WidgetDesc) -> No
         } else {
             accesskit::Toggled::False
         }),
-        WidgetKind::Swatch { selected: true, .. } => node.set_selected(true),
+        WidgetKind::Swatch { selected: true, .. } | WidgetKind::ListItem { selected: true } => {
+            node.set_selected(true)
+        }
         WidgetKind::Slider {
             value,
             min,
@@ -3708,7 +3715,7 @@ mod tests {
 
         /// One migrated category: its enum variant, its widget-category
         /// index, and the setter for its focus counter.
-        type FocusCase = (SettingsCategory, u8, fn(&mut SettingsPanel, u8));
+        type FocusCase = (SettingsCategory, u8, fn(&mut SettingsPanel, u16));
 
         let cases: [FocusCase; 5] = [
             (SettingsCategory::Theme, THEME_CATEGORY, |p, i| {
@@ -3759,12 +3766,12 @@ mod tests {
         let mut state = ClientState::new(80, 24, 1000);
         state.settings_panel.is_open = true;
         state.settings_panel.category = SettingsCategory::Security;
-        state.settings_panel.security_field_focus = SECURITY_ROW_COUNT as u8;
+        state.settings_panel.security_field_focus = SECURITY_ROW_COUNT as u16;
 
         let update = build_tree_from_state(&state);
         assert_ne!(
             update.focus,
-            widget_id(SECURITY_CATEGORY, SECURITY_ROW_COUNT as u8)
+            widget_id(SECURITY_CATEGORY, SECURITY_ROW_COUNT as u16)
         );
         assert!(update.nodes.iter().any(|(id, _)| *id == update.focus));
     }
@@ -4059,12 +4066,12 @@ mod tests {
     }
 
     /// Helper: the Font family row index.
-    fn font_family_row() -> u8 {
+    fn font_family_row() -> u16 {
         crate::renderer::overlay::widgets::settings_font::row::FAMILY
     }
 
     /// Helper: the NodeId of a widget-derived settings node.
-    fn widget_id(category: u8, index: u8) -> NodeId {
+    fn widget_id(category: u8, index: u16) -> NodeId {
         settings_widget_id(crate::renderer::overlay::widgets::spec::WidgetId::new(
             category, index,
         ))
@@ -4260,7 +4267,7 @@ mod tests {
         };
         use crate::renderer::overlay::widgets::spec::WidgetId;
 
-        for index in 0..WINDOW_ROW_COUNT as u8 {
+        for index in 0..WINDOW_ROW_COUNT as u16 {
             assert_eq!(
                 decode_node_id(settings_widget_id(WidgetId::new(WINDOW_CATEGORY, index))),
                 NodeIdKind::SettingsWidget {
@@ -4304,7 +4311,7 @@ mod tests {
         };
         use crate::renderer::overlay::widgets::spec::WidgetId;
 
-        for focus_idx in 0..WINDOW_ROW_COUNT as u8 {
+        for focus_idx in 0..WINDOW_ROW_COUNT as u16 {
             let mut panel = SettingsPanel::default();
             panel.category = crate::settings_panel::SettingsCategory::Window;
             panel.window_field_focus = focus_idx;
@@ -4318,11 +4325,11 @@ mod tests {
 
         let mut panel = SettingsPanel::default();
         panel.category = crate::settings_panel::SettingsCategory::Window;
-        panel.window_field_focus = WINDOW_ROW_COUNT as u8;
+        panel.window_field_focus = WINDOW_ROW_COUNT as u16;
         let (_nodes, focus) = build_settings_panel_nodes(&panel);
         assert_ne!(
             focus,
-            settings_widget_id(WidgetId::new(WINDOW_CATEGORY, WINDOW_ROW_COUNT as u8)),
+            settings_widget_id(WidgetId::new(WINDOW_CATEGORY, WINDOW_ROW_COUNT as u16)),
             "an out-of-range focus must fall back, not point at a missing node"
         );
     }
@@ -5686,16 +5693,16 @@ mod tests {
     fn settings_widget_range_decodes_only_encodable_ids() {
         use crate::renderer::overlay::widgets::spec::WidgetId;
 
-        for (category, index) in [(0u8, 0u8), (2, 0), (2, 18), (255, 255)] {
+        for (category, index) in [(0u8, 0u16), (2, 0), (2, 18), (255, 65535)] {
             let id = WidgetId::new(category, index);
             assert_eq!(
                 decode_node_id(settings_widget_id(id)),
                 NodeIdKind::SettingsWidget { category, index }
             );
         }
-        // Above the two packed bytes: not producible by `as_u32`.
+        // Above the packed category byte: not producible by `as_u32`.
         assert_eq!(
-            decode_node_id(NodeId(SETTINGS_WIDGET_BASE + 0x1_0000)),
+            decode_node_id(NodeId(SETTINGS_WIDGET_BASE + 0x0100_0000)),
             NodeIdKind::Unknown
         );
         assert_eq!(decode_node_id(NodeId(799_999_999)), NodeIdKind::Unknown);

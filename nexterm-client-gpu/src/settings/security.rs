@@ -8,7 +8,7 @@ use nexterm_i18n::fl;
 
 impl SettingsPanel {
     /// Total number of fields in the Security category.
-    pub const SECURITY_FIELD_COUNT: u8 = 7;
+    pub const SECURITY_FIELD_COUNT: u16 = 7;
 
     /// Human-readable label for a consent policy value.
     pub fn consent_label(p: nexterm_config::ConsentPolicy) -> &'static str {
@@ -59,7 +59,7 @@ impl SettingsPanel {
     }
 
     /// The consent policy at field index 0..=3 (`None` for numeric fields).
-    pub fn security_policy_at(&self, idx: u8) -> Option<nexterm_config::ConsentPolicy> {
+    pub fn security_policy_at(&self, idx: u16) -> Option<nexterm_config::ConsentPolicy> {
         match idx {
             0 => Some(self.sec_external_url),
             1 => Some(self.sec_osc52_clipboard),
@@ -70,7 +70,7 @@ impl SettingsPanel {
     }
 
     /// The byte-cap value at field index 4..=6 (`None` for policy fields).
-    pub fn security_bytes_at(&self, idx: u8) -> Option<usize> {
+    pub fn security_bytes_at(&self, idx: u16) -> Option<usize> {
         match idx {
             4 => Some(self.sec_osc52_max_bytes),
             5 => Some(self.sec_notification_max_bytes),
@@ -80,7 +80,7 @@ impl SettingsPanel {
     }
 
     /// Static row label for a Security field index.
-    pub fn security_field_label(idx: u8) -> String {
+    pub fn security_field_label(idx: u16) -> String {
         match idx {
             0 => fl!("settings-security-field-external-url"),
             1 => fl!("settings-security-field-osc52-clipboard"),

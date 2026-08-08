@@ -375,7 +375,7 @@ impl EventHandler {
             use crate::renderer::overlay::widgets::settings_window::WINDOW_CATEGORY;
             let hovered = match hit {
                 SettingsPanelHit::ThemeColor(i) => {
-                    Some((THEME_CATEGORY, THEME_SWATCH_BASE + i as u8))
+                    Some((THEME_CATEGORY, THEME_SWATCH_BASE + i as u16))
                 }
                 SettingsPanelHit::ThemeRow(index) => Some((THEME_CATEGORY, index)),
                 SettingsPanelHit::WindowRow(index) => Some((WINDOW_CATEGORY, index)),

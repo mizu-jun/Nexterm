@@ -1,7 +1,8 @@
 # UI/UX Modernization v3 — Fluent Design Foundation
 
 Status: approved 2026-07-30; last reconciled 2026-08-08 (P1a/P1b complete,
-P1c 6 tabs of 9). Target releases: v1.17–v1.21+.
+P1c 6 tabs of 9 plus the widget-layer foundation for the remaining three).
+Target releases: v1.17–v1.21+.
 Execution order: P0 → P1 → P2 → {P3, P4, P5 parallelizable} → P6 → P7.
 Source: successor to `plans/archive/ui-ux-modernization-v2.md` and
 `plans/archive/2026-07-29-windows-terminal-like-ux.md`.
@@ -328,8 +329,21 @@ gated behind a spike.
       the renderer, the hit-test and the AccessKit tree
 - [ ] P1c tab migration — **6 of 9 done** (Theme, Window, Font, Startup,
       Blocks, Security). Remaining:
-  - [ ] Ssh / Keybindings / Profiles — list-shaped rather than row-shaped, so
-        they need a list widget kind before they can move
+  - [x] Foundation for the list-shaped tabs — `draw.rs` split into `draw/`
+        by control family (it was at 779 of the 800-line guideline);
+        `WidgetId.index` widened to `u16` so a category can address one widget
+        per user-created list entry; `WidgetKind::{ListItem, Button,
+        KeyCapture}` added and `Text` given a real `caret` offset (the old
+        renderer appended `_` and ignored `TextInputState.cursor`, which also
+        affected the already-migrated Security and Startup fields)
+  - [ ] Ssh / Keybindings / Profiles — the three share one shape: a list, an
+        edit panel for the selected entry, Add/Delete, and a delete dialog.
+        Migrate smallest first (Profiles → Ssh → Keybindings). The delete
+        dialog is a modal over the whole panel, not a settings row, and stays
+        on its existing hand-written AccessKit nodes for now
+  - [ ] Bounded list viewport — the SSH list grows without limit and pushes
+        its edit panel off the panel past ~20 hosts. This predates the widget
+        layer and migration does not fix it; keep it a separate change
   - [ ] Collapse the seven per-tab focus counters into one
         `focused_widget_id` (blocked on the three list tabs)
   - [ ] Hard-coded colour migration (G11) — not started; the widget layer

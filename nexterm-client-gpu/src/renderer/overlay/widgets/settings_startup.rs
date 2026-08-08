@@ -16,13 +16,13 @@ pub(crate) const STARTUP_CATEGORY: u8 = 0;
 /// Row indices, matching `startup_field_focus`.
 pub(crate) mod row {
     /// UI language (cycler).
-    pub const LANGUAGE: u8 = 0;
+    pub const LANGUAGE: u16 = 0;
     /// "Check for updates on startup" toggle.
-    pub const CHECK_UPDATES: u8 = 1;
+    pub const CHECK_UPDATES: u16 = 1;
     /// Shell program path (typed).
-    pub const SHELL_PROGRAM: u8 = 2;
+    pub const SHELL_PROGRAM: u16 = 2;
     /// Shell arguments (typed).
-    pub const SHELL_ARGS: u8 = 3;
+    pub const SHELL_ARGS: u16 = 3;
 }
 
 /// Number of rows in the Startup category.
@@ -47,10 +47,15 @@ fn language_label(sp: &SettingsPanel) -> &'static str {
 pub(crate) fn startup_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
     let focus = sp.startup_field_focus;
     // Only the focused shell field carries the live edit buffer.
-    let shell_editing = |index: u8| focus == index && sp.shell_field_editing.is_some();
-    let shell_value = |index: u8, committed: &str| match sp.shell_field_editing.as_ref() {
+    let shell_editing = |index: u16| focus == index && sp.shell_field_editing.is_some();
+    let shell_value = |index: u16, committed: &str| match sp.shell_field_editing.as_ref() {
         Some(state) if focus == index => state.buffer.clone(),
         _ => committed.to_string(),
+    };
+    // The caret only means anything for the field that owns the live buffer.
+    let shell_caret = |index: u16| match sp.shell_field_editing.as_ref() {
+        Some(state) if focus == index => Some(state.cursor),
+        _ => None,
     };
 
     vec![
@@ -75,6 +80,7 @@ pub(crate) fn startup_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
             WidgetKind::Text {
                 value: shell_value(row::SHELL_PROGRAM, &sp.shell_program),
                 editing: shell_editing(row::SHELL_PROGRAM),
+                caret: shell_caret(row::SHELL_PROGRAM),
             },
             nexterm_i18n::fl!("settings-startup-shell-program"),
         )
@@ -84,6 +90,7 @@ pub(crate) fn startup_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
             WidgetKind::Text {
                 value: shell_value(row::SHELL_ARGS, &sp.shell_args),
                 editing: shell_editing(row::SHELL_ARGS),
+                caret: shell_caret(row::SHELL_ARGS),
             },
             nexterm_i18n::fl!("settings-startup-shell-args"),
         )
@@ -131,7 +138,7 @@ pub(crate) fn language_note_y(g: &TabGeometry) -> f32 {
 /// Apply an action to the Startup widget at `index`.
 pub(crate) fn apply_startup_action(
     sp: &mut SettingsPanel,
-    index: u8,
+    index: u16,
     action: WidgetAction,
 ) -> bool {
     if index as usize >= STARTUP_ROW_COUNT {
@@ -287,7 +294,7 @@ mod tests {
         ));
         assert!(!apply_startup_action(
             &mut sp,
-            STARTUP_ROW_COUNT as u8,
+            STARTUP_ROW_COUNT as u16,
             WidgetAction::Activate
         ));
     }

@@ -17,13 +17,13 @@ pub(crate) const FONT_CATEGORY: u8 = 1;
 /// Row indices, matching `font_field_focus`.
 pub(crate) mod row {
     /// Font family name (typed).
-    pub const FAMILY: u8 = 0;
+    pub const FAMILY: u16 = 0;
     /// Font size (slider).
-    pub const SIZE: u8 = 1;
+    pub const SIZE: u16 = 1;
     /// Ligatures on/off.
-    pub const LIGATURES: u8 = 2;
+    pub const LIGATURES: u16 = 2;
     /// Comma-separated fallback list (typed).
-    pub const FALLBACKS: u8 = 3;
+    pub const FALLBACKS: u16 = 3;
 }
 
 /// Number of rows in the Font category.
@@ -51,6 +51,9 @@ pub(crate) fn font_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
             WidgetKind::Text {
                 value: sp.font_family.clone(),
                 editing: sp.font_family_editing,
+                // This field tracks no cursor of its own, so the caret goes
+                // to the end of the value.
+                caret: None,
             },
             nexterm_i18n::fl!("settings-font-family"),
         )
@@ -85,6 +88,7 @@ pub(crate) fn font_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
                     None => sp.font_fallbacks_text.clone(),
                 },
                 editing: sp.font_fallbacks_editing.is_some(),
+                caret: sp.font_fallbacks_editing.as_ref().map(|s| s.cursor),
             },
             nexterm_i18n::fl!("settings-font-fallbacks"),
         )
@@ -127,7 +131,7 @@ pub(crate) fn build_font_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<Wid
 /// Y position of the hint line that follows the row at `index`, in pixels.
 ///
 /// The renderer draws hints under the family, size and fallbacks rows.
-pub(crate) fn hint_y(g: &TabGeometry, index: u8) -> f32 {
+pub(crate) fn hint_y(g: &TabGeometry, index: u16) -> f32 {
     let base = ROW_OFFSETS
         .get(index as usize)
         .copied()
@@ -136,7 +140,7 @@ pub(crate) fn hint_y(g: &TabGeometry, index: u8) -> f32 {
 }
 
 /// Apply an action to the Font widget at `index`.
-pub(crate) fn apply_font_action(sp: &mut SettingsPanel, index: u8, action: WidgetAction) -> bool {
+pub(crate) fn apply_font_action(sp: &mut SettingsPanel, index: u16, action: WidgetAction) -> bool {
     if index as usize >= FONT_ROW_COUNT {
         return false;
     }
@@ -294,7 +298,7 @@ mod tests {
         let mut sp = SettingsPanel::default();
         assert!(!apply_font_action(
             &mut sp,
-            FONT_ROW_COUNT as u8,
+            FONT_ROW_COUNT as u16,
             WidgetAction::Activate
         ));
     }
