@@ -2663,22 +2663,22 @@ pub fn dispatch_settings_action(
         ) => {
             use crate::renderer::overlay::widgets::action::WidgetAction;
             use crate::renderer::overlay::widgets::settings_blocks::{
-                apply_blocks_action, BLOCKS_CATEGORY,
+                BLOCKS_CATEGORY, apply_blocks_action,
             };
             use crate::renderer::overlay::widgets::settings_font::{
-                apply_font_action, FONT_CATEGORY,
+                FONT_CATEGORY, apply_font_action,
             };
             use crate::renderer::overlay::widgets::settings_security::{
-                apply_security_action, SECURITY_CATEGORY,
+                SECURITY_CATEGORY, apply_security_action,
             };
             use crate::renderer::overlay::widgets::settings_startup::{
-                apply_startup_action, STARTUP_CATEGORY,
+                STARTUP_CATEGORY, apply_startup_action,
             };
             use crate::renderer::overlay::widgets::settings_theme::{
-                apply_theme_action, THEME_CATEGORY,
+                THEME_CATEGORY, apply_theme_action,
             };
             use crate::renderer::overlay::widgets::settings_window::{
-                apply_window_action, WINDOW_CATEGORY,
+                WINDOW_CATEGORY, apply_window_action,
             };
             let widget_action = match (action, data) {
                 (Action::Increment, _) => WidgetAction::Next,
@@ -3664,7 +3664,7 @@ mod tests {
             );
         }
         // Fields for the Font category must be present.
-        use crate::renderer::overlay::widgets::settings_font::{row as font_row, FONT_CATEGORY};
+        use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, row as font_row};
         assert!(ids.contains(&widget_id(FONT_CATEGORY, font_row::FAMILY).0));
         assert!(ids.contains(&widget_id(FONT_CATEGORY, font_row::SIZE).0));
     }
@@ -3789,7 +3789,7 @@ mod tests {
         let update = build_tree_from_state(&state);
         let ids: Vec<u64> = update.nodes.iter().map(|(id, _)| id.0).collect();
         use crate::renderer::overlay::widgets::settings_startup::{
-            row as startup_row, STARTUP_CATEGORY,
+            STARTUP_CATEGORY, row as startup_row,
         };
         assert!(ids.contains(&widget_id(STARTUP_CATEGORY, startup_row::LANGUAGE).0));
         assert!(ids.contains(&widget_id(STARTUP_CATEGORY, startup_row::CHECK_UPDATES).0));
@@ -3934,7 +3934,7 @@ mod tests {
     /// Click on the family row enters edit mode.
     #[test]
     fn dispatch_settings_font_family_click_enters_editing() {
-        use crate::renderer::overlay::widgets::settings_font::{row, FONT_CATEGORY};
+        use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, row};
 
         let mut panel = SettingsPanel::default();
         let handled = dispatch_settings_action(
@@ -3953,7 +3953,7 @@ mod tests {
     /// A string SetValue applies to the family field and marks it dirty.
     #[test]
     fn dispatch_settings_font_family_set_value_updates_string() {
-        use crate::renderer::overlay::widgets::settings_font::{row, FONT_CATEGORY};
+        use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, row};
 
         let mut panel = SettingsPanel::default();
         panel.dirty = false;
@@ -3974,7 +3974,7 @@ mod tests {
     /// A numeric SetValue on a text field is refused rather than coerced.
     #[test]
     fn dispatch_settings_font_family_set_value_with_numeric_returns_false() {
-        use crate::renderer::overlay::widgets::settings_font::{row, FONT_CATEGORY};
+        use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, row};
 
         let mut panel = SettingsPanel::default();
         let before = panel.font_family.clone();
@@ -3994,7 +3994,7 @@ mod tests {
     /// SetValue on the size slider keeps its 0.5-unit rounding and 8..=32 clamp.
     #[test]
     fn dispatch_settings_font_size_set_value_rounds_and_clamps() {
-        use crate::renderer::overlay::widgets::settings_font::{row, FONT_CATEGORY};
+        use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, row};
 
         let mut panel = SettingsPanel::default();
         let kind = NodeIdKind::SettingsWidget {
@@ -4025,7 +4025,7 @@ mod tests {
     /// Increment / Decrement on the size slider move in 0.5 steps.
     #[test]
     fn dispatch_settings_font_size_increment_decrement() {
-        use crate::renderer::overlay::widgets::settings_font::{row, FONT_CATEGORY};
+        use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, row};
 
         let mut panel = SettingsPanel::default();
         let kind = NodeIdKind::SettingsWidget {
@@ -4079,7 +4079,7 @@ mod tests {
 
     /// Helper: the WidgetId of the Window opacity slider.
     fn window_opacity_widget_id() -> crate::renderer::overlay::widgets::spec::WidgetId {
-        use crate::renderer::overlay::widgets::settings_window::{row, WINDOW_CATEGORY};
+        use crate::renderer::overlay::widgets::settings_window::{WINDOW_CATEGORY, row};
         crate::renderer::overlay::widgets::spec::WidgetId::new(WINDOW_CATEGORY, row::OPACITY)
     }
 
@@ -4169,7 +4169,7 @@ mod tests {
     /// setter — and therefore the behaviour — is unchanged.
     #[test]
     fn dispatch_settings_opacity_set_value_rounds_and_clamps() {
-        use crate::renderer::overlay::widgets::settings_window::{row, WINDOW_CATEGORY};
+        use crate::renderer::overlay::widgets::settings_window::{WINDOW_CATEGORY, row};
 
         let mut panel = SettingsPanel::default();
         let kind = NodeIdKind::SettingsWidget {
@@ -4219,7 +4219,7 @@ mod tests {
     /// Click / Increment on the language row advances it; Decrement goes back.
     #[test]
     fn dispatch_settings_language_click_advances() {
-        use crate::renderer::overlay::widgets::settings_startup::{row, STARTUP_CATEGORY};
+        use crate::renderer::overlay::widgets::settings_startup::{STARTUP_CATEGORY, row};
 
         let mut panel = SettingsPanel::default();
         let kind = NodeIdKind::SettingsWidget {
@@ -4236,7 +4236,7 @@ mod tests {
     /// Click on the update-check row toggles it; Focus only moves focus.
     #[test]
     fn dispatch_settings_auto_update_click_toggles() {
-        use crate::renderer::overlay::widgets::settings_startup::{row, STARTUP_CATEGORY};
+        use crate::renderer::overlay::widgets::settings_startup::{STARTUP_CATEGORY, row};
 
         let mut panel = SettingsPanel::default();
         let kind = NodeIdKind::SettingsWidget {
@@ -4283,7 +4283,7 @@ mod tests {
     #[test]
     fn build_settings_panel_nodes_window_exposes_every_row() {
         use crate::renderer::overlay::widgets::settings_window::{
-            window_widget_descs, WINDOW_ROW_COUNT,
+            WINDOW_ROW_COUNT, window_widget_descs,
         };
 
         let mut panel = SettingsPanel::default();
@@ -6322,7 +6322,7 @@ mod tests {
     /// write_ssh_hosts_back: in-place updates preserve unmanaged fields.
     #[test]
     fn write_ssh_hosts_back_preserves_unknown_fields() {
-        use crate::settings_panel::{write_ssh_hosts_back, SshHostEntry};
+        use crate::settings_panel::{SshHostEntry, write_ssh_hosts_back};
 
         // Existing TOML has name + key_path.
         let existing = r#"
@@ -6368,7 +6368,7 @@ forward_local = ["8080:localhost:80"]
     /// write_ssh_hosts_back: can create a new [[hosts]] array even if it is missing.
     #[test]
     fn write_ssh_hosts_back_creates_new_array() {
-        use crate::settings_panel::{write_ssh_hosts_back, SshHostEntry};
+        use crate::settings_panel::{SshHostEntry, write_ssh_hosts_back};
         let mut doc: toml_edit::DocumentMut = "".parse().unwrap();
         let hosts = vec![SshHostEntry {
             name: "first".to_string(),
@@ -6622,7 +6622,7 @@ auth_type = "key"
 
     /// Test factory: SettingsPanel preloaded with 2 keybindings on the Keybindings category.
     fn make_key_panel_with_2_bindings() -> SettingsPanel {
-        use crate::settings_panel::{KeyBindingEntry, SettingsCategory, KEYBINDING_ACTIONS};
+        use crate::settings_panel::{KEYBINDING_ACTIONS, KeyBindingEntry, SettingsCategory};
         let mut panel = SettingsPanel::default();
         panel.category = SettingsCategory::Keybindings;
         panel.keybindings = vec![
@@ -7040,9 +7040,11 @@ auth_type = "key"
             "Delete button must be exposed in disabled form"
         );
         // No ListBoxOption is created when the list is empty.
-        assert!(!nodes
-            .iter()
-            .any(|(nid, _)| *nid == settings_key_binding_item_id(0)));
+        assert!(
+            !nodes
+                .iter()
+                .any(|(nid, _)| *nid == settings_key_binding_item_id(0))
+        );
         // Default focus when nothing is set falls back to the category tab.
         assert!(matches!(
             decode_node_id(focus),
