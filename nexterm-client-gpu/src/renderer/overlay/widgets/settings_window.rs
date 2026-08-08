@@ -12,7 +12,7 @@
 
 use crate::settings_panel::SettingsPanel;
 
-use super::settings_theme::TabGeometry;
+use super::geometry::TabGeometry;
 use super::spec::{WidgetDesc, WidgetId, WidgetKind, WidgetRect, WidgetSpec};
 
 /// `SettingsCategory::ALL` index of the Window category.
@@ -249,9 +249,9 @@ pub(crate) fn drag_slider_of(index: u8) -> Option<(crate::settings_panel::Slider
 pub(crate) fn apply_window_action(
     sp: &mut SettingsPanel,
     index: u8,
-    action: super::settings_theme::WidgetAction,
+    action: super::action::WidgetAction,
 ) -> bool {
-    use super::settings_theme::WidgetAction;
+    use super::action::WidgetAction;
 
     if index as usize >= WINDOW_ROW_COUNT {
         return false;
@@ -528,7 +528,7 @@ mod tests {
 
     #[test]
     fn activate_flips_toggles_and_steps_cyclers() {
-        use super::super::settings_theme::WidgetAction;
+        use super::super::action::WidgetAction;
 
         let mut sp = panel();
         let before = sp.cursor_blink_enabled;
@@ -546,7 +546,7 @@ mod tests {
 
     #[test]
     fn activate_leaves_numeric_rows_alone() {
-        use super::super::settings_theme::WidgetAction;
+        use super::super::action::WidgetAction;
 
         let mut sp = panel();
         let before = sp.opacity;
@@ -561,7 +561,7 @@ mod tests {
 
     #[test]
     fn increment_and_decrement_move_a_slider() {
-        use super::super::settings_theme::WidgetAction;
+        use super::super::action::WidgetAction;
 
         let mut sp = panel();
         sp.padding_x = 4;
@@ -573,7 +573,7 @@ mod tests {
 
     #[test]
     fn an_out_of_range_row_is_refused() {
-        use super::super::settings_theme::WidgetAction;
+        use super::super::action::WidgetAction;
 
         let mut sp = panel();
         assert!(!apply_window_action(

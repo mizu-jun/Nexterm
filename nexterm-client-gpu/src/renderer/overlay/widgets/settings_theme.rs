@@ -12,6 +12,8 @@
 
 use crate::settings_panel::SettingsPanel;
 
+use super::action::WidgetAction;
+use super::geometry::TabGeometry;
 use super::spec::{WidgetDesc, WidgetId, WidgetKind, WidgetRect, WidgetSpec};
 
 /// `SettingsCategory::ALL` index of the Theme category.
@@ -45,21 +47,6 @@ pub(crate) fn swatch_names() -> [&'static str; 9] {
         out[i] = name;
     }
     out
-}
-
-/// The panel geometry a tab needs to lay its widgets out, in physical pixels.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct TabGeometry {
-    /// Top of the category content area.
-    pub content_top: f32,
-    /// Left edge of the content area's inner padding.
-    pub content_inner_x: f32,
-    /// Width of the content area.
-    pub content_w: f32,
-    /// Character cell width.
-    pub cell_w: f32,
-    /// Character cell height.
-    pub cell_h: f32,
 }
 
 /// Row height as a multiple of the cell height, matching the highlight
@@ -194,26 +181,6 @@ pub(crate) fn build_theme_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<Wi
             desc.place(rect, control).hovered(hovered == Some(index))
         })
         .collect()
-}
-
-/// What an accessibility client asked to do to a control.
-///
-/// Not `Copy`: [`Self::SetText`] carries an owned string.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum WidgetAction {
-    /// Default action (AccessKit `Click`): flip a toggle, pick a swatch,
-    /// advance a cycler.
-    Activate,
-    /// Step forward (AccessKit `Increment`).
-    Next,
-    /// Step backward (AccessKit `Decrement`).
-    Prev,
-    /// Set a numeric control directly (AccessKit `SetValue`). Ignored by
-    /// kinds that carry no number.
-    SetValue(f64),
-    /// Set a text control directly (AccessKit `SetValue` with a string).
-    /// Ignored by kinds that carry no text.
-    SetText(String),
 }
 
 /// Apply `action` to the Theme widget at `index`.

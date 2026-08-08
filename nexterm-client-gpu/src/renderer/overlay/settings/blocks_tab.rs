@@ -8,7 +8,7 @@ use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::settings_panel::SettingsPanel;
 
 use super::super::widgets::draw::{WidgetSink, WidgetTheme, draw_widget};
-use super::super::widgets::settings_theme::TabGeometry;
+use super::super::widgets::geometry::TabGeometry;
 use crate::vertex_util::add_string_verts;
 
 use super::super::widgets::settings_blocks::{build_blocks_widgets, tip_y};

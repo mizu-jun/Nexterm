@@ -65,7 +65,7 @@ pub(super) enum SettingsPanelHit {
 impl EventHandler {
     /// Run a mouse hit-test against the settings panel.
     pub(super) fn hit_test_settings_panel(&self, cx: f32, cy: f32) -> SettingsPanelHit {
-        use crate::renderer::overlay::widgets::settings_theme::TabGeometry;
+        use crate::renderer::overlay::widgets::geometry::TabGeometry;
         use crate::settings_panel::{SettingsCategory, SliderType};
 
         let sp = &self.app.state.settings_panel;
@@ -178,6 +178,14 @@ impl EventHandler {
 
         // Content-area hit-test.
         let content_top = py + title_h + cell_h * 0.5;
+        // Built once: every migrated category lays out from the same geometry.
+        let geometry = TabGeometry {
+            content_top,
+            content_inner_x,
+            content_w,
+            cell_w,
+            cell_h,
+        };
 
         match &sp.category {
             SettingsCategory::Font => {
@@ -188,16 +196,7 @@ impl EventHandler {
                     FONT_SIZE_RANGE, build_font_widgets, row,
                 };
 
-                let specs = build_font_widgets(
-                    sp,
-                    &TabGeometry {
-                        content_top,
-                        content_inner_x,
-                        content_w,
-                        cell_w,
-                        cell_h,
-                    },
-                );
+                let specs = build_font_widgets(sp, &geometry);
                 if let Some(id) = crate::renderer::overlay::widgets::spec::hit_test(&specs, cx, cy)
                 {
                     if let Some(spec) = specs.iter().find(|s| s.id() == id)
@@ -226,16 +225,7 @@ impl EventHandler {
                 // before; they are clickable now that they are widgets.
                 use crate::renderer::overlay::widgets::settings_startup::build_startup_widgets;
 
-                let specs = build_startup_widgets(
-                    sp,
-                    &TabGeometry {
-                        content_top,
-                        content_inner_x,
-                        content_w,
-                        cell_w,
-                        cell_h,
-                    },
-                );
+                let specs = build_startup_widgets(sp, &geometry);
                 if let Some(id) = crate::renderer::overlay::widgets::spec::hit_test(&specs, cx, cy)
                 {
                     return SettingsPanelHit::StartupRow(id.index);
@@ -246,18 +236,9 @@ impl EventHandler {
                 // the geometry lives in exactly one place and this branch
                 // just hit-tests what the renderer drew.
                 use crate::renderer::overlay::widgets::settings_theme::{
-                    TabGeometry, build_theme_widgets, swatch_index_of,
+                    build_theme_widgets, swatch_index_of,
                 };
-                let specs = build_theme_widgets(
-                    sp,
-                    &TabGeometry {
-                        content_top,
-                        content_inner_x,
-                        content_w,
-                        cell_w,
-                        cell_h,
-                    },
-                );
+                let specs = build_theme_widgets(sp, &geometry);
                 if let Some(id) = crate::renderer::overlay::widgets::spec::hit_test(&specs, cx, cy)
                 {
                     if let Some(i) = swatch_index_of(id) {
@@ -275,14 +256,7 @@ impl EventHandler {
 
                 let specs =
                     crate::renderer::overlay::widgets::settings_window::build_window_widgets(
-                        sp,
-                        &TabGeometry {
-                            content_top,
-                            content_inner_x,
-                            content_w,
-                            cell_w,
-                            cell_h,
-                        },
+                        sp, &geometry,
                     );
                 if let Some(id) = crate::renderer::overlay::widgets::spec::hit_test(&specs, cx, cy)
                 {
@@ -315,16 +289,7 @@ impl EventHandler {
             SettingsCategory::Blocks => {
                 use crate::renderer::overlay::widgets::settings_blocks::build_blocks_widgets;
 
-                let specs = build_blocks_widgets(
-                    sp,
-                    &TabGeometry {
-                        content_top,
-                        content_inner_x,
-                        content_w,
-                        cell_w,
-                        cell_h,
-                    },
-                );
+                let specs = build_blocks_widgets(sp, &geometry);
                 if let Some(id) = crate::renderer::overlay::widgets::spec::hit_test(&specs, cx, cy)
                 {
                     return SettingsPanelHit::BlocksRow(id.index);
@@ -333,16 +298,7 @@ impl EventHandler {
             SettingsCategory::Security => {
                 use crate::renderer::overlay::widgets::settings_security::build_security_widgets;
 
-                let specs = build_security_widgets(
-                    sp,
-                    &TabGeometry {
-                        content_top,
-                        content_inner_x,
-                        content_w,
-                        cell_w,
-                        cell_h,
-                    },
-                );
+                let specs = build_security_widgets(sp, &geometry);
                 if let Some(id) = crate::renderer::overlay::widgets::spec::hit_test(&specs, cx, cy)
                 {
                     return SettingsPanelHit::SecurityRow(id.index);

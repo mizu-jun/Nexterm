@@ -7,8 +7,8 @@ use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::settings_panel::SettingsPanel;
 
 use super::super::widgets::draw::{WidgetSink, WidgetTheme, draw_widget};
+use super::super::widgets::geometry::TabGeometry;
 use super::super::widgets::settings_security::{build_security_widgets, note_y};
-use super::super::widgets::settings_theme::TabGeometry;
 use super::row::{MIN_TEXT_CONTRAST, draw_description_rows, ensure_readable};
 
 #[allow(clippy::too_many_arguments)]

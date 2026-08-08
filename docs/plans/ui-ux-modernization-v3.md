@@ -1,7 +1,7 @@
 # UI/UX Modernization v3 — Fluent Design Foundation
 
-Status: approved 2026-07-30; last reconciled 2026-07-31 (v1.16.0 shipped
-#46–#50 in parallel). Target releases: v1.17–v1.21+.
+Status: approved 2026-07-30; last reconciled 2026-08-08 (P1a/P1b complete,
+P1c 6 tabs of 9). Target releases: v1.17–v1.21+.
 Execution order: P0 → P1 → P2 → {P3, P4, P5 parallelizable} → P6 → P7.
 Source: successor to `plans/archive/ui-ux-modernization-v2.md` and
 `plans/archive/2026-07-29-windows-terminal-like-ux.md`.
@@ -321,9 +321,19 @@ gated behind a spike.
 - [x] P0 (SDF half) rounded-rect unification — shipped via #47 (2026-07-30)
 - [x] P0 (compositing half) premultiplied-alpha contract — shipped via #45
       (2026-07-31; on-device visual checks listed in the PR remain pending)
-- [ ] P1a metric tokens (`metrics.rs`)
-- [ ] P1b widget layer + Theme/Window tab migration + tooltip
-- [ ] P1c remaining tabs + hard-coded color migration
+- [x] P1a metric tokens (`metrics.rs`) — `MetricTokens` with the spacing,
+      radius, type, elevation and motion ramps
+- [x] P1b widget layer + tooltip — `renderer/overlay/widgets/`, with
+      `WidgetDesc` (semantics) / `WidgetSpec` (semantics + layout) consumed by
+      the renderer, the hit-test and the AccessKit tree
+- [ ] P1c tab migration — **6 of 9 done** (Theme, Window, Font, Startup,
+      Blocks, Security). Remaining:
+  - [ ] Ssh / Keybindings / Profiles — list-shaped rather than row-shaped, so
+        they need a list widget kind before they can move
+  - [ ] Collapse the seven per-tab focus counters into one
+        `focused_widget_id` (blocked on the three list tabs)
+  - [ ] Hard-coded colour migration (G11) — not started; the widget layer
+        reads `DesignTokens`, but colours outside it are untouched
 - [ ] CONFIGURATION.md inventory PR
 - [ ] P2a soft shadows + stroke (shader attributes)
 - [ ] P2b in-app acrylic (offscreen + Kawase blur)

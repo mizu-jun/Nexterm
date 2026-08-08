@@ -11,8 +11,8 @@ use crate::settings_panel::SettingsPanel;
 use crate::vertex_util::add_string_verts;
 
 use super::super::widgets::draw::{WidgetSink, WidgetTheme, draw_widget};
+use super::super::widgets::geometry::TabGeometry;
 use super::super::widgets::settings_font::{build_font_widgets, hint_y, row};
-use super::super::widgets::settings_theme::TabGeometry;
 use super::row::{MIN_TEXT_CONTRAST, ensure_readable};
 
 #[allow(clippy::too_many_arguments)]

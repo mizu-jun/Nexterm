@@ -18,7 +18,9 @@
 //! Migration is deliberately tab-by-tab: a migrated category builds specs,
 //! everything else keeps its bespoke code until its turn comes.
 
+pub(crate) mod action;
 pub(crate) mod draw;
+pub(crate) mod geometry;
 pub(crate) mod settings_blocks;
 pub(crate) mod settings_font;
 pub(crate) mod settings_security;

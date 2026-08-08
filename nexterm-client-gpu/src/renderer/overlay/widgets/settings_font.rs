@@ -7,7 +7,8 @@
 
 use crate::settings_panel::SettingsPanel;
 
-use super::settings_theme::{TabGeometry, WidgetAction};
+use super::action::WidgetAction;
+use super::geometry::TabGeometry;
 use super::spec::{WidgetDesc, WidgetId, WidgetKind, WidgetRect, WidgetSpec};
 
 /// `SettingsCategory::ALL` index of the Font category.

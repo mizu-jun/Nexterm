@@ -11,9 +11,9 @@ use crate::settings_panel::SettingsPanel;
 use crate::vertex_util::{add_string_verts, truncate_to_cols};
 
 use super::super::widgets::draw::{WidgetSink, WidgetTheme, draw_widget};
+use super::super::widgets::geometry::TabGeometry;
 use super::super::widgets::settings_theme::{
-    THEME_CATEGORY, TabGeometry, build_theme_widgets, swatch_gap, swatch_index_of, swatch_names,
-    swatch_y,
+    THEME_CATEGORY, build_theme_widgets, swatch_gap, swatch_index_of, swatch_names, swatch_y,
 };
 use super::super::widgets::tooltip::{draw_tooltip, place_tooltip};
 use super::row::{MIN_TEXT_CONTRAST, ensure_readable};

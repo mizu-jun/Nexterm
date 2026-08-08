@@ -394,10 +394,15 @@ impl EventHandler {
                     std::time::Instant::now(),
                 )
             });
-        } else if self.app.state.settings_panel.theme_hover_preview.is_some() {
-            // Panel closed while a preview was active (e.g. Esc dismiss):
-            // clear the stale preview so the next open starts clean.
+        } else if self.app.state.settings_panel.theme_hover_preview.is_some()
+            || self.app.state.settings_panel.hover_widget.is_some()
+        {
+            // Panel closed while a preview or a hover dwell was active (e.g.
+            // Esc dismiss): clear both so the next open starts clean. Leaving
+            // the dwell behind would make a tooltip reappear the instant the
+            // panel reopens under a stationary cursor, skipping its delay.
             self.app.state.settings_panel.theme_hover_preview = None;
+            self.app.state.settings_panel.hover_widget = None;
         }
 
         let col = (position.x / cell_w) as u16;
@@ -960,25 +965,15 @@ impl EventHandler {
                         }
                     }
                     SettingsPanelHit::WindowRow(row) => {
-                        // Phase 5-11-6 #6 / Phase B4 / Phase B4-P2: click on a row inside
-                        // the Window category. Change focus; clicking the label of rows
-                        // 1/4/5/7/8/9/10/11/12 also changes the value (toggle or cycle).
-                        // Row 13 (fps_limit) is numeric — click only focuses, matching
-                        // the padding_x/y (2/3) and scrollback_lines (6) convention.
-                        let sp = &mut self.app.state.settings_panel;
-                        sp.window_field_focus = row;
-                        match row {
-                            1 => sp.next_cursor_style(),
-                            4 => sp.next_present_mode(),
-                            5 => sp.toggle_cursor_blink(),
-                            7 => sp.toggle_show_tab_number(),
-                            8 => sp.toggle_show_new_tab_button(),
-                            9 => sp.toggle_animations_enabled(),
-                            10 => sp.next_animations_intensity(),
-                            11 => sp.next_window_decorations(),
-                            12 => sp.next_window_close_action(),
-                            _ => {}
-                        }
+                        // UI/UX v3 P1c: the same router the keyboard and the
+                        // accessibility path use, so the three cannot drift.
+                        use crate::renderer::overlay::widgets::action::WidgetAction;
+                        use crate::renderer::overlay::widgets::settings_window::apply_window_action;
+                        apply_window_action(
+                            &mut self.app.state.settings_panel,
+                            row,
+                            WidgetAction::Activate,
+                        );
                     }
                     SettingsPanelHit::TitleBar => {
                         // Phase 3 (UI 4-tasks, 2026-06-12): pressing the title
@@ -995,8 +990,8 @@ impl EventHandler {
                         // UI/UX v3 P1c: routed through the shared action
                         // router, so a click and a screen reader apply the
                         // same transition. Blocks still auto-saves.
+                        use crate::renderer::overlay::widgets::action::WidgetAction;
                         use crate::renderer::overlay::widgets::settings_blocks::apply_blocks_action;
-                        use crate::renderer::overlay::widgets::settings_theme::WidgetAction;
                         let sp = &mut self.app.state.settings_panel;
                         if apply_blocks_action(sp, row, WidgetAction::Activate) {
                             let _ = sp.save_to_toml();
@@ -1007,8 +1002,8 @@ impl EventHandler {
                         // Click focuses the row; policy rows cycle forward and
                         // byte-cap rows start editing. Changes persist on
                         // Save/close rather than auto-saving.
+                        use crate::renderer::overlay::widgets::action::WidgetAction;
                         use crate::renderer::overlay::widgets::settings_security::apply_security_action;
-                        use crate::renderer::overlay::widgets::settings_theme::WidgetAction;
                         apply_security_action(
                             &mut self.app.state.settings_panel,
                             row,
@@ -1018,8 +1013,8 @@ impl EventHandler {
                     SettingsPanelHit::FontRow(row) => {
                         // UI/UX v3 P1c: the Font rows had no click handling
                         // before — only the size slider reacted.
+                        use crate::renderer::overlay::widgets::action::WidgetAction;
                         use crate::renderer::overlay::widgets::settings_font::apply_font_action;
-                        use crate::renderer::overlay::widgets::settings_theme::WidgetAction;
                         apply_font_action(
                             &mut self.app.state.settings_panel,
                             row,
@@ -1029,8 +1024,8 @@ impl EventHandler {
                     SettingsPanelHit::StartupRow(row) => {
                         // UI/UX v3 P1c: likewise new — the Startup rows were
                         // keyboard-only.
+                        use crate::renderer::overlay::widgets::action::WidgetAction;
                         use crate::renderer::overlay::widgets::settings_startup::apply_startup_action;
-                        use crate::renderer::overlay::widgets::settings_theme::WidgetAction;
                         apply_startup_action(
                             &mut self.app.state.settings_panel,
                             row,

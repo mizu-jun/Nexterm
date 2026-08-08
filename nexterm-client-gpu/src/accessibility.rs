@@ -691,8 +691,7 @@ pub enum NodeIdKind {
 /// | 26 | `AlertRegion` (Sprint 5-11-5) |
 /// | 27 | `PaneInputBuffer` (Phase 5-11-7) |
 /// | 28..29 | reserved |
-/// | 30..35 | settings fields (FontFamily / FontSize / — / WindowOpacity / StartupLanguage / StartupAutoUpdate); 32 retired with the Theme migration |
-/// | 36..39 | settings fields Phase 5-11-6 #6 (CursorStyle / PaddingX / PaddingY / PresentMode) |
+/// | 30..39 | **free** — every hand-written settings-field node (font family/size, theme scheme, window opacity, startup language/auto-update, cursor style, padding x/y, present mode) was replaced by `SettingsWidget` in UI/UX v3 P1b/P1c |
 /// | 40..44 | settings fields Phase 5-11-8 Step 8-2 (SshFieldName / Host / Port / Username / AuthType) |
 /// | 45..49 | settings fields Phase 5-11-8 Step 8-3 (SshAddBtn / SshDeleteBtn / SshDeleteDialog / SshDeleteConfirmBtn / SshDeleteCancelBtn) |
 /// | 50..56 | settings fields Phase 5-11-9 Sub-phase E (KeyFieldKey / KeyFieldAction / KeyAddBtn / KeyDeleteBtn / KeyDeleteDialog / KeyDeleteConfirmBtn / KeyDeleteCancelBtn) |
@@ -704,7 +703,7 @@ pub enum NodeIdKind {
 /// | 400M..500M | `ContextItem { idx: id - 400M }` |
 /// | 500M..600M | `QuickSelectItem { idx: id - 500M }` |
 /// | 600M..700M | `SettingsProfileItem { idx: id - 600M }` (Phase 5-11-7) |
-/// | 700M..800M | `SettingsWidget { category, index }` (UI/UX v3 P1b) |
+/// | 700M..800M | `SettingsWidget { category, index }` — `SETTINGS_WIDGET_BASE + WidgetId::as_u32()` (UI/UX v3 P1b/P1c) |
 /// | 800M..900M | `SettingsSshHostItem { idx: id - 800M }` (Phase 5-11-8 Step 8-1) |
 /// | 900M..1G | `SettingsKeyBindingItem { idx: id - 900M }` (Phase 5-11-9 Sub-phase E) |
 /// | 1G..1G+u32::MAX | `Tab { pane_id: id - 1G }` |
@@ -1606,6 +1605,62 @@ fn widget_node(desc: &crate::renderer::overlay::widgets::spec::WidgetDesc) -> No
     node
 }
 
+/// NodeId the reported focus should sit on for a widget-migrated category.
+///
+/// Every migrated tab keeps its own focus counter until they are collapsed
+/// into one `focused_widget_id`, so the mapping is per category. Returns
+/// `None` for categories that are not migrated (or, like Blocks, have no
+/// focus counter at all), letting the caller fall through to its own rules.
+///
+/// This must stay in step with the `Action::Focus` arm of
+/// `dispatch_settings_action`: that arm writes the counter, and this reads it
+/// back. If one knows about a category and the other does not, a screen
+/// reader moves its virtual cursor and the reported focus never follows.
+fn widget_focus_id(panel: &SettingsPanel) -> Option<NodeId> {
+    use crate::settings_panel::SettingsCategory;
+
+    use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, FONT_ROW_COUNT};
+    use crate::renderer::overlay::widgets::settings_security::{
+        SECURITY_CATEGORY, SECURITY_ROW_COUNT,
+    };
+    use crate::renderer::overlay::widgets::settings_startup::{
+        STARTUP_CATEGORY, STARTUP_ROW_COUNT,
+    };
+    use crate::renderer::overlay::widgets::settings_theme::{THEME_CATEGORY, THEME_SWATCH_BASE};
+    use crate::renderer::overlay::widgets::settings_window::{WINDOW_CATEGORY, WINDOW_ROW_COUNT};
+    use crate::renderer::overlay::widgets::spec::WidgetId;
+
+    let (category, index, count) = match panel.category {
+        // Editing the family field pins focus there regardless of the counter.
+        SettingsCategory::Font if panel.font_family_editing => {
+            use crate::renderer::overlay::widgets::settings_font::row;
+            (FONT_CATEGORY, row::FAMILY, FONT_ROW_COUNT)
+        }
+        SettingsCategory::Font => (FONT_CATEGORY, panel.font_field_focus, FONT_ROW_COUNT),
+        SettingsCategory::Startup => (
+            STARTUP_CATEGORY,
+            panel.startup_field_focus,
+            STARTUP_ROW_COUNT,
+        ),
+        // The Theme counter addresses rows only; the swatches are picked with
+        // the mouse, so the counter can never point at one.
+        SettingsCategory::Theme => (
+            THEME_CATEGORY,
+            panel.theme_field_focus,
+            THEME_SWATCH_BASE as usize,
+        ),
+        SettingsCategory::Window => (WINDOW_CATEGORY, panel.window_field_focus, WINDOW_ROW_COUNT),
+        SettingsCategory::Security => (
+            SECURITY_CATEGORY,
+            panel.security_field_focus,
+            SECURITY_ROW_COUNT,
+        ),
+        // Blocks is mouse-only; Ssh / Keybindings / Profiles are not migrated.
+        _ => return None,
+    };
+    ((index as usize) < count).then(|| settings_widget_id(WidgetId::new(category, index)))
+}
+
 fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, NodeId) {
     use crate::settings_panel::{KeyEditMode, SettingsCategory};
 
@@ -2045,26 +2100,8 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
     nodes.push((SETTINGS_CONTENT_ID, content));
 
     // ===== Focus selection =====
-    let focus = if matches!(panel.category, SettingsCategory::Font) && panel.font_family_editing {
-        use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, row};
-        settings_widget_id(crate::renderer::overlay::widgets::spec::WidgetId::new(
-            FONT_CATEGORY,
-            row::FAMILY,
-        ))
-    } else if matches!(panel.category, SettingsCategory::Window) {
-        // UI/UX v3 P1c: focus the widget `window_field_focus` selects. Every
-        // row is a widget now, so the mapping no longer stops at row 4.
-        use crate::renderer::overlay::widgets::settings_window::{
-            WINDOW_CATEGORY, WINDOW_ROW_COUNT,
-        };
-        if (panel.window_field_focus as usize) < WINDOW_ROW_COUNT {
-            settings_widget_id(crate::renderer::overlay::widgets::spec::WidgetId::new(
-                WINDOW_CATEGORY,
-                panel.window_field_focus,
-            ))
-        } else {
-            settings_tab_id_at(current_idx)
-        }
+    let focus = if let Some(id) = widget_focus_id(panel) {
+        id
     } else if matches!(panel.category, SettingsCategory::Profiles) && !panel.profiles.is_empty() {
         // Phase 5-11-7: focus the `selected_profile` node in the Profiles category.
         settings_profile_item_id(panel.selected_profile.min(panel.profiles.len() - 1))
@@ -2617,6 +2654,7 @@ pub fn dispatch_settings_action(
             Action::Click | Action::Increment | Action::Decrement | Action::SetValue,
             NodeIdKind::SettingsWidget { category, index },
         ) => {
+            use crate::renderer::overlay::widgets::action::WidgetAction;
             use crate::renderer::overlay::widgets::settings_blocks::{
                 BLOCKS_CATEGORY, apply_blocks_action,
             };
@@ -2630,7 +2668,7 @@ pub fn dispatch_settings_action(
                 STARTUP_CATEGORY, apply_startup_action,
             };
             use crate::renderer::overlay::widgets::settings_theme::{
-                THEME_CATEGORY, WidgetAction, apply_theme_action,
+                THEME_CATEGORY, apply_theme_action,
             };
             use crate::renderer::overlay::widgets::settings_window::{
                 WINDOW_CATEGORY, apply_window_action,
@@ -3638,18 +3676,97 @@ mod tests {
         assert_eq!(update.focus, widget_id(font_category(), font_family_row()));
     }
 
-    /// Outside of editing, focus is on the current category tab.
+    /// A category with no widget focus counter falls back to its tab.
     #[test]
-    fn settings_panel_focus_defaults_to_current_tab() {
+    fn settings_panel_focus_falls_back_to_the_tab() {
         use crate::settings_panel::SettingsCategory;
 
         let mut state = ClientState::new(80, 24, 1000);
         state.settings_panel.is_open = true;
-        state.settings_panel.category = SettingsCategory::Theme;
+        // Blocks is mouse-only, so nothing inside it can hold focus.
+        state.settings_panel.category = SettingsCategory::Blocks;
 
         let update = build_tree_from_state(&state);
-        // Theme is index 2 in SettingsCategory::ALL.
-        assert_eq!(update.focus, settings_tab_id_at(2));
+        // Blocks is index 7 in SettingsCategory::ALL.
+        assert_eq!(update.focus, settings_tab_id_at(7));
+    }
+
+    /// Focus follows each migrated tab's field counter (UI/UX v3 P1c).
+    ///
+    /// Regression guard for a real defect: the `Action::Focus` dispatch arm
+    /// wrote these counters while the reported focus ignored them, so a
+    /// screen reader's virtual cursor moved but the announced focus never
+    /// did. Every migrated category with a counter must appear here.
+    #[test]
+    fn settings_panel_focus_follows_every_migrated_counter() {
+        use crate::renderer::overlay::widgets::settings_font::FONT_CATEGORY;
+        use crate::renderer::overlay::widgets::settings_security::SECURITY_CATEGORY;
+        use crate::renderer::overlay::widgets::settings_startup::STARTUP_CATEGORY;
+        use crate::renderer::overlay::widgets::settings_theme::THEME_CATEGORY;
+        use crate::renderer::overlay::widgets::settings_window::WINDOW_CATEGORY;
+        use crate::settings_panel::SettingsCategory;
+
+        /// One migrated category: its enum variant, its widget-category
+        /// index, and the setter for its focus counter.
+        type FocusCase = (SettingsCategory, u8, fn(&mut SettingsPanel, u8));
+
+        let cases: [FocusCase; 5] = [
+            (SettingsCategory::Theme, THEME_CATEGORY, |p, i| {
+                p.theme_field_focus = i
+            }),
+            (SettingsCategory::Window, WINDOW_CATEGORY, |p, i| {
+                p.window_field_focus = i
+            }),
+            (SettingsCategory::Font, FONT_CATEGORY, |p, i| {
+                p.font_field_focus = i
+            }),
+            (SettingsCategory::Startup, STARTUP_CATEGORY, |p, i| {
+                p.startup_field_focus = i
+            }),
+            (SettingsCategory::Security, SECURITY_CATEGORY, |p, i| {
+                p.security_field_focus = i
+            }),
+        ];
+
+        for (category, widget_category, set_focus) in cases {
+            let mut state = ClientState::new(80, 24, 1000);
+            state.settings_panel.is_open = true;
+            state.settings_panel.category = category.clone();
+            set_focus(&mut state.settings_panel, 1);
+
+            let update = build_tree_from_state(&state);
+            assert_eq!(
+                update.focus,
+                widget_id(widget_category, 1),
+                "focus did not follow the counter for {category:?}"
+            );
+            assert!(
+                update.nodes.iter().any(|(id, _)| *id == update.focus),
+                "the focused node must exist in the tree for {category:?}"
+            );
+        }
+    }
+
+    /// An out-of-range counter must not point at a node that is not in the
+    /// tree — a dangling focus id breaks the reader outright.
+    #[test]
+    fn settings_panel_focus_ignores_an_out_of_range_counter() {
+        use crate::renderer::overlay::widgets::settings_security::{
+            SECURITY_CATEGORY, SECURITY_ROW_COUNT,
+        };
+        use crate::settings_panel::SettingsCategory;
+
+        let mut state = ClientState::new(80, 24, 1000);
+        state.settings_panel.is_open = true;
+        state.settings_panel.category = SettingsCategory::Security;
+        state.settings_panel.security_field_focus = SECURITY_ROW_COUNT as u8;
+
+        let update = build_tree_from_state(&state);
+        assert_ne!(
+            update.focus,
+            widget_id(SECURITY_CATEGORY, SECURITY_ROW_COUNT as u8)
+        );
+        assert!(update.nodes.iter().any(|(id, _)| *id == update.focus));
     }
 
     /// Each category must include only the fields belonging to it.

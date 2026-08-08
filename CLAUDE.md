@@ -154,6 +154,13 @@ The legacy `nexterm-launcher` crate was removed in v1.4.0. Single-binary mode (t
 - `key_map.rs` — Key input mapping.
 - `connection.rs` — IPC connection to the server.
 - `settings_panel.rs` — Settings panel UI opened with `Ctrl+,` (7 categories, writes back via `toml_edit`, language picker uses `LANGUAGE_OPTIONS`).
+- `renderer/overlay/widgets/` — Shared widget layer for chrome controls (UI/UX v3 P1b/P1c). A settings control used to be defined three times over — per-tab draw code, mouse hit-test, AccessKit tree — with comments asking maintainers to keep the copies in sync. It is now described once and consumed by all three:
+  - `spec.rs` — `WidgetDesc` (identity, kind, label, value, focus: the *semantics*, no geometry) and `WidgetSpec` = `desc.place(rect, control_rect)` (semantics + one frame's layout), plus the pure `hit_test`. AccessKit reads `WidgetDesc`; the renderer and the hit-test read `WidgetSpec`, so they cannot describe different sets of controls.
+  - `geometry.rs` / `action.rs` — `TabGeometry` and `WidgetAction`, the two cross-cutting types every tab and both event paths share.
+  - `draw.rs` — one hover / focus / disabled visual language: Fluent pill toggles, chevron cyclers, sliders, text fields, colour swatches, focus ring. Geometry from `MetricTokens`, colour from `DesignTokens`.
+  - `tooltip.rs` — placement (below, flipping above, clamped) and drawing; the dwell timer lives in `settings/hover.rs` as `HoverDwell`.
+  - `settings_<tab>.rs` — one module per migrated category, each exposing `<tab>_widget_descs` (semantics), `build_<tab>_widgets` (semantics + geometry) and `apply_<tab>_action` (the single state transition the mouse, keyboard and AccessKit paths all call). Migrated: Theme, Window, Font, Startup, Blocks, Security. Not yet migrated: Ssh, Keybindings, Profiles (list-shaped rather than row-shaped).
+- `settings/hover.rs` — `HoverDwell`, the pointer-dwell timer that gates tooltips (500 ms).
 - `palette.rs` — Command palette (`Ctrl+Shift+P`). Fuzzy search via `SkimMatcherV2`. Sprint 5-7 / Phase 3-3 covers all 25 actions in `execute_action` (Quit, ClosePane, NewWindow, QuickSelect, SetBroadcastOn/Off, …) and persists usage history at `~/.local/state/nexterm/palette_history.json` (atomic write, mode 0600). The pure `rank_actions` function orders by history when the query is empty (last_used desc → use_count desc) and combines fuzzy score with a `history_bonus` (use_count×10 capped at 100, +100 within 1 day, +50 within 1 week) when a query is present. `record_use` records the selection.
 - `scrollback.rs` — Scrollback management + incremental search.
 - `host_manager.rs` — SSH host manager UI. `load_history()` / `save_history()` persist connection frequency to `host_history.json`. The `PasswordModal` struct handles the password prompt for `auth_type="password"` hosts.
@@ -217,7 +224,8 @@ This project renders its own GUI with Rust + wgpu + cosmic-text. There is no web
   - **Animations**: frame-driven. There is no `prefers-reduced-motion` media query; intensity is controlled by `config.toml` instead.
   - **Strings**: every user-facing string must be added to all 8 languages via `nexterm_i18n::fl!`.
   - **Accessibility**: contrast ratio ≥ 4.5:1, keyboard-only operation must work, respect IME composition (reuse the existing `ime_preedit` path).
-- Primary areas for UI/UX work: `settings_panel.rs`, `host_manager.rs`, `palette.rs`, `macro_picker.rs`, `renderer/overlay/`, `state/menus.rs`.
+- Primary areas for UI/UX work: `renderer/overlay/widgets/` (any migrated settings control), `host_manager.rs`, `palette.rs`, `macro_picker.rs`, `renderer/overlay/`, `state/menus.rs`.
+- **Adding a control to a migrated settings tab**: edit that tab's `settings_<tab>.rs` only — add a `row::` constant, a `WidgetDesc` arm, a layout entry, and an `apply_<tab>_action` arm. The renderer, the hit-test and the AccessKit tree pick it up automatically. Do not add geometry to `settings_panel_hit.rs` or a node to `accessibility.rs`; that is the duplication this layer exists to prevent.
 
 ## Release Flow
 
