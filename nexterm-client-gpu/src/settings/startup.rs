@@ -34,7 +34,7 @@ impl SettingsPanel {
     }
 
     /// Total number of fields in the Startup category.
-    pub const STARTUP_FIELD_COUNT: u8 = 4;
+    pub const STARTUP_FIELD_COUNT: u16 = 4;
 
     /// Move focus to the next Startup field (stops at the last one).
     pub fn next_startup_field(&mut self) -> bool {

@@ -20,7 +20,7 @@ pub struct HoverDwell {
     /// `SettingsCategory::ALL` index of the owning category.
     pub category: u8,
     /// Widget index within that category.
-    pub index: u8,
+    pub index: u16,
     /// When the pointer arrived.
     pub since: Instant,
 }
@@ -31,7 +31,7 @@ impl HoverDwell {
     /// Staying on the same control keeps the running timer, so small
     /// movements within a row do not restart the dwell; moving to a different
     /// control resets it.
-    pub fn enter(previous: Option<Self>, category: u8, index: u8, now: Instant) -> Self {
+    pub fn enter(previous: Option<Self>, category: u8, index: u16, now: Instant) -> Self {
         match previous {
             Some(prev) if prev.category == category && prev.index == index => prev,
             _ => Self {

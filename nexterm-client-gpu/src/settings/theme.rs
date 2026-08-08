@@ -38,7 +38,7 @@ impl SettingsPanel {
     }
 
     /// Total number of fields in the Theme category.
-    pub const THEME_FIELD_COUNT: u8 = 2;
+    pub const THEME_FIELD_COUNT: u16 = 2;
 
     /// Move focus to the next field (stops at the last one).
     pub fn next_theme_field(&mut self) -> bool {

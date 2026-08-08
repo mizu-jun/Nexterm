@@ -147,7 +147,7 @@ pub struct SettingsPanel {
     /// Focused field index inside the Security category. 0=external_url /
     /// 1=osc52_clipboard / 2=osc_notification / 3=plugin_read /
     /// 4=osc52_max_bytes / 5=notification_max_bytes / 6=plugin_read_max_bytes.
-    pub security_field_focus: u8,
+    pub security_field_focus: u16,
     /// In-flight decimal edit for the Security byte-cap fields (focus 4..=6).
     /// `Some` = edit mode on; Enter commits, Esc cancels.
     pub security_field_editing: Option<TextInputState>,
@@ -164,7 +164,7 @@ pub struct SettingsPanel {
     pub present_mode: nexterm_config::PresentModeConfig,
     /// Phase 5-11-6 #6: focused field index inside the Window category.
     /// 0=opacity / 1=cursor_style / 2=padding_x / 3=padding_y / 4=present_mode.
-    pub window_field_focus: u8,
+    pub window_field_focus: u16,
     /// Phase 5-11-8 Step 8-2: focused field index inside the SSH category.
     /// 0=ListBox (host selection) / 1=name / 2=host / 3=port / 4=username / 5=auth_type.
     /// Range: 0..=5. Updated via AccessKit Focus or the arrow keys.
@@ -255,7 +255,7 @@ pub struct SettingsPanel {
     pub colors_follow_system: bool,
     /// Focused field index inside the Theme category.
     /// 0=color scheme / 1=colors_follow_system toggle.
-    pub theme_field_focus: u8,
+    pub theme_field_focus: u16,
 
     // ===== Phase B4-P2: Font-category fields =====
     /// `[font].ligatures` mirror.
@@ -267,7 +267,7 @@ pub struct SettingsPanel {
     pub font_fallbacks_editing: Option<TextInputState>,
     /// Focused field index inside the Font category.
     /// 0=family / 1=size / 2=ligatures / 3=font_fallbacks.
-    pub font_field_focus: u8,
+    pub font_field_focus: u16,
 
     // ===== Phase B4-P2: Keybindings-category leader key field =====
     /// `leader_key` mirror (top-level key), editable at `key_field_focus == 5`.
@@ -278,7 +278,7 @@ pub struct SettingsPanel {
     // ===== Phase B4: Startup-category shell fields =====
     /// Focused field index inside the Startup category.
     /// 0=language / 1=auto_check_update toggle / 2=shell program / 3=shell args.
-    pub startup_field_focus: u8,
+    pub startup_field_focus: u16,
     /// `[shell].program` mirror (editable via `startup_field_focus == 2`).
     pub shell_program: String,
     /// `[shell].args` mirror, joined with a single space for editing

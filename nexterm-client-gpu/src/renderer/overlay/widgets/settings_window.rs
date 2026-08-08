@@ -23,33 +23,33 @@ pub(crate) const WINDOW_CATEGORY: u8 = 3;
 /// keyboard handler and the search filter keep working unchanged.
 pub(crate) mod row {
     /// Background opacity (slider).
-    pub const OPACITY: u8 = 0;
+    pub const OPACITY: u16 = 0;
     /// Cursor style (cycler).
-    pub const CURSOR_STYLE: u8 = 1;
+    pub const CURSOR_STYLE: u16 = 1;
     /// Horizontal padding (slider).
-    pub const PADDING_X: u8 = 2;
+    pub const PADDING_X: u16 = 2;
     /// Vertical padding (slider).
-    pub const PADDING_Y: u8 = 3;
+    pub const PADDING_Y: u16 = 3;
     /// Present mode (cycler).
-    pub const PRESENT_MODE: u8 = 4;
+    pub const PRESENT_MODE: u16 = 4;
     /// Cursor blink (toggle).
-    pub const CURSOR_BLINK: u8 = 5;
+    pub const CURSOR_BLINK: u16 = 5;
     /// Scrollback lines (slider).
-    pub const SCROLLBACK: u8 = 6;
+    pub const SCROLLBACK: u16 = 6;
     /// Show tab number (toggle).
-    pub const SHOW_TAB_NUMBER: u8 = 7;
+    pub const SHOW_TAB_NUMBER: u16 = 7;
     /// Show new-tab button (toggle).
-    pub const SHOW_NEW_TAB_BUTTON: u8 = 8;
+    pub const SHOW_NEW_TAB_BUTTON: u16 = 8;
     /// Animations enabled (toggle).
-    pub const ANIMATIONS_ENABLED: u8 = 9;
+    pub const ANIMATIONS_ENABLED: u16 = 9;
     /// Animation intensity (cycler).
-    pub const ANIMATION_INTENSITY: u8 = 10;
+    pub const ANIMATION_INTENSITY: u16 = 10;
     /// Window decorations (cycler).
-    pub const DECORATIONS: u8 = 11;
+    pub const DECORATIONS: u16 = 11;
     /// Close action (cycler).
-    pub const CLOSE_ACTION: u8 = 12;
+    pub const CLOSE_ACTION: u16 = 12;
     /// FPS limit (slider).
-    pub const FPS_LIMIT: u8 = 13;
+    pub const FPS_LIMIT: u16 = 13;
 }
 
 /// Number of rows in the Window category.
@@ -68,7 +68,7 @@ const SCROLLBACK_RANGE: (f32, f32) = (100.0, 100_000.0);
 const FPS_RANGE: (f32, f32) = (0.0, 240.0);
 
 /// Localised label for a row, without the value the widget renders itself.
-fn label(index: u8) -> String {
+fn label(index: u16) -> String {
     use nexterm_i18n::fl;
     match index {
         row::OPACITY => fl!("settings-window-opacity-label"),
@@ -90,7 +90,7 @@ fn label(index: u8) -> String {
 }
 
 /// The kind and current value of a row.
-fn kind(sp: &SettingsPanel, index: u8) -> WidgetKind {
+fn kind(sp: &SettingsPanel, index: u16) -> WidgetKind {
     match index {
         row::OPACITY => WidgetKind::Slider {
             value: sp.opacity,
@@ -160,7 +160,7 @@ fn kind(sp: &SettingsPanel, index: u8) -> WidgetKind {
 
 /// Describe every control of the Window tab, without laying it out.
 pub(crate) fn window_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
-    (0..WINDOW_ROW_COUNT as u8)
+    (0..WINDOW_ROW_COUNT as u16)
         .map(|index| {
             WidgetDesc::new(
                 WidgetId::new(WINDOW_CATEGORY, index),
@@ -232,7 +232,7 @@ pub(crate) fn build_window_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<W
 /// listed: `SliderType` has no variant for scrollback or the FPS limit, so
 /// those two render as sliders but are still adjusted with the keyboard or a
 /// click, exactly as before.
-pub(crate) fn drag_slider_of(index: u8) -> Option<(crate::settings_panel::SliderType, f32, f32)> {
+pub(crate) fn drag_slider_of(index: u16) -> Option<(crate::settings_panel::SliderType, f32, f32)> {
     use crate::settings_panel::SliderType;
     match index {
         row::OPACITY => Some((SliderType::WindowOpacity, OPACITY_RANGE.0, OPACITY_RANGE.1)),
@@ -248,7 +248,7 @@ pub(crate) fn drag_slider_of(index: u8) -> Option<(crate::settings_panel::Slider
 /// paths cannot drift. Returns whether anything changed.
 pub(crate) fn apply_window_action(
     sp: &mut SettingsPanel,
-    index: u8,
+    index: u16,
     action: super::action::WidgetAction,
 ) -> bool {
     use super::action::WidgetAction;
@@ -578,7 +578,7 @@ mod tests {
         let mut sp = panel();
         assert!(!apply_window_action(
             &mut sp,
-            WINDOW_ROW_COUNT as u8,
+            WINDOW_ROW_COUNT as u16,
             WidgetAction::Activate
         ));
     }

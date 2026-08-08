@@ -17,11 +17,11 @@ pub(crate) const BLOCKS_CATEGORY: u8 = 7;
 /// Row indices, matching `visible_blocks_rows` order.
 pub(crate) mod row {
     /// `blocks.enabled` toggle.
-    pub const ENABLED: u8 = 0;
+    pub const ENABLED: u16 = 0;
     /// `blocks.border_width_px`, cycled 1..=8.
-    pub const BORDER_WIDTH: u8 = 1;
+    pub const BORDER_WIDTH: u16 = 1;
     /// `blocks.show_exit_code_badge` toggle.
-    pub const STATUS_BADGE: u8 = 2;
+    pub const STATUS_BADGE: u16 = 2;
 }
 
 /// Number of rows in the Blocks category.
@@ -117,7 +117,11 @@ pub(crate) fn tip_y(sp: &SettingsPanel, g: &TabGeometry) -> f32 {
 ///
 /// Every row commits immediately, matching the pre-migration mouse handler:
 /// the caller persists once this returns true.
-pub(crate) fn apply_blocks_action(sp: &mut SettingsPanel, index: u8, action: WidgetAction) -> bool {
+pub(crate) fn apply_blocks_action(
+    sp: &mut SettingsPanel,
+    index: u16,
+    action: WidgetAction,
+) -> bool {
     // Nothing here is numeric, so a SetValue has no meaning.
     if index as usize >= BLOCKS_ROW_COUNT
         || matches!(action, WidgetAction::SetValue(_) | WidgetAction::SetText(_))

@@ -130,7 +130,7 @@ mod tests {
         nexterm_i18n::set_locale("en");
         let sp = SettingsPanel::default();
         assert_eq!(
-            sp.window_row_labels().len() as u8,
+            sp.window_row_labels().len() as u16,
             SettingsPanel::WINDOW_FIELD_COUNT,
             "window_row_labels must stay in sync with WINDOW_FIELD_COUNT"
         );

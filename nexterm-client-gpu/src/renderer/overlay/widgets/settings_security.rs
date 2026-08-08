@@ -18,7 +18,7 @@ pub(crate) const SECURITY_CATEGORY: u8 = 8;
 pub(crate) const SECURITY_ROW_COUNT: usize = 7;
 
 /// Index of the first byte-cap row. Rows below this are policy cyclers.
-pub(crate) const FIRST_BYTE_CAP_ROW: u8 = 4;
+pub(crate) const FIRST_BYTE_CAP_ROW: u16 = 4;
 
 /// Vertical pitch between rows, in cell heights.
 const ROW_PITCH: f32 = 1.4;
@@ -31,7 +31,7 @@ const ROW_BLEED: f32 = 0.3;
 
 /// Describe every control of the Security tab, without laying it out.
 pub(crate) fn security_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
-    (0..SECURITY_ROW_COUNT as u8)
+    (0..SECURITY_ROW_COUNT as u16)
         .map(|index| {
             let focused = sp.security_field_focus == index;
             let kind = if let Some(policy) = sp.security_policy_at(index) {
@@ -42,11 +42,15 @@ pub(crate) fn security_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
                 // While this field is being edited the buffer is the live
                 // value; otherwise show what is committed.
                 let editing = focused && sp.security_field_editing.is_some();
-                let value = match (editing, sp.security_field_editing.as_ref()) {
-                    (true, Some(state)) => state.buffer.clone(),
-                    _ => sp.security_bytes_at(index).unwrap_or(0).to_string(),
+                let (value, caret) = match (editing, sp.security_field_editing.as_ref()) {
+                    (true, Some(state)) => (state.buffer.clone(), Some(state.cursor)),
+                    _ => (sp.security_bytes_at(index).unwrap_or(0).to_string(), None),
                 };
-                WidgetKind::Text { value, editing }
+                WidgetKind::Text {
+                    value,
+                    editing,
+                    caret,
+                }
             };
             WidgetDesc::new(
                 WidgetId::new(SECURITY_CATEGORY, index),
@@ -107,7 +111,7 @@ pub(crate) fn note_y(g: &TabGeometry) -> f32 {
 /// Apply an action to the Security widget at `index`.
 pub(crate) fn apply_security_action(
     sp: &mut SettingsPanel,
-    index: u8,
+    index: u16,
     action: WidgetAction,
 ) -> bool {
     if index as usize >= SECURITY_ROW_COUNT {
@@ -164,7 +168,7 @@ mod tests {
         let descs = security_widget_descs(&SettingsPanel::default());
         assert_eq!(descs.len(), SECURITY_ROW_COUNT);
         for (i, d) in descs.iter().enumerate() {
-            let i = i as u8;
+            let i = i as u16;
             if i < FIRST_BYTE_CAP_ROW {
                 assert!(
                     matches!(d.kind, WidgetKind::Cycle { .. }),
@@ -190,7 +194,8 @@ mod tests {
         sp.security_field_insert_char('7');
 
         let descs = security_widget_descs(&sp);
-        let WidgetKind::Text { value, editing } = &descs[FIRST_BYTE_CAP_ROW as usize].kind else {
+        let WidgetKind::Text { value, editing, .. } = &descs[FIRST_BYTE_CAP_ROW as usize].kind
+        else {
             panic!("byte caps must be text fields");
         };
         assert!(*editing);
@@ -259,7 +264,7 @@ mod tests {
         ));
         assert!(!apply_security_action(
             &mut sp,
-            SECURITY_ROW_COUNT as u8,
+            SECURITY_ROW_COUNT as u16,
             WidgetAction::Activate
         ));
     }

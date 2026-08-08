@@ -27,30 +27,30 @@ pub(super) enum SettingsPanelHit {
     /// UI/UX v3 P1c: click on a row inside the Font category. The payload is
     /// the widget index; a press on the size slider's track returns `Slider`
     /// instead so a drag can start.
-    FontRow(u8),
+    FontRow(u16),
     /// UI/UX v3 P1c: click on a row inside the Startup category.
-    StartupRow(u8),
+    StartupRow(u16),
     /// Theme color dot.
     ThemeColor(usize),
     /// UI/UX v3 P1b: click on a non-swatch row of the Theme category. The
     /// payload is the widget index (`THEME_SCHEME` / `THEME_FOLLOW_SYSTEM`);
     /// clicking focuses the row and, for the toggle, flips it.
-    ThemeRow(u8),
+    ThemeRow(u16),
     /// Click on a row inside the Window category. The payload is the widget
     /// index; see `widgets::settings_window::row` for the names. Clicking a
     /// toggle or cycler row also changes its value, while numeric rows only
     /// take focus (a press on a slider track returns `Slider` instead, so a
     /// drag can start).
-    WindowRow(u8),
+    WindowRow(u16),
     /// Phase 2c follow-up: click on a row inside the Blocks category.
     /// row 0 = `blocks_enabled` toggle, row 1 = increment `border_width_px`
     /// (wraps from 8 back to 1), row 2 = `show_exit_code_badge` toggle.
     /// The "Editing" hint row (3) intentionally has no hit zone.
-    BlocksRow(u8),
+    BlocksRow(u16),
     /// Click on a row inside the Security category. row 0..=3 are consent-policy
     /// cyclers (click cycles forward), 4..=6 are byte-cap fields (click focuses
     /// and starts editing). The footer note row has no hit zone.
-    SecurityRow(u8),
+    SecurityRow(u16),
     /// P4 (WT-like UX): the "Open config.toml" link in the footer bar.
     OpenConfigFile,
     /// P2-A (WT-like UX): the "reset category to defaults" link in the
