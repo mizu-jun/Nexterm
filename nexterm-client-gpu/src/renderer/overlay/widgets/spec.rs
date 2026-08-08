@@ -120,9 +120,20 @@ pub(crate) enum WidgetKind {
         value: String,
     },
     /// Continuous value, drawn as a track with a thumb.
+    ///
+    /// The real value and range are carried rather than a pre-normalised
+    /// fraction, because a screen reader announces the actual number and
+    /// steps by `step`. The drawing code derives the fraction via
+    /// [`WidgetKind::slider_fraction`].
     Slider {
-        /// Normalised position in `[0, 1]`.
-        fraction: f32,
+        /// Current value.
+        value: f32,
+        /// Lowest value the control accepts.
+        min: f32,
+        /// Highest value the control accepts.
+        max: f32,
+        /// Increment applied by one step.
+        step: f32,
         /// Human-readable value shown next to the track.
         display: String,
     },
@@ -146,6 +157,19 @@ impl WidgetKind {
     /// Whether this kind reacts to input at all.
     pub fn is_interactive(&self) -> bool {
         !matches!(self, WidgetKind::Label)
+    }
+
+    /// Position of a slider's value within its range, normalised to `[0, 1]`.
+    ///
+    /// Returns 0 for every other kind, and for a degenerate range, so the
+    /// thumb never lands off the track.
+    pub fn slider_fraction(&self) -> f32 {
+        match self {
+            WidgetKind::Slider {
+                value, min, max, ..
+            } if max > min => ((value - min) / (max - min)).clamp(0.0, 1.0),
+            _ => 0.0,
+        }
     }
 }
 

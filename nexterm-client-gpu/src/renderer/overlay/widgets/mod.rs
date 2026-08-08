@@ -20,5 +20,6 @@
 
 pub(crate) mod draw;
 pub(crate) mod settings_theme;
+pub(crate) mod settings_window;
 pub(crate) mod spec;
 pub(crate) mod tooltip;

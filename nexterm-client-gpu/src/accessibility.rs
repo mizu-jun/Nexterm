@@ -133,30 +133,16 @@ pub const SETTINGS_FONT_FAMILY_ID: NodeId = NodeId(30);
 /// Font category: font size slider.
 pub const SETTINGS_FONT_SIZE_ID: NodeId = NodeId(31);
 
-// 32 was `SETTINGS_THEME_SCHEME_ID`, the hand-written Theme colour-scheme
-// node. The Theme category is now described by the widget layer and its nodes
-// live in the `SETTINGS_WIDGET_BASE` range, so 32 is free.
-
-/// Window category: opacity slider.
-pub const SETTINGS_WINDOW_OPACITY_ID: NodeId = NodeId(33);
+// 32 (Theme colour scheme), 33 (window opacity) and 36..=39 (cursor style,
+// padding x/y, present mode) were hand-written settings-field nodes. The
+// Theme and Window categories are now described by the widget layer and their
+// nodes live in the `SETTINGS_WIDGET_BASE` range, so those slots are free.
 
 /// Startup category: language picker.
 pub const SETTINGS_STARTUP_LANGUAGE_ID: NodeId = NodeId(34);
 
 /// Startup category: "check for updates on startup" CheckBox.
 pub const SETTINGS_STARTUP_AUTO_UPDATE_ID: NodeId = NodeId(35);
-
-/// Phase 5-11-6 #6 - Window category: cursor style (block / beam / underline).
-pub const SETTINGS_CURSOR_STYLE_ID: NodeId = NodeId(36);
-
-/// Phase 5-11-6 #6 - Window category: horizontal padding (0..32 px).
-pub const SETTINGS_PADDING_X_ID: NodeId = NodeId(37);
-
-/// Phase 5-11-6 #6 - Window category: vertical padding (0..32 px).
-pub const SETTINGS_PADDING_Y_ID: NodeId = NodeId(38);
-
-/// Phase 5-11-6 #6 - Window category: GPU presentation mode (fifo / mailbox / auto).
-pub const SETTINGS_PRESENT_MODE_ID: NodeId = NodeId(39);
 
 /// Phase 5-11-8 Step 8-2 - SSH category: name field of the selected host (TextInput).
 pub const SETTINGS_SSH_FIELD_NAME_ID: NodeId = NodeId(40);
@@ -649,20 +635,10 @@ pub enum NodeIdKind {
         /// Widget index within that category.
         index: u8,
     },
-    /// Settings panel: opacity slider.
-    SettingsWindowOpacity,
     /// Settings panel: language picker.
     SettingsStartupLanguage,
     /// Settings panel: "check for updates on startup" CheckBox.
     SettingsStartupAutoUpdate,
-    /// Phase 5-11-6 #6: settings panel cursor style (block / beam / underline).
-    SettingsCursorStyle,
-    /// Phase 5-11-6 #6: settings panel horizontal padding slider (0..32 px).
-    SettingsPaddingX,
-    /// Phase 5-11-6 #6: settings panel vertical padding slider (0..32 px).
-    SettingsPaddingY,
-    /// Phase 5-11-6 #6: settings panel GPU presentation mode (fifo / mailbox / auto).
-    SettingsPresentMode,
     /// Pane row node (Sprint 5-11-3, identified by `pane_id` and `row`).
     PaneRow { pane_id: u32, row: u16 },
     /// Pane scrollback row node (Sprint 5-11-4, identified by `pane_id` and
@@ -795,14 +771,9 @@ pub fn decode_node_id(id: NodeId) -> NodeIdKind {
         }
         30 => NodeIdKind::SettingsFontFamily,
         31 => NodeIdKind::SettingsFontSize,
-        33 => NodeIdKind::SettingsWindowOpacity,
         34 => NodeIdKind::SettingsStartupLanguage,
         35 => NodeIdKind::SettingsStartupAutoUpdate,
         // Phase 5-11-6 #6: 4 new Window category fields
-        36 => NodeIdKind::SettingsCursorStyle,
-        37 => NodeIdKind::SettingsPaddingX,
-        38 => NodeIdKind::SettingsPaddingY,
-        39 => NodeIdKind::SettingsPresentMode,
         // Phase 5-11-8 Step 8-2: 5 SSH category host fields
         40 => NodeIdKind::SettingsSshFieldName,
         41 => NodeIdKind::SettingsSshFieldHost,
@@ -1641,6 +1612,18 @@ fn widget_node(desc: &crate::renderer::overlay::widgets::spec::WidgetDesc) -> No
             accesskit::Toggled::False
         }),
         WidgetKind::Swatch { selected: true, .. } => node.set_selected(true),
+        WidgetKind::Slider {
+            value,
+            min,
+            max,
+            step,
+            ..
+        } => {
+            node.set_numeric_value(*value as f64);
+            node.set_min_numeric_value(*min as f64);
+            node.set_max_numeric_value(*max as f64);
+            node.set_numeric_value_step(*step as f64);
+        }
         _ => {}
     }
     node
@@ -1739,51 +1722,17 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
             }
         }
         SettingsCategory::Window => {
-            // Phase 5-11-6 #6: 5 fields
-            //   0=opacity / 1=cursor_style / 2=padding_x / 3=padding_y / 4=present_mode
-            let mut opacity = Node::new(Role::Slider);
-            opacity.set_label("Background opacity");
-            opacity.set_value(format!("{:.0}%", panel.opacity * 100.0));
-            opacity.set_numeric_value(panel.opacity as f64);
-            opacity.set_min_numeric_value(0.1);
-            opacity.set_max_numeric_value(1.0);
-            opacity.set_numeric_value_step(0.05);
-            nodes.push((SETTINGS_WINDOW_OPACITY_ID, opacity));
-            content_children.push(SETTINGS_WINDOW_OPACITY_ID);
-
-            let mut cs = Node::new(Role::ComboBox);
-            cs.set_label("Cursor style");
-            cs.set_value(panel.cursor_style_label());
-            cs.set_description("Use Left/Right to cycle");
-            nodes.push((SETTINGS_CURSOR_STYLE_ID, cs));
-            content_children.push(SETTINGS_CURSOR_STYLE_ID);
-
-            let mut px = Node::new(Role::Slider);
-            px.set_label("Horizontal padding");
-            px.set_value(format!("{} px", panel.padding_x));
-            px.set_numeric_value(panel.padding_x as f64);
-            px.set_min_numeric_value(0.0);
-            px.set_max_numeric_value(32.0);
-            px.set_numeric_value_step(1.0);
-            nodes.push((SETTINGS_PADDING_X_ID, px));
-            content_children.push(SETTINGS_PADDING_X_ID);
-
-            let mut py = Node::new(Role::Slider);
-            py.set_label("Vertical padding");
-            py.set_value(format!("{} px", panel.padding_y));
-            py.set_numeric_value(panel.padding_y as f64);
-            py.set_min_numeric_value(0.0);
-            py.set_max_numeric_value(32.0);
-            py.set_numeric_value_step(1.0);
-            nodes.push((SETTINGS_PADDING_Y_ID, py));
-            content_children.push(SETTINGS_PADDING_Y_ID);
-
-            let mut pm = Node::new(Role::ComboBox);
-            pm.set_label("Present mode");
-            pm.set_value(panel.present_mode_label());
-            pm.set_description("Use Left/Right to cycle");
-            nodes.push((SETTINGS_PRESENT_MODE_ID, pm));
-            content_children.push(SETTINGS_PRESENT_MODE_ID);
+            // UI/UX v3 P1c: same treatment as Theme. The hand-written tree
+            // carried 5 of the 14 rows; all 14 are now exposed, with the
+            // slider ranges coming from the widget kind so the announced
+            // min/max cannot drift from what the control accepts.
+            for desc in
+                crate::renderer::overlay::widgets::settings_window::window_widget_descs(panel)
+            {
+                let id = settings_widget_id(desc.id);
+                nodes.push((id, widget_node(&desc)));
+                content_children.push(id);
+            }
         }
         SettingsCategory::Startup => {
             let mut lang = Node::new(Role::ComboBox);
@@ -2143,14 +2092,18 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
     let focus = if matches!(panel.category, SettingsCategory::Font) && panel.font_family_editing {
         SETTINGS_FONT_FAMILY_ID
     } else if matches!(panel.category, SettingsCategory::Window) {
-        // Phase 5-11-6 #6: For the Window category, focus the field selected by `window_field_focus`.
-        match panel.window_field_focus {
-            0 => SETTINGS_WINDOW_OPACITY_ID,
-            1 => SETTINGS_CURSOR_STYLE_ID,
-            2 => SETTINGS_PADDING_X_ID,
-            3 => SETTINGS_PADDING_Y_ID,
-            4 => SETTINGS_PRESENT_MODE_ID,
-            _ => settings_tab_id_at(current_idx),
+        // UI/UX v3 P1c: focus the widget `window_field_focus` selects. Every
+        // row is a widget now, so the mapping no longer stops at row 4.
+        use crate::renderer::overlay::widgets::settings_window::{
+            WINDOW_CATEGORY, WINDOW_ROW_COUNT,
+        };
+        if (panel.window_field_focus as usize) < WINDOW_ROW_COUNT {
+            settings_widget_id(crate::renderer::overlay::widgets::spec::WidgetId::new(
+                WINDOW_CATEGORY,
+                panel.window_field_focus,
+            ))
+        } else {
+            settings_tab_id_at(current_idx)
         }
     } else if matches!(panel.category, SettingsCategory::Profiles) && !panel.profiles.is_empty() {
         // Phase 5-11-7: focus the `selected_profile` node in the Profiles category.
@@ -2633,8 +2586,9 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
 /// - `Focus` is used as a state-change trigger via the SR path only for
 ///   "Tab / Pane / CategoryTab" (virtual-cursor traversal = control transition).
 ///   For CheckBox and TextInput, Focus has no side effects beyond rendering state.
-/// - `SettingsFontSize` / `SettingsWindowOpacity` SetValue is delegated to the pure
-///   `set_*_value` setters (rounded to 0.5 / 0.05 units and clamped).
+/// - `SettingsFontSize` SetValue is delegated to the pure `set_font_size_value`
+///   setter. Widget-layer sliders take the same route via the tab's
+///   `apply_*_action`, which reuses the identical setters.
 /// - ThemeScheme / Language treat Click and Increment equivalently (ComboBox "next").
 pub fn dispatch_settings_action(
     panel: &mut SettingsPanel,
@@ -2693,41 +2647,49 @@ pub fn dispatch_settings_action(
         // ===== Widget-layer nodes (UI/UX v3 P1b) =====
         // Routed back to the same state transition the mouse and keyboard
         // paths use, so a screen reader and a click never disagree.
+        // Focus is virtual-cursor traversal: it moves the panel's focus but
+        // changes no value, matching the retired per-field arms.
+        (Action::Focus, NodeIdKind::SettingsWidget { category, index }) => {
+            use crate::renderer::overlay::widgets::settings_theme::THEME_CATEGORY;
+            use crate::renderer::overlay::widgets::settings_window::{
+                WINDOW_CATEGORY, WINDOW_ROW_COUNT,
+            };
+            match *category {
+                THEME_CATEGORY => {
+                    panel.theme_field_focus = *index;
+                    true
+                }
+                WINDOW_CATEGORY if (*index as usize) < WINDOW_ROW_COUNT => {
+                    panel.window_field_focus = *index;
+                    true
+                }
+                _ => false,
+            }
+        }
         (
-            Action::Click | Action::Increment | Action::Decrement,
+            Action::Click | Action::Increment | Action::Decrement | Action::SetValue,
             NodeIdKind::SettingsWidget { category, index },
         ) => {
             use crate::renderer::overlay::widgets::settings_theme::{
                 THEME_CATEGORY, WidgetAction, apply_theme_action,
             };
-            let widget_action = match action {
-                Action::Increment => WidgetAction::Next,
-                Action::Decrement => WidgetAction::Prev,
+            use crate::renderer::overlay::widgets::settings_window::{
+                WINDOW_CATEGORY, apply_window_action,
+            };
+            let widget_action = match (action, data) {
+                (Action::Increment, _) => WidgetAction::Next,
+                (Action::Decrement, _) => WidgetAction::Prev,
+                (Action::SetValue, Some(ActionData::NumericValue(v))) => WidgetAction::SetValue(v),
+                // SetValue without a numeric payload is malformed, not a click.
+                (Action::SetValue, _) => return false,
                 _ => WidgetAction::Activate,
             };
             match *category {
                 THEME_CATEGORY => apply_theme_action(panel, *index, widget_action),
+                WINDOW_CATEGORY => apply_window_action(panel, *index, widget_action),
                 // No other category is migrated yet.
                 _ => false,
             }
-        }
-
-        // ===== Window opacity (Slider) =====
-        (Action::SetValue, NodeIdKind::SettingsWindowOpacity) => {
-            if let Some(ActionData::NumericValue(v)) = data {
-                panel.set_opacity_value(v);
-                true
-            } else {
-                false
-            }
-        }
-        (Action::Increment, NodeIdKind::SettingsWindowOpacity) => {
-            panel.increase_opacity();
-            true
-        }
-        (Action::Decrement, NodeIdKind::SettingsWindowOpacity) => {
-            panel.decrease_opacity();
-            true
         }
 
         // ===== Language (ComboBox) =====
@@ -2745,88 +2707,6 @@ pub fn dispatch_settings_action(
         // so only Click reacts.
         (Action::Click, NodeIdKind::SettingsStartupAutoUpdate) => {
             panel.toggle_auto_check_update();
-            true
-        }
-
-        // ===== Phase 5-11-6 #6 - Cursor style (ComboBox) =====
-        (Action::Click | Action::Increment, NodeIdKind::SettingsCursorStyle) => {
-            panel.next_cursor_style();
-            panel.window_field_focus = 1;
-            true
-        }
-        (Action::Decrement, NodeIdKind::SettingsCursorStyle) => {
-            panel.prev_cursor_style();
-            panel.window_field_focus = 1;
-            true
-        }
-        (Action::Focus, NodeIdKind::SettingsCursorStyle) => {
-            panel.window_field_focus = 1;
-            true
-        }
-
-        // ===== Phase 5-11-6 #6 - Horizontal padding (Slider) =====
-        (Action::SetValue, NodeIdKind::SettingsPaddingX) => {
-            if let Some(ActionData::NumericValue(v)) = data {
-                panel.set_padding_x_value(v);
-                panel.window_field_focus = 2;
-                true
-            } else {
-                false
-            }
-        }
-        (Action::Increment, NodeIdKind::SettingsPaddingX) => {
-            panel.increase_padding_x();
-            panel.window_field_focus = 2;
-            true
-        }
-        (Action::Decrement, NodeIdKind::SettingsPaddingX) => {
-            panel.decrease_padding_x();
-            panel.window_field_focus = 2;
-            true
-        }
-        (Action::Focus, NodeIdKind::SettingsPaddingX) => {
-            panel.window_field_focus = 2;
-            true
-        }
-
-        // ===== Phase 5-11-6 #6 - Vertical padding (Slider) =====
-        (Action::SetValue, NodeIdKind::SettingsPaddingY) => {
-            if let Some(ActionData::NumericValue(v)) = data {
-                panel.set_padding_y_value(v);
-                panel.window_field_focus = 3;
-                true
-            } else {
-                false
-            }
-        }
-        (Action::Increment, NodeIdKind::SettingsPaddingY) => {
-            panel.increase_padding_y();
-            panel.window_field_focus = 3;
-            true
-        }
-        (Action::Decrement, NodeIdKind::SettingsPaddingY) => {
-            panel.decrease_padding_y();
-            panel.window_field_focus = 3;
-            true
-        }
-        (Action::Focus, NodeIdKind::SettingsPaddingY) => {
-            panel.window_field_focus = 3;
-            true
-        }
-
-        // ===== Phase 5-11-6 #6 - GPU present mode (ComboBox) =====
-        (Action::Click | Action::Increment, NodeIdKind::SettingsPresentMode) => {
-            panel.next_present_mode();
-            panel.window_field_focus = 4;
-            true
-        }
-        (Action::Decrement, NodeIdKind::SettingsPresentMode) => {
-            panel.prev_present_mode();
-            panel.window_field_focus = 4;
-            true
-        }
-        (Action::Focus, NodeIdKind::SettingsPresentMode) => {
-            panel.window_field_focus = 4;
             true
         }
 
@@ -3775,10 +3655,6 @@ mod tests {
             }
         );
         assert_eq!(
-            decode_node_id(SETTINGS_WINDOW_OPACITY_ID),
-            NodeIdKind::SettingsWindowOpacity
-        );
-        assert_eq!(
             decode_node_id(SETTINGS_STARTUP_LANGUAGE_ID),
             NodeIdKind::SettingsStartupLanguage
         );
@@ -3866,7 +3742,7 @@ mod tests {
         state.settings_panel.category = SettingsCategory::Window;
         let update = build_tree_from_state(&state);
         let ids: Vec<u64> = update.nodes.iter().map(|(id, _)| id.0).collect();
-        assert!(ids.contains(&SETTINGS_WINDOW_OPACITY_ID.0));
+        assert!(ids.contains(&settings_widget_id(window_opacity_widget_id()).0));
         assert!(
             !ids.contains(&settings_widget_id(theme_scheme_widget_id()).0),
             "Theme field must not appear in the Window category"
@@ -3894,7 +3770,7 @@ mod tests {
             // Detail fields are not present.
             assert!(!ids.contains(&SETTINGS_FONT_FAMILY_ID.0));
             assert!(!ids.contains(&settings_widget_id(theme_scheme_widget_id()).0));
-            assert!(!ids.contains(&SETTINGS_WINDOW_OPACITY_ID.0));
+            assert!(!ids.contains(&settings_widget_id(window_opacity_widget_id()).0));
         }
     }
 
@@ -4139,6 +4015,12 @@ mod tests {
         assert_eq!(panel.scheme_index, 1, "Decrement selects previous scheme");
     }
 
+    /// Helper: the WidgetId of the Window opacity slider.
+    fn window_opacity_widget_id() -> crate::renderer::overlay::widgets::spec::WidgetId {
+        use crate::renderer::overlay::widgets::settings_window::{WINDOW_CATEGORY, row};
+        crate::renderer::overlay::widgets::spec::WidgetId::new(WINDOW_CATEGORY, row::OPACITY)
+    }
+
     /// Helper: the WidgetId of the Theme colour-scheme cycler.
     fn theme_scheme_widget_id() -> crate::renderer::overlay::widgets::spec::WidgetId {
         use crate::renderer::overlay::widgets::settings_theme::{THEME_CATEGORY, THEME_SCHEME};
@@ -4204,56 +4086,72 @@ mod tests {
     }
 
     /// An action aimed at a category that has not been migrated is refused
-    /// rather than silently applied to the Theme tab.
+    /// rather than silently applied to a migrated tab.
     #[test]
     fn dispatch_settings_widget_ignores_unmigrated_categories() {
         let mut panel = SettingsPanel::default();
+        // 5 = Keybindings, which still has its own hand-written nodes.
         assert!(!dispatch_settings_action(
             &mut panel,
             Action::Click,
             &NodeIdKind::SettingsWidget {
-                category: 3,
+                category: 5,
                 index: 0,
             },
             None,
         ));
     }
 
-    /// SetValue on SettingsWindowOpacity applies 0.05-unit rounding and clamping to 0.1..=1.0.
+    /// SetValue on the opacity slider applies 0.05-unit rounding and clamping
+    /// to 0.1..=1.0. UI/UX v3 P1c routes it through the widget layer, but the
+    /// setter — and therefore the behaviour — is unchanged.
     #[test]
     fn dispatch_settings_opacity_set_value_rounds_and_clamps() {
-        let mut panel = SettingsPanel::default();
+        use crate::renderer::overlay::widgets::settings_window::{WINDOW_CATEGORY, row};
 
-        // 0.737 → 0.75
-        dispatch_settings_action(
-            &mut panel,
-            Action::SetValue,
-            &NodeIdKind::SettingsWindowOpacity,
-            Some(ActionData::NumericValue(0.737)),
-        );
+        let mut panel = SettingsPanel::default();
+        let kind = NodeIdKind::SettingsWidget {
+            category: WINDOW_CATEGORY,
+            index: row::OPACITY,
+        };
+        let set = |panel: &mut SettingsPanel, v: f64| {
+            dispatch_settings_action(
+                panel,
+                Action::SetValue,
+                &kind,
+                Some(ActionData::NumericValue(v)),
+            )
+        };
+
+        assert!(set(&mut panel, 0.737));
         assert!(
             (panel.opacity - 0.75).abs() < 1e-4,
             "0.05-unit rounding: 0.737 -> 0.75, actual = {}",
             panel.opacity
         );
 
-        // 2.0 → 1.0
-        dispatch_settings_action(
-            &mut panel,
-            Action::SetValue,
-            &NodeIdKind::SettingsWindowOpacity,
-            Some(ActionData::NumericValue(2.0)),
+        set(&mut panel, 2.0);
+        assert!(
+            (panel.opacity - 1.0).abs() < f32::EPSILON,
+            "clamped to the max"
         );
-        assert!((panel.opacity - 1.0).abs() < f32::EPSILON);
 
-        // 0.0 → 0.1
-        dispatch_settings_action(
+        set(&mut panel, 0.0);
+        assert!(
+            (panel.opacity - 0.1).abs() < f32::EPSILON,
+            "clamped to the min"
+        );
+
+        // A SetValue with no numeric payload is malformed and must be refused
+        // rather than falling through to a click.
+        let before = panel.opacity;
+        assert!(!dispatch_settings_action(
             &mut panel,
             Action::SetValue,
-            &NodeIdKind::SettingsWindowOpacity,
-            Some(ActionData::NumericValue(0.0)),
-        );
-        assert!((panel.opacity - 0.1).abs() < f32::EPSILON);
+            &kind,
+            None
+        ));
+        assert_eq!(panel.opacity, before);
     }
 
     /// Click on SettingsStartupLanguage advances to next_language (index + 1).
@@ -4321,236 +4219,82 @@ mod tests {
         assert_eq!(panel.auto_check_update, before);
     }
 
-    // ===== Phase 5-11-6 #6: tests for the 4 new fields in the Window category =====
+    // ===== Window category (UI/UX v3 P1c: widget-derived nodes) =====
 
+    /// Every Window row decodes back to its own widget, so an action can
+    /// never be applied to the wrong control.
     #[test]
-    fn decode_node_id_returns_settings_cursor_style() {
-        assert_eq!(
-            decode_node_id(SETTINGS_CURSOR_STYLE_ID),
-            NodeIdKind::SettingsCursorStyle
-        );
+    fn decode_node_id_round_trips_every_window_row() {
+        use crate::renderer::overlay::widgets::settings_window::{
+            WINDOW_CATEGORY, WINDOW_ROW_COUNT,
+        };
+        use crate::renderer::overlay::widgets::spec::WidgetId;
+
+        for index in 0..WINDOW_ROW_COUNT as u8 {
+            assert_eq!(
+                decode_node_id(settings_widget_id(WidgetId::new(WINDOW_CATEGORY, index))),
+                NodeIdKind::SettingsWidget {
+                    category: WINDOW_CATEGORY,
+                    index
+                }
+            );
+        }
     }
 
+    /// The Window category exposes every row, not the five the hand-written
+    /// tree used to carry (UI/UX v3 P1c).
     #[test]
-    fn decode_node_id_returns_settings_padding_x() {
-        assert_eq!(
-            decode_node_id(SETTINGS_PADDING_X_ID),
-            NodeIdKind::SettingsPaddingX
-        );
-    }
+    fn build_settings_panel_nodes_window_exposes_every_row() {
+        use crate::renderer::overlay::widgets::settings_window::{
+            WINDOW_ROW_COUNT, window_widget_descs,
+        };
 
-    #[test]
-    fn decode_node_id_returns_settings_padding_y() {
-        assert_eq!(
-            decode_node_id(SETTINGS_PADDING_Y_ID),
-            NodeIdKind::SettingsPaddingY
-        );
-    }
-
-    #[test]
-    fn decode_node_id_returns_settings_present_mode() {
-        assert_eq!(
-            decode_node_id(SETTINGS_PRESENT_MODE_ID),
-            NodeIdKind::SettingsPresentMode
-        );
-    }
-
-    /// CursorStyle: Click cycles to next and moves focus to 1.
-    #[test]
-    fn dispatch_cursor_style_click_cycles_and_focuses() {
-        let mut panel = SettingsPanel::default();
-        assert_eq!(panel.cursor_style, nexterm_config::CursorStyle::Block);
-
-        let handled = dispatch_settings_action(
-            &mut panel,
-            Action::Click,
-            &NodeIdKind::SettingsCursorStyle,
-            None,
-        );
-        assert!(handled);
-        assert_eq!(panel.cursor_style, nexterm_config::CursorStyle::Beam);
-        assert_eq!(panel.window_field_focus, 1);
-    }
-
-    /// CursorStyle: Decrement cycles backward.
-    #[test]
-    fn dispatch_cursor_style_decrement_goes_back() {
-        let mut panel = SettingsPanel::default();
-        let handled = dispatch_settings_action(
-            &mut panel,
-            Action::Decrement,
-            &NodeIdKind::SettingsCursorStyle,
-            None,
-        );
-        assert!(handled);
-        assert_eq!(panel.cursor_style, nexterm_config::CursorStyle::Underline);
-    }
-
-    /// CursorStyle: Focus only moves focus (does not change value).
-    #[test]
-    fn dispatch_cursor_style_focus_only_moves_focus() {
-        let mut panel = SettingsPanel::default();
-        let before = panel.cursor_style.clone();
-        panel.window_field_focus = 0;
-        let handled = dispatch_settings_action(
-            &mut panel,
-            Action::Focus,
-            &NodeIdKind::SettingsCursorStyle,
-            None,
-        );
-        assert!(handled);
-        assert_eq!(
-            panel.cursor_style, before,
-            "Focus must not change the value"
-        );
-        assert_eq!(panel.window_field_focus, 1);
-    }
-
-    /// PaddingX: SetValue rounds half-up and clamps.
-    #[test]
-    fn dispatch_padding_x_set_value_rounds_and_clamps() {
-        let mut panel = SettingsPanel::default();
-        let handled = dispatch_settings_action(
-            &mut panel,
-            Action::SetValue,
-            &NodeIdKind::SettingsPaddingX,
-            Some(ActionData::NumericValue(15.7)),
-        );
-        assert!(handled);
-        assert_eq!(panel.padding_x, 16, "rounds 15.7 -> 16");
-        assert_eq!(panel.window_field_focus, 2);
-
-        // Upper-bound clamp.
-        let _ = dispatch_settings_action(
-            &mut panel,
-            Action::SetValue,
-            &NodeIdKind::SettingsPaddingX,
-            Some(ActionData::NumericValue(100.0)),
-        );
-        assert_eq!(panel.padding_x, 32, "upper bound clamps to 32");
-    }
-
-    /// PaddingX: Increment / Decrement
-    #[test]
-    fn dispatch_padding_x_increment_decrement() {
-        let mut panel = SettingsPanel::default();
-        assert_eq!(panel.padding_x, 0);
-
-        let handled = dispatch_settings_action(
-            &mut panel,
-            Action::Increment,
-            &NodeIdKind::SettingsPaddingX,
-            None,
-        );
-        assert!(handled);
-        assert_eq!(panel.padding_x, 1);
-
-        let _ = dispatch_settings_action(
-            &mut panel,
-            Action::Decrement,
-            &NodeIdKind::SettingsPaddingX,
-            None,
-        );
-        assert_eq!(panel.padding_x, 0);
-    }
-
-    /// PaddingY: verify SetValue + Increment / Decrement.
-    #[test]
-    fn dispatch_padding_y_actions() {
-        let mut panel = SettingsPanel::default();
-
-        let _ = dispatch_settings_action(
-            &mut panel,
-            Action::SetValue,
-            &NodeIdKind::SettingsPaddingY,
-            Some(ActionData::NumericValue(8.0)),
-        );
-        assert_eq!(panel.padding_y, 8);
-        assert_eq!(panel.window_field_focus, 3);
-
-        let _ = dispatch_settings_action(
-            &mut panel,
-            Action::Increment,
-            &NodeIdKind::SettingsPaddingY,
-            None,
-        );
-        assert_eq!(panel.padding_y, 9);
-
-        let _ = dispatch_settings_action(
-            &mut panel,
-            Action::Decrement,
-            &NodeIdKind::SettingsPaddingY,
-            None,
-        );
-        assert_eq!(panel.padding_y, 8);
-    }
-
-    /// PresentMode: Click cycles forward, Decrement cycles backward.
-    #[test]
-    fn dispatch_present_mode_click_and_decrement() {
-        let mut panel = SettingsPanel::default();
-        assert_eq!(
-            panel.present_mode,
-            nexterm_config::PresentModeConfig::Mailbox
-        );
-
-        let handled = dispatch_settings_action(
-            &mut panel,
-            Action::Click,
-            &NodeIdKind::SettingsPresentMode,
-            None,
-        );
-        assert!(handled);
-        assert_eq!(panel.present_mode, nexterm_config::PresentModeConfig::Auto);
-        assert_eq!(panel.window_field_focus, 4);
-
-        let _ = dispatch_settings_action(
-            &mut panel,
-            Action::Decrement,
-            &NodeIdKind::SettingsPresentMode,
-            None,
-        );
-        assert_eq!(
-            panel.present_mode,
-            nexterm_config::PresentModeConfig::Mailbox
-        );
-    }
-
-    /// build_settings_panel_nodes: the Window category must expose 5 nodes.
-    #[test]
-    fn build_settings_panel_nodes_window_exposes_five_fields() {
         let mut panel = SettingsPanel::default();
         panel.category = crate::settings_panel::SettingsCategory::Window;
         let (nodes, _focus) = build_settings_panel_nodes(&panel);
         let ids: Vec<u64> = nodes.iter().map(|(id, _)| id.0).collect();
-        assert!(ids.contains(&SETTINGS_WINDOW_OPACITY_ID.0));
-        assert!(ids.contains(&SETTINGS_CURSOR_STYLE_ID.0));
-        assert!(ids.contains(&SETTINGS_PADDING_X_ID.0));
-        assert!(ids.contains(&SETTINGS_PADDING_Y_ID.0));
-        assert!(ids.contains(&SETTINGS_PRESENT_MODE_ID.0));
+
+        let descs = window_widget_descs(&panel);
+        assert_eq!(descs.len(), WINDOW_ROW_COUNT);
+        for desc in &descs {
+            assert!(
+                ids.contains(&settings_widget_id(desc.id).0),
+                "row {:?} missing from the tree",
+                desc.id
+            );
+        }
     }
 
-    /// build_settings_panel_nodes: focus moves correctly according to window_field_focus.
+    /// Focus follows `window_field_focus` across every row, and falls back to
+    /// the category tab when the index is out of range.
     #[test]
     fn build_settings_panel_nodes_window_focus_follows_field() {
-        let cases = [
-            (0_u8, SETTINGS_WINDOW_OPACITY_ID),
-            (1, SETTINGS_CURSOR_STYLE_ID),
-            (2, SETTINGS_PADDING_X_ID),
-            (3, SETTINGS_PADDING_Y_ID),
-            (4, SETTINGS_PRESENT_MODE_ID),
-        ];
-        for (focus_idx, expected_node) in cases {
+        use crate::renderer::overlay::widgets::settings_window::{
+            WINDOW_CATEGORY, WINDOW_ROW_COUNT,
+        };
+        use crate::renderer::overlay::widgets::spec::WidgetId;
+
+        for focus_idx in 0..WINDOW_ROW_COUNT as u8 {
             let mut panel = SettingsPanel::default();
             panel.category = crate::settings_panel::SettingsCategory::Window;
             panel.window_field_focus = focus_idx;
             let (_nodes, focus) = build_settings_panel_nodes(&panel);
             assert_eq!(
-                focus, expected_node,
-                "with window_field_focus={}, focus should point to {:?}",
-                focus_idx, expected_node
+                focus,
+                settings_widget_id(WidgetId::new(WINDOW_CATEGORY, focus_idx)),
+                "with window_field_focus={focus_idx}"
             );
         }
+
+        let mut panel = SettingsPanel::default();
+        panel.category = crate::settings_panel::SettingsCategory::Window;
+        panel.window_field_focus = WINDOW_ROW_COUNT as u8;
+        let (_nodes, focus) = build_settings_panel_nodes(&panel);
+        assert_ne!(
+            focus,
+            settings_widget_id(WidgetId::new(WINDOW_CATEGORY, WINDOW_ROW_COUNT as u8)),
+            "an out-of-range focus must fall back, not point at a missing node"
+        );
     }
 
     /// compute_tree_state_hash: detects changes in

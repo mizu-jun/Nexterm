@@ -330,6 +330,7 @@ impl WgpuState {
                 SettingsCategory::Window => window_tab::draw_window_tab(
                     sp,
                     tokens,
+                    &metrics,
                     content_top,
                     content_inner_x,
                     content_w,

@@ -30,13 +30,11 @@ pub(super) enum SettingsPanelHit {
     /// payload is the widget index (`THEME_SCHEME` / `THEME_FOLLOW_SYSTEM`);
     /// clicking focuses the row and, for the toggle, flips it.
     ThemeRow(u8),
-    /// Phase 5-11-6 #6 / Phase B4: click on a row inside the Window category
-    /// (changes focus + optional action).
-    /// row 0=opacity / 1=cursor_style / 2=padding_x / 3=padding_y / 4=present_mode /
-    /// 5=cursor blink / 6=scrollback_lines / 7=show_tab_number /
-    /// 8=show_new_tab_button / 9=animations enabled / 10=animations intensity.
-    /// Clicking on the label area of rows 1 / 4 / 5 / 7 / 8 / 9 / 10 also
-    /// changes the value (toggle or cycle).
+    /// Click on a row inside the Window category. The payload is the widget
+    /// index; see `widgets::settings_window::row` for the names. Clicking a
+    /// toggle or cycler row also changes its value, while numeric rows only
+    /// take focus (a press on a slider track returns `Slider` instead, so a
+    /// drag can start).
     WindowRow(u8),
     /// Phase 2c follow-up: click on a row inside the Blocks category.
     /// row 0 = `blocks_enabled` toggle, row 1 = increment `border_width_px`
@@ -219,84 +217,50 @@ impl EventHandler {
                 }
             }
             SettingsCategory::Window => {
-                // Phase 5-11-6 #6: hit-test for the 5-field layout.
-                //   row 0=opacity / 1=cursor_style / 2=padding_x / 3=padding_y / 4=present_mode
-                //   Geometry mirrors overlay/settings.rs: labels_top = content_top + cell_h*0.6, row_h = cell_h*3.2.
-                let labels_top = content_top + cell_h * 0.6;
-                let row_h = cell_h * 3.2;
-                // P2-B: search collapse — rows sit at compacted slot
-                // positions; derive Y from the same `visible` list the
-                // renderer uses so both stay aligned. Collapsed rows
-                // (slot = None) have no hit region at all.
-                let visible = sp.visible_window_rows();
-                let slot_y = |row: usize| {
-                    crate::settings_panel::slot_of(&visible, row)
-                        .map(|s| labels_top + row_h * s as f32)
-                };
+                // UI/UX v3 P1c: the Window tab is built from widget specs, so
+                // the row geometry (including search collapse) lives in one
+                // place and this branch only classifies the hit.
+                use crate::renderer::overlay::widgets::draw::slider_track_rect;
+                use crate::renderer::overlay::widgets::settings_theme::TabGeometry;
+                use crate::renderer::overlay::widgets::settings_window::drag_slider_of;
 
-                // Row 0: opacity slider.
-                let opacity_bar_y = slot_y(0).map(|y| y + cell_h * 1.4).unwrap_or(f32::MIN);
-                if cy >= opacity_bar_y - cell_h * 0.5
-                    && cy <= opacity_bar_y + cell_h
-                    && cx >= content_inner_x
-                    && cx <= content_inner_x + bar_w
+                let specs =
+                    crate::renderer::overlay::widgets::settings_window::build_window_widgets(
+                        sp,
+                        &TabGeometry {
+                            content_top,
+                            content_inner_x,
+                            content_w,
+                            cell_w,
+                            cell_h,
+                        },
+                    );
+                if let Some(id) = crate::renderer::overlay::widgets::spec::hit_test(&specs, cx, cy)
                 {
-                    return SettingsPanelHit::Slider {
-                        slider_type: SliderType::WindowOpacity,
-                        track_x: content_inner_x,
-                        track_w: bar_w,
-                        min: 0.1,
-                        max: 1.0,
-                    };
-                }
-
-                // Row 2: padding_x slider.
-                let px_bar_y = slot_y(2).map(|y| y + cell_h * 1.4).unwrap_or(f32::MIN);
-                let px_bar_w = bar_w * 0.6;
-                if cy >= px_bar_y - cell_h * 0.5
-                    && cy <= px_bar_y + cell_h
-                    && cx >= content_inner_x
-                    && cx <= content_inner_x + px_bar_w
-                {
-                    return SettingsPanelHit::Slider {
-                        slider_type: SliderType::WindowPaddingX,
-                        track_x: content_inner_x,
-                        track_w: px_bar_w,
-                        min: 0.0,
-                        max: 32.0,
-                    };
-                }
-
-                // Row 3: padding_y slider.
-                let py_bar_y = slot_y(3).map(|y| y + cell_h * 1.4).unwrap_or(f32::MIN);
-                let py_bar_w = bar_w * 0.6;
-                if cy >= py_bar_y - cell_h * 0.5
-                    && cy <= py_bar_y + cell_h
-                    && cx >= content_inner_x
-                    && cx <= content_inner_x + py_bar_w
-                {
-                    return SettingsPanelHit::Slider {
-                        slider_type: SliderType::WindowPaddingY,
-                        track_x: content_inner_x,
-                        track_w: py_bar_w,
-                        min: 0.0,
-                        max: 32.0,
-                    };
-                }
-
-                // Row click detection (label area = each row's y..y+row_h).
-                // Clicking the label of rows 1 / 4 is expected to cycle the value (handled on the mouse side).
-                // Phase B4: extended to 11 rows (5=cursor blink / 6=scrollback_lines /
-                // 7=show_tab_number / 8=show_new_tab_button / 9=animations enabled /
-                // 10=animations intensity). See `SettingsPanel::WINDOW_FIELD_COUNT`.
-                for row in 0u8..crate::settings_panel::SettingsPanel::WINDOW_FIELD_COUNT {
-                    // P2-B: collapsed rows have no hit region.
-                    let Some(row_y) = slot_y(row as usize) else {
-                        continue;
-                    };
-                    if cy >= row_y - cell_h * 0.3 && cy <= row_y + cell_h * 2.5 {
-                        return SettingsPanelHit::WindowRow(row);
+                    // A press on the track itself starts a drag; anywhere else
+                    // on the row is a plain row click.
+                    if let (Some(spec), Some((slider_type, min, max))) = (
+                        specs.iter().find(|s| s.id() == id),
+                        drag_slider_of(id.index),
+                    ) {
+                        let track = slider_track_rect(spec.control_rect, cell_w, cell_h);
+                        // Grow the grab region vertically: the drawn track is
+                        // only a few pixels tall.
+                        if cx >= track.x
+                            && cx <= track.x + track.w
+                            && cy >= track.y - cell_h * 0.5
+                            && cy <= track.y + track.h + cell_h * 0.5
+                        {
+                            return SettingsPanelHit::Slider {
+                                slider_type,
+                                track_x: track.x,
+                                track_w: track.w,
+                                min,
+                                max,
+                            };
+                        }
                     }
+                    return SettingsPanelHit::WindowRow(id.index);
                 }
             }
             SettingsCategory::Blocks => {

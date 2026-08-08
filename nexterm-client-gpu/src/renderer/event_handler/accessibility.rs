@@ -110,8 +110,7 @@ impl EventHandler {
     /// | `SettingsFontSize` | `Increment` / `Decrement` | `increase_font_size` / `decrease_font_size` |
     /// | `SettingsThemeScheme` | `Click` / `Increment` | `next_scheme` |
     /// | `SettingsThemeScheme` | `Decrement` | `prev_scheme` |
-    /// | `SettingsWindowOpacity` | `SetValue(v)` | round to 0.05 + clamp to 0.1–1.0 |
-    /// | `SettingsWindowOpacity` | `Increment` / `Decrement` | `increase_opacity` / `decrease_opacity` |
+    /// | `SettingsWidget` | `SetValue(v)` / `Increment` / `Decrement` / `Click` / `Focus` | routed to the owning tab's `apply_*_action` |
     /// | `SettingsStartupLanguage` | `Click` / `Increment` | `next_language` |
     /// | `SettingsStartupLanguage` | `Decrement` | `prev_language` |
     /// | `SettingsStartupAutoUpdate` | `Click` | toggle + `dirty = true` |
@@ -149,13 +148,8 @@ impl EventHandler {
                 | NodeIdKind::SettingsFontFamily
                 | NodeIdKind::SettingsFontSize
                 | NodeIdKind::SettingsWidget { .. }
-                | NodeIdKind::SettingsWindowOpacity
                 | NodeIdKind::SettingsStartupLanguage
                 | NodeIdKind::SettingsStartupAutoUpdate
-                | NodeIdKind::SettingsCursorStyle
-                | NodeIdKind::SettingsPaddingX
-                | NodeIdKind::SettingsPaddingY
-                | NodeIdKind::SettingsPresentMode
                 | NodeIdKind::SettingsProfileItem { .. }
                 | NodeIdKind::SettingsSshHostItem { .. }
                 | NodeIdKind::SettingsSshFieldName

@@ -195,7 +195,7 @@ pub(crate) fn build_theme_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<Wi
 }
 
 /// What an accessibility client asked to do to a control.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum WidgetAction {
     /// Default action (AccessKit `Click`): flip a toggle, pick a swatch,
     /// advance a cycler.
@@ -204,6 +204,9 @@ pub(crate) enum WidgetAction {
     Next,
     /// Step backward (AccessKit `Decrement`).
     Prev,
+    /// Set a numeric control directly (AccessKit `SetValue`). Ignored by
+    /// kinds that carry no number.
+    SetValue(f64),
 }
 
 /// Apply `action` to the Theme widget at `index`.
@@ -213,6 +216,9 @@ pub(crate) enum WidgetAction {
 /// mouse and keyboard paths perform, so a screen reader and a click stay in
 /// agreement.
 pub(crate) fn apply_theme_action(sp: &mut SettingsPanel, index: u8, action: WidgetAction) -> bool {
+    if matches!(action, WidgetAction::SetValue(_)) && index == THEME_SCHEME {
+        return false;
+    }
     if let Some(i) = swatch_index_of(WidgetId::new(THEME_CATEGORY, index)) {
         // A swatch is a choice, not a stepper: every action selects it.
         sp.scheme_index = i;
@@ -230,7 +236,10 @@ pub(crate) fn apply_theme_action(sp: &mut SettingsPanel, index: u8, action: Widg
             true
         }
         // A toggle has two states, so stepping either way flips it — the same
-        // behaviour the Left/Right keys already have.
+        // behaviour the Left/Right keys already have. A numeric SetValue is
+        // meaningless on a toggle, so it is refused rather than treated as a
+        // flip.
+        (THEME_FOLLOW_SYSTEM, WidgetAction::SetValue(_)) => false,
         (THEME_FOLLOW_SYSTEM, _) => {
             sp.toggle_colors_follow_system();
             true

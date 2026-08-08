@@ -95,9 +95,16 @@ pub(crate) fn draw_widget(
         WidgetKind::Label => {}
         WidgetKind::Toggle { on } => draw_toggle(spec, *on, theme, sink),
         WidgetKind::Cycle { value } => draw_cycle(spec, value, theme, font, atlas, queue, sink),
-        WidgetKind::Slider { fraction, display } => {
-            draw_slider(spec, *fraction, display, theme, font, atlas, queue, sink)
-        }
+        kind @ WidgetKind::Slider { display, .. } => draw_slider(
+            spec,
+            kind.slider_fraction(),
+            display,
+            theme,
+            font,
+            atlas,
+            queue,
+            sink,
+        ),
         WidgetKind::Text { value, editing } => {
             draw_text_field(spec, value, *editing, theme, font, atlas, queue, sink)
         }
@@ -372,6 +379,22 @@ fn slider_readout_w(theme: &WidgetTheme<'_>) -> f32 {
     theme.cell_w * 8.0
 }
 
+/// Track rectangle of a slider, derived from its control rect.
+///
+/// Exposed because the mouse hit-test needs the same rectangle to start a
+/// drag; deriving it in both places from one function is what keeps the
+/// grab region on top of the drawn track.
+pub(crate) fn slider_track_rect(control: WidgetRect, cell_w: f32, cell_h: f32) -> WidgetRect {
+    let track_w = (control.w - cell_w * 8.0).max(cell_w);
+    let track_h = cell_h * SLIDER_TRACK_H;
+    WidgetRect::new(
+        control.x,
+        control.y + (control.h - track_h) * 0.5,
+        track_w,
+        track_h,
+    )
+}
+
 /// Draw the slider's rail, filled portion and thumb. Returns the track width
 /// so the caller can place the readout after it.
 ///
@@ -384,12 +407,8 @@ fn draw_slider_track(
     sink: &mut WidgetSink<'_>,
 ) -> f32 {
     let f = fraction.clamp(0.0, 1.0);
-    // Reserve room on the right for the numeric readout.
-    let readout_w = slider_readout_w(theme);
-    let track_w = (spec.control_rect.w - readout_w).max(theme.cell_w);
-    let track_h = theme.cell_h * SLIDER_TRACK_H;
-    let track_x = spec.control_rect.x;
-    let track_y = spec.control_rect.y + (spec.control_rect.h - track_h) * 0.5;
+    let track = slider_track_rect(spec.control_rect, theme.cell_w, theme.cell_h);
+    let (track_x, track_y, track_w, track_h) = (track.x, track.y, track.w, track.h);
     let radius = track_h * 0.5;
 
     let (rail, fill, thumb) = if spec.enabled() {
@@ -660,7 +679,10 @@ mod tests {
     #[test]
     fn a_slider_at_zero_skips_the_fill_quad() {
         let spec = spec_at(WidgetKind::Slider {
-            fraction: 0.0,
+            value: 0.0,
+            min: 0.0,
+            max: 1.0,
+            step: 0.1,
             display: "0".into(),
         });
         // rail + thumb, with no filled portion.
@@ -682,7 +704,10 @@ mod tests {
     #[test]
     fn slider_fraction_is_clamped() {
         let spec = spec_at(WidgetKind::Slider {
-            fraction: 5.0,
+            value: 5.0,
+            min: 0.0,
+            max: 1.0,
+            step: 0.1,
             display: "x".into(),
         });
         // An out-of-range fraction must not panic or drop the thumb.
