@@ -127,22 +127,11 @@ pub const PANE_INPUT_BUFFER_ID: NodeId = NodeId(27);
 
 // 28..29 reserved for future containers (sidebars, etc.).
 
-/// Font category: font family input field.
-pub const SETTINGS_FONT_FAMILY_ID: NodeId = NodeId(30);
-
-/// Font category: font size slider.
-pub const SETTINGS_FONT_SIZE_ID: NodeId = NodeId(31);
-
-// 32 (Theme colour scheme), 33 (window opacity) and 36..=39 (cursor style,
-// padding x/y, present mode) were hand-written settings-field nodes. The
-// Theme and Window categories are now described by the widget layer and their
-// nodes live in the `SETTINGS_WIDGET_BASE` range, so those slots are free.
-
-/// Startup category: language picker.
-pub const SETTINGS_STARTUP_LANGUAGE_ID: NodeId = NodeId(34);
-
-/// Startup category: "check for updates on startup" CheckBox.
-pub const SETTINGS_STARTUP_AUTO_UPDATE_ID: NodeId = NodeId(35);
+// 30..=39 were hand-written settings-field nodes (font family/size, theme
+// colour scheme, window opacity, startup language/auto-update, cursor style,
+// padding x/y, present mode). Every one of those categories is now described
+// by the widget layer, with nodes in the `SETTINGS_WIDGET_BASE` range, so the
+// whole 30..=39 block is free.
 
 /// Phase 5-11-8 Step 8-2 - SSH category: name field of the selected host (TextInput).
 pub const SETTINGS_SSH_FIELD_NAME_ID: NodeId = NodeId(40);
@@ -622,10 +611,6 @@ pub enum NodeIdKind {
     WindowCloseButton,
     /// Settings panel: content container for the current category.
     SettingsContent,
-    /// Settings panel: font family input field.
-    SettingsFontFamily,
-    /// Settings panel: font size slider.
-    SettingsFontSize,
     /// Settings panel: color scheme picker.
     /// A node built from a `WidgetSpec` (UI/UX v3 P1b). `category` is the
     /// `SettingsCategory::ALL` index, `index` the widget's position in it.
@@ -635,10 +620,6 @@ pub enum NodeIdKind {
         /// Widget index within that category.
         index: u8,
     },
-    /// Settings panel: language picker.
-    SettingsStartupLanguage,
-    /// Settings panel: "check for updates on startup" CheckBox.
-    SettingsStartupAutoUpdate,
     /// Pane row node (Sprint 5-11-3, identified by `pane_id` and `row`).
     PaneRow { pane_id: u32, row: u16 },
     /// Pane scrollback row node (Sprint 5-11-4, identified by `pane_id` and
@@ -769,10 +750,6 @@ pub fn decode_node_id(id: NodeId) -> NodeIdKind {
                 None => NodeIdKind::Unknown,
             }
         }
-        30 => NodeIdKind::SettingsFontFamily,
-        31 => NodeIdKind::SettingsFontSize,
-        34 => NodeIdKind::SettingsStartupLanguage,
-        35 => NodeIdKind::SettingsStartupAutoUpdate,
         // Phase 5-11-6 #6: 4 new Window category fields
         // Phase 5-11-8 Step 8-2: 5 SSH category host fields
         40 => NodeIdKind::SettingsSshFieldName,
@@ -1690,24 +1667,11 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
 
     match panel.category {
         SettingsCategory::Font => {
-            let mut family = Node::new(Role::TextInput);
-            family.set_label("Font family");
-            family.set_value(panel.font_family.as_str());
-            if panel.font_family_editing {
-                family.set_description("Editing (press Tab to commit)");
+            for desc in crate::renderer::overlay::widgets::settings_font::font_widget_descs(panel) {
+                let id = settings_widget_id(desc.id);
+                nodes.push((id, widget_node(&desc)));
+                content_children.push(id);
             }
-            nodes.push((SETTINGS_FONT_FAMILY_ID, family));
-            content_children.push(SETTINGS_FONT_FAMILY_ID);
-
-            let mut size = Node::new(Role::Slider);
-            size.set_label("Font size");
-            size.set_value(format!("{:.1}", panel.font_size));
-            size.set_numeric_value(panel.font_size as f64);
-            size.set_min_numeric_value(8.0);
-            size.set_max_numeric_value(32.0);
-            size.set_numeric_value_step(0.5);
-            nodes.push((SETTINGS_FONT_SIZE_ID, size));
-            content_children.push(SETTINGS_FONT_SIZE_ID);
         }
         SettingsCategory::Theme => {
             // UI/UX v3 P1b: built from the same descriptions the renderer and
@@ -1735,22 +1699,13 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
             }
         }
         SettingsCategory::Startup => {
-            let mut lang = Node::new(Role::ComboBox);
-            lang.set_label("Language");
-            lang.set_value(panel.language_code());
-            lang.set_description("Use Left/Right to cycle");
-            nodes.push((SETTINGS_STARTUP_LANGUAGE_ID, lang));
-            content_children.push(SETTINGS_STARTUP_LANGUAGE_ID);
-
-            let mut auto_update = Node::new(Role::CheckBox);
-            auto_update.set_label("Check for updates on startup");
-            auto_update.set_toggled(if panel.auto_check_update {
-                accesskit::Toggled::True
-            } else {
-                accesskit::Toggled::False
-            });
-            nodes.push((SETTINGS_STARTUP_AUTO_UPDATE_ID, auto_update));
-            content_children.push(SETTINGS_STARTUP_AUTO_UPDATE_ID);
+            for desc in
+                crate::renderer::overlay::widgets::settings_startup::startup_widget_descs(panel)
+            {
+                let id = settings_widget_id(desc.id);
+                nodes.push((id, widget_node(&desc)));
+                content_children.push(id);
+            }
         }
         SettingsCategory::Profiles => {
             // Phase 5-11-7: expose the profile list as ListBox + ListBoxOption.
@@ -2048,33 +2003,34 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
         // screen-readers without specific row support still announce the
         // overall state.
         SettingsCategory::Blocks => {
-            content_description = Some(format!(
-                "Command Blocks (click rows to edit). Enabled: {}. Border width: {} px. \
-                 Status badge: {}. Direct edits to config.toml [blocks] also live-reload.",
-                if panel.blocks_enabled { "on" } else { "off" },
-                panel.blocks_border_width_px,
-                if panel.blocks_show_exit_code_badge {
-                    "on"
-                } else {
-                    "off"
-                },
-            ));
+            // UI/UX v3 P1c: each row is now its own node. Previously the
+            // whole category was a single prose description, so none of the
+            // three controls could be operated by an assistive client.
+            for desc in
+                crate::renderer::overlay::widgets::settings_blocks::blocks_widget_descs(panel)
+            {
+                let id = settings_widget_id(desc.id);
+                nodes.push((id, widget_node(&desc)));
+                content_children.push(id);
+            }
+            content_description =
+                Some("Direct edits to config.toml [blocks] also live-reload.".to_string());
         }
         SettingsCategory::Security => {
-            use crate::settings_panel::SettingsPanel;
-            content_description = Some(format!(
-                "Security consent policies (Up/Down to move, Left/Right to cycle a policy, \
-                 Enter to edit a byte cap). External URL: {}. OSC 52 clipboard: {}. \
-                 Notification: {}. Plugin read: {} (prompt behaves as deny for now). \
-                 OSC 52 max bytes: {}. Notification max bytes: {}. Plugin read max bytes: {}.",
-                SettingsPanel::consent_label(panel.sec_external_url),
-                SettingsPanel::consent_label(panel.sec_osc52_clipboard),
-                SettingsPanel::consent_label(panel.sec_osc_notification),
-                SettingsPanel::consent_label(panel.sec_plugin_read),
-                panel.sec_osc52_max_bytes,
-                panel.sec_notification_max_bytes,
-                panel.sec_plugin_read_max_bytes,
-            ));
+            // UI/UX v3 P1c: as with Blocks, the seven controls replace what
+            // was a single prose description of the whole category.
+            for desc in
+                crate::renderer::overlay::widgets::settings_security::security_widget_descs(panel)
+            {
+                let id = settings_widget_id(desc.id);
+                nodes.push((id, widget_node(&desc)));
+                content_children.push(id);
+            }
+            // The one caveat that belongs to no single control.
+            content_description = Some(
+                "The plugin read policy has no prompt path yet, so prompt behaves as deny."
+                    .to_string(),
+            );
         }
     }
 
@@ -2090,7 +2046,11 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
 
     // ===== Focus selection =====
     let focus = if matches!(panel.category, SettingsCategory::Font) && panel.font_family_editing {
-        SETTINGS_FONT_FAMILY_ID
+        use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, row};
+        settings_widget_id(crate::renderer::overlay::widgets::spec::WidgetId::new(
+            FONT_CATEGORY,
+            row::FAMILY,
+        ))
     } else if matches!(panel.category, SettingsCategory::Window) {
         // UI/UX v3 P1c: focus the widget `window_field_focus` selects. Every
         // row is a widget now, so the mapping no longer stops at row 4.
@@ -2586,9 +2546,9 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
 /// - `Focus` is used as a state-change trigger via the SR path only for
 ///   "Tab / Pane / CategoryTab" (virtual-cursor traversal = control transition).
 ///   For CheckBox and TextInput, Focus has no side effects beyond rendering state.
-/// - `SettingsFontSize` SetValue is delegated to the pure `set_font_size_value`
-///   setter. Widget-layer sliders take the same route via the tab's
-///   `apply_*_action`, which reuses the identical setters.
+/// - Widget-layer controls route every action through their tab's
+///   `apply_*_action`, which reuses the same setters the mouse and keyboard
+///   paths call (rounding and clamping included).
 /// - ThemeScheme / Language treat Click and Increment equivalently (ComboBox "next").
 pub fn dispatch_settings_action(
     panel: &mut SettingsPanel,
@@ -2611,45 +2571,19 @@ pub fn dispatch_settings_action(
             }
         }
 
-        // ===== Font family (TextInput) =====
-        (Action::Click, NodeIdKind::SettingsFontFamily) => {
-            panel.font_family_editing = true;
-            true
-        }
-        (Action::SetValue, NodeIdKind::SettingsFontFamily) => {
-            if let Some(ActionData::Value(s)) = data {
-                panel.font_family = s.into_string();
-                panel.dirty = true;
-                true
-            } else {
-                false
-            }
-        }
-
-        // ===== Font size (Slider) =====
-        (Action::SetValue, NodeIdKind::SettingsFontSize) => {
-            if let Some(ActionData::NumericValue(v)) = data {
-                panel.set_font_size_value(v);
-                true
-            } else {
-                false
-            }
-        }
-        (Action::Increment, NodeIdKind::SettingsFontSize) => {
-            panel.increase_font_size();
-            true
-        }
-        (Action::Decrement, NodeIdKind::SettingsFontSize) => {
-            panel.decrease_font_size();
-            true
-        }
-
         // ===== Widget-layer nodes (UI/UX v3 P1b) =====
         // Routed back to the same state transition the mouse and keyboard
         // paths use, so a screen reader and a click never disagree.
         // Focus is virtual-cursor traversal: it moves the panel's focus but
         // changes no value, matching the retired per-field arms.
         (Action::Focus, NodeIdKind::SettingsWidget { category, index }) => {
+            use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, FONT_ROW_COUNT};
+            use crate::renderer::overlay::widgets::settings_security::{
+                SECURITY_CATEGORY, SECURITY_ROW_COUNT,
+            };
+            use crate::renderer::overlay::widgets::settings_startup::{
+                STARTUP_CATEGORY, STARTUP_ROW_COUNT,
+            };
             use crate::renderer::overlay::widgets::settings_theme::THEME_CATEGORY;
             use crate::renderer::overlay::widgets::settings_window::{
                 WINDOW_CATEGORY, WINDOW_ROW_COUNT,
@@ -2663,6 +2597,19 @@ pub fn dispatch_settings_action(
                     panel.window_field_focus = *index;
                     true
                 }
+                FONT_CATEGORY if (*index as usize) < FONT_ROW_COUNT => {
+                    panel.font_field_focus = *index;
+                    true
+                }
+                STARTUP_CATEGORY if (*index as usize) < STARTUP_ROW_COUNT => {
+                    panel.startup_field_focus = *index;
+                    true
+                }
+                SECURITY_CATEGORY if (*index as usize) < SECURITY_ROW_COUNT => {
+                    panel.security_field_focus = *index;
+                    true
+                }
+                // Blocks has no focus counter.
                 _ => false,
             }
         }
@@ -2670,6 +2617,18 @@ pub fn dispatch_settings_action(
             Action::Click | Action::Increment | Action::Decrement | Action::SetValue,
             NodeIdKind::SettingsWidget { category, index },
         ) => {
+            use crate::renderer::overlay::widgets::settings_blocks::{
+                BLOCKS_CATEGORY, apply_blocks_action,
+            };
+            use crate::renderer::overlay::widgets::settings_font::{
+                FONT_CATEGORY, apply_font_action,
+            };
+            use crate::renderer::overlay::widgets::settings_security::{
+                SECURITY_CATEGORY, apply_security_action,
+            };
+            use crate::renderer::overlay::widgets::settings_startup::{
+                STARTUP_CATEGORY, apply_startup_action,
+            };
             use crate::renderer::overlay::widgets::settings_theme::{
                 THEME_CATEGORY, WidgetAction, apply_theme_action,
             };
@@ -2680,34 +2639,23 @@ pub fn dispatch_settings_action(
                 (Action::Increment, _) => WidgetAction::Next,
                 (Action::Decrement, _) => WidgetAction::Prev,
                 (Action::SetValue, Some(ActionData::NumericValue(v))) => WidgetAction::SetValue(v),
-                // SetValue without a numeric payload is malformed, not a click.
+                (Action::SetValue, Some(ActionData::Value(text))) => {
+                    WidgetAction::SetText(text.into_string())
+                }
+                // SetValue without a usable payload is malformed, not a click.
                 (Action::SetValue, _) => return false,
                 _ => WidgetAction::Activate,
             };
             match *category {
                 THEME_CATEGORY => apply_theme_action(panel, *index, widget_action),
                 WINDOW_CATEGORY => apply_window_action(panel, *index, widget_action),
-                // No other category is migrated yet.
+                FONT_CATEGORY => apply_font_action(panel, *index, widget_action),
+                STARTUP_CATEGORY => apply_startup_action(panel, *index, widget_action),
+                BLOCKS_CATEGORY => apply_blocks_action(panel, *index, widget_action),
+                SECURITY_CATEGORY => apply_security_action(panel, *index, widget_action),
+                // Ssh / Keybindings / Profiles keep their own nodes for now.
                 _ => false,
             }
-        }
-
-        // ===== Language (ComboBox) =====
-        (Action::Click | Action::Increment, NodeIdKind::SettingsStartupLanguage) => {
-            panel.next_language();
-            true
-        }
-        (Action::Decrement, NodeIdKind::SettingsStartupLanguage) => {
-            panel.prev_language();
-            true
-        }
-
-        // ===== Auto update check (CheckBox) =====
-        // Toggling on Focus would change the value as the SR virtual cursor passes by,
-        // so only Click reacts.
-        (Action::Click, NodeIdKind::SettingsStartupAutoUpdate) => {
-            panel.toggle_auto_check_update();
-            true
         }
 
         // ===== Phase 5-11-7 - Profile item (ListBoxOption) =====
@@ -3640,27 +3588,11 @@ mod tests {
     #[test]
     fn decode_settings_field_node_ids() {
         assert_eq!(
-            decode_node_id(SETTINGS_FONT_FAMILY_ID),
-            NodeIdKind::SettingsFontFamily
-        );
-        assert_eq!(
-            decode_node_id(SETTINGS_FONT_SIZE_ID),
-            NodeIdKind::SettingsFontSize
-        );
-        assert_eq!(
             decode_node_id(settings_widget_id(theme_scheme_widget_id())),
             NodeIdKind::SettingsWidget {
                 category: 2,
                 index: 0
             }
-        );
-        assert_eq!(
-            decode_node_id(SETTINGS_STARTUP_LANGUAGE_ID),
-            NodeIdKind::SettingsStartupLanguage
-        );
-        assert_eq!(
-            decode_node_id(SETTINGS_STARTUP_AUTO_UPDATE_ID),
-            NodeIdKind::SettingsStartupAutoUpdate
         );
     }
 
@@ -3687,8 +3619,9 @@ mod tests {
             );
         }
         // Fields for the Font category must be present.
-        assert!(ids.contains(&SETTINGS_FONT_FAMILY_ID.0));
-        assert!(ids.contains(&SETTINGS_FONT_SIZE_ID.0));
+        use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, row as font_row};
+        assert!(ids.contains(&widget_id(FONT_CATEGORY, font_row::FAMILY).0));
+        assert!(ids.contains(&widget_id(FONT_CATEGORY, font_row::SIZE).0));
     }
 
     /// While editing the Font, focus must move to the FontFamily input.
@@ -3702,7 +3635,7 @@ mod tests {
         state.settings_panel.font_family_editing = true;
 
         let update = build_tree_from_state(&state);
-        assert_eq!(update.focus, SETTINGS_FONT_FAMILY_ID);
+        assert_eq!(update.focus, widget_id(font_category(), font_family_row()));
     }
 
     /// Outside of editing, focus is on the current category tab.
@@ -3731,10 +3664,13 @@ mod tests {
         state.settings_panel.category = SettingsCategory::Startup;
         let update = build_tree_from_state(&state);
         let ids: Vec<u64> = update.nodes.iter().map(|(id, _)| id.0).collect();
-        assert!(ids.contains(&SETTINGS_STARTUP_LANGUAGE_ID.0));
-        assert!(ids.contains(&SETTINGS_STARTUP_AUTO_UPDATE_ID.0));
+        use crate::renderer::overlay::widgets::settings_startup::{
+            STARTUP_CATEGORY, row as startup_row,
+        };
+        assert!(ids.contains(&widget_id(STARTUP_CATEGORY, startup_row::LANGUAGE).0));
+        assert!(ids.contains(&widget_id(STARTUP_CATEGORY, startup_row::CHECK_UPDATES).0));
         assert!(
-            !ids.contains(&SETTINGS_FONT_FAMILY_ID.0),
+            !ids.contains(&widget_id(font_category(), font_family_row()).0),
             "Font field must not appear in the Startup category"
         );
 
@@ -3768,7 +3704,7 @@ mod tests {
             // The Content Group is present.
             assert!(ids.contains(&SETTINGS_CONTENT_ID.0));
             // Detail fields are not present.
-            assert!(!ids.contains(&SETTINGS_FONT_FAMILY_ID.0));
+            assert!(!ids.contains(&widget_id(font_category(), font_family_row()).0));
             assert!(!ids.contains(&settings_widget_id(theme_scheme_widget_id()).0));
             assert!(!ids.contains(&settings_widget_id(window_opacity_widget_id()).0));
         }
@@ -3867,131 +3803,116 @@ mod tests {
         assert_eq!(panel.category, original, "category should not change");
     }
 
-    /// Click on SettingsFontFamily enters edit mode.
+    /// The Font/Startup dispatch tests below drive the widget-derived nodes
+    /// introduced in UI/UX v3 P1c; the per-field nodes they used to target
+    /// were retired with the migration.
+    ///
+    /// Click on the family row enters edit mode.
     #[test]
     fn dispatch_settings_font_family_click_enters_editing() {
-        let mut panel = SettingsPanel::default();
-        panel.font_family_editing = false;
+        use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, row};
 
+        let mut panel = SettingsPanel::default();
         let handled = dispatch_settings_action(
             &mut panel,
             Action::Click,
-            &NodeIdKind::SettingsFontFamily,
+            &NodeIdKind::SettingsWidget {
+                category: FONT_CATEGORY,
+                index: row::FAMILY,
+            },
             None,
         );
-
         assert!(handled);
-        assert!(
-            panel.font_family_editing,
-            "Click should make font_family_editing=true"
-        );
+        assert!(panel.font_family_editing);
     }
 
-    /// SetValue on SettingsFontFamily applies the string and sets dirty=true.
+    /// A string SetValue applies to the family field and marks it dirty.
     #[test]
     fn dispatch_settings_font_family_set_value_updates_string() {
+        use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, row};
+
         let mut panel = SettingsPanel::default();
         panel.dirty = false;
-
         let handled = dispatch_settings_action(
             &mut panel,
             Action::SetValue,
-            &NodeIdKind::SettingsFontFamily,
-            Some(ActionData::Value(
-                "JetBrains Mono".to_string().into_boxed_str(),
-            )),
+            &NodeIdKind::SettingsWidget {
+                category: FONT_CATEGORY,
+                index: row::FAMILY,
+            },
+            Some(ActionData::Value("Cascadia Code".into())),
         );
-
         assert!(handled);
-        assert_eq!(panel.font_family, "JetBrains Mono");
-        assert!(panel.dirty, "setting a value should make dirty=true");
+        assert_eq!(panel.font_family, "Cascadia Code");
+        assert!(panel.dirty);
     }
 
-    /// Passing NumericValue to SettingsFontFamily SetValue is ignored (handled=false).
+    /// A numeric SetValue on a text field is refused rather than coerced.
     #[test]
     fn dispatch_settings_font_family_set_value_with_numeric_returns_false() {
-        let mut panel = SettingsPanel::default();
-        let original = panel.font_family.clone();
+        use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, row};
 
+        let mut panel = SettingsPanel::default();
+        let before = panel.font_family.clone();
         let handled = dispatch_settings_action(
             &mut panel,
             Action::SetValue,
-            &NodeIdKind::SettingsFontFamily,
-            Some(ActionData::NumericValue(42.0)),
+            &NodeIdKind::SettingsWidget {
+                category: FONT_CATEGORY,
+                index: row::FAMILY,
+            },
+            Some(ActionData::NumericValue(12.0)),
         );
-
-        assert!(
-            !handled,
-            "NumericValue on a TextInput must return handled=false"
-        );
-        assert_eq!(panel.font_family, original);
+        assert!(!handled);
+        assert_eq!(panel.font_family, before);
     }
 
-    /// SetValue on SettingsFontSize applies 0.5-unit rounding and clamping to 8.0..=32.0.
+    /// SetValue on the size slider keeps its 0.5-unit rounding and 8..=32 clamp.
     #[test]
     fn dispatch_settings_font_size_set_value_rounds_and_clamps() {
-        let mut panel = SettingsPanel::default();
+        use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, row};
 
-        // 14.37 rounds to 14.5.
-        let handled = dispatch_settings_action(
-            &mut panel,
-            Action::SetValue,
-            &NodeIdKind::SettingsFontSize,
-            Some(ActionData::NumericValue(14.37)),
-        );
-        assert!(handled);
+        let mut panel = SettingsPanel::default();
+        let kind = NodeIdKind::SettingsWidget {
+            category: FONT_CATEGORY,
+            index: row::SIZE,
+        };
+        let set = |panel: &mut SettingsPanel, v: f64| {
+            dispatch_settings_action(
+                panel,
+                Action::SetValue,
+                &kind,
+                Some(ActionData::NumericValue(v)),
+            )
+        };
+
+        set(&mut panel, 13.3);
         assert!(
-            (panel.font_size - 14.5).abs() < f32::EPSILON,
-            "0.5-unit rounding: 14.37 -> 14.5, actual = {}",
+            (panel.font_size - 13.5).abs() < 1e-4,
+            "0.5-unit rounding, actual = {}",
             panel.font_size
         );
-
-        // 100.0 clamps to 32.0.
-        dispatch_settings_action(
-            &mut panel,
-            Action::SetValue,
-            &NodeIdKind::SettingsFontSize,
-            Some(ActionData::NumericValue(100.0)),
-        );
-        assert!(
-            (panel.font_size - 32.0).abs() < f32::EPSILON,
-            "upper bound clamps to 32.0"
-        );
-
-        // 1.0 clamps to 8.0.
-        dispatch_settings_action(
-            &mut panel,
-            Action::SetValue,
-            &NodeIdKind::SettingsFontSize,
-            Some(ActionData::NumericValue(1.0)),
-        );
-        assert!(
-            (panel.font_size - 8.0).abs() < f32::EPSILON,
-            "lower bound clamps to 8.0"
-        );
+        set(&mut panel, 100.0);
+        assert!((panel.font_size - 32.0).abs() < f32::EPSILON);
+        set(&mut panel, 1.0);
+        assert!((panel.font_size - 8.0).abs() < f32::EPSILON);
     }
 
-    /// Increment / Decrement on SettingsFontSize moves in 0.5 steps.
+    /// Increment / Decrement on the size slider move in 0.5 steps.
     #[test]
     fn dispatch_settings_font_size_increment_decrement() {
+        use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, row};
+
         let mut panel = SettingsPanel::default();
-        panel.font_size = 14.0;
-
-        dispatch_settings_action(
-            &mut panel,
-            Action::Increment,
-            &NodeIdKind::SettingsFontSize,
-            None,
-        );
-        assert!((panel.font_size - 14.5).abs() < f32::EPSILON);
-
-        dispatch_settings_action(
-            &mut panel,
-            Action::Decrement,
-            &NodeIdKind::SettingsFontSize,
-            None,
-        );
-        assert!((panel.font_size - 14.0).abs() < f32::EPSILON);
+        let kind = NodeIdKind::SettingsWidget {
+            category: FONT_CATEGORY,
+            index: row::SIZE,
+        };
+        let before = panel.font_size;
+        dispatch_settings_action(&mut panel, Action::Increment, &kind, None);
+        assert!((panel.font_size - (before + 0.5)).abs() < 1e-4);
+        dispatch_settings_action(&mut panel, Action::Decrement, &kind, None);
+        assert!((panel.font_size - before).abs() < 1e-4);
     }
 
     /// Click / Increment on the Theme scheme cycler advance by 1 (UI/UX v3 P1b:
@@ -4013,6 +3934,23 @@ mod tests {
 
         dispatch_settings_action(&mut panel, Action::Decrement, &kind, None);
         assert_eq!(panel.scheme_index, 1, "Decrement selects previous scheme");
+    }
+
+    /// Helper: the Font category index.
+    fn font_category() -> u8 {
+        crate::renderer::overlay::widgets::settings_font::FONT_CATEGORY
+    }
+
+    /// Helper: the Font family row index.
+    fn font_family_row() -> u8 {
+        crate::renderer::overlay::widgets::settings_font::row::FAMILY
+    }
+
+    /// Helper: the NodeId of a widget-derived settings node.
+    fn widget_id(category: u8, index: u8) -> NodeId {
+        settings_widget_id(crate::renderer::overlay::widgets::spec::WidgetId::new(
+            category, index,
+        ))
     }
 
     /// Helper: the WidgetId of the Window opacity slider.
@@ -4154,69 +4092,44 @@ mod tests {
         assert_eq!(panel.opacity, before);
     }
 
-    /// Click on SettingsStartupLanguage advances to next_language (index + 1).
+    /// Click / Increment on the language row advances it; Decrement goes back.
     #[test]
     fn dispatch_settings_language_click_advances() {
+        use crate::renderer::overlay::widgets::settings_startup::{STARTUP_CATEGORY, row};
+
         let mut panel = SettingsPanel::default();
-        panel.language_index = 0;
-
-        dispatch_settings_action(
-            &mut panel,
-            Action::Click,
-            &NodeIdKind::SettingsStartupLanguage,
-            None,
-        );
-        assert_eq!(panel.language_index, 1);
-
-        dispatch_settings_action(
-            &mut panel,
-            Action::Decrement,
-            &NodeIdKind::SettingsStartupLanguage,
-            None,
-        );
-        assert_eq!(panel.language_index, 0);
+        let kind = NodeIdKind::SettingsWidget {
+            category: STARTUP_CATEGORY,
+            index: row::LANGUAGE,
+        };
+        let before = panel.language_index;
+        dispatch_settings_action(&mut panel, Action::Click, &kind, None);
+        assert_ne!(panel.language_index, before);
+        dispatch_settings_action(&mut panel, Action::Decrement, &kind, None);
+        assert_eq!(panel.language_index, before);
     }
 
-    /// Click on SettingsStartupAutoUpdate toggles; Focus has no effect.
+    /// Click on the update-check row toggles it; Focus only moves focus.
     #[test]
     fn dispatch_settings_auto_update_click_toggles() {
+        use crate::renderer::overlay::widgets::settings_startup::{STARTUP_CATEGORY, row};
+
         let mut panel = SettingsPanel::default();
-        panel.auto_check_update = false;
-        panel.dirty = false;
-
-        // Click toggles.
-        let handled = dispatch_settings_action(
-            &mut panel,
-            Action::Click,
-            &NodeIdKind::SettingsStartupAutoUpdate,
-            None,
-        );
-        assert!(handled);
-        assert!(panel.auto_check_update);
-        assert!(panel.dirty);
-
-        // A second Click flips it back to false.
-        dispatch_settings_action(
-            &mut panel,
-            Action::Click,
-            &NodeIdKind::SettingsStartupAutoUpdate,
-            None,
-        );
-        assert!(!panel.auto_check_update);
-
-        // Focus has no effect.
+        let kind = NodeIdKind::SettingsWidget {
+            category: STARTUP_CATEGORY,
+            index: row::CHECK_UPDATES,
+        };
         let before = panel.auto_check_update;
-        let handled = dispatch_settings_action(
-            &mut panel,
-            Action::Focus,
-            &NodeIdKind::SettingsStartupAutoUpdate,
-            None,
+        dispatch_settings_action(&mut panel, Action::Click, &kind, None);
+        assert_eq!(panel.auto_check_update, !before);
+
+        let after_click = panel.auto_check_update;
+        dispatch_settings_action(&mut panel, Action::Focus, &kind, None);
+        assert_eq!(
+            panel.auto_check_update, after_click,
+            "Focus must not flip a checkbox as the virtual cursor passes by"
         );
-        assert!(
-            !handled,
-            "Focus must return handled=false (CheckBoxes do not toggle on Focus)"
-        );
-        assert_eq!(panel.auto_check_update, before);
+        assert_eq!(panel.startup_field_focus, row::CHECK_UPDATES);
     }
 
     // ===== Window category (UI/UX v3 P1c: widget-derived nodes) =====

@@ -24,6 +24,12 @@ pub(super) enum SettingsPanelHit {
         #[allow(dead_code)]
         max: f32,
     },
+    /// UI/UX v3 P1c: click on a row inside the Font category. The payload is
+    /// the widget index; a press on the size slider's track returns `Slider`
+    /// instead so a drag can start.
+    FontRow(u8),
+    /// UI/UX v3 P1c: click on a row inside the Startup category.
+    StartupRow(u8),
     /// Theme color dot.
     ThemeColor(usize),
     /// UI/UX v3 P1b: click on a non-swatch row of the Theme category. The
@@ -59,6 +65,7 @@ pub(super) enum SettingsPanelHit {
 impl EventHandler {
     /// Run a mouse hit-test against the settings panel.
     pub(super) fn hit_test_settings_panel(&self, cx: f32, cy: f32) -> SettingsPanelHit {
+        use crate::renderer::overlay::widgets::settings_theme::TabGeometry;
         use crate::settings_panel::{SettingsCategory, SliderType};
 
         let sp = &self.app.state.settings_panel;
@@ -171,24 +178,67 @@ impl EventHandler {
 
         // Content-area hit-test.
         let content_top = py + title_h + cell_h * 0.5;
-        let bar_w = content_w - cell_w * 3.0;
 
         match &sp.category {
             SettingsCategory::Font => {
-                // Font-size slider.
-                let bar_y = content_top + cell_h * 4.2;
-                if cy >= bar_y - cell_h * 0.5
-                    && cy <= bar_y + cell_h
-                    && cx >= content_inner_x
-                    && cx <= content_inner_x + bar_w
+                // UI/UX v3 P1c: rows come from the widget layer. Rows were
+                // not clickable before; only the size slider was.
+                use crate::renderer::overlay::widgets::draw::slider_track_rect;
+                use crate::renderer::overlay::widgets::settings_font::{
+                    FONT_SIZE_RANGE, build_font_widgets, row,
+                };
+
+                let specs = build_font_widgets(
+                    sp,
+                    &TabGeometry {
+                        content_top,
+                        content_inner_x,
+                        content_w,
+                        cell_w,
+                        cell_h,
+                    },
+                );
+                if let Some(id) = crate::renderer::overlay::widgets::spec::hit_test(&specs, cx, cy)
                 {
-                    return SettingsPanelHit::Slider {
-                        slider_type: SliderType::FontSize,
-                        track_x: content_inner_x,
-                        track_w: bar_w,
-                        min: 8.0,
-                        max: 32.0,
-                    };
+                    if let Some(spec) = specs.iter().find(|s| s.id() == id)
+                        && id.index == row::SIZE
+                    {
+                        let track = slider_track_rect(spec.control_rect, cell_w, cell_h);
+                        if cx >= track.x
+                            && cx <= track.x + track.w
+                            && cy >= track.y - cell_h * 0.5
+                            && cy <= track.y + track.h + cell_h * 0.5
+                        {
+                            return SettingsPanelHit::Slider {
+                                slider_type: SliderType::FontSize,
+                                track_x: track.x,
+                                track_w: track.w,
+                                min: FONT_SIZE_RANGE.0,
+                                max: FONT_SIZE_RANGE.1,
+                            };
+                        }
+                    }
+                    return SettingsPanelHit::FontRow(id.index);
+                }
+            }
+            SettingsCategory::Startup => {
+                // UI/UX v3 P1c: the Startup rows had no hit zone at all
+                // before; they are clickable now that they are widgets.
+                use crate::renderer::overlay::widgets::settings_startup::build_startup_widgets;
+
+                let specs = build_startup_widgets(
+                    sp,
+                    &TabGeometry {
+                        content_top,
+                        content_inner_x,
+                        content_w,
+                        cell_w,
+                        cell_h,
+                    },
+                );
+                if let Some(id) = crate::renderer::overlay::widgets::spec::hit_test(&specs, cx, cy)
+                {
+                    return SettingsPanelHit::StartupRow(id.index);
                 }
             }
             SettingsCategory::Theme => {
@@ -221,7 +271,6 @@ impl EventHandler {
                 // the row geometry (including search collapse) lives in one
                 // place and this branch only classifies the hit.
                 use crate::renderer::overlay::widgets::draw::slider_track_rect;
-                use crate::renderer::overlay::widgets::settings_theme::TabGeometry;
                 use crate::renderer::overlay::widgets::settings_window::drag_slider_of;
 
                 let specs =
@@ -264,35 +313,39 @@ impl EventHandler {
                 }
             }
             SettingsCategory::Blocks => {
-                // Renderer places the visible rows starting at content_top +
-                // cell_h * (0.5 + slot * 1.6); the trailing hint row has no
-                // hit zone. P2-B: search collapse compacts the rows, so Y
-                // derives from the same `visible_blocks_rows` list.
-                for (slot, &row) in sp.visible_blocks_rows().iter().enumerate() {
-                    let row_y = content_top + cell_h * (0.5 + slot as f32 * 1.6);
-                    if cy >= row_y - cell_h * 0.3
-                        && cy <= row_y + cell_h * 1.2
-                        && cx >= content_inner_x
-                        && cx < content_inner_x + content_w
-                    {
-                        return SettingsPanelHit::BlocksRow(row as u8);
-                    }
+                use crate::renderer::overlay::widgets::settings_blocks::build_blocks_widgets;
+
+                let specs = build_blocks_widgets(
+                    sp,
+                    &TabGeometry {
+                        content_top,
+                        content_inner_x,
+                        content_w,
+                        cell_w,
+                        cell_h,
+                    },
+                );
+                if let Some(id) = crate::renderer::overlay::widgets::spec::hit_test(&specs, cx, cy)
+                {
+                    return SettingsPanelHit::BlocksRow(id.index);
                 }
             }
             SettingsCategory::Security => {
-                // Renderer places the visible field rows at content_top +
-                // cell_h * (0.5 + slot * 1.4); the footer note row has no
-                // hit zone. P2-B: search collapse compacts the rows, so Y
-                // derives from the same `visible_security_rows` list.
-                for (slot, &row) in sp.visible_security_rows().iter().enumerate() {
-                    let row_y = content_top + cell_h * (0.5 + slot as f32 * 1.4);
-                    if cy >= row_y - cell_h * 0.3
-                        && cy <= row_y + cell_h * 1.2
-                        && cx >= content_inner_x
-                        && cx < content_inner_x + content_w
-                    {
-                        return SettingsPanelHit::SecurityRow(row as u8);
-                    }
+                use crate::renderer::overlay::widgets::settings_security::build_security_widgets;
+
+                let specs = build_security_widgets(
+                    sp,
+                    &TabGeometry {
+                        content_top,
+                        content_inner_x,
+                        content_w,
+                        cell_w,
+                        cell_h,
+                    },
+                );
+                if let Some(id) = crate::renderer::overlay::widgets::spec::hit_test(&specs, cx, cy)
+                {
+                    return SettingsPanelHit::SecurityRow(id.index);
                 }
             }
             _ => {}

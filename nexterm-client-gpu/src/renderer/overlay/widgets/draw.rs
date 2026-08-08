@@ -149,6 +149,10 @@ fn draw_label(
 ) {
     let base = if !spec.enabled() {
         theme.tokens.text_muted
+    } else if spec.desc.search_match {
+        // While a search is active, matching rows pop out in the accent
+        // colour so the eye lands on them first.
+        theme.tokens.accent_primary
     } else if spec.focused() {
         theme.tokens.text_primary
     } else {

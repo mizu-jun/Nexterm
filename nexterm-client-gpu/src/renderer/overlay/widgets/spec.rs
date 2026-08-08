@@ -191,6 +191,10 @@ pub(crate) struct WidgetDesc {
     pub focused: bool,
     /// Whether the widget accepts input right now.
     pub enabled: bool,
+    /// Whether this row's label matches the active sidebar search query.
+    /// Matching rows are drawn in the accent colour so they stand out while
+    /// the list is being filtered.
+    pub search_match: bool,
     /// Optional hint, shown as a tooltip and announced as a description.
     pub tooltip: Option<String>,
 }
@@ -205,8 +209,15 @@ impl WidgetDesc {
             label: label.into(),
             focused: false,
             enabled: true,
+            search_match: false,
             tooltip: None,
         }
+    }
+
+    /// Mark the row as matching the active search query.
+    pub fn search_match(mut self, matched: bool) -> Self {
+        self.search_match = matched;
+        self
     }
 
     /// Mark the widget focused.

@@ -19,6 +19,10 @@
 //! everything else keeps its bespoke code until its turn comes.
 
 pub(crate) mod draw;
+pub(crate) mod settings_blocks;
+pub(crate) mod settings_font;
+pub(crate) mod settings_security;
+pub(crate) mod settings_startup;
 pub(crate) mod settings_theme;
 pub(crate) mod settings_window;
 pub(crate) mod spec;

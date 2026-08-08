@@ -199,6 +199,8 @@ pub(crate) fn build_window_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<W
     window_widget_descs(sp)
         .into_iter()
         .map(|desc| {
+            let matched = sp.label_matches_search(&desc.label);
+            let desc = desc.search_match(matched);
             let index = desc.id.index;
             let Some(slot) = crate::settings_panel::slot_of(&visible, index as usize) else {
                 // Collapsed by the search filter: no hit region, nothing drawn.
@@ -262,6 +264,8 @@ pub(crate) fn apply_window_action(
         WidgetAction::Prev => sp.window_field_decrease(),
         // A screen reader can set a numeric control directly; the setters
         // apply the same rounding and clamping the drag path uses.
+        // Typed input is not offered by any Window row.
+        WidgetAction::SetText(_) => return false,
         WidgetAction::SetValue(v) => match index {
             row::OPACITY => sp.set_opacity_value(v),
             row::PADDING_X => sp.set_padding_x_value(v),
@@ -471,6 +475,33 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn matching_rows_are_flagged_for_the_search_highlight() {
+        // The accent-coloured highlight on matching rows predates the widget
+        // layer; losing it in the migration would be a silent regression.
+        let mut sp = panel();
+        assert!(
+            build_window_widgets(&sp, &geometry())
+                .iter()
+                .all(|s| !s.desc.search_match),
+            "an idle search must not highlight anything"
+        );
+
+        sp.search_query = sp.window_row_labels()[row::OPACITY as usize]
+            .chars()
+            .take(4)
+            .collect();
+        let specs = build_window_widgets(&sp, &geometry());
+        assert!(
+            specs[row::OPACITY as usize].desc.search_match,
+            "the matched row must be flagged"
+        );
+        assert!(
+            specs.iter().filter(|s| s.desc.search_match).count() < WINDOW_ROW_COUNT,
+            "the flag must discriminate, not blanket every row"
+        );
     }
 
     #[test]

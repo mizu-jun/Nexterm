@@ -293,6 +293,7 @@ impl WgpuState {
                 SettingsCategory::Font => font_tab::draw_font_tab(
                     sp,
                     tokens,
+                    &metrics,
                     content_top,
                     content_inner_x,
                     content_w,
@@ -367,6 +368,7 @@ impl WgpuState {
                 SettingsCategory::Startup => startup_tab::draw_startup_tab(
                     sp,
                     tokens,
+                    &metrics,
                     content_top,
                     content_inner_x,
                     content_w,
@@ -429,6 +431,7 @@ impl WgpuState {
                 SettingsCategory::Blocks => blocks_tab::draw_blocks_tab(
                     sp,
                     tokens,
+                    &metrics,
                     content_top,
                     content_inner_x,
                     content_w,
@@ -447,6 +450,7 @@ impl WgpuState {
                 SettingsCategory::Security => security_tab::draw_security_tab(
                     sp,
                     tokens,
+                    &metrics,
                     content_top,
                     content_inner_x,
                     content_w,

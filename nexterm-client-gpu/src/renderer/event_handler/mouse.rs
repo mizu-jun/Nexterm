@@ -365,6 +365,10 @@ impl EventHandler {
             // UI/UX v3 P1b: dwell tracking for tooltips. Only migrated
             // categories report a widget; everything else clears the dwell so
             // no stale tooltip lingers.
+            use crate::renderer::overlay::widgets::settings_blocks::BLOCKS_CATEGORY;
+            use crate::renderer::overlay::widgets::settings_font::FONT_CATEGORY;
+            use crate::renderer::overlay::widgets::settings_security::SECURITY_CATEGORY;
+            use crate::renderer::overlay::widgets::settings_startup::STARTUP_CATEGORY;
             use crate::renderer::overlay::widgets::settings_theme::{
                 THEME_CATEGORY, THEME_SWATCH_BASE,
             };
@@ -375,6 +379,10 @@ impl EventHandler {
                 }
                 SettingsPanelHit::ThemeRow(index) => Some((THEME_CATEGORY, index)),
                 SettingsPanelHit::WindowRow(index) => Some((WINDOW_CATEGORY, index)),
+                SettingsPanelHit::FontRow(index) => Some((FONT_CATEGORY, index)),
+                SettingsPanelHit::StartupRow(index) => Some((STARTUP_CATEGORY, index)),
+                SettingsPanelHit::BlocksRow(index) => Some((BLOCKS_CATEGORY, index)),
+                SettingsPanelHit::SecurityRow(index) => Some((SECURITY_CATEGORY, index)),
                 _ => None,
             };
             let sp = &mut self.app.state.settings_panel;
@@ -984,41 +992,50 @@ impl EventHandler {
                         self.app.state.settings_panel.start_drag(fx, fy);
                     }
                     SettingsPanelHit::BlocksRow(row) => {
-                        // Phase 2c follow-up: interactive Blocks toggles.
-                        // row 0 = enabled, row 1 = border width (cycle 1..=8),
-                        // row 2 = status badge. Each click marks the panel
-                        // dirty so the next Save (or panel close) persists.
+                        // UI/UX v3 P1c: routed through the shared action
+                        // router, so a click and a screen reader apply the
+                        // same transition. Blocks still auto-saves.
+                        use crate::renderer::overlay::widgets::settings_blocks::apply_blocks_action;
+                        use crate::renderer::overlay::widgets::settings_theme::WidgetAction;
                         let sp = &mut self.app.state.settings_panel;
-                        match row {
-                            0 => sp.blocks_enabled = !sp.blocks_enabled,
-                            1 => {
-                                sp.blocks_border_width_px = if sp.blocks_border_width_px >= 8 {
-                                    1
-                                } else {
-                                    sp.blocks_border_width_px + 1
-                                };
-                            }
-                            2 => {
-                                sp.blocks_show_exit_code_badge = !sp.blocks_show_exit_code_badge;
-                            }
-                            _ => {}
+                        if apply_blocks_action(sp, row, WidgetAction::Activate) {
+                            let _ = sp.save_to_toml();
+                            sp.dirty = false;
                         }
-                        sp.dirty = true;
-                        let _ = sp.save_to_toml();
-                        sp.dirty = false;
                     }
                     SettingsPanelHit::SecurityRow(row) => {
-                        // Click focuses the row. Policy rows (0..=3) cycle
-                        // forward; byte-cap rows (4..=6) start decimal editing.
-                        // Like the Window cyclers, changes persist on Save/close
-                        // rather than auto-saving.
-                        let sp = &mut self.app.state.settings_panel;
-                        sp.security_field_focus = row;
-                        if row <= 3 {
-                            sp.security_field_increase();
-                        } else {
-                            sp.begin_security_edit();
-                        }
+                        // Click focuses the row; policy rows cycle forward and
+                        // byte-cap rows start editing. Changes persist on
+                        // Save/close rather than auto-saving.
+                        use crate::renderer::overlay::widgets::settings_security::apply_security_action;
+                        use crate::renderer::overlay::widgets::settings_theme::WidgetAction;
+                        apply_security_action(
+                            &mut self.app.state.settings_panel,
+                            row,
+                            WidgetAction::Activate,
+                        );
+                    }
+                    SettingsPanelHit::FontRow(row) => {
+                        // UI/UX v3 P1c: the Font rows had no click handling
+                        // before — only the size slider reacted.
+                        use crate::renderer::overlay::widgets::settings_font::apply_font_action;
+                        use crate::renderer::overlay::widgets::settings_theme::WidgetAction;
+                        apply_font_action(
+                            &mut self.app.state.settings_panel,
+                            row,
+                            WidgetAction::Activate,
+                        );
+                    }
+                    SettingsPanelHit::StartupRow(row) => {
+                        // UI/UX v3 P1c: likewise new — the Startup rows were
+                        // keyboard-only.
+                        use crate::renderer::overlay::widgets::settings_startup::apply_startup_action;
+                        use crate::renderer::overlay::widgets::settings_theme::WidgetAction;
+                        apply_startup_action(
+                            &mut self.app.state.settings_panel,
+                            row,
+                            WidgetAction::Activate,
+                        );
                     }
                     SettingsPanelHit::PanelBackground => {
                         // Other clicks inside the panel → do nothing.

@@ -179,6 +179,8 @@ pub(crate) fn build_theme_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<Wi
     theme_widget_descs(sp)
         .into_iter()
         .map(|desc| {
+            let matched = sp.label_matches_search(&desc.label);
+            let desc = desc.search_match(matched);
             let index = desc.id.index;
             let (rect, control) = if let Some(i) = swatch_index_of(desc.id) {
                 let dot =
@@ -195,7 +197,9 @@ pub(crate) fn build_theme_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<Wi
 }
 
 /// What an accessibility client asked to do to a control.
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// Not `Copy`: [`Self::SetText`] carries an owned string.
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum WidgetAction {
     /// Default action (AccessKit `Click`): flip a toggle, pick a swatch,
     /// advance a cycler.
@@ -207,6 +211,9 @@ pub(crate) enum WidgetAction {
     /// Set a numeric control directly (AccessKit `SetValue`). Ignored by
     /// kinds that carry no number.
     SetValue(f64),
+    /// Set a text control directly (AccessKit `SetValue` with a string).
+    /// Ignored by kinds that carry no text.
+    SetText(String),
 }
 
 /// Apply `action` to the Theme widget at `index`.
@@ -216,7 +223,8 @@ pub(crate) enum WidgetAction {
 /// mouse and keyboard paths perform, so a screen reader and a click stay in
 /// agreement.
 pub(crate) fn apply_theme_action(sp: &mut SettingsPanel, index: u8, action: WidgetAction) -> bool {
-    if matches!(action, WidgetAction::SetValue(_)) && index == THEME_SCHEME {
+    // Nothing in this tab is numeric or typed.
+    if matches!(action, WidgetAction::SetValue(_) | WidgetAction::SetText(_)) {
         return false;
     }
     if let Some(i) = swatch_index_of(WidgetId::new(THEME_CATEGORY, index)) {
@@ -239,7 +247,6 @@ pub(crate) fn apply_theme_action(sp: &mut SettingsPanel, index: u8, action: Widg
         // behaviour the Left/Right keys already have. A numeric SetValue is
         // meaningless on a toggle, so it is refused rather than treated as a
         // flip.
-        (THEME_FOLLOW_SYSTEM, WidgetAction::SetValue(_)) => false,
         (THEME_FOLLOW_SYSTEM, _) => {
             sp.toggle_colors_follow_system();
             true

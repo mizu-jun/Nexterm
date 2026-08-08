@@ -104,16 +104,10 @@ impl EventHandler {
     /// | `PaletteSearch` | `SetValue(s)` | `palette.query = s` + reset selection |
     /// | `QuickSelectItem { idx }` | `Click` | copy `matches[idx].text` to the clipboard + `quick_select.exit()` |
     /// | `SettingsTab { idx }` | `Focus` / `Click` | switch category + `font_family_editing = false` |
-    /// | `SettingsFontFamily` | `Click` | enter edit mode |
-    /// | `SettingsFontFamily` | `SetValue(s)` | `font_family = s`, `dirty = true` |
-    /// | `SettingsFontSize` | `SetValue(v)` | round to 0.5 + clamp to 8.0–32.0 |
-    /// | `SettingsFontSize` | `Increment` / `Decrement` | `increase_font_size` / `decrease_font_size` |
+    /// | `SettingsWidget` | `SetValue(s)` (string) | routed to the tab's `apply_*_action` as `SetText` |
     /// | `SettingsThemeScheme` | `Click` / `Increment` | `next_scheme` |
     /// | `SettingsThemeScheme` | `Decrement` | `prev_scheme` |
     /// | `SettingsWidget` | `SetValue(v)` / `Increment` / `Decrement` / `Click` / `Focus` | routed to the owning tab's `apply_*_action` |
-    /// | `SettingsStartupLanguage` | `Click` / `Increment` | `next_language` |
-    /// | `SettingsStartupLanguage` | `Decrement` | `prev_language` |
-    /// | `SettingsStartupAutoUpdate` | `Click` | toggle + `dirty = true` |
     /// | other | — | `debug!` log only |
     ///
     /// **Design notes**:
@@ -145,11 +139,7 @@ impl EventHandler {
         if matches!(
             kind,
             NodeIdKind::SettingsTab { .. }
-                | NodeIdKind::SettingsFontFamily
-                | NodeIdKind::SettingsFontSize
                 | NodeIdKind::SettingsWidget { .. }
-                | NodeIdKind::SettingsStartupLanguage
-                | NodeIdKind::SettingsStartupAutoUpdate
                 | NodeIdKind::SettingsProfileItem { .. }
                 | NodeIdKind::SettingsSshHostItem { .. }
                 | NodeIdKind::SettingsSshFieldName
