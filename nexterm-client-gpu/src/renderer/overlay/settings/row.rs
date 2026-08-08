@@ -1,11 +1,11 @@
-//! Common row builders shared by every settings-panel category.
+//! Row builders shared by the settings-panel categories that have not moved
+//! onto the widget layer yet, plus the contrast helper every category uses.
 //!
-//! Rather than a trait-based abstraction, these are plain functions
-//! (Simplicity First) covering the three recurring shapes:
+//! UI/UX v3 P1b/P1c retired `draw_label_control_row` and
+//! `search_label_color`: migrated tabs describe their rows as `WidgetSpec`s,
+//! and `draw_widget` owns the label/control layout and the search highlight.
+//! What remains:
 //!   - [`draw_section_header`]: a bold, full-width heading line.
-//!   - [`draw_label_control_row`]: a label (left column) + value/control
-//!     (right column) row, with an optional focus-highlight background
-//!     spanning the full row.
 //!   - [`draw_description_rows`]: a muted, word-wrapped hint/description
 //!     block below a row.
 //!
@@ -23,11 +23,10 @@
 //! than a generic assumption.
 
 use crate::font::FontManager;
-use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
-use crate::vertex_util::{add_px_rect, add_string_verts, truncate_to_width};
+use crate::glyph_atlas::{GlyphAtlas, TextVertex};
+use crate::vertex_util::{add_string_verts, truncate_to_width};
 
 use super::super::util::wrap_text;
-use super::layout::RowLayout;
 
 /// WCAG 2.x contrast floor used throughout the settings panel (project
 /// accessibility guideline: see `CLAUDE.md` "UI/UX Guidelines").
@@ -56,23 +55,6 @@ pub(in crate::renderer) fn ensure_readable(
     }
 }
 
-/// P2-A (WT-like UX): label colour override while a field-level search
-/// query is active. Rows whose rendered label fuzzy-matches the query pop
-/// out in the accent colour (contrast-corrected); everything else keeps
-/// its `base` colour. With an idle search this is a pass-through.
-pub(in crate::renderer) fn search_label_color(
-    sp: &crate::settings_panel::SettingsPanel,
-    label: &str,
-    base: [f32; 4],
-    tokens: &nexterm_config::DesignTokens,
-) -> [f32; 4] {
-    if sp.label_matches_search(label) {
-        ensure_readable(tokens.accent_primary, tokens.surface_2, MIN_TEXT_CONTRAST)
-    } else {
-        base
-    }
-}
-
 /// Draw a section header line (bold, no control column, not truncated to a
 /// control width since it spans the full content width).
 #[allow(clippy::too_many_arguments)]
@@ -94,89 +76,6 @@ pub(in crate::renderer) fn draw_section_header(
     let truncated = truncate_to_width(text, content_w, cell_w);
     add_string_verts(
         &truncated, x, y, color, true, sw, sh, cell_w, font, atlas, queue, text_verts, text_idx,
-    );
-}
-
-/// Draw a two-column label+control row.
-///
-/// When `focused` is true, a highlight rect is drawn spanning the full row
-/// width (label column + gap + control column) before the text, matching
-/// the existing focus-highlight visual language used throughout the panel.
-#[allow(clippy::too_many_arguments)]
-pub(in crate::renderer) fn draw_label_control_row(
-    sp: &crate::settings_panel::SettingsPanel,
-    tokens: &nexterm_config::DesignTokens,
-    content_inner_x: f32,
-    row_y: f32,
-    row_h: f32,
-    layout: &RowLayout,
-    label: &str,
-    value: &str,
-    focused: bool,
-    focus_bg: [f32; 4],
-    label_color: [f32; 4],
-    value_color: [f32; 4],
-    sw: f32,
-    sh: f32,
-    cell_w: f32,
-    cell_h: f32,
-    font: &mut FontManager,
-    atlas: &mut GlyphAtlas,
-    queue: &wgpu::Queue,
-    bg_verts: &mut Vec<BgVertex>,
-    bg_idx: &mut Vec<u16>,
-    text_verts: &mut Vec<TextVertex>,
-    text_idx: &mut Vec<u16>,
-) {
-    if focused {
-        let row_w = layout.control_x_off + layout.control_w + cell_w * 0.6;
-        add_px_rect(
-            content_inner_x - cell_w * 0.3,
-            row_y - cell_h * 0.1,
-            row_w,
-            row_h,
-            focus_bg,
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
-    }
-
-    // P2-A: matching rows pop out in the accent colour while searching.
-    let label_color = search_label_color(sp, label, label_color, tokens);
-    let label_text = truncate_to_width(label, layout.label_w, cell_w);
-    add_string_verts(
-        &label_text,
-        content_inner_x,
-        row_y,
-        label_color,
-        focused,
-        sw,
-        sh,
-        cell_w,
-        font,
-        atlas,
-        queue,
-        text_verts,
-        text_idx,
-    );
-
-    let value_text = truncate_to_width(value, layout.control_w, cell_w);
-    add_string_verts(
-        &value_text,
-        content_inner_x + layout.control_x_off,
-        row_y,
-        value_color,
-        focused,
-        sw,
-        sh,
-        cell_w,
-        font,
-        atlas,
-        queue,
-        text_verts,
-        text_idx,
     );
 }
 

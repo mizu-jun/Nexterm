@@ -14,6 +14,7 @@
 mod category;
 mod drag;
 mod font;
+mod hover;
 mod keybindings;
 mod keybindings_edit;
 mod profiles;
@@ -31,6 +32,7 @@ mod window_extra;
 
 pub use category::SettingsCategory;
 pub use drag::clamp_panel_position;
+pub use hover::HoverDwell;
 pub use keybindings::{KEYBINDING_ACTIONS, KeyBindingEntry, KeyEditMode};
 pub use profiles::ProfileEntry;
 pub use row_filter::slot_of;
@@ -91,6 +93,10 @@ pub struct SettingsPanel {
     /// the on-disk TOML, so moving the cursor away reverts cleanly and
     /// clicking commits via the existing `ThemeColor` hit handler.
     pub theme_hover_preview: Option<usize>,
+    /// UI/UX v3 P1b: the widget the pointer is resting on, with the dwell
+    /// start time. Drives tooltips; `None` when the pointer is not over a
+    /// widget of a migrated category.
+    pub hover_widget: Option<HoverDwell>,
     /// Window opacity.
     pub opacity: f32,
     /// Whether the panel has unsaved changes.
@@ -354,6 +360,7 @@ impl SettingsPanel {
             font_size: config.font.size,
             scheme_index,
             theme_hover_preview: None,
+            hover_widget: None,
             opacity: config.window.background_opacity,
             dirty: false,
             font_family: config.font.family.clone(),

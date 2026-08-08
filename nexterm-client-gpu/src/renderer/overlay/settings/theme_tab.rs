@@ -1,17 +1,28 @@
-//! Theme category: color-scheme picker (label + value) and preview dots.
+//! Theme category: color-scheme cycler, preview swatches, follow-system toggle.
+//!
+//! Migrated onto the shared widget layer in UI/UX v3 phase P1b. The geometry
+//! now lives in `overlay/widgets/settings_theme.rs` and is shared with the
+//! mouse hit-test; this file only paints what that module describes, plus the
+//! scheme name captions under the swatch strip (plain text, not a control).
 
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::settings_panel::SettingsPanel;
-use crate::vertex_util::{add_px_rect, add_string_verts, truncate_to_cols};
+use crate::vertex_util::{add_string_verts, truncate_to_cols};
 
-use super::layout::compute_row_layout;
-use super::row::{MIN_TEXT_CONTRAST, ensure_readable, search_label_color};
+use super::super::widgets::draw::{WidgetSink, WidgetTheme, draw_widget};
+use super::super::widgets::geometry::TabGeometry;
+use super::super::widgets::settings_theme::{
+    THEME_CATEGORY, build_theme_widgets, swatch_gap, swatch_index_of, swatch_names, swatch_y,
+};
+use super::super::widgets::tooltip::{draw_tooltip, place_tooltip};
+use super::row::{MIN_TEXT_CONTRAST, ensure_readable};
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::renderer) fn draw_theme_tab(
     sp: &SettingsPanel,
     tokens: &nexterm_config::DesignTokens,
+    metrics: &nexterm_config::MetricTokens,
     content_top: f32,
     content_inner_x: f32,
     content_w: f32,
@@ -27,130 +38,55 @@ pub(in crate::renderer) fn draw_theme_tab(
     text_verts: &mut Vec<TextVertex>,
     text_idx: &mut Vec<u16>,
 ) {
-    let layout = compute_row_layout(content_w, cell_w);
-    let focus = sp.theme_field_focus;
-
-    // Color scheme (label + value). Phase B4-P2: highlighted when
-    // `theme_field_focus == 0` (the default, so pre-existing behavior is
-    // visually unchanged when the panel first opens on this category).
-    let scheme_row_y = content_top + cell_h * 1.0;
-    let scheme_color = if focus == 0 {
-        tokens.text_primary
-    } else {
-        tokens.text_secondary
-    };
-    if focus == 0 {
-        add_px_rect(
-            content_inner_x - cell_w * 0.3,
-            scheme_row_y - cell_h * 0.1,
-            content_w - cell_w * 0.7,
-            cell_h * 1.2,
-            tokens.surface_2,
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
-    }
-    let label = crate::vertex_util::truncate_to_width(
-        &nexterm_i18n::fl!("settings-theme-label"),
-        layout.label_w,
-        cell_w,
-    );
-    add_string_verts(
-        &label,
+    let geometry = TabGeometry {
+        content_top,
         content_inner_x,
-        scheme_row_y,
-        search_label_color(sp, &label, scheme_color, tokens),
-        focus == 0,
-        sw,
-        sh,
+        content_w,
         cell_w,
-        font,
-        atlas,
-        queue,
-        text_verts,
-        text_idx,
-    );
-    let value = format!("{}  (←/→)", sp.scheme_name());
-    let value = crate::vertex_util::truncate_to_width(&value, layout.control_w, cell_w);
-    add_string_verts(
-        &value,
-        content_inner_x + layout.control_x_off,
-        scheme_row_y,
-        scheme_color,
-        focus == 0,
-        sw,
-        sh,
-        cell_w,
-        font,
-        atlas,
-        queue,
-        text_verts,
-        text_idx,
-    );
+        cell_h,
+    };
+    let specs = build_theme_widgets(sp, &geometry);
 
-    // Scheme preview dots (9 entries). Geometry (`dot_y` / `dot_gap` /
-    // `dot_size` / `content_inner_x`) mirrors
-    // `settings_panel_hit.rs::hit_test_settings_panel` exactly — keep both
-    // in sync.
-    let dot_y = content_top + cell_h * 2.5;
-    let scheme_names = [
-        "dark",
-        "light",
-        "tokyonight",
-        "solarized",
-        "gruvbox",
-        "catppuccin",
-        "dracula",
-        "nord",
-        "onedark",
-    ];
-    let schemes_colors: [[f32; 4]; 9] = [
-        [0.15, 0.15, 0.18, 1.0],
-        [0.95, 0.95, 0.92, 1.0],
-        [0.10, 0.10, 0.20, 1.0],
-        [0.00, 0.17, 0.21, 1.0],
-        [0.28, 0.26, 0.22, 1.0],
-        [0.19, 0.17, 0.23, 1.0],
-        [0.16, 0.13, 0.23, 1.0],
-        [0.18, 0.20, 0.25, 1.0],
-        [0.16, 0.18, 0.22, 1.0],
-    ];
-    let dot_size = cell_w * 1.2;
-    let dot_gap = (content_w - cell_w * 2.0) / 9.0;
-    for (i, (&col, name)) in schemes_colors.iter().zip(scheme_names.iter()).enumerate() {
-        let dot_x = content_inner_x + i as f32 * dot_gap;
+    let theme = WidgetTheme {
+        tokens,
+        metrics,
+        sw,
+        sh,
+        cell_w,
+        cell_h,
+    };
+    let mut sink = WidgetSink {
+        bg_verts,
+        bg_idx,
+        text_verts,
+        text_idx,
+    };
+    for spec in &specs {
+        draw_widget(spec, &theme, font, atlas, queue, &mut sink);
+    }
+
+    // Scheme name captions under the swatches. The swatch slot bounds the
+    // caption width, so a long scheme name never bleeds into the next chip.
+    let gap = swatch_gap(&geometry);
+    let name_y = swatch_y(&geometry) + cell_h * 1.3;
+    let max_cols = ((gap / cell_w).floor() as usize).max(1);
+    for (i, name) in swatch_names().iter().enumerate() {
         let is_sel = sp.scheme_index == i;
-        if is_sel {
-            add_px_rect(
-                dot_x - 2.0,
-                dot_y - 2.0,
-                dot_size + 4.0,
-                cell_h + 4.0,
-                tokens.accent_primary,
-                sw,
-                sh,
-                bg_verts,
-                bg_idx,
-            );
-        }
-        add_px_rect(
-            dot_x, dot_y, dot_size, cell_h, col, sw, sh, bg_verts, bg_idx,
-        );
-        let name_y = dot_y + cell_h * 1.3;
-        // The dot slot itself bounds the label width (dot_gap, minus a hair
-        // of padding), so a long scheme name never bleeds into the next dot.
-        let short = truncate_to_cols(name, ((dot_gap / cell_w).floor() as usize).max(1));
+        let color = if is_sel {
+            tokens.text_secondary
+        } else {
+            ensure_readable(tokens.text_muted, tokens.surface_2, MIN_TEXT_CONTRAST)
+        };
+        let x = specs
+            .iter()
+            .find(|s| swatch_index_of(s.id()) == Some(i))
+            .map(|s| s.rect.x)
+            .unwrap_or(content_inner_x);
         add_string_verts(
-            &short,
-            dot_x,
+            &truncate_to_cols(name, max_cols),
+            x,
             name_y,
-            if is_sel {
-                tokens.text_secondary
-            } else {
-                ensure_readable(tokens.text_muted, tokens.surface_2, MIN_TEXT_CONTRAST)
-            },
+            color,
             is_sel,
             sw,
             sh,
@@ -158,54 +94,75 @@ pub(in crate::renderer) fn draw_theme_tab(
             font,
             atlas,
             queue,
-            text_verts,
-            text_idx,
+            sink.text_verts,
+            sink.text_idx,
         );
+    }
+}
+
+/// Draw the tooltip for whichever Theme widget the pointer has been resting
+/// on, if the dwell has elapsed.
+///
+/// Called after the scrollable content has been merged into the outer vertex
+/// buffers, so the tooltip is never clipped by the content scissor. Pass
+/// `content_top` already shifted by the scroll offset so the anchor follows
+/// the row on screen.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::renderer) fn draw_theme_tooltip(
+    sp: &SettingsPanel,
+    tokens: &nexterm_config::DesignTokens,
+    metrics: &nexterm_config::MetricTokens,
+    content_top: f32,
+    content_inner_x: f32,
+    content_w: f32,
+    sw: f32,
+    sh: f32,
+    cell_w: f32,
+    cell_h: f32,
+    font: &mut FontManager,
+    atlas: &mut GlyphAtlas,
+    queue: &wgpu::Queue,
+    bg_verts: &mut Vec<BgVertex>,
+    bg_idx: &mut Vec<u16>,
+    text_verts: &mut Vec<TextVertex>,
+    text_idx: &mut Vec<u16>,
+) {
+    let Some(dwell) = sp.hover_widget else {
+        return;
+    };
+    if dwell.category != THEME_CATEGORY || !dwell.is_ready(std::time::Instant::now()) {
+        return;
     }
 
-    // ===== Phase B4-P2: colors_follow_system toggle (theme_field_focus == 1) =====
-    let follow_row_y = dot_y + cell_h * 2.8;
-    let follow_color = if focus == 1 {
-        tokens.text_primary
-    } else {
-        tokens.text_secondary
-    };
-    if focus == 1 {
-        add_px_rect(
-            content_inner_x - cell_w * 0.3,
-            follow_row_y - cell_h * 0.1,
-            content_w - cell_w * 0.7,
-            cell_h * 1.2,
-            tokens.surface_2,
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
-    }
-    let follow_toggle = if sp.colors_follow_system {
-        "[ON ]"
-    } else {
-        "[OFF]"
-    };
-    let follow_label = crate::vertex_util::truncate_to_width(
-        &nexterm_i18n::fl!("settings-theme-follow-system", toggle = follow_toggle),
-        layout.label_w + layout.control_w,
-        cell_w,
-    );
-    add_string_verts(
-        &follow_label,
+    let geometry = TabGeometry {
+        content_top,
         content_inner_x,
-        follow_row_y,
-        search_label_color(sp, &follow_label, follow_color, tokens),
-        focus == 1,
+        content_w,
+        cell_w,
+        cell_h,
+    };
+    let specs = build_theme_widgets(sp, &geometry);
+    let Some(spec) = specs.iter().find(|s| s.id().index == dwell.index) else {
+        return;
+    };
+    let Some(text) = spec.desc.tooltip.as_deref() else {
+        return;
+    };
+
+    let rect = place_tooltip(spec.rect, text, cell_w, cell_h, sw, sh);
+    let theme = WidgetTheme {
+        tokens,
+        metrics,
         sw,
         sh,
         cell_w,
-        font,
-        atlas,
-        queue,
+        cell_h,
+    };
+    let mut sink = WidgetSink {
+        bg_verts,
+        bg_idx,
         text_verts,
         text_idx,
-    );
+    };
+    draw_tooltip(rect, text, &theme, font, atlas, queue, &mut sink);
 }

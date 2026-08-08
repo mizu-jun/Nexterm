@@ -127,35 +127,11 @@ pub const PANE_INPUT_BUFFER_ID: NodeId = NodeId(27);
 
 // 28..29 reserved for future containers (sidebars, etc.).
 
-/// Font category: font family input field.
-pub const SETTINGS_FONT_FAMILY_ID: NodeId = NodeId(30);
-
-/// Font category: font size slider.
-pub const SETTINGS_FONT_SIZE_ID: NodeId = NodeId(31);
-
-/// Theme category: color scheme picker.
-pub const SETTINGS_THEME_SCHEME_ID: NodeId = NodeId(32);
-
-/// Window category: opacity slider.
-pub const SETTINGS_WINDOW_OPACITY_ID: NodeId = NodeId(33);
-
-/// Startup category: language picker.
-pub const SETTINGS_STARTUP_LANGUAGE_ID: NodeId = NodeId(34);
-
-/// Startup category: "check for updates on startup" CheckBox.
-pub const SETTINGS_STARTUP_AUTO_UPDATE_ID: NodeId = NodeId(35);
-
-/// Phase 5-11-6 #6 - Window category: cursor style (block / beam / underline).
-pub const SETTINGS_CURSOR_STYLE_ID: NodeId = NodeId(36);
-
-/// Phase 5-11-6 #6 - Window category: horizontal padding (0..32 px).
-pub const SETTINGS_PADDING_X_ID: NodeId = NodeId(37);
-
-/// Phase 5-11-6 #6 - Window category: vertical padding (0..32 px).
-pub const SETTINGS_PADDING_Y_ID: NodeId = NodeId(38);
-
-/// Phase 5-11-6 #6 - Window category: GPU presentation mode (fifo / mailbox / auto).
-pub const SETTINGS_PRESENT_MODE_ID: NodeId = NodeId(39);
+// 30..=39 were hand-written settings-field nodes (font family/size, theme
+// colour scheme, window opacity, startup language/auto-update, cursor style,
+// padding x/y, present mode). Every one of those categories is now described
+// by the widget layer, with nodes in the `SETTINGS_WIDGET_BASE` range, so the
+// whole 30..=39 block is free.
 
 /// Phase 5-11-8 Step 8-2 - SSH category: name field of the selected host (TextInput).
 pub const SETTINGS_SSH_FIELD_NAME_ID: NodeId = NodeId(40);
@@ -224,6 +200,19 @@ pub const WINDOW_MAXIMIZE_BTN_ID: NodeId = NodeId(58);
 pub const WINDOW_CLOSE_BTN_ID: NodeId = NodeId(59);
 
 // 57..99 reserved for future fields.
+
+/// Base NodeId for nodes derived from a `WidgetSpec` (UI/UX v3 P1b).
+///
+/// Occupies the `700M..800M` slot the offset table already reserved for
+/// "future dynamic SettingsField expansion". A widget's node id is
+/// `SETTINGS_WIDGET_BASE + WidgetId::as_u32()`, which packs the category and
+/// index into two bytes — so the range holds every category comfortably.
+pub const SETTINGS_WIDGET_BASE: u64 = 700_000_000;
+
+/// NodeId of a widget-derived settings node.
+pub fn settings_widget_id(id: crate::renderer::overlay::widgets::spec::WidgetId) -> NodeId {
+    NodeId(SETTINGS_WIDGET_BASE + id.as_u32() as u64)
+}
 
 /// Base NodeId for settings panel category tabs.
 ///
@@ -622,26 +611,15 @@ pub enum NodeIdKind {
     WindowCloseButton,
     /// Settings panel: content container for the current category.
     SettingsContent,
-    /// Settings panel: font family input field.
-    SettingsFontFamily,
-    /// Settings panel: font size slider.
-    SettingsFontSize,
     /// Settings panel: color scheme picker.
-    SettingsThemeScheme,
-    /// Settings panel: opacity slider.
-    SettingsWindowOpacity,
-    /// Settings panel: language picker.
-    SettingsStartupLanguage,
-    /// Settings panel: "check for updates on startup" CheckBox.
-    SettingsStartupAutoUpdate,
-    /// Phase 5-11-6 #6: settings panel cursor style (block / beam / underline).
-    SettingsCursorStyle,
-    /// Phase 5-11-6 #6: settings panel horizontal padding slider (0..32 px).
-    SettingsPaddingX,
-    /// Phase 5-11-6 #6: settings panel vertical padding slider (0..32 px).
-    SettingsPaddingY,
-    /// Phase 5-11-6 #6: settings panel GPU presentation mode (fifo / mailbox / auto).
-    SettingsPresentMode,
+    /// A node built from a `WidgetSpec` (UI/UX v3 P1b). `category` is the
+    /// `SettingsCategory::ALL` index, `index` the widget's position in it.
+    SettingsWidget {
+        /// Owning settings category.
+        category: u8,
+        /// Widget index within that category.
+        index: u8,
+    },
     /// Pane row node (Sprint 5-11-3, identified by `pane_id` and `row`).
     PaneRow { pane_id: u32, row: u16 },
     /// Pane scrollback row node (Sprint 5-11-4, identified by `pane_id` and
@@ -713,8 +691,7 @@ pub enum NodeIdKind {
 /// | 26 | `AlertRegion` (Sprint 5-11-5) |
 /// | 27 | `PaneInputBuffer` (Phase 5-11-7) |
 /// | 28..29 | reserved |
-/// | 30..35 | settings fields (FontFamily / FontSize / ThemeScheme / WindowOpacity / StartupLanguage / StartupAutoUpdate) |
-/// | 36..39 | settings fields Phase 5-11-6 #6 (CursorStyle / PaddingX / PaddingY / PresentMode) |
+/// | 30..39 | **free** — every hand-written settings-field node (font family/size, theme scheme, window opacity, startup language/auto-update, cursor style, padding x/y, present mode) was replaced by `SettingsWidget` in UI/UX v3 P1b/P1c |
 /// | 40..44 | settings fields Phase 5-11-8 Step 8-2 (SshFieldName / Host / Port / Username / AuthType) |
 /// | 45..49 | settings fields Phase 5-11-8 Step 8-3 (SshAddBtn / SshDeleteBtn / SshDeleteDialog / SshDeleteConfirmBtn / SshDeleteCancelBtn) |
 /// | 50..56 | settings fields Phase 5-11-9 Sub-phase E (KeyFieldKey / KeyFieldAction / KeyAddBtn / KeyDeleteBtn / KeyDeleteDialog / KeyDeleteConfirmBtn / KeyDeleteCancelBtn) |
@@ -726,7 +703,7 @@ pub enum NodeIdKind {
 /// | 400M..500M | `ContextItem { idx: id - 400M }` |
 /// | 500M..600M | `QuickSelectItem { idx: id - 500M }` |
 /// | 600M..700M | `SettingsProfileItem { idx: id - 600M }` (Phase 5-11-7) |
-/// | 700M..800M | reserved (future dynamic SettingsField expansion) |
+/// | 700M..800M | `SettingsWidget { category, index }` — `SETTINGS_WIDGET_BASE + WidgetId::as_u32()` (UI/UX v3 P1b/P1c) |
 /// | 800M..900M | `SettingsSshHostItem { idx: id - 800M }` (Phase 5-11-8 Step 8-1) |
 /// | 900M..1G | `SettingsKeyBindingItem { idx: id - 900M }` (Phase 5-11-9 Sub-phase E) |
 /// | 1G..1G+u32::MAX | `Tab { pane_id: id - 1G }` |
@@ -761,17 +738,18 @@ pub fn decode_node_id(id: NodeId) -> NodeIdKind {
         26 => NodeIdKind::AlertRegion,
         // Phase 5-11-7: terminal input buffer
         27 => NodeIdKind::PaneInputBuffer,
-        30 => NodeIdKind::SettingsFontFamily,
-        31 => NodeIdKind::SettingsFontSize,
-        32 => NodeIdKind::SettingsThemeScheme,
-        33 => NodeIdKind::SettingsWindowOpacity,
-        34 => NodeIdKind::SettingsStartupLanguage,
-        35 => NodeIdKind::SettingsStartupAutoUpdate,
+        700_000_000..=799_999_999 => {
+            match crate::renderer::overlay::widgets::spec::WidgetId::from_u32(
+                (raw - SETTINGS_WIDGET_BASE) as u32,
+            ) {
+                Some(w) => NodeIdKind::SettingsWidget {
+                    category: w.category,
+                    index: w.index,
+                },
+                None => NodeIdKind::Unknown,
+            }
+        }
         // Phase 5-11-6 #6: 4 new Window category fields
-        36 => NodeIdKind::SettingsCursorStyle,
-        37 => NodeIdKind::SettingsPaddingX,
-        38 => NodeIdKind::SettingsPaddingY,
-        39 => NodeIdKind::SettingsPresentMode,
         // Phase 5-11-8 Step 8-2: 5 SSH category host fields
         40 => NodeIdKind::SettingsSshFieldName,
         41 => NodeIdKind::SettingsSshFieldHost,
@@ -1579,6 +1557,110 @@ fn build_macro_picker_nodes(picker: &MacroPicker) -> (Vec<(NodeId, Node)>, NodeI
 ///
 /// Focus: the editing field while `font_family_editing` is true; for the Window
 /// category, follows `window_field_focus`; otherwise the current category tab.
+/// Convert one widget description into an AccessKit node (UI/UX v3 P1b).
+///
+/// The role is derived from the widget kind, so a control's accessible role
+/// and its on-screen shape can never disagree: both come from `WidgetKind`.
+fn widget_node(desc: &crate::renderer::overlay::widgets::spec::WidgetDesc) -> Node {
+    use crate::renderer::overlay::widgets::spec::WidgetKind;
+
+    let mut node = Node::new(match &desc.kind {
+        WidgetKind::Label => Role::Label,
+        WidgetKind::Toggle { .. } => Role::CheckBox,
+        WidgetKind::Cycle { .. } => Role::ComboBox,
+        WidgetKind::Slider { .. } => Role::Slider,
+        WidgetKind::Text { .. } => Role::TextInput,
+        // A swatch is one choice among the scheme strip, which is what a
+        // radio button models.
+        WidgetKind::Swatch { .. } => Role::RadioButton,
+    });
+    node.set_label(desc.label.clone());
+    if let Some(value) = desc.value_text() {
+        node.set_value(value);
+    }
+    if let Some(hint) = &desc.tooltip {
+        node.set_description(hint.clone());
+    }
+    match &desc.kind {
+        WidgetKind::Toggle { on } => node.set_toggled(if *on {
+            accesskit::Toggled::True
+        } else {
+            accesskit::Toggled::False
+        }),
+        WidgetKind::Swatch { selected: true, .. } => node.set_selected(true),
+        WidgetKind::Slider {
+            value,
+            min,
+            max,
+            step,
+            ..
+        } => {
+            node.set_numeric_value(*value as f64);
+            node.set_min_numeric_value(*min as f64);
+            node.set_max_numeric_value(*max as f64);
+            node.set_numeric_value_step(*step as f64);
+        }
+        _ => {}
+    }
+    node
+}
+
+/// NodeId the reported focus should sit on for a widget-migrated category.
+///
+/// Every migrated tab keeps its own focus counter until they are collapsed
+/// into one `focused_widget_id`, so the mapping is per category. Returns
+/// `None` for categories that are not migrated (or, like Blocks, have no
+/// focus counter at all), letting the caller fall through to its own rules.
+///
+/// This must stay in step with the `Action::Focus` arm of
+/// `dispatch_settings_action`: that arm writes the counter, and this reads it
+/// back. If one knows about a category and the other does not, a screen
+/// reader moves its virtual cursor and the reported focus never follows.
+fn widget_focus_id(panel: &SettingsPanel) -> Option<NodeId> {
+    use crate::settings_panel::SettingsCategory;
+
+    use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, FONT_ROW_COUNT};
+    use crate::renderer::overlay::widgets::settings_security::{
+        SECURITY_CATEGORY, SECURITY_ROW_COUNT,
+    };
+    use crate::renderer::overlay::widgets::settings_startup::{
+        STARTUP_CATEGORY, STARTUP_ROW_COUNT,
+    };
+    use crate::renderer::overlay::widgets::settings_theme::{THEME_CATEGORY, THEME_SWATCH_BASE};
+    use crate::renderer::overlay::widgets::settings_window::{WINDOW_CATEGORY, WINDOW_ROW_COUNT};
+    use crate::renderer::overlay::widgets::spec::WidgetId;
+
+    let (category, index, count) = match panel.category {
+        // Editing the family field pins focus there regardless of the counter.
+        SettingsCategory::Font if panel.font_family_editing => {
+            use crate::renderer::overlay::widgets::settings_font::row;
+            (FONT_CATEGORY, row::FAMILY, FONT_ROW_COUNT)
+        }
+        SettingsCategory::Font => (FONT_CATEGORY, panel.font_field_focus, FONT_ROW_COUNT),
+        SettingsCategory::Startup => (
+            STARTUP_CATEGORY,
+            panel.startup_field_focus,
+            STARTUP_ROW_COUNT,
+        ),
+        // The Theme counter addresses rows only; the swatches are picked with
+        // the mouse, so the counter can never point at one.
+        SettingsCategory::Theme => (
+            THEME_CATEGORY,
+            panel.theme_field_focus,
+            THEME_SWATCH_BASE as usize,
+        ),
+        SettingsCategory::Window => (WINDOW_CATEGORY, panel.window_field_focus, WINDOW_ROW_COUNT),
+        SettingsCategory::Security => (
+            SECURITY_CATEGORY,
+            panel.security_field_focus,
+            SECURITY_ROW_COUNT,
+        ),
+        // Blocks is mouse-only; Ssh / Keybindings / Profiles are not migrated.
+        _ => return None,
+    };
+    ((index as usize) < count).then(|| settings_widget_id(WidgetId::new(category, index)))
+}
+
 fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, NodeId) {
     use crate::settings_panel::{KeyEditMode, SettingsCategory};
 
@@ -1640,97 +1722,45 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
 
     match panel.category {
         SettingsCategory::Font => {
-            let mut family = Node::new(Role::TextInput);
-            family.set_label("Font family");
-            family.set_value(panel.font_family.as_str());
-            if panel.font_family_editing {
-                family.set_description("Editing (press Tab to commit)");
+            for desc in crate::renderer::overlay::widgets::settings_font::font_widget_descs(panel) {
+                let id = settings_widget_id(desc.id);
+                nodes.push((id, widget_node(&desc)));
+                content_children.push(id);
             }
-            nodes.push((SETTINGS_FONT_FAMILY_ID, family));
-            content_children.push(SETTINGS_FONT_FAMILY_ID);
-
-            let mut size = Node::new(Role::Slider);
-            size.set_label("Font size");
-            size.set_value(format!("{:.1}", panel.font_size));
-            size.set_numeric_value(panel.font_size as f64);
-            size.set_min_numeric_value(8.0);
-            size.set_max_numeric_value(32.0);
-            size.set_numeric_value_step(0.5);
-            nodes.push((SETTINGS_FONT_SIZE_ID, size));
-            content_children.push(SETTINGS_FONT_SIZE_ID);
         }
         SettingsCategory::Theme => {
-            let mut scheme = Node::new(Role::ComboBox);
-            scheme.set_label("Color scheme");
-            scheme.set_value(panel.scheme_name());
-            scheme.set_description("Use Left/Right to cycle");
-            nodes.push((SETTINGS_THEME_SCHEME_ID, scheme));
-            content_children.push(SETTINGS_THEME_SCHEME_ID);
+            // UI/UX v3 P1b: built from the same descriptions the renderer and
+            // the hit-test consume, so the tree can no longer drift from what
+            // is on screen. This also exposes the follow-system toggle and the
+            // nine scheme swatches, which the hand-written tree omitted.
+            for desc in crate::renderer::overlay::widgets::settings_theme::theme_widget_descs(panel)
+            {
+                let id = settings_widget_id(desc.id);
+                nodes.push((id, widget_node(&desc)));
+                content_children.push(id);
+            }
         }
         SettingsCategory::Window => {
-            // Phase 5-11-6 #6: 5 fields
-            //   0=opacity / 1=cursor_style / 2=padding_x / 3=padding_y / 4=present_mode
-            let mut opacity = Node::new(Role::Slider);
-            opacity.set_label("Background opacity");
-            opacity.set_value(format!("{:.0}%", panel.opacity * 100.0));
-            opacity.set_numeric_value(panel.opacity as f64);
-            opacity.set_min_numeric_value(0.1);
-            opacity.set_max_numeric_value(1.0);
-            opacity.set_numeric_value_step(0.05);
-            nodes.push((SETTINGS_WINDOW_OPACITY_ID, opacity));
-            content_children.push(SETTINGS_WINDOW_OPACITY_ID);
-
-            let mut cs = Node::new(Role::ComboBox);
-            cs.set_label("Cursor style");
-            cs.set_value(panel.cursor_style_label());
-            cs.set_description("Use Left/Right to cycle");
-            nodes.push((SETTINGS_CURSOR_STYLE_ID, cs));
-            content_children.push(SETTINGS_CURSOR_STYLE_ID);
-
-            let mut px = Node::new(Role::Slider);
-            px.set_label("Horizontal padding");
-            px.set_value(format!("{} px", panel.padding_x));
-            px.set_numeric_value(panel.padding_x as f64);
-            px.set_min_numeric_value(0.0);
-            px.set_max_numeric_value(32.0);
-            px.set_numeric_value_step(1.0);
-            nodes.push((SETTINGS_PADDING_X_ID, px));
-            content_children.push(SETTINGS_PADDING_X_ID);
-
-            let mut py = Node::new(Role::Slider);
-            py.set_label("Vertical padding");
-            py.set_value(format!("{} px", panel.padding_y));
-            py.set_numeric_value(panel.padding_y as f64);
-            py.set_min_numeric_value(0.0);
-            py.set_max_numeric_value(32.0);
-            py.set_numeric_value_step(1.0);
-            nodes.push((SETTINGS_PADDING_Y_ID, py));
-            content_children.push(SETTINGS_PADDING_Y_ID);
-
-            let mut pm = Node::new(Role::ComboBox);
-            pm.set_label("Present mode");
-            pm.set_value(panel.present_mode_label());
-            pm.set_description("Use Left/Right to cycle");
-            nodes.push((SETTINGS_PRESENT_MODE_ID, pm));
-            content_children.push(SETTINGS_PRESENT_MODE_ID);
+            // UI/UX v3 P1c: same treatment as Theme. The hand-written tree
+            // carried 5 of the 14 rows; all 14 are now exposed, with the
+            // slider ranges coming from the widget kind so the announced
+            // min/max cannot drift from what the control accepts.
+            for desc in
+                crate::renderer::overlay::widgets::settings_window::window_widget_descs(panel)
+            {
+                let id = settings_widget_id(desc.id);
+                nodes.push((id, widget_node(&desc)));
+                content_children.push(id);
+            }
         }
         SettingsCategory::Startup => {
-            let mut lang = Node::new(Role::ComboBox);
-            lang.set_label("Language");
-            lang.set_value(panel.language_code());
-            lang.set_description("Use Left/Right to cycle");
-            nodes.push((SETTINGS_STARTUP_LANGUAGE_ID, lang));
-            content_children.push(SETTINGS_STARTUP_LANGUAGE_ID);
-
-            let mut auto_update = Node::new(Role::CheckBox);
-            auto_update.set_label("Check for updates on startup");
-            auto_update.set_toggled(if panel.auto_check_update {
-                accesskit::Toggled::True
-            } else {
-                accesskit::Toggled::False
-            });
-            nodes.push((SETTINGS_STARTUP_AUTO_UPDATE_ID, auto_update));
-            content_children.push(SETTINGS_STARTUP_AUTO_UPDATE_ID);
+            for desc in
+                crate::renderer::overlay::widgets::settings_startup::startup_widget_descs(panel)
+            {
+                let id = settings_widget_id(desc.id);
+                nodes.push((id, widget_node(&desc)));
+                content_children.push(id);
+            }
         }
         SettingsCategory::Profiles => {
             // Phase 5-11-7: expose the profile list as ListBox + ListBoxOption.
@@ -2028,33 +2058,34 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
         // screen-readers without specific row support still announce the
         // overall state.
         SettingsCategory::Blocks => {
-            content_description = Some(format!(
-                "Command Blocks (click rows to edit). Enabled: {}. Border width: {} px. \
-                 Status badge: {}. Direct edits to config.toml [blocks] also live-reload.",
-                if panel.blocks_enabled { "on" } else { "off" },
-                panel.blocks_border_width_px,
-                if panel.blocks_show_exit_code_badge {
-                    "on"
-                } else {
-                    "off"
-                },
-            ));
+            // UI/UX v3 P1c: each row is now its own node. Previously the
+            // whole category was a single prose description, so none of the
+            // three controls could be operated by an assistive client.
+            for desc in
+                crate::renderer::overlay::widgets::settings_blocks::blocks_widget_descs(panel)
+            {
+                let id = settings_widget_id(desc.id);
+                nodes.push((id, widget_node(&desc)));
+                content_children.push(id);
+            }
+            content_description =
+                Some("Direct edits to config.toml [blocks] also live-reload.".to_string());
         }
         SettingsCategory::Security => {
-            use crate::settings_panel::SettingsPanel;
-            content_description = Some(format!(
-                "Security consent policies (Up/Down to move, Left/Right to cycle a policy, \
-                 Enter to edit a byte cap). External URL: {}. OSC 52 clipboard: {}. \
-                 Notification: {}. Plugin read: {} (prompt behaves as deny for now). \
-                 OSC 52 max bytes: {}. Notification max bytes: {}. Plugin read max bytes: {}.",
-                SettingsPanel::consent_label(panel.sec_external_url),
-                SettingsPanel::consent_label(panel.sec_osc52_clipboard),
-                SettingsPanel::consent_label(panel.sec_osc_notification),
-                SettingsPanel::consent_label(panel.sec_plugin_read),
-                panel.sec_osc52_max_bytes,
-                panel.sec_notification_max_bytes,
-                panel.sec_plugin_read_max_bytes,
-            ));
+            // UI/UX v3 P1c: as with Blocks, the seven controls replace what
+            // was a single prose description of the whole category.
+            for desc in
+                crate::renderer::overlay::widgets::settings_security::security_widget_descs(panel)
+            {
+                let id = settings_widget_id(desc.id);
+                nodes.push((id, widget_node(&desc)));
+                content_children.push(id);
+            }
+            // The one caveat that belongs to no single control.
+            content_description = Some(
+                "The plugin read policy has no prompt path yet, so prompt behaves as deny."
+                    .to_string(),
+            );
         }
     }
 
@@ -2069,18 +2100,8 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
     nodes.push((SETTINGS_CONTENT_ID, content));
 
     // ===== Focus selection =====
-    let focus = if matches!(panel.category, SettingsCategory::Font) && panel.font_family_editing {
-        SETTINGS_FONT_FAMILY_ID
-    } else if matches!(panel.category, SettingsCategory::Window) {
-        // Phase 5-11-6 #6: For the Window category, focus the field selected by `window_field_focus`.
-        match panel.window_field_focus {
-            0 => SETTINGS_WINDOW_OPACITY_ID,
-            1 => SETTINGS_CURSOR_STYLE_ID,
-            2 => SETTINGS_PADDING_X_ID,
-            3 => SETTINGS_PADDING_Y_ID,
-            4 => SETTINGS_PRESENT_MODE_ID,
-            _ => settings_tab_id_at(current_idx),
-        }
+    let focus = if let Some(id) = widget_focus_id(panel) {
+        id
     } else if matches!(panel.category, SettingsCategory::Profiles) && !panel.profiles.is_empty() {
         // Phase 5-11-7: focus the `selected_profile` node in the Profiles category.
         settings_profile_item_id(panel.selected_profile.min(panel.profiles.len() - 1))
@@ -2562,8 +2583,9 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
 /// - `Focus` is used as a state-change trigger via the SR path only for
 ///   "Tab / Pane / CategoryTab" (virtual-cursor traversal = control transition).
 ///   For CheckBox and TextInput, Focus has no side effects beyond rendering state.
-/// - `SettingsFontSize` / `SettingsWindowOpacity` SetValue is delegated to the pure
-///   `set_*_value` setters (rounded to 0.5 / 0.05 units and clamped).
+/// - Widget-layer controls route every action through their tab's
+///   `apply_*_action`, which reuses the same setters the mouse and keyboard
+///   paths call (rounding and clamping included).
 /// - ThemeScheme / Language treat Click and Increment equivalently (ComboBox "next").
 pub fn dispatch_settings_action(
     panel: &mut SettingsPanel,
@@ -2586,165 +2608,92 @@ pub fn dispatch_settings_action(
             }
         }
 
-        // ===== Font family (TextInput) =====
-        (Action::Click, NodeIdKind::SettingsFontFamily) => {
-            panel.font_family_editing = true;
-            true
-        }
-        (Action::SetValue, NodeIdKind::SettingsFontFamily) => {
-            if let Some(ActionData::Value(s)) = data {
-                panel.font_family = s.into_string();
-                panel.dirty = true;
-                true
-            } else {
-                false
+        // ===== Widget-layer nodes (UI/UX v3 P1b) =====
+        // Routed back to the same state transition the mouse and keyboard
+        // paths use, so a screen reader and a click never disagree.
+        // Focus is virtual-cursor traversal: it moves the panel's focus but
+        // changes no value, matching the retired per-field arms.
+        (Action::Focus, NodeIdKind::SettingsWidget { category, index }) => {
+            use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, FONT_ROW_COUNT};
+            use crate::renderer::overlay::widgets::settings_security::{
+                SECURITY_CATEGORY, SECURITY_ROW_COUNT,
+            };
+            use crate::renderer::overlay::widgets::settings_startup::{
+                STARTUP_CATEGORY, STARTUP_ROW_COUNT,
+            };
+            use crate::renderer::overlay::widgets::settings_theme::THEME_CATEGORY;
+            use crate::renderer::overlay::widgets::settings_window::{
+                WINDOW_CATEGORY, WINDOW_ROW_COUNT,
+            };
+            match *category {
+                THEME_CATEGORY => {
+                    panel.theme_field_focus = *index;
+                    true
+                }
+                WINDOW_CATEGORY if (*index as usize) < WINDOW_ROW_COUNT => {
+                    panel.window_field_focus = *index;
+                    true
+                }
+                FONT_CATEGORY if (*index as usize) < FONT_ROW_COUNT => {
+                    panel.font_field_focus = *index;
+                    true
+                }
+                STARTUP_CATEGORY if (*index as usize) < STARTUP_ROW_COUNT => {
+                    panel.startup_field_focus = *index;
+                    true
+                }
+                SECURITY_CATEGORY if (*index as usize) < SECURITY_ROW_COUNT => {
+                    panel.security_field_focus = *index;
+                    true
+                }
+                // Blocks has no focus counter.
+                _ => false,
             }
         }
-
-        // ===== Font size (Slider) =====
-        (Action::SetValue, NodeIdKind::SettingsFontSize) => {
-            if let Some(ActionData::NumericValue(v)) = data {
-                panel.set_font_size_value(v);
-                true
-            } else {
-                false
+        (
+            Action::Click | Action::Increment | Action::Decrement | Action::SetValue,
+            NodeIdKind::SettingsWidget { category, index },
+        ) => {
+            use crate::renderer::overlay::widgets::action::WidgetAction;
+            use crate::renderer::overlay::widgets::settings_blocks::{
+                BLOCKS_CATEGORY, apply_blocks_action,
+            };
+            use crate::renderer::overlay::widgets::settings_font::{
+                FONT_CATEGORY, apply_font_action,
+            };
+            use crate::renderer::overlay::widgets::settings_security::{
+                SECURITY_CATEGORY, apply_security_action,
+            };
+            use crate::renderer::overlay::widgets::settings_startup::{
+                STARTUP_CATEGORY, apply_startup_action,
+            };
+            use crate::renderer::overlay::widgets::settings_theme::{
+                THEME_CATEGORY, apply_theme_action,
+            };
+            use crate::renderer::overlay::widgets::settings_window::{
+                WINDOW_CATEGORY, apply_window_action,
+            };
+            let widget_action = match (action, data) {
+                (Action::Increment, _) => WidgetAction::Next,
+                (Action::Decrement, _) => WidgetAction::Prev,
+                (Action::SetValue, Some(ActionData::NumericValue(v))) => WidgetAction::SetValue(v),
+                (Action::SetValue, Some(ActionData::Value(text))) => {
+                    WidgetAction::SetText(text.into_string())
+                }
+                // SetValue without a usable payload is malformed, not a click.
+                (Action::SetValue, _) => return false,
+                _ => WidgetAction::Activate,
+            };
+            match *category {
+                THEME_CATEGORY => apply_theme_action(panel, *index, widget_action),
+                WINDOW_CATEGORY => apply_window_action(panel, *index, widget_action),
+                FONT_CATEGORY => apply_font_action(panel, *index, widget_action),
+                STARTUP_CATEGORY => apply_startup_action(panel, *index, widget_action),
+                BLOCKS_CATEGORY => apply_blocks_action(panel, *index, widget_action),
+                SECURITY_CATEGORY => apply_security_action(panel, *index, widget_action),
+                // Ssh / Keybindings / Profiles keep their own nodes for now.
+                _ => false,
             }
-        }
-        (Action::Increment, NodeIdKind::SettingsFontSize) => {
-            panel.increase_font_size();
-            true
-        }
-        (Action::Decrement, NodeIdKind::SettingsFontSize) => {
-            panel.decrease_font_size();
-            true
-        }
-
-        // ===== Theme scheme (ComboBox) =====
-        (Action::Click | Action::Increment, NodeIdKind::SettingsThemeScheme) => {
-            panel.next_scheme();
-            true
-        }
-        (Action::Decrement, NodeIdKind::SettingsThemeScheme) => {
-            panel.prev_scheme();
-            true
-        }
-
-        // ===== Window opacity (Slider) =====
-        (Action::SetValue, NodeIdKind::SettingsWindowOpacity) => {
-            if let Some(ActionData::NumericValue(v)) = data {
-                panel.set_opacity_value(v);
-                true
-            } else {
-                false
-            }
-        }
-        (Action::Increment, NodeIdKind::SettingsWindowOpacity) => {
-            panel.increase_opacity();
-            true
-        }
-        (Action::Decrement, NodeIdKind::SettingsWindowOpacity) => {
-            panel.decrease_opacity();
-            true
-        }
-
-        // ===== Language (ComboBox) =====
-        (Action::Click | Action::Increment, NodeIdKind::SettingsStartupLanguage) => {
-            panel.next_language();
-            true
-        }
-        (Action::Decrement, NodeIdKind::SettingsStartupLanguage) => {
-            panel.prev_language();
-            true
-        }
-
-        // ===== Auto update check (CheckBox) =====
-        // Toggling on Focus would change the value as the SR virtual cursor passes by,
-        // so only Click reacts.
-        (Action::Click, NodeIdKind::SettingsStartupAutoUpdate) => {
-            panel.toggle_auto_check_update();
-            true
-        }
-
-        // ===== Phase 5-11-6 #6 - Cursor style (ComboBox) =====
-        (Action::Click | Action::Increment, NodeIdKind::SettingsCursorStyle) => {
-            panel.next_cursor_style();
-            panel.window_field_focus = 1;
-            true
-        }
-        (Action::Decrement, NodeIdKind::SettingsCursorStyle) => {
-            panel.prev_cursor_style();
-            panel.window_field_focus = 1;
-            true
-        }
-        (Action::Focus, NodeIdKind::SettingsCursorStyle) => {
-            panel.window_field_focus = 1;
-            true
-        }
-
-        // ===== Phase 5-11-6 #6 - Horizontal padding (Slider) =====
-        (Action::SetValue, NodeIdKind::SettingsPaddingX) => {
-            if let Some(ActionData::NumericValue(v)) = data {
-                panel.set_padding_x_value(v);
-                panel.window_field_focus = 2;
-                true
-            } else {
-                false
-            }
-        }
-        (Action::Increment, NodeIdKind::SettingsPaddingX) => {
-            panel.increase_padding_x();
-            panel.window_field_focus = 2;
-            true
-        }
-        (Action::Decrement, NodeIdKind::SettingsPaddingX) => {
-            panel.decrease_padding_x();
-            panel.window_field_focus = 2;
-            true
-        }
-        (Action::Focus, NodeIdKind::SettingsPaddingX) => {
-            panel.window_field_focus = 2;
-            true
-        }
-
-        // ===== Phase 5-11-6 #6 - Vertical padding (Slider) =====
-        (Action::SetValue, NodeIdKind::SettingsPaddingY) => {
-            if let Some(ActionData::NumericValue(v)) = data {
-                panel.set_padding_y_value(v);
-                panel.window_field_focus = 3;
-                true
-            } else {
-                false
-            }
-        }
-        (Action::Increment, NodeIdKind::SettingsPaddingY) => {
-            panel.increase_padding_y();
-            panel.window_field_focus = 3;
-            true
-        }
-        (Action::Decrement, NodeIdKind::SettingsPaddingY) => {
-            panel.decrease_padding_y();
-            panel.window_field_focus = 3;
-            true
-        }
-        (Action::Focus, NodeIdKind::SettingsPaddingY) => {
-            panel.window_field_focus = 3;
-            true
-        }
-
-        // ===== Phase 5-11-6 #6 - GPU present mode (ComboBox) =====
-        (Action::Click | Action::Increment, NodeIdKind::SettingsPresentMode) => {
-            panel.next_present_mode();
-            panel.window_field_focus = 4;
-            true
-        }
-        (Action::Decrement, NodeIdKind::SettingsPresentMode) => {
-            panel.prev_present_mode();
-            panel.window_field_focus = 4;
-            true
-        }
-        (Action::Focus, NodeIdKind::SettingsPresentMode) => {
-            panel.window_field_focus = 4;
-            true
         }
 
         // ===== Phase 5-11-7 - Profile item (ListBoxOption) =====
@@ -3628,10 +3577,17 @@ mod tests {
         assert_eq!(decode_node_id(NodeId(24)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(28)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(29)), NodeIdKind::Unknown);
-        // 700M..899M is reserved for future SettingsField dynamic expansion
-        // (600M..700M was assigned to SettingsProfileItem in Phase 5-11-7;
-        //  900M..1G is SettingsKeyBindingItem in Phase 5-11-9 Sub-phase E).
-        assert_eq!(decode_node_id(NodeId(700_000_000)), NodeIdKind::Unknown);
+        // 700M..800M was reserved for dynamic SettingsField expansion and is
+        // now `SettingsWidget` (UI/UX v3 P1b), so it no longer decodes to
+        // Unknown — except for values carrying bits outside the packed
+        // (category, index) pair, which no `WidgetId` can produce.
+        assert_eq!(
+            decode_node_id(NodeId(700_000_000)),
+            NodeIdKind::SettingsWidget {
+                category: 0,
+                index: 0
+            }
+        );
         assert_eq!(decode_node_id(NodeId(799_999_999)), NodeIdKind::Unknown);
         // The gap between the Tab and Pane ranges (5.3e9..1e10) is also Unknown.
         assert_eq!(decode_node_id(NodeId(7_000_000_000)), NodeIdKind::Unknown);
@@ -3670,28 +3626,11 @@ mod tests {
     #[test]
     fn decode_settings_field_node_ids() {
         assert_eq!(
-            decode_node_id(SETTINGS_FONT_FAMILY_ID),
-            NodeIdKind::SettingsFontFamily
-        );
-        assert_eq!(
-            decode_node_id(SETTINGS_FONT_SIZE_ID),
-            NodeIdKind::SettingsFontSize
-        );
-        assert_eq!(
-            decode_node_id(SETTINGS_THEME_SCHEME_ID),
-            NodeIdKind::SettingsThemeScheme
-        );
-        assert_eq!(
-            decode_node_id(SETTINGS_WINDOW_OPACITY_ID),
-            NodeIdKind::SettingsWindowOpacity
-        );
-        assert_eq!(
-            decode_node_id(SETTINGS_STARTUP_LANGUAGE_ID),
-            NodeIdKind::SettingsStartupLanguage
-        );
-        assert_eq!(
-            decode_node_id(SETTINGS_STARTUP_AUTO_UPDATE_ID),
-            NodeIdKind::SettingsStartupAutoUpdate
+            decode_node_id(settings_widget_id(theme_scheme_widget_id())),
+            NodeIdKind::SettingsWidget {
+                category: 2,
+                index: 0
+            }
         );
     }
 
@@ -3718,8 +3657,9 @@ mod tests {
             );
         }
         // Fields for the Font category must be present.
-        assert!(ids.contains(&SETTINGS_FONT_FAMILY_ID.0));
-        assert!(ids.contains(&SETTINGS_FONT_SIZE_ID.0));
+        use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, row as font_row};
+        assert!(ids.contains(&widget_id(FONT_CATEGORY, font_row::FAMILY).0));
+        assert!(ids.contains(&widget_id(FONT_CATEGORY, font_row::SIZE).0));
     }
 
     /// While editing the Font, focus must move to the FontFamily input.
@@ -3733,21 +3673,100 @@ mod tests {
         state.settings_panel.font_family_editing = true;
 
         let update = build_tree_from_state(&state);
-        assert_eq!(update.focus, SETTINGS_FONT_FAMILY_ID);
+        assert_eq!(update.focus, widget_id(font_category(), font_family_row()));
     }
 
-    /// Outside of editing, focus is on the current category tab.
+    /// A category with no widget focus counter falls back to its tab.
     #[test]
-    fn settings_panel_focus_defaults_to_current_tab() {
+    fn settings_panel_focus_falls_back_to_the_tab() {
         use crate::settings_panel::SettingsCategory;
 
         let mut state = ClientState::new(80, 24, 1000);
         state.settings_panel.is_open = true;
-        state.settings_panel.category = SettingsCategory::Theme;
+        // Blocks is mouse-only, so nothing inside it can hold focus.
+        state.settings_panel.category = SettingsCategory::Blocks;
 
         let update = build_tree_from_state(&state);
-        // Theme is index 2 in SettingsCategory::ALL.
-        assert_eq!(update.focus, settings_tab_id_at(2));
+        // Blocks is index 7 in SettingsCategory::ALL.
+        assert_eq!(update.focus, settings_tab_id_at(7));
+    }
+
+    /// Focus follows each migrated tab's field counter (UI/UX v3 P1c).
+    ///
+    /// Regression guard for a real defect: the `Action::Focus` dispatch arm
+    /// wrote these counters while the reported focus ignored them, so a
+    /// screen reader's virtual cursor moved but the announced focus never
+    /// did. Every migrated category with a counter must appear here.
+    #[test]
+    fn settings_panel_focus_follows_every_migrated_counter() {
+        use crate::renderer::overlay::widgets::settings_font::FONT_CATEGORY;
+        use crate::renderer::overlay::widgets::settings_security::SECURITY_CATEGORY;
+        use crate::renderer::overlay::widgets::settings_startup::STARTUP_CATEGORY;
+        use crate::renderer::overlay::widgets::settings_theme::THEME_CATEGORY;
+        use crate::renderer::overlay::widgets::settings_window::WINDOW_CATEGORY;
+        use crate::settings_panel::SettingsCategory;
+
+        /// One migrated category: its enum variant, its widget-category
+        /// index, and the setter for its focus counter.
+        type FocusCase = (SettingsCategory, u8, fn(&mut SettingsPanel, u8));
+
+        let cases: [FocusCase; 5] = [
+            (SettingsCategory::Theme, THEME_CATEGORY, |p, i| {
+                p.theme_field_focus = i
+            }),
+            (SettingsCategory::Window, WINDOW_CATEGORY, |p, i| {
+                p.window_field_focus = i
+            }),
+            (SettingsCategory::Font, FONT_CATEGORY, |p, i| {
+                p.font_field_focus = i
+            }),
+            (SettingsCategory::Startup, STARTUP_CATEGORY, |p, i| {
+                p.startup_field_focus = i
+            }),
+            (SettingsCategory::Security, SECURITY_CATEGORY, |p, i| {
+                p.security_field_focus = i
+            }),
+        ];
+
+        for (category, widget_category, set_focus) in cases {
+            let mut state = ClientState::new(80, 24, 1000);
+            state.settings_panel.is_open = true;
+            state.settings_panel.category = category.clone();
+            set_focus(&mut state.settings_panel, 1);
+
+            let update = build_tree_from_state(&state);
+            assert_eq!(
+                update.focus,
+                widget_id(widget_category, 1),
+                "focus did not follow the counter for {category:?}"
+            );
+            assert!(
+                update.nodes.iter().any(|(id, _)| *id == update.focus),
+                "the focused node must exist in the tree for {category:?}"
+            );
+        }
+    }
+
+    /// An out-of-range counter must not point at a node that is not in the
+    /// tree — a dangling focus id breaks the reader outright.
+    #[test]
+    fn settings_panel_focus_ignores_an_out_of_range_counter() {
+        use crate::renderer::overlay::widgets::settings_security::{
+            SECURITY_CATEGORY, SECURITY_ROW_COUNT,
+        };
+        use crate::settings_panel::SettingsCategory;
+
+        let mut state = ClientState::new(80, 24, 1000);
+        state.settings_panel.is_open = true;
+        state.settings_panel.category = SettingsCategory::Security;
+        state.settings_panel.security_field_focus = SECURITY_ROW_COUNT as u8;
+
+        let update = build_tree_from_state(&state);
+        assert_ne!(
+            update.focus,
+            widget_id(SECURITY_CATEGORY, SECURITY_ROW_COUNT as u8)
+        );
+        assert!(update.nodes.iter().any(|(id, _)| *id == update.focus));
     }
 
     /// Each category must include only the fields belonging to it.
@@ -3762,10 +3781,13 @@ mod tests {
         state.settings_panel.category = SettingsCategory::Startup;
         let update = build_tree_from_state(&state);
         let ids: Vec<u64> = update.nodes.iter().map(|(id, _)| id.0).collect();
-        assert!(ids.contains(&SETTINGS_STARTUP_LANGUAGE_ID.0));
-        assert!(ids.contains(&SETTINGS_STARTUP_AUTO_UPDATE_ID.0));
+        use crate::renderer::overlay::widgets::settings_startup::{
+            STARTUP_CATEGORY, row as startup_row,
+        };
+        assert!(ids.contains(&widget_id(STARTUP_CATEGORY, startup_row::LANGUAGE).0));
+        assert!(ids.contains(&widget_id(STARTUP_CATEGORY, startup_row::CHECK_UPDATES).0));
         assert!(
-            !ids.contains(&SETTINGS_FONT_FAMILY_ID.0),
+            !ids.contains(&widget_id(font_category(), font_family_row()).0),
             "Font field must not appear in the Startup category"
         );
 
@@ -3773,9 +3795,9 @@ mod tests {
         state.settings_panel.category = SettingsCategory::Window;
         let update = build_tree_from_state(&state);
         let ids: Vec<u64> = update.nodes.iter().map(|(id, _)| id.0).collect();
-        assert!(ids.contains(&SETTINGS_WINDOW_OPACITY_ID.0));
+        assert!(ids.contains(&settings_widget_id(window_opacity_widget_id()).0));
         assert!(
-            !ids.contains(&SETTINGS_THEME_SCHEME_ID.0),
+            !ids.contains(&settings_widget_id(theme_scheme_widget_id()).0),
             "Theme field must not appear in the Window category"
         );
     }
@@ -3799,9 +3821,9 @@ mod tests {
             // The Content Group is present.
             assert!(ids.contains(&SETTINGS_CONTENT_ID.0));
             // Detail fields are not present.
-            assert!(!ids.contains(&SETTINGS_FONT_FAMILY_ID.0));
-            assert!(!ids.contains(&SETTINGS_THEME_SCHEME_ID.0));
-            assert!(!ids.contains(&SETTINGS_WINDOW_OPACITY_ID.0));
+            assert!(!ids.contains(&widget_id(font_category(), font_family_row()).0));
+            assert!(!ids.contains(&settings_widget_id(theme_scheme_widget_id()).0));
+            assert!(!ids.contains(&settings_widget_id(window_opacity_widget_id()).0));
         }
     }
 
@@ -3898,496 +3920,411 @@ mod tests {
         assert_eq!(panel.category, original, "category should not change");
     }
 
-    /// Click on SettingsFontFamily enters edit mode.
+    /// The Font/Startup dispatch tests below drive the widget-derived nodes
+    /// introduced in UI/UX v3 P1c; the per-field nodes they used to target
+    /// were retired with the migration.
+    ///
+    /// Click on the family row enters edit mode.
     #[test]
     fn dispatch_settings_font_family_click_enters_editing() {
-        let mut panel = SettingsPanel::default();
-        panel.font_family_editing = false;
+        use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, row};
 
+        let mut panel = SettingsPanel::default();
         let handled = dispatch_settings_action(
             &mut panel,
             Action::Click,
-            &NodeIdKind::SettingsFontFamily,
+            &NodeIdKind::SettingsWidget {
+                category: FONT_CATEGORY,
+                index: row::FAMILY,
+            },
             None,
         );
-
         assert!(handled);
-        assert!(
-            panel.font_family_editing,
-            "Click should make font_family_editing=true"
-        );
+        assert!(panel.font_family_editing);
     }
 
-    /// SetValue on SettingsFontFamily applies the string and sets dirty=true.
+    /// A string SetValue applies to the family field and marks it dirty.
     #[test]
     fn dispatch_settings_font_family_set_value_updates_string() {
+        use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, row};
+
         let mut panel = SettingsPanel::default();
         panel.dirty = false;
-
         let handled = dispatch_settings_action(
             &mut panel,
             Action::SetValue,
-            &NodeIdKind::SettingsFontFamily,
-            Some(ActionData::Value(
-                "JetBrains Mono".to_string().into_boxed_str(),
-            )),
+            &NodeIdKind::SettingsWidget {
+                category: FONT_CATEGORY,
+                index: row::FAMILY,
+            },
+            Some(ActionData::Value("Cascadia Code".into())),
         );
-
         assert!(handled);
-        assert_eq!(panel.font_family, "JetBrains Mono");
-        assert!(panel.dirty, "setting a value should make dirty=true");
+        assert_eq!(panel.font_family, "Cascadia Code");
+        assert!(panel.dirty);
     }
 
-    /// Passing NumericValue to SettingsFontFamily SetValue is ignored (handled=false).
+    /// A numeric SetValue on a text field is refused rather than coerced.
     #[test]
     fn dispatch_settings_font_family_set_value_with_numeric_returns_false() {
-        let mut panel = SettingsPanel::default();
-        let original = panel.font_family.clone();
+        use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, row};
 
+        let mut panel = SettingsPanel::default();
+        let before = panel.font_family.clone();
         let handled = dispatch_settings_action(
             &mut panel,
             Action::SetValue,
-            &NodeIdKind::SettingsFontFamily,
-            Some(ActionData::NumericValue(42.0)),
+            &NodeIdKind::SettingsWidget {
+                category: FONT_CATEGORY,
+                index: row::FAMILY,
+            },
+            Some(ActionData::NumericValue(12.0)),
         );
-
-        assert!(
-            !handled,
-            "NumericValue on a TextInput must return handled=false"
-        );
-        assert_eq!(panel.font_family, original);
+        assert!(!handled);
+        assert_eq!(panel.font_family, before);
     }
 
-    /// SetValue on SettingsFontSize applies 0.5-unit rounding and clamping to 8.0..=32.0.
+    /// SetValue on the size slider keeps its 0.5-unit rounding and 8..=32 clamp.
     #[test]
     fn dispatch_settings_font_size_set_value_rounds_and_clamps() {
-        let mut panel = SettingsPanel::default();
+        use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, row};
 
-        // 14.37 rounds to 14.5.
-        let handled = dispatch_settings_action(
-            &mut panel,
-            Action::SetValue,
-            &NodeIdKind::SettingsFontSize,
-            Some(ActionData::NumericValue(14.37)),
-        );
-        assert!(handled);
+        let mut panel = SettingsPanel::default();
+        let kind = NodeIdKind::SettingsWidget {
+            category: FONT_CATEGORY,
+            index: row::SIZE,
+        };
+        let set = |panel: &mut SettingsPanel, v: f64| {
+            dispatch_settings_action(
+                panel,
+                Action::SetValue,
+                &kind,
+                Some(ActionData::NumericValue(v)),
+            )
+        };
+
+        set(&mut panel, 13.3);
         assert!(
-            (panel.font_size - 14.5).abs() < f32::EPSILON,
-            "0.5-unit rounding: 14.37 -> 14.5, actual = {}",
+            (panel.font_size - 13.5).abs() < 1e-4,
+            "0.5-unit rounding, actual = {}",
             panel.font_size
         );
-
-        // 100.0 clamps to 32.0.
-        dispatch_settings_action(
-            &mut panel,
-            Action::SetValue,
-            &NodeIdKind::SettingsFontSize,
-            Some(ActionData::NumericValue(100.0)),
-        );
-        assert!(
-            (panel.font_size - 32.0).abs() < f32::EPSILON,
-            "upper bound clamps to 32.0"
-        );
-
-        // 1.0 clamps to 8.0.
-        dispatch_settings_action(
-            &mut panel,
-            Action::SetValue,
-            &NodeIdKind::SettingsFontSize,
-            Some(ActionData::NumericValue(1.0)),
-        );
-        assert!(
-            (panel.font_size - 8.0).abs() < f32::EPSILON,
-            "lower bound clamps to 8.0"
-        );
+        set(&mut panel, 100.0);
+        assert!((panel.font_size - 32.0).abs() < f32::EPSILON);
+        set(&mut panel, 1.0);
+        assert!((panel.font_size - 8.0).abs() < f32::EPSILON);
     }
 
-    /// Increment / Decrement on SettingsFontSize moves in 0.5 steps.
+    /// Increment / Decrement on the size slider move in 0.5 steps.
     #[test]
     fn dispatch_settings_font_size_increment_decrement() {
+        use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, row};
+
         let mut panel = SettingsPanel::default();
-        panel.font_size = 14.0;
-
-        dispatch_settings_action(
-            &mut panel,
-            Action::Increment,
-            &NodeIdKind::SettingsFontSize,
-            None,
-        );
-        assert!((panel.font_size - 14.5).abs() < f32::EPSILON);
-
-        dispatch_settings_action(
-            &mut panel,
-            Action::Decrement,
-            &NodeIdKind::SettingsFontSize,
-            None,
-        );
-        assert!((panel.font_size - 14.0).abs() < f32::EPSILON);
+        let kind = NodeIdKind::SettingsWidget {
+            category: FONT_CATEGORY,
+            index: row::SIZE,
+        };
+        let before = panel.font_size;
+        dispatch_settings_action(&mut panel, Action::Increment, &kind, None);
+        assert!((panel.font_size - (before + 0.5)).abs() < 1e-4);
+        dispatch_settings_action(&mut panel, Action::Decrement, &kind, None);
+        assert!((panel.font_size - before).abs() < 1e-4);
     }
 
-    /// Click / Increment on SettingsThemeScheme behave like next_scheme (advance by 1).
+    /// Click / Increment on the Theme scheme cycler advance by 1 (UI/UX v3 P1b:
+    /// the node is now widget-derived, but the behaviour is unchanged).
     #[test]
     fn dispatch_settings_theme_scheme_click_advances() {
         let mut panel = SettingsPanel::default();
         panel.scheme_index = 0;
+        let kind = NodeIdKind::SettingsWidget {
+            category: 2,
+            index: 0,
+        };
 
-        dispatch_settings_action(
-            &mut panel,
-            Action::Click,
-            &NodeIdKind::SettingsThemeScheme,
-            None,
-        );
+        dispatch_settings_action(&mut panel, Action::Click, &kind, None);
         assert_eq!(panel.scheme_index, 1, "Click selects next scheme");
 
-        dispatch_settings_action(
-            &mut panel,
-            Action::Increment,
-            &NodeIdKind::SettingsThemeScheme,
-            None,
-        );
+        dispatch_settings_action(&mut panel, Action::Increment, &kind, None);
         assert_eq!(panel.scheme_index, 2, "Increment selects next scheme");
 
-        dispatch_settings_action(
-            &mut panel,
-            Action::Decrement,
-            &NodeIdKind::SettingsThemeScheme,
-            None,
-        );
+        dispatch_settings_action(&mut panel, Action::Decrement, &kind, None);
         assert_eq!(panel.scheme_index, 1, "Decrement selects previous scheme");
     }
 
-    /// SetValue on SettingsWindowOpacity applies 0.05-unit rounding and clamping to 0.1..=1.0.
+    /// Helper: the Font category index.
+    fn font_category() -> u8 {
+        crate::renderer::overlay::widgets::settings_font::FONT_CATEGORY
+    }
+
+    /// Helper: the Font family row index.
+    fn font_family_row() -> u8 {
+        crate::renderer::overlay::widgets::settings_font::row::FAMILY
+    }
+
+    /// Helper: the NodeId of a widget-derived settings node.
+    fn widget_id(category: u8, index: u8) -> NodeId {
+        settings_widget_id(crate::renderer::overlay::widgets::spec::WidgetId::new(
+            category, index,
+        ))
+    }
+
+    /// Helper: the WidgetId of the Window opacity slider.
+    fn window_opacity_widget_id() -> crate::renderer::overlay::widgets::spec::WidgetId {
+        use crate::renderer::overlay::widgets::settings_window::{WINDOW_CATEGORY, row};
+        crate::renderer::overlay::widgets::spec::WidgetId::new(WINDOW_CATEGORY, row::OPACITY)
+    }
+
+    /// Helper: the WidgetId of the Theme colour-scheme cycler.
+    fn theme_scheme_widget_id() -> crate::renderer::overlay::widgets::spec::WidgetId {
+        use crate::renderer::overlay::widgets::settings_theme::{THEME_CATEGORY, THEME_SCHEME};
+        crate::renderer::overlay::widgets::spec::WidgetId::new(THEME_CATEGORY, THEME_SCHEME)
+    }
+
+    /// The Theme category exposes every control the renderer draws, not just
+    /// the colour-scheme cycler the hand-written tree used to carry.
+    #[test]
+    fn settings_panel_theme_exposes_every_widget() {
+        use crate::settings_panel::SettingsCategory;
+
+        let mut state = ClientState::new(80, 24, 1000);
+        state.settings_panel.is_open = true;
+        state.settings_panel.category = SettingsCategory::Theme;
+        let update = build_tree_from_state(&state);
+        let ids: Vec<u64> = update.nodes.iter().map(|(id, _)| id.0).collect();
+
+        let descs = crate::renderer::overlay::widgets::settings_theme::theme_widget_descs(
+            &state.settings_panel,
+        );
+        assert_eq!(descs.len(), 11, "2 rows + 9 swatches");
+        for desc in &descs {
+            assert!(
+                ids.contains(&settings_widget_id(desc.id).0),
+                "widget {:?} missing from the tree",
+                desc.id
+            );
+        }
+    }
+
+    /// A screen reader can flip the follow-system toggle and pick a swatch —
+    /// neither was reachable before the migration.
+    #[test]
+    fn dispatch_settings_theme_toggle_and_swatch() {
+        use crate::renderer::overlay::widgets::settings_theme::{
+            THEME_CATEGORY, THEME_FOLLOW_SYSTEM, THEME_SWATCH_BASE,
+        };
+
+        let mut panel = SettingsPanel::default();
+        let before = panel.colors_follow_system;
+        assert!(dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &NodeIdKind::SettingsWidget {
+                category: THEME_CATEGORY,
+                index: THEME_FOLLOW_SYSTEM,
+            },
+            None,
+        ));
+        assert_eq!(panel.colors_follow_system, !before);
+
+        assert!(dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &NodeIdKind::SettingsWidget {
+                category: THEME_CATEGORY,
+                index: THEME_SWATCH_BASE + 4,
+            },
+            None,
+        ));
+        assert_eq!(panel.scheme_index, 4, "a swatch is selected, not stepped");
+    }
+
+    /// An action aimed at a category that has not been migrated is refused
+    /// rather than silently applied to a migrated tab.
+    #[test]
+    fn dispatch_settings_widget_ignores_unmigrated_categories() {
+        let mut panel = SettingsPanel::default();
+        // 5 = Keybindings, which still has its own hand-written nodes.
+        assert!(!dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &NodeIdKind::SettingsWidget {
+                category: 5,
+                index: 0,
+            },
+            None,
+        ));
+    }
+
+    /// SetValue on the opacity slider applies 0.05-unit rounding and clamping
+    /// to 0.1..=1.0. UI/UX v3 P1c routes it through the widget layer, but the
+    /// setter — and therefore the behaviour — is unchanged.
     #[test]
     fn dispatch_settings_opacity_set_value_rounds_and_clamps() {
-        let mut panel = SettingsPanel::default();
+        use crate::renderer::overlay::widgets::settings_window::{WINDOW_CATEGORY, row};
 
-        // 0.737 → 0.75
-        dispatch_settings_action(
-            &mut panel,
-            Action::SetValue,
-            &NodeIdKind::SettingsWindowOpacity,
-            Some(ActionData::NumericValue(0.737)),
-        );
+        let mut panel = SettingsPanel::default();
+        let kind = NodeIdKind::SettingsWidget {
+            category: WINDOW_CATEGORY,
+            index: row::OPACITY,
+        };
+        let set = |panel: &mut SettingsPanel, v: f64| {
+            dispatch_settings_action(
+                panel,
+                Action::SetValue,
+                &kind,
+                Some(ActionData::NumericValue(v)),
+            )
+        };
+
+        assert!(set(&mut panel, 0.737));
         assert!(
             (panel.opacity - 0.75).abs() < 1e-4,
             "0.05-unit rounding: 0.737 -> 0.75, actual = {}",
             panel.opacity
         );
 
-        // 2.0 → 1.0
-        dispatch_settings_action(
-            &mut panel,
-            Action::SetValue,
-            &NodeIdKind::SettingsWindowOpacity,
-            Some(ActionData::NumericValue(2.0)),
+        set(&mut panel, 2.0);
+        assert!(
+            (panel.opacity - 1.0).abs() < f32::EPSILON,
+            "clamped to the max"
         );
-        assert!((panel.opacity - 1.0).abs() < f32::EPSILON);
 
-        // 0.0 → 0.1
-        dispatch_settings_action(
+        set(&mut panel, 0.0);
+        assert!(
+            (panel.opacity - 0.1).abs() < f32::EPSILON,
+            "clamped to the min"
+        );
+
+        // A SetValue with no numeric payload is malformed and must be refused
+        // rather than falling through to a click.
+        let before = panel.opacity;
+        assert!(!dispatch_settings_action(
             &mut panel,
             Action::SetValue,
-            &NodeIdKind::SettingsWindowOpacity,
-            Some(ActionData::NumericValue(0.0)),
-        );
-        assert!((panel.opacity - 0.1).abs() < f32::EPSILON);
+            &kind,
+            None
+        ));
+        assert_eq!(panel.opacity, before);
     }
 
-    /// Click on SettingsStartupLanguage advances to next_language (index + 1).
+    /// Click / Increment on the language row advances it; Decrement goes back.
     #[test]
     fn dispatch_settings_language_click_advances() {
+        use crate::renderer::overlay::widgets::settings_startup::{STARTUP_CATEGORY, row};
+
         let mut panel = SettingsPanel::default();
-        panel.language_index = 0;
-
-        dispatch_settings_action(
-            &mut panel,
-            Action::Click,
-            &NodeIdKind::SettingsStartupLanguage,
-            None,
-        );
-        assert_eq!(panel.language_index, 1);
-
-        dispatch_settings_action(
-            &mut panel,
-            Action::Decrement,
-            &NodeIdKind::SettingsStartupLanguage,
-            None,
-        );
-        assert_eq!(panel.language_index, 0);
+        let kind = NodeIdKind::SettingsWidget {
+            category: STARTUP_CATEGORY,
+            index: row::LANGUAGE,
+        };
+        let before = panel.language_index;
+        dispatch_settings_action(&mut panel, Action::Click, &kind, None);
+        assert_ne!(panel.language_index, before);
+        dispatch_settings_action(&mut panel, Action::Decrement, &kind, None);
+        assert_eq!(panel.language_index, before);
     }
 
-    /// Click on SettingsStartupAutoUpdate toggles; Focus has no effect.
+    /// Click on the update-check row toggles it; Focus only moves focus.
     #[test]
     fn dispatch_settings_auto_update_click_toggles() {
+        use crate::renderer::overlay::widgets::settings_startup::{STARTUP_CATEGORY, row};
+
         let mut panel = SettingsPanel::default();
-        panel.auto_check_update = false;
-        panel.dirty = false;
-
-        // Click toggles.
-        let handled = dispatch_settings_action(
-            &mut panel,
-            Action::Click,
-            &NodeIdKind::SettingsStartupAutoUpdate,
-            None,
-        );
-        assert!(handled);
-        assert!(panel.auto_check_update);
-        assert!(panel.dirty);
-
-        // A second Click flips it back to false.
-        dispatch_settings_action(
-            &mut panel,
-            Action::Click,
-            &NodeIdKind::SettingsStartupAutoUpdate,
-            None,
-        );
-        assert!(!panel.auto_check_update);
-
-        // Focus has no effect.
+        let kind = NodeIdKind::SettingsWidget {
+            category: STARTUP_CATEGORY,
+            index: row::CHECK_UPDATES,
+        };
         let before = panel.auto_check_update;
-        let handled = dispatch_settings_action(
-            &mut panel,
-            Action::Focus,
-            &NodeIdKind::SettingsStartupAutoUpdate,
-            None,
-        );
-        assert!(
-            !handled,
-            "Focus must return handled=false (CheckBoxes do not toggle on Focus)"
-        );
-        assert_eq!(panel.auto_check_update, before);
-    }
+        dispatch_settings_action(&mut panel, Action::Click, &kind, None);
+        assert_eq!(panel.auto_check_update, !before);
 
-    // ===== Phase 5-11-6 #6: tests for the 4 new fields in the Window category =====
-
-    #[test]
-    fn decode_node_id_returns_settings_cursor_style() {
+        let after_click = panel.auto_check_update;
+        dispatch_settings_action(&mut panel, Action::Focus, &kind, None);
         assert_eq!(
-            decode_node_id(SETTINGS_CURSOR_STYLE_ID),
-            NodeIdKind::SettingsCursorStyle
+            panel.auto_check_update, after_click,
+            "Focus must not flip a checkbox as the virtual cursor passes by"
         );
+        assert_eq!(panel.startup_field_focus, row::CHECK_UPDATES);
     }
 
+    // ===== Window category (UI/UX v3 P1c: widget-derived nodes) =====
+
+    /// Every Window row decodes back to its own widget, so an action can
+    /// never be applied to the wrong control.
     #[test]
-    fn decode_node_id_returns_settings_padding_x() {
-        assert_eq!(
-            decode_node_id(SETTINGS_PADDING_X_ID),
-            NodeIdKind::SettingsPaddingX
-        );
+    fn decode_node_id_round_trips_every_window_row() {
+        use crate::renderer::overlay::widgets::settings_window::{
+            WINDOW_CATEGORY, WINDOW_ROW_COUNT,
+        };
+        use crate::renderer::overlay::widgets::spec::WidgetId;
+
+        for index in 0..WINDOW_ROW_COUNT as u8 {
+            assert_eq!(
+                decode_node_id(settings_widget_id(WidgetId::new(WINDOW_CATEGORY, index))),
+                NodeIdKind::SettingsWidget {
+                    category: WINDOW_CATEGORY,
+                    index
+                }
+            );
+        }
     }
 
+    /// The Window category exposes every row, not the five the hand-written
+    /// tree used to carry (UI/UX v3 P1c).
     #[test]
-    fn decode_node_id_returns_settings_padding_y() {
-        assert_eq!(
-            decode_node_id(SETTINGS_PADDING_Y_ID),
-            NodeIdKind::SettingsPaddingY
-        );
-    }
+    fn build_settings_panel_nodes_window_exposes_every_row() {
+        use crate::renderer::overlay::widgets::settings_window::{
+            WINDOW_ROW_COUNT, window_widget_descs,
+        };
 
-    #[test]
-    fn decode_node_id_returns_settings_present_mode() {
-        assert_eq!(
-            decode_node_id(SETTINGS_PRESENT_MODE_ID),
-            NodeIdKind::SettingsPresentMode
-        );
-    }
-
-    /// CursorStyle: Click cycles to next and moves focus to 1.
-    #[test]
-    fn dispatch_cursor_style_click_cycles_and_focuses() {
-        let mut panel = SettingsPanel::default();
-        assert_eq!(panel.cursor_style, nexterm_config::CursorStyle::Block);
-
-        let handled = dispatch_settings_action(
-            &mut panel,
-            Action::Click,
-            &NodeIdKind::SettingsCursorStyle,
-            None,
-        );
-        assert!(handled);
-        assert_eq!(panel.cursor_style, nexterm_config::CursorStyle::Beam);
-        assert_eq!(panel.window_field_focus, 1);
-    }
-
-    /// CursorStyle: Decrement cycles backward.
-    #[test]
-    fn dispatch_cursor_style_decrement_goes_back() {
-        let mut panel = SettingsPanel::default();
-        let handled = dispatch_settings_action(
-            &mut panel,
-            Action::Decrement,
-            &NodeIdKind::SettingsCursorStyle,
-            None,
-        );
-        assert!(handled);
-        assert_eq!(panel.cursor_style, nexterm_config::CursorStyle::Underline);
-    }
-
-    /// CursorStyle: Focus only moves focus (does not change value).
-    #[test]
-    fn dispatch_cursor_style_focus_only_moves_focus() {
-        let mut panel = SettingsPanel::default();
-        let before = panel.cursor_style.clone();
-        panel.window_field_focus = 0;
-        let handled = dispatch_settings_action(
-            &mut panel,
-            Action::Focus,
-            &NodeIdKind::SettingsCursorStyle,
-            None,
-        );
-        assert!(handled);
-        assert_eq!(
-            panel.cursor_style, before,
-            "Focus must not change the value"
-        );
-        assert_eq!(panel.window_field_focus, 1);
-    }
-
-    /// PaddingX: SetValue rounds half-up and clamps.
-    #[test]
-    fn dispatch_padding_x_set_value_rounds_and_clamps() {
-        let mut panel = SettingsPanel::default();
-        let handled = dispatch_settings_action(
-            &mut panel,
-            Action::SetValue,
-            &NodeIdKind::SettingsPaddingX,
-            Some(ActionData::NumericValue(15.7)),
-        );
-        assert!(handled);
-        assert_eq!(panel.padding_x, 16, "rounds 15.7 -> 16");
-        assert_eq!(panel.window_field_focus, 2);
-
-        // Upper-bound clamp.
-        let _ = dispatch_settings_action(
-            &mut panel,
-            Action::SetValue,
-            &NodeIdKind::SettingsPaddingX,
-            Some(ActionData::NumericValue(100.0)),
-        );
-        assert_eq!(panel.padding_x, 32, "upper bound clamps to 32");
-    }
-
-    /// PaddingX: Increment / Decrement
-    #[test]
-    fn dispatch_padding_x_increment_decrement() {
-        let mut panel = SettingsPanel::default();
-        assert_eq!(panel.padding_x, 0);
-
-        let handled = dispatch_settings_action(
-            &mut panel,
-            Action::Increment,
-            &NodeIdKind::SettingsPaddingX,
-            None,
-        );
-        assert!(handled);
-        assert_eq!(panel.padding_x, 1);
-
-        let _ = dispatch_settings_action(
-            &mut panel,
-            Action::Decrement,
-            &NodeIdKind::SettingsPaddingX,
-            None,
-        );
-        assert_eq!(panel.padding_x, 0);
-    }
-
-    /// PaddingY: verify SetValue + Increment / Decrement.
-    #[test]
-    fn dispatch_padding_y_actions() {
-        let mut panel = SettingsPanel::default();
-
-        let _ = dispatch_settings_action(
-            &mut panel,
-            Action::SetValue,
-            &NodeIdKind::SettingsPaddingY,
-            Some(ActionData::NumericValue(8.0)),
-        );
-        assert_eq!(panel.padding_y, 8);
-        assert_eq!(panel.window_field_focus, 3);
-
-        let _ = dispatch_settings_action(
-            &mut panel,
-            Action::Increment,
-            &NodeIdKind::SettingsPaddingY,
-            None,
-        );
-        assert_eq!(panel.padding_y, 9);
-
-        let _ = dispatch_settings_action(
-            &mut panel,
-            Action::Decrement,
-            &NodeIdKind::SettingsPaddingY,
-            None,
-        );
-        assert_eq!(panel.padding_y, 8);
-    }
-
-    /// PresentMode: Click cycles forward, Decrement cycles backward.
-    #[test]
-    fn dispatch_present_mode_click_and_decrement() {
-        let mut panel = SettingsPanel::default();
-        assert_eq!(
-            panel.present_mode,
-            nexterm_config::PresentModeConfig::Mailbox
-        );
-
-        let handled = dispatch_settings_action(
-            &mut panel,
-            Action::Click,
-            &NodeIdKind::SettingsPresentMode,
-            None,
-        );
-        assert!(handled);
-        assert_eq!(panel.present_mode, nexterm_config::PresentModeConfig::Auto);
-        assert_eq!(panel.window_field_focus, 4);
-
-        let _ = dispatch_settings_action(
-            &mut panel,
-            Action::Decrement,
-            &NodeIdKind::SettingsPresentMode,
-            None,
-        );
-        assert_eq!(
-            panel.present_mode,
-            nexterm_config::PresentModeConfig::Mailbox
-        );
-    }
-
-    /// build_settings_panel_nodes: the Window category must expose 5 nodes.
-    #[test]
-    fn build_settings_panel_nodes_window_exposes_five_fields() {
         let mut panel = SettingsPanel::default();
         panel.category = crate::settings_panel::SettingsCategory::Window;
         let (nodes, _focus) = build_settings_panel_nodes(&panel);
         let ids: Vec<u64> = nodes.iter().map(|(id, _)| id.0).collect();
-        assert!(ids.contains(&SETTINGS_WINDOW_OPACITY_ID.0));
-        assert!(ids.contains(&SETTINGS_CURSOR_STYLE_ID.0));
-        assert!(ids.contains(&SETTINGS_PADDING_X_ID.0));
-        assert!(ids.contains(&SETTINGS_PADDING_Y_ID.0));
-        assert!(ids.contains(&SETTINGS_PRESENT_MODE_ID.0));
+
+        let descs = window_widget_descs(&panel);
+        assert_eq!(descs.len(), WINDOW_ROW_COUNT);
+        for desc in &descs {
+            assert!(
+                ids.contains(&settings_widget_id(desc.id).0),
+                "row {:?} missing from the tree",
+                desc.id
+            );
+        }
     }
 
-    /// build_settings_panel_nodes: focus moves correctly according to window_field_focus.
+    /// Focus follows `window_field_focus` across every row, and falls back to
+    /// the category tab when the index is out of range.
     #[test]
     fn build_settings_panel_nodes_window_focus_follows_field() {
-        let cases = [
-            (0_u8, SETTINGS_WINDOW_OPACITY_ID),
-            (1, SETTINGS_CURSOR_STYLE_ID),
-            (2, SETTINGS_PADDING_X_ID),
-            (3, SETTINGS_PADDING_Y_ID),
-            (4, SETTINGS_PRESENT_MODE_ID),
-        ];
-        for (focus_idx, expected_node) in cases {
+        use crate::renderer::overlay::widgets::settings_window::{
+            WINDOW_CATEGORY, WINDOW_ROW_COUNT,
+        };
+        use crate::renderer::overlay::widgets::spec::WidgetId;
+
+        for focus_idx in 0..WINDOW_ROW_COUNT as u8 {
             let mut panel = SettingsPanel::default();
             panel.category = crate::settings_panel::SettingsCategory::Window;
             panel.window_field_focus = focus_idx;
             let (_nodes, focus) = build_settings_panel_nodes(&panel);
             assert_eq!(
-                focus, expected_node,
-                "with window_field_focus={}, focus should point to {:?}",
-                focus_idx, expected_node
+                focus,
+                settings_widget_id(WidgetId::new(WINDOW_CATEGORY, focus_idx)),
+                "with window_field_focus={focus_idx}"
             );
         }
+
+        let mut panel = SettingsPanel::default();
+        panel.category = crate::settings_panel::SettingsCategory::Window;
+        panel.window_field_focus = WINDOW_ROW_COUNT as u8;
+        let (_nodes, focus) = build_settings_panel_nodes(&panel);
+        assert_ne!(
+            focus,
+            settings_widget_id(WidgetId::new(WINDOW_CATEGORY, WINDOW_ROW_COUNT as u8)),
+            "an out-of-range focus must fall back, not point at a missing node"
+        );
     }
 
     /// compute_tree_state_hash: detects changes in
@@ -5741,11 +5678,26 @@ mod tests {
         );
     }
 
-    /// Reserved range 700M..800M remains Unknown. (900M..1G is now assigned to
-    /// SettingsKeyBindingItem in Phase 5-11-9 Sub-phase E.)
+    /// The 700M..800M range now carries `SettingsWidget` ids (UI/UX v3 P1b).
+    /// Only the sub-range a `WidgetId` can actually encode decodes to a
+    /// widget; the rest of the block stays Unknown, so a stray id in there is
+    /// still rejected rather than aliased onto a real control.
     #[test]
-    fn settings_ssh_host_offset_reserved_ranges_are_unknown() {
-        assert_eq!(decode_node_id(NodeId(700_000_000)), NodeIdKind::Unknown);
+    fn settings_widget_range_decodes_only_encodable_ids() {
+        use crate::renderer::overlay::widgets::spec::WidgetId;
+
+        for (category, index) in [(0u8, 0u8), (2, 0), (2, 18), (255, 255)] {
+            let id = WidgetId::new(category, index);
+            assert_eq!(
+                decode_node_id(settings_widget_id(id)),
+                NodeIdKind::SettingsWidget { category, index }
+            );
+        }
+        // Above the two packed bytes: not producible by `as_u32`.
+        assert_eq!(
+            decode_node_id(NodeId(SETTINGS_WIDGET_BASE + 0x1_0000)),
+            NodeIdKind::Unknown
+        );
         assert_eq!(decode_node_id(NodeId(799_999_999)), NodeIdKind::Unknown);
     }
 

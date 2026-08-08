@@ -361,10 +361,48 @@ impl EventHandler {
             if self.app.state.settings_panel.theme_hover_preview != new_preview {
                 self.app.state.settings_panel.theme_hover_preview = new_preview;
             }
-        } else if self.app.state.settings_panel.theme_hover_preview.is_some() {
-            // Panel closed while a preview was active (e.g. Esc dismiss):
-            // clear the stale preview so the next open starts clean.
+
+            // UI/UX v3 P1b: dwell tracking for tooltips. Only migrated
+            // categories report a widget; everything else clears the dwell so
+            // no stale tooltip lingers.
+            use crate::renderer::overlay::widgets::settings_blocks::BLOCKS_CATEGORY;
+            use crate::renderer::overlay::widgets::settings_font::FONT_CATEGORY;
+            use crate::renderer::overlay::widgets::settings_security::SECURITY_CATEGORY;
+            use crate::renderer::overlay::widgets::settings_startup::STARTUP_CATEGORY;
+            use crate::renderer::overlay::widgets::settings_theme::{
+                THEME_CATEGORY, THEME_SWATCH_BASE,
+            };
+            use crate::renderer::overlay::widgets::settings_window::WINDOW_CATEGORY;
+            let hovered = match hit {
+                SettingsPanelHit::ThemeColor(i) => {
+                    Some((THEME_CATEGORY, THEME_SWATCH_BASE + i as u8))
+                }
+                SettingsPanelHit::ThemeRow(index) => Some((THEME_CATEGORY, index)),
+                SettingsPanelHit::WindowRow(index) => Some((WINDOW_CATEGORY, index)),
+                SettingsPanelHit::FontRow(index) => Some((FONT_CATEGORY, index)),
+                SettingsPanelHit::StartupRow(index) => Some((STARTUP_CATEGORY, index)),
+                SettingsPanelHit::BlocksRow(index) => Some((BLOCKS_CATEGORY, index)),
+                SettingsPanelHit::SecurityRow(index) => Some((SECURITY_CATEGORY, index)),
+                _ => None,
+            };
+            let sp = &mut self.app.state.settings_panel;
+            sp.hover_widget = hovered.map(|(category, index)| {
+                crate::settings_panel::HoverDwell::enter(
+                    sp.hover_widget,
+                    category,
+                    index,
+                    std::time::Instant::now(),
+                )
+            });
+        } else if self.app.state.settings_panel.theme_hover_preview.is_some()
+            || self.app.state.settings_panel.hover_widget.is_some()
+        {
+            // Panel closed while a preview or a hover dwell was active (e.g.
+            // Esc dismiss): clear both so the next open starts clean. Leaving
+            // the dwell behind would make a tooltip reappear the instant the
+            // panel reopens under a stationary cursor, skipping its delay.
             self.app.state.settings_panel.theme_hover_preview = None;
+            self.app.state.settings_panel.hover_widget = None;
         }
 
         let col = (position.x / cell_w) as u16;
@@ -914,26 +952,28 @@ impl EventHandler {
                         self.app.state.settings_panel.dirty = true;
                         self.app.state.settings_panel.theme_hover_preview = None;
                     }
-                    SettingsPanelHit::WindowRow(row) => {
-                        // Phase 5-11-6 #6 / Phase B4 / Phase B4-P2: click on a row inside
-                        // the Window category. Change focus; clicking the label of rows
-                        // 1/4/5/7/8/9/10/11/12 also changes the value (toggle or cycle).
-                        // Row 13 (fps_limit) is numeric — click only focuses, matching
-                        // the padding_x/y (2/3) and scrollback_lines (6) convention.
+                    SettingsPanelHit::ThemeRow(index) => {
+                        // UI/UX v3 P1b: click focuses the row; clicking the
+                        // follow-system row also flips it, matching the
+                        // toggle-on-click convention the Window rows use.
+                        use crate::renderer::overlay::widgets::settings_theme::THEME_FOLLOW_SYSTEM;
                         let sp = &mut self.app.state.settings_panel;
-                        sp.window_field_focus = row;
-                        match row {
-                            1 => sp.next_cursor_style(),
-                            4 => sp.next_present_mode(),
-                            5 => sp.toggle_cursor_blink(),
-                            7 => sp.toggle_show_tab_number(),
-                            8 => sp.toggle_show_new_tab_button(),
-                            9 => sp.toggle_animations_enabled(),
-                            10 => sp.next_animations_intensity(),
-                            11 => sp.next_window_decorations(),
-                            12 => sp.next_window_close_action(),
-                            _ => {}
+                        sp.theme_field_focus = index;
+                        if index == THEME_FOLLOW_SYSTEM {
+                            sp.colors_follow_system = !sp.colors_follow_system;
+                            sp.dirty = true;
                         }
+                    }
+                    SettingsPanelHit::WindowRow(row) => {
+                        // UI/UX v3 P1c: the same router the keyboard and the
+                        // accessibility path use, so the three cannot drift.
+                        use crate::renderer::overlay::widgets::action::WidgetAction;
+                        use crate::renderer::overlay::widgets::settings_window::apply_window_action;
+                        apply_window_action(
+                            &mut self.app.state.settings_panel,
+                            row,
+                            WidgetAction::Activate,
+                        );
                     }
                     SettingsPanelHit::TitleBar => {
                         // Phase 3 (UI 4-tasks, 2026-06-12): pressing the title
@@ -947,41 +987,50 @@ impl EventHandler {
                         self.app.state.settings_panel.start_drag(fx, fy);
                     }
                     SettingsPanelHit::BlocksRow(row) => {
-                        // Phase 2c follow-up: interactive Blocks toggles.
-                        // row 0 = enabled, row 1 = border width (cycle 1..=8),
-                        // row 2 = status badge. Each click marks the panel
-                        // dirty so the next Save (or panel close) persists.
+                        // UI/UX v3 P1c: routed through the shared action
+                        // router, so a click and a screen reader apply the
+                        // same transition. Blocks still auto-saves.
+                        use crate::renderer::overlay::widgets::action::WidgetAction;
+                        use crate::renderer::overlay::widgets::settings_blocks::apply_blocks_action;
                         let sp = &mut self.app.state.settings_panel;
-                        match row {
-                            0 => sp.blocks_enabled = !sp.blocks_enabled,
-                            1 => {
-                                sp.blocks_border_width_px = if sp.blocks_border_width_px >= 8 {
-                                    1
-                                } else {
-                                    sp.blocks_border_width_px + 1
-                                };
-                            }
-                            2 => {
-                                sp.blocks_show_exit_code_badge = !sp.blocks_show_exit_code_badge;
-                            }
-                            _ => {}
+                        if apply_blocks_action(sp, row, WidgetAction::Activate) {
+                            let _ = sp.save_to_toml();
+                            sp.dirty = false;
                         }
-                        sp.dirty = true;
-                        let _ = sp.save_to_toml();
-                        sp.dirty = false;
                     }
                     SettingsPanelHit::SecurityRow(row) => {
-                        // Click focuses the row. Policy rows (0..=3) cycle
-                        // forward; byte-cap rows (4..=6) start decimal editing.
-                        // Like the Window cyclers, changes persist on Save/close
-                        // rather than auto-saving.
-                        let sp = &mut self.app.state.settings_panel;
-                        sp.security_field_focus = row;
-                        if row <= 3 {
-                            sp.security_field_increase();
-                        } else {
-                            sp.begin_security_edit();
-                        }
+                        // Click focuses the row; policy rows cycle forward and
+                        // byte-cap rows start editing. Changes persist on
+                        // Save/close rather than auto-saving.
+                        use crate::renderer::overlay::widgets::action::WidgetAction;
+                        use crate::renderer::overlay::widgets::settings_security::apply_security_action;
+                        apply_security_action(
+                            &mut self.app.state.settings_panel,
+                            row,
+                            WidgetAction::Activate,
+                        );
+                    }
+                    SettingsPanelHit::FontRow(row) => {
+                        // UI/UX v3 P1c: the Font rows had no click handling
+                        // before — only the size slider reacted.
+                        use crate::renderer::overlay::widgets::action::WidgetAction;
+                        use crate::renderer::overlay::widgets::settings_font::apply_font_action;
+                        apply_font_action(
+                            &mut self.app.state.settings_panel,
+                            row,
+                            WidgetAction::Activate,
+                        );
+                    }
+                    SettingsPanelHit::StartupRow(row) => {
+                        // UI/UX v3 P1c: likewise new — the Startup rows were
+                        // keyboard-only.
+                        use crate::renderer::overlay::widgets::action::WidgetAction;
+                        use crate::renderer::overlay::widgets::settings_startup::apply_startup_action;
+                        apply_startup_action(
+                            &mut self.app.state.settings_panel,
+                            row,
+                            WidgetAction::Activate,
+                        );
                     }
                     SettingsPanelHit::PanelBackground => {
                         // Other clicks inside the panel → do nothing.
