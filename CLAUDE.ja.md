@@ -2,6 +2,30 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **正本:** [CLAUDE.md](CLAUDE.md)（英語版）。本ファイルはローカル参照用の翻訳であり正本ではない。両者が食い違う場合は英語版が勝つ。
+
+## 言語ポリシー
+
+Nexterm は世界中に配布されるオープンソースプロジェクトだが、主要メンテナは日本語で作業する。したがって次のように使い分ける。
+
+**日本語（対話面 — メンテナがリアルタイムで読むもの）:**
+- **Claude Code CLI の会話**: チャット返答・進捗報告・ターン末サマリ・選択肢ブロック・確認質問はすべて日本語。グローバルの「日本語で回答する」ルールを本リポジトリ向けに明示したものであり、英語で会話するモードは存在しない
+- **個人ブランチのローカルコミットメッセージ**: 反復作業中は日本語で構わない
+
+**英語（世界に出る成果物 — 外部コントリビュータが読むもの）:**
+- **ソースコードのコメント**（`//`・`///`・doc コメント・`expect("...")` メッセージ・`panic!` メッセージ・`log::*!` の文字列・`anyhow!`/`bail!` のリテラル）: 英語のみ
+- **リポジトリのドキュメント**（`README.md`・`docs/**`・`CHANGELOG.md`・ADR・`examples/**/README.md`・`nexterm-vt/fuzz/README.md` 等）: 英語を正本とする。日本語訳を用意する場合は英語版の隣に `*.ja.md` として置く（例: `README.md` + `README.ja.md`）。現状バイリンガル維持しているのはトップレベルの `README` のみ
+- **`master` 向け PR のコミットメッセージ**および **PR の説明・タイトル**: 英語
+- **Git タグと GitHub Release ノート**: 英語（日本語の補足は歓迎だが正文ではない）
+- **Claude Code の指示ファイル**（`CLAUDE.md`）: 英語。本ファイル `CLAUDE.ja.md` はローカル参照用の翻訳であり**正本ではない**
+
+**アプリのユーザー向け文字列（別の話）:**
+- **実行中のアプリに表示される文字列**: `nexterm-i18n`（Fluent + JSON ロケール）が管理する。新しい文字列は `nexterm-i18n/locales/` 配下の**全 8 ロケールファイル**に追加すること。レンダラーに自然言語をハードコードしない
+
+新しいドキュメントを追加するときは既定で英語とし、その文書に日本語での可読性が必要な場合のみ `*.ja.md` を併設する。
+
+**判断の目安:** Claude とのターミナルセッション内で人間が読むものなら日本語、リポジトリや GitHub に載って世界に出るものなら英語。
+
 ## ドキュメントマップと役割分担
 
 永続ドキュメントはそれぞれ 1 つの役割を持つ。新しい内容はその役割を持つファイルに書き、他のファイルに重複させないこと。
@@ -21,29 +45,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Linux 開発依存ライブラリ（Ubuntu/Debianの場合）
 sudo apt-get install -y libx11-dev libxkbcommon-dev libwayland-dev libasound2-dev libpulse-dev
 
-# 全クレートをビルド
-cargo build
-
-# リリースビルド
-cargo build --release
-
-# 特定クレートのみ
-cargo build -p nexterm-server
-cargo build -p nexterm-client-gpu
-cargo build -p nexterm-ctl
-
-# テスト実行
-cargo test
-cargo test -p nexterm-vt                      # 特定クレート
-cargo test bsp_split                           # テスト名でフィルタ
-cargo test --test ipc_integration              # nexterm-server 統合テスト
-cargo test --test snapshot_roundtrip           # スナップショット往復テスト
-
-# Lint
-cargo clippy -- -D warnings        # PRマージ必須条件
-cargo fmt --check                  # PRマージ必須条件
-cargo fmt                          # フォーマット適用
-cargo audit                        # 脆弱性チェック（cargo install cargo-audit が必要）
+# PRマージ必須条件
+cargo clippy -- -D warnings
+cargo fmt --check
 
 # デバッグ実行
 NEXTERM_LOG=debug nexterm-server
@@ -72,71 +76,22 @@ v1.4.0 で旧 `nexterm-launcher` クレートを削除。v0.9.3 でシングル�
 ### クレート依存関係
 
 - `nexterm-proto` — 全IPC型定義。他の全クレートが依存する中心クレート。変更は全クレートに影響する
+- `nexterm-client-core` — クライアント側 IPC 実装の共通化（Sprint 3-6）。`nexterm-client-gpu` / `nexterm-client-tui` の `connection.rs` に重複していた UDS / Windows 名前付きパイプのフレーミング・ハンドシェイク・送受信タスク管理を集約し、`Connection` を公開する。GPU / TUI 両クライアントが依存する
 - `nexterm-vt` — `vte`クレートのラッパー。VT100/ANSIパーサ + 仮想スクリーン (`Grid`) + Sixel/Kitty画像デコード
 - `nexterm-server` — PTYサーバー。`SessionManager → Session → Window (BSP) → Pane` の階層構造
 - `nexterm-config` — TOML+Luaコンフィグ。ロード順: デフォルト値 → config.toml → config.lua。`notify`クレートによるホットリロード
-- `nexterm-client-gpu` — wgpuレンダラー (winit 0.30 ApplicationHandler)。3パスレンダリング: 背景矩形→テキスト→画像。アップデートチェック（`update_checker.rs`）の詳細は後述の「GPUクライアント内部構造」を参照
+- `nexterm-client-gpu` — wgpuレンダラー (winit 0.30 ApplicationHandler)。3パスレンダリング: 背景矩形→テキスト→画像
 - `nexterm-client-tui` — ratatui+crossterm によるTUIフォールバック
 - `nexterm-ssh` — russh 0.60 ベースのSSHクライアント（GHSA-f5v4-2wr6-hqmg pre-auth DoS 対策で 0.60 に更新、`ring` backend を使用して NASM 依存を回避）
 - `nexterm-plugin` — wasmiベースのWASMプラグインランタイム。`PLUGIN_API_VERSION = 1` が安定 ABI を識別する。`PluginManager::unload(path)` / `reload(path)` でランタイムアンロード/再ロードに対応。プラグインは `nexterm_meta` エクスポートで名前・バージョンを公開できる。`SessionManager.plugin_manager` に `Arc<Mutex<Option<PluginManager>>>` として保持され、IPC (`ListPlugins`/`LoadPlugin`/`UnloadPlugin`/`ReloadPlugin`) で操作可能
 - `nexterm-i18n` — 8言語対応 (en/ja/zh-CN/ko/de/fr/es/it)。ユーザー向け文字列は`fl!`マクロ必須
-- `nexterm-ctl` — CLIツール (list/new/attach/kill/record)
 
-### サーバー内部構造 (`nexterm-server/src/`)
+### クレート別ガイド
 
-- `session.rs` — `SessionManager`, `Session`, BSPレイアウトエンジン
-- `window/` — `Window` の実装（モジュール化）:
-  - `mod.rs` — `Window` 本体（BSPツリー + Pane管理）
-  - `bsp.rs` — BSP分割アルゴリズム (`PaneRect` / `SplitDir` を公開)
-  - `tiling.rs` — タイリングレイアウトロジック
-  - `floating.rs` — フローティングウィンドウ (`FloatRect` を公開)
-  - `tests.rs` — `bsp_split` 等のレイアウトユニットテスト
-- `pane.rs` — `Pane` (PTY + PTYリーダースレッド + 録画ログライター)
-- `ipc/` — IPCモジュール:
-  - `platform.rs` — Unix/Windows リスナー・UID検証 (SO_PEERCRED/getpeereid)
-  - `handler.rs` — クライアント読み書きループ
-  - `dispatch.rs` — 40+ IPCコマンドのディスパッチロジック
-  - `key.rs` — キーコード → VTエスケープシーケンス変換（ユニットテスト8件付き）
-  - `sftp.rs` — SFTPアップロード・ダウンロードヘルパー
-  - `plugin_dispatch.rs` — プラグイン IPC コマンド (`ListPlugins`/`LoadPlugin`/`UnloadPlugin`/`ReloadPlugin`) のハンドラ
-- `persist.rs` / `snapshot.rs` — セッション永続化 (JSON、`~/.local/state/nexterm/snapshot.json`)。スキーマ v3（`SNAPSHOT_VERSION=3`、最低サポート v1。Sprint 5-7 / Phase 2-1 で `workspace_name` を追加）。旧 v1 / v2 スナップショットは `load_snapshot()` が自動マイグレーション
-- `hooks.rs` — Luaフックイベント処理
-- `serial.rs` — シリアルポート接続
-- `template.rs` — セッションテンプレート
-- `web/` — Web ターミナル機能（axum WebSocket + xterm.js）:
-  - `mod.rs` — エンドポイント・ルーティング
-  - `auth.rs` — トークン認証
-  - `oauth.rs` — OAuth 認証フロー
-  - `otp.rs` — TOTP（時間ベースワンタイムパスワード）
-  - `tls.rs` — TLS 設定・証明書ロード
-  - `access_log.rs` — アクセスログ
-- `test_utils.rs` — テスト用ヘルパー（ライブラリ内テスト共有）
+クレート内部の詳細は、作業中のクレートディレクトリから遅延ロードされる:
 
-### 統合テスト (`nexterm-server/tests/`)
-
-- `ipc_integration.rs` — IPC コマンド全体の往復テスト
-- `snapshot_roundtrip.rs` — スナップショット保存→ロードの往復テスト
-
-### GPUクライアント内部構造 (`nexterm-client-gpu/src/`)
-
-- `renderer.rs` — wgpu初期化 + 3パスレンダリングパイプライン + cosmic-textグリフアトラス + winit イベントループ
-- `state.rs` — `ClientState` (panes/pane_layouts/copy_mode/search/context_menu等の状態管理)
-- `font.rs` — `FontManager` (cosmic-textラッパー、CJK幅計算)
-- `glyph_atlas.rs` — GPUグリフアトラス管理。`LruCache` でグリフをキャッシュ（フォント変更後の古いエントリを自動削除）。`new_with_config(device, atlas_size)` で設定値を最大サイズとして初期化する
-- `shaders.rs` — WGSLシェーダー定数
-- `vertex_util.rs` — 頂点バッファユーティリティ
-- `color_util.rs` — カラーパレット変換
-- `key_map.rs` — キー入力マッピング
-- `connection.rs` — サーバーへのIPC接続管理
-- `settings_panel.rs` — `Ctrl+,`で開く設定パネルUI (7カテゴリ、toml_editで書き戻し、`LANGUAGE_OPTIONS`で言語選択)
-- `palette.rs` — コマンドパレット（Ctrl+Shift+P）。`SkimMatcherV2` で fuzzy 検索。Sprint 5-7 / Phase 3-3 で `execute_action` 全アクション（Quit / ClosePane / NewWindow / QuickSelect / SetBroadcastOn/Off 等を含む 25 件）を網羅 + 使用履歴を `~/.local/state/nexterm/palette_history.json`（atomic write + 0600）に永続化。`rank_actions` 純関数: クエリ空時は履歴順（last_used 降順 → use_count 降順）、クエリ有時は fuzzy スコア + `history_bonus`（use_count×10 上限 100 + 1日以内+100/1週間以内+50）。選択時に `record_use` で記録
-- `scrollback.rs` — スクロールバック管理 + インクリメンタル検索
-- `host_manager.rs` — SSHホストマネージャーUI。`load_history()` / `save_history()` で接続頻度を `host_history.json` に永続化。`PasswordModal` 構造体で `auth_type="password"` ホストのパスワード入力モーダルを管理
-- `macro_picker.rs` — Luaマクロピッカーui
-- `update_checker.rs` — 起動 5 秒後に GitHub Releases API をポーリングして新バージョンを検出。`auto_check_update = false` で無効化可能。結果は `ClientState.update_banner` に格納され、`Esc` で閉じる / `Enter` でリリースページを開く
-- `platform.rs` — プラットフォーム依存ユーティリティ。`apply_acrylic_blur` は Windows 11 で `DwmSetWindowAttribute(DWMWA_SYSTEMBACKDROP_TYPE=4)` により Acrylic 効果を適用（Windows 10 以下では何もしない）。`open_releases_url` はリリースページを既定ブラウザで開く
-- `renderer/background_pass.rs` — 背景画像レンダリング（Sprint 5-7 / Phase 3-1）。`WindowConfig.background_image` 設定時のみ起動時に画像をロードし、毎フレームで clear → 背景画像 → セル背景 → テキストの順で描画する。fit モード（cover/contain/stretch/center/tile）ごとの NDC + UV 計算を `compute_background_quad` 純関数で実装し 11 件のユニットテスト付き。4096x4096 を超える画像は Lanczos3 で自動ダウンスケール。Tile モードでタイル数が 256 を超えるケースは Stretch にフォールバック（実害回避）。既存の `image_pipeline`（Sixel/Kitty 用）を再利用するため独自パイプラインは作らない。サポート形式: PNG / JPEG（workspace の `image` クレートで有効な features）
-- `animations.rs` — UI アニメーション基盤（Sprint 5-7 / Phase 3-2）。`ease_out_cubic` / `linear` 等の easing 関数と `AnimationManager`（タブ切替・ペイン追加の時刻記録）を提供。レンダラーは `tab_switch_progress(now, duration)` / `pane_fade_in_progress(id, now, duration)` で進捗 [0,1] を取得する。`Config.animations` で `enabled=false` または `intensity="off"` の場合は `scaled_duration_ms` が 0 を返し全アニメーションが即時反映（reduced motion 対応）。intensity は `off`/`subtle`(×0.5)/`normal`(×1.0)/`energetic`(×1.5) の 4 段階。タブ切替は 200ms の ease-out（アクセントラインが中央から横に伸びる + フェードイン）、新規ペイン追加は 250ms の白いオーバーレイ alpha=0.35→0 フェード
+- `nexterm-server/CLAUDE.md` — サーバー内部構造（session / window / ipc / persist / web）
+- `nexterm-client-gpu/CLAUDE.md` — GPU クライアント内部構造（レンダラー・ウィジェット層・パレット・アニメーション）
 
 ## 重要な実装パターン
 
@@ -195,16 +150,6 @@ v1.4.0 で旧 `nexterm-launcher` クレートを削除。v0.9.3 でシングル�
 
 ## リリースフロー
 
-リリースは`.github/workflows/release.yml`で自動化。バージョンタグ (`v*.*.*`) のプッシュでトリガーされる。WiX v3でWindowsインストーラー (`.msi`) をビルド。`wix/main.wxs`でコンポーネントを管理 (`nexterm-client-gpu.exe`は含まない)。
+リリース・CI・パッケージングの詳細（バージョンタグ運用、WiX v3 MSI、Flatpak ビルド、russh の feature フラグ）は `release-flow` skill に移動した。リリース作業時やこれらのパイプラインの調査時に呼び出す。
 
-CIは`.github/workflows/ci.yml`で`master`ブランチへの push / PR をトリガーとして設定済み。Linux / macOS / Windows の3 OS マトリクスで `cargo test` / `cargo clippy -- -D warnings` / `cargo fmt --check` を実行する。
-
-バージョンバンプは`Cargo.toml`の`[workspace.package] version`を更新すること（個別クレートのCargo.tomlではなく、ワークスペースルートのみ）。ワークスペースは Rust 2024 edition (`edition = "2024"`) を使用しているため、ビルドには Rust 1.85 以降が必要。マイナー/メジャーバージョンを上げる際は `docs/PRODUCT.md` もレビューすること（"Last reviewed" 行の更新と、出荷済み・取り下げ済み要求の反映）。
-
-Flatpakビルドは`.github/workflows/flatpak.yml`で`ubuntu-latest`ランナー上で実行する。`container:`ブロックを使うと`apt-get`が利用できなくなるため使用しないこと。`flatpak remote-add`・`flatpak install`・`flatpak-builder`にはすべて`--user`フラグが必要（CI環境ではシステム操作の権限がない）。
-
-flatpak-builder のサンドボックスはネットワーク隔離されているため、cargo の依存は事前に vendor して `pkg/flatpak/cargo-sources.json` に格納し、manifest の `sources` から参照する。**Cargo.lock を変更したら必ず `bash scripts/regenerate-flatpak-sources.sh` を実行して `cargo-sources.json` を再生成しコミットすること**。CI (`flatpak.yml`) は最初のステップで `flatpak-cargo-generator.py` を走らせて `cargo-sources.json` との diff を取り、不一致なら失敗するため再生成漏れを早期検知できる。ビルドは `CARGO_NET_OFFLINE=true` + `cargo --offline build` でオフライン強制。
-
-russh 0.59 / 0.60 の SSH エージェント認証では `request_identities()` が返す `Vec<AgentIdentity>` のループ変数は `&AgentIdentity` 型。`authenticate_publickey_with` の第2引数は `ssh_key::PublicKey` であるため `identity.public_key().into_owned()` で取得すること（russh 0.58 では `identity.clone()` で `PublicKey` を取得していたが、0.59 で型が変わった）。0.59 → 0.60 では本コードベースで使用する API に破壊的変更なし。`Cargo.toml` で `default-features = false, features = ["ring", "rsa", "flate2"]` を指定して `aws-lc-rs` backend を回避することで、Windows 等の NASM 未導入環境でもビルド可能。
-
-WiX v3 の `candle.exe` にプリプロセッサ変数を渡す際は `-dName=Value` 形式（スペースなし）を使うこと。PowerShell から呼び出す場合は `-d "Name=Value"` とすると2引数に分割されて `CNDL0289` エラーになる。正しい形式: `"-dVersion=$version"`。
+リリース時以外に発火する規則が 1 つだけここに残る: **`Cargo.lock` が変わったら `bash scripts/regenerate-flatpak-sources.sh` を実行して `pkg/flatpak/cargo-sources.json` を再生成しコミットする。** flatpak CI はこのファイルと差分照合し、不一致でジョブを失敗させる。
