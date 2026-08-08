@@ -20,7 +20,7 @@ use super::super::settings::row::{MIN_TEXT_CONTRAST, ensure_readable};
 use super::spec::{WidgetKind, WidgetRect, WidgetSpec};
 
 /// Colours, metrics and screen geometry needed to paint a widget.
-pub(in crate::renderer) struct WidgetTheme<'a> {
+pub(crate) struct WidgetTheme<'a> {
     /// Palette-derived colours.
     pub tokens: &'a nexterm_config::DesignTokens,
     /// Metric tokens, already scaled to physical pixels.
@@ -36,7 +36,7 @@ pub(in crate::renderer) struct WidgetTheme<'a> {
 }
 
 /// The vertex buffers a widget appends to.
-pub(in crate::renderer) struct WidgetSink<'a> {
+pub(crate) struct WidgetSink<'a> {
     /// Background quads.
     pub bg_verts: &'a mut Vec<BgVertex>,
     /// Background indices.
@@ -64,7 +64,7 @@ const SLIDER_TRACK_H: f32 = 0.3;
 const SLIDER_THUMB: f32 = 0.85;
 
 /// Paint one widget: row background, label, then the control itself.
-pub(in crate::renderer) fn draw_widget(
+pub(crate) fn draw_widget(
     spec: &WidgetSpec,
     theme: &WidgetTheme<'_>,
     font: &mut FontManager,
@@ -80,18 +80,18 @@ pub(in crate::renderer) fn draw_widget(
     draw_row_background(spec, theme, sink);
 
     // A swatch is its own control with no label column.
-    if let WidgetKind::Swatch { color, selected } = &spec.kind {
+    if let WidgetKind::Swatch { color, selected } = spec.kind() {
         draw_swatch(spec, *color, *selected, theme, sink);
         return;
     }
 
     draw_label(spec, theme, font, atlas, queue, sink);
 
-    if spec.focused && spec.kind.is_interactive() {
+    if spec.focused() && spec.kind().is_interactive() {
         draw_focus_ring(spec.control_rect, theme, sink);
     }
 
-    match &spec.kind {
+    match spec.kind() {
         WidgetKind::Label => {}
         WidgetKind::Toggle { on } => draw_toggle(spec, *on, theme, sink),
         WidgetKind::Cycle { value } => draw_cycle(spec, value, theme, font, atlas, queue, sink),
@@ -107,9 +107,9 @@ pub(in crate::renderer) fn draw_widget(
 
 /// Hover / focus fill behind the whole row.
 fn draw_row_background(spec: &WidgetSpec, theme: &WidgetTheme<'_>, sink: &mut WidgetSink<'_>) {
-    let fill = if spec.focused {
+    let fill = if spec.focused() {
         Some(theme.tokens.surface_2)
-    } else if spec.hovered && spec.enabled && spec.kind.is_interactive() {
+    } else if spec.hovered && spec.enabled() && spec.kind().is_interactive() {
         let s = theme.tokens.surface_3;
         Some([s[0], s[1], s[2], s[3] * HOVER_ALPHA])
     } else {
@@ -140,22 +140,22 @@ fn draw_label(
     queue: &wgpu::Queue,
     sink: &mut WidgetSink<'_>,
 ) {
-    let base = if !spec.enabled {
+    let base = if !spec.enabled() {
         theme.tokens.text_muted
-    } else if spec.focused {
+    } else if spec.focused() {
         theme.tokens.text_primary
     } else {
         theme.tokens.text_secondary
     };
     let color = ensure_readable(base, theme.tokens.surface_2, MIN_TEXT_CONTRAST);
     let label_w = (spec.control_rect.x - spec.rect.x).max(0.0);
-    let text = truncate_to_width(&spec.label, label_w, theme.cell_w);
+    let text = truncate_to_width(&spec.desc.label, label_w, theme.cell_w);
     add_string_verts(
         &text,
         spec.rect.x,
         text_baseline(spec.rect, theme),
         color,
-        spec.focused,
+        spec.focused(),
         theme.sw,
         theme.sh,
         theme.cell_w,
@@ -207,7 +207,7 @@ fn draw_toggle(spec: &WidgetSpec, on: bool, theme: &WidgetTheme<'_>, sink: &mut 
     let track_y = spec.control_rect.y + (spec.control_rect.h - track_h) * 0.5;
     let radius = track_h * 0.5;
 
-    let (track_color, thumb_color) = if !spec.enabled {
+    let (track_color, thumb_color) = if !spec.enabled() {
         (theme.tokens.surface_3, theme.tokens.text_muted)
     } else if on {
         (theme.tokens.accent_primary, theme.tokens.text_on_accent)
@@ -277,16 +277,16 @@ fn draw_cycle(
     queue: &wgpu::Queue,
     sink: &mut WidgetSink<'_>,
 ) {
-    let chevron_color = if !spec.enabled {
+    let chevron_color = if !spec.enabled() {
         theme.tokens.text_muted
-    } else if spec.focused {
+    } else if spec.focused() {
         theme.tokens.accent_primary
     } else {
         theme.tokens.text_muted
     };
     let chevron_color = ensure_readable(chevron_color, theme.tokens.surface_2, MIN_TEXT_CONTRAST);
     let value_color = ensure_readable(
-        if spec.enabled {
+        if spec.enabled() {
             theme.tokens.text_primary
         } else {
             theme.tokens.text_muted
@@ -315,13 +315,19 @@ fn draw_cycle(
         );
     };
 
-    put("‹", spec.control_rect.x, chevron_color, spec.focused, sink);
+    put(
+        "‹",
+        spec.control_rect.x,
+        chevron_color,
+        spec.focused(),
+        sink,
+    );
     // The value sits between the two chevrons, each one cell wide plus a gap.
     let value_x = spec.control_rect.x + theme.cell_w * 2.0;
     let value_w = (right_x - value_x - theme.cell_w).max(0.0);
     let text = truncate_to_width(value, value_w, theme.cell_w);
-    put(&text, value_x, value_color, spec.focused, sink);
-    put("›", right_x, chevron_color, spec.focused, sink);
+    put(&text, value_x, value_color, spec.focused(), sink);
+    put("›", right_x, chevron_color, spec.focused(), sink);
 }
 
 /// Track + filled portion + thumb, with the formatted value to the right.
@@ -349,7 +355,7 @@ fn draw_slider(
         spec.control_rect.x + track_w + theme.cell_w,
         text_baseline(spec.rect, theme),
         color,
-        spec.focused,
+        spec.focused(),
         theme.sw,
         theme.sh,
         theme.cell_w,
@@ -386,7 +392,7 @@ fn draw_slider_track(
     let track_y = spec.control_rect.y + (spec.control_rect.h - track_h) * 0.5;
     let radius = track_h * 0.5;
 
-    let (rail, fill, thumb) = if spec.enabled {
+    let (rail, fill, thumb) = if spec.enabled() {
         (
             theme.tokens.surface_3,
             theme.tokens.accent_primary,
@@ -491,7 +497,7 @@ fn draw_text_field(
         value.to_string()
     };
     let color = ensure_readable(
-        if spec.enabled {
+        if spec.enabled() {
             theme.tokens.text_primary
         } else {
             theme.tokens.text_muted
@@ -528,7 +534,7 @@ fn draw_swatch(
     sink: &mut WidgetSink<'_>,
 ) {
     let r = theme.metrics.radius.control;
-    if spec.focused {
+    if spec.focused() {
         draw_focus_ring(spec.control_rect, theme, sink);
     } else if selected {
         let t = FOCUS_RING_PX;
@@ -567,7 +573,7 @@ fn text_baseline(rect: WidgetRect, theme: &WidgetTheme<'_>) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::renderer::overlay::widgets::spec::{WidgetId, WidgetRect};
+    use crate::renderer::overlay::widgets::spec::{WidgetDesc, WidgetId, WidgetRect};
 
     fn theme_fixture() -> (nexterm_config::DesignTokens, nexterm_config::MetricTokens) {
         (
@@ -577,13 +583,18 @@ mod tests {
     }
 
     fn spec_at(kind: WidgetKind) -> WidgetSpec {
-        WidgetSpec::new(
-            WidgetId::new(1, 0),
-            kind,
-            "label",
+        WidgetDesc::new(WidgetId::new(1, 0), kind, "label").place(
             WidgetRect::new(0.0, 0.0, 400.0, 24.0),
             WidgetRect::new(200.0, 0.0, 200.0, 24.0),
         )
+    }
+
+    /// Focus is part of the semantics, so it is set on the desc.
+    fn focused(spec: WidgetSpec) -> WidgetSpec {
+        WidgetSpec {
+            desc: spec.desc.focused(true),
+            ..spec
+        }
     }
 
     /// Count only the background quads: they are produced without touching
@@ -618,7 +629,7 @@ mod tests {
 
     #[test]
     fn focus_and_hover_each_paint_one_row_fill() {
-        let focused = spec_at(WidgetKind::Toggle { on: false }).focused(true);
+        let focused = focused(spec_at(WidgetKind::Toggle { on: false }));
         assert_eq!(bg_quads(|t, s| draw_row_background(&focused, t, s)), 1);
         let hovered = spec_at(WidgetKind::Toggle { on: false }).hovered(true);
         assert_eq!(bg_quads(|t, s| draw_row_background(&hovered, t, s)), 1);
@@ -703,7 +714,7 @@ mod tests {
             bg_quads(|t, s| draw_swatch(&plain, [1.0; 4], true, t, s)),
             2
         );
-        let focused = plain.clone().focused(true);
+        let focused = focused(plain.clone());
         assert_eq!(
             bg_quads(|t, s| draw_swatch(&focused, [1.0; 4], true, t, s)),
             3,
@@ -713,7 +724,7 @@ mod tests {
 
     #[test]
     fn a_collapsed_widget_paints_nothing() {
-        let mut spec = spec_at(WidgetKind::Toggle { on: true }).focused(true);
+        let mut spec = focused(spec_at(WidgetKind::Toggle { on: true }));
         spec.rect = WidgetRect::new(0.0, 0.0, 400.0, 0.0);
         let n = bg_quads(|t, s| draw_row_background(&spec, t, s));
         assert_eq!(n, 1, "draw_row_background itself does not gate on size");

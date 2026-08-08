@@ -11,15 +11,14 @@
 //! |---|---|
 //! | Visuals | [`draw::draw_widget`] |
 //! | Mouse routing | [`spec::hit_test`] |
-//! | Keyboard focus | [`spec::next_focusable`] / [`spec::prev_focusable`] |
-//! | AccessKit | consumes `WidgetSpec::label` / `value_text` (wired up next) |
+//! | AccessKit | [`spec::WidgetDesc`] via `accessibility::widget_node` |
 //!
 //! [`tooltip`] is the first component built on top of the layer.
 //!
 //! Migration is deliberately tab-by-tab: a migrated category builds specs,
 //! everything else keeps its bespoke code until its turn comes.
 
-pub(in crate::renderer) mod draw;
-pub(in crate::renderer) mod settings_theme;
-pub(in crate::renderer) mod spec;
-pub(in crate::renderer) mod tooltip;
+pub(crate) mod draw;
+pub(crate) mod settings_theme;
+pub(crate) mod spec;
+pub(crate) mod tooltip;

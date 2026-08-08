@@ -133,8 +133,9 @@ pub const SETTINGS_FONT_FAMILY_ID: NodeId = NodeId(30);
 /// Font category: font size slider.
 pub const SETTINGS_FONT_SIZE_ID: NodeId = NodeId(31);
 
-/// Theme category: color scheme picker.
-pub const SETTINGS_THEME_SCHEME_ID: NodeId = NodeId(32);
+// 32 was `SETTINGS_THEME_SCHEME_ID`, the hand-written Theme colour-scheme
+// node. The Theme category is now described by the widget layer and its nodes
+// live in the `SETTINGS_WIDGET_BASE` range, so 32 is free.
 
 /// Window category: opacity slider.
 pub const SETTINGS_WINDOW_OPACITY_ID: NodeId = NodeId(33);
@@ -224,6 +225,19 @@ pub const WINDOW_MAXIMIZE_BTN_ID: NodeId = NodeId(58);
 pub const WINDOW_CLOSE_BTN_ID: NodeId = NodeId(59);
 
 // 57..99 reserved for future fields.
+
+/// Base NodeId for nodes derived from a `WidgetSpec` (UI/UX v3 P1b).
+///
+/// Occupies the `700M..800M` slot the offset table already reserved for
+/// "future dynamic SettingsField expansion". A widget's node id is
+/// `SETTINGS_WIDGET_BASE + WidgetId::as_u32()`, which packs the category and
+/// index into two bytes — so the range holds every category comfortably.
+pub const SETTINGS_WIDGET_BASE: u64 = 700_000_000;
+
+/// NodeId of a widget-derived settings node.
+pub fn settings_widget_id(id: crate::renderer::overlay::widgets::spec::WidgetId) -> NodeId {
+    NodeId(SETTINGS_WIDGET_BASE + id.as_u32() as u64)
+}
 
 /// Base NodeId for settings panel category tabs.
 ///
@@ -627,7 +641,14 @@ pub enum NodeIdKind {
     /// Settings panel: font size slider.
     SettingsFontSize,
     /// Settings panel: color scheme picker.
-    SettingsThemeScheme,
+    /// A node built from a `WidgetSpec` (UI/UX v3 P1b). `category` is the
+    /// `SettingsCategory::ALL` index, `index` the widget's position in it.
+    SettingsWidget {
+        /// Owning settings category.
+        category: u8,
+        /// Widget index within that category.
+        index: u8,
+    },
     /// Settings panel: opacity slider.
     SettingsWindowOpacity,
     /// Settings panel: language picker.
@@ -713,7 +734,7 @@ pub enum NodeIdKind {
 /// | 26 | `AlertRegion` (Sprint 5-11-5) |
 /// | 27 | `PaneInputBuffer` (Phase 5-11-7) |
 /// | 28..29 | reserved |
-/// | 30..35 | settings fields (FontFamily / FontSize / ThemeScheme / WindowOpacity / StartupLanguage / StartupAutoUpdate) |
+/// | 30..35 | settings fields (FontFamily / FontSize / — / WindowOpacity / StartupLanguage / StartupAutoUpdate); 32 retired with the Theme migration |
 /// | 36..39 | settings fields Phase 5-11-6 #6 (CursorStyle / PaddingX / PaddingY / PresentMode) |
 /// | 40..44 | settings fields Phase 5-11-8 Step 8-2 (SshFieldName / Host / Port / Username / AuthType) |
 /// | 45..49 | settings fields Phase 5-11-8 Step 8-3 (SshAddBtn / SshDeleteBtn / SshDeleteDialog / SshDeleteConfirmBtn / SshDeleteCancelBtn) |
@@ -726,7 +747,7 @@ pub enum NodeIdKind {
 /// | 400M..500M | `ContextItem { idx: id - 400M }` |
 /// | 500M..600M | `QuickSelectItem { idx: id - 500M }` |
 /// | 600M..700M | `SettingsProfileItem { idx: id - 600M }` (Phase 5-11-7) |
-/// | 700M..800M | reserved (future dynamic SettingsField expansion) |
+/// | 700M..800M | `SettingsWidget { category, index }` (UI/UX v3 P1b) |
 /// | 800M..900M | `SettingsSshHostItem { idx: id - 800M }` (Phase 5-11-8 Step 8-1) |
 /// | 900M..1G | `SettingsKeyBindingItem { idx: id - 900M }` (Phase 5-11-9 Sub-phase E) |
 /// | 1G..1G+u32::MAX | `Tab { pane_id: id - 1G }` |
@@ -761,9 +782,19 @@ pub fn decode_node_id(id: NodeId) -> NodeIdKind {
         26 => NodeIdKind::AlertRegion,
         // Phase 5-11-7: terminal input buffer
         27 => NodeIdKind::PaneInputBuffer,
+        700_000_000..=799_999_999 => {
+            match crate::renderer::overlay::widgets::spec::WidgetId::from_u32(
+                (raw - SETTINGS_WIDGET_BASE) as u32,
+            ) {
+                Some(w) => NodeIdKind::SettingsWidget {
+                    category: w.category,
+                    index: w.index,
+                },
+                None => NodeIdKind::Unknown,
+            }
+        }
         30 => NodeIdKind::SettingsFontFamily,
         31 => NodeIdKind::SettingsFontSize,
-        32 => NodeIdKind::SettingsThemeScheme,
         33 => NodeIdKind::SettingsWindowOpacity,
         34 => NodeIdKind::SettingsStartupLanguage,
         35 => NodeIdKind::SettingsStartupAutoUpdate,
@@ -1579,6 +1610,42 @@ fn build_macro_picker_nodes(picker: &MacroPicker) -> (Vec<(NodeId, Node)>, NodeI
 ///
 /// Focus: the editing field while `font_family_editing` is true; for the Window
 /// category, follows `window_field_focus`; otherwise the current category tab.
+/// Convert one widget description into an AccessKit node (UI/UX v3 P1b).
+///
+/// The role is derived from the widget kind, so a control's accessible role
+/// and its on-screen shape can never disagree: both come from `WidgetKind`.
+fn widget_node(desc: &crate::renderer::overlay::widgets::spec::WidgetDesc) -> Node {
+    use crate::renderer::overlay::widgets::spec::WidgetKind;
+
+    let mut node = Node::new(match &desc.kind {
+        WidgetKind::Label => Role::Label,
+        WidgetKind::Toggle { .. } => Role::CheckBox,
+        WidgetKind::Cycle { .. } => Role::ComboBox,
+        WidgetKind::Slider { .. } => Role::Slider,
+        WidgetKind::Text { .. } => Role::TextInput,
+        // A swatch is one choice among the scheme strip, which is what a
+        // radio button models.
+        WidgetKind::Swatch { .. } => Role::RadioButton,
+    });
+    node.set_label(desc.label.clone());
+    if let Some(value) = desc.value_text() {
+        node.set_value(value);
+    }
+    if let Some(hint) = &desc.tooltip {
+        node.set_description(hint.clone());
+    }
+    match &desc.kind {
+        WidgetKind::Toggle { on } => node.set_toggled(if *on {
+            accesskit::Toggled::True
+        } else {
+            accesskit::Toggled::False
+        }),
+        WidgetKind::Swatch { selected: true, .. } => node.set_selected(true),
+        _ => {}
+    }
+    node
+}
+
 fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, NodeId) {
     use crate::settings_panel::{KeyEditMode, SettingsCategory};
 
@@ -1660,12 +1727,16 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
             content_children.push(SETTINGS_FONT_SIZE_ID);
         }
         SettingsCategory::Theme => {
-            let mut scheme = Node::new(Role::ComboBox);
-            scheme.set_label("Color scheme");
-            scheme.set_value(panel.scheme_name());
-            scheme.set_description("Use Left/Right to cycle");
-            nodes.push((SETTINGS_THEME_SCHEME_ID, scheme));
-            content_children.push(SETTINGS_THEME_SCHEME_ID);
+            // UI/UX v3 P1b: built from the same descriptions the renderer and
+            // the hit-test consume, so the tree can no longer drift from what
+            // is on screen. This also exposes the follow-system toggle and the
+            // nine scheme swatches, which the hand-written tree omitted.
+            for desc in crate::renderer::overlay::widgets::settings_theme::theme_widget_descs(panel)
+            {
+                let id = settings_widget_id(desc.id);
+                nodes.push((id, widget_node(&desc)));
+                content_children.push(id);
+            }
         }
         SettingsCategory::Window => {
             // Phase 5-11-6 #6: 5 fields
@@ -2619,14 +2690,26 @@ pub fn dispatch_settings_action(
             true
         }
 
-        // ===== Theme scheme (ComboBox) =====
-        (Action::Click | Action::Increment, NodeIdKind::SettingsThemeScheme) => {
-            panel.next_scheme();
-            true
-        }
-        (Action::Decrement, NodeIdKind::SettingsThemeScheme) => {
-            panel.prev_scheme();
-            true
+        // ===== Widget-layer nodes (UI/UX v3 P1b) =====
+        // Routed back to the same state transition the mouse and keyboard
+        // paths use, so a screen reader and a click never disagree.
+        (
+            Action::Click | Action::Increment | Action::Decrement,
+            NodeIdKind::SettingsWidget { category, index },
+        ) => {
+            use crate::renderer::overlay::widgets::settings_theme::{
+                THEME_CATEGORY, WidgetAction, apply_theme_action,
+            };
+            let widget_action = match action {
+                Action::Increment => WidgetAction::Next,
+                Action::Decrement => WidgetAction::Prev,
+                _ => WidgetAction::Activate,
+            };
+            match *category {
+                THEME_CATEGORY => apply_theme_action(panel, *index, widget_action),
+                // No other category is migrated yet.
+                _ => false,
+            }
         }
 
         // ===== Window opacity (Slider) =====
@@ -3628,10 +3711,17 @@ mod tests {
         assert_eq!(decode_node_id(NodeId(24)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(28)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(29)), NodeIdKind::Unknown);
-        // 700M..899M is reserved for future SettingsField dynamic expansion
-        // (600M..700M was assigned to SettingsProfileItem in Phase 5-11-7;
-        //  900M..1G is SettingsKeyBindingItem in Phase 5-11-9 Sub-phase E).
-        assert_eq!(decode_node_id(NodeId(700_000_000)), NodeIdKind::Unknown);
+        // 700M..800M was reserved for dynamic SettingsField expansion and is
+        // now `SettingsWidget` (UI/UX v3 P1b), so it no longer decodes to
+        // Unknown — except for values carrying bits outside the packed
+        // (category, index) pair, which no `WidgetId` can produce.
+        assert_eq!(
+            decode_node_id(NodeId(700_000_000)),
+            NodeIdKind::SettingsWidget {
+                category: 0,
+                index: 0
+            }
+        );
         assert_eq!(decode_node_id(NodeId(799_999_999)), NodeIdKind::Unknown);
         // The gap between the Tab and Pane ranges (5.3e9..1e10) is also Unknown.
         assert_eq!(decode_node_id(NodeId(7_000_000_000)), NodeIdKind::Unknown);
@@ -3678,8 +3768,11 @@ mod tests {
             NodeIdKind::SettingsFontSize
         );
         assert_eq!(
-            decode_node_id(SETTINGS_THEME_SCHEME_ID),
-            NodeIdKind::SettingsThemeScheme
+            decode_node_id(settings_widget_id(theme_scheme_widget_id())),
+            NodeIdKind::SettingsWidget {
+                category: 2,
+                index: 0
+            }
         );
         assert_eq!(
             decode_node_id(SETTINGS_WINDOW_OPACITY_ID),
@@ -3775,7 +3868,7 @@ mod tests {
         let ids: Vec<u64> = update.nodes.iter().map(|(id, _)| id.0).collect();
         assert!(ids.contains(&SETTINGS_WINDOW_OPACITY_ID.0));
         assert!(
-            !ids.contains(&SETTINGS_THEME_SCHEME_ID.0),
+            !ids.contains(&settings_widget_id(theme_scheme_widget_id()).0),
             "Theme field must not appear in the Window category"
         );
     }
@@ -3800,7 +3893,7 @@ mod tests {
             assert!(ids.contains(&SETTINGS_CONTENT_ID.0));
             // Detail fields are not present.
             assert!(!ids.contains(&SETTINGS_FONT_FAMILY_ID.0));
-            assert!(!ids.contains(&SETTINGS_THEME_SCHEME_ID.0));
+            assert!(!ids.contains(&settings_widget_id(theme_scheme_widget_id()).0));
             assert!(!ids.contains(&SETTINGS_WINDOW_OPACITY_ID.0));
         }
     }
@@ -4025,35 +4118,105 @@ mod tests {
         assert!((panel.font_size - 14.0).abs() < f32::EPSILON);
     }
 
-    /// Click / Increment on SettingsThemeScheme behave like next_scheme (advance by 1).
+    /// Click / Increment on the Theme scheme cycler advance by 1 (UI/UX v3 P1b:
+    /// the node is now widget-derived, but the behaviour is unchanged).
     #[test]
     fn dispatch_settings_theme_scheme_click_advances() {
         let mut panel = SettingsPanel::default();
         panel.scheme_index = 0;
+        let kind = NodeIdKind::SettingsWidget {
+            category: 2,
+            index: 0,
+        };
 
-        dispatch_settings_action(
-            &mut panel,
-            Action::Click,
-            &NodeIdKind::SettingsThemeScheme,
-            None,
-        );
+        dispatch_settings_action(&mut panel, Action::Click, &kind, None);
         assert_eq!(panel.scheme_index, 1, "Click selects next scheme");
 
-        dispatch_settings_action(
-            &mut panel,
-            Action::Increment,
-            &NodeIdKind::SettingsThemeScheme,
-            None,
-        );
+        dispatch_settings_action(&mut panel, Action::Increment, &kind, None);
         assert_eq!(panel.scheme_index, 2, "Increment selects next scheme");
 
-        dispatch_settings_action(
-            &mut panel,
-            Action::Decrement,
-            &NodeIdKind::SettingsThemeScheme,
-            None,
-        );
+        dispatch_settings_action(&mut panel, Action::Decrement, &kind, None);
         assert_eq!(panel.scheme_index, 1, "Decrement selects previous scheme");
+    }
+
+    /// Helper: the WidgetId of the Theme colour-scheme cycler.
+    fn theme_scheme_widget_id() -> crate::renderer::overlay::widgets::spec::WidgetId {
+        use crate::renderer::overlay::widgets::settings_theme::{THEME_CATEGORY, THEME_SCHEME};
+        crate::renderer::overlay::widgets::spec::WidgetId::new(THEME_CATEGORY, THEME_SCHEME)
+    }
+
+    /// The Theme category exposes every control the renderer draws, not just
+    /// the colour-scheme cycler the hand-written tree used to carry.
+    #[test]
+    fn settings_panel_theme_exposes_every_widget() {
+        use crate::settings_panel::SettingsCategory;
+
+        let mut state = ClientState::new(80, 24, 1000);
+        state.settings_panel.is_open = true;
+        state.settings_panel.category = SettingsCategory::Theme;
+        let update = build_tree_from_state(&state);
+        let ids: Vec<u64> = update.nodes.iter().map(|(id, _)| id.0).collect();
+
+        let descs = crate::renderer::overlay::widgets::settings_theme::theme_widget_descs(
+            &state.settings_panel,
+        );
+        assert_eq!(descs.len(), 11, "2 rows + 9 swatches");
+        for desc in &descs {
+            assert!(
+                ids.contains(&settings_widget_id(desc.id).0),
+                "widget {:?} missing from the tree",
+                desc.id
+            );
+        }
+    }
+
+    /// A screen reader can flip the follow-system toggle and pick a swatch —
+    /// neither was reachable before the migration.
+    #[test]
+    fn dispatch_settings_theme_toggle_and_swatch() {
+        use crate::renderer::overlay::widgets::settings_theme::{
+            THEME_CATEGORY, THEME_FOLLOW_SYSTEM, THEME_SWATCH_BASE,
+        };
+
+        let mut panel = SettingsPanel::default();
+        let before = panel.colors_follow_system;
+        assert!(dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &NodeIdKind::SettingsWidget {
+                category: THEME_CATEGORY,
+                index: THEME_FOLLOW_SYSTEM,
+            },
+            None,
+        ));
+        assert_eq!(panel.colors_follow_system, !before);
+
+        assert!(dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &NodeIdKind::SettingsWidget {
+                category: THEME_CATEGORY,
+                index: THEME_SWATCH_BASE + 4,
+            },
+            None,
+        ));
+        assert_eq!(panel.scheme_index, 4, "a swatch is selected, not stepped");
+    }
+
+    /// An action aimed at a category that has not been migrated is refused
+    /// rather than silently applied to the Theme tab.
+    #[test]
+    fn dispatch_settings_widget_ignores_unmigrated_categories() {
+        let mut panel = SettingsPanel::default();
+        assert!(!dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &NodeIdKind::SettingsWidget {
+                category: 3,
+                index: 0,
+            },
+            None,
+        ));
     }
 
     /// SetValue on SettingsWindowOpacity applies 0.05-unit rounding and clamping to 0.1..=1.0.
@@ -5741,11 +5904,26 @@ mod tests {
         );
     }
 
-    /// Reserved range 700M..800M remains Unknown. (900M..1G is now assigned to
-    /// SettingsKeyBindingItem in Phase 5-11-9 Sub-phase E.)
+    /// The 700M..800M range now carries `SettingsWidget` ids (UI/UX v3 P1b).
+    /// Only the sub-range a `WidgetId` can actually encode decodes to a
+    /// widget; the rest of the block stays Unknown, so a stray id in there is
+    /// still rejected rather than aliased onto a real control.
     #[test]
-    fn settings_ssh_host_offset_reserved_ranges_are_unknown() {
-        assert_eq!(decode_node_id(NodeId(700_000_000)), NodeIdKind::Unknown);
+    fn settings_widget_range_decodes_only_encodable_ids() {
+        use crate::renderer::overlay::widgets::spec::WidgetId;
+
+        for (category, index) in [(0u8, 0u8), (2, 0), (2, 18), (255, 255)] {
+            let id = WidgetId::new(category, index);
+            assert_eq!(
+                decode_node_id(settings_widget_id(id)),
+                NodeIdKind::SettingsWidget { category, index }
+            );
+        }
+        // Above the two packed bytes: not producible by `as_u32`.
+        assert_eq!(
+            decode_node_id(NodeId(SETTINGS_WIDGET_BASE + 0x1_0000)),
+            NodeIdKind::Unknown
+        );
         assert_eq!(decode_node_id(NodeId(799_999_999)), NodeIdKind::Unknown);
     }
 

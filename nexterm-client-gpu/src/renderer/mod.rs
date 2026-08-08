@@ -34,7 +34,7 @@ use crate::state::{ContextMenu, CopyModeState, SearchState};
 // ---- Vertex-builder submodules (Sprint 2-1 Phase A) ----
 // Sprint 5-4 / A2: overlay_verts.rs (1,958 lines) was further split into the overlay/ subdirectory.
 mod grid_verts;
-mod overlay;
+pub(crate) mod overlay;
 mod ui_verts;
 
 // ---- Runtime submodules (Sprint 2-1 Phase B/C) ----

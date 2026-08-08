@@ -18,9 +18,10 @@ mod key_hint;
 mod picker;
 mod settings;
 mod util;
-// `pub(in crate::renderer)` so `event_handler` can hit-test against the same
-// widget specs the renderer draws, instead of recomputing the geometry.
-pub(in crate::renderer) mod widgets;
+// `pub(crate)` so `event_handler` can hit-test against the same widget specs
+// the renderer draws, and `accessibility` can build its tree from the same
+// semantics — instead of either recomputing them.
+pub(crate) mod widgets;
 
 // Phase B1: `render_frame.rs` needs this to apply the settings panel's
 // measured content height back onto `SettingsPanel::scroll` and to scissor

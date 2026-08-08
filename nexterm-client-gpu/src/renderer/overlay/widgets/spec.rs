@@ -10,15 +10,15 @@
 //! Readers:
 //! 1. [`super::draw::draw_widget`] — visuals.
 //! 2. [`hit_test`] — mouse routing.
-//! 3. The AccessKit tree builder — wired up in a follow-up, from the same
-//!    label / kind / focus data the other two already read.
+//! 3. The AccessKit tree builder, via [`WidgetDesc`] — the semantic half,
+//!    which carries no geometry because a screen reader needs none.
 //!
 //! Everything in this file is pure: no GPU handles, no font state. That keeps
 //! layout and hit-testing fully unit-testable.
 
 /// An axis-aligned rectangle in physical pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub(in crate::renderer) struct WidgetRect {
+pub(crate) struct WidgetRect {
     /// Left edge.
     pub x: f32,
     /// Top edge.
@@ -62,7 +62,7 @@ impl WidgetRect {
 /// lets focus survive a re-layout — and what will let the seven per-tab
 /// focus counters collapse into a single `focused_widget_id`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(in crate::renderer) struct WidgetId {
+pub(crate) struct WidgetId {
     /// Owning settings category.
     pub category: u8,
     /// Position within the category.
@@ -73,6 +73,24 @@ impl WidgetId {
     /// Build an id.
     pub fn new(category: u8, index: u8) -> Self {
         Self { category, index }
+    }
+
+    /// Flatten to a single integer, used as the AccessKit `NodeId` offset.
+    ///
+    /// Injective, so two widgets can never collide on one node id.
+    pub fn as_u32(&self) -> u32 {
+        ((self.category as u32) << 8) | self.index as u32
+    }
+
+    /// Inverse of [`Self::as_u32`].
+    ///
+    /// Returns `None` when the value carries bits outside the two packed
+    /// bytes, i.e. it was never produced by `as_u32`.
+    pub fn from_u32(raw: u32) -> Option<Self> {
+        if raw > 0xFFFF {
+            return None;
+        }
+        Some(Self::new((raw >> 8) as u8, (raw & 0xFF) as u8))
     }
 }
 
@@ -88,7 +106,7 @@ impl WidgetId {
 /// Window tab migrates.
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
-pub(in crate::renderer) enum WidgetKind {
+pub(crate) enum WidgetKind {
     /// Non-interactive text row (section headers, notes).
     Label,
     /// Boolean, drawn as a Fluent pill switch.
@@ -131,46 +149,37 @@ impl WidgetKind {
     }
 }
 
-/// One control, fully described for this frame.
+/// A control's semantics, independent of where it is drawn.
+///
+/// This is what the AccessKit tree builder consumes: a screen reader needs
+/// identity, role, label, value and state — never pixels. [`WidgetSpec`] is
+/// this plus the layout for one frame, so the two can never describe
+/// different sets of controls.
 #[derive(Debug, Clone, PartialEq)]
-pub(in crate::renderer) struct WidgetSpec {
+pub(crate) struct WidgetDesc {
     /// Stable identity.
     pub id: WidgetId,
     /// Kind and current value.
     pub kind: WidgetKind,
-    /// Localised label shown in the left column.
+    /// Localised label shown in the left column and announced by a reader.
     pub label: String,
-    /// Full row rectangle — the focus highlight and the hit region.
-    pub rect: WidgetRect,
-    /// The interactive control itself, inside `rect`.
-    pub control_rect: WidgetRect,
     /// Whether keyboard focus is on this widget.
     pub focused: bool,
-    /// Whether the pointer is over this widget.
-    pub hovered: bool,
     /// Whether the widget accepts input right now.
     pub enabled: bool,
-    /// Optional tooltip text, shown after a hover dwell.
+    /// Optional hint, shown as a tooltip and announced as a description.
     pub tooltip: Option<String>,
 }
 
-impl WidgetSpec {
-    /// Build a spec with the common defaults (enabled, unfocused, no tooltip).
-    pub fn new(
-        id: WidgetId,
-        kind: WidgetKind,
-        label: impl Into<String>,
-        rect: WidgetRect,
-        control_rect: WidgetRect,
-    ) -> Self {
+impl WidgetDesc {
+    /// Describe a widget with the common defaults (enabled, unfocused, no
+    /// tooltip).
+    pub fn new(id: WidgetId, kind: WidgetKind, label: impl Into<String>) -> Self {
         Self {
             id,
             kind,
             label: label.into(),
-            rect,
-            control_rect,
             focused: false,
-            hovered: false,
             enabled: true,
             tooltip: None,
         }
@@ -182,15 +191,81 @@ impl WidgetSpec {
         self
     }
 
-    /// Mark the widget hovered.
-    pub fn hovered(mut self, hovered: bool) -> Self {
-        self.hovered = hovered;
+    /// Attach a hint.
+    pub fn tooltip(mut self, text: impl Into<String>) -> Self {
+        self.tooltip = Some(text.into());
         self
     }
 
-    /// Attach a tooltip.
-    pub fn tooltip(mut self, text: impl Into<String>) -> Self {
-        self.tooltip = Some(text.into());
+    /// The current value as a plain string, for readers and for search.
+    ///
+    /// Returns `None` for kinds that carry no value of their own.
+    pub fn value_text(&self) -> Option<String> {
+        match &self.kind {
+            WidgetKind::Label => None,
+            WidgetKind::Toggle { on } => Some(if *on { "on" } else { "off" }.to_string()),
+            WidgetKind::Cycle { value } => Some(value.clone()),
+            WidgetKind::Slider { display, .. } => Some(display.clone()),
+            WidgetKind::Text { value, .. } => Some(value.clone()),
+            WidgetKind::Swatch { selected, .. } => Some(
+                if *selected {
+                    "selected"
+                } else {
+                    "not selected"
+                }
+                .to_string(),
+            ),
+        }
+    }
+
+    /// Place this widget for one frame.
+    pub fn place(self, rect: WidgetRect, control_rect: WidgetRect) -> WidgetSpec {
+        WidgetSpec {
+            desc: self,
+            rect,
+            control_rect,
+            hovered: false,
+        }
+    }
+}
+
+/// One control, fully described for this frame: semantics plus layout.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct WidgetSpec {
+    /// Identity, role, label and state.
+    pub desc: WidgetDesc,
+    /// Full row rectangle — the focus highlight and the hit region.
+    pub rect: WidgetRect,
+    /// The interactive control itself, inside `rect`.
+    pub control_rect: WidgetRect,
+    /// Whether the pointer is over this widget.
+    pub hovered: bool,
+}
+
+impl WidgetSpec {
+    /// Stable identity.
+    pub fn id(&self) -> WidgetId {
+        self.desc.id
+    }
+
+    /// Kind and current value.
+    pub fn kind(&self) -> &WidgetKind {
+        &self.desc.kind
+    }
+
+    /// Whether keyboard focus is on this widget.
+    pub fn focused(&self) -> bool {
+        self.desc.focused
+    }
+
+    /// Whether the widget accepts input right now.
+    pub fn enabled(&self) -> bool {
+        self.desc.enabled
+    }
+
+    /// Mark the widget hovered.
+    pub fn hovered(mut self, hovered: bool) -> Self {
+        self.hovered = hovered;
         self
     }
 }
@@ -200,12 +275,12 @@ impl WidgetSpec {
 /// Disabled and non-interactive widgets are skipped so a section header can
 /// never steal a click from the row beneath it. Later specs win on overlap,
 /// matching painter's order: a swatch drawn on top of its row is hit first.
-pub(in crate::renderer) fn hit_test(specs: &[WidgetSpec], px: f32, py: f32) -> Option<WidgetId> {
+pub(crate) fn hit_test(specs: &[WidgetSpec], px: f32, py: f32) -> Option<WidgetId> {
     specs
         .iter()
         .rev()
-        .find(|s| s.enabled && s.kind.is_interactive() && s.rect.contains(px, py))
-        .map(|s| s.id)
+        .find(|s| s.enabled() && s.kind().is_interactive() && s.rect.contains(px, py))
+        .map(|s| s.id())
 }
 
 #[cfg(test)]
@@ -213,10 +288,7 @@ mod tests {
     use super::*;
 
     fn row(index: u8, kind: WidgetKind, y: f32) -> WidgetSpec {
-        WidgetSpec::new(
-            WidgetId::new(1, index),
-            kind,
-            format!("row {index}"),
+        WidgetDesc::new(WidgetId::new(1, index), kind, format!("row {index}")).place(
             WidgetRect::new(0.0, y, 200.0, 20.0),
             WidgetRect::new(100.0, y, 100.0, 20.0),
         )
@@ -276,7 +348,7 @@ mod tests {
     #[test]
     fn hit_test_skips_labels_and_disabled_widgets() {
         let mut specs = vec![row(0, WidgetKind::Label, 0.0), toggle(1, 20.0)];
-        specs[1].enabled = false;
+        specs[1].desc.enabled = false;
         assert_eq!(hit_test(&specs, 50.0, 5.0), None);
         assert_eq!(hit_test(&specs, 50.0, 25.0), None);
     }
@@ -300,9 +372,18 @@ mod tests {
 
     #[test]
     fn builder_methods_set_the_interaction_flags() {
-        let w = toggle(0, 0.0).focused(true).hovered(true).tooltip("hint");
-        assert!(w.focused);
+        let desc = WidgetDesc::new(
+            WidgetId::new(1, 0),
+            WidgetKind::Toggle { on: false },
+            "row 0",
+        )
+        .focused(true)
+        .tooltip("hint");
+        let w = desc
+            .place(WidgetRect::default(), WidgetRect::default())
+            .hovered(true);
+        assert!(w.focused());
         assert!(w.hovered);
-        assert_eq!(w.tooltip.as_deref(), Some("hint"));
+        assert_eq!(w.desc.tooltip.as_deref(), Some("hint"));
     }
 }

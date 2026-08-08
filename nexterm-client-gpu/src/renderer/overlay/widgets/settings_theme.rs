@@ -1,27 +1,28 @@
 //! Widget specs for the Theme settings category — the first tab migrated
 //! onto the shared widget layer (UI/UX v3 phase P1b).
 //!
-//! This is the single definition of the Theme tab's geometry. The renderer
+//! This is the single definition of the Theme tab. [`theme_widget_descs`] is
+//! the semantic list the AccessKit tree is built from;
+//! [`build_theme_widgets`] is that list plus geometry, shared by the renderer
 //! (`overlay/settings/theme_tab.rs`) and the mouse hit-test
-//! (`event_handler/settings_panel_hit.rs`) both call [`build_theme_widgets`],
-//! so the "keep both in sync" comment the old hit-test carried is gone: there
-//! is only one copy to keep.
+//! (`event_handler/settings_panel_hit.rs`). The "keep both in sync" comment
+//! the old hit-test carried is gone: there is only one copy to keep.
 //!
 //! Later tabs get sibling modules here as they are migrated.
 
 use crate::settings_panel::SettingsPanel;
 
-use super::spec::{WidgetId, WidgetKind, WidgetRect, WidgetSpec};
+use super::spec::{WidgetDesc, WidgetId, WidgetKind, WidgetRect, WidgetSpec};
 
 /// `SettingsCategory::ALL` index of the Theme category.
-pub(in crate::renderer) const THEME_CATEGORY: u8 = 2;
+pub(crate) const THEME_CATEGORY: u8 = 2;
 /// Widget index of the color-scheme cycler.
-pub(in crate::renderer) const THEME_SCHEME: u8 = 0;
+pub(crate) const THEME_SCHEME: u8 = 0;
 /// Widget index of the "follow system theme" toggle.
-pub(in crate::renderer) const THEME_FOLLOW_SYSTEM: u8 = 1;
+pub(crate) const THEME_FOLLOW_SYSTEM: u8 = 1;
 /// First widget index of the nine color-scheme swatches. The gap above the
 /// row indices leaves room for future rows without renumbering the swatches.
-pub(in crate::renderer) const THEME_SWATCH_BASE: u8 = 10;
+pub(crate) const THEME_SWATCH_BASE: u8 = 10;
 
 /// The nine built-in schemes previewed as swatches, with the representative
 /// background color drawn in each chip.
@@ -38,7 +39,7 @@ const SWATCHES: [(&str, [f32; 4]); 9] = [
 ];
 
 /// Display names of the swatches, in the same order as [`SWATCHES`].
-pub(in crate::renderer) fn swatch_names() -> [&'static str; 9] {
+pub(crate) fn swatch_names() -> [&'static str; 9] {
     let mut out = [""; 9];
     for (i, (name, _)) in SWATCHES.iter().enumerate() {
         out[i] = name;
@@ -48,7 +49,7 @@ pub(in crate::renderer) fn swatch_names() -> [&'static str; 9] {
 
 /// The panel geometry a tab needs to lay its widgets out, in physical pixels.
 #[derive(Debug, Clone, Copy)]
-pub(in crate::renderer) struct TabGeometry {
+pub(crate) struct TabGeometry {
     /// Top of the category content area.
     pub content_top: f32,
     /// Left edge of the content area's inner padding.
@@ -75,7 +76,7 @@ fn scheme_row_y(g: &TabGeometry) -> f32 {
 }
 
 /// Y position of the swatch strip.
-pub(in crate::renderer) fn swatch_y(g: &TabGeometry) -> f32 {
+pub(crate) fn swatch_y(g: &TabGeometry) -> f32 {
     g.content_top + g.cell_h * 2.5
 }
 
@@ -85,7 +86,7 @@ fn follow_row_y(g: &TabGeometry) -> f32 {
 }
 
 /// Horizontal pitch between swatches.
-pub(in crate::renderer) fn swatch_gap(g: &TabGeometry) -> f32 {
+pub(crate) fn swatch_gap(g: &TabGeometry) -> f32 {
     (g.content_w - g.cell_w * 2.0) / SWATCHES.len() as f32
 }
 
@@ -99,87 +100,52 @@ fn row_rect(g: &TabGeometry, text_y: f32) -> WidgetRect {
     )
 }
 
-/// Build every widget of the Theme tab for this frame.
+/// Describe every control of the Theme tab, without laying it out.
+///
+/// This is the tab's single semantic definition: the AccessKit tree builder
+/// consumes it directly, and [`build_theme_widgets`] is this list plus
+/// geometry.
 ///
 /// Order matters: the swatches come last so they win the hit-test where they
 /// overlap their surrounding row (see `spec::hit_test`).
-pub(in crate::renderer) fn build_theme_widgets(
-    sp: &SettingsPanel,
-    g: &TabGeometry,
-) -> Vec<WidgetSpec> {
-    let layout = super::super::settings::layout::compute_row_layout(g.content_w, g.cell_w);
+pub(crate) fn theme_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
     let focus = sp.theme_field_focus;
-    // The pointer is over at most one widget of this category.
-    let hovered = sp
-        .hover_widget
-        .filter(|h| h.category == THEME_CATEGORY)
-        .map(|h| h.index);
     let mut out = Vec::with_capacity(SWATCHES.len() + 2);
 
-    // Row 0 — color-scheme cycler.
-    let y = scheme_row_y(g);
-    let rect = row_rect(g, y);
     out.push(
-        WidgetSpec::new(
+        WidgetDesc::new(
             WidgetId::new(THEME_CATEGORY, THEME_SCHEME),
             WidgetKind::Cycle {
                 value: sp.scheme_name().to_string(),
             },
             nexterm_i18n::fl!("settings-theme-label"),
-            rect,
-            WidgetRect::new(
-                g.content_inner_x + layout.control_x_off,
-                rect.y,
-                layout.control_w,
-                rect.h,
-            ),
         )
         .focused(focus == THEME_SCHEME)
-        .hovered(hovered == Some(THEME_SCHEME))
         .tooltip(nexterm_i18n::fl!("settings-theme-tip")),
     );
 
-    // Row 1 — follow-system toggle.
-    let y = follow_row_y(g);
-    let rect = row_rect(g, y);
     out.push(
-        WidgetSpec::new(
+        WidgetDesc::new(
             WidgetId::new(THEME_CATEGORY, THEME_FOLLOW_SYSTEM),
             WidgetKind::Toggle {
                 on: sp.colors_follow_system,
             },
             nexterm_i18n::fl!("settings-theme-follow-system-label"),
-            rect,
-            WidgetRect::new(
-                g.content_inner_x + layout.control_x_off,
-                rect.y,
-                layout.control_w,
-                rect.h,
-            ),
         )
         .focused(focus == THEME_FOLLOW_SYSTEM)
-        .hovered(hovered == Some(THEME_FOLLOW_SYSTEM))
         .tooltip(nexterm_i18n::fl!("settings-theme-follow-system-tip")),
     );
 
-    // Swatches — drawn (and hit-tested) on top of the strip.
-    let dot_y = swatch_y(g);
-    let gap = swatch_gap(g);
-    let dot_w = g.cell_w * 1.2;
     for (i, (name, color)) in SWATCHES.iter().enumerate() {
-        let dot = WidgetRect::new(g.content_inner_x + i as f32 * gap, dot_y, dot_w, g.cell_h);
         out.push(
-            WidgetSpec::new(
+            WidgetDesc::new(
                 WidgetId::new(THEME_CATEGORY, THEME_SWATCH_BASE + i as u8),
                 WidgetKind::Swatch {
                     color: *color,
                     selected: sp.scheme_index == i,
                 },
                 *name,
-                dot,
-                dot,
             )
-            .hovered(hovered == Some(THEME_SWATCH_BASE + i as u8))
             .tooltip(*name),
         );
     }
@@ -187,8 +153,94 @@ pub(in crate::renderer) fn build_theme_widgets(
     out
 }
 
+/// Lay the Theme tab out for this frame.
+pub(crate) fn build_theme_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<WidgetSpec> {
+    let layout = super::super::settings::layout::compute_row_layout(g.content_w, g.cell_w);
+    // The pointer is over at most one widget of this category.
+    let hovered = sp
+        .hover_widget
+        .filter(|h| h.category == THEME_CATEGORY)
+        .map(|h| h.index);
+
+    let row = |text_y: f32| {
+        let rect = row_rect(g, text_y);
+        let control = WidgetRect::new(
+            g.content_inner_x + layout.control_x_off,
+            rect.y,
+            layout.control_w,
+            rect.h,
+        );
+        (rect, control)
+    };
+    let dot_y = swatch_y(g);
+    let gap = swatch_gap(g);
+    let dot_w = g.cell_w * 1.2;
+
+    theme_widget_descs(sp)
+        .into_iter()
+        .map(|desc| {
+            let index = desc.id.index;
+            let (rect, control) = if let Some(i) = swatch_index_of(desc.id) {
+                let dot =
+                    WidgetRect::new(g.content_inner_x + i as f32 * gap, dot_y, dot_w, g.cell_h);
+                (dot, dot)
+            } else if index == THEME_FOLLOW_SYSTEM {
+                row(follow_row_y(g))
+            } else {
+                row(scheme_row_y(g))
+            };
+            desc.place(rect, control).hovered(hovered == Some(index))
+        })
+        .collect()
+}
+
+/// What an accessibility client asked to do to a control.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WidgetAction {
+    /// Default action (AccessKit `Click`): flip a toggle, pick a swatch,
+    /// advance a cycler.
+    Activate,
+    /// Step forward (AccessKit `Increment`).
+    Next,
+    /// Step backward (AccessKit `Decrement`).
+    Prev,
+}
+
+/// Apply `action` to the Theme widget at `index`.
+///
+/// Returns whether anything changed, matching the convention
+/// `dispatch_settings_action` uses. This is the same state transition the
+/// mouse and keyboard paths perform, so a screen reader and a click stay in
+/// agreement.
+pub(crate) fn apply_theme_action(sp: &mut SettingsPanel, index: u8, action: WidgetAction) -> bool {
+    if let Some(i) = swatch_index_of(WidgetId::new(THEME_CATEGORY, index)) {
+        // A swatch is a choice, not a stepper: every action selects it.
+        sp.scheme_index = i;
+        sp.dirty = true;
+        sp.theme_hover_preview = None;
+        return true;
+    }
+    match (index, action) {
+        (THEME_SCHEME, WidgetAction::Activate | WidgetAction::Next) => {
+            sp.next_scheme();
+            true
+        }
+        (THEME_SCHEME, WidgetAction::Prev) => {
+            sp.prev_scheme();
+            true
+        }
+        // A toggle has two states, so stepping either way flips it — the same
+        // behaviour the Left/Right keys already have.
+        (THEME_FOLLOW_SYSTEM, _) => {
+            sp.toggle_colors_follow_system();
+            true
+        }
+        _ => false,
+    }
+}
+
 /// Map a widget index back to the swatch it represents.
-pub(in crate::renderer) fn swatch_index_of(id: WidgetId) -> Option<usize> {
+pub(crate) fn swatch_index_of(id: WidgetId) -> Option<usize> {
     if id.category != THEME_CATEGORY || id.index < THEME_SWATCH_BASE {
         return None;
     }
@@ -220,7 +272,7 @@ mod tests {
         assert_eq!(specs.len(), 11);
         let swatches = specs
             .iter()
-            .filter(|s| matches!(s.kind, WidgetKind::Swatch { .. }))
+            .filter(|s| matches!(s.kind(), WidgetKind::Swatch { .. }))
             .count();
         assert_eq!(swatches, 9);
     }
@@ -228,7 +280,7 @@ mod tests {
     #[test]
     fn every_widget_id_is_unique() {
         let specs = build_theme_widgets(&panel(), &geometry());
-        let ids: std::collections::HashSet<_> = specs.iter().map(|s| s.id).collect();
+        let ids: std::collections::HashSet<_> = specs.iter().map(|s| s.id()).collect();
         assert_eq!(ids.len(), specs.len());
     }
 
@@ -237,9 +289,9 @@ mod tests {
         let mut sp = panel();
         sp.theme_field_focus = THEME_FOLLOW_SYSTEM;
         let specs = build_theme_widgets(&sp, &geometry());
-        let focused: Vec<_> = specs.iter().filter(|s| s.focused).collect();
+        let focused: Vec<_> = specs.iter().filter(|s| s.focused()).collect();
         assert_eq!(focused.len(), 1);
-        assert_eq!(focused[0].id.index, THEME_FOLLOW_SYSTEM);
+        assert_eq!(focused[0].id().index, THEME_FOLLOW_SYSTEM);
     }
 
     #[test]
@@ -249,9 +301,9 @@ mod tests {
         let specs = build_theme_widgets(&sp, &geometry());
         let toggle = specs
             .iter()
-            .find(|s| s.id.index == THEME_FOLLOW_SYSTEM)
+            .find(|s| s.id().index == THEME_FOLLOW_SYSTEM)
             .expect("the follow-system toggle must exist");
-        assert_eq!(toggle.kind, WidgetKind::Toggle { on: true });
+        assert_eq!(*toggle.kind(), WidgetKind::Toggle { on: true });
     }
 
     #[test]
@@ -261,10 +313,10 @@ mod tests {
         let specs = build_theme_widgets(&sp, &geometry());
         let selected: Vec<_> = specs
             .iter()
-            .filter(|s| matches!(s.kind, WidgetKind::Swatch { selected: true, .. }))
+            .filter(|s| matches!(s.kind(), WidgetKind::Swatch { selected: true, .. }))
             .collect();
         assert_eq!(selected.len(), 1);
-        assert_eq!(swatch_index_of(selected[0].id), Some(4));
+        assert_eq!(swatch_index_of(selected[0].id()), Some(4));
     }
 
     #[test]
@@ -277,7 +329,7 @@ mod tests {
         for i in 0..9usize {
             let s = specs
                 .iter()
-                .find(|s| swatch_index_of(s.id) == Some(i))
+                .find(|s| swatch_index_of(s.id()) == Some(i))
                 .expect("swatch present");
             assert!((s.rect.x - (g.content_inner_x + i as f32 * gap)).abs() < 0.001);
             assert!((s.rect.y - (g.content_top + g.cell_h * 2.5)).abs() < 0.001);
@@ -322,9 +374,9 @@ mod tests {
         let specs = build_theme_widgets(&panel(), &g);
         let strip_top = swatch_y(&g);
         let strip_bottom = strip_top + g.cell_h;
-        for s in specs.iter().filter(|s| swatch_index_of(s.id).is_none()) {
+        for s in specs.iter().filter(|s| swatch_index_of(s.id()).is_none()) {
             let overlaps = s.rect.y < strip_bottom && s.rect.y + s.rect.h > strip_top;
-            assert!(!overlaps, "row {:?} overlaps the swatch strip", s.id);
+            assert!(!overlaps, "row {:?} overlaps the swatch strip", s.id());
         }
     }
 

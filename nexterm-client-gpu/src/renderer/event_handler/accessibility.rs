@@ -148,7 +148,7 @@ impl EventHandler {
             NodeIdKind::SettingsTab { .. }
                 | NodeIdKind::SettingsFontFamily
                 | NodeIdKind::SettingsFontSize
-                | NodeIdKind::SettingsThemeScheme
+                | NodeIdKind::SettingsWidget { .. }
                 | NodeIdKind::SettingsWindowOpacity
                 | NodeIdKind::SettingsStartupLanguage
                 | NodeIdKind::SettingsStartupAutoUpdate

@@ -79,7 +79,7 @@ pub(in crate::renderer) fn draw_theme_tab(
         };
         let x = specs
             .iter()
-            .find(|s| swatch_index_of(s.id) == Some(i))
+            .find(|s| swatch_index_of(s.id()) == Some(i))
             .map(|s| s.rect.x)
             .unwrap_or(content_inner_x);
         add_string_verts(
@@ -142,10 +142,10 @@ pub(in crate::renderer) fn draw_theme_tooltip(
         cell_h,
     };
     let specs = build_theme_widgets(sp, &geometry);
-    let Some(spec) = specs.iter().find(|s| s.id.index == dwell.index) else {
+    let Some(spec) = specs.iter().find(|s| s.id().index == dwell.index) else {
         return;
     };
-    let Some(text) = spec.tooltip.as_deref() else {
+    let Some(text) = spec.desc.tooltip.as_deref() else {
         return;
     };
 

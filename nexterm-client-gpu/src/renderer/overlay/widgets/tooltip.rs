@@ -34,7 +34,7 @@ const ELEVATION_TO_OFFSET: f32 = 8.0;
 /// bottom edge, and clamps horizontally so it never leaves the surface. When
 /// the tooltip cannot fit in either direction the below-placement is kept and
 /// clamped, which is still better than drawing off-screen.
-pub(in crate::renderer) fn place_tooltip(
+pub(crate) fn place_tooltip(
     anchor: WidgetRect,
     text: &str,
     cell_w: f32,
@@ -65,7 +65,7 @@ pub(in crate::renderer) fn place_tooltip(
 }
 
 /// Draw a tooltip: shadow, border ring, surface, then the text.
-pub(in crate::renderer) fn draw_tooltip(
+pub(crate) fn draw_tooltip(
     rect: WidgetRect,
     text: &str,
     theme: &WidgetTheme<'_>,
