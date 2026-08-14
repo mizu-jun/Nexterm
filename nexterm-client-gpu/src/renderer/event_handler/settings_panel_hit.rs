@@ -61,6 +61,12 @@ pub(super) enum SettingsPanelHit {
     /// `widgets::settings_ssh::row`). Nothing here was clickable before the
     /// migration. No hit is reported while the delete dialog is open.
     SshRow(u16),
+    /// UI/UX v3 P1c: click on a row inside the Keybindings category — a
+    /// windowed binding entry, the key/action pair, the Add/Delete buttons or
+    /// the leader-key row (see `widgets::settings_keybindings::row`). Nothing
+    /// here was clickable before the migration. No hit is reported while the
+    /// delete dialog is open.
+    KeybindingsRow(u16),
     /// P4 (WT-like UX): the "Open config.toml" link in the footer bar.
     OpenConfigFile,
     /// P2-A (WT-like UX): the "reset category to defaults" link in the
@@ -336,6 +342,15 @@ impl EventHandler {
                 if let Some(id) = crate::renderer::overlay::widgets::spec::hit_test(&specs, cx, cy)
                 {
                     return SettingsPanelHit::SshRow(id.index);
+                }
+            }
+            SettingsCategory::Keybindings if !sp.key_delete_dialog_open => {
+                use crate::renderer::overlay::widgets::settings_keybindings::build_keybindings_widgets;
+
+                let specs = build_keybindings_widgets(sp, &geometry);
+                if let Some(id) = crate::renderer::overlay::widgets::spec::hit_test(&specs, cx, cy)
+                {
+                    return SettingsPanelHit::KeybindingsRow(id.index);
                 }
             }
             _ => {}

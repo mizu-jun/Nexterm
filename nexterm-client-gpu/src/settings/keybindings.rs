@@ -192,15 +192,6 @@ impl SettingsPanel {
         true
     }
 
-    /// Returns `true` when the selected binding's action is in `KEYBINDING_ACTIONS`.
-    /// Used by the renderer / SR layer to flag invalid entries.
-    pub fn selected_key_action_is_valid(&self) -> bool {
-        let Some(kb) = self.keybindings.get(self.selected_key_index) else {
-            return false;
-        };
-        KEYBINDING_ACTIONS.contains(&kb.action.as_str())
-    }
-
     /// Append a fresh key binding with safe defaults and start Record-mode
     /// editing on the key field.
     pub fn add_key_binding(&mut self) {
@@ -514,14 +505,6 @@ mod tests {
         assert!(!panel.next_key_action());
         assert!(!panel.prev_key_action());
         assert!(!panel.dirty);
-    }
-
-    #[test]
-    fn selected_key_action_is_valid_detects_unknown() {
-        let mut panel = panel_with_one_binding();
-        assert!(panel.selected_key_action_is_valid());
-        panel.keybindings[0].action = "BogusAction".to_string();
-        assert!(!panel.selected_key_action_is_valid());
     }
 
     #[test]

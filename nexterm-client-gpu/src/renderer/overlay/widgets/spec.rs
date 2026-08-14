@@ -108,10 +108,8 @@ impl WidgetId {
 /// designing around.
 ///
 /// The enum is deliberately complete rather than grown tab by tab: it is the
-/// vocabulary the whole layer is written against, and `draw_widget` already
-/// paints every arm. `ListItem`, `Button` and `KeyCapture` have no producer
-/// until the list-shaped tabs (Profiles, Ssh, Keybindings) migrate.
-#[allow(dead_code)]
+/// vocabulary the whole layer is written against. Every arm now has both a
+/// producer (some `settings_<tab>.rs`) and a painter in `draw_widget`.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum WidgetKind {
     /// Non-interactive text row (section headers, notes).
@@ -248,6 +246,12 @@ pub(crate) struct WidgetDesc {
     pub focused: bool,
     /// Whether the widget accepts input right now.
     pub enabled: bool,
+    /// Whether the current value fails validation — a configured value outside
+    /// the set the control accepts, e.g. a typo'd keybinding action. The row
+    /// stays interactive (so the value can be corrected) but is drawn in the
+    /// error colour and announced as invalid, which is what makes a bad value
+    /// visible without opening the file it came from.
+    pub invalid: bool,
     /// Whether this row's label matches the active sidebar search query.
     /// Matching rows are drawn in the accent colour so they stand out while
     /// the list is being filtered.
@@ -266,9 +270,16 @@ impl WidgetDesc {
             label: label.into(),
             focused: false,
             enabled: true,
+            invalid: false,
             search_match: false,
             tooltip: None,
         }
+    }
+
+    /// Mark the current value as failing validation.
+    pub fn invalid(mut self, invalid: bool) -> Self {
+        self.invalid = invalid;
+        self
     }
 
     /// Mark the row as matching the active search query.
@@ -393,6 +404,20 @@ mod tests {
 
     fn toggle(index: u16, y: f32) -> WidgetSpec {
         row(index, WidgetKind::Toggle { on: false }, y)
+    }
+
+    #[test]
+    fn a_widget_is_valid_until_marked_otherwise() {
+        let desc = WidgetDesc::new(
+            WidgetId::new(1, 0),
+            WidgetKind::Cycle {
+                value: "known".into(),
+            },
+            "action",
+        );
+        assert!(!desc.invalid);
+        assert!(desc.clone().invalid(true).invalid);
+        assert!(!desc.invalid(false).invalid);
     }
 
     #[test]

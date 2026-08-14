@@ -367,6 +367,7 @@ impl EventHandler {
             // no stale tooltip lingers.
             use crate::renderer::overlay::widgets::settings_blocks::BLOCKS_CATEGORY;
             use crate::renderer::overlay::widgets::settings_font::FONT_CATEGORY;
+            use crate::renderer::overlay::widgets::settings_keybindings::KEYBINDINGS_CATEGORY;
             use crate::renderer::overlay::widgets::settings_profiles::PROFILES_CATEGORY;
             use crate::renderer::overlay::widgets::settings_security::SECURITY_CATEGORY;
             use crate::renderer::overlay::widgets::settings_ssh::SSH_CATEGORY;
@@ -387,6 +388,7 @@ impl EventHandler {
                 SettingsPanelHit::SecurityRow(index) => Some((SECURITY_CATEGORY, index)),
                 SettingsPanelHit::ProfilesRow(index) => Some((PROFILES_CATEGORY, index)),
                 SettingsPanelHit::SshRow(index) => Some((SSH_CATEGORY, index)),
+                SettingsPanelHit::KeybindingsRow(index) => Some((KEYBINDINGS_CATEGORY, index)),
                 _ => None,
             };
             let sp = &mut self.app.state.settings_panel;
@@ -1037,6 +1039,21 @@ impl EventHandler {
                         use crate::renderer::overlay::widgets::action::WidgetAction;
                         use crate::renderer::overlay::widgets::settings_ssh::apply_ssh_action;
                         apply_ssh_action(
+                            &mut self.app.state.settings_panel,
+                            row,
+                            WidgetAction::Activate,
+                        );
+                    }
+                    SettingsPanelHit::KeybindingsRow(row) => {
+                        // UI/UX v3 P1c: nothing on this tab was clickable
+                        // before. An entry click selects it, the key field
+                        // starts Record mode, the action field cycles forward,
+                        // Add appends, Delete opens the confirmation dialog and
+                        // the leader row opens its editor — all through the
+                        // router the screen reader uses.
+                        use crate::renderer::overlay::widgets::action::WidgetAction;
+                        use crate::renderer::overlay::widgets::settings_keybindings::apply_keybindings_action;
+                        apply_keybindings_action(
                             &mut self.app.state.settings_panel,
                             row,
                             WidgetAction::Activate,

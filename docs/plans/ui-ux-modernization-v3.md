@@ -1,7 +1,7 @@
 # UI/UX Modernization v3 — Fluent Design Foundation
 
-Status: approved 2026-07-30; last reconciled 2026-08-08 (P1a/P1b complete,
-P1c 6 tabs of 9 plus the widget-layer foundation for the remaining three).
+Status: approved 2026-07-30; last reconciled 2026-08-15 (P1a/P1b complete,
+P1c complete — all 9 settings tabs are on the widget layer).
 Target releases: v1.17–v1.21+.
 Execution order: P0 → P1 → P2 → {P3, P4, P5 parallelizable} → P6 → P7.
 Source: successor to `plans/archive/ui-ux-modernization-v2.md` and
@@ -327,8 +327,8 @@ gated behind a spike.
 - [x] P1b widget layer + tooltip — `renderer/overlay/widgets/`, with
       `WidgetDesc` (semantics) / `WidgetSpec` (semantics + layout) consumed by
       the renderer, the hit-test and the AccessKit tree
-- [ ] P1c tab migration — **8 of 9 done** (Theme, Window, Font, Startup,
-      Blocks, Security, Profiles, Ssh). Remaining:
+- [x] P1c tab migration — **9 of 9 done** (Theme, Window, Font, Startup,
+      Blocks, Security, Profiles, Ssh, Keybindings). Follow-ups below:
   - [x] Foundation for the list-shaped tabs — `draw.rs` split into `draw/`
         by control family (it was at 779 of the 800-line guideline);
         `WidgetId.index` widened to `u16` so a category can address one widget
@@ -336,9 +336,9 @@ gated behind a spike.
         KeyCapture}` added and `Text` given a real `caret` offset (the old
         renderer appended `_` and ignored `TextInputState.cursor`, which also
         affected the already-migrated Security and Startup fields)
-  - [ ] Ssh / Keybindings / Profiles — the three share one shape: a list, an
+  - [x] Ssh / Keybindings / Profiles — the three share one shape: a list, an
         edit panel for the selected entry, Add/Delete, and a delete dialog.
-        Migrate smallest first (Profiles → Ssh → Keybindings). Profiles
+        Migrated smallest first (Profiles → Ssh → Keybindings). Profiles
         shipped via #56: first `ListItem` consumer, retires the hand-written
         `SettingsProfileItem` AccessKit range, and fixes the latent
         hit-test-vs-scroll offset mismatch for every migrated tab. Ssh
@@ -346,16 +346,23 @@ gated behind a spike.
         AccessKit support, windows the entry list via `list_window`, retires
         the 800M host-item range and fixed ids 40..=46, and heals the
         event-route gap that made the dialog/button dispatch arms
-        unreachable. The delete dialog is a modal over the whole panel, not
-        a settings row, and stays on its existing hand-written AccessKit
-        nodes for now
+        unreachable. Keybindings closes the set: first `KeyCapture` consumer,
+        adds `WidgetDesc.invalid` (a typo'd action stays red and is announced
+        as invalid, which the hand-written renderer did by hand), retires the
+        900M binding-item range and fixed ids 50..=53, gives the leader-key
+        row its first AccessKit node at all, and feeds `leader_key` into the
+        tree-diff hash so an in-flight edit reaches a reader. Each delete
+        dialog is a modal over the whole panel, not a settings row, and stays
+        on its existing hand-written AccessKit nodes for now
   - [x] Bounded list viewport — shipped via #54: the Ssh and Keybindings
         lists window to `MAX_LIST_ROWS` (8) rows around the selection with a
         range-indicator row (`list_window` in `layout.rs`), anchoring the
         edit panel right below the windowed list. Predates the widget layer
         and was kept separate from the list-tab migration on purpose
-  - [ ] Collapse the seven per-tab focus counters into one
-        `focused_widget_id` (blocked on the three list tabs)
+  - [ ] Collapse the per-tab focus counters into one `focused_widget_id` —
+        now unblocked: every category builds widget specs, and the three list
+        tabs already mirror their counter onto the widget indices as the
+        identity
   - [ ] Hard-coded colour migration (G11) — not started; the widget layer
         reads `DesignTokens`, but colours outside it are untouched
 - [ ] CONFIGURATION.md inventory PR
