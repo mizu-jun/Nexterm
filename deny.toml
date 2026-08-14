@@ -60,6 +60,14 @@ ignore = [
     { id = "RUSTSEC-2026-0194", reason = "quick-xml DoS; notify-rust 上流の更新待ち・外部入力をパースしない" },
     { id = "RUSTSEC-2026-0195", reason = "quick-xml DoS; notify-rust 上流の更新待ち・外部入力をパースしない" },
 
+    # lru の `LruCache::pop()` panic 安全性問題 (unsound)。発生条件は「キー型の
+    # Drop 実装が panic する」ことだが、当リポジトリのキーは GlyphKey (char +
+    # bool×3) / LigatureKey (String/usize/u32) — glyph_atlas.rs — で panic しうる
+    # Drop を持たず、ratatui-core 0.1 の内部キャッシュも同様のため経路が存在しない。
+    # 修正版 0.18.2+ は直依存 (0.17.0) には breaking change、ratatui-core 経由の
+    # 0.16.4 は上流更新待ち。月次依存レビューで再評価。
+    { id = "RUSTSEC-2026-0253", reason = "lru pop() panic 安全性; キーに Drop panic 経路なし・0.18.2 更新は月次依存レビューで" },
+
     # RUSTSEC-2025-0141 (bincode 1.x): Sprint 5-1 / G3 で postcard 1.x へ移行済み。
     # ignore エントリは削除済み。
 ]
