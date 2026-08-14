@@ -121,6 +121,7 @@
   "settings-font-hint-slider": "(←/→ per modificare, ↓ per il campo successivo)",
   "settings-font-fallbacks-hint-editing": "(separati da virgole. Invio=conferma  Esc=annulla)",
   "settings-font-fallbacks-hint-idle": "(Invio per modificare, separati da virgole)",
+  "settings-list-window": "Visualizzazione di {from}-{to} su {total}",
   "settings-keybindings-header": "Scorciatoie da tastiera:",
   "settings-keybindings-empty": "Nessuna scorciatoia da tastiera configurata",
   "settings-keybindings-edit-record": "Modifica l'associazione selezionata (Registrazione: premi un tasto, Tab = Testo, Esc = annulla):",

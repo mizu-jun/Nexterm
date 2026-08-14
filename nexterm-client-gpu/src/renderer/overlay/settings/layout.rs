@@ -72,6 +72,72 @@ pub(in crate::renderer) fn compute_row_layout(content_w_px: f32, cell_w: f32) ->
     }
 }
 
+/// Maximum list rows the list-shaped categories (Ssh, Keybindings) draw at
+/// once. Anything longer is windowed around the selection so the edit panel
+/// and the Add/Delete buttons below the list stay reachable no matter how
+/// many entries exist.
+pub(in crate::renderer) const MAX_LIST_ROWS: usize = 8;
+
+/// Vertical pitch of one list row, in character-cell heights. Shared by the
+/// list-shaped categories so [`ListWindow::block_rows`] and the per-row `y`
+/// computations cannot drift apart.
+pub(in crate::renderer) const LIST_ROW_PITCH: f32 = 1.2;
+
+/// The contiguous slice of a settings list to draw: at most `max_rows`
+/// items, positioned so the selected item is always inside the window
+/// (centered where possible, clamped at either end of the list).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::renderer) struct ListWindow {
+    /// Index of the first drawn item.
+    pub first: usize,
+    /// Number of drawn items.
+    pub visible: usize,
+    /// True when the window shows only part of the list; the caller draws a
+    /// range-indicator row right below the last visible item.
+    pub clipped: bool,
+}
+
+impl ListWindow {
+    /// Height of the drawn list block in character-cell heights: the visible
+    /// rows plus the range-indicator row when the list is clipped. An
+    /// unclipped window occupies exactly the pre-windowing
+    /// `len * LIST_ROW_PITCH`, so short lists keep their historical layout.
+    pub(in crate::renderer) fn block_rows(&self) -> f32 {
+        let indicator = if self.clipped { LIST_ROW_PITCH } else { 0.0 };
+        self.visible as f32 * LIST_ROW_PITCH + indicator
+    }
+}
+
+/// Compute the [`ListWindow`] for a `len`-item list with `selected` as the
+/// current selection, drawing at most `max_rows` rows.
+///
+/// An out-of-bounds `selected` is treated as the last item (the drawing code
+/// clamps the same way), and `max_rows == 0` degenerates to an empty window
+/// rather than panicking.
+pub(in crate::renderer) fn list_window(len: usize, selected: usize, max_rows: usize) -> ListWindow {
+    if len <= max_rows {
+        return ListWindow {
+            first: 0,
+            visible: len,
+            clipped: false,
+        };
+    }
+    if max_rows == 0 {
+        return ListWindow {
+            first: 0,
+            visible: 0,
+            clipped: true,
+        };
+    }
+    let sel = selected.min(len - 1);
+    let first = sel.saturating_sub(max_rows / 2).min(len - max_rows);
+    ListWindow {
+        first,
+        visible: max_rows,
+        clipped: true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,5 +197,94 @@ mod tests {
             );
             assert!(l.label_w >= 0.0, "cols={cols} produced negative label_w");
         }
+    }
+
+    // ===== list_window =====
+
+    #[test]
+    fn short_list_is_shown_entirely() {
+        let w = list_window(5, 2, 8);
+        assert_eq!((w.first, w.visible), (0, 5));
+        assert!(!w.clipped);
+
+        // Exactly max_rows still fits without clipping.
+        let w = list_window(8, 7, 8);
+        assert_eq!((w.first, w.visible), (0, 8));
+        assert!(!w.clipped);
+
+        let w = list_window(0, 0, 8);
+        assert_eq!((w.first, w.visible), (0, 0));
+        assert!(!w.clipped);
+    }
+
+    #[test]
+    fn long_list_is_clipped_to_max_rows() {
+        let w = list_window(45, 0, 8);
+        assert_eq!(w.visible, 8);
+        assert!(w.clipped);
+    }
+
+    #[test]
+    fn selection_near_start_pins_window_to_front() {
+        // half = 8 / 2 = 4: selections 0..=4 all keep the window at 0.
+        for sel in 0..=4 {
+            let w = list_window(45, sel, 8);
+            assert_eq!(w.first, 0, "sel={sel}");
+        }
+    }
+
+    #[test]
+    fn selection_in_middle_centers_window() {
+        let w = list_window(45, 20, 8);
+        assert_eq!(w.first, 16); // 20 - half(4)
+    }
+
+    #[test]
+    fn selection_near_end_clamps_window_to_back() {
+        let w = list_window(45, 44, 8);
+        assert_eq!(w.first, 37); // len - max_rows
+        let w = list_window(45, 41, 8);
+        assert_eq!(w.first, 37);
+    }
+
+    #[test]
+    fn out_of_bounds_selection_is_treated_as_last() {
+        let w = list_window(45, 100, 8);
+        assert_eq!(w.first, 37);
+    }
+
+    #[test]
+    fn selected_item_always_falls_inside_the_window() {
+        for len in [1usize, 2, 7, 8, 9, 20, 45, 300] {
+            for sel in 0..len {
+                let w = list_window(len, sel, 8);
+                assert!(
+                    w.first <= sel && sel < w.first + w.visible,
+                    "len={len} sel={sel} window=({}, {})",
+                    w.first,
+                    w.visible
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn zero_max_rows_degenerates_to_empty_window() {
+        let w = list_window(45, 3, 0);
+        assert_eq!((w.first, w.visible), (0, 0));
+    }
+
+    #[test]
+    fn block_rows_matches_legacy_layout_when_not_clipped() {
+        // Pre-fix code sized the list as `len * 1.2` rows; an unclipped
+        // window must occupy exactly the same height.
+        let w = list_window(5, 0, 8);
+        assert!((w.block_rows() - 5.0 * LIST_ROW_PITCH).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn block_rows_adds_one_indicator_row_when_clipped() {
+        let w = list_window(45, 0, 8);
+        assert!((w.block_rows() - 9.0 * LIST_ROW_PITCH).abs() < f32::EPSILON);
     }
 }

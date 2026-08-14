@@ -6,7 +6,7 @@ use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::settings_panel::{KEYBINDING_ACTIONS, KeyEditMode, SettingsPanel};
 use crate::vertex_util::{add_px_rect, add_string_verts, truncate_to_width};
 
-use super::layout::compute_row_layout;
+use super::layout::{LIST_ROW_PITCH, MAX_LIST_ROWS, compute_row_layout, list_window};
 use super::row::{MIN_TEXT_CONTRAST, draw_section_header, ensure_readable};
 
 #[allow(clippy::too_many_arguments)]
@@ -67,9 +67,18 @@ pub(in crate::renderer) fn draw_keybindings_tab(
             text_idx,
         );
     } else {
-        let row_count = sp.keybindings.len();
-        for (i, kb) in sp.keybindings.iter().enumerate() {
-            let item_y = content_top + cell_h * (1.5 + i as f32 * 1.2);
+        // Bounded list viewport: draw at most MAX_LIST_ROWS bindings,
+        // windowed around the selection, so the edit panel and the buttons
+        // below stay on the panel no matter how many bindings exist.
+        let w = list_window(sp.keybindings.len(), sp.selected_key_index, MAX_LIST_ROWS);
+        for (i, kb) in sp
+            .keybindings
+            .iter()
+            .enumerate()
+            .skip(w.first)
+            .take(w.visible)
+        {
+            let item_y = content_top + cell_h * (1.5 + (i - w.first) as f32 * LIST_ROW_PITCH);
             let is_sel = sp.selected_key_index == i;
             if is_sel && sp.key_field_focus == 0 {
                 add_px_rect(
@@ -107,10 +116,34 @@ pub(in crate::renderer) fn draw_keybindings_tab(
             );
         }
 
+        // Range indicator: which slice of the full list the window shows.
+        if w.clipped {
+            let indicator_y = content_top + cell_h * (1.5 + w.visible as f32 * LIST_ROW_PITCH);
+            add_string_verts(
+                &nexterm_i18n::fl!(
+                    "settings-list-window",
+                    from = w.first + 1,
+                    to = w.first + w.visible,
+                    total = sp.keybindings.len()
+                ),
+                content_inner_x,
+                indicator_y,
+                ensure_readable(tokens.text_muted, tokens.surface_2, MIN_TEXT_CONTRAST),
+                false,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                queue,
+                text_verts,
+                text_idx,
+            );
+        }
+
         let sel = sp.selected_key_index.min(sp.keybindings.len() - 1);
         let kb = &sp.keybindings[sel];
-        let visible_rows = row_count as f32;
-        let fields_top = content_top + cell_h * (1.5 + visible_rows * 1.2 + 1.4);
+        let fields_top = key_fields_top(sp, content_top, cell_h);
         let header = match &sp.key_editing {
             Some(KeyEditMode::Record) => nexterm_i18n::fl!("settings-keybindings-edit-record"),
             Some(KeyEditMode::Text(_)) => nexterm_i18n::fl!("settings-keybindings-edit-text"),
@@ -286,6 +319,13 @@ pub(in crate::renderer) fn draw_keybindings_tab(
     }
 }
 
+/// Y position of the field-edit panel: right below the windowed binding
+/// list. Shared with [`key_buttons_y`] so the two cannot drift apart.
+fn key_fields_top(sp: &SettingsPanel, content_top: f32, cell_h: f32) -> f32 {
+    let w = list_window(sp.keybindings.len(), sp.selected_key_index, MAX_LIST_ROWS);
+    content_top + cell_h * (1.5 + w.block_rows() + 1.4)
+}
+
 /// Y position of the Add/Delete button row. Shared with
 /// [`draw_leader_key_row`] so the leader-key row can stack directly beneath
 /// it regardless of the (variable-length) binding list above.
@@ -293,8 +333,7 @@ fn key_buttons_y(sp: &SettingsPanel, content_top: f32, cell_h: f32) -> f32 {
     if sp.keybindings.is_empty() {
         content_top + cell_h * 4.0
     } else {
-        let visible_rows = sp.keybindings.len() as f32;
-        let fields_top = content_top + cell_h * (1.5 + visible_rows * 1.2 + 1.4);
+        let fields_top = key_fields_top(sp, content_top, cell_h);
         let last_field_y = fields_top + cell_h * (1.3 + 1.0 * 1.1);
         last_field_y + cell_h * 2.0
     }

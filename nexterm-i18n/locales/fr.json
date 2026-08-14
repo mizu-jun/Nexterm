@@ -121,6 +121,7 @@
   "settings-font-hint-slider": "(←/→ pour changer, ↓ pour le champ suivant)",
   "settings-font-fallbacks-hint-editing": "(séparés par des virgules. Entrée=confirmer  Échap=annuler)",
   "settings-font-fallbacks-hint-idle": "(Entrée pour modifier, séparés par des virgules)",
+  "settings-list-window": "Affichage de {from}-{to} sur {total}",
   "settings-keybindings-header": "Raccourcis clavier :",
   "settings-keybindings-empty": "Aucun raccourci clavier configuré",
   "settings-keybindings-edit-record": "Modifier la liaison sélectionnée (Enregistrement : appuyez sur une touche, Tab = Texte, Échap = annuler) :",

@@ -121,6 +121,7 @@
   "settings-font-hint-slider": "(←/→ 更改，↓ 到下一字段)",
   "settings-font-fallbacks-hint-editing": "(以逗号分隔。Enter=确认  Esc=取消)",
   "settings-font-fallbacks-hint-idle": "(按 Enter 编辑，以逗号分隔)",
+  "settings-list-window": "显示 {from}-{to} / 共 {total} 项",
   "settings-keybindings-header": "按键绑定:",
   "settings-keybindings-empty": "未配置按键绑定",
   "settings-keybindings-edit-record": "编辑所选绑定（录制中：按任意键，Tab = 文本，Esc = 取消）：",

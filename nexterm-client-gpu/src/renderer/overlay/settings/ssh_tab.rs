@@ -5,7 +5,7 @@ use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::settings_panel::SettingsPanel;
 use crate::vertex_util::{add_px_rect, add_string_verts, truncate_to_width};
 
-use super::layout::compute_row_layout;
+use super::layout::{LIST_ROW_PITCH, MAX_LIST_ROWS, compute_row_layout, list_window};
 use super::row::{MIN_TEXT_CONTRAST, draw_section_header, ensure_readable};
 
 #[allow(clippy::too_many_arguments)]
@@ -81,8 +81,18 @@ pub(in crate::renderer) fn draw_ssh_tab(
             text_idx,
         );
     } else {
-        for (i, host) in sp.ssh_hosts.iter().enumerate() {
-            let item_y = content_top + cell_h * (1.5 + i as f32 * 1.2);
+        // Bounded list viewport: draw at most MAX_LIST_ROWS hosts, windowed
+        // around the selection, so the edit panel and the Add/Delete buttons
+        // below stay on the panel no matter how many hosts exist.
+        let w = list_window(sp.ssh_hosts.len(), sp.selected_host_index, MAX_LIST_ROWS);
+        for (i, host) in sp
+            .ssh_hosts
+            .iter()
+            .enumerate()
+            .skip(w.first)
+            .take(w.visible)
+        {
+            let item_y = content_top + cell_h * (1.5 + (i - w.first) as f32 * LIST_ROW_PITCH);
             let is_sel = sp.selected_host_index == i;
             if is_sel {
                 add_px_rect(
@@ -120,10 +130,35 @@ pub(in crate::renderer) fn draw_ssh_tab(
             );
         }
 
+        // Range indicator: which slice of the full list the window shows.
+        if w.clipped {
+            let indicator_y = content_top + cell_h * (1.5 + w.visible as f32 * LIST_ROW_PITCH);
+            add_string_verts(
+                &nexterm_i18n::fl!(
+                    "settings-list-window",
+                    from = w.first + 1,
+                    to = w.first + w.visible,
+                    total = sp.ssh_hosts.len()
+                ),
+                content_inner_x,
+                indicator_y,
+                ensure_readable(tokens.text_muted, tokens.surface_2, MIN_TEXT_CONTRAST),
+                false,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                queue,
+                text_verts,
+                text_idx,
+            );
+        }
+
         // ===== Field-edit panel for the selected host =====
         let sel = sp.selected_host_index.min(sp.ssh_hosts.len() - 1);
         let host = &sp.ssh_hosts[sel];
-        let fields_top = content_top + cell_h * (1.5 + sp.ssh_hosts.len() as f32 * 1.2 + 0.6);
+        let fields_top = ssh_fields_top(sp, content_top, cell_h);
 
         draw_section_header(
             &nexterm_i18n::fl!("settings-ssh-edit-header"),
@@ -324,6 +359,13 @@ pub(in crate::renderer) fn draw_ssh_tab(
     }
 }
 
+/// Y position of the field-edit panel: right below the windowed host list.
+/// Shared with [`draw_add_delete_buttons`] so the two cannot drift apart.
+fn ssh_fields_top(sp: &SettingsPanel, content_top: f32, cell_h: f32) -> f32 {
+    let w = list_window(sp.ssh_hosts.len(), sp.selected_host_index, MAX_LIST_ROWS);
+    content_top + cell_h * (1.5 + w.block_rows() + 0.6)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_add_delete_buttons(
     sp: &SettingsPanel,
@@ -347,7 +389,7 @@ fn draw_add_delete_buttons(
     let buttons_y = if sp.ssh_hosts.is_empty() {
         content_top + cell_h * 4.0
     } else {
-        let fields_top = content_top + cell_h * (1.5 + sp.ssh_hosts.len() as f32 * 1.2 + 0.6);
+        let fields_top = ssh_fields_top(sp, content_top, cell_h);
         let note_y = fields_top + cell_h * (1.3 + 5.0 * 1.1 + 0.4);
         note_y + cell_h * 1.5
     };

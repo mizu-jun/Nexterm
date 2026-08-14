@@ -121,6 +121,7 @@
   "settings-font-hint-slider": "(←/→ 변경, ↓ 다음 필드)",
   "settings-font-fallbacks-hint-editing": "(쉼표로 구분. Enter=확인  Esc=취소)",
   "settings-font-fallbacks-hint-idle": "(Enter로 편집, 쉼표로 구분)",
+  "settings-list-window": "{from}-{to} / 총 {total}개 표시 중",
   "settings-keybindings-header": "키 바인딩:",
   "settings-keybindings-empty": "구성된 키 바인딩이 없습니다",
   "settings-keybindings-edit-record": "선택한 바인딩 편집(녹화 중: 아무 키나 누르기, Tab = 텍스트, Esc = 취소):",
