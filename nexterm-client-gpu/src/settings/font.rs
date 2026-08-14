@@ -41,29 +41,6 @@ impl SettingsPanel {
         self.dirty = true;
     }
 
-    /// Total number of fields in the Font category.
-    pub const FONT_FIELD_COUNT: u16 = 4;
-
-    /// Move focus to the next field (stops at the last one).
-    pub fn next_font_field(&mut self) -> bool {
-        if self.focused_widget_index + 1 < Self::FONT_FIELD_COUNT {
-            self.focused_widget_index += 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Move focus to the previous field (stops at the first one).
-    pub fn prev_font_field(&mut self) -> bool {
-        if self.focused_widget_index > 0 {
-            self.focused_widget_index -= 1;
-            true
-        } else {
-            false
-        }
-    }
-
     /// Increment the focused field's value (Right arrow).
     pub fn font_field_increase(&mut self) {
         match self.focused_widget_index {
@@ -258,21 +235,5 @@ mod tests {
         assert!(panel.commit_font_fallbacks_edit());
         assert!(panel.font_fallbacks_text.ends_with('x'));
         assert!(panel.font_fallbacks_editing.is_none());
-    }
-
-    #[test]
-    fn font_field_navigation_covers_all_four_fields() {
-        let config = Config::default();
-        let mut panel = SettingsPanel::new(&config);
-        for expected in 1..SettingsPanel::FONT_FIELD_COUNT {
-            assert!(panel.next_font_field());
-            assert_eq!(panel.focused_widget_index, expected);
-        }
-        assert!(!panel.next_font_field());
-        for expected in (0..SettingsPanel::FONT_FIELD_COUNT - 1).rev() {
-            assert!(panel.prev_font_field());
-            assert_eq!(panel.focused_widget_index, expected);
-        }
-        assert!(!panel.prev_font_field());
     }
 }

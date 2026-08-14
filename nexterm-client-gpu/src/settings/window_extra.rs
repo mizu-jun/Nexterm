@@ -1,7 +1,8 @@
-//! Window category (part 2): the field-index navigation dispatcher
-//! (`next_window_field` / `*_increase` / `*_decrease`), cursor blink,
-//! scrollback length, tab-bar toggles, and animation settings. Split
-//! out of `window.rs` to stay under the 800-line-per-file limit.
+//! Window category (part 2): the value dispatchers for the focused field
+//! (`window_field_increase` / `*_decrease`), cursor blink, scrollback length,
+//! tab-bar toggles, and animation settings. Split out of `window.rs` to stay
+//! under the 800-line-per-file limit. Focus movement itself is not here — it is
+//! derived from the descriptors in `renderer/overlay/widgets/navigation.rs`.
 //!
 //! Moved out of `settings_panel.rs` (Phase B6 mechanical split).
 
@@ -9,31 +10,6 @@ use super::SettingsPanel;
 use nexterm_i18n::fl;
 
 impl SettingsPanel {
-    /// Total number of fields in the Window category.
-    pub const WINDOW_FIELD_COUNT: u16 = 14;
-
-    /// Move focus to the next field (stops at the last one).
-    /// Returns `true` if focus moved; `false` if already on the last field
-    /// (used by the category-navigation fallback).
-    pub fn next_window_field(&mut self) -> bool {
-        if self.focused_widget_index + 1 < Self::WINDOW_FIELD_COUNT {
-            self.focused_widget_index += 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Move focus to the previous field (stops at the first one).
-    pub fn prev_window_field(&mut self) -> bool {
-        if self.focused_widget_index > 0 {
-            self.focused_widget_index -= 1;
-            true
-        } else {
-            false
-        }
-    }
-
     /// Increment the focused field's value (Right arrow, or the Up arrow's
     /// fallback inside the Window category).
     pub fn window_field_increase(&mut self) {
@@ -178,15 +154,6 @@ impl SettingsPanel {
 mod tests {
     use super::*;
     use nexterm_config::Config;
-
-    #[test]
-    fn window_field_count_covers_all_new_rows() {
-        // 5 pre-existing fields (opacity/cursor_style/padding_x/padding_y/present_mode)
-        // + 6 Phase B4 fields (blink/scrollback/show_tab_number/show_new_tab_button/
-        // animations enabled/animations intensity) + 3 Phase B4-P2 fields
-        // (decorations/close_action/fps_limit).
-        assert_eq!(SettingsPanel::WINDOW_FIELD_COUNT, 14);
-    }
 
     #[test]
     fn toggle_cursor_blink_flips_and_marks_dirty() {

@@ -23,6 +23,7 @@
 pub(crate) mod action;
 pub(crate) mod draw;
 pub(crate) mod geometry;
+pub(crate) mod navigation;
 pub(crate) mod settings_blocks;
 pub(crate) mod settings_font;
 pub(crate) mod settings_keybindings;

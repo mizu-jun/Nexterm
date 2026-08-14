@@ -369,12 +369,16 @@ gated behind a spike.
         in-flight field edit; before this, the keyboard paths reset all seven
         counters by hand and the sidebar click reset none of them, so a click
         during an edit left the buffer live but invisible
-  - [ ] Derive keyboard navigation from the descriptors — ↑/↓ still walk
-        hand-written per-category rules (`next_window_field`, the
-        "empty list → skip Delete" special cases). `WidgetDesc.enabled` and
-        `WidgetKind::is_interactive` already encode what those rules
-        re-implement, so one generic walk over the current category's descs can
-        replace them and stay correct for future tabs
+  - [x] Derive keyboard navigation from the descriptors — `widgets/navigation.rs`
+        walks the current category's descriptors, skipping anything that is not
+        a focus stop (`!enabled`, `Label`, and `Swatch`, which is a redundant
+        mouse affordance for the cycler row above it). The five identical
+        `next_<tab>_field` / `prev_<tab>_field` pairs and four
+        `<tab>_FIELD_COUNT` constants are gone; a category now gains keyboard
+        navigation by describing its controls. Ssh and Keybindings keep bespoke
+        arrow handling: index 0 addresses their entry list as a whole, which a
+        plain descriptor walk cannot express — migrating that convention is its
+        own change. Profiles and Blocks have no focus ring to preserve
   - [ ] Hard-coded colour migration (G11) — not started; the widget layer
         reads `DesignTokens`, but colours outside it are untouched
 - [ ] CONFIGURATION.md inventory PR

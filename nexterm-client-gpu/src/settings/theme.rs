@@ -37,29 +37,6 @@ impl SettingsPanel {
         SCHEMES[self.scheme_index % 9]
     }
 
-    /// Total number of fields in the Theme category.
-    pub const THEME_FIELD_COUNT: u16 = 2;
-
-    /// Move focus to the next field (stops at the last one).
-    pub fn next_theme_field(&mut self) -> bool {
-        if self.focused_widget_index + 1 < Self::THEME_FIELD_COUNT {
-            self.focused_widget_index += 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Move focus to the previous field (stops at the first one).
-    pub fn prev_theme_field(&mut self) -> bool {
-        if self.focused_widget_index > 0 {
-            self.focused_widget_index -= 1;
-            true
-        } else {
-            false
-        }
-    }
-
     /// Toggle `colors_follow_system`.
     pub fn toggle_colors_follow_system(&mut self) {
         self.colors_follow_system = !self.colors_follow_system;
@@ -134,19 +111,6 @@ mod tests {
         assert!(panel.colors_follow_system);
         let toml_str = panel.apply_to_toml_string("");
         assert!(toml_str.contains("colors_follow_system = true"));
-    }
-
-    #[test]
-    fn theme_field_navigation_wraps_between_scheme_and_follow_system() {
-        let config = Config::default();
-        let mut panel = SettingsPanel::new(&config);
-        assert_eq!(panel.focused_widget_index, 0);
-        assert!(panel.next_theme_field());
-        assert_eq!(panel.focused_widget_index, 1);
-        assert!(!panel.next_theme_field());
-        assert!(panel.prev_theme_field());
-        assert_eq!(panel.focused_widget_index, 0);
-        assert!(!panel.prev_theme_field());
     }
 }
 

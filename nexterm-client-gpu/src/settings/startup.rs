@@ -33,29 +33,6 @@ impl SettingsPanel {
         self.dirty = true;
     }
 
-    /// Total number of fields in the Startup category.
-    pub const STARTUP_FIELD_COUNT: u16 = 4;
-
-    /// Move focus to the next Startup field (stops at the last one).
-    pub fn next_startup_field(&mut self) -> bool {
-        if self.focused_widget_index + 1 < Self::STARTUP_FIELD_COUNT {
-            self.focused_widget_index += 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Move focus to the previous Startup field (stops at the first one).
-    pub fn prev_startup_field(&mut self) -> bool {
-        if self.focused_widget_index > 0 {
-            self.focused_widget_index -= 1;
-            true
-        } else {
-            false
-        }
-    }
-
     /// Start editing the focused shell field (`focused_widget_index` 2 or 3).
     /// Returns `true` when edit mode actually started.
     pub fn begin_shell_field_edit(&mut self) -> bool {
@@ -158,28 +135,6 @@ pub const LANGUAGE_OPTIONS: &[(&str, &str)] = &[
 mod tests {
     use super::*;
     use nexterm_config::Config;
-
-    #[test]
-    fn startup_field_navigation_stops_at_bounds() {
-        let config = Config::default();
-        let mut panel = SettingsPanel::new(&config);
-        assert_eq!(panel.focused_widget_index, 0);
-
-        assert!(panel.next_startup_field());
-        assert_eq!(panel.focused_widget_index, 1);
-        assert!(panel.next_startup_field());
-        assert_eq!(panel.focused_widget_index, 2);
-        assert!(panel.next_startup_field());
-        assert_eq!(panel.focused_widget_index, 3);
-        assert!(
-            !panel.next_startup_field(),
-            "the last field must report no further movement"
-        );
-        assert_eq!(panel.focused_widget_index, 3);
-
-        assert!(panel.prev_startup_field());
-        assert_eq!(panel.focused_widget_index, 2);
-    }
 
     #[test]
     fn shell_field_edit_lifecycle_program() {
