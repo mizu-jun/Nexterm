@@ -155,8 +155,9 @@ impl WgpuState {
         let content_w = panel_w - sidebar_w;
 
         // Panel chrome: drop-shadow + border ring + rounded background via shared helper.
+        let elevation = nexterm_config::ElevationScale::default().flyout;
         draw_overlay_panel(
-            px, py, panel_w, panel_h, tokens, 4.0, 6.0, sw, sh, bg_verts, bg_idx,
+            px, py, panel_w, panel_h, tokens, elevation, 6.0, sw, sh, bg_verts, bg_idx,
         );
 
         // Title bar (tokens.surface_3, opaque)

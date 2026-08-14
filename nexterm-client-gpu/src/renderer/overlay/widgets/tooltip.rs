@@ -7,14 +7,17 @@
 //! [`crate::settings::HoverDwell`].
 //!
 //! Elevation and radius come from [`nexterm_config::MetricTokens`]: Tooltip
-//! sits at elevation 16 with the control radius. Until P2 lands soft shadows,
-//! the elevation is expressed as the existing hard offset quad, scaled down
-//! from the token so the relative ordering between surfaces still holds.
+//! sits at elevation 16 with the control radius, rendered as a real soft
+//! shadow through the shared `shadow_params` mapping (UI/UX v3 P2a), so its
+//! weight stays ordered against the other overlay surfaces.
 
 use crate::font::FontManager;
 use crate::glyph_atlas::GlyphAtlas;
-use crate::vertex_util::{add_px_rounded_rect_sdf, add_string_verts, visual_width};
+use crate::vertex_util::{
+    add_px_rounded_rect_sdf, add_px_soft_shadow_sdf, add_string_verts, visual_width,
+};
 
+use super::super::util::shadow_params;
 use super::draw::{WidgetSink, WidgetTheme};
 use super::spec::WidgetRect;
 
@@ -24,10 +27,6 @@ const ANCHOR_GAP_CELLS: f32 = 0.4;
 const PAD_X_CELLS: f32 = 0.6;
 /// Vertical padding inside the tooltip, in character cells.
 const PAD_Y_CELLS: f32 = 0.25;
-/// Divisor turning the elevation token into a hard shadow offset. Replaced by
-/// a real soft shadow in P2; the divisor keeps the current visual weight.
-const ELEVATION_TO_OFFSET: f32 = 8.0;
-
 /// Where a tooltip of the given text should be drawn.
 ///
 /// Prefers directly below the anchor. Flips above when it would fall off the
@@ -78,15 +77,16 @@ pub(crate) fn draw_tooltip(
         return;
     }
     let r = theme.metrics.radius.control;
-    let offset = theme.metrics.elevation.tooltip / ELEVATION_TO_OFFSET;
+    let shadow = shadow_params(theme.metrics.elevation.tooltip);
 
-    add_px_rounded_rect_sdf(
-        rect.x + offset,
-        rect.y + offset,
+    add_px_soft_shadow_sdf(
+        rect.x + shadow.offset,
+        rect.y + shadow.offset,
         rect.w,
         rect.h,
         r,
-        [0.0, 0.0, 0.0, 0.45],
+        [0.0, 0.0, 0.0, shadow.alpha],
+        shadow.softness,
         theme.sw,
         theme.sh,
         sink.bg_verts,

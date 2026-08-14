@@ -88,17 +88,21 @@ impl WgpuState {
                     buffers: &[wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<BgVertex>() as u64,
                         step_mode: wgpu::VertexStepMode::Vertex,
-                        // Must mirror the 5-attribute layout in `wgpu_init.rs`
+                        // Must mirror the 7-attribute layout in `wgpu_init.rs`
                         // (position + color + SDF rect_center / rect_half_size /
-                        // corner_radius); the built-in shader consumes all five,
-                        // so the previous 2-attribute layout failed pipeline
-                        // validation on reload.
+                        // corner_radius + P2a shadow_softness / stroke_width);
+                        // the built-in shader consumes all seven, so a stale
+                        // shorter layout here fails pipeline validation on
+                        // reload — exactly what happened with the pre-v1.11
+                        // 2-attribute layout.
                         attributes: &wgpu::vertex_attr_array![
                             0 => Float32x2,
                             1 => Float32x4,
                             2 => Float32x2,
                             3 => Float32x2,
                             4 => Float32,
+                            5 => Float32,
+                            6 => Float32,
                         ],
                     }],
                     compilation_options: Default::default(),

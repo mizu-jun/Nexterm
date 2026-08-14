@@ -40,7 +40,10 @@ impl WgpuState {
         let py = (sh - ph) / 2.0;
 
         // Panel chrome: drop-shadow + border ring + rounded background.
-        draw_overlay_panel(px, py, pw, ph, tokens, 5.0, 6.0, sw, sh, bg_verts, bg_idx);
+        let elevation = nexterm_config::ElevationScale::default().flyout;
+        draw_overlay_panel(
+            px, py, pw, ph, tokens, elevation, 6.0, sw, sh, bg_verts, bg_idx,
+        );
         // Top accent stripe (accent_primary)
         let ap = tokens.accent_primary;
         add_px_rect(px, py, pw, 2.0, ap, sw, sh, bg_verts, bg_idx);
@@ -134,7 +137,10 @@ impl WgpuState {
         let py = (sh - ph) / 2.0;
 
         // Panel chrome: drop-shadow + border ring + rounded background.
-        draw_overlay_panel(px, py, pw, ph, tokens, 5.0, 6.0, sw, sh, bg_verts, bg_idx);
+        let elevation = nexterm_config::ElevationScale::default().flyout;
+        draw_overlay_panel(
+            px, py, pw, ph, tokens, elevation, 6.0, sw, sh, bg_verts, bg_idx,
+        );
         // Top accent stripe — upload: accent_primary (cyan), download: semantic_success (green).
         let accent = if ft.mode == "upload" {
             tokens.accent_primary
@@ -269,7 +275,10 @@ impl WgpuState {
         let py = (sh - ph) / 2.0;
 
         // Panel chrome: shared drop-shadow + border + rounded background.
-        draw_overlay_panel(px, py, pw, ph, tokens, 5.0, 6.0, sw, sh, bg_verts, bg_idx);
+        let elevation = nexterm_config::ElevationScale::default().flyout;
+        draw_overlay_panel(
+            px, py, pw, ph, tokens, elevation, 6.0, sw, sh, bg_verts, bg_idx,
+        );
         // Top accent line — intentional purple branding, kept as-is.
         add_px_rect(
             px,
@@ -414,7 +423,10 @@ impl WgpuState {
         let py = (sh - ph) / 2.0;
 
         // Panel chrome: shared drop-shadow + border + rounded background.
-        draw_overlay_panel(px, py, pw, ph, tokens, 5.0, 6.0, sw, sh, bg_verts, bg_idx);
+        let elevation = nexterm_config::ElevationScale::default().flyout;
+        draw_overlay_panel(
+            px, py, pw, ph, tokens, elevation, 6.0, sw, sh, bg_verts, bg_idx,
+        );
         // Top accent line — intentional green SSH branding, kept as-is.
         add_px_rect(
             px,

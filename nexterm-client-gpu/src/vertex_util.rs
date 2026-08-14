@@ -72,13 +72,16 @@ pub(crate) fn add_rect_verts(
         [0.0, 0.0],
         [0.0, 0.0],
         0.0,
+        0.0,
+        0.0,
         bg_verts,
         bg_idx,
     );
 }
 
-/// Inner helper that fills every `BgVertex` field. Used by both the flat
-/// [`add_rect_verts`] and the rounded [`add_px_rounded_rect_sdf`].
+/// Inner helper that fills every `BgVertex` field. Used by the flat
+/// [`add_rect_verts`], the rounded [`add_px_rounded_rect_sdf`] and the soft
+/// [`add_px_soft_shadow_sdf`].
 #[allow(clippy::too_many_arguments)]
 fn push_rect_verts_with_sdf(
     x0: f32,
@@ -89,6 +92,8 @@ fn push_rect_verts_with_sdf(
     rect_center: [f32; 2],
     rect_half_size: [f32; 2],
     corner_radius: f32,
+    shadow_softness: f32,
+    stroke_width: f32,
     bg_verts: &mut Vec<BgVertex>,
     bg_idx: &mut Vec<u16>,
 ) {
@@ -99,6 +104,8 @@ fn push_rect_verts_with_sdf(
         rect_center,
         rect_half_size,
         corner_radius,
+        shadow_softness,
+        stroke_width,
     };
     bg_verts.extend_from_slice(&[
         make([x0, y0]),
@@ -168,6 +175,51 @@ pub(crate) fn add_px_rounded_rect_sdf(
         rect_center,
         rect_half_size,
         r,
+        0.0,
+        0.0,
+        bg_verts,
+        bg_idx,
+    );
+}
+
+/// Pixel-space soft drop shadow (UI/UX v3 P2a).
+///
+/// The rasterised quad is grown by `softness` on every side because the
+/// penumbra fades *outside* the rect — a tight quad would clip the fade at
+/// its edge. The SDF metadata keeps the true rect so the fade stays centred
+/// on the rect border. `softness <= 0` degenerates to the plain rounded
+/// fill.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn add_px_soft_shadow_sdf(
+    px: f32,
+    py: f32,
+    pw: f32,
+    ph: f32,
+    radius: f32,
+    color: [f32; 4],
+    softness: f32,
+    sw: f32,
+    sh: f32,
+    bg_verts: &mut Vec<BgVertex>,
+    bg_idx: &mut Vec<u16>,
+) {
+    let s = softness.max(0.0);
+    let x0 = (px - s) / sw * 2.0 - 1.0;
+    let y0 = 1.0 - (py - s) / sh * 2.0;
+    let x1 = (px + pw + s) / sw * 2.0 - 1.0;
+    let y1 = 1.0 - (py + ph + s) / sh * 2.0;
+    let r = radius.max(0.0).min(pw * 0.5).min(ph * 0.5);
+    push_rect_verts_with_sdf(
+        x0,
+        y0,
+        x1,
+        y1,
+        color,
+        [px + pw * 0.5, py + ph * 0.5],
+        [pw * 0.5, ph * 0.5],
+        r,
+        s,
+        0.0,
         bg_verts,
         bg_idx,
     );
@@ -217,6 +269,8 @@ pub(crate) fn add_px_gradient_rect(
         rect_center: [0.0, 0.0],
         rect_half_size: [0.0, 0.0],
         corner_radius: 0.0,
+        shadow_softness: 0.0,
+        stroke_width: 0.0,
     };
     bg_verts.extend_from_slice(&[
         make([x0, y0], lerp(from, to, t_tl)),
@@ -658,6 +712,8 @@ mod tests {
             assert_eq!(vert.rect_center, [0.0, 0.0]);
             assert_eq!(vert.rect_half_size, [0.0, 0.0]);
             assert_eq!(vert.corner_radius, 0.0);
+            assert_eq!(vert.shadow_softness, 0.0);
+            assert_eq!(vert.stroke_width, 0.0);
         }
         // Index triangulation is unchanged.
         assert_eq!(i, vec![0, 1, 2, 0, 2, 3]);
@@ -685,7 +741,59 @@ mod tests {
             assert_eq!(vert.rect_center, [200.0, 70.0]);
             assert_eq!(vert.rect_half_size, [100.0, 20.0]);
             assert_eq!(vert.corner_radius, 8.0);
+            // The plain fill keeps both P2a extensions off, so the shader
+            // output is bit-identical to the pre-P2a build.
+            assert_eq!(vert.shadow_softness, 0.0);
+            assert_eq!(vert.stroke_width, 0.0);
         }
+    }
+
+    #[test]
+    fn soft_shadow_helper_expands_the_quad_but_not_the_sdf_rect() {
+        // The penumbra fades *outside* the rect, so the rasterised quad must
+        // grow by the softness on every side — otherwise the fade would be
+        // clipped at the quad edge — while the SDF metadata keeps the true
+        // rect so the fade stays centred on its border.
+        let mut v = Vec::new();
+        let mut i = Vec::new();
+        add_px_soft_shadow_sdf(
+            100.0,
+            50.0,
+            200.0,
+            40.0,
+            8.0,
+            [0.0, 0.0, 0.0, 0.45],
+            16.0,
+            800.0,
+            600.0,
+            &mut v,
+            &mut i,
+        );
+        assert_eq!(v.len(), 4);
+        for vert in &v {
+            assert_eq!(vert.rect_center, [200.0, 70.0]);
+            assert_eq!(vert.rect_half_size, [100.0, 20.0]);
+            assert_eq!(vert.corner_radius, 8.0);
+            assert_eq!(vert.shadow_softness, 16.0);
+            assert_eq!(vert.stroke_width, 0.0);
+        }
+        let ndc_x = |px: f32| px / 800.0 * 2.0 - 1.0;
+        let ndc_y = |py: f32| 1.0 - py / 600.0 * 2.0;
+        let min_x = v
+            .iter()
+            .map(|q| q.position[0])
+            .fold(f32::INFINITY, f32::min);
+        let max_x = v
+            .iter()
+            .map(|q| q.position[0])
+            .fold(f32::NEG_INFINITY, f32::max);
+        let max_y = v
+            .iter()
+            .map(|q| q.position[1])
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert!(approx(min_x, ndc_x(100.0 - 16.0)));
+        assert!(approx(max_x, ndc_x(100.0 + 200.0 + 16.0)));
+        assert!(approx(max_y, ndc_y(50.0 - 16.0)));
     }
 
     #[test]

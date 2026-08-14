@@ -110,9 +110,12 @@ pub struct GpuConfig {
     /// built-in shader when omitted).
     ///
     /// The shader must implement `@vertex fn vs_main` / `@fragment fn fs_main`.
-    /// Vertex input (5 attributes): `position: vec2<f32>`, `color: vec4<f32>`,
+    /// Vertex input (7 attributes): `position: vec2<f32>`, `color: vec4<f32>`,
     /// `rect_center: vec2<f32>`, `rect_half_size: vec2<f32>`,
-    /// `corner_radius: f32`.
+    /// `corner_radius: f32`, `shadow_softness: f32`, `stroke_width: f32`.
+    /// The last two were added in UI/UX v3 P2a (soft shadows / outlines);
+    /// custom shaders that read only the first five keep working — wgpu
+    /// validates that shader inputs are a subset of the buffer layout.
     ///
     /// **Breaking change (UI/UX v3 P0)**: the fragment output must be
     /// premultiplied alpha (`rgb * a`) — pipelines blend with
