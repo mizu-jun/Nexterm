@@ -158,6 +158,23 @@ pub(crate) enum WidgetKind {
         /// `None` while editing means "put it at the end".
         caret: Option<usize>,
     },
+    /// Discrete numeric value stepped with ←/→, e.g. the Ssh port.
+    ///
+    /// Drawn like a [`WidgetKind::Cycle`] (`< value >`), but announced as a
+    /// spin button so a screen reader exposes the numeric range and can set
+    /// the value directly — a cycler's ComboBox role would lose both.
+    SpinButton {
+        /// Current value.
+        value: f32,
+        /// Lowest value the control accepts.
+        min: f32,
+        /// Highest value the control accepts.
+        max: f32,
+        /// Increment applied by one step.
+        step: f32,
+        /// Human-readable value shown between the chevrons.
+        display: String,
+    },
     /// Key-combination capture, as used by the Keybindings tab.
     ///
     /// Distinct from [`WidgetKind::Text`] because recording is not text entry:
@@ -281,6 +298,7 @@ impl WidgetDesc {
             WidgetKind::Toggle { on } => Some(if *on { "on" } else { "off" }.to_string()),
             WidgetKind::Cycle { value } => Some(value.clone()),
             WidgetKind::Slider { display, .. } => Some(display.clone()),
+            WidgetKind::SpinButton { display, .. } => Some(display.clone()),
             WidgetKind::Text { value, .. } => Some(value.clone()),
             WidgetKind::KeyCapture { value, .. } => Some(value.clone()),
             WidgetKind::Swatch { selected, .. } => Some(
@@ -413,6 +431,22 @@ mod tests {
             }
             .is_interactive()
         );
+    }
+
+    #[test]
+    fn spin_buttons_are_interactive_and_expose_their_display_text() {
+        // Added for the Ssh port field (UI/UX v3 P1c): announced as a spin
+        // button with a numeric range, drawn like a cycler.
+        let kind = WidgetKind::SpinButton {
+            value: 22.0,
+            min: 1.0,
+            max: 65535.0,
+            step: 1.0,
+            display: "22".to_string(),
+        };
+        assert!(kind.is_interactive());
+        let desc = WidgetDesc::new(WidgetId::new(4, 3), kind, "Port");
+        assert_eq!(desc.value_text().as_deref(), Some("22"));
     }
 
     #[test]

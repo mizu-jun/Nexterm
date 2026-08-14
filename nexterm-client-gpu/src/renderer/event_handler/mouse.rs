@@ -369,6 +369,7 @@ impl EventHandler {
             use crate::renderer::overlay::widgets::settings_font::FONT_CATEGORY;
             use crate::renderer::overlay::widgets::settings_profiles::PROFILES_CATEGORY;
             use crate::renderer::overlay::widgets::settings_security::SECURITY_CATEGORY;
+            use crate::renderer::overlay::widgets::settings_ssh::SSH_CATEGORY;
             use crate::renderer::overlay::widgets::settings_startup::STARTUP_CATEGORY;
             use crate::renderer::overlay::widgets::settings_theme::{
                 THEME_CATEGORY, THEME_SWATCH_BASE,
@@ -385,6 +386,7 @@ impl EventHandler {
                 SettingsPanelHit::BlocksRow(index) => Some((BLOCKS_CATEGORY, index)),
                 SettingsPanelHit::SecurityRow(index) => Some((SECURITY_CATEGORY, index)),
                 SettingsPanelHit::ProfilesRow(index) => Some((PROFILES_CATEGORY, index)),
+                SettingsPanelHit::SshRow(index) => Some((SSH_CATEGORY, index)),
                 _ => None,
             };
             let sp = &mut self.app.state.settings_panel;
@@ -1021,6 +1023,20 @@ impl EventHandler {
                         use crate::renderer::overlay::widgets::action::WidgetAction;
                         use crate::renderer::overlay::widgets::settings_profiles::apply_profiles_action;
                         apply_profiles_action(
+                            &mut self.app.state.settings_panel,
+                            row,
+                            WidgetAction::Activate,
+                        );
+                    }
+                    SettingsPanelHit::SshRow(row) => {
+                        // UI/UX v3 P1c: nothing on this tab was clickable
+                        // before. An entry click selects it, a field click
+                        // focuses (text fields also open their edit buffer),
+                        // Add appends, Delete opens the confirmation dialog —
+                        // all through the router the screen reader uses.
+                        use crate::renderer::overlay::widgets::action::WidgetAction;
+                        use crate::renderer::overlay::widgets::settings_ssh::apply_ssh_action;
+                        apply_ssh_action(
                             &mut self.app.state.settings_panel,
                             row,
                             WidgetAction::Activate,

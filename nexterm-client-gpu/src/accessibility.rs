@@ -133,26 +133,10 @@ pub const PANE_INPUT_BUFFER_ID: NodeId = NodeId(27);
 // by the widget layer, with nodes in the `SETTINGS_WIDGET_BASE` range, so the
 // whole 30..=39 block is free.
 
-/// Phase 5-11-8 Step 8-2 - SSH category: name field of the selected host (TextInput).
-pub const SETTINGS_SSH_FIELD_NAME_ID: NodeId = NodeId(40);
-
-/// Phase 5-11-8 Step 8-2 - SSH category: host field of the selected host (TextInput).
-pub const SETTINGS_SSH_FIELD_HOST_ID: NodeId = NodeId(41);
-
-/// Phase 5-11-8 Step 8-2 - SSH category: port field of the selected host (SpinButton, 1..65535).
-pub const SETTINGS_SSH_FIELD_PORT_ID: NodeId = NodeId(42);
-
-/// Phase 5-11-8 Step 8-2 - SSH category: username field of the selected host (TextInput).
-pub const SETTINGS_SSH_FIELD_USERNAME_ID: NodeId = NodeId(43);
-
-/// Phase 5-11-8 Step 8-2 - SSH category: auth_type field of the selected host (ComboBox).
-pub const SETTINGS_SSH_FIELD_AUTH_TYPE_ID: NodeId = NodeId(44);
-
-/// Phase 5-11-8 Step 8-3 Sub-phase D - SSH category: add-host button.
-pub const SETTINGS_SSH_ADD_BTN_ID: NodeId = NodeId(45);
-
-/// Phase 5-11-8 Step 8-3 Sub-phase D - SSH category: delete-host button (selected host).
-pub const SETTINGS_SSH_DELETE_BTN_ID: NodeId = NodeId(46);
+// 40..=46 were the hand-written SSH field / Add / Delete nodes
+// (Phase 5-11-8). The Ssh category is described by the widget layer since
+// UI/UX v3 P1c, so that block is free; only the delete-confirmation dialog
+// below keeps fixed ids.
 
 /// Phase 5-11-8 Step 8-3 Sub-phase D - SSH delete confirmation dialog body (Role::AlertDialog).
 pub const SETTINGS_SSH_DELETE_DIALOG_ID: NodeId = NodeId(47);
@@ -261,15 +245,10 @@ const NODE_ID_QUICKSELECT_ITEM_OFFSET: u64 = 500_000_000;
 // layer, whose ids sit in the 700M `SETTINGS_WIDGET_BASE` slot. Node ids are
 // never persisted, so the range is free for reuse.
 
-/// Dynamic items of the SettingsPanel Ssh category (`800_000_000 + idx`, Phase 5-11-8 Step 8-1).
-///
-/// Each `SshHostEntry` of `SettingsPanel.ssh_hosts` is exposed as `Role::ListBoxOption`.
-/// `selected_host_index` identifies the currently selected entry.
-///
-/// Range: `[800_000_000, 900_000_000)`. 100M of margin before
-/// `NODE_ID_TAB_OFFSET = 1e9`. The range 700M..800M is reserved for future
-/// dynamic expansion of SettingsField.
-const NODE_ID_SETTINGS_SSH_HOST_OFFSET: u64 = 800_000_000;
+// The 800M..900M range used to carry `SettingsSshHostItem` (Phase 5-11-8).
+// Retired in UI/UX v3 P1c: the Ssh category now lives on the widget layer,
+// whose ids sit in the 700M `SETTINGS_WIDGET_BASE` slot. Node ids are never
+// persisted, so the range is free for reuse.
 
 /// Dynamic items of the SettingsPanel Keybindings category (`900_000_000 + idx`, Phase 5-11-9 Sub-phase E).
 ///
@@ -529,11 +508,6 @@ fn quickselect_item_id(idx: usize) -> NodeId {
     NodeId(NODE_ID_QUICKSELECT_ITEM_OFFSET + idx as u64)
 }
 
-/// Compute the NodeId for a SettingsPanel Ssh category item from its idx (Phase 5-11-8 Step 8-1).
-fn settings_ssh_host_item_id(idx: usize) -> NodeId {
-    NodeId(NODE_ID_SETTINGS_SSH_HOST_OFFSET + idx as u64)
-}
-
 // ===== NodeId reverse lookup (Step 2-4) =====
 
 /// `NodeId` kind (used to dispatch Action responses).
@@ -621,23 +595,6 @@ pub enum NodeIdKind {
     Alert { seq: u64 },
     /// Phase 5-11-7: terminal input buffer (for PTY writes to the focused pane).
     PaneInputBuffer,
-    /// Phase 5-11-8 Step 8-1: SettingsPanel Ssh category host item
-    /// (`idx` is the index in `SettingsPanel.ssh_hosts`).
-    SettingsSshHostItem { idx: usize },
-    /// Phase 5-11-8 Step 8-2: name field of the selected host (TextInput).
-    SettingsSshFieldName,
-    /// Phase 5-11-8 Step 8-2: host field of the selected host (TextInput).
-    SettingsSshFieldHost,
-    /// Phase 5-11-8 Step 8-2: port field of the selected host (SpinButton 1..65535).
-    SettingsSshFieldPort,
-    /// Phase 5-11-8 Step 8-2: username field of the selected host (TextInput).
-    SettingsSshFieldUsername,
-    /// Phase 5-11-8 Step 8-2: auth_type field of the selected host (ComboBox password/key/agent).
-    SettingsSshFieldAuthType,
-    /// Phase 5-11-8 Step 8-3 Sub-phase D: SSH category add-host button.
-    SettingsSshAddBtn,
-    /// Phase 5-11-8 Step 8-3 Sub-phase D: SSH category delete-host button (selected host).
-    SettingsSshDeleteBtn,
     /// Phase 5-11-8 Step 8-3 Sub-phase D: SSH delete confirmation dialog body (Role::AlertDialog).
     SettingsSshDeleteDialog,
     /// Phase 5-11-8 Step 8-3 Sub-phase D: SSH delete confirmation dialog "Delete" confirm button.
@@ -691,7 +648,7 @@ pub enum NodeIdKind {
 /// | 500M..600M | `QuickSelectItem { idx: id - 500M }` |
 /// | 600M..700M | retired — carried `SettingsProfileItem` until the Profiles category moved onto the widget layer (UI/UX v3 P1c) |
 /// | 700M..800M | `SettingsWidget { category, index }` — `SETTINGS_WIDGET_BASE + WidgetId::as_u32()` (UI/UX v3 P1b/P1c). Widest encodable offset is `0xFF_FFFF` ≈ 16.8M, so the 100M-wide slot has room to spare |
-/// | 800M..900M | `SettingsSshHostItem { idx: id - 800M }` (Phase 5-11-8 Step 8-1) |
+/// | 800M..900M | retired — carried `SettingsSshHostItem` until the Ssh category moved onto the widget layer (UI/UX v3 P1c) |
 /// | 900M..1G | `SettingsKeyBindingItem { idx: id - 900M }` (Phase 5-11-9 Sub-phase E) |
 /// | 1G..1G+u32::MAX | `Tab { pane_id: id - 1G }` |
 /// | 10G..10G+u32::MAX | `Pane { pane_id: id - 10G }` |
@@ -737,15 +694,9 @@ pub fn decode_node_id(id: NodeId) -> NodeIdKind {
             }
         }
         // Phase 5-11-6 #6: 4 new Window category fields
-        // Phase 5-11-8 Step 8-2: 5 SSH category host fields
-        40 => NodeIdKind::SettingsSshFieldName,
-        41 => NodeIdKind::SettingsSshFieldHost,
-        42 => NodeIdKind::SettingsSshFieldPort,
-        43 => NodeIdKind::SettingsSshFieldUsername,
-        44 => NodeIdKind::SettingsSshFieldAuthType,
-        // Phase 5-11-8 Step 8-3 Sub-phase D: Add/Delete + delete confirmation dialog
-        45 => NodeIdKind::SettingsSshAddBtn,
-        46 => NodeIdKind::SettingsSshDeleteBtn,
+        // Phase 5-11-8 Step 8-3 Sub-phase D: delete confirmation dialog
+        // (40..=46 were the hand-written SSH field/button nodes, retired in
+        // UI/UX v3 P1c when the Ssh category moved onto the widget layer).
         47 => NodeIdKind::SettingsSshDeleteDialog,
         48 => NodeIdKind::SettingsSshDeleteConfirmBtn,
         49 => NodeIdKind::SettingsSshDeleteCancelBtn,
@@ -794,14 +745,6 @@ fn decode_dynamic(raw: u64) -> NodeIdKind {
     {
         return NodeIdKind::QuickSelectItem {
             idx: (raw - NODE_ID_QUICKSELECT_ITEM_OFFSET) as usize,
-        };
-    }
-    // Phase 5-11-8 Step 8-1: SettingsPanel Ssh host item range: [800M, 900M)
-    if (NODE_ID_SETTINGS_SSH_HOST_OFFSET..NODE_ID_SETTINGS_SSH_HOST_OFFSET + DYN_RANGE)
-        .contains(&raw)
-    {
-        return NodeIdKind::SettingsSshHostItem {
-            idx: (raw - NODE_ID_SETTINGS_SSH_HOST_OFFSET) as usize,
         };
     }
     // Phase 5-11-9 Sub-phase E: SettingsPanel Keybindings item range: [900M, 1G)
@@ -1549,6 +1492,7 @@ fn widget_node(desc: &crate::renderer::overlay::widgets::spec::WidgetDesc) -> No
         WidgetKind::Toggle { .. } => Role::CheckBox,
         WidgetKind::Cycle { .. } => Role::ComboBox,
         WidgetKind::Slider { .. } => Role::Slider,
+        WidgetKind::SpinButton { .. } => Role::SpinButton,
         WidgetKind::Text { .. } => Role::TextInput,
         // A key capture reads as a text input too: its value is a string the
         // user replaces, even though the replacement arrives as a key press.
@@ -1581,6 +1525,13 @@ fn widget_node(desc: &crate::renderer::overlay::widgets::spec::WidgetDesc) -> No
             max,
             step,
             ..
+        }
+        | WidgetKind::SpinButton {
+            value,
+            min,
+            max,
+            step,
+            ..
         } => {
             node.set_numeric_value(*value as f64);
             node.set_min_numeric_value(*min as f64);
@@ -1588,6 +1539,9 @@ fn widget_node(desc: &crate::renderer::overlay::widgets::spec::WidgetDesc) -> No
             node.set_numeric_value_step(*step as f64);
         }
         _ => {}
+    }
+    if !desc.enabled {
+        node.set_disabled();
     }
     node
 }
@@ -1653,7 +1607,26 @@ fn widget_focus_id(panel: &SettingsPanel) -> Option<NodeId> {
                 1 + panel.profiles.len(),
             )
         }
-        // Blocks is mouse-only; Ssh / Keybindings are not migrated.
+        // Ssh: the counter covers the list (0 → the selected windowed entry),
+        // the five fields (1..=5, the identity onto the widget indices) and
+        // the two buttons (6/7). While the delete dialog is open the
+        // hand-written dialog buttons own the focus, so report nothing and
+        // let the caller's dialog rule take over.
+        SettingsCategory::Ssh if !panel.ssh_delete_dialog_open => {
+            use crate::renderer::overlay::widgets::settings_ssh::{SSH_CATEGORY, row};
+            let empty = panel.ssh_hosts.is_empty();
+            let index = match panel.ssh_field_focus {
+                0 if !empty => {
+                    row::LIST_BASE + panel.selected_host_index.min(panel.ssh_hosts.len() - 1) as u16
+                }
+                f @ 1..=5 if !empty => f as u16,
+                6 => row::ADD,
+                7 if !empty => row::DELETE,
+                _ => return None,
+            };
+            return Some(settings_widget_id(WidgetId::new(SSH_CATEGORY, index)));
+        }
+        // Blocks is mouse-only; Keybindings is not migrated.
         _ => return None,
     };
     ((index as usize) < count).then(|| settings_widget_id(WidgetId::new(category, index)))
@@ -1784,12 +1757,12 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
             }
         }
         SettingsCategory::Ssh => {
-            // Phase 5-11-8 Step 8-1: expose the SSH host list as ListBox + ListBoxOption.
-            // Phase 5-11-8 Step 8-2: expose the selected host's 5 fields (name / host /
-            // port / username / auth_type) as Role::TextInput / SpinButton / ComboBox.
-            // Phase 5-11-8 Step 8-3 (Sub-phase D): add Add / Delete buttons at the end,
-            // and expose the delete confirmation dialog (NodeId 47-49) while
-            // ssh_delete_dialog_open == true.
+            // UI/UX v3 P1c: the windowed host list, the five fields of the
+            // selected host and the Add/Delete buttons are widget nodes now,
+            // replacing the hand-written machinery of Phase 5-11-8 (the 800M
+            // host-item range and fixed ids 40..=46, both retired). The
+            // delete-confirmation dialog (NodeId 47-49) stays hand-written:
+            // it is a modal over the panel, not a settings row.
             if panel.ssh_hosts.is_empty() {
                 content_description = Some(
                     "No SSH hosts are registered. \
@@ -1797,130 +1770,18 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
                         .to_string(),
                 );
             } else {
-                // ===== Host list (Step 8-1) =====
-                let item_ids: Vec<NodeId> = (0..panel.ssh_hosts.len())
-                    .map(settings_ssh_host_item_id)
-                    .collect();
-                for (idx, host) in panel.ssh_hosts.iter().enumerate() {
-                    let mut item = Node::new(Role::ListBoxOption);
-                    item.set_label(host.label());
-                    // The description supplies the authentication method.
-                    if !host.auth_type.is_empty() {
-                        item.set_description(format!("Auth: {}", host.auth_type));
-                    }
-                    if idx == panel.selected_host_index {
-                        item.set_selected(true);
-                    }
-                    nodes.push((settings_ssh_host_item_id(idx), item));
-                }
-                for id in &item_ids {
-                    content_children.push(*id);
-                }
-
-                // ===== Field editing for the selected host (Step 8-2 + 8-3 Sub-phase A) =====
-                // Clamp the index (so we never panic even if it goes out of range).
                 let sel = panel.selected_host_index.min(panel.ssh_hosts.len() - 1);
-                let host = &panel.ssh_hosts[sel];
-
-                // Phase 5-11-8 Step 8-3 (Sub-phase A): while GUI editing is active,
-                // expose the buffered value so SR also sees real-time progress.
-                // Fields that are not being edited (`ssh_field_focus != 1/2/4`)
-                // continue to expose the host's current value.
-                let editing_value = |target: u8| -> Option<String> {
-                    if panel.ssh_field_focus == target {
-                        panel.ssh_field_editing.as_ref().map(|s| s.display_string())
-                    } else {
-                        None
-                    }
-                };
-
-                // name (TextInput)
-                let mut name_node = Node::new(Role::TextInput);
-                name_node.set_label("Host name (name)");
-                let name_val = editing_value(1).unwrap_or_else(|| host.name.clone());
-                name_node.set_value(name_val.as_str());
-                name_node.set_description(
-                    "SR can start GUI editing via SetValue or Enter. Enter to commit / Esc to cancel.",
-                );
-                nodes.push((SETTINGS_SSH_FIELD_NAME_ID, name_node));
-                content_children.push(SETTINGS_SSH_FIELD_NAME_ID);
-
-                // host (TextInput)
-                let mut host_node = Node::new(Role::TextInput);
-                host_node.set_label("Target host (host)");
-                let host_val = editing_value(2).unwrap_or_else(|| host.host.clone());
-                host_node.set_value(host_val.as_str());
-                host_node.set_description(
-                    "IP address or FQDN. Start GUI editing via SR SetValue or Enter.",
-                );
-                nodes.push((SETTINGS_SSH_FIELD_HOST_ID, host_node));
-                content_children.push(SETTINGS_SSH_FIELD_HOST_ID);
-
-                // port (SpinButton)
-                let mut port_node = Node::new(Role::SpinButton);
-                port_node.set_label("Port");
-                port_node.set_numeric_value(host.port as f64);
-                port_node.set_min_numeric_value(1.0);
-                port_node.set_max_numeric_value(65535.0);
-                port_node.set_numeric_value_step(1.0);
-                port_node.set_description("1..65535. Use Left/Right to adjust.");
-                nodes.push((SETTINGS_SSH_FIELD_PORT_ID, port_node));
-                content_children.push(SETTINGS_SSH_FIELD_PORT_ID);
-
-                // username (TextInput)
-                let mut user_node = Node::new(Role::TextInput);
-                user_node.set_label("User name (username)");
-                let user_val = editing_value(4).unwrap_or_else(|| host.username.clone());
-                user_node.set_value(user_val.as_str());
-                user_node.set_description("Start GUI editing via SR SetValue or Enter.");
-                nodes.push((SETTINGS_SSH_FIELD_USERNAME_ID, user_node));
-                content_children.push(SETTINGS_SSH_FIELD_USERNAME_ID);
-
-                // auth_type (ComboBox: password / key / agent)
-                let mut auth_node = Node::new(Role::ComboBox);
-                auth_node.set_label("Auth method (auth_type)");
-                auth_node.set_value(host.auth_type.as_str());
-                auth_node.set_description("Use Left/Right to cycle: password / key / agent");
-                nodes.push((SETTINGS_SSH_FIELD_AUTH_TYPE_ID, auth_node));
-                content_children.push(SETTINGS_SSH_FIELD_AUTH_TYPE_ID);
-
                 content_description = Some(format!(
                     "Editing host {} of {}. Use Up/Down to move between fields, Enter to save.",
                     sel + 1,
                     panel.ssh_hosts.len(),
                 ));
             }
-
-            // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): Add / Delete buttons =====
-            // Always exposed (Add is active even when the list is empty; Delete uses its
-            // label and description to indicate the disabled state). SR users can scan
-            // 0..=7 with Up/Down and reach the Add (6) / Delete (7) buttons.
-            let mut add_btn = Node::new(Role::Button);
-            add_btn.set_label("Add new host");
-            add_btn.set_description(
-                "Enter or Click appends a new SSH host to the end of the list and immediately starts editing its name.",
-            );
-            if panel.ssh_field_focus == 6 {
-                add_btn.set_selected(true);
+            for desc in crate::renderer::overlay::widgets::settings_ssh::ssh_widget_descs(panel) {
+                let id = settings_widget_id(desc.id);
+                nodes.push((id, widget_node(&desc)));
+                content_children.push(id);
             }
-            nodes.push((SETTINGS_SSH_ADD_BTN_ID, add_btn));
-            content_children.push(SETTINGS_SSH_ADD_BTN_ID);
-
-            let mut delete_btn = Node::new(Role::Button);
-            if panel.ssh_hosts.is_empty() {
-                delete_btn.set_label("Delete selected host (disabled)");
-                delete_btn.set_description("No host is available to delete. Add a new host first.");
-            } else {
-                delete_btn.set_label("Delete selected host");
-                delete_btn.set_description(
-                    "Enter or Click opens the delete confirmation dialog. Esc or Cancel dismisses it.",
-                );
-                if panel.ssh_field_focus == 7 {
-                    delete_btn.set_selected(true);
-                }
-            }
-            nodes.push((SETTINGS_SSH_DELETE_BTN_ID, delete_btn));
-            content_children.push(SETTINGS_SSH_DELETE_BTN_ID);
         }
         SettingsCategory::Keybindings => {
             // Phase 5-11-9 Sub-phase E: expose the keybinding list as ListBox +
@@ -2085,29 +1946,6 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
             SETTINGS_SSH_DELETE_CONFIRM_BTN_ID
         } else {
             SETTINGS_SSH_DELETE_CANCEL_BTN_ID
-        }
-    } else if matches!(panel.category, SettingsCategory::Ssh) && panel.ssh_field_focus == 6 {
-        // Phase 5-11-8 Step 8-3 (Sub-phase D): the Add button is active even when ssh_hosts is empty.
-        SETTINGS_SSH_ADD_BTN_ID
-    } else if matches!(panel.category, SettingsCategory::Ssh)
-        && panel.ssh_field_focus == 7
-        && !panel.ssh_hosts.is_empty()
-    {
-        // Phase 5-11-8 Step 8-3 (Sub-phase D): the Delete button is focusable only when the list is non-empty.
-        SETTINGS_SSH_DELETE_BTN_ID
-    } else if matches!(panel.category, SettingsCategory::Ssh) && !panel.ssh_hosts.is_empty() {
-        // Phase 5-11-8: focus selection for the Ssh category.
-        // ssh_field_focus = 0 -> selected item of the host list
-        // ssh_field_focus = 1..=5 -> the corresponding field node
-        match panel.ssh_field_focus {
-            1 => SETTINGS_SSH_FIELD_NAME_ID,
-            2 => SETTINGS_SSH_FIELD_HOST_ID,
-            3 => SETTINGS_SSH_FIELD_PORT_ID,
-            4 => SETTINGS_SSH_FIELD_USERNAME_ID,
-            5 => SETTINGS_SSH_FIELD_AUTH_TYPE_ID,
-            _ => {
-                settings_ssh_host_item_id(panel.selected_host_index.min(panel.ssh_hosts.len() - 1))
-            }
         }
     } else if matches!(panel.category, SettingsCategory::Keybindings)
         && panel.key_delete_dialog_open
@@ -2594,6 +2432,7 @@ pub fn dispatch_settings_action(
             use crate::renderer::overlay::widgets::settings_security::{
                 SECURITY_CATEGORY, SECURITY_ROW_COUNT,
             };
+            use crate::renderer::overlay::widgets::settings_ssh::{SSH_CATEGORY, row as ssh_row};
             use crate::renderer::overlay::widgets::settings_startup::{
                 STARTUP_CATEGORY, STARTUP_ROW_COUNT,
             };
@@ -2633,6 +2472,24 @@ pub fn dispatch_settings_action(
                     panel.selected_profile = (*index - profiles_row::LIST_BASE) as usize;
                     true
                 }
+                // Ssh: focusing a list entry selects it and hands the counter
+                // back to the list, matching the retired host-item arm.
+                SSH_CATEGORY
+                    if *index >= ssh_row::LIST_BASE
+                        && ((*index - ssh_row::LIST_BASE) as usize) < panel.ssh_hosts.len() =>
+                {
+                    panel.selected_host_index = (*index - ssh_row::LIST_BASE) as usize;
+                    panel.ssh_field_focus = 0;
+                    true
+                }
+                // Ssh fields and buttons: the widget indices mirror
+                // `ssh_field_focus` exactly. The Delete button accepts focus
+                // even while disabled so reader navigation stays stable,
+                // matching the retired button arm.
+                SSH_CATEGORY if (1..=7).contains(index) => {
+                    panel.ssh_field_focus = *index as u8;
+                    true
+                }
                 // Blocks has no focus counter.
                 _ => false,
             }
@@ -2654,6 +2511,7 @@ pub fn dispatch_settings_action(
             use crate::renderer::overlay::widgets::settings_security::{
                 SECURITY_CATEGORY, apply_security_action,
             };
+            use crate::renderer::overlay::widgets::settings_ssh::{SSH_CATEGORY, apply_ssh_action};
             use crate::renderer::overlay::widgets::settings_startup::{
                 STARTUP_CATEGORY, apply_startup_action,
             };
@@ -2682,129 +2540,10 @@ pub fn dispatch_settings_action(
                 BLOCKS_CATEGORY => apply_blocks_action(panel, *index, widget_action),
                 SECURITY_CATEGORY => apply_security_action(panel, *index, widget_action),
                 PROFILES_CATEGORY => apply_profiles_action(panel, *index, widget_action),
-                // Ssh / Keybindings keep their own nodes for now.
+                SSH_CATEGORY => apply_ssh_action(panel, *index, widget_action),
+                // Keybindings keeps its own nodes for now.
                 _ => false,
             }
-        }
-
-        // ===== Phase 5-11-8 Step 8-1 - Ssh host item (ListBoxOption) =====
-        // Both Click and Focus update `selected_host_index`.
-        // When the host changes, reset `ssh_field_focus` to 0 (the list) so the
-        // value display on the field nodes stays consistent.
-        (Action::Click | Action::Focus, NodeIdKind::SettingsSshHostItem { idx })
-            if *idx < panel.ssh_hosts.len() =>
-        {
-            panel.selected_host_index = *idx;
-            panel.ssh_field_focus = 0;
-            true
-        }
-
-        // ===== Phase 5-11-8 Step 8-2 - Ssh field: name (TextInput) =====
-        (Action::Focus, NodeIdKind::SettingsSshFieldName) => {
-            panel.ssh_field_focus = 1;
-            true
-        }
-        (Action::SetValue, NodeIdKind::SettingsSshFieldName) => {
-            if let Some(ActionData::Value(s)) = data {
-                panel.set_ssh_host_name(s.into_string());
-                panel.ssh_field_focus = 1;
-                true
-            } else {
-                false
-            }
-        }
-
-        // ===== Phase 5-11-8 Step 8-2 - Ssh field: host (TextInput) =====
-        (Action::Focus, NodeIdKind::SettingsSshFieldHost) => {
-            panel.ssh_field_focus = 2;
-            true
-        }
-        (Action::SetValue, NodeIdKind::SettingsSshFieldHost) => {
-            if let Some(ActionData::Value(s)) = data {
-                panel.set_ssh_host_host(s.into_string());
-                panel.ssh_field_focus = 2;
-                true
-            } else {
-                false
-            }
-        }
-
-        // ===== Phase 5-11-8 Step 8-2 - Ssh field: port (SpinButton) =====
-        (Action::Focus, NodeIdKind::SettingsSshFieldPort) => {
-            panel.ssh_field_focus = 3;
-            true
-        }
-        (Action::SetValue, NodeIdKind::SettingsSshFieldPort) => {
-            if let Some(ActionData::NumericValue(v)) = data {
-                panel.set_ssh_host_port_value(v);
-                panel.ssh_field_focus = 3;
-                true
-            } else {
-                false
-            }
-        }
-        (Action::Increment, NodeIdKind::SettingsSshFieldPort) => {
-            panel.increase_ssh_host_port();
-            panel.ssh_field_focus = 3;
-            true
-        }
-        (Action::Decrement, NodeIdKind::SettingsSshFieldPort) => {
-            panel.decrease_ssh_host_port();
-            panel.ssh_field_focus = 3;
-            true
-        }
-
-        // ===== Phase 5-11-8 Step 8-2 - Ssh field: username (TextInput) =====
-        (Action::Focus, NodeIdKind::SettingsSshFieldUsername) => {
-            panel.ssh_field_focus = 4;
-            true
-        }
-        (Action::SetValue, NodeIdKind::SettingsSshFieldUsername) => {
-            if let Some(ActionData::Value(s)) = data {
-                panel.set_ssh_host_username(s.into_string());
-                panel.ssh_field_focus = 4;
-                true
-            } else {
-                false
-            }
-        }
-
-        // ===== Phase 5-11-8 Step 8-2 - Ssh field: auth_type (ComboBox) =====
-        (Action::Focus, NodeIdKind::SettingsSshFieldAuthType) => {
-            panel.ssh_field_focus = 5;
-            true
-        }
-        (Action::Click | Action::Increment, NodeIdKind::SettingsSshFieldAuthType) => {
-            panel.next_ssh_auth_type();
-            panel.ssh_field_focus = 5;
-            true
-        }
-        (Action::Decrement, NodeIdKind::SettingsSshFieldAuthType) => {
-            panel.prev_ssh_auth_type();
-            panel.ssh_field_focus = 5;
-            true
-        }
-
-        // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): Add / Delete buttons =====
-        (Action::Focus, NodeIdKind::SettingsSshAddBtn) => {
-            panel.ssh_field_focus = 6;
-            true
-        }
-        (Action::Click, NodeIdKind::SettingsSshAddBtn) => {
-            // Click from the SR adds a new host and auto-enters name edit mode.
-            panel.add_ssh_host();
-            true
-        }
-        (Action::Focus, NodeIdKind::SettingsSshDeleteBtn) => {
-            // Accept focus even when the list is empty (so SR navigation stays stable).
-            // `description` already marks the button as "disabled", so the SR won't misbehave.
-            panel.ssh_field_focus = 7;
-            true
-        }
-        (Action::Click, NodeIdKind::SettingsSshDeleteBtn) => {
-            // No-op when the list is empty (`open_ssh_delete_dialog` checks `is_empty`).
-            panel.open_ssh_delete_dialog();
-            true
         }
 
         // ===== Phase 5-11-8 Step 8-3 (Sub-phase D): delete confirmation dialog =====
@@ -5569,6 +5308,44 @@ mod tests {
         assert_ne!(h0, h1, "the hash must change when selected_profile changes");
     }
 
+    /// widget_node: a SpinButton is announced with its role and numeric range
+    /// (the Ssh port field relies on Increment/Decrement/SetValue working).
+    #[test]
+    fn widget_node_spin_button_exposes_numeric_range() {
+        use crate::renderer::overlay::widgets::spec::{WidgetDesc, WidgetId, WidgetKind};
+        let desc = WidgetDesc::new(
+            WidgetId::new(4, 3),
+            WidgetKind::SpinButton {
+                value: 22.0,
+                min: 1.0,
+                max: 65535.0,
+                step: 1.0,
+                display: "22".to_string(),
+            },
+            "Port",
+        );
+        let node = widget_node(&desc);
+        assert_eq!(node.role(), Role::SpinButton);
+        assert_eq!(node.numeric_value(), Some(22.0));
+        assert_eq!(node.min_numeric_value(), Some(1.0));
+        assert_eq!(node.max_numeric_value(), Some(65535.0));
+    }
+
+    /// widget_node: a disabled widget is announced as disabled (first needed
+    /// by the Ssh Delete button, which is inert while the host list is empty).
+    #[test]
+    fn widget_node_marks_disabled_widgets() {
+        use crate::renderer::overlay::widgets::spec::{WidgetDesc, WidgetId, WidgetKind};
+        let mut desc = WidgetDesc::new(
+            WidgetId::new(4, 7),
+            WidgetKind::Button { destructive: true },
+            "Delete",
+        );
+        desc.enabled = false;
+        let node = widget_node(&desc);
+        assert!(node.is_disabled());
+    }
+
     /// tree_state_hash changes when active_profile_index changes: the
     /// Profiles cycler's exposed value depends on it (UI/UX v3 P1c), so a
     /// stale hash would leave a screen reader announcing the old profile.
@@ -5651,34 +5428,6 @@ mod tests {
         assert_eq!(h_nouser.label(), "myhost (example.com:2222)");
     }
 
-    /// SettingsSshHostItem NodeId roundtrip.
-    #[test]
-    fn settings_ssh_host_item_id_roundtrip() {
-        for idx in [0, 1, 50, 99_999] {
-            let id = settings_ssh_host_item_id(idx);
-            let decoded = decode_node_id(id);
-            assert_eq!(
-                decoded,
-                NodeIdKind::SettingsSshHostItem { idx },
-                "roundtrip for settings_ssh_host_item_id({})",
-                idx
-            );
-        }
-    }
-
-    /// The SettingsSshHostItem offset does not overlap the widget / Tab ranges.
-    #[test]
-    fn settings_ssh_host_offset_does_not_overlap() {
-        const _: () = assert!(
-            NODE_ID_SETTINGS_SSH_HOST_OFFSET >= SETTINGS_WIDGET_BASE + 100_000_000,
-            "SSH host range [800M, 900M) must not collide with the widget range [700M, 800M)"
-        );
-        const _: () = assert!(
-            NODE_ID_SETTINGS_SSH_HOST_OFFSET + 100_000_000 <= NODE_ID_TAB_OFFSET,
-            "SSH host range [800M, 900M) must not collide with Tab range [1G, ...)"
-        );
-    }
-
     /// The 700M..800M range now carries `SettingsWidget` ids (UI/UX v3 P1b).
     /// Only the sub-range a `WidgetId` can actually encode decodes to a
     /// widget; the rest of the block stays Unknown, so a stray id in there is
@@ -5730,7 +5479,22 @@ mod tests {
         );
     }
 
-    /// When the SSH category has hosts: ListBoxOption nodes are exposed.
+    /// Test helper: the widget NodeId of the Ssh host entry at `i`.
+    fn ssh_entry_widget_id(i: usize) -> NodeId {
+        use crate::renderer::overlay::widgets::settings_ssh::{SSH_CATEGORY, row};
+        use crate::renderer::overlay::widgets::spec::WidgetId;
+        settings_widget_id(WidgetId::new(SSH_CATEGORY, row::LIST_BASE + i as u16))
+    }
+
+    /// Test helper: the widget NodeId of an Ssh field/button at `index`.
+    fn ssh_widget_id(index: u16) -> NodeId {
+        use crate::renderer::overlay::widgets::settings_ssh::SSH_CATEGORY;
+        use crate::renderer::overlay::widgets::spec::WidgetId;
+        settings_widget_id(WidgetId::new(SSH_CATEGORY, index))
+    }
+
+    /// When the SSH category has hosts: entry widget nodes are exposed
+    /// (UI/UX v3 P1c — previously hand-written `SettingsSshHostItem` nodes).
     #[test]
     fn build_settings_panel_ssh_exposes_listbox_options() {
         use crate::settings_panel::{SettingsCategory, SshHostEntry};
@@ -5759,7 +5523,7 @@ mod tests {
         // Each ListBoxOption is exposed.
         let opt0 = nodes
             .iter()
-            .find(|(id, _)| *id == settings_ssh_host_item_id(0))
+            .find(|(id, _)| *id == ssh_entry_widget_id(0))
             .unwrap();
         assert_eq!(opt0.1.role(), Role::ListBoxOption);
         assert!(opt0.1.label().unwrap_or("").contains("prod"));
@@ -5772,7 +5536,7 @@ mod tests {
 
         let opt1 = nodes
             .iter()
-            .find(|(id, _)| *id == settings_ssh_host_item_id(1))
+            .find(|(id, _)| *id == ssh_entry_widget_id(1))
             .unwrap();
         assert_eq!(opt1.1.role(), Role::ListBoxOption);
         assert!(opt1.1.label().unwrap_or("").contains("staging"));
@@ -5780,13 +5544,10 @@ mod tests {
         // selected_host_index = 1 so this entry is selected.
         assert_eq!(opt1.1.is_selected(), Some(true));
 
-        // Focus moves to the selected host item.
-        assert_eq!(focus, settings_ssh_host_item_id(1));
+        // Focus moves to the selected host item (ssh_field_focus = 0).
+        assert_eq!(focus, ssh_entry_widget_id(1));
 
         // SETTINGS_CONTENT includes the host count.
-        // (Step 8-2 changed the description to the "editing" mode, so the Step 8-1
-        //  "Edit via the [[hosts]] section in nexterm.toml" guidance is no longer
-        //  on the description. Each field node now documents how to edit instead.)
         let content = nodes
             .iter()
             .find(|(id, _)| *id == SETTINGS_CONTENT_ID)
@@ -5799,79 +5560,58 @@ mod tests {
         );
     }
 
-    /// dispatch_settings_action: SettingsSshHostItem Click updates selected_host_index.
+    /// dispatch_settings_action: Click on an Ssh entry widget selects it and
+    /// hands the focus counter back to the list (via the shared router).
     #[test]
-    fn dispatch_settings_ssh_host_item_click() {
-        use crate::settings_panel::{SettingsCategory, SshHostEntry};
-        let mut panel = SettingsPanel::default();
-        panel.category = SettingsCategory::Ssh;
-        panel.ssh_hosts = vec![
-            SshHostEntry {
-                name: "a".to_string(),
-                host: "a.example.com".to_string(),
-                port: 22,
-                username: "u".to_string(),
-                auth_type: "key".to_string(),
-            },
-            SshHostEntry {
-                name: "b".to_string(),
-                host: "b.example.com".to_string(),
-                port: 22,
-                username: "u".to_string(),
-                auth_type: "key".to_string(),
-            },
-        ];
-        panel.selected_host_index = 0;
+    fn dispatch_settings_ssh_entry_click_selects() {
+        use crate::renderer::overlay::widgets::settings_ssh::{SSH_CATEGORY, row};
+        let mut panel = make_ssh_panel_with_2_hosts();
+        panel.ssh_field_focus = 4;
 
         let handled = dispatch_settings_action(
             &mut panel,
             accesskit::Action::Click,
-            &NodeIdKind::SettingsSshHostItem { idx: 1 },
+            &NodeIdKind::SettingsWidget {
+                category: SSH_CATEGORY,
+                index: row::LIST_BASE + 1,
+            },
             None,
         );
         assert!(handled);
         assert_eq!(panel.selected_host_index, 1);
+        assert_eq!(panel.ssh_field_focus, 0);
     }
 
-    /// dispatch_settings_action: SettingsSshHostItem Focus also updates selected_host_index.
+    /// dispatch_settings_action: Focus on an Ssh field widget moves the
+    /// counter, and SetValue on the port writes through the router.
     #[test]
-    fn dispatch_settings_ssh_host_item_focus() {
-        use crate::settings_panel::{SettingsCategory, SshHostEntry};
-        let mut panel = SettingsPanel::default();
-        panel.category = SettingsCategory::Ssh;
-        panel.ssh_hosts = vec![SshHostEntry {
-            name: "x".to_string(),
-            host: "x.example.com".to_string(),
-            port: 22,
-            username: "u".to_string(),
-            auth_type: "agent".to_string(),
-        }];
-        panel.selected_host_index = 0;
+    fn dispatch_settings_ssh_field_focus_and_set_value() {
+        use crate::renderer::overlay::widgets::settings_ssh::{SSH_CATEGORY, row};
+        let mut panel = make_ssh_panel_with_2_hosts();
 
         let handled = dispatch_settings_action(
             &mut panel,
             accesskit::Action::Focus,
-            &NodeIdKind::SettingsSshHostItem { idx: 0 },
+            &NodeIdKind::SettingsWidget {
+                category: SSH_CATEGORY,
+                index: row::FIELD_USERNAME,
+            },
             None,
         );
         assert!(handled);
-        assert_eq!(panel.selected_host_index, 0);
-    }
-
-    /// dispatch_settings_action: an out-of-range idx is a no-op and returns false.
-    #[test]
-    fn dispatch_settings_ssh_host_item_out_of_range() {
-        let mut panel = SettingsPanel::default();
-        panel.ssh_hosts = vec![];
+        assert_eq!(panel.ssh_field_focus, 4);
 
         let handled = dispatch_settings_action(
             &mut panel,
-            accesskit::Action::Click,
-            &NodeIdKind::SettingsSshHostItem { idx: 5 },
-            None,
+            accesskit::Action::SetValue,
+            &NodeIdKind::SettingsWidget {
+                category: SSH_CATEGORY,
+                index: row::FIELD_PORT,
+            },
+            Some(accesskit::ActionData::NumericValue(8022.0)),
         );
-        assert!(!handled);
-        assert_eq!(panel.selected_host_index, 0);
+        assert!(handled);
+        assert_eq!(panel.ssh_hosts[0].port, 8022);
     }
 
     /// tree_state_hash changes when selected_host_index changes.
@@ -5958,38 +5698,18 @@ mod tests {
         panel
     }
 
-    /// SettingsSshField* NodeId decode.
+    /// The delete-dialog NodeIds (the Ssh ids that stayed hand-written) and
+    /// the title-bar window buttons decode; 40..=46 were retired with the
+    /// Ssh widget migration and now decode to Unknown.
     #[test]
     fn settings_ssh_field_node_ids_decode() {
-        assert_eq!(
-            decode_node_id(SETTINGS_SSH_FIELD_NAME_ID),
-            NodeIdKind::SettingsSshFieldName
-        );
-        assert_eq!(
-            decode_node_id(SETTINGS_SSH_FIELD_HOST_ID),
-            NodeIdKind::SettingsSshFieldHost
-        );
-        assert_eq!(
-            decode_node_id(SETTINGS_SSH_FIELD_PORT_ID),
-            NodeIdKind::SettingsSshFieldPort
-        );
-        assert_eq!(
-            decode_node_id(SETTINGS_SSH_FIELD_USERNAME_ID),
-            NodeIdKind::SettingsSshFieldUsername
-        );
-        assert_eq!(
-            decode_node_id(SETTINGS_SSH_FIELD_AUTH_TYPE_ID),
-            NodeIdKind::SettingsSshFieldAuthType
-        );
-        // Phase 5-11-8 Step 8-3 Sub-phase D: 45-49 are Add/Delete buttons + delete confirmation dialog.
-        assert_eq!(
-            decode_node_id(SETTINGS_SSH_ADD_BTN_ID),
-            NodeIdKind::SettingsSshAddBtn
-        );
-        assert_eq!(
-            decode_node_id(SETTINGS_SSH_DELETE_BTN_ID),
-            NodeIdKind::SettingsSshDeleteBtn
-        );
+        for retired in 40u64..=46 {
+            assert_eq!(
+                decode_node_id(NodeId(retired)),
+                NodeIdKind::Unknown,
+                "retired fixed id {retired} must no longer alias a control"
+            );
+        }
         assert_eq!(
             decode_node_id(SETTINGS_SSH_DELETE_DIALOG_ID),
             NodeIdKind::SettingsSshDeleteDialog
@@ -6030,37 +5750,48 @@ mod tests {
                 .map(|(_, n)| n)
         };
 
+        use crate::renderer::overlay::widgets::settings_ssh::row;
+
         // name (TextInput)
-        let n = find(SETTINGS_SSH_FIELD_NAME_ID).expect("name node must exist");
+        let n = find(ssh_widget_id(row::FIELD_NAME)).expect("name node must exist");
         assert_eq!(n.role(), Role::TextInput);
         assert_eq!(n.value().unwrap_or(""), "prod");
 
         // host (TextInput)
-        let h = find(SETTINGS_SSH_FIELD_HOST_ID).expect("host node must exist");
+        let h = find(ssh_widget_id(row::FIELD_HOST)).expect("host node must exist");
         assert_eq!(h.role(), Role::TextInput);
         assert_eq!(h.value().unwrap_or(""), "prod.example.com");
 
         // port (SpinButton)
-        let p = find(SETTINGS_SSH_FIELD_PORT_ID).expect("port node must exist");
+        let p = find(ssh_widget_id(row::FIELD_PORT)).expect("port node must exist");
         assert_eq!(p.role(), Role::SpinButton);
         assert_eq!(p.numeric_value(), Some(22.0));
         assert_eq!(p.min_numeric_value(), Some(1.0));
         assert_eq!(p.max_numeric_value(), Some(65535.0));
 
         // username (TextInput)
-        let u = find(SETTINGS_SSH_FIELD_USERNAME_ID).expect("username node must exist");
+        let u = find(ssh_widget_id(row::FIELD_USERNAME)).expect("username node must exist");
         assert_eq!(u.role(), Role::TextInput);
         assert_eq!(u.value().unwrap_or(""), "deploy");
 
         // auth_type (ComboBox)
-        let a = find(SETTINGS_SSH_FIELD_AUTH_TYPE_ID).expect("auth_type node must exist");
+        let a = find(ssh_widget_id(row::FIELD_AUTH)).expect("auth_type node must exist");
         assert_eq!(a.role(), Role::ComboBox);
         assert_eq!(a.value().unwrap_or(""), "key");
+
+        // Add / Delete buttons (previously fixed ids 45/46).
+        let add = find(ssh_widget_id(row::ADD)).expect("add button must exist");
+        assert_eq!(add.role(), Role::Button);
+        let del = find(ssh_widget_id(row::DELETE)).expect("delete button must exist");
+        assert_eq!(del.role(), Role::Button);
+        assert!(!del.is_disabled(), "delete is enabled while hosts exist");
     }
 
-    /// With an empty host list, the 5 field nodes are not exposed.
+    /// With an empty host list, the field nodes are not exposed (only the
+    /// Add/Delete buttons are, Delete reporting disabled).
     #[test]
     fn build_settings_panel_ssh_no_fields_when_empty() {
+        use crate::renderer::overlay::widgets::settings_ssh::row;
         use crate::settings_panel::SettingsCategory;
         let mut panel = SettingsPanel::default();
         panel.category = SettingsCategory::Ssh;
@@ -6068,225 +5799,45 @@ mod tests {
 
         let (nodes, _focus) = build_settings_panel_nodes(&panel);
         let has_field = nodes.iter().any(|(id, _)| {
-            *id == SETTINGS_SSH_FIELD_NAME_ID
-                || *id == SETTINGS_SSH_FIELD_HOST_ID
-                || *id == SETTINGS_SSH_FIELD_PORT_ID
+            *id == ssh_widget_id(row::FIELD_NAME)
+                || *id == ssh_widget_id(row::FIELD_HOST)
+                || *id == ssh_widget_id(row::FIELD_PORT)
         });
         assert!(
             !has_field,
             "no field nodes must be exposed for an empty list"
         );
+        let del = nodes
+            .iter()
+            .find(|(id, _)| *id == ssh_widget_id(row::DELETE))
+            .expect("delete button stays exposed");
+        assert!(del.1.is_disabled(), "delete reports disabled when empty");
     }
 
     /// When ssh_field_focus is name, focus moves to the name node.
     #[test]
     fn build_settings_panel_ssh_focus_follows_ssh_field_focus() {
+        use crate::renderer::overlay::widgets::settings_ssh::row;
         let mut panel = make_ssh_panel_with_2_hosts();
         panel.ssh_field_focus = 1; // name
         let (_nodes, focus) = build_settings_panel_nodes(&panel);
-        assert_eq!(focus, SETTINGS_SSH_FIELD_NAME_ID);
+        assert_eq!(focus, ssh_widget_id(row::FIELD_NAME));
 
         panel.ssh_field_focus = 3; // port
         let (_nodes, focus) = build_settings_panel_nodes(&panel);
-        assert_eq!(focus, SETTINGS_SSH_FIELD_PORT_ID);
+        assert_eq!(focus, ssh_widget_id(row::FIELD_PORT));
 
         panel.ssh_field_focus = 5; // auth_type
         let (_nodes, focus) = build_settings_panel_nodes(&panel);
-        assert_eq!(focus, SETTINGS_SSH_FIELD_AUTH_TYPE_ID);
+        assert_eq!(focus, ssh_widget_id(row::FIELD_AUTH));
+
+        panel.ssh_field_focus = 7; // delete button
+        let (_nodes, focus) = build_settings_panel_nodes(&panel);
+        assert_eq!(focus, ssh_widget_id(row::DELETE));
 
         panel.ssh_field_focus = 0; // back to list
         let (_nodes, focus) = build_settings_panel_nodes(&panel);
-        assert_eq!(focus, settings_ssh_host_item_id(0));
-    }
-
-    /// dispatch SettingsSshFieldName SetValue updates name and sets dirty=true.
-    #[test]
-    fn dispatch_ssh_field_name_set_value() {
-        let mut panel = make_ssh_panel_with_2_hosts();
-        panel.dirty = false;
-
-        let handled = dispatch_settings_action(
-            &mut panel,
-            accesskit::Action::SetValue,
-            &NodeIdKind::SettingsSshFieldName,
-            Some(accesskit::ActionData::Value("newname".into())),
-        );
-        assert!(handled);
-        assert_eq!(panel.ssh_hosts[0].name, "newname");
-        assert!(panel.dirty);
-        assert_eq!(panel.ssh_field_focus, 1);
-    }
-
-    /// dispatch SettingsSshFieldHost SetValue updates host.
-    #[test]
-    fn dispatch_ssh_field_host_set_value() {
-        let mut panel = make_ssh_panel_with_2_hosts();
-        let handled = dispatch_settings_action(
-            &mut panel,
-            accesskit::Action::SetValue,
-            &NodeIdKind::SettingsSshFieldHost,
-            Some(accesskit::ActionData::Value("new.example.com".into())),
-        );
-        assert!(handled);
-        assert_eq!(panel.ssh_hosts[0].host, "new.example.com");
-        assert!(panel.dirty);
-    }
-
-    /// dispatch SettingsSshFieldPort SetValue performs clamping.
-    #[test]
-    fn dispatch_ssh_field_port_set_value_clamps() {
-        let mut panel = make_ssh_panel_with_2_hosts();
-
-        // In-range.
-        dispatch_settings_action(
-            &mut panel,
-            accesskit::Action::SetValue,
-            &NodeIdKind::SettingsSshFieldPort,
-            Some(accesskit::ActionData::NumericValue(8022.0)),
-        );
-        assert_eq!(panel.ssh_hosts[0].port, 8022);
-
-        // Above the upper bound.
-        dispatch_settings_action(
-            &mut panel,
-            accesskit::Action::SetValue,
-            &NodeIdKind::SettingsSshFieldPort,
-            Some(accesskit::ActionData::NumericValue(70000.0)),
-        );
-        assert_eq!(panel.ssh_hosts[0].port, 65535);
-
-        // Below the lower bound.
-        dispatch_settings_action(
-            &mut panel,
-            accesskit::Action::SetValue,
-            &NodeIdKind::SettingsSshFieldPort,
-            Some(accesskit::ActionData::NumericValue(0.0)),
-        );
-        assert_eq!(panel.ssh_hosts[0].port, 1);
-    }
-
-    /// dispatch SettingsSshFieldPort Increment / Decrement
-    #[test]
-    fn dispatch_ssh_field_port_increment_decrement() {
-        let mut panel = make_ssh_panel_with_2_hosts();
-        let initial = panel.ssh_hosts[0].port;
-
-        dispatch_settings_action(
-            &mut panel,
-            accesskit::Action::Increment,
-            &NodeIdKind::SettingsSshFieldPort,
-            None,
-        );
-        assert_eq!(panel.ssh_hosts[0].port, initial + 1);
-
-        dispatch_settings_action(
-            &mut panel,
-            accesskit::Action::Decrement,
-            &NodeIdKind::SettingsSshFieldPort,
-            None,
-        );
-        assert_eq!(panel.ssh_hosts[0].port, initial);
-    }
-
-    /// dispatch SettingsSshFieldAuthType Click cycles to the next value.
-    #[test]
-    fn dispatch_ssh_field_auth_type_click_cycles() {
-        let mut panel = make_ssh_panel_with_2_hosts();
-        // Initial value is "key".
-        assert_eq!(panel.ssh_hosts[0].auth_type, "key");
-
-        dispatch_settings_action(
-            &mut panel,
-            accesskit::Action::Click,
-            &NodeIdKind::SettingsSshFieldAuthType,
-            None,
-        );
-        // key → agent
-        assert_eq!(panel.ssh_hosts[0].auth_type, "agent");
-
-        dispatch_settings_action(
-            &mut panel,
-            accesskit::Action::Click,
-            &NodeIdKind::SettingsSshFieldAuthType,
-            None,
-        );
-        // agent → password (cycles)
-        assert_eq!(panel.ssh_hosts[0].auth_type, "password");
-
-        dispatch_settings_action(
-            &mut panel,
-            accesskit::Action::Decrement,
-            &NodeIdKind::SettingsSshFieldAuthType,
-            None,
-        );
-        // password → agent (reverse direction)
-        assert_eq!(panel.ssh_hosts[0].auth_type, "agent");
-    }
-
-    /// dispatch Focus path updates ssh_field_focus.
-    #[test]
-    fn dispatch_ssh_field_focus_updates_focus_tracker() {
-        let mut panel = make_ssh_panel_with_2_hosts();
-        for (kind, expected_focus) in [
-            (NodeIdKind::SettingsSshFieldName, 1),
-            (NodeIdKind::SettingsSshFieldHost, 2),
-            (NodeIdKind::SettingsSshFieldPort, 3),
-            (NodeIdKind::SettingsSshFieldUsername, 4),
-            (NodeIdKind::SettingsSshFieldAuthType, 5),
-        ] {
-            panel.ssh_field_focus = 0;
-            let handled =
-                dispatch_settings_action(&mut panel, accesskit::Action::Focus, &kind, None);
-            assert!(handled);
-            assert_eq!(
-                panel.ssh_field_focus, expected_focus,
-                "Focus on kind={:?} must set field_focus={}",
-                kind, expected_focus
-            );
-        }
-    }
-
-    /// Switching hosts resets ssh_field_focus to 0.
-    #[test]
-    fn dispatch_ssh_host_item_resets_field_focus() {
-        let mut panel = make_ssh_panel_with_2_hosts();
-        panel.ssh_field_focus = 3; // currently focused on some field
-
-        dispatch_settings_action(
-            &mut panel,
-            accesskit::Action::Click,
-            &NodeIdKind::SettingsSshHostItem { idx: 1 },
-            None,
-        );
-
-        assert_eq!(panel.selected_host_index, 1);
-        assert_eq!(
-            panel.ssh_field_focus, 0,
-            "switching hosts must move focus back to the list"
-        );
-    }
-
-    /// SetValue on an out-of-range SshHostEntry is a no-op returning false.
-    #[test]
-    fn dispatch_ssh_field_no_op_when_no_host() {
-        use crate::settings_panel::SettingsCategory;
-        let mut panel = SettingsPanel::default();
-        panel.category = SettingsCategory::Ssh;
-        panel.ssh_hosts = vec![]; // empty list
-        panel.dirty = false;
-
-        let handled = dispatch_settings_action(
-            &mut panel,
-            accesskit::Action::SetValue,
-            &NodeIdKind::SettingsSshFieldName,
-            Some(accesskit::ActionData::Value("oops".into())),
-        );
-        // Focus is updated, but with an empty list set_ssh_host_name is a no-op
-        // → handled=true (the focus tracker was updated) but ssh_hosts is unchanged.
-        assert!(handled);
-        assert!(panel.ssh_hosts.is_empty());
-        // With an empty list, set_ssh_host_name does not set dirty=true so it stays false.
-        assert!(!panel.dirty);
+        assert_eq!(focus, ssh_entry_widget_id(0));
     }
 
     /// SshHostEntry mutation API: set_ssh_host_port_value clamps.
@@ -6423,99 +5974,6 @@ auth_type = "key"
     // ============================================================
     // Sprint 5-11-8 Step 8-3 Sub-phase E: Add / Delete + dialog dispatch tests
     // ============================================================
-
-    /// SettingsSshAddBtn Click appends a new host and enters edit mode.
-    #[test]
-    fn dispatch_settings_ssh_add_btn_click_adds_host() {
-        let mut panel = make_ssh_panel_with_2_hosts();
-        assert_eq!(panel.ssh_hosts.len(), 2);
-
-        let handled = dispatch_settings_action(
-            &mut panel,
-            Action::Click,
-            &NodeIdKind::SettingsSshAddBtn,
-            None,
-        );
-
-        assert!(handled);
-        assert_eq!(panel.ssh_hosts.len(), 3, "one host has been added");
-        assert_eq!(
-            panel.selected_host_index, 2,
-            "the new host at the tail is selected"
-        );
-        assert_eq!(panel.ssh_field_focus, 1, "focus is on the name field");
-        assert!(
-            panel.ssh_field_editing.is_some(),
-            "name edit mode starts immediately"
-        );
-        assert!(panel.dirty);
-    }
-
-    /// SettingsSshAddBtn Focus only sets ssh_field_focus = 6 (does not append).
-    #[test]
-    fn dispatch_settings_ssh_add_btn_focus_only_sets_focus() {
-        let mut panel = make_ssh_panel_with_2_hosts();
-
-        let handled = dispatch_settings_action(
-            &mut panel,
-            Action::Focus,
-            &NodeIdKind::SettingsSshAddBtn,
-            None,
-        );
-
-        assert!(handled);
-        assert_eq!(panel.ssh_field_focus, 6);
-        assert_eq!(
-            panel.ssh_hosts.len(),
-            2,
-            "Focus alone must not append a host"
-        );
-    }
-
-    /// SettingsSshDeleteBtn Click opens the delete confirmation dialog.
-    #[test]
-    fn dispatch_settings_ssh_delete_btn_click_opens_dialog() {
-        let mut panel = make_ssh_panel_with_2_hosts();
-        assert!(!panel.ssh_delete_dialog_open);
-
-        let handled = dispatch_settings_action(
-            &mut panel,
-            Action::Click,
-            &NodeIdKind::SettingsSshDeleteBtn,
-            None,
-        );
-
-        assert!(handled);
-        assert!(panel.ssh_delete_dialog_open, "the dialog is open");
-        assert!(
-            !panel.ssh_delete_dialog_confirm_focused,
-            "Cancel is the default focus"
-        );
-        assert_eq!(panel.ssh_hosts.len(), 2, "no deletion has happened yet");
-    }
-
-    /// SettingsSshDeleteBtn Click is a no-op when the list is empty (dialog does not open).
-    #[test]
-    fn dispatch_settings_ssh_delete_btn_click_noop_when_empty() {
-        let mut panel = make_ssh_panel_with_2_hosts();
-        panel.ssh_hosts.clear();
-        panel.selected_host_index = 0;
-
-        let handled = dispatch_settings_action(
-            &mut panel,
-            Action::Click,
-            &NodeIdKind::SettingsSshDeleteBtn,
-            None,
-        );
-
-        // The dispatch handler itself returns handled=true (the invocation is recorded),
-        // but open_ssh_delete_dialog's internal check keeps the dialog closed.
-        assert!(handled);
-        assert!(
-            !panel.ssh_delete_dialog_open,
-            "the dialog must not open when the list is empty"
-        );
-    }
 
     /// SettingsSshDeleteConfirmBtn Click performs the deletion and closes the dialog.
     #[test]
@@ -7150,13 +6608,14 @@ auth_type = "key"
 
     // ----- sanity (2) -----
 
-    /// The Keybinding dynamic offset must not collide with the SSH host offset
+    /// The Keybinding dynamic offset must not collide with the widget range
     /// or other adjacent overlay ranges.
     #[test]
     fn settings_keybinding_offset_does_not_overlap_neighbors() {
-        // Keybinding range is 900M..1G. Earlier dynamic ranges are below 900M.
+        // Keybinding range is 900M..1G. Earlier live ranges end at 800M (the
+        // widget slot); 800M..900M is retired since the Ssh widget migration.
         const _: () =
-            assert!(NODE_ID_SETTINGS_KEY_BINDING_OFFSET > NODE_ID_SETTINGS_SSH_HOST_OFFSET);
+            assert!(NODE_ID_SETTINGS_KEY_BINDING_OFFSET >= SETTINGS_WIDGET_BASE + 200_000_000);
         // Tab/pane offsets are at 1e9 and 1e10 -> still safely above the key binding range
         // (the key binding offset spans 100M, matching the local DYN_RANGE in decode_dynamic).
         const _: () =

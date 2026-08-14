@@ -1,17 +1,31 @@
 //! Ssh category: host list + field-edit panel + Add/Delete + delete dialog.
+//!
+//! Migrated onto the shared widget layer in UI/UX v3 phase P1c. The windowed
+//! host list, the five fields and the Add/Delete buttons live in
+//! `overlay/widgets/settings_ssh.rs`, shared with the mouse hit-test and the
+//! AccessKit tree; this file paints what that module describes, plus the
+//! prose it still owns (section headers, the empty state, the list
+//! range-indicator, the edit-hint note) and the delete-confirmation modal,
+//! which is deliberately not a settings row.
 
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::settings_panel::SettingsPanel;
-use crate::vertex_util::{add_px_rect, add_string_verts, truncate_to_width};
+use crate::vertex_util::{add_px_rect, add_string_verts};
 
-use super::layout::{LIST_ROW_PITCH, MAX_LIST_ROWS, compute_row_layout, list_window};
+use super::super::widgets::draw::{WidgetSink, WidgetTheme, draw_widget};
+use super::super::widgets::geometry::TabGeometry;
+use super::super::widgets::settings_ssh::{
+    build_ssh_widgets, ssh_fields_top, ssh_list_window, ssh_note_y,
+};
+use super::layout::LIST_ROW_PITCH;
 use super::row::{MIN_TEXT_CONTRAST, draw_section_header, ensure_readable};
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::renderer) fn draw_ssh_tab(
     sp: &SettingsPanel,
     tokens: &nexterm_config::DesignTokens,
+    metrics: &nexterm_config::MetricTokens,
     px: f32,
     py: f32,
     panel_w: f32,
@@ -31,9 +45,6 @@ pub(in crate::renderer) fn draw_ssh_tab(
     text_verts: &mut Vec<TextVertex>,
     text_idx: &mut Vec<u16>,
 ) {
-    let layout = compute_row_layout(content_w, cell_w);
-    let list_label_max_w = content_w - cell_w * 0.7;
-
     draw_section_header(
         &nexterm_i18n::fl!("settings-ssh-header"),
         content_inner_x,
@@ -49,6 +60,7 @@ pub(in crate::renderer) fn draw_ssh_tab(
         text_verts,
         text_idx,
     );
+
     if sp.ssh_hosts.is_empty() {
         add_string_verts(
             &nexterm_i18n::fl!("settings-ssh-empty"),
@@ -81,56 +93,8 @@ pub(in crate::renderer) fn draw_ssh_tab(
             text_idx,
         );
     } else {
-        // Bounded list viewport: draw at most MAX_LIST_ROWS hosts, windowed
-        // around the selection, so the edit panel and the Add/Delete buttons
-        // below stay on the panel no matter how many hosts exist.
-        let w = list_window(sp.ssh_hosts.len(), sp.selected_host_index, MAX_LIST_ROWS);
-        for (i, host) in sp
-            .ssh_hosts
-            .iter()
-            .enumerate()
-            .skip(w.first)
-            .take(w.visible)
-        {
-            let item_y = content_top + cell_h * (1.5 + (i - w.first) as f32 * LIST_ROW_PITCH);
-            let is_sel = sp.selected_host_index == i;
-            if is_sel {
-                add_px_rect(
-                    content_inner_x - cell_w * 0.3,
-                    item_y - cell_h * 0.1,
-                    content_w - cell_w * 0.7,
-                    cell_h,
-                    tokens.surface_2,
-                    sw,
-                    sh,
-                    bg_verts,
-                    bg_idx,
-                );
-            }
-            let label = truncate_to_width(&host.label(), list_label_max_w, cell_w);
-            let fg = if is_sel {
-                tokens.text_secondary
-            } else {
-                ensure_readable(tokens.text_muted, tokens.surface_2, MIN_TEXT_CONTRAST)
-            };
-            add_string_verts(
-                &label,
-                content_inner_x,
-                item_y,
-                fg,
-                is_sel,
-                sw,
-                sh,
-                cell_w,
-                font,
-                atlas,
-                queue,
-                text_verts,
-                text_idx,
-            );
-        }
-
         // Range indicator: which slice of the full list the window shows.
+        let w = ssh_list_window(sp);
         if w.clipped {
             let indicator_y = content_top + cell_h * (1.5 + w.visible as f32 * LIST_ROW_PITCH);
             add_string_verts(
@@ -155,15 +119,10 @@ pub(in crate::renderer) fn draw_ssh_tab(
             );
         }
 
-        // ===== Field-edit panel for the selected host =====
-        let sel = sp.selected_host_index.min(sp.ssh_hosts.len() - 1);
-        let host = &sp.ssh_hosts[sel];
-        let fields_top = ssh_fields_top(sp, content_top, cell_h);
-
         draw_section_header(
             &nexterm_i18n::fl!("settings-ssh-edit-header"),
             content_inner_x,
-            fields_top,
+            ssh_fields_top(sp, content_top, cell_h),
             content_w,
             tokens.text_secondary,
             sw,
@@ -176,140 +135,6 @@ pub(in crate::renderer) fn draw_ssh_tab(
             text_idx,
         );
 
-        // Labels + current values for the 5 fields, two-column (label |
-        // value). port/auth_type behave like SpinButton/ComboBox
-        // (`< value >`, changeable via ←/→ without an edit mode); the
-        // others enter a text-edit buffer on Enter.
-        let editing_focus = sp.ssh_field_editing.as_ref().map(|_| sp.ssh_field_focus);
-        let field_labels: [(String, String, u8); 5] = [
-            (
-                nexterm_i18n::fl!("settings-ssh-field-name"),
-                host.name.clone(),
-                1,
-            ),
-            (
-                nexterm_i18n::fl!("settings-ssh-field-host"),
-                host.host.clone(),
-                2,
-            ),
-            (
-                nexterm_i18n::fl!("settings-ssh-field-port"),
-                host.port.to_string(),
-                3,
-            ),
-            (
-                nexterm_i18n::fl!("settings-ssh-field-username"),
-                host.username.clone(),
-                4,
-            ),
-            (
-                nexterm_i18n::fl!("settings-ssh-field-auth-type"),
-                host.auth_type.clone(),
-                5,
-            ),
-        ];
-        for (i, (label, raw_value, field_id)) in field_labels.iter().enumerate() {
-            let row_y = fields_top + cell_h * (1.3 + i as f32 * 1.1);
-            let is_focused = sp.ssh_field_focus == *field_id;
-            let is_editing = editing_focus == Some(*field_id);
-            let is_spin_or_combo = matches!(*field_id, 3 | 5);
-
-            if is_focused {
-                let bg_color = if is_editing {
-                    tokens.surface_3
-                } else {
-                    tokens.surface_2
-                };
-                add_px_rect(
-                    content_inner_x - cell_w * 0.3,
-                    row_y - cell_h * 0.1,
-                    content_w - cell_w * 0.7,
-                    cell_h,
-                    bg_color,
-                    sw,
-                    sh,
-                    bg_verts,
-                    bg_idx,
-                );
-            }
-
-            let fg = if is_focused {
-                tokens.text_secondary
-            } else {
-                ensure_readable(tokens.text_muted, tokens.surface_2, MIN_TEXT_CONTRAST)
-            };
-
-            let display_value = if is_editing {
-                sp.ssh_field_editing
-                    .as_ref()
-                    .map(|s| s.display_string())
-                    .unwrap_or_else(|| raw_value.clone())
-            } else if is_spin_or_combo {
-                format!("< {} >", raw_value)
-            } else {
-                raw_value.clone()
-            };
-
-            let label_text = truncate_to_width(label, layout.label_w, cell_w);
-            add_string_verts(
-                &label_text,
-                content_inner_x,
-                row_y,
-                fg,
-                is_focused,
-                sw,
-                sh,
-                cell_w,
-                font,
-                atlas,
-                queue,
-                text_verts,
-                text_idx,
-            );
-            let value_text = truncate_to_width(&display_value, layout.control_w, cell_w);
-            add_string_verts(
-                &value_text,
-                content_inner_x + layout.control_x_off,
-                row_y,
-                fg,
-                is_focused,
-                sw,
-                sh,
-                cell_w,
-                font,
-                atlas,
-                queue,
-                text_verts,
-                text_idx,
-            );
-
-            // Cursor bar overlay while editing: positioned at the control
-            // column offset + the cursor's column within the (untruncated)
-            // display string.
-            if is_editing && let Some(state) = sp.ssh_field_editing.as_ref() {
-                let cursor_byte = state.display_cursor();
-                let display = state.display_string();
-                let cursor_col = display
-                    .get(..cursor_byte.min(display.len()))
-                    .map(|s| s.chars().count() as f32)
-                    .unwrap_or(0.0);
-                let cursor_x = content_inner_x + layout.control_x_off + cell_w * cursor_col;
-                add_px_rect(
-                    cursor_x,
-                    row_y - cell_h * 0.05,
-                    2.0,
-                    cell_h * 1.1,
-                    tokens.text_primary,
-                    sw,
-                    sh,
-                    bg_verts,
-                    bg_idx,
-                );
-            }
-        }
-
-        // Footnote
-        let note_y = fields_top + cell_h * (1.3 + 5.0 * 1.1 + 0.4);
         let note_text = if sp.ssh_field_editing.is_some() {
             nexterm_i18n::fl!("settings-ssh-note-editing")
         } else {
@@ -318,7 +143,7 @@ pub(in crate::renderer) fn draw_ssh_tab(
         add_string_verts(
             &note_text,
             content_inner_x,
-            note_y,
+            ssh_note_y(sp, content_top, cell_h),
             ensure_readable(tokens.text_muted, tokens.surface_2, MIN_TEXT_CONTRAST),
             false,
             sw,
@@ -332,156 +157,52 @@ pub(in crate::renderer) fn draw_ssh_tab(
         );
     }
 
-    draw_add_delete_buttons(
-        sp,
-        tokens,
+    let geometry = TabGeometry {
         content_top,
         content_inner_x,
         content_w,
+        cell_w,
+        cell_h,
+    };
+    let theme = WidgetTheme {
+        tokens,
+        metrics,
         sw,
         sh,
         cell_w,
         cell_h,
-        font,
-        atlas,
-        queue,
+    };
+    let mut sink = WidgetSink {
         bg_verts,
         bg_idx,
         text_verts,
         text_idx,
-    );
+    };
+    for spec in &build_ssh_widgets(sp, &geometry) {
+        draw_widget(spec, &theme, font, atlas, queue, &mut sink);
+    }
 
     if sp.ssh_delete_dialog_open && !sp.ssh_hosts.is_empty() {
         draw_delete_dialog(
-            sp, tokens, px, py, panel_w, panel_h, sw, sh, cell_w, cell_h, font, atlas, queue,
-            bg_verts, bg_idx, text_verts, text_idx,
+            sp,
+            tokens,
+            px,
+            py,
+            panel_w,
+            panel_h,
+            sw,
+            sh,
+            cell_w,
+            cell_h,
+            font,
+            atlas,
+            queue,
+            sink.bg_verts,
+            sink.bg_idx,
+            sink.text_verts,
+            sink.text_idx,
         );
     }
-}
-
-/// Y position of the field-edit panel: right below the windowed host list.
-/// Shared with [`draw_add_delete_buttons`] so the two cannot drift apart.
-fn ssh_fields_top(sp: &SettingsPanel, content_top: f32, cell_h: f32) -> f32 {
-    let w = list_window(sp.ssh_hosts.len(), sp.selected_host_index, MAX_LIST_ROWS);
-    content_top + cell_h * (1.5 + w.block_rows() + 0.6)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn draw_add_delete_buttons(
-    sp: &SettingsPanel,
-    tokens: &nexterm_config::DesignTokens,
-    content_top: f32,
-    content_inner_x: f32,
-    content_w: f32,
-    sw: f32,
-    sh: f32,
-    cell_w: f32,
-    cell_h: f32,
-    font: &mut FontManager,
-    atlas: &mut GlyphAtlas,
-    queue: &wgpu::Queue,
-    bg_verts: &mut Vec<BgVertex>,
-    bg_idx: &mut Vec<u16>,
-    text_verts: &mut Vec<TextVertex>,
-    text_idx: &mut Vec<u16>,
-) {
-    let _ = content_w;
-    let buttons_y = if sp.ssh_hosts.is_empty() {
-        content_top + cell_h * 4.0
-    } else {
-        let fields_top = ssh_fields_top(sp, content_top, cell_h);
-        let note_y = fields_top + cell_h * (1.3 + 5.0 * 1.1 + 0.4);
-        note_y + cell_h * 1.5
-    };
-    let add_focused = sp.ssh_field_focus == 6;
-    let delete_focused = sp.ssh_field_focus == 7;
-    let delete_disabled = sp.ssh_hosts.is_empty();
-    let btn_w = cell_w * 24.0;
-    let btn_h = cell_h * 1.4;
-    let btn_gap = cell_w * 2.0;
-
-    let add_x = content_inner_x;
-    let add_bg = if add_focused {
-        tokens.surface_2
-    } else {
-        tokens.surface_1
-    };
-    add_px_rect(
-        add_x - cell_w * 0.3,
-        buttons_y - cell_h * 0.15,
-        btn_w,
-        btn_h,
-        add_bg,
-        sw,
-        sh,
-        bg_verts,
-        bg_idx,
-    );
-    let add_fg = if add_focused {
-        tokens.text_primary
-    } else {
-        tokens.text_secondary
-    };
-    add_string_verts(
-        &nexterm_i18n::fl!("settings-ssh-add"),
-        add_x,
-        buttons_y,
-        add_fg,
-        add_focused,
-        sw,
-        sh,
-        cell_w,
-        font,
-        atlas,
-        queue,
-        text_verts,
-        text_idx,
-    );
-
-    let del_x = add_x + btn_w + btn_gap;
-    let del_bg = if delete_focused && !delete_disabled {
-        [0.298, 0.149, 0.149, 1.0]
-    } else {
-        tokens.surface_1
-    };
-    add_px_rect(
-        del_x - cell_w * 0.3,
-        buttons_y - cell_h * 0.15,
-        btn_w,
-        btn_h,
-        del_bg,
-        sw,
-        sh,
-        bg_verts,
-        bg_idx,
-    );
-    let del_fg = if delete_disabled {
-        ensure_readable(tokens.text_muted, tokens.surface_1, MIN_TEXT_CONTRAST)
-    } else if delete_focused {
-        [0.984, 0.808, 0.808, 1.0]
-    } else {
-        [0.776, 0.553, 0.553, 1.0]
-    };
-    let del_label = if delete_disabled {
-        nexterm_i18n::fl!("settings-ssh-delete-disabled")
-    } else {
-        nexterm_i18n::fl!("settings-ssh-delete")
-    };
-    add_string_verts(
-        &del_label,
-        del_x,
-        buttons_y,
-        del_fg,
-        delete_focused && !delete_disabled,
-        sw,
-        sh,
-        cell_w,
-        font,
-        atlas,
-        queue,
-        text_verts,
-        text_idx,
-    );
 }
 
 /// Delete-confirmation modal, drawn centered over the whole panel.

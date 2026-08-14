@@ -56,6 +56,11 @@ pub(super) enum SettingsPanelHit {
     /// selects entry `i`. Before the migration the list had no hit zone at
     /// all (selection was AccessKit-only).
     ProfilesRow(u16),
+    /// UI/UX v3 P1c: click on a row inside the Ssh category — a windowed list
+    /// entry, one of the five fields, or the Add/Delete buttons (see
+    /// `widgets::settings_ssh::row`). Nothing here was clickable before the
+    /// migration. No hit is reported while the delete dialog is open.
+    SshRow(u16),
     /// P4 (WT-like UX): the "Open config.toml" link in the footer bar.
     OpenConfigFile,
     /// P2-A (WT-like UX): the "reset category to defaults" link in the
@@ -320,6 +325,17 @@ impl EventHandler {
                 if let Some(id) = crate::renderer::overlay::widgets::spec::hit_test(&specs, cx, cy)
                 {
                     return SettingsPanelHit::ProfilesRow(id.index);
+                }
+            }
+            // The delete-confirmation modal covers the whole panel; while it
+            // is open the widgets underneath must not swallow clicks.
+            SettingsCategory::Ssh if !sp.ssh_delete_dialog_open => {
+                use crate::renderer::overlay::widgets::settings_ssh::build_ssh_widgets;
+
+                let specs = build_ssh_widgets(sp, &geometry);
+                if let Some(id) = crate::renderer::overlay::widgets::spec::hit_test(&specs, cx, cy)
+                {
+                    return SettingsPanelHit::SshRow(id.index);
                 }
             }
             _ => {}
