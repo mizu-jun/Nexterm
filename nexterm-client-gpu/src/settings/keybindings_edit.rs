@@ -103,7 +103,7 @@ impl SettingsPanel {
     /// Start editing `leader_key` (focus must be on field 5).
     /// Returns `true` when edit mode actually started.
     pub fn begin_leader_key_edit(&mut self) -> bool {
-        if self.key_field_focus != 5 {
+        if self.focused_widget_index != 5 {
             return false;
         }
         self.leader_key_editing = Some(TextInputState::new(self.leader_key.clone()));
@@ -288,7 +288,7 @@ mod tests {
     fn leader_key_edit_round_trip() {
         let config = Config::default();
         let mut panel = SettingsPanel::new(&config);
-        panel.key_field_focus = 5;
+        panel.focused_widget_index = 5;
         assert!(panel.begin_leader_key_edit());
         panel.leader_key_backspace();
         panel.leader_key_insert_char('x');

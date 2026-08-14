@@ -96,7 +96,7 @@ fn row_rect(g: &TabGeometry, text_y: f32) -> WidgetRect {
 /// Order matters: the swatches come last so they win the hit-test where they
 /// overlap their surrounding row (see `spec::hit_test`).
 pub(crate) fn theme_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
-    let focus = sp.theme_field_focus;
+    let focus = sp.focused_widget_index;
     let mut out = Vec::with_capacity(SWATCHES.len() + 2);
 
     out.push(
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn the_focused_counter_selects_exactly_one_row() {
         let mut sp = panel();
-        sp.theme_field_focus = THEME_FOLLOW_SYSTEM;
+        sp.focused_widget_index = THEME_FOLLOW_SYSTEM;
         let specs = build_theme_widgets(&sp, &geometry());
         let focused: Vec<_> = specs.iter().filter(|s| s.focused()).collect();
         assert_eq!(focused.len(), 1);

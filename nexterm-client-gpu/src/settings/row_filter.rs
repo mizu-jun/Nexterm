@@ -40,7 +40,7 @@ pub fn slot_of(visible: &[usize], idx: usize) -> Option<usize> {
 
 impl SettingsPanel {
     /// Rendered (localized) labels of the Window category's rows, in the
-    /// exact `window_field_focus` order used by the renderer and the
+    /// exact `focused_widget_index` order used by the renderer and the
     /// hit-test. Value placeholders are blanked — the label part is what
     /// search collapse matches on.
     pub fn window_row_labels(&self) -> Vec<String> {
@@ -69,7 +69,7 @@ impl SettingsPanel {
     }
 
     /// Visible Security rows (labels via `security_field_label`, in
-    /// `security_field_focus` order).
+    /// `focused_widget_index` order).
     pub fn visible_security_rows(&self) -> Vec<usize> {
         let labels: Vec<String> = (0..Self::SECURITY_FIELD_COUNT)
             .map(Self::security_field_label)

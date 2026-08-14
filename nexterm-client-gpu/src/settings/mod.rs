@@ -144,11 +144,23 @@ pub struct SettingsPanel {
     pub sec_osc52_max_bytes: usize,
     pub sec_notification_max_bytes: usize,
     pub sec_plugin_read_max_bytes: usize,
-    /// Focused field index inside the Security category. 0=external_url /
-    /// 1=osc52_clipboard / 2=osc_notification / 3=plugin_read /
-    /// 4=osc52_max_bytes / 5=notification_max_bytes / 6=plugin_read_max_bytes.
-    pub security_field_focus: u16,
-    /// In-flight decimal edit for the Security byte-cap fields (focus 4..=6).
+    /// UI/UX v3 P1c follow-up: index of the focused widget inside the current
+    /// category, replacing the seven per-tab counters this used to be
+    /// (`window_field_focus`, `ssh_field_focus`, …).
+    ///
+    /// The value is a `WidgetId.index` for `self.category`, so what it means is
+    /// defined by that category's descriptor builder in
+    /// `renderer/overlay/widgets/settings_<tab>.rs` — its `row` constants where
+    /// it has them, otherwise the order in which it pushes descriptors. The
+    /// list-shaped tabs (Ssh, Keybindings) reserve 0 for the entry list itself;
+    /// which entry is selected lives in `selected_host_index` /
+    /// `selected_key_index`, because that outlives focus moving to the fields.
+    ///
+    /// Reset by [`Self::set_category`] on every category change: an index is
+    /// only meaningful together with the category it was resolved against.
+    pub focused_widget_index: u16,
+    /// In-flight decimal edit for the Security byte-cap fields
+    /// (Security `focused_widget_index` 4..=6).
     /// `Some` = edit mode on; Enter commits, Esc cancels.
     pub security_field_editing: Option<TextInputState>,
     /// Cursor shape (Phase 5-11-6 #6). `block` / `beam` / `underline`.
@@ -162,16 +174,9 @@ pub struct SettingsPanel {
     /// GPU presentation mode (`fifo` / `mailbox` / `auto`).
     /// On save we write back to `[gpu].present_mode`.
     pub present_mode: nexterm_config::PresentModeConfig,
-    /// Phase 5-11-6 #6: focused field index inside the Window category.
-    /// 0=opacity / 1=cursor_style / 2=padding_x / 3=padding_y / 4=present_mode.
-    pub window_field_focus: u16,
-    /// Phase 5-11-8 Step 8-2: focused field index inside the SSH category.
-    /// 0=ListBox (host selection) / 1=name / 2=host / 3=port / 4=username / 5=auth_type.
-    /// Range: 0..=5. Updated via AccessKit Focus or the arrow keys.
-    pub ssh_field_focus: u8,
     /// Phase 5-11-8 Step 8-3 (Sub-phase A): in-flight SSH host field edit state.
     /// `Some(state)` = edit mode is on; `None` = off. Corresponds to
-    /// `ssh_field_focus` values 1/2/4 (name/host/username). Enter starts the
+    /// Ssh `focused_widget_index` values 1/2/4 (name/host/username). Enter starts the
     /// edit, Enter commits, Esc cancels. `port` / `auth_type` use separate UI
     /// (SpinButton / ComboBox) in Sub-phase C and do not flow through this option.
     pub ssh_field_editing: Option<TextInputState>,
@@ -191,10 +196,6 @@ pub struct SettingsPanel {
     pub keybindings: Vec<KeyBindingEntry>,
     /// Phase 5-11-9 Sub-phase A: currently selected key binding index (into `keybindings`).
     pub selected_key_index: usize,
-    /// Phase 5-11-9 Sub-phase A: focused field index inside the Keybindings category.
-    /// 0=ListBox (binding selection) / 1=key field / 2=action field.
-    /// Sub-phase D extends this range to 0..=4 (3=Add, 4=Delete).
-    pub key_field_focus: u8,
     /// Phase 5-11-9 Sub-phase B: in-flight key-string edit state.
     /// `Some(Record)` = waiting for the next physical key press to capture.
     /// `Some(Text(state))` = free-form text editing for prefix bindings.
@@ -242,20 +243,17 @@ pub struct SettingsPanel {
     pub animations_intensity: nexterm_config::AnimationIntensity,
 
     // ===== Phase B4-P2: additional Window-category fields =====
-    /// `[window].decorations` mirror. Cycled via ←/→ at `window_field_focus == 11`.
+    /// `[window].decorations` mirror. Cycled via ←/→ at Window `focused_widget_index == 11`.
     pub window_decorations: nexterm_config::WindowDecorations,
-    /// `[window].close_action` mirror. Cycled via ←/→ at `window_field_focus == 12`.
+    /// `[window].close_action` mirror. Cycled via ←/→ at Window `focused_widget_index == 12`.
     pub window_close_action: nexterm_config::CloseAction,
     /// `[gpu].fps_limit` mirror. 0 = unlimited. Adjusted in 10-fps steps,
-    /// clamped to `0..=480`, at `window_field_focus == 13`.
+    /// clamped to `0..=480`, at Window `focused_widget_index == 13`.
     pub fps_limit: u32,
 
     // ===== Phase B4-P2: Theme-category fields =====
     /// `colors_follow_system` mirror (top-level key).
     pub colors_follow_system: bool,
-    /// Focused field index inside the Theme category.
-    /// 0=color scheme / 1=colors_follow_system toggle.
-    pub theme_field_focus: u16,
 
     // ===== Phase B4-P2: Font-category fields =====
     /// `[font].ligatures` mirror.
@@ -265,24 +263,18 @@ pub struct SettingsPanel {
     pub font_fallbacks_text: String,
     /// In-flight edit buffer for `font_fallbacks_text` (`None` = not editing).
     pub font_fallbacks_editing: Option<TextInputState>,
-    /// Focused field index inside the Font category.
-    /// 0=family / 1=size / 2=ligatures / 3=font_fallbacks.
-    pub font_field_focus: u16,
 
     // ===== Phase B4-P2: Keybindings-category leader key field =====
-    /// `leader_key` mirror (top-level key), editable at `key_field_focus == 5`.
+    /// `leader_key` mirror (top-level key), editable at Keybindings `focused_widget_index == 5`.
     pub leader_key: String,
     /// In-flight edit buffer for `leader_key` (`None` = not editing).
     pub leader_key_editing: Option<TextInputState>,
 
     // ===== Phase B4: Startup-category shell fields =====
-    /// Focused field index inside the Startup category.
-    /// 0=language / 1=auto_check_update toggle / 2=shell program / 3=shell args.
-    pub startup_field_focus: u16,
-    /// `[shell].program` mirror (editable via `startup_field_focus == 2`).
+    /// `[shell].program` mirror (editable via Startup `focused_widget_index == 2`).
     pub shell_program: String,
     /// `[shell].args` mirror, joined with a single space for editing
-    /// (split back on whitespace on save). Editable via `startup_field_focus == 3`.
+    /// (split back on whitespace on save). Editable via Startup `focused_widget_index == 3`.
     pub shell_args: String,
     /// In-flight edit buffer for the focused shell field (`None` = not editing).
     pub shell_field_editing: Option<TextInputState>,
@@ -369,13 +361,12 @@ impl SettingsPanel {
             selected_profile: 0,
             ssh_hosts,
             selected_host_index: 0,
-            ssh_field_focus: 0,
+            focused_widget_index: 0,
             ssh_field_editing: None,
             ssh_delete_dialog_open: false,
             ssh_delete_dialog_confirm_focused: false,
             keybindings,
             selected_key_index: 0,
-            key_field_focus: 0,
             key_editing: None,
             key_delete_dialog_open: false,
             key_delete_dialog_confirm_focused: false,
@@ -395,7 +386,6 @@ impl SettingsPanel {
             sec_osc52_max_bytes: config.security.osc52_max_bytes,
             sec_notification_max_bytes: config.security.notification_max_bytes,
             sec_plugin_read_max_bytes: config.security.plugin_read_max_bytes,
-            security_field_focus: 0,
             security_field_editing: None,
             cursor_style: config.cursor_style.clone(),
             // `padding_x` / `padding_y` are `u32` in the config but the UI
@@ -403,7 +393,6 @@ impl SettingsPanel {
             padding_x: config.window.padding_x.min(32),
             padding_y: config.window.padding_y.min(32),
             present_mode: config.gpu.present_mode.clone(),
-            window_field_focus: 0,
             // Phase 3 (UI 4-tasks): panel renders centered on first open.
             drag_offset: (0.0, 0.0),
             drag_anchor: None,
@@ -420,14 +409,11 @@ impl SettingsPanel {
             window_close_action: config.window.close_action,
             fps_limit: config.gpu.fps_limit,
             colors_follow_system: config.colors_follow_system,
-            theme_field_focus: 0,
             font_ligatures: config.font.ligatures,
             font_fallbacks_text: config.font.font_fallbacks.join(", "),
             font_fallbacks_editing: None,
-            font_field_focus: 0,
             leader_key: config.leader_key.clone(),
             leader_key_editing: None,
-            startup_field_focus: 0,
             shell_program: config.shell.program.clone(),
             shell_args: config.shell.args.join(" "),
             shell_field_editing: None,
@@ -472,21 +458,45 @@ impl SettingsPanel {
         self.shell_field_editing = None;
     }
 
+    /// Switch to `cat`, resetting the state that only made sense in the
+    /// category being left.
+    ///
+    /// Every category change goes through here — the arrow keys, the sidebar
+    /// click and the search-filtered jump — so the reset cannot be forgotten on
+    /// one path. Before the focus counters collapsed into
+    /// `focused_widget_index`, the keyboard paths reset all seven by hand and
+    /// the sidebar click reset none of them.
+    pub fn set_category(&mut self, cat: SettingsCategory) {
+        self.category = cat;
+        // Phase B1: each category has its own content height, so the previous
+        // scroll offset is meaningless in the new category.
+        self.scroll.reset();
+        // A widget index is only meaningful against the category it was
+        // resolved against.
+        self.focused_widget_index = 0;
+        // Every field edit buffer is displayed only while
+        // `focused_widget_index` matches its field, so one that outlived the
+        // reset above would keep taking keystrokes while invisible.
+        self.ssh_field_editing = None;
+        self.security_field_editing = None;
+        self.shell_field_editing = None;
+        self.font_fallbacks_editing = None;
+        self.leader_key_editing = None;
+        self.font_family_editing = false;
+        self.key_editing = None;
+    }
+
     /// Move to the previous category in the sidebar.
     pub fn prev_category(&mut self) {
         let idx = Self::category_index(&self.category);
         let len = SettingsCategory::ALL.len();
-        self.category = SettingsCategory::ALL[(idx + len - 1) % len].clone();
-        // Phase B1: each category has its own content height, so the
-        // previous scroll offset is meaningless in the new category.
-        self.scroll.reset();
+        self.set_category(SettingsCategory::ALL[(idx + len - 1) % len].clone());
     }
 
     /// Move to the next category in the sidebar.
     pub fn next_category(&mut self) {
         let idx = Self::category_index(&self.category);
-        self.category = SettingsCategory::ALL[(idx + 1) % SettingsCategory::ALL.len()].clone();
-        self.scroll.reset();
+        self.set_category(SettingsCategory::ALL[(idx + 1) % SettingsCategory::ALL.len()].clone());
     }
 
     fn category_index(cat: &SettingsCategory) -> usize {
@@ -596,6 +606,52 @@ mod tests {
         panel.scroll.offset_px = 120.0;
         panel.prev_category();
         assert_eq!(panel.scroll.offset_px, 0.0);
+    }
+
+    /// The seven per-tab focus counters collapsed into one
+    /// `focused_widget_index` (UI/UX v3 P1c follow-up), so a category change
+    /// has to clear it: an index that addressed a Window row would otherwise
+    /// point at nothing — or at an unrelated row — in the next category.
+    #[test]
+    fn category_change_resets_the_focused_widget() {
+        let config = Config::default();
+        let mut panel = SettingsPanel::new(&config);
+
+        panel.focused_widget_index = 4;
+        panel.next_category();
+        assert_eq!(panel.focused_widget_index, 0);
+
+        panel.focused_widget_index = 3;
+        panel.prev_category();
+        assert_eq!(panel.focused_widget_index, 0);
+    }
+
+    /// Leaving a category must drop the field edit buffers with it. Their
+    /// display is gated on `focused_widget_index` matching the field, so an
+    /// edit that survived a category change would stay live while being
+    /// invisible — the user would type into a field they can no longer see.
+    #[test]
+    fn category_change_cancels_in_flight_field_edits() {
+        let config = Config::default();
+        let mut panel = SettingsPanel::new(&config);
+
+        panel.ssh_field_editing = Some(TextInputState::new("half-typed".to_string()));
+        panel.security_field_editing = Some(TextInputState::new("1024".to_string()));
+        panel.shell_field_editing = Some(TextInputState::new("/bin/zsh".to_string()));
+        panel.font_fallbacks_editing = Some(TextInputState::new("Noto".to_string()));
+        panel.leader_key_editing = Some(TextInputState::new("ctrl+q".to_string()));
+        panel.font_family_editing = true;
+        panel.key_editing = Some(KeyEditMode::Record);
+
+        panel.next_category();
+
+        assert!(panel.ssh_field_editing.is_none());
+        assert!(panel.security_field_editing.is_none());
+        assert!(panel.shell_field_editing.is_none());
+        assert!(panel.font_fallbacks_editing.is_none());
+        assert!(panel.leader_key_editing.is_none());
+        assert!(!panel.font_family_editing);
+        assert!(panel.key_editing.is_none());
     }
 
     #[test]

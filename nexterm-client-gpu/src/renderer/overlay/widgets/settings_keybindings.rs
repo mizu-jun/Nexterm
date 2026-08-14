@@ -3,7 +3,7 @@
 //! The last list-shaped tab, and `WidgetKind::KeyCapture`'s first consumer:
 //! a windowed binding list, a key/action edit pair for the selected binding,
 //! the Add/Delete buttons, and the always-present leader-key text row below
-//! them. Widget indices 1..=5 mirror the existing `key_field_focus` counter
+//! them. Widget indices 1..=5 mirror the existing `focused_widget_index` counter
 //! (1 key, 2 action, 3 Add, 4 Delete, 5 leader key) as the identity; list
 //! entries live at `LIST_BASE + i`. The delete-confirmation dialog is a
 //! modal over the whole panel and deliberately stays outside this module.
@@ -18,7 +18,7 @@ use super::spec::{WidgetDesc, WidgetId, WidgetKind, WidgetRect, WidgetSpec};
 /// `SettingsCategory::ALL` index of the Keybindings category.
 pub(crate) const KEYBINDINGS_CATEGORY: u8 = 5;
 
-/// Widget indices. 1..=5 mirror `key_field_focus` exactly (0 there means
+/// Widget indices. 1..=5 mirror `focused_widget_index` exactly (0 there means
 /// "the list", whose entries are addressed via [`row::LIST_BASE`]` + i`).
 pub(crate) mod row {
     /// Key-combination capture of the selected binding.
@@ -118,7 +118,7 @@ pub(crate) fn keybindings_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
                     WidgetKind::ListItem { selected: sel == i },
                     kb.label(),
                 )
-                .focused(sp.key_field_focus == 0 && sel == i),
+                .focused(sp.focused_widget_index == 0 && sel == i),
             );
         }
 
@@ -146,7 +146,7 @@ pub(crate) fn keybindings_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
                 key_kind,
                 nexterm_i18n::fl!("settings-keybindings-field-key"),
             )
-            .focused(sp.key_field_focus == 1),
+            .focused(sp.focused_widget_index == 1),
         );
         descs.push(
             WidgetDesc::new(
@@ -156,7 +156,7 @@ pub(crate) fn keybindings_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
                 },
                 nexterm_i18n::fl!("settings-keybindings-field-action"),
             )
-            .focused(sp.key_field_focus == 2)
+            .focused(sp.focused_widget_index == 2)
             // An action outside `KEYBINDING_ACTIONS` never dispatches, so the
             // row reads as invalid regardless of focus.
             .invalid(!KEYBINDING_ACTIONS.contains(&kb.action.as_str())),
@@ -168,7 +168,7 @@ pub(crate) fn keybindings_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
             WidgetKind::Button { destructive: false },
             nexterm_i18n::fl!("settings-keybindings-add"),
         )
-        .focused(sp.key_field_focus == 3),
+        .focused(sp.focused_widget_index == 3),
     );
     let delete_label = if empty {
         nexterm_i18n::fl!("settings-keybindings-delete-disabled")
@@ -180,7 +180,7 @@ pub(crate) fn keybindings_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
         WidgetKind::Button { destructive: true },
         delete_label,
     )
-    .focused(!empty && sp.key_field_focus == 4);
+    .focused(!empty && sp.focused_widget_index == 4);
     delete.enabled = !empty;
     descs.push(delete);
 
@@ -202,7 +202,7 @@ pub(crate) fn keybindings_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
             leader_kind,
             nexterm_i18n::fl!("settings-keybindings-leader-key"),
         )
-        .focused(sp.key_field_focus == 5),
+        .focused(sp.focused_widget_index == 5),
     );
     descs
 }
@@ -290,7 +290,7 @@ pub(crate) fn apply_keybindings_action(
             return false;
         }
         sp.selected_key_index = i;
-        sp.key_field_focus = 0;
+        sp.focused_widget_index = 0;
         return true;
     }
     // The key/action pair and Delete need a binding to act on; Add and the
@@ -303,12 +303,12 @@ pub(crate) fn apply_keybindings_action(
     match index {
         row::FIELD_KEY => match action {
             WidgetAction::Activate => {
-                sp.key_field_focus = 1;
+                sp.focused_widget_index = 1;
                 sp.begin_key_record()
             }
             WidgetAction::SetText(text) => {
                 let updated = sp.set_keybinding_key_direct(text);
-                sp.key_field_focus = 1;
+                sp.focused_widget_index = 1;
                 updated
             }
             _ => false,
@@ -328,7 +328,7 @@ pub(crate) fn apply_keybindings_action(
                 }
                 _ => return false,
             }
-            sp.key_field_focus = 2;
+            sp.focused_widget_index = 2;
             true
         }
         row::ADD if matches!(action, WidgetAction::Activate) => {
@@ -341,12 +341,12 @@ pub(crate) fn apply_keybindings_action(
         }
         row::LEADER => match action {
             WidgetAction::Activate => {
-                sp.key_field_focus = 5;
+                sp.focused_widget_index = 5;
                 sp.begin_leader_key_edit()
             }
             WidgetAction::SetText(text) => {
                 sp.leader_key = text;
-                sp.key_field_focus = 5;
+                sp.focused_widget_index = 5;
                 sp.dirty = true;
                 true
             }
@@ -434,7 +434,7 @@ mod tests {
             }
         );
 
-        sp.key_field_focus = 1;
+        sp.focused_widget_index = 1;
         assert!(sp.begin_key_record());
         let descs = keybindings_widget_descs(&sp);
         let key = descs.iter().find(|d| d.id.index == row::FIELD_KEY).unwrap();
@@ -450,7 +450,7 @@ mod tests {
     #[test]
     fn a_text_mode_edit_turns_the_key_field_into_a_text_widget() {
         let mut sp = panel_with_bindings(1);
-        sp.key_field_focus = 1;
+        sp.focused_widget_index = 1;
         assert!(sp.begin_key_record());
         sp.toggle_key_edit_mode(); // Record -> Text
         sp.key_field_insert_char('x');
@@ -518,7 +518,7 @@ mod tests {
             }
         );
 
-        sp.key_field_focus = 5;
+        sp.focused_widget_index = 5;
         assert!(sp.begin_leader_key_edit());
         sp.leader_key_insert_char('b');
         let descs = keybindings_widget_descs(&sp);
@@ -533,15 +533,15 @@ mod tests {
     #[test]
     fn the_field_focus_counter_maps_onto_widget_indices_as_identity() {
         let mut sp = panel_with_bindings(1);
-        for focus in 1u8..=5 {
-            sp.key_field_focus = focus;
+        for focus in 1u16..=5 {
+            sp.focused_widget_index = focus;
             let descs = keybindings_widget_descs(&sp);
             let focused: Vec<u16> = descs
                 .iter()
                 .filter(|d| d.focused)
                 .map(|d| d.id.index)
                 .collect();
-            assert_eq!(focused, vec![focus as u16], "focus={focus}");
+            assert_eq!(focused, vec![focus], "focus={focus}");
         }
     }
 
@@ -575,14 +575,14 @@ mod tests {
     #[test]
     fn activating_a_list_entry_selects_it_and_returns_focus_to_the_list() {
         let mut sp = panel_with_bindings(3);
-        sp.key_field_focus = 2;
+        sp.focused_widget_index = 2;
         assert!(apply_keybindings_action(
             &mut sp,
             row::LIST_BASE + 2,
             WidgetAction::Activate
         ));
         assert_eq!(sp.selected_key_index, 2);
-        assert_eq!(sp.key_field_focus, 0);
+        assert_eq!(sp.focused_widget_index, 0);
     }
 
     #[test]
@@ -593,7 +593,7 @@ mod tests {
             row::FIELD_KEY,
             WidgetAction::Activate
         ));
-        assert_eq!(sp.key_field_focus, 1);
+        assert_eq!(sp.focused_widget_index, 1);
         assert!(sp.is_key_recording());
 
         sp.cancel_key_edit();
@@ -661,7 +661,7 @@ mod tests {
             row::LEADER,
             WidgetAction::Activate
         ));
-        assert_eq!(sp.key_field_focus, 5);
+        assert_eq!(sp.focused_widget_index, 5);
         assert!(sp.leader_key_editing.is_some());
 
         sp.cancel_leader_key_edit();

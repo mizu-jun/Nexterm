@@ -587,18 +587,20 @@ impl EventHandler {
                         use crate::settings_panel::SettingsCategory;
                         let sp = &mut self.app.state.settings_panel;
                         if sp.category == SettingsCategory::Ssh
-                            && matches!(sp.ssh_field_focus, 1 | 2 | 4)
+                            && matches!(sp.focused_widget_index, 1 | 2 | 4)
                             && sp.begin_ssh_field_edit()
                         {
                             // Phase 5-11-8 Step 8-3 (Sub-phase B): when entering edit mode,
                             // move the IME cursor area onto the SSH field row.
                             self.update_ime_cursor_area_for_ssh_field();
-                        } else if sp.category == SettingsCategory::Ssh && sp.ssh_field_focus == 6 {
+                        } else if sp.category == SettingsCategory::Ssh
+                            && sp.focused_widget_index == 6
+                        {
                             // Sub-phase D: Add button → add a new host + auto-start name editing
                             sp.add_ssh_host();
                             self.update_ime_cursor_area_for_ssh_field();
                         } else if sp.category == SettingsCategory::Ssh
-                            && sp.ssh_field_focus == 7
+                            && sp.focused_widget_index == 7
                             && !sp.ssh_hosts.is_empty()
                         {
                             // Sub-phase D: Delete button → open the delete confirmation dialog.
@@ -606,7 +608,7 @@ impl EventHandler {
                             //   (to prevent accidental presses).
                             sp.open_ssh_delete_dialog();
                         } else if sp.category == SettingsCategory::Keybindings
-                            && sp.key_field_focus == 1
+                            && sp.focused_widget_index == 1
                             && sp.begin_key_record()
                         {
                             // Phase 5-11-9 Sub-phase B: Enter on the key field starts
@@ -614,13 +616,13 @@ impl EventHandler {
                             // Tab inside Record mode switches to Text mode for
                             // prefix bindings like "ctrl+b d".
                         } else if sp.category == SettingsCategory::Keybindings
-                            && sp.key_field_focus == 3
+                            && sp.focused_widget_index == 3
                         {
                             // Phase 5-11-9 Sub-phase D: Add button → append a new
                             // binding and auto-start Record mode on the key field.
                             sp.add_key_binding();
                         } else if sp.category == SettingsCategory::Keybindings
-                            && sp.key_field_focus == 4
+                            && sp.focused_widget_index == 4
                             && !sp.keybindings.is_empty()
                         {
                             // Phase 5-11-9 Sub-phase D: Delete button → open the
@@ -628,22 +630,23 @@ impl EventHandler {
                             // treated as disabled.
                             sp.open_key_delete_dialog();
                         } else if sp.category == SettingsCategory::Security
-                            && matches!(sp.security_field_focus, 4..=6)
+                            && matches!(sp.focused_widget_index, 4..=6)
                         {
                             // Enter on a byte-cap field starts decimal editing.
                             sp.begin_security_edit();
                         } else if sp.category == SettingsCategory::Startup
-                            && matches!(sp.startup_field_focus, 2 | 3)
+                            && matches!(sp.focused_widget_index, 2 | 3)
                         {
                             // Phase B4: Enter on the shell program/args field
                             // starts editing.
                             sp.begin_shell_field_edit();
-                        } else if sp.category == SettingsCategory::Font && sp.font_field_focus == 3
+                        } else if sp.category == SettingsCategory::Font
+                            && sp.focused_widget_index == 3
                         {
                             // Phase B4-P2: Enter on the font_fallbacks field starts editing.
                             sp.begin_font_fallbacks_edit();
                         } else if sp.category == SettingsCategory::Keybindings
-                            && sp.key_field_focus == 5
+                            && sp.focused_widget_index == 5
                         {
                             // Phase B4-P2: Enter on the leader_key field starts editing.
                             sp.begin_leader_key_edit();
@@ -733,28 +736,26 @@ impl EventHandler {
                     // Phase 5-11-6 #6: in the Window category, reinterpret ↓ as field navigation.
                     // Once past the last field, fall through to the next category.
                     // Phase 5-11-8 Step 8-3 (Sub-phase A): the Ssh category similarly reinterprets ↓
-                    // as moving `ssh_field_focus` 0 → 1 → 2 → 3 → 4 → 5.
+                    // as moving `focused_widget_index` 0 → 1 → 2 → 3 → 4 → 5.
                     let sp = &mut self.app.state.settings_panel;
                     if sp.category == SettingsCategory::Window && code == WKeyCode::ArrowDown {
                         if !sp.next_window_field() {
                             sp.next_category();
-                            sp.window_field_focus = 0;
                         }
                     } else if sp.category == SettingsCategory::Ssh && code == WKeyCode::ArrowDown {
                         // Phase 5-11-8 Step 8-3 (Sub-phase D): widened to 0..=7
                         //   6=Add, 7=Delete. With an empty list, Delete (7) is treated as
                         //   disabled and skipped, stopping at 6 (Add) (next press → next category).
                         let max_focus = if sp.ssh_hosts.is_empty() { 6 } else { 7 };
-                        if sp.ssh_field_focus < max_focus {
-                            sp.ssh_field_focus += 1;
+                        if sp.focused_widget_index < max_focus {
+                            sp.focused_widget_index += 1;
                         } else {
                             sp.next_category();
-                            sp.ssh_field_focus = 0;
                         }
                     } else if sp.category == SettingsCategory::Keybindings
                         && code == WKeyCode::ArrowDown
                     {
-                        // Phase 5-11-9 Sub-phase A: ↓ walks key_field_focus 0 → 1 → 2.
+                        // Phase 5-11-9 Sub-phase A: ↓ walks focused_widget_index 0 → 1 → 2.
                         // Sub-phase D extends the range to 3 (Add) and 4 (Delete).
                         // Phase B4-P2 appends 5 (leader_key), always present regardless
                         // of whether the binding list is empty (unlike 1/2/4).
@@ -762,20 +763,18 @@ impl EventHandler {
                         //     → next category. Delete (4) is treated as disabled and skipped.
                         //   - With entries: 0 → 1 → 2 → 3 → 4 → 5 → next category.
                         if sp.keybindings.is_empty() {
-                            if sp.key_field_focus < 3 {
+                            if sp.focused_widget_index < 3 {
                                 // 0 → 3 directly (skip 1/2 which require a selected binding).
-                                sp.key_field_focus = 3;
-                            } else if sp.key_field_focus < 5 {
-                                sp.key_field_focus = 5;
+                                sp.focused_widget_index = 3;
+                            } else if sp.focused_widget_index < 5 {
+                                sp.focused_widget_index = 5;
                             } else {
                                 sp.next_category();
-                                sp.key_field_focus = 0;
                             }
-                        } else if sp.key_field_focus < 5 {
-                            sp.key_field_focus += 1;
+                        } else if sp.focused_widget_index < 5 {
+                            sp.focused_widget_index += 1;
                         } else {
                             sp.next_category();
-                            sp.key_field_focus = 0;
                         }
                     } else if sp.category == SettingsCategory::Security
                         && code == WKeyCode::ArrowDown
@@ -784,38 +783,27 @@ impl EventHandler {
                         // through to the next category.
                         if !sp.next_security_field() {
                             sp.next_category();
-                            sp.security_field_focus = 0;
                         }
                     } else if sp.category == SettingsCategory::Startup
                         && code == WKeyCode::ArrowDown
                     {
-                        // Phase B4: ↓ walks startup_field_focus 0 -> 1 -> 2 -> 3.
+                        // Phase B4: ↓ walks focused_widget_index 0 -> 1 -> 2 -> 3.
                         if !sp.next_startup_field() {
                             sp.next_category();
-                            sp.startup_field_focus = 0;
                         }
                     } else if sp.category == SettingsCategory::Font && code == WKeyCode::ArrowDown {
-                        // Phase B4-P2: ↓ walks font_field_focus 0 -> 1 -> 2 -> 3.
+                        // Phase B4-P2: ↓ walks focused_widget_index 0 -> 1 -> 2 -> 3.
                         if !sp.next_font_field() {
                             sp.next_category();
-                            sp.font_field_focus = 0;
                         }
                     } else if sp.category == SettingsCategory::Theme && code == WKeyCode::ArrowDown
                     {
-                        // Phase B4-P2: ↓ walks theme_field_focus 0 -> 1.
+                        // Phase B4-P2: ↓ walks focused_widget_index 0 -> 1.
                         if !sp.next_theme_field() {
                             sp.next_category();
-                            sp.theme_field_focus = 0;
                         }
                     } else {
                         sp.next_category();
-                        sp.window_field_focus = 0;
-                        sp.ssh_field_focus = 0;
-                        sp.key_field_focus = 0;
-                        sp.security_field_focus = 0;
-                        sp.startup_field_focus = 0;
-                        sp.font_field_focus = 0;
-                        sp.theme_field_focus = 0;
                     }
                 }
                 WKeyCode::ArrowUp if !editing => {
@@ -827,7 +815,6 @@ impl EventHandler {
                             // top, fall back to the previous category.
                             if !sp.prev_font_field() {
                                 sp.prev_category();
-                                sp.font_field_focus = 0;
                             }
                         }
                         SettingsCategory::Theme => {
@@ -835,36 +822,32 @@ impl EventHandler {
                             // top, fall back to the previous category.
                             if !sp.prev_theme_field() {
                                 sp.prev_category();
-                                sp.theme_field_focus = 0;
                             }
                         }
                         SettingsCategory::Window => {
                             // Phase 5-11-6 #6: ↑ navigates between fields. At the top, fall back to the previous category.
                             if !sp.prev_window_field() {
                                 sp.prev_category();
-                                sp.window_field_focus = 0;
                             }
                         }
                         SettingsCategory::Ssh => {
-                            // Phase 5-11-8 Step 8-3 (Sub-phase A): ↑ moves ssh_field_focus back by one
-                            if sp.ssh_field_focus > 0 {
-                                sp.ssh_field_focus -= 1;
+                            // Phase 5-11-8 Step 8-3 (Sub-phase A): ↑ moves focused_widget_index back by one
+                            if sp.focused_widget_index > 0 {
+                                sp.focused_widget_index -= 1;
                             } else {
                                 sp.prev_category();
-                                sp.ssh_field_focus = 0;
                             }
                         }
                         SettingsCategory::Keybindings => {
-                            // Phase 5-11-9 Sub-phase A: ↑ moves key_field_focus back by one.
+                            // Phase 5-11-9 Sub-phase A: ↑ moves focused_widget_index back by one.
                             // Sub-phase D: when the list is empty, jump from 3 (Add)
                             //   directly to 0 (ListBox) — focuses 1/2 require a selection.
-                            if sp.keybindings.is_empty() && sp.key_field_focus == 3 {
-                                sp.key_field_focus = 0;
-                            } else if sp.key_field_focus > 0 {
-                                sp.key_field_focus -= 1;
+                            if sp.keybindings.is_empty() && sp.focused_widget_index == 3 {
+                                sp.focused_widget_index = 0;
+                            } else if sp.focused_widget_index > 0 {
+                                sp.focused_widget_index -= 1;
                             } else {
                                 sp.prev_category();
-                                sp.key_field_focus = 0;
                             }
                         }
                         SettingsCategory::Security => {
@@ -872,14 +855,12 @@ impl EventHandler {
                             // top, fall back to the previous category.
                             if !sp.prev_security_field() {
                                 sp.prev_category();
-                                sp.security_field_focus = 0;
                             }
                         }
                         SettingsCategory::Startup => {
-                            // Phase B4: ↑ moves startup_field_focus back by one.
+                            // Phase B4: ↑ moves focused_widget_index back by one.
                             if !sp.prev_startup_field() {
                                 sp.prev_category();
-                                sp.startup_field_focus = 0;
                             }
                         }
                         _ => sp.prev_category(),
@@ -904,15 +885,15 @@ impl EventHandler {
                         // the pre-existing behavior; field 1 toggles colors_follow_system.
                         SettingsCategory::Theme => {
                             let sp = &mut self.app.state.settings_panel;
-                            match sp.theme_field_focus {
+                            match sp.focused_widget_index {
                                 1 => sp.toggle_colors_follow_system(),
                                 _ => sp.next_scheme(),
                             }
                         }
                         // Phase B4: Left/Right only cycles the language when
-                        // `startup_field_focus == 0`; other fields use Enter to edit.
+                        // `focused_widget_index == 0`; other fields use Enter to edit.
                         SettingsCategory::Startup => {
-                            if self.app.state.settings_panel.startup_field_focus == 0 {
+                            if self.app.state.settings_panel.focused_widget_index == 0 {
                                 self.app.state.settings_panel.next_language();
                             }
                         }
@@ -932,17 +913,17 @@ impl EventHandler {
                         // SSH `port` (SpinButton) and `auth_type` (ComboBox).
                         SettingsCategory::Ssh => {
                             let sp = &mut self.app.state.settings_panel;
-                            match sp.ssh_field_focus {
+                            match sp.focused_widget_index {
                                 3 => sp.increase_ssh_host_port(),
                                 5 => sp.next_ssh_auth_type(),
                                 _ => {}
                             }
                         }
                         // Phase 5-11-9 Sub-phase C: → cycles the action ComboBox forward
-                        // when the action field (key_field_focus == 2) is focused.
+                        // when the action field (focused_widget_index == 2) is focused.
                         SettingsCategory::Keybindings => {
                             let sp = &mut self.app.state.settings_panel;
-                            if sp.key_field_focus == 2 {
+                            if sp.focused_widget_index == 2 {
                                 sp.next_key_action();
                             }
                         }
@@ -971,13 +952,13 @@ impl EventHandler {
                     match &self.app.state.settings_panel.category {
                         SettingsCategory::Theme => {
                             let sp = &mut self.app.state.settings_panel;
-                            match sp.theme_field_focus {
+                            match sp.focused_widget_index {
                                 1 => sp.toggle_colors_follow_system(),
                                 _ => sp.prev_scheme(),
                             }
                         }
                         SettingsCategory::Startup => {
-                            if self.app.state.settings_panel.startup_field_focus == 0 {
+                            if self.app.state.settings_panel.focused_widget_index == 0 {
                                 self.app.state.settings_panel.prev_language();
                             }
                         }
@@ -997,17 +978,17 @@ impl EventHandler {
                         // SSH `port` (SpinButton) and `auth_type` (ComboBox).
                         SettingsCategory::Ssh => {
                             let sp = &mut self.app.state.settings_panel;
-                            match sp.ssh_field_focus {
+                            match sp.focused_widget_index {
                                 3 => sp.decrease_ssh_host_port(),
                                 5 => sp.prev_ssh_auth_type(),
                                 _ => {}
                             }
                         }
                         // Phase 5-11-9 Sub-phase C: ← cycles the action ComboBox backward
-                        // when the action field (key_field_focus == 2) is focused.
+                        // when the action field (focused_widget_index == 2) is focused.
                         SettingsCategory::Keybindings => {
                             let sp = &mut self.app.state.settings_panel;
-                            if sp.key_field_focus == 2 {
+                            if sp.focused_widget_index == 2 {
                                 sp.prev_key_action();
                             }
                         }

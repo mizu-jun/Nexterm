@@ -46,8 +46,8 @@ impl SettingsPanel {
 
     /// Move focus to the next field (stops at the last one).
     pub fn next_font_field(&mut self) -> bool {
-        if self.font_field_focus + 1 < Self::FONT_FIELD_COUNT {
-            self.font_field_focus += 1;
+        if self.focused_widget_index + 1 < Self::FONT_FIELD_COUNT {
+            self.focused_widget_index += 1;
             true
         } else {
             false
@@ -56,8 +56,8 @@ impl SettingsPanel {
 
     /// Move focus to the previous field (stops at the first one).
     pub fn prev_font_field(&mut self) -> bool {
-        if self.font_field_focus > 0 {
-            self.font_field_focus -= 1;
+        if self.focused_widget_index > 0 {
+            self.focused_widget_index -= 1;
             true
         } else {
             false
@@ -66,7 +66,7 @@ impl SettingsPanel {
 
     /// Increment the focused field's value (Right arrow).
     pub fn font_field_increase(&mut self) {
-        match self.font_field_focus {
+        match self.focused_widget_index {
             1 => self.increase_font_size(),
             2 => self.toggle_font_ligatures(),
             _ => {}
@@ -75,7 +75,7 @@ impl SettingsPanel {
 
     /// Decrement the focused field's value (Left arrow).
     pub fn font_field_decrease(&mut self) {
-        match self.font_field_focus {
+        match self.focused_widget_index {
             1 => self.decrease_font_size(),
             2 => self.toggle_font_ligatures(),
             _ => {}
@@ -91,7 +91,7 @@ impl SettingsPanel {
     /// Start editing `font_fallbacks_text` (focus must be on field 3).
     /// Returns `true` when edit mode actually started.
     pub fn begin_font_fallbacks_edit(&mut self) -> bool {
-        if self.font_field_focus != 3 {
+        if self.focused_widget_index != 3 {
             return false;
         }
         self.font_fallbacks_editing = Some(TextInputState::new(self.font_fallbacks_text.clone()));
@@ -252,7 +252,7 @@ mod tests {
     fn font_fallbacks_edit_round_trip() {
         let config = Config::default();
         let mut panel = SettingsPanel::new(&config);
-        panel.font_field_focus = 3;
+        panel.focused_widget_index = 3;
         assert!(panel.begin_font_fallbacks_edit());
         panel.font_fallbacks_insert_char('x');
         assert!(panel.commit_font_fallbacks_edit());
@@ -266,12 +266,12 @@ mod tests {
         let mut panel = SettingsPanel::new(&config);
         for expected in 1..SettingsPanel::FONT_FIELD_COUNT {
             assert!(panel.next_font_field());
-            assert_eq!(panel.font_field_focus, expected);
+            assert_eq!(panel.focused_widget_index, expected);
         }
         assert!(!panel.next_font_field());
         for expected in (0..SettingsPanel::FONT_FIELD_COUNT - 1).rev() {
             assert!(panel.prev_font_field());
-            assert_eq!(panel.font_field_focus, expected);
+            assert_eq!(panel.focused_widget_index, expected);
         }
         assert!(!panel.prev_font_field());
     }

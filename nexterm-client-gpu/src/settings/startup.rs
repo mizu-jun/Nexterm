@@ -38,8 +38,8 @@ impl SettingsPanel {
 
     /// Move focus to the next Startup field (stops at the last one).
     pub fn next_startup_field(&mut self) -> bool {
-        if self.startup_field_focus + 1 < Self::STARTUP_FIELD_COUNT {
-            self.startup_field_focus += 1;
+        if self.focused_widget_index + 1 < Self::STARTUP_FIELD_COUNT {
+            self.focused_widget_index += 1;
             true
         } else {
             false
@@ -48,18 +48,18 @@ impl SettingsPanel {
 
     /// Move focus to the previous Startup field (stops at the first one).
     pub fn prev_startup_field(&mut self) -> bool {
-        if self.startup_field_focus > 0 {
-            self.startup_field_focus -= 1;
+        if self.focused_widget_index > 0 {
+            self.focused_widget_index -= 1;
             true
         } else {
             false
         }
     }
 
-    /// Start editing the focused shell field (`startup_field_focus` 2 or 3).
+    /// Start editing the focused shell field (`focused_widget_index` 2 or 3).
     /// Returns `true` when edit mode actually started.
     pub fn begin_shell_field_edit(&mut self) -> bool {
-        let initial = match self.startup_field_focus {
+        let initial = match self.focused_widget_index {
             2 => self.shell_program.clone(),
             3 => self.shell_args.clone(),
             _ => return false,
@@ -74,7 +74,7 @@ impl SettingsPanel {
         let Some(state) = self.shell_field_editing.take() else {
             return false;
         };
-        match self.startup_field_focus {
+        match self.focused_widget_index {
             2 => self.shell_program = state.buffer,
             3 => self.shell_args = state.buffer,
             _ => return false,
@@ -163,29 +163,29 @@ mod tests {
     fn startup_field_navigation_stops_at_bounds() {
         let config = Config::default();
         let mut panel = SettingsPanel::new(&config);
-        assert_eq!(panel.startup_field_focus, 0);
+        assert_eq!(panel.focused_widget_index, 0);
 
         assert!(panel.next_startup_field());
-        assert_eq!(panel.startup_field_focus, 1);
+        assert_eq!(panel.focused_widget_index, 1);
         assert!(panel.next_startup_field());
-        assert_eq!(panel.startup_field_focus, 2);
+        assert_eq!(panel.focused_widget_index, 2);
         assert!(panel.next_startup_field());
-        assert_eq!(panel.startup_field_focus, 3);
+        assert_eq!(panel.focused_widget_index, 3);
         assert!(
             !panel.next_startup_field(),
             "the last field must report no further movement"
         );
-        assert_eq!(panel.startup_field_focus, 3);
+        assert_eq!(panel.focused_widget_index, 3);
 
         assert!(panel.prev_startup_field());
-        assert_eq!(panel.startup_field_focus, 2);
+        assert_eq!(panel.focused_widget_index, 2);
     }
 
     #[test]
     fn shell_field_edit_lifecycle_program() {
         let config = Config::default();
         let mut panel = SettingsPanel::new(&config);
-        panel.startup_field_focus = 2; // shell program
+        panel.focused_widget_index = 2; // shell program
         panel.shell_program = "/bin/bash".to_string();
 
         assert!(panel.begin_shell_field_edit());
@@ -209,7 +209,7 @@ mod tests {
     fn shell_field_edit_lifecycle_args_and_cancel() {
         let config = Config::default();
         let mut panel = SettingsPanel::new(&config);
-        panel.startup_field_focus = 3; // shell args
+        panel.focused_widget_index = 3; // shell args
         panel.shell_args = "-l".to_string();
 
         assert!(panel.begin_shell_field_edit());
@@ -224,7 +224,7 @@ mod tests {
     fn begin_shell_field_edit_is_a_no_op_outside_fields_2_and_3() {
         let config = Config::default();
         let mut panel = SettingsPanel::new(&config);
-        panel.startup_field_focus = 0; // language field, not a shell field
+        panel.focused_widget_index = 0; // language field, not a shell field
         assert!(!panel.begin_shell_field_edit());
         assert!(panel.shell_field_editing.is_none());
     }

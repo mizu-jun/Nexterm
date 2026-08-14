@@ -16,8 +16,8 @@ impl SettingsPanel {
     /// Returns `true` if focus moved; `false` if already on the last field
     /// (used by the category-navigation fallback).
     pub fn next_window_field(&mut self) -> bool {
-        if self.window_field_focus + 1 < Self::WINDOW_FIELD_COUNT {
-            self.window_field_focus += 1;
+        if self.focused_widget_index + 1 < Self::WINDOW_FIELD_COUNT {
+            self.focused_widget_index += 1;
             true
         } else {
             false
@@ -26,8 +26,8 @@ impl SettingsPanel {
 
     /// Move focus to the previous field (stops at the first one).
     pub fn prev_window_field(&mut self) -> bool {
-        if self.window_field_focus > 0 {
-            self.window_field_focus -= 1;
+        if self.focused_widget_index > 0 {
+            self.focused_widget_index -= 1;
             true
         } else {
             false
@@ -37,7 +37,7 @@ impl SettingsPanel {
     /// Increment the focused field's value (Right arrow, or the Up arrow's
     /// fallback inside the Window category).
     pub fn window_field_increase(&mut self) {
-        match self.window_field_focus {
+        match self.focused_widget_index {
             0 => self.increase_opacity(),
             1 => self.next_cursor_style(),
             2 => self.increase_padding_x(),
@@ -58,7 +58,7 @@ impl SettingsPanel {
 
     /// Decrement the focused field's value.
     pub fn window_field_decrease(&mut self) {
-        match self.window_field_focus {
+        match self.focused_widget_index {
             0 => self.decrease_opacity(),
             1 => self.prev_cursor_style(),
             2 => self.decrease_padding_x(),
@@ -277,34 +277,34 @@ mod tests {
         let config = Config::default();
         let mut panel = SettingsPanel::new(&config);
 
-        panel.window_field_focus = 5;
+        panel.focused_widget_index = 5;
         let before = panel.cursor_blink_enabled;
         panel.window_field_increase();
         assert_eq!(panel.cursor_blink_enabled, !before);
 
-        panel.window_field_focus = 6;
+        panel.focused_widget_index = 6;
         panel.scrollback_lines = 10_000;
         panel.window_field_increase();
         assert_eq!(panel.scrollback_lines, 11_000);
         panel.window_field_decrease();
         assert_eq!(panel.scrollback_lines, 10_000);
 
-        panel.window_field_focus = 7;
+        panel.focused_widget_index = 7;
         let before = panel.tab_show_tab_number;
         panel.window_field_increase();
         assert_eq!(panel.tab_show_tab_number, !before);
 
-        panel.window_field_focus = 8;
+        panel.focused_widget_index = 8;
         let before = panel.tab_show_new_tab_button;
         panel.window_field_increase();
         assert_eq!(panel.tab_show_new_tab_button, !before);
 
-        panel.window_field_focus = 9;
+        panel.focused_widget_index = 9;
         let before = panel.animations_enabled;
         panel.window_field_increase();
         assert_eq!(panel.animations_enabled, !before);
 
-        panel.window_field_focus = 10;
+        panel.focused_widget_index = 10;
         use nexterm_config::AnimationIntensity::Normal;
         panel.animations_intensity = Normal;
         panel.window_field_increase();
