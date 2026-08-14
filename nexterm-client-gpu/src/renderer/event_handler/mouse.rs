@@ -892,14 +892,15 @@ impl EventHandler {
                         // to honour the user-visible order.
                         let filtered = self.app.state.settings_panel.filtered_categories();
                         if let Some(cat) = filtered.get(idx) {
-                            self.app.state.settings_panel.category = cat.clone();
+                            // `set_category` also drops the stale scroll offset
+                            // and the focused widget index; before the counters
+                            // collapsed this path reset neither, so a click
+                            // carried the previous category's row focus over.
+                            self.app.state.settings_panel.set_category(cat.clone());
                             // Clicking a category implicitly defocuses the
                             // search input so subsequent keyboard navigation
                             // (Tab / ↑ / ↓) operates on the panel again.
                             self.app.state.settings_panel.unfocus_search();
-                            // Phase B1: the new category has its own content
-                            // height, so any prior scroll offset is stale.
-                            self.app.state.settings_panel.scroll.reset();
                         }
                     }
                     SettingsPanelHit::SearchInput => {
@@ -924,15 +925,15 @@ impl EventHandler {
                                 sp.set_font_size_from_slider(fx, track_x, track_w)
                             }
                             SliderType::WindowOpacity => {
-                                sp.window_field_focus = 0;
+                                sp.focused_widget_index = 0;
                                 sp.set_opacity_from_slider(fx, track_x, track_w);
                             }
                             SliderType::WindowPaddingX => {
-                                sp.window_field_focus = 2;
+                                sp.focused_widget_index = 2;
                                 sp.set_padding_x_from_slider(fx, track_x, track_w);
                             }
                             SliderType::WindowPaddingY => {
-                                sp.window_field_focus = 3;
+                                sp.focused_widget_index = 3;
                                 sp.set_padding_y_from_slider(fx, track_x, track_w);
                             }
                         }
@@ -964,7 +965,7 @@ impl EventHandler {
                         // toggle-on-click convention the Window rows use.
                         use crate::renderer::overlay::widgets::settings_theme::THEME_FOLLOW_SYSTEM;
                         let sp = &mut self.app.state.settings_panel;
-                        sp.theme_field_focus = index;
+                        sp.focused_widget_index = index;
                         if index == THEME_FOLLOW_SYSTEM {
                             sp.colors_follow_system = !sp.colors_follow_system;
                             sp.dirty = true;

@@ -33,7 +33,7 @@ const ROW_BLEED: f32 = 0.3;
 pub(crate) fn security_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
     (0..SECURITY_ROW_COUNT as u16)
         .map(|index| {
-            let focused = sp.security_field_focus == index;
+            let focused = sp.focused_widget_index == index;
             let kind = if let Some(policy) = sp.security_policy_at(index) {
                 WidgetKind::Cycle {
                     value: SettingsPanel::consent_display_label(policy),
@@ -119,7 +119,7 @@ pub(crate) fn apply_security_action(
     }
     // The increase/decrease setters act on the focused field, as they do for
     // the keyboard.
-    sp.security_field_focus = index;
+    sp.focused_widget_index = index;
     match action {
         WidgetAction::Next => sp.security_field_increase(),
         WidgetAction::Prev => sp.security_field_decrease(),
@@ -187,7 +187,7 @@ mod tests {
     #[test]
     fn an_edited_field_shows_its_buffer() {
         let mut sp = SettingsPanel {
-            security_field_focus: FIRST_BYTE_CAP_ROW,
+            focused_widget_index: FIRST_BYTE_CAP_ROW,
             ..Default::default()
         };
         sp.begin_security_edit();
@@ -205,12 +205,12 @@ mod tests {
     #[test]
     fn an_unfocused_field_shows_the_committed_value() {
         let mut sp = SettingsPanel {
-            security_field_focus: FIRST_BYTE_CAP_ROW,
+            focused_widget_index: FIRST_BYTE_CAP_ROW,
             ..Default::default()
         };
         sp.begin_security_edit();
         // Move focus away: the other byte caps must still read as committed.
-        sp.security_field_focus = FIRST_BYTE_CAP_ROW + 1;
+        sp.focused_widget_index = FIRST_BYTE_CAP_ROW + 1;
 
         let descs = security_widget_descs(&sp);
         let WidgetKind::Text { editing, .. } = &descs[FIRST_BYTE_CAP_ROW as usize].kind else {
@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn exactly_one_row_is_focused() {
         let sp = SettingsPanel {
-            security_field_focus: 3,
+            focused_widget_index: 3,
             ..Default::default()
         };
         let focused: Vec<_> = security_widget_descs(&sp)

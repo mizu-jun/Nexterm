@@ -132,7 +132,7 @@ impl SettingsPanel {
     ///
     /// Default values: `name=""`, `host=""`, `port=22`, `username=""`,
     /// `auth_type="password"`. After appending, the selection moves to
-    /// `selected_host_index = ssh_hosts.len() - 1`, `ssh_field_focus` becomes
+    /// `selected_host_index = ssh_hosts.len() - 1`, `focused_widget_index` becomes
     /// 1 (name), and `begin_ssh_field_edit()` is called so SR users can start
     /// typing the name immediately.
     pub fn add_ssh_host(&mut self) {
@@ -145,7 +145,7 @@ impl SettingsPanel {
         };
         self.ssh_hosts.push(new_host);
         self.selected_host_index = self.ssh_hosts.len() - 1;
-        self.ssh_field_focus = 1;
+        self.focused_widget_index = 1;
         // Immediately enter edit mode on the name field.
         self.ssh_field_editing = Some(TextInputState::new(String::new()));
         self.dirty = true;
@@ -179,7 +179,7 @@ impl SettingsPanel {
     ///   the new upper bound is `L - 1`; clamp to 0 otherwise.
     /// - When `n` was the last entry, the new selection is `n - 1`.
     /// - When the list becomes empty, reset `selected_host_index = 0` and
-    ///   `ssh_field_focus = 0`.
+    ///   `focused_widget_index = 0`.
     pub fn confirm_ssh_delete_dialog(&mut self) {
         if self.selected_host_index < self.ssh_hosts.len() {
             self.ssh_hosts.remove(self.selected_host_index);
@@ -190,7 +190,7 @@ impl SettingsPanel {
             // When the list is empty, return focus to the ListBox.
             if self.ssh_hosts.is_empty() {
                 self.selected_host_index = 0;
-                self.ssh_field_focus = 0;
+                self.focused_widget_index = 0;
             }
             self.dirty = true;
         }
@@ -204,7 +204,7 @@ impl SettingsPanel {
         self.ssh_delete_dialog_confirm_focused = !self.ssh_delete_dialog_confirm_focused;
     }
 
-    /// Start TextInput edit mode for the current `ssh_field_focus` value.
+    /// Start TextInput edit mode for the current `focused_widget_index` value.
     ///
     /// Returns `true` if edit mode actually started; `false` when the field
     /// is not a TextInput (port / auth_type / ListBox) or no host is selected.
@@ -213,7 +213,7 @@ impl SettingsPanel {
             let Some(host) = self.ssh_hosts.get(self.selected_host_index) else {
                 return false;
             };
-            match self.ssh_field_focus {
+            match self.focused_widget_index {
                 1 => host.name.clone(),
                 2 => host.host.clone(),
                 4 => host.username.clone(),
@@ -231,7 +231,7 @@ impl SettingsPanel {
             return false;
         };
         let text = state.buffer;
-        match self.ssh_field_focus {
+        match self.focused_widget_index {
             1 => self.set_ssh_host_name(text),
             2 => self.set_ssh_host_host(text),
             4 => self.set_ssh_host_username(text),
@@ -380,7 +380,7 @@ mod tests {
     #[test]
     fn ssh_field_edit_begin_commit_lifecycle() {
         let mut panel = panel_with_one_host();
-        panel.ssh_field_focus = 1; // name
+        panel.focused_widget_index = 1; // name
 
         assert!(panel.begin_ssh_field_edit());
         assert!(panel.ssh_field_editing.is_some());
@@ -401,7 +401,7 @@ mod tests {
     #[test]
     fn ssh_field_edit_cancel_discards_changes() {
         let mut panel = panel_with_one_host();
-        panel.ssh_field_focus = 2; // host
+        panel.focused_widget_index = 2; // host
         panel.begin_ssh_field_edit();
         panel.ssh_field_insert_char('X');
 
@@ -416,8 +416,8 @@ mod tests {
         let mut panel = panel_with_one_host();
         // port (3) / auth_type (5) / ListBox (0) are not TextInputs, so begin
         // must return false.
-        for focus in [0u8, 3, 5, 6, 7] {
-            panel.ssh_field_focus = focus;
+        for focus in [0u16, 3, 5, 6, 7] {
+            panel.focused_widget_index = focus;
             assert!(
                 !panel.begin_ssh_field_edit(),
                 "focus={focus} is not a TextInput, so begin_ssh_field_edit should return false"
@@ -441,7 +441,10 @@ mod tests {
         assert_eq!(new_host.auth_type, "password");
 
         assert_eq!(panel.selected_host_index, 0);
-        assert_eq!(panel.ssh_field_focus, 1, "focus moves to the name field");
+        assert_eq!(
+            panel.focused_widget_index, 1,
+            "focus moves to the name field"
+        );
         assert!(
             panel.ssh_field_editing.is_some(),
             "name edit mode should start immediately"
@@ -539,7 +542,7 @@ mod tests {
     #[test]
     fn confirm_ssh_delete_dialog_empty_after_resets_focus() {
         let mut panel = panel_with_one_host();
-        panel.ssh_field_focus = 3; // any non-zero value
+        panel.focused_widget_index = 3; // any non-zero value
 
         panel.open_ssh_delete_dialog();
         panel.confirm_ssh_delete_dialog();
@@ -547,7 +550,7 @@ mod tests {
         assert!(panel.ssh_hosts.is_empty());
         assert_eq!(panel.selected_host_index, 0);
         assert_eq!(
-            panel.ssh_field_focus, 0,
+            panel.focused_widget_index, 0,
             "the focus returns to the ListBox once the list is empty"
         );
     }

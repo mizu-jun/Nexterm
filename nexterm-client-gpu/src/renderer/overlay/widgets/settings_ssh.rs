@@ -2,7 +2,7 @@
 //!
 //! The full list-shaped form: a windowed host list, a five-field edit panel
 //! for the selected host, and an Add/Delete button pair. Widget indices are
-//! chosen so the existing `ssh_field_focus` counter (1..=5 fields, 6 Add,
+//! chosen so the existing `focused_widget_index` counter (1..=5 fields, 6 Add,
 //! 7 Delete) maps onto them as the identity; list entries live at
 //! `LIST_BASE + i`. The delete-confirmation dialog is a modal over the whole
 //! panel, not a settings row, and deliberately stays outside this module.
@@ -17,7 +17,7 @@ use super::spec::{WidgetDesc, WidgetId, WidgetKind, WidgetRect, WidgetSpec};
 /// `SettingsCategory::ALL` index of the Ssh category.
 pub(crate) const SSH_CATEGORY: u8 = 4;
 
-/// Widget indices. 1..=7 mirror `ssh_field_focus` exactly (0 there means
+/// Widget indices. 1..=7 mirror `focused_widget_index` exactly (0 there means
 /// "the list", whose entries are addressed via [`row::LIST_BASE`]` + i`).
 pub(crate) mod row {
     /// `name` text field.
@@ -102,7 +102,7 @@ pub(crate) fn ssh_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
                 WidgetKind::ListItem { selected: sel == i },
                 host.label(),
             )
-            .focused(sp.ssh_field_focus == 0 && sel == i);
+            .focused(sp.focused_widget_index == 0 && sel == i);
             // A reader hears the auth method as the entry's description,
             // matching the retired hand-written nodes.
             if !host.auth_type.is_empty() {
@@ -115,9 +115,9 @@ pub(crate) fn ssh_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
         // buffer (and its caret) instead of the stored value, so the reader
         // and the renderer both track keystrokes live.
         let host = &sp.ssh_hosts[sel];
-        let text_kind = |field: u8, stored: &str| -> WidgetKind {
+        let text_kind = |field: u16, stored: &str| -> WidgetKind {
             match sp.ssh_field_editing.as_ref() {
-                Some(state) if sp.ssh_field_focus == field => WidgetKind::Text {
+                Some(state) if sp.focused_widget_index == field => WidgetKind::Text {
                     value: state.display_string(),
                     editing: true,
                     caret: Some(state.display_cursor()),
@@ -131,7 +131,7 @@ pub(crate) fn ssh_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
         };
         let field = |index: u16, kind: WidgetKind, label: String| {
             WidgetDesc::new(WidgetId::new(SSH_CATEGORY, index), kind, label)
-                .focused(sp.ssh_field_focus as u16 == index)
+                .focused(sp.focused_widget_index == index)
         };
         descs.push(field(
             row::FIELD_NAME,
@@ -173,7 +173,7 @@ pub(crate) fn ssh_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
             WidgetKind::Button { destructive: false },
             nexterm_i18n::fl!("settings-ssh-add"),
         )
-        .focused(sp.ssh_field_focus == 6),
+        .focused(sp.focused_widget_index == 6),
     );
     let delete_label = if empty {
         nexterm_i18n::fl!("settings-ssh-delete-disabled")
@@ -185,7 +185,7 @@ pub(crate) fn ssh_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
         WidgetKind::Button { destructive: true },
         delete_label,
     )
-    .focused(!empty && sp.ssh_field_focus == 7);
+    .focused(!empty && sp.focused_widget_index == 7);
     delete.enabled = !empty;
     descs.push(delete);
     descs
@@ -266,7 +266,7 @@ pub(crate) fn apply_ssh_action(sp: &mut SettingsPanel, index: u16, action: Widge
             return false;
         }
         sp.selected_host_index = i;
-        sp.ssh_field_focus = 0;
+        sp.focused_widget_index = 0;
         return true;
     }
     // Everything below Add operates on the selected host.
@@ -281,13 +281,13 @@ pub(crate) fn apply_ssh_action(sp: &mut SettingsPanel, index: u16, action: Widge
                     row::FIELD_HOST => sp.set_ssh_host_host(text),
                     _ => sp.set_ssh_host_username(text),
                 }
-                sp.ssh_field_focus = index as u8;
+                sp.focused_widget_index = index;
                 true
             }
             WidgetAction::Activate => {
                 // A click focuses the field and opens the edit buffer,
                 // matching the Security byte-cap fields.
-                sp.ssh_field_focus = index as u8;
+                sp.focused_widget_index = index;
                 sp.begin_ssh_field_edit()
             }
             _ => false,
@@ -301,7 +301,7 @@ pub(crate) fn apply_ssh_action(sp: &mut SettingsPanel, index: u16, action: Widge
                 WidgetAction::Activate => {}
                 WidgetAction::SetText(_) => return false,
             }
-            sp.ssh_field_focus = 3;
+            sp.focused_widget_index = 3;
             true
         }
         row::FIELD_AUTH => {
@@ -310,7 +310,7 @@ pub(crate) fn apply_ssh_action(sp: &mut SettingsPanel, index: u16, action: Widge
                 WidgetAction::Prev => sp.prev_ssh_auth_type(),
                 _ => return false,
             }
-            sp.ssh_field_focus = 5;
+            sp.focused_widget_index = 5;
             true
         }
         row::ADD if matches!(action, WidgetAction::Activate) => {
@@ -383,7 +383,7 @@ mod tests {
     fn the_selected_entry_is_focused_while_the_list_owns_the_counter() {
         let mut sp = panel_with_hosts(3);
         sp.selected_host_index = 2;
-        sp.ssh_field_focus = 0;
+        sp.focused_widget_index = 0;
         let descs = ssh_widget_descs(&sp);
         assert_eq!(descs[2].kind, WidgetKind::ListItem { selected: true });
         assert!(descs[2].focused);
@@ -393,15 +393,15 @@ mod tests {
     #[test]
     fn the_field_focus_counter_maps_onto_widget_indices_as_identity() {
         let mut sp = panel_with_hosts(1);
-        for focus in 1u8..=7 {
-            sp.ssh_field_focus = focus;
+        for focus in 1u16..=7 {
+            sp.focused_widget_index = focus;
             let descs = ssh_widget_descs(&sp);
             let focused: Vec<u16> = descs
                 .iter()
                 .filter(|d| d.focused)
                 .map(|d| d.id.index)
                 .collect();
-            assert_eq!(focused, vec![focus as u16], "focus={focus}");
+            assert_eq!(focused, vec![focus], "focus={focus}");
         }
     }
 
@@ -429,7 +429,7 @@ mod tests {
     #[test]
     fn an_in_flight_edit_shows_the_buffer_with_a_caret() {
         let mut sp = panel_with_hosts(1);
-        sp.ssh_field_focus = 1;
+        sp.focused_widget_index = 1;
         assert!(sp.begin_ssh_field_edit());
         sp.ssh_field_insert_char('x');
         let descs = ssh_widget_descs(&sp);
@@ -488,14 +488,14 @@ mod tests {
     #[test]
     fn activating_a_list_entry_selects_it_and_returns_focus_to_the_list() {
         let mut sp = panel_with_hosts(3);
-        sp.ssh_field_focus = 4;
+        sp.focused_widget_index = 4;
         assert!(apply_ssh_action(
             &mut sp,
             row::LIST_BASE + 2,
             WidgetAction::Activate
         ));
         assert_eq!(sp.selected_host_index, 2);
-        assert_eq!(sp.ssh_field_focus, 0);
+        assert_eq!(sp.focused_widget_index, 0);
     }
 
     #[test]
@@ -507,7 +507,7 @@ mod tests {
             WidgetAction::SetText("new".to_string())
         ));
         assert_eq!(sp.ssh_hosts[0].name, "new");
-        assert_eq!(sp.ssh_field_focus, 1);
+        assert_eq!(sp.focused_widget_index, 1);
         assert!(sp.ssh_field_editing.is_none(), "SetText is a direct write");
 
         assert!(apply_ssh_action(
@@ -515,7 +515,7 @@ mod tests {
             row::FIELD_HOST,
             WidgetAction::Activate
         ));
-        assert_eq!(sp.ssh_field_focus, 2);
+        assert_eq!(sp.focused_widget_index, 2);
         assert!(sp.ssh_field_editing.is_some(), "a click starts GUI editing");
     }
 
@@ -540,7 +540,7 @@ mod tests {
             WidgetAction::SetValue(8022.0)
         ));
         assert_eq!(sp.ssh_hosts[0].port, 8022);
-        assert_eq!(sp.ssh_field_focus, 3);
+        assert_eq!(sp.focused_widget_index, 3);
     }
 
     #[test]
@@ -558,7 +558,7 @@ mod tests {
             WidgetAction::Prev
         ));
         assert_eq!(sp.ssh_hosts[0].auth_type, "password");
-        assert_eq!(sp.ssh_field_focus, 5);
+        assert_eq!(sp.focused_widget_index, 5);
     }
 
     #[test]
@@ -566,7 +566,7 @@ mod tests {
         let mut sp = SettingsPanel::default();
         assert!(apply_ssh_action(&mut sp, row::ADD, WidgetAction::Activate));
         assert_eq!(sp.ssh_hosts.len(), 1);
-        assert_eq!(sp.ssh_field_focus, 1);
+        assert_eq!(sp.focused_widget_index, 1);
         assert!(sp.ssh_field_editing.is_some());
     }
 

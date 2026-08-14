@@ -14,7 +14,7 @@ use super::spec::{WidgetDesc, WidgetId, WidgetKind, WidgetRect, WidgetSpec};
 /// `SettingsCategory::ALL` index of the Font category.
 pub(crate) const FONT_CATEGORY: u8 = 1;
 
-/// Row indices, matching `font_field_focus`.
+/// Row indices, matching `focused_widget_index`.
 pub(crate) mod row {
     /// Font family name (typed).
     pub const FAMILY: u16 = 0;
@@ -44,7 +44,7 @@ const ROW_BLEED: f32 = 0.3;
 
 /// Describe every control of the Font tab, without laying it out.
 pub(crate) fn font_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
-    let focus = sp.font_field_focus;
+    let focus = sp.focused_widget_index;
     vec![
         WidgetDesc::new(
             WidgetId::new(FONT_CATEGORY, row::FAMILY),
@@ -144,7 +144,7 @@ pub(crate) fn apply_font_action(sp: &mut SettingsPanel, index: u16, action: Widg
     if index as usize >= FONT_ROW_COUNT {
         return false;
     }
-    sp.font_field_focus = index;
+    sp.focused_widget_index = index;
     match action {
         WidgetAction::Next => sp.font_field_increase(),
         WidgetAction::Prev => sp.font_field_decrease(),
@@ -224,7 +224,7 @@ mod tests {
         // Editing is entered from a click, which need not have moved the
         // focus counter; a ring-less edit box would read as inactive.
         let sp = SettingsPanel {
-            font_field_focus: row::SIZE,
+            focused_widget_index: row::SIZE,
             font_family_editing: true,
             ..Default::default()
         };
@@ -290,7 +290,7 @@ mod tests {
             WidgetAction::Activate
         ));
         assert_eq!(sp.font_size, before);
-        assert_eq!(sp.font_field_focus, row::SIZE);
+        assert_eq!(sp.focused_widget_index, row::SIZE);
     }
 
     #[test]

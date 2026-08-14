@@ -454,7 +454,7 @@ impl EventHandler {
             return;
         }
         // Do nothing for non-TextInput fields (port=3 / auth_type=5).
-        let row_index = match sp.ssh_field_focus {
+        let row_index = match sp.focused_widget_index {
             1 => 0u32, // name
             2 => 1,    // host
             4 => 3,    // username

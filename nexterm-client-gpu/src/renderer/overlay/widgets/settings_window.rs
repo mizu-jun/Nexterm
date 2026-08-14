@@ -19,7 +19,7 @@ use super::spec::{WidgetDesc, WidgetId, WidgetKind, WidgetRect, WidgetSpec};
 pub(crate) const WINDOW_CATEGORY: u8 = 3;
 
 /// Row indices, in the order they are drawn. These match the pre-migration
-/// `window_field_focus` values and the `window_row_labels` order, so the
+/// `focused_widget_index` values and the `window_row_labels` order, so the
 /// keyboard handler and the search filter keep working unchanged.
 pub(crate) mod row {
     /// Background opacity (slider).
@@ -167,7 +167,7 @@ pub(crate) fn window_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
                 kind(sp, index),
                 label(index),
             )
-            .focused(sp.window_field_focus == index)
+            .focused(sp.focused_widget_index == index)
         })
         .collect()
 }
@@ -185,7 +185,7 @@ const ROW_BLEED: f32 = 0.3;
 /// Lay the Window tab out for this frame.
 ///
 /// Rows hidden by the sidebar search get a zero-sized rect rather than being
-/// dropped, so widget indices stay aligned with `window_field_focus` and the
+/// dropped, so widget indices stay aligned with `focused_widget_index` and the
 /// AccessKit tree.
 pub(crate) fn build_window_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<WidgetSpec> {
     let layout = super::super::settings::layout::compute_row_layout(g.content_w, g.cell_w);
@@ -258,7 +258,7 @@ pub(crate) fn apply_window_action(
     }
     // Focus the row first: the increase/decrease setters act on the focused
     // field, exactly as they do for the keyboard.
-    sp.window_field_focus = index;
+    sp.focused_widget_index = index;
     match action {
         WidgetAction::Next => sp.window_field_increase(),
         WidgetAction::Prev => sp.window_field_decrease(),
@@ -406,7 +406,7 @@ mod tests {
     #[test]
     fn exactly_one_row_is_focused() {
         let mut sp = panel();
-        sp.window_field_focus = row::SCROLLBACK;
+        sp.focused_widget_index = row::SCROLLBACK;
         let focused: Vec<_> = window_widget_descs(&sp)
             .into_iter()
             .filter(|d| d.focused)
@@ -556,7 +556,11 @@ mod tests {
             WidgetAction::Activate
         ));
         assert_eq!(sp.opacity, before, "a click must not nudge a slider");
-        assert_eq!(sp.window_field_focus, row::OPACITY, "but it does focus it");
+        assert_eq!(
+            sp.focused_widget_index,
+            row::OPACITY,
+            "but it does focus it"
+        );
     }
 
     #[test]

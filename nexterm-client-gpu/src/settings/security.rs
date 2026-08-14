@@ -95,8 +95,8 @@ impl SettingsPanel {
 
     /// Move focus to the next Security field (stops at the last one).
     pub fn next_security_field(&mut self) -> bool {
-        if self.security_field_focus + 1 < Self::SECURITY_FIELD_COUNT {
-            self.security_field_focus += 1;
+        if self.focused_widget_index + 1 < Self::SECURITY_FIELD_COUNT {
+            self.focused_widget_index += 1;
             true
         } else {
             false
@@ -105,8 +105,8 @@ impl SettingsPanel {
 
     /// Move focus to the previous Security field (stops at the first one).
     pub fn prev_security_field(&mut self) -> bool {
-        if self.security_field_focus > 0 {
-            self.security_field_focus -= 1;
+        if self.focused_widget_index > 0 {
+            self.focused_widget_index -= 1;
             true
         } else {
             false
@@ -124,7 +124,7 @@ impl SettingsPanel {
     }
 
     fn cycle_security_policy(&mut self, forward: bool) {
-        let field = match self.security_field_focus {
+        let field = match self.focused_widget_index {
             0 => &mut self.sec_external_url,
             1 => &mut self.sec_osc52_clipboard,
             2 => &mut self.sec_osc_notification,
@@ -137,7 +137,7 @@ impl SettingsPanel {
 
     /// Begin editing the focused byte-cap field (focus 4..=6). No-op otherwise.
     pub fn begin_security_edit(&mut self) {
-        if let Some(v) = self.security_bytes_at(self.security_field_focus) {
+        if let Some(v) = self.security_bytes_at(self.focused_widget_index) {
             self.security_field_editing = Some(TextInputState::new(v.to_string()));
         }
     }
@@ -148,7 +148,7 @@ impl SettingsPanel {
         if let Some(state) = self.security_field_editing.take()
             && let Ok(parsed) = state.buffer.trim().parse::<usize>()
         {
-            match self.security_field_focus {
+            match self.focused_widget_index {
                 4 => self.sec_osc52_max_bytes = parsed,
                 5 => self.sec_notification_max_bytes = parsed,
                 6 => self.sec_plugin_read_max_bytes = parsed,
@@ -225,7 +225,7 @@ mod tests {
         let config = Config::default();
         let mut panel = SettingsPanel::new(&config);
         // Focus the plugin_read policy (index 3) and cycle it.
-        panel.security_field_focus = 3;
+        panel.focused_widget_index = 3;
         let before = panel.sec_plugin_read;
         panel.security_field_increase();
         assert_ne!(panel.sec_plugin_read, before, "policy fields cycle");
@@ -233,7 +233,7 @@ mod tests {
 
         // A numeric field (index 4) does not cycle as a policy.
         panel.dirty = false;
-        panel.security_field_focus = 4;
+        panel.focused_widget_index = 4;
         let bytes_before = panel.sec_osc52_max_bytes;
         panel.security_field_increase();
         assert_eq!(panel.sec_osc52_max_bytes, bytes_before);
@@ -244,7 +244,7 @@ mod tests {
     fn security_byte_cap_edit_parses_and_commits() {
         let config = Config::default();
         let mut panel = SettingsPanel::new(&config);
-        panel.security_field_focus = 6; // plugin_read_max_bytes
+        panel.focused_widget_index = 6; // plugin_read_max_bytes
         panel.begin_security_edit();
         assert!(panel.security_field_editing.is_some());
         // Replace the buffer with a fresh number, digits only.
@@ -262,7 +262,7 @@ mod tests {
         let config = Config::default();
         let mut panel = SettingsPanel::new(&config);
         let original = panel.sec_notification_max_bytes;
-        panel.security_field_focus = 5;
+        panel.focused_widget_index = 5;
         panel.begin_security_edit();
         panel.security_field_insert_char('9');
         panel.cancel_security_edit();

@@ -201,7 +201,7 @@ impl SettingsPanel {
         };
         self.keybindings.push(new_binding);
         self.selected_key_index = self.keybindings.len() - 1;
-        self.key_field_focus = 1;
+        self.focused_widget_index = 1;
         // Immediately enter Record mode — the next key press becomes the binding.
         self.key_editing = Some(KeyEditMode::Record);
         self.dirty = true;
@@ -226,7 +226,7 @@ impl SettingsPanel {
     /// Delete the selected binding and close the dialog.
     ///
     /// Selection clamp: if the deleted index was the tail, fall back to n-1.
-    /// When the list becomes empty, reset focus to the ListBox (`key_field_focus = 0`).
+    /// When the list becomes empty, reset focus to the ListBox (`focused_widget_index = 0`).
     pub fn confirm_key_delete_dialog(&mut self) {
         if self.selected_key_index < self.keybindings.len() {
             self.keybindings.remove(self.selected_key_index);
@@ -235,7 +235,7 @@ impl SettingsPanel {
             }
             if self.keybindings.is_empty() {
                 self.selected_key_index = 0;
-                self.key_field_focus = 0;
+                self.focused_widget_index = 0;
             }
             self.dirty = true;
         }
@@ -361,7 +361,7 @@ mod tests {
             assert_eq!(kb.action, config.keys[i].action);
         }
         assert_eq!(panel.selected_key_index, 0);
-        assert_eq!(panel.key_field_focus, 0);
+        assert_eq!(panel.focused_widget_index, 0);
     }
 
     #[test]
@@ -371,7 +371,7 @@ mod tests {
         let panel = SettingsPanel::new(&config);
         assert!(panel.keybindings.is_empty());
         assert_eq!(panel.selected_key_index, 0);
-        assert_eq!(panel.key_field_focus, 0);
+        assert_eq!(panel.focused_widget_index, 0);
     }
 
     #[test]
@@ -526,7 +526,7 @@ mod tests {
         assert_eq!(panel.keybindings[0].key, "");
         assert_eq!(panel.keybindings[0].action, KEYBINDING_ACTIONS[0]);
         assert_eq!(panel.selected_key_index, 0);
-        assert_eq!(panel.key_field_focus, 1);
+        assert_eq!(panel.focused_widget_index, 1);
         assert!(panel.is_key_recording());
         assert!(panel.dirty);
     }
@@ -603,13 +603,13 @@ mod tests {
     #[test]
     fn confirm_key_delete_dialog_emptying_resets_focus() {
         let mut panel = panel_with_one_binding();
-        panel.key_field_focus = 4;
+        panel.focused_widget_index = 4;
         panel.open_key_delete_dialog();
         panel.confirm_key_delete_dialog();
         assert!(panel.keybindings.is_empty());
         assert_eq!(panel.selected_key_index, 0);
         assert_eq!(
-            panel.key_field_focus, 0,
+            panel.focused_widget_index, 0,
             "empty list must restore ListBox focus"
         );
     }

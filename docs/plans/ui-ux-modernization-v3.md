@@ -148,9 +148,11 @@ Addresses G4, G5, G9, G11 (principles: Effortless, Familiar, Coherent).
 - New `renderer/overlay/widgets/` module: a `WidgetSpec` descriptor
   (immediate-mode, rebuilt per frame) consumed by exactly three readers —
   `draw_widget` (visuals: real toggle pills, chevrons, sliders, focus ring),
-  key/mouse routing via a single `focused_widget_id`, and the AccessKit tree
+  key/mouse routing via a single focused-widget field, and the AccessKit tree
   builder. This collapses the 7 per-tab focus counters and the triple
-  definition of every control.
+  definition of every control. (Shipped as `focused_widget_index: u16` rather
+  than a full `WidgetId`: the category is already in `SettingsPanel.category`,
+  and storing it twice invites the two copies drifting apart.)
 - First tooltip component (Tooltip elevation 16, radius 4).
 - Migrate Theme and Window tabs first; remaining tabs follow tab-by-tab with
   old and new coexisting.
@@ -359,10 +361,20 @@ gated behind a spike.
         range-indicator row (`list_window` in `layout.rs`), anchoring the
         edit panel right below the windowed list. Predates the widget layer
         and was kept separate from the list-tab migration on purpose
-  - [ ] Collapse the per-tab focus counters into one `focused_widget_id` —
-        now unblocked: every category builds widget specs, and the three list
-        tabs already mirror their counter onto the widget indices as the
-        identity
+  - [x] Collapse the per-tab focus counters into one field — the seven
+        `<tab>_field_focus` counters are now a single
+        `SettingsPanel.focused_widget_index` (a `WidgetId.index` for the current
+        category). Every category change goes through the new
+        `set_category`, which resets the index, the scroll offset and any
+        in-flight field edit; before this, the keyboard paths reset all seven
+        counters by hand and the sidebar click reset none of them, so a click
+        during an edit left the buffer live but invisible
+  - [ ] Derive keyboard navigation from the descriptors — ↑/↓ still walk
+        hand-written per-category rules (`next_window_field`, the
+        "empty list → skip Delete" special cases). `WidgetDesc.enabled` and
+        `WidgetKind::is_interactive` already encode what those rules
+        re-implement, so one generic walk over the current category's descs can
+        replace them and stay correct for future tabs
   - [ ] Hard-coded colour migration (G11) — not started; the widget layer
         reads `DesignTokens`, but colours outside it are untouched
 - [ ] CONFIGURATION.md inventory PR

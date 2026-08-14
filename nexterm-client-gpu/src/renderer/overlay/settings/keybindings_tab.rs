@@ -109,7 +109,7 @@ pub(in crate::renderer) fn draw_keybindings_tab(
         let header = match &sp.key_editing {
             Some(KeyEditMode::Record) => nexterm_i18n::fl!("settings-keybindings-edit-record"),
             Some(KeyEditMode::Text(_)) => nexterm_i18n::fl!("settings-keybindings-edit-text"),
-            None => match sp.key_field_focus {
+            None => match sp.focused_widget_index {
                 1 => nexterm_i18n::fl!("settings-keybindings-edit-key-focus"),
                 2 => nexterm_i18n::fl!("settings-keybindings-edit-action-focus"),
                 _ => nexterm_i18n::fl!("settings-keybindings-edit-default"),

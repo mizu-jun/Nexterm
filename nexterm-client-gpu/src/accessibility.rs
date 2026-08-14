@@ -1439,7 +1439,7 @@ fn build_macro_picker_nodes(picker: &MacroPicker) -> (Vec<(NodeId, Node)>, NodeI
 /// ```
 ///
 /// Focus: the editing field while `font_family_editing` is true; for the Window
-/// category, follows `window_field_focus`; otherwise the current category tab.
+/// category, follows `focused_widget_index`; otherwise the current category tab.
 /// Convert one widget description into an AccessKit node (UI/UX v3 P1b).
 ///
 /// The role is derived from the widget kind, so a control's accessible role
@@ -1542,23 +1542,27 @@ fn widget_focus_id(panel: &SettingsPanel) -> Option<NodeId> {
             use crate::renderer::overlay::widgets::settings_font::row;
             (FONT_CATEGORY, row::FAMILY, FONT_ROW_COUNT)
         }
-        SettingsCategory::Font => (FONT_CATEGORY, panel.font_field_focus, FONT_ROW_COUNT),
+        SettingsCategory::Font => (FONT_CATEGORY, panel.focused_widget_index, FONT_ROW_COUNT),
         SettingsCategory::Startup => (
             STARTUP_CATEGORY,
-            panel.startup_field_focus,
+            panel.focused_widget_index,
             STARTUP_ROW_COUNT,
         ),
         // The Theme counter addresses rows only; the swatches are picked with
         // the mouse, so the counter can never point at one.
         SettingsCategory::Theme => (
             THEME_CATEGORY,
-            panel.theme_field_focus,
+            panel.focused_widget_index,
             THEME_SWATCH_BASE as usize,
         ),
-        SettingsCategory::Window => (WINDOW_CATEGORY, panel.window_field_focus, WINDOW_ROW_COUNT),
+        SettingsCategory::Window => (
+            WINDOW_CATEGORY,
+            panel.focused_widget_index,
+            WINDOW_ROW_COUNT,
+        ),
         SettingsCategory::Security => (
             SECURITY_CATEGORY,
-            panel.security_field_focus,
+            panel.focused_widget_index,
             SECURITY_ROW_COUNT,
         ),
         // Profiles has no focus counter: the reported focus follows the list
@@ -1580,11 +1584,11 @@ fn widget_focus_id(panel: &SettingsPanel) -> Option<NodeId> {
         SettingsCategory::Ssh if !panel.ssh_delete_dialog_open => {
             use crate::renderer::overlay::widgets::settings_ssh::{SSH_CATEGORY, row};
             let empty = panel.ssh_hosts.is_empty();
-            let index = match panel.ssh_field_focus {
+            let index = match panel.focused_widget_index {
                 0 if !empty => {
                     row::LIST_BASE + panel.selected_host_index.min(panel.ssh_hosts.len() - 1) as u16
                 }
-                f @ 1..=5 if !empty => f as u16,
+                f @ 1..=5 if !empty => f,
                 6 => row::ADD,
                 7 if !empty => row::DELETE,
                 _ => return None,
@@ -1601,12 +1605,12 @@ fn widget_focus_id(panel: &SettingsPanel) -> Option<NodeId> {
                 KEYBINDINGS_CATEGORY, row,
             };
             let empty = panel.keybindings.is_empty();
-            let index = match panel.key_field_focus {
+            let index = match panel.focused_widget_index {
                 0 if !empty => {
                     row::LIST_BASE
                         + panel.selected_key_index.min(panel.keybindings.len() - 1) as u16
                 }
-                f @ 1..=2 if !empty => f as u16,
+                f @ 1..=2 if !empty => f,
                 3 => row::ADD,
                 4 if !empty => row::DELETE,
                 5 => row::LEADER,
@@ -2165,8 +2169,8 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
         p.language_index.hash(&mut h);
         p.auto_check_update.hash(&mut h);
         // Phase 5-11-6 #6: 4 new Window category fields + field focus.
-        // window_field_focus needs a tree update even when only the focus changes.
-        p.window_field_focus.hash(&mut h);
+        // focused_widget_index needs a tree update even when only the focus changes.
+        p.focused_widget_index.hash(&mut h);
         // CursorStyle / PresentModeConfig do not implement Hash; use their toml_key strings.
         p.cursor_style_toml_key().hash(&mut h);
         p.present_mode_toml_key().hash(&mut h);
@@ -2185,9 +2189,9 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
         }
         // Phase 5-11-8 Step 8-1 / 8-2: for the Ssh category, reflect
         // selected_host_index + the number of ssh_hosts + each SshHostEntry's
-        // label-affecting fields + ssh_field_focus.
+        // label-affecting fields + focused_widget_index.
         p.selected_host_index.hash(&mut h);
-        p.ssh_field_focus.hash(&mut h);
+        p.focused_widget_index.hash(&mut h);
         p.ssh_hosts.len().hash(&mut h);
         for host in &p.ssh_hosts {
             host.name.hash(&mut h);
@@ -2208,7 +2212,7 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
         }
         // Phase 5-11-8 Step 8-3 (Sub-phase D): propagate open/close of the delete
         // confirmation dialog and the button focus change. Add/Delete button focus
-        // changes are tracked via the existing `ssh_field_focus`; ssh_hosts
+        // changes are tracked via the existing `focused_widget_index`; ssh_hosts
         // additions/removals are already covered by `ssh_hosts.len()` and each
         // per-host field hash.
         p.ssh_delete_dialog_open.hash(&mut h);
@@ -2216,11 +2220,11 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
         // Phase 5-11-9 Sub-phase E: Keybindings category fields.
         // Reflect everything `build_settings_panel_nodes` reads:
         //   - keybindings list (key / action per entry)
-        //   - selected_key_index / key_field_focus
+        //   - selected_key_index / focused_widget_index
         //   - delete dialog open / confirm focus
         //   - key_editing mode (Record / Text + Text buffer) for live updates
         p.selected_key_index.hash(&mut h);
-        p.key_field_focus.hash(&mut h);
+        p.focused_widget_index.hash(&mut h);
         p.keybindings.len().hash(&mut h);
         for kb in &p.keybindings {
             kb.key.hash(&mut h);
@@ -2321,8 +2325,11 @@ pub fn dispatch_settings_action(
         // ===== Category tabs =====
         (Action::Focus | Action::Click, NodeIdKind::SettingsTab { idx }) => {
             if let Some(cat) = SettingsCategory::ALL.get(*idx) {
-                panel.category = cat.clone();
-                panel.font_family_editing = false;
+                // Via `set_category` so this path drops the stale scroll
+                // offset, the focused widget index and any in-flight field edit
+                // (`font_family_editing` among them) like the keyboard and
+                // mouse paths do.
+                panel.set_category(cat.clone());
                 true
             } else {
                 false
@@ -2355,23 +2362,23 @@ pub fn dispatch_settings_action(
             };
             match *category {
                 THEME_CATEGORY => {
-                    panel.theme_field_focus = *index;
+                    panel.focused_widget_index = *index;
                     true
                 }
                 WINDOW_CATEGORY if (*index as usize) < WINDOW_ROW_COUNT => {
-                    panel.window_field_focus = *index;
+                    panel.focused_widget_index = *index;
                     true
                 }
                 FONT_CATEGORY if (*index as usize) < FONT_ROW_COUNT => {
-                    panel.font_field_focus = *index;
+                    panel.focused_widget_index = *index;
                     true
                 }
                 STARTUP_CATEGORY if (*index as usize) < STARTUP_ROW_COUNT => {
-                    panel.startup_field_focus = *index;
+                    panel.focused_widget_index = *index;
                     true
                 }
                 SECURITY_CATEGORY if (*index as usize) < SECURITY_ROW_COUNT => {
-                    panel.security_field_focus = *index;
+                    panel.focused_widget_index = *index;
                     true
                 }
                 // Profiles has no focus counter: focusing an entry moves the
@@ -2392,15 +2399,15 @@ pub fn dispatch_settings_action(
                         && ((*index - ssh_row::LIST_BASE) as usize) < panel.ssh_hosts.len() =>
                 {
                     panel.selected_host_index = (*index - ssh_row::LIST_BASE) as usize;
-                    panel.ssh_field_focus = 0;
+                    panel.focused_widget_index = 0;
                     true
                 }
                 // Ssh fields and buttons: the widget indices mirror
-                // `ssh_field_focus` exactly. The Delete button accepts focus
+                // `focused_widget_index` exactly. The Delete button accepts focus
                 // even while disabled so reader navigation stays stable,
                 // matching the retired button arm.
                 SSH_CATEGORY if (1..=7).contains(index) => {
-                    panel.ssh_field_focus = *index as u8;
+                    panel.focused_widget_index = *index;
                     true
                 }
                 // Keybindings: same shape as Ssh — focusing a binding selects
@@ -2411,15 +2418,15 @@ pub fn dispatch_settings_action(
                         && ((*index - key_row::LIST_BASE) as usize) < panel.keybindings.len() =>
                 {
                     panel.selected_key_index = (*index - key_row::LIST_BASE) as usize;
-                    panel.key_field_focus = 0;
+                    panel.focused_widget_index = 0;
                     true
                 }
                 // Keybindings fields, buttons and the leader row: the widget
-                // indices mirror `key_field_focus` exactly. The Delete button
+                // indices mirror `focused_widget_index` exactly. The Delete button
                 // accepts focus even while disabled so reader navigation stays
                 // stable, matching the retired button arm.
                 KEYBINDINGS_CATEGORY if (1..=5).contains(index) => {
-                    panel.key_field_focus = *index as u8;
+                    panel.focused_widget_index = *index;
                     true
                 }
                 // Blocks has no focus counter.
@@ -3293,19 +3300,19 @@ mod tests {
 
         let cases: [FocusCase; 5] = [
             (SettingsCategory::Theme, THEME_CATEGORY, |p, i| {
-                p.theme_field_focus = i
+                p.focused_widget_index = i
             }),
             (SettingsCategory::Window, WINDOW_CATEGORY, |p, i| {
-                p.window_field_focus = i
+                p.focused_widget_index = i
             }),
             (SettingsCategory::Font, FONT_CATEGORY, |p, i| {
-                p.font_field_focus = i
+                p.focused_widget_index = i
             }),
             (SettingsCategory::Startup, STARTUP_CATEGORY, |p, i| {
-                p.startup_field_focus = i
+                p.focused_widget_index = i
             }),
             (SettingsCategory::Security, SECURITY_CATEGORY, |p, i| {
-                p.security_field_focus = i
+                p.focused_widget_index = i
             }),
         ];
 
@@ -3340,7 +3347,7 @@ mod tests {
         let mut state = ClientState::new(80, 24, 1000);
         state.settings_panel.is_open = true;
         state.settings_panel.category = SettingsCategory::Security;
-        state.settings_panel.security_field_focus = SECURITY_ROW_COUNT as u16;
+        state.settings_panel.focused_widget_index = SECURITY_ROW_COUNT as u16;
 
         let update = build_tree_from_state(&state);
         assert_ne!(
@@ -3485,6 +3492,28 @@ mod tests {
         let handled = dispatch_settings_action(&mut panel, Action::Focus, &kind2, None);
         assert!(handled);
         assert_eq!(panel.category, SettingsCategory::Startup);
+    }
+
+    /// A tab switch from the reader must clear `focused_widget_index` too. The
+    /// counters used to be per-tab, so a stale value was harmless; with one
+    /// shared index, carrying it over would point at an unrelated row (or at
+    /// nothing) in the category being entered.
+    #[test]
+    fn dispatch_settings_tab_click_resets_the_focused_widget() {
+        let mut panel = SettingsPanel::default();
+        panel.category = SettingsCategory::Window;
+        // A high index that is valid in Window (14 rows) but not in Theme (2).
+        panel.focused_widget_index = 13;
+
+        let kind = NodeIdKind::SettingsTab { idx: 2 };
+        assert!(dispatch_settings_action(
+            &mut panel,
+            Action::Click,
+            &kind,
+            None
+        ));
+        assert_eq!(panel.category, SettingsCategory::Theme);
+        assert_eq!(panel.focused_widget_index, 0);
     }
 
     /// Out-of-range SettingsTab idx must return handled=false (category unchanged).
@@ -3827,7 +3856,7 @@ mod tests {
             panel.auto_check_update, after_click,
             "Focus must not flip a checkbox as the virtual cursor passes by"
         );
-        assert_eq!(panel.startup_field_focus, row::CHECK_UPDATES);
+        assert_eq!(panel.focused_widget_index, row::CHECK_UPDATES);
     }
 
     // ===== Window category (UI/UX v3 P1c: widget-derived nodes) =====
@@ -3876,7 +3905,7 @@ mod tests {
         }
     }
 
-    /// Focus follows `window_field_focus` across every row, and falls back to
+    /// Focus follows `focused_widget_index` across every row, and falls back to
     /// the category tab when the index is out of range.
     #[test]
     fn build_settings_panel_nodes_window_focus_follows_field() {
@@ -3888,18 +3917,18 @@ mod tests {
         for focus_idx in 0..WINDOW_ROW_COUNT as u16 {
             let mut panel = SettingsPanel::default();
             panel.category = crate::settings_panel::SettingsCategory::Window;
-            panel.window_field_focus = focus_idx;
+            panel.focused_widget_index = focus_idx;
             let (_nodes, focus) = build_settings_panel_nodes(&panel);
             assert_eq!(
                 focus,
                 settings_widget_id(WidgetId::new(WINDOW_CATEGORY, focus_idx)),
-                "with window_field_focus={focus_idx}"
+                "with focused_widget_index={focus_idx}"
             );
         }
 
         let mut panel = SettingsPanel::default();
         panel.category = crate::settings_panel::SettingsCategory::Window;
-        panel.window_field_focus = WINDOW_ROW_COUNT as u16;
+        panel.focused_widget_index = WINDOW_ROW_COUNT as u16;
         let (_nodes, focus) = build_settings_panel_nodes(&panel);
         assert_ne!(
             focus,
@@ -3909,7 +3938,7 @@ mod tests {
     }
 
     /// compute_tree_state_hash: detects changes in
-    /// window_field_focus / cursor_style / padding / present_mode.
+    /// focused_widget_index / cursor_style / padding / present_mode.
     #[test]
     fn tree_hash_detects_window_field_changes() {
         let mut state = ClientState::new(80, 24, 1000);
@@ -3918,9 +3947,9 @@ mod tests {
         let h0 = compute_tree_state_hash(&state);
 
         // Focus change.
-        state.settings_panel.window_field_focus = 1;
+        state.settings_panel.focused_widget_index = 1;
         let h1 = compute_tree_state_hash(&state);
-        assert_ne!(h0, h1, "window_field_focus change must affect the hash");
+        assert_ne!(h0, h1, "focused_widget_index change must affect the hash");
 
         // cursor_style change.
         state.settings_panel.cursor_style = nexterm_config::CursorStyle::Beam;
@@ -5247,7 +5276,7 @@ mod tests {
         let h1 = compute_tree_state_hash(&state);
         assert_ne!(h0, h1, "the hash must change with the stored leader key");
 
-        state.settings_panel.key_field_focus = 5;
+        state.settings_panel.focused_widget_index = 5;
         assert!(state.settings_panel.begin_leader_key_edit());
         let h2 = compute_tree_state_hash(&state);
         assert_ne!(
@@ -5430,7 +5459,7 @@ mod tests {
         // selected_host_index = 1 so this entry is selected.
         assert_eq!(opt1.1.is_selected(), Some(true));
 
-        // Focus moves to the selected host item (ssh_field_focus = 0).
+        // Focus moves to the selected host item (focused_widget_index = 0).
         assert_eq!(focus, ssh_entry_widget_id(1));
 
         // SETTINGS_CONTENT includes the host count.
@@ -5452,7 +5481,7 @@ mod tests {
     fn dispatch_settings_ssh_entry_click_selects() {
         use crate::renderer::overlay::widgets::settings_ssh::{SSH_CATEGORY, row};
         let mut panel = make_ssh_panel_with_2_hosts();
-        panel.ssh_field_focus = 4;
+        panel.focused_widget_index = 4;
 
         let handled = dispatch_settings_action(
             &mut panel,
@@ -5465,7 +5494,7 @@ mod tests {
         );
         assert!(handled);
         assert_eq!(panel.selected_host_index, 1);
-        assert_eq!(panel.ssh_field_focus, 0);
+        assert_eq!(panel.focused_widget_index, 0);
     }
 
     /// dispatch_settings_action: Focus on an Ssh field widget moves the
@@ -5485,7 +5514,7 @@ mod tests {
             None,
         );
         assert!(handled);
-        assert_eq!(panel.ssh_field_focus, 4);
+        assert_eq!(panel.focused_widget_index, 4);
 
         let handled = dispatch_settings_action(
             &mut panel,
@@ -5580,7 +5609,7 @@ mod tests {
             },
         ];
         panel.selected_host_index = 0;
-        panel.ssh_field_focus = 0;
+        panel.focused_widget_index = 0;
         panel
     }
 
@@ -5700,28 +5729,28 @@ mod tests {
         assert!(del.1.is_disabled(), "delete reports disabled when empty");
     }
 
-    /// When ssh_field_focus is name, focus moves to the name node.
+    /// When focused_widget_index is name, focus moves to the name node.
     #[test]
     fn build_settings_panel_ssh_focus_follows_ssh_field_focus() {
         use crate::renderer::overlay::widgets::settings_ssh::row;
         let mut panel = make_ssh_panel_with_2_hosts();
-        panel.ssh_field_focus = 1; // name
+        panel.focused_widget_index = 1; // name
         let (_nodes, focus) = build_settings_panel_nodes(&panel);
         assert_eq!(focus, ssh_widget_id(row::FIELD_NAME));
 
-        panel.ssh_field_focus = 3; // port
+        panel.focused_widget_index = 3; // port
         let (_nodes, focus) = build_settings_panel_nodes(&panel);
         assert_eq!(focus, ssh_widget_id(row::FIELD_PORT));
 
-        panel.ssh_field_focus = 5; // auth_type
+        panel.focused_widget_index = 5; // auth_type
         let (_nodes, focus) = build_settings_panel_nodes(&panel);
         assert_eq!(focus, ssh_widget_id(row::FIELD_AUTH));
 
-        panel.ssh_field_focus = 7; // delete button
+        panel.focused_widget_index = 7; // delete button
         let (_nodes, focus) = build_settings_panel_nodes(&panel);
         assert_eq!(focus, ssh_widget_id(row::DELETE));
 
-        panel.ssh_field_focus = 0; // back to list
+        panel.focused_widget_index = 0; // back to list
         let (_nodes, focus) = build_settings_panel_nodes(&panel);
         assert_eq!(focus, ssh_entry_widget_id(0));
     }
@@ -5843,18 +5872,21 @@ auth_type = "key"
         assert_eq!(arr.len(), 0);
     }
 
-    /// compute_tree_state_hash detects ssh_field_focus changes.
+    /// compute_tree_state_hash detects focused_widget_index changes.
     #[test]
     fn tree_state_hash_detects_ssh_field_focus_change() {
         let mut state = ClientState::new(80, 24, 1000);
         state.settings_panel = make_ssh_panel_with_2_hosts();
         state.settings_panel.is_open = true;
-        state.settings_panel.ssh_field_focus = 0;
+        state.settings_panel.focused_widget_index = 0;
         let h0 = compute_tree_state_hash(&state);
 
-        state.settings_panel.ssh_field_focus = 3;
+        state.settings_panel.focused_widget_index = 3;
         let h1 = compute_tree_state_hash(&state);
-        assert_ne!(h0, h1, "the hash must change when ssh_field_focus changes");
+        assert_ne!(
+            h0, h1,
+            "the hash must change when focused_widget_index changes"
+        );
     }
 
     // ============================================================
@@ -5974,7 +6006,7 @@ auth_type = "key"
             },
         ];
         panel.selected_key_index = 0;
-        panel.key_field_focus = 0;
+        panel.focused_widget_index = 0;
         panel
     }
 
@@ -6136,7 +6168,7 @@ auth_type = "key"
         // Clear the built-in defaults to simulate an empty list.
         panel.keybindings.clear();
         panel.selected_key_index = 0;
-        panel.key_field_focus = 0;
+        panel.focused_widget_index = 0;
 
         let (nodes, focus) = build_settings_panel_nodes(&panel);
         let node_of = |index: u16| {
@@ -6159,7 +6191,7 @@ auth_type = "key"
             node_of(row::LIST_BASE).is_none(),
             "no list entry exists for an empty list"
         );
-        // key_field_focus = 0 means "the list", which has no entry to point at,
+        // focused_widget_index = 0 means "the list", which has no entry to point at,
         // so the reported focus falls back to the category tab.
         assert!(matches!(
             decode_node_id(focus),
@@ -6196,7 +6228,7 @@ auth_type = "key"
         assert_eq!(focus2, SETTINGS_KEY_DELETE_CONFIRM_BTN_ID);
     }
 
-    /// key_field_focus chooses the right focus target, and the counter maps onto
+    /// focused_widget_index chooses the right focus target, and the counter maps onto
     /// the widget indices as the identity (1 key, 2 action, 3 Add, 4 Delete,
     /// 5 leader) with 0 meaning the selected list entry.
     #[test]
@@ -6206,19 +6238,19 @@ auth_type = "key"
         panel.is_open = true;
 
         for (focus_val, expected_index) in [
-            (0u8, row::LIST_BASE),
+            (0u16, row::LIST_BASE),
             (1, row::FIELD_KEY),
             (2, row::FIELD_ACTION),
             (3, row::ADD),
             (4, row::DELETE),
             (5, row::LEADER),
         ] {
-            panel.key_field_focus = focus_val;
+            panel.focused_widget_index = focus_val;
             let (_, focus) = build_settings_panel_nodes(&panel);
             assert_eq!(
                 focus,
                 key_widget_id(expected_index),
-                "key_field_focus={focus_val} should focus widget {expected_index}"
+                "focused_widget_index={focus_val} should focus widget {expected_index}"
             );
         }
     }
@@ -6247,8 +6279,8 @@ auth_type = "key"
 
         let h0 = compute_tree_state_hash(&state);
 
-        // 1. Change key_field_focus.
-        state.settings_panel.key_field_focus = 2;
+        // 1. Change focused_widget_index.
+        state.settings_panel.focused_widget_index = 2;
         let h1 = compute_tree_state_hash(&state);
         assert_ne!(h0, h1);
 

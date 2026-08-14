@@ -13,7 +13,7 @@ use super::spec::{WidgetDesc, WidgetId, WidgetKind, WidgetRect, WidgetSpec};
 /// `SettingsCategory::ALL` index of the Startup category.
 pub(crate) const STARTUP_CATEGORY: u8 = 0;
 
-/// Row indices, matching `startup_field_focus`.
+/// Row indices, matching `focused_widget_index`.
 pub(crate) mod row {
     /// UI language (cycler).
     pub const LANGUAGE: u16 = 0;
@@ -45,7 +45,7 @@ fn language_label(sp: &SettingsPanel) -> &'static str {
 
 /// Describe every control of the Startup tab, without laying it out.
 pub(crate) fn startup_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
-    let focus = sp.startup_field_focus;
+    let focus = sp.focused_widget_index;
     // Only the focused shell field carries the live edit buffer.
     let shell_editing = |index: u16| focus == index && sp.shell_field_editing.is_some();
     let shell_value = |index: u16, committed: &str| match sp.shell_field_editing.as_ref() {
@@ -144,7 +144,7 @@ pub(crate) fn apply_startup_action(
     if index as usize >= STARTUP_ROW_COUNT {
         return false;
     }
-    sp.startup_field_focus = index;
+    sp.focused_widget_index = index;
     match action {
         // Nothing in this tab is numeric.
         WidgetAction::SetValue(_) => return false,
@@ -224,7 +224,7 @@ mod tests {
     #[test]
     fn only_the_focused_shell_field_shows_the_edit_buffer() {
         let mut sp = SettingsPanel {
-            startup_field_focus: row::SHELL_PROGRAM,
+            focused_widget_index: row::SHELL_PROGRAM,
             ..Default::default()
         };
         sp.begin_shell_field_edit();
