@@ -341,9 +341,11 @@ gated behind a spike.
         Migrate smallest first (Profiles → Ssh → Keybindings). The delete
         dialog is a modal over the whole panel, not a settings row, and stays
         on its existing hand-written AccessKit nodes for now
-  - [ ] Bounded list viewport — the SSH list grows without limit and pushes
-        its edit panel off the panel past ~20 hosts. This predates the widget
-        layer and migration does not fix it; keep it a separate change
+  - [x] Bounded list viewport — shipped via #54: the Ssh and Keybindings
+        lists window to `MAX_LIST_ROWS` (8) rows around the selection with a
+        range-indicator row (`list_window` in `layout.rs`), anchoring the
+        edit panel right below the windowed list. Predates the widget layer
+        and was kept separate from the list-tab migration on purpose
   - [ ] Collapse the seven per-tab focus counters into one
         `focused_widget_id` (blocked on the three list tabs)
   - [ ] Hard-coded colour migration (G11) — not started; the widget layer
