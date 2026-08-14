@@ -291,27 +291,14 @@ pub(crate) fn signed_rect_distance(
     outside_len + inside_d - corner_radius
 }
 
-#[allow(dead_code, clippy::too_many_arguments)]
-pub(crate) fn draw_cursor(
-    style: &nexterm_config::CursorStyle,
-    cx: f32,
-    cy: f32,
-    cell_w: f32,
-    cell_h: f32,
-    sw: f32,
-    sh: f32,
-    bg_verts: &mut Vec<BgVertex>,
-    bg_idx: &mut Vec<u16>,
-) {
-    draw_cursor_with_visibility(
-        style, cx, cy, cell_w, cell_h, sw, sh, true, bg_verts, bg_idx,
-    );
-}
-
-/// Phase 5 (UI/UX v2): variant of [`draw_cursor`] that honours the blink
-/// state. When `visible` is `false` the call is a no-op. Kept as a separate
-/// entry point so the legacy [`draw_cursor`] callers (and its tests) stay
-/// signature-compatible.
+/// Phase 5 (UI/UX v2): cursor rectangle, honouring the blink state. When
+/// `visible` is `false` the call is a no-op.
+///
+/// `base_color` supplies the hue (UI/UX v3 G11: scheme-derived, typically
+/// `DesignTokens.text_primary`); its alpha channel is ignored because each
+/// cursor shape carries its own translucency — a Block covers the glyph so
+/// it stays see-through, while the thin Beam/Underline need to be nearly
+/// opaque to remain visible.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_cursor_with_visibility(
     style: &nexterm_config::CursorStyle,
@@ -321,6 +308,7 @@ pub(crate) fn draw_cursor_with_visibility(
     cell_h: f32,
     sw: f32,
     sh: f32,
+    base_color: [f32; 4],
     visible: bool,
     bg_verts: &mut Vec<BgVertex>,
     bg_idx: &mut Vec<u16>,
@@ -328,6 +316,7 @@ pub(crate) fn draw_cursor_with_visibility(
     if !visible {
         return;
     }
+    let shaped = |alpha: f32| [base_color[0], base_color[1], base_color[2], alpha];
     match style {
         nexterm_config::CursorStyle::Block => {
             add_px_rect(
@@ -335,7 +324,7 @@ pub(crate) fn draw_cursor_with_visibility(
                 cy,
                 cell_w,
                 cell_h,
-                [1.0, 1.0, 1.0, 0.35],
+                shaped(0.35),
                 sw,
                 sh,
                 bg_verts,
@@ -344,17 +333,7 @@ pub(crate) fn draw_cursor_with_visibility(
         }
         nexterm_config::CursorStyle::Beam => {
             // 2 px wide vertical bar.
-            add_px_rect(
-                cx,
-                cy,
-                2.0,
-                cell_h,
-                [1.0, 1.0, 1.0, 0.9],
-                sw,
-                sh,
-                bg_verts,
-                bg_idx,
-            );
+            add_px_rect(cx, cy, 2.0, cell_h, shaped(0.9), sw, sh, bg_verts, bg_idx);
         }
         nexterm_config::CursorStyle::Underline => {
             // 2 px tall underline at the bottom of the cell.
@@ -363,7 +342,7 @@ pub(crate) fn draw_cursor_with_visibility(
                 cy + cell_h - 2.0,
                 cell_w,
                 2.0,
-                [1.0, 1.0, 1.0, 0.9],
+                shaped(0.9),
                 sw,
                 sh,
                 bg_verts,
@@ -520,6 +499,51 @@ mod tests {
 
     fn approx(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-3
+    }
+
+    // ---- draw_cursor_with_visibility ----
+
+    #[test]
+    fn cursor_takes_its_hue_from_the_caller() {
+        // G11: the cursor is painted with a scheme-derived color handed in
+        // by the caller; only the per-style alpha is fixed here, so the
+        // cursor stays visible on light themes too.
+        let base = [0.2, 0.4, 0.6, 1.0];
+        for (style, alpha) in [
+            (nexterm_config::CursorStyle::Block, 0.35),
+            (nexterm_config::CursorStyle::Beam, 0.9),
+            (nexterm_config::CursorStyle::Underline, 0.9),
+        ] {
+            let mut verts = Vec::new();
+            let mut idx = Vec::new();
+            draw_cursor_with_visibility(
+                &style, 0.0, 0.0, 10.0, 20.0, 100.0, 100.0, base, true, &mut verts, &mut idx,
+            );
+            assert!(!verts.is_empty(), "cursor rect missing for {style:?}");
+            for v in &verts {
+                assert_eq!(v.color, [0.2, 0.4, 0.6, alpha], "color for {style:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn hidden_cursor_draws_nothing() {
+        let mut verts = Vec::new();
+        let mut idx = Vec::new();
+        draw_cursor_with_visibility(
+            &nexterm_config::CursorStyle::Block,
+            0.0,
+            0.0,
+            10.0,
+            20.0,
+            100.0,
+            100.0,
+            [1.0; 4],
+            false,
+            &mut verts,
+            &mut idx,
+        );
+        assert!(verts.is_empty() && idx.is_empty());
     }
 
     // ---- truncate_to_width / truncate_to_cols ----

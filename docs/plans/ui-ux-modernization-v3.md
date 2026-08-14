@@ -1,7 +1,8 @@
 # UI/UX Modernization v3 — Fluent Design Foundation
 
-Status: approved 2026-07-30; last reconciled 2026-08-15 (P1a/P1b complete,
-P1c complete — all 9 settings tabs are on the widget layer).
+Status: approved 2026-07-30; last reconciled 2026-08-15 (P1 complete:
+metric tokens, widget layer, all 9 settings tabs migrated, G11 colour
+migration — a G11 follow-up for out-of-plan sites remains below).
 Target releases: v1.17–v1.21+.
 Execution order: P0 → P1 → P2 → {P3, P4, P5 parallelizable} → P6 → P7.
 Source: successor to `plans/archive/ui-ux-modernization-v2.md` and
@@ -379,8 +380,34 @@ gated behind a spike.
         arrow handling: index 0 addresses their entry list as a whole, which a
         plain descriptor walk cannot express — migrating that convention is its
         own change. Profiles and Blocks have no focus ring to preserve
-  - [ ] Hard-coded colour migration (G11) — not started; the widget layer
-        reads `DesignTokens`, but colours outside it are untouched
+  - [x] Hard-coded colour migration (G11) — shipped via #62. The four
+        plan-scoped sites now read `DesignTokens`: the IME preedit
+        (`surface_3` backdrop, `accent_primary` composition underline,
+        `text_primary` text — previously a dark-only gray-and-yellow set),
+        the cursor (`draw_cursor_with_visibility` takes a scheme-derived
+        base colour, `text_primary`, keeping the per-shape alpha — the
+        hard-coded white cursor was invisible on light schemes; the dead
+        legacy `draw_cursor` wrapper is gone), the OSC 9;4 progress bar
+        (`semantic_success` / `semantic_error` / `text_muted` /
+        `semantic_warning` via the new `color_util::with_alpha`), and the
+        theme-preview swatches, now derived from the canonical
+        `BuiltinScheme::palette().bg` — the hand-copied table had visibly
+        drifted (dark and gruvbox most) and a new test pins the swatches to
+        the scheme list
+  - [ ] G11 follow-up — the #62 sweep surfaced hard-coded colours *outside*
+        the plan's four sites, deliberately left out to keep that PR
+        reviewable: the selection highlights (`SEL_COLOR` duplicated in both
+        `grid_verts` builders, plus copy-mode's near-but-not-equal
+        `CM_SEL_COLOR` — `tokens` now reaches both builders, so this is a
+        one-line change each), the copy-mode cursor, the pane-number badges,
+        the dialog scrim/button colours (`overlay/dialog.rs`; the same scrim
+        literal appears in four files), the picker query/selection colours
+        (`overlay/picker.rs` — the purple/green macro & SSH branding is
+        intentional per its code comments and needs a product decision), the
+        delete-dialog reds that have already drifted apart between `ssh_tab`
+        and `keybindings_tab`, the tab-rename edit colour in `ui_verts`, and
+        the no-palette fallbacks in `color_util::resolve_color`. Shadow
+        quads (`tooltip.rs`, `overlay/util.rs`) are G3's scope, not G11's
 - [ ] CONFIGURATION.md inventory PR
 - [ ] P2a soft shadows + stroke (shader attributes)
 - [ ] P2b in-app acrylic (offscreen + Kawase blur)

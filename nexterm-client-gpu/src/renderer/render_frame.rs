@@ -369,6 +369,7 @@ impl WgpuState {
                                 font,
                                 atlas,
                                 palette_ref,
+                                &tokens,
                                 cursor_style,
                                 cursor_visible,
                                 cursor_visual_col,
@@ -520,6 +521,7 @@ impl WgpuState {
                     font,
                     atlas,
                     palette_ref,
+                    &tokens,
                     cursor_style,
                     cursor_visible,
                     cursor_visual_col,
@@ -1129,26 +1131,27 @@ impl WgpuState {
         {
             let px = pane.cursor_col as f32 * cell_w;
             let py = (pane.cursor_row + 1) as f32 * cell_h;
-            // Preedit background (slightly brighter gray)
+            // Preedit backdrop: a raised surface floating over the grid
+            // (UI/UX v3 G11: scheme-derived instead of a dark-only gray).
             let text_width = preedit.chars().count() as f32 * cell_w;
             add_px_rect(
                 px,
                 py,
                 text_width.max(cell_w),
                 cell_h,
-                [0.25, 0.25, 0.30, 0.90],
+                crate::color_util::with_alpha(tokens.surface_3, 0.90),
                 sw,
                 sh,
                 &mut bg_verts,
                 &mut bg_idx,
             );
-            // Underline (yellow)
+            // Composition underline in the accent color.
             add_px_rect(
                 px,
                 py + cell_h - 2.0,
                 text_width.max(cell_w),
                 2.0,
-                [1.0, 0.85, 0.2, 1.0],
+                tokens.accent_primary,
                 sw,
                 sh,
                 &mut bg_verts,
@@ -1159,7 +1162,7 @@ impl WgpuState {
                 preedit,
                 px,
                 py,
-                [1.0, 1.0, 0.6, 1.0],
+                tokens.text_primary,
                 false,
                 sw,
                 sh,

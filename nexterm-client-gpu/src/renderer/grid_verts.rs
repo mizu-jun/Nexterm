@@ -28,6 +28,9 @@ impl WgpuState {
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         palette: Option<&nexterm_config::SchemePalette>,
+        // UI/UX v3 (G11): scheme-derived tokens; the cursor takes its hue
+        // from `text_primary` so it stays visible on light themes.
+        tokens: &nexterm_config::DesignTokens,
         cursor_style: &nexterm_config::CursorStyle,
         // Phase 5 (UI/UX v2): cursor visibility from the blink phase.
         // Computed once per frame in `render_frame.rs` against
@@ -255,6 +258,7 @@ impl WgpuState {
             cell_h,
             sw,
             sh,
+            tokens.text_primary,
             cursor_visible,
             bg_verts,
             bg_idx,
@@ -616,6 +620,9 @@ impl WgpuState {
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         palette: Option<&nexterm_config::SchemePalette>,
+        // UI/UX v3 (G11): scheme-derived tokens; the cursor takes its hue
+        // from `text_primary` so it stays visible on light themes.
+        tokens: &nexterm_config::DesignTokens,
         cursor_style: &nexterm_config::CursorStyle,
         // Phase 5 (UI/UX v2): cursor visibility from the blink phase.
         cursor_visible: bool,
@@ -749,6 +756,7 @@ impl WgpuState {
                 cell_h,
                 sw,
                 sh,
+                tokens.text_primary,
                 cursor_visible,
                 bg_verts,
                 bg_idx,
