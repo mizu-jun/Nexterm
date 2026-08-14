@@ -51,6 +51,11 @@ pub(super) enum SettingsPanelHit {
     /// cyclers (click cycles forward), 4..=6 are byte-cap fields (click focuses
     /// and starts editing). The footer note row has no hit zone.
     SecurityRow(u16),
+    /// UI/UX v3 P1c: click on a row inside the Profiles category. Index 0 is
+    /// the active-profile cycler (click cycles forward); `LIST_BASE + i`
+    /// selects entry `i`. Before the migration the list had no hit zone at
+    /// all (selection was AccessKit-only).
+    ProfilesRow(u16),
     /// P4 (WT-like UX): the "Open config.toml" link in the footer bar.
     OpenConfigFile,
     /// P2-A (WT-like UX): the "reset category to defaults" link in the
@@ -179,8 +184,12 @@ impl EventHandler {
         // Content-area hit-test.
         let content_top = py + title_h + cell_h * 0.5;
         // Built once: every migrated category lays out from the same geometry.
+        // The renderer translates the content by `-offset_px` when the panel
+        // is scrolled, so the hit geometry has to shift the same way or a
+        // scrolled panel routes clicks to the wrong row. (Same convention as
+        // the tooltip anchor in `overlay/settings/mod.rs`.)
         let geometry = TabGeometry {
-            content_top,
+            content_top: content_top - sp.scroll.offset_px,
             content_inner_x,
             content_w,
             cell_w,
@@ -302,6 +311,15 @@ impl EventHandler {
                 if let Some(id) = crate::renderer::overlay::widgets::spec::hit_test(&specs, cx, cy)
                 {
                     return SettingsPanelHit::SecurityRow(id.index);
+                }
+            }
+            SettingsCategory::Profiles => {
+                use crate::renderer::overlay::widgets::settings_profiles::build_profiles_widgets;
+
+                let specs = build_profiles_widgets(sp, &geometry);
+                if let Some(id) = crate::renderer::overlay::widgets::spec::hit_test(&specs, cx, cy)
+                {
+                    return SettingsPanelHit::ProfilesRow(id.index);
                 }
             }
             _ => {}

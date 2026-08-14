@@ -23,6 +23,7 @@ pub(crate) mod draw;
 pub(crate) mod geometry;
 pub(crate) mod settings_blocks;
 pub(crate) mod settings_font;
+pub(crate) mod settings_profiles;
 pub(crate) mod settings_security;
 pub(crate) mod settings_startup;
 pub(crate) mod settings_theme;

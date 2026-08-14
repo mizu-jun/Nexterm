@@ -327,8 +327,8 @@ gated behind a spike.
 - [x] P1b widget layer + tooltip — `renderer/overlay/widgets/`, with
       `WidgetDesc` (semantics) / `WidgetSpec` (semantics + layout) consumed by
       the renderer, the hit-test and the AccessKit tree
-- [ ] P1c tab migration — **6 of 9 done** (Theme, Window, Font, Startup,
-      Blocks, Security). Remaining:
+- [ ] P1c tab migration — **7 of 9 done** (Theme, Window, Font, Startup,
+      Blocks, Security, Profiles). Remaining:
   - [x] Foundation for the list-shaped tabs — `draw.rs` split into `draw/`
         by control family (it was at 779 of the 800-line guideline);
         `WidgetId.index` widened to `u16` so a category can address one widget
@@ -338,7 +338,10 @@ gated behind a spike.
         affected the already-migrated Security and Startup fields)
   - [ ] Ssh / Keybindings / Profiles — the three share one shape: a list, an
         edit panel for the selected entry, Add/Delete, and a delete dialog.
-        Migrate smallest first (Profiles → Ssh → Keybindings). The delete
+        Migrate smallest first (Profiles → Ssh → Keybindings). Profiles
+        shipped via #56: first `ListItem` consumer, retires the hand-written
+        `SettingsProfileItem` AccessKit range, and fixes the latent
+        hit-test-vs-scroll offset mismatch for every migrated tab. The delete
         dialog is a modal over the whole panel, not a settings row, and stays
         on its existing hand-written AccessKit nodes for now
   - [x] Bounded list viewport — shipped via #54: the Ssh and Keybindings

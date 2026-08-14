@@ -367,6 +367,7 @@ impl EventHandler {
             // no stale tooltip lingers.
             use crate::renderer::overlay::widgets::settings_blocks::BLOCKS_CATEGORY;
             use crate::renderer::overlay::widgets::settings_font::FONT_CATEGORY;
+            use crate::renderer::overlay::widgets::settings_profiles::PROFILES_CATEGORY;
             use crate::renderer::overlay::widgets::settings_security::SECURITY_CATEGORY;
             use crate::renderer::overlay::widgets::settings_startup::STARTUP_CATEGORY;
             use crate::renderer::overlay::widgets::settings_theme::{
@@ -383,6 +384,7 @@ impl EventHandler {
                 SettingsPanelHit::StartupRow(index) => Some((STARTUP_CATEGORY, index)),
                 SettingsPanelHit::BlocksRow(index) => Some((BLOCKS_CATEGORY, index)),
                 SettingsPanelHit::SecurityRow(index) => Some((SECURITY_CATEGORY, index)),
+                SettingsPanelHit::ProfilesRow(index) => Some((PROFILES_CATEGORY, index)),
                 _ => None,
             };
             let sp = &mut self.app.state.settings_panel;
@@ -1005,6 +1007,20 @@ impl EventHandler {
                         use crate::renderer::overlay::widgets::action::WidgetAction;
                         use crate::renderer::overlay::widgets::settings_security::apply_security_action;
                         apply_security_action(
+                            &mut self.app.state.settings_panel,
+                            row,
+                            WidgetAction::Activate,
+                        );
+                    }
+                    SettingsPanelHit::ProfilesRow(row) => {
+                        // UI/UX v3 P1c: the profile list had no mouse path at
+                        // all before (selection was AccessKit-only). Clicking
+                        // the cycler steps the active profile; clicking an
+                        // entry selects it — the same router the screen
+                        // reader uses.
+                        use crate::renderer::overlay::widgets::action::WidgetAction;
+                        use crate::renderer::overlay::widgets::settings_profiles::apply_profiles_action;
+                        apply_profiles_action(
                             &mut self.app.state.settings_panel,
                             row,
                             WidgetAction::Activate,

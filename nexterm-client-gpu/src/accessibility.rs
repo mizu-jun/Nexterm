@@ -256,15 +256,10 @@ const NODE_ID_CONTEXT_ITEM_OFFSET: u64 = 400_000_000;
 /// Quick Select match item (`500_000_000 + idx`, Step 2-2-h).
 const NODE_ID_QUICKSELECT_ITEM_OFFSET: u64 = 500_000_000;
 
-/// Dynamic items of the SettingsPanel Profiles category (`600_000_000 + idx`, Phase 5-11-7).
-///
-/// Each `ProfileEntry` of `SettingsPanel.profiles` is exposed as `Role::ListBoxOption`.
-/// `selected_profile` identifies the currently selected entry.
-///
-/// Range: `[600_000_000, 700_000_000)`. Given the realistic upper bound for the
-/// number of profiles, 10M of headroom is plenty, and 300M of margin remains
-/// before `NODE_ID_TAB_OFFSET = 1e9`.
-const NODE_ID_SETTINGS_PROFILE_OFFSET: u64 = 600_000_000;
+// The 600M..700M range used to carry `SettingsProfileItem` (Phase 5-11-7).
+// Retired in UI/UX v3 P1c: the Profiles category now lives on the widget
+// layer, whose ids sit in the 700M `SETTINGS_WIDGET_BASE` slot. Node ids are
+// never persisted, so the range is free for reuse.
 
 /// Dynamic items of the SettingsPanel Ssh category (`800_000_000 + idx`, Phase 5-11-8 Step 8-1).
 ///
@@ -534,11 +529,6 @@ fn quickselect_item_id(idx: usize) -> NodeId {
     NodeId(NODE_ID_QUICKSELECT_ITEM_OFFSET + idx as u64)
 }
 
-/// Compute the NodeId for a SettingsPanel Profiles category item from its idx (Phase 5-11-7).
-fn settings_profile_item_id(idx: usize) -> NodeId {
-    NodeId(NODE_ID_SETTINGS_PROFILE_OFFSET + idx as u64)
-}
-
 /// Compute the NodeId for a SettingsPanel Ssh category item from its idx (Phase 5-11-8 Step 8-1).
 fn settings_ssh_host_item_id(idx: usize) -> NodeId {
     NodeId(NODE_ID_SETTINGS_SSH_HOST_OFFSET + idx as u64)
@@ -631,9 +621,6 @@ pub enum NodeIdKind {
     Alert { seq: u64 },
     /// Phase 5-11-7: terminal input buffer (for PTY writes to the focused pane).
     PaneInputBuffer,
-    /// Phase 5-11-7: dynamic item of the SettingsPanel Profiles category
-    /// (`idx` is the index in `SettingsPanel.profiles`).
-    SettingsProfileItem { idx: usize },
     /// Phase 5-11-8 Step 8-1: SettingsPanel Ssh category host item
     /// (`idx` is the index in `SettingsPanel.ssh_hosts`).
     SettingsSshHostItem { idx: usize },
@@ -702,7 +689,7 @@ pub enum NodeIdKind {
 /// | 300M..400M | `MacroItem { idx: id - 300M }` |
 /// | 400M..500M | `ContextItem { idx: id - 400M }` |
 /// | 500M..600M | `QuickSelectItem { idx: id - 500M }` |
-/// | 600M..700M | `SettingsProfileItem { idx: id - 600M }` (Phase 5-11-7) |
+/// | 600M..700M | retired — carried `SettingsProfileItem` until the Profiles category moved onto the widget layer (UI/UX v3 P1c) |
 /// | 700M..800M | `SettingsWidget { category, index }` — `SETTINGS_WIDGET_BASE + WidgetId::as_u32()` (UI/UX v3 P1b/P1c). Widest encodable offset is `0xFF_FFFF` ≈ 16.8M, so the 100M-wide slot has room to spare |
 /// | 800M..900M | `SettingsSshHostItem { idx: id - 800M }` (Phase 5-11-8 Step 8-1) |
 /// | 900M..1G | `SettingsKeyBindingItem { idx: id - 900M }` (Phase 5-11-9 Sub-phase E) |
@@ -807,13 +794,6 @@ fn decode_dynamic(raw: u64) -> NodeIdKind {
     {
         return NodeIdKind::QuickSelectItem {
             idx: (raw - NODE_ID_QUICKSELECT_ITEM_OFFSET) as usize,
-        };
-    }
-    // Phase 5-11-7: SettingsPanel Profiles item range: [600M, 700M)
-    if (NODE_ID_SETTINGS_PROFILE_OFFSET..NODE_ID_SETTINGS_PROFILE_OFFSET + DYN_RANGE).contains(&raw)
-    {
-        return NodeIdKind::SettingsProfileItem {
-            idx: (raw - NODE_ID_SETTINGS_PROFILE_OFFSET) as usize,
         };
     }
     // Phase 5-11-8 Step 8-1: SettingsPanel Ssh host item range: [800M, 900M)
@@ -1662,7 +1642,18 @@ fn widget_focus_id(panel: &SettingsPanel) -> Option<NodeId> {
             panel.security_field_focus,
             SECURITY_ROW_COUNT,
         ),
-        // Blocks is mouse-only; Ssh / Keybindings / Profiles are not migrated.
+        // Profiles has no focus counter: the reported focus follows the list
+        // selection, matching the pre-migration behaviour.
+        SettingsCategory::Profiles if !panel.profiles.is_empty() => {
+            use crate::renderer::overlay::widgets::settings_profiles::{PROFILES_CATEGORY, row};
+            let sel = panel.selected_profile.min(panel.profiles.len() - 1);
+            (
+                PROFILES_CATEGORY,
+                row::LIST_BASE + sel as u16,
+                1 + panel.profiles.len(),
+            )
+        }
+        // Blocks is mouse-only; Ssh / Keybindings are not migrated.
         _ => return None,
     };
     ((index as usize) < count).then(|| settings_widget_id(WidgetId::new(category, index)))
@@ -1770,51 +1761,26 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
             }
         }
         SettingsCategory::Profiles => {
-            // Phase 5-11-7: expose the profile list as ListBox + ListBoxOption.
-            // Each ProfileEntry is identified by `settings_profile_item_id(idx)`;
-            // Click / Focus updates `selected_profile`.
+            // UI/UX v3 P1c: the active-profile cycler and each entry are
+            // widget nodes now, replacing the hand-written ListBoxOption list
+            // (Phase 5-11-7). `widget_node` keeps the ListBoxOption role for
+            // entries and marks the selected one, so a screen reader hears
+            // the same list as before plus the cycler it could not reach.
             if panel.profiles.is_empty() {
                 content_description = Some(
                     "No profiles defined. Add a [[profiles]] entry to nexterm.toml.".to_string(),
                 );
             } else {
-                let item_ids: Vec<NodeId> = (0..panel.profiles.len())
-                    .map(settings_profile_item_id)
-                    .collect();
-                for (idx, prof) in panel.profiles.iter().enumerate() {
-                    let mut item = Node::new(Role::ListBoxOption);
-                    let label = if prof.icon.is_empty() {
-                        prof.name.clone()
-                    } else {
-                        format!("{} {}", prof.icon, prof.name)
-                    };
-                    item.set_label(label);
-                    if idx == panel.selected_profile {
-                        item.set_selected(true);
-                    }
-                    nodes.push((settings_profile_item_id(idx), item));
-                    // ListBoxOption nodes are placed as ListBox children via item_ids,
-                    // while `content_children` only receives a single ListBox (see below).
-                    let _ = idx; // namespace tidy-up: idx was already used in the `nodes.push` above
+                for desc in
+                    crate::renderer::overlay::widgets::settings_profiles::profiles_widget_descs(
+                        panel,
+                    )
+                {
+                    let id = settings_widget_id(desc.id);
+                    nodes.push((id, widget_node(&desc)));
+                    content_children.push(id);
                 }
-                // Parent ListBox node. `content_children` contains only one ListBox.
-                // Instead of assigning a dedicated NodeId to the ListBox itself, we
-                // simplify the Group description and lay out ListBoxOptions directly
-                // under `SETTINGS_CONTENT_ID`.
-                //
-                // Q: Why not assign a dedicated NodeId for the ListBox?
-                // A: We would prefer to switch `SETTINGS_CONTENT_ID` itself from Group
-                //    to ListBox, but Group is shared with other categories. As a
-                //    workaround we lay out each ListBoxOption directly under
-                //    `SETTINGS_CONTENT_ID` (SR readers such as NVDA / Orca handle
-                //    ListBoxOption children of a Group correctly).
-                for id in &item_ids {
-                    content_children.push(*id);
-                }
-                content_description = Some(format!(
-                    "Profiles ({} entries). Up/Down to select, Enter to apply.",
-                    panel.profiles.len()
-                ));
+                content_description = Some(format!("Profiles ({} entries).", panel.profiles.len()));
             }
         }
         SettingsCategory::Ssh => {
@@ -2109,9 +2075,6 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
     // ===== Focus selection =====
     let focus = if let Some(id) = widget_focus_id(panel) {
         id
-    } else if matches!(panel.category, SettingsCategory::Profiles) && !panel.profiles.is_empty() {
-        // Phase 5-11-7: focus the `selected_profile` node in the Profiles category.
-        settings_profile_item_id(panel.selected_profile.min(panel.profiles.len() - 1))
     } else if matches!(panel.category, SettingsCategory::Ssh)
         && panel.ssh_delete_dialog_open
         && !panel.ssh_hosts.is_empty()
@@ -2477,6 +2440,9 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
         // Phase 5-11-7: for the Profiles category, reflect selected_profile + the
         // number of profiles + each ProfileEntry's name / icon.
         p.selected_profile.hash(&mut h);
+        // UI/UX v3 P1c: the Profiles cycler exposes the active profile's
+        // name as its value, so the tree must rebuild when it changes.
+        p.active_profile_index.hash(&mut h);
         p.profiles.len().hash(&mut h);
         for prof in &p.profiles {
             prof.name.hash(&mut h);
@@ -2622,6 +2588,9 @@ pub fn dispatch_settings_action(
         // changes no value, matching the retired per-field arms.
         (Action::Focus, NodeIdKind::SettingsWidget { category, index }) => {
             use crate::renderer::overlay::widgets::settings_font::{FONT_CATEGORY, FONT_ROW_COUNT};
+            use crate::renderer::overlay::widgets::settings_profiles::{
+                PROFILES_CATEGORY, row as profiles_row,
+            };
             use crate::renderer::overlay::widgets::settings_security::{
                 SECURITY_CATEGORY, SECURITY_ROW_COUNT,
             };
@@ -2653,6 +2622,17 @@ pub fn dispatch_settings_action(
                     panel.security_field_focus = *index;
                     true
                 }
+                // Profiles has no focus counter: focusing an entry moves the
+                // list selection itself, exactly as the retired
+                // `SettingsProfileItem` arm did. Focusing the cycler changes
+                // nothing, so it reports unhandled.
+                PROFILES_CATEGORY
+                    if *index >= profiles_row::LIST_BASE
+                        && ((*index - profiles_row::LIST_BASE) as usize) < panel.profiles.len() =>
+                {
+                    panel.selected_profile = (*index - profiles_row::LIST_BASE) as usize;
+                    true
+                }
                 // Blocks has no focus counter.
                 _ => false,
             }
@@ -2667,6 +2647,9 @@ pub fn dispatch_settings_action(
             };
             use crate::renderer::overlay::widgets::settings_font::{
                 FONT_CATEGORY, apply_font_action,
+            };
+            use crate::renderer::overlay::widgets::settings_profiles::{
+                PROFILES_CATEGORY, apply_profiles_action,
             };
             use crate::renderer::overlay::widgets::settings_security::{
                 SECURITY_CATEGORY, apply_security_action,
@@ -2698,19 +2681,10 @@ pub fn dispatch_settings_action(
                 STARTUP_CATEGORY => apply_startup_action(panel, *index, widget_action),
                 BLOCKS_CATEGORY => apply_blocks_action(panel, *index, widget_action),
                 SECURITY_CATEGORY => apply_security_action(panel, *index, widget_action),
-                // Ssh / Keybindings / Profiles keep their own nodes for now.
+                PROFILES_CATEGORY => apply_profiles_action(panel, *index, widget_action),
+                // Ssh / Keybindings keep their own nodes for now.
                 _ => false,
             }
-        }
-
-        // ===== Phase 5-11-7 - Profile item (ListBoxOption) =====
-        // Click / Focus are both treated as virtual-cursor traversal = control transition,
-        // updating `selected_profile`.
-        (Action::Click | Action::Focus, NodeIdKind::SettingsProfileItem { idx })
-            if *idx < panel.profiles.len() =>
-        {
-            panel.selected_profile = *idx;
-            true
         }
 
         // ===== Phase 5-11-8 Step 8-1 - Ssh host item (ListBoxOption) =====
@@ -5354,31 +5328,6 @@ mod tests {
 
     // ===== Phase 5-11-7: SettingsPanel Profiles + Ssh/Keybindings description =====
 
-    /// SettingsProfileItem NodeId roundtrip.
-    #[test]
-    fn settings_profile_item_id_roundtrip() {
-        for idx in [0, 1, 50, 99_999] {
-            let id = settings_profile_item_id(idx);
-            let decoded = decode_node_id(id);
-            assert_eq!(
-                decoded,
-                NodeIdKind::SettingsProfileItem { idx },
-                "roundtrip for settings_profile_item_id({})",
-                idx
-            );
-        }
-    }
-
-    /// The SettingsProfileItem offset does not overlap the QuickSelect / Tab ranges.
-    #[test]
-    fn settings_profile_offset_does_not_overlap() {
-        const _: () = assert!(NODE_ID_SETTINGS_PROFILE_OFFSET > NODE_ID_QUICKSELECT_ITEM_OFFSET);
-        const _: () = assert!(
-            NODE_ID_SETTINGS_PROFILE_OFFSET + 100_000_000 <= NODE_ID_TAB_OFFSET,
-            "Profiles range [600M, 700M) must not collide with Tab range [1G, ...)"
-        );
-    }
-
     /// When the Profiles category is empty: shows the "No profiles defined" guidance.
     #[test]
     fn build_settings_panel_profiles_empty() {
@@ -5400,9 +5349,13 @@ mod tests {
         );
     }
 
-    /// When the Profiles category has entries: ListBoxOption nodes are exposed.
+    /// When the Profiles category has entries: the cycler and each entry are
+    /// exposed as widget nodes (UI/UX v3 P1c — previously hand-written
+    /// `SettingsProfileItem` ListBoxOptions, and the cycler had no node).
     #[test]
-    fn build_settings_panel_profiles_exposes_listbox_options() {
+    fn build_settings_panel_profiles_exposes_widget_nodes() {
+        use crate::renderer::overlay::widgets::settings_profiles::{PROFILES_CATEGORY, row};
+        use crate::renderer::overlay::widgets::spec::WidgetId;
         use crate::settings_panel::{ProfileEntry, SettingsCategory};
         let mut panel = SettingsPanel::default();
         panel.category = SettingsCategory::Profiles;
@@ -5423,32 +5376,36 @@ mod tests {
         panel.selected_profile = 1;
 
         let (nodes, focus) = build_settings_panel_nodes(&panel);
+        let entry_id = |i: usize| {
+            settings_widget_id(WidgetId::new(PROFILES_CATEGORY, row::LIST_BASE + i as u16))
+        };
 
-        // Each ListBoxOption is exposed.
-        let opt0 = nodes
-            .iter()
-            .find(|(id, _)| *id == settings_profile_item_id(0))
-            .unwrap();
+        // The active-profile cycler is reachable now (it had no node before).
+        let cycler_id = settings_widget_id(WidgetId::new(PROFILES_CATEGORY, row::ACTIVE));
+        let cycler = nodes.iter().find(|(id, _)| *id == cycler_id).unwrap();
+        assert_eq!(cycler.1.role(), Role::ComboBox);
+
+        // Each entry is exposed as a ListBoxOption.
+        let opt0 = nodes.iter().find(|(id, _)| *id == entry_id(0)).unwrap();
         assert_eq!(opt0.1.role(), Role::ListBoxOption);
         assert!(opt0.1.label().unwrap_or("").contains("bash"));
         assert_eq!(opt0.1.is_selected(), None); // unselected (set_selected is not called)
 
-        let opt1 = nodes
-            .iter()
-            .find(|(id, _)| *id == settings_profile_item_id(1))
-            .unwrap();
+        let opt1 = nodes.iter().find(|(id, _)| *id == entry_id(1)).unwrap();
         assert_eq!(opt1.1.role(), Role::ListBoxOption);
         assert!(opt1.1.label().unwrap_or("").contains("powershell"));
         // selected_profile = 1 so this one is selected.
         assert_eq!(opt1.1.is_selected(), Some(true));
 
-        // Focus moves to the selected profile item.
-        assert_eq!(focus, settings_profile_item_id(1));
+        // Focus moves to the selected profile entry.
+        assert_eq!(focus, entry_id(1));
     }
 
-    /// dispatch_settings_action: SettingsProfileItem Click updates selected_profile.
+    /// dispatch_settings_action: Click on a profile entry widget updates
+    /// selected_profile (via the shared action router).
     #[test]
-    fn dispatch_settings_profile_item_click() {
+    fn dispatch_settings_profile_entry_click() {
+        use crate::renderer::overlay::widgets::settings_profiles::{PROFILES_CATEGORY, row};
         use crate::settings_panel::{ProfileEntry, SettingsCategory};
         let mut panel = SettingsPanel::default();
         panel.category = SettingsCategory::Profiles;
@@ -5471,16 +5428,21 @@ mod tests {
         let handled = dispatch_settings_action(
             &mut panel,
             accesskit::Action::Click,
-            &NodeIdKind::SettingsProfileItem { idx: 1 },
+            &NodeIdKind::SettingsWidget {
+                category: PROFILES_CATEGORY,
+                index: row::LIST_BASE + 1,
+            },
             None,
         );
         assert!(handled);
         assert_eq!(panel.selected_profile, 1);
     }
 
-    /// dispatch_settings_action: SettingsProfileItem Focus also updates selected_profile.
+    /// dispatch_settings_action: Focus on a profile entry widget also updates
+    /// selected_profile (virtual-cursor traversal = list selection).
     #[test]
-    fn dispatch_settings_profile_item_focus() {
+    fn dispatch_settings_profile_entry_focus() {
+        use crate::renderer::overlay::widgets::settings_profiles::{PROFILES_CATEGORY, row};
         use crate::settings_panel::{ProfileEntry, SettingsCategory};
         let mut panel = SettingsPanel::default();
         panel.category = SettingsCategory::Profiles;
@@ -5495,23 +5457,31 @@ mod tests {
         let handled = dispatch_settings_action(
             &mut panel,
             accesskit::Action::Focus,
-            &NodeIdKind::SettingsProfileItem { idx: 0 },
+            &NodeIdKind::SettingsWidget {
+                category: PROFILES_CATEGORY,
+                index: row::LIST_BASE,
+            },
             None,
         );
         assert!(handled);
         assert_eq!(panel.selected_profile, 0);
     }
 
-    /// dispatch_settings_action: an out-of-range idx is a no-op and returns false.
+    /// dispatch_settings_action: an out-of-range profile entry is a no-op and
+    /// returns false.
     #[test]
-    fn dispatch_settings_profile_item_out_of_range() {
+    fn dispatch_settings_profile_entry_out_of_range() {
+        use crate::renderer::overlay::widgets::settings_profiles::{PROFILES_CATEGORY, row};
         let mut panel = SettingsPanel::default();
         panel.profiles = vec![];
 
         let handled = dispatch_settings_action(
             &mut panel,
             accesskit::Action::Click,
-            &NodeIdKind::SettingsProfileItem { idx: 5 },
+            &NodeIdKind::SettingsWidget {
+                category: PROFILES_CATEGORY,
+                index: row::LIST_BASE + 5,
+            },
             None,
         );
         assert!(!handled);
@@ -5599,6 +5569,30 @@ mod tests {
         assert_ne!(h0, h1, "the hash must change when selected_profile changes");
     }
 
+    /// tree_state_hash changes when active_profile_index changes: the
+    /// Profiles cycler's exposed value depends on it (UI/UX v3 P1c), so a
+    /// stale hash would leave a screen reader announcing the old profile.
+    #[test]
+    fn tree_state_hash_detects_active_profile_change() {
+        use crate::settings_panel::ProfileEntry;
+        let mut state = ClientState::new(80, 24, 1000);
+        state.settings_panel.is_open = true;
+        state.settings_panel.profiles = vec![ProfileEntry {
+            name: "a".to_string(),
+            icon: String::new(),
+            shell_program: String::new(),
+            working_dir: String::new(),
+        }];
+        let h0 = compute_tree_state_hash(&state);
+
+        state.settings_panel.next_active_profile();
+        let h1 = compute_tree_state_hash(&state);
+        assert_ne!(
+            h0, h1,
+            "the hash must change when the active profile changes"
+        );
+    }
+
     /// tree_state_hash changes when the profiles list changes.
     #[test]
     fn tree_state_hash_detects_profiles_change() {
@@ -5672,12 +5666,12 @@ mod tests {
         }
     }
 
-    /// The SettingsSshHostItem offset does not overlap the Profiles / Tab ranges.
+    /// The SettingsSshHostItem offset does not overlap the widget / Tab ranges.
     #[test]
     fn settings_ssh_host_offset_does_not_overlap() {
         const _: () = assert!(
-            NODE_ID_SETTINGS_SSH_HOST_OFFSET > NODE_ID_SETTINGS_PROFILE_OFFSET + 100_000_000,
-            "SSH host range [800M, 900M) must not collide with Profiles range [600M, 700M)"
+            NODE_ID_SETTINGS_SSH_HOST_OFFSET >= SETTINGS_WIDGET_BASE + 100_000_000,
+            "SSH host range [800M, 900M) must not collide with the widget range [700M, 800M)"
         );
         const _: () = assert!(
             NODE_ID_SETTINGS_SSH_HOST_OFFSET + 100_000_000 <= NODE_ID_TAB_OFFSET,

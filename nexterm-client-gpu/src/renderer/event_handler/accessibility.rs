@@ -134,13 +134,12 @@ impl EventHandler {
         //
         // Phase 5-11-7: extended the route so the four fields added in
         // Phase 5-11-6 #6 (CursorStyle / PaddingX / PaddingY / PresentMode)
-        // and the new Profiles entry (SettingsProfileItem) are handled by the
-        // same delegate.
+        // are handled by the same delegate. The Profiles entries ride the
+        // `SettingsWidget` route since UI/UX v3 P1c.
         if matches!(
             kind,
             NodeIdKind::SettingsTab { .. }
                 | NodeIdKind::SettingsWidget { .. }
-                | NodeIdKind::SettingsProfileItem { .. }
                 | NodeIdKind::SettingsSshHostItem { .. }
                 | NodeIdKind::SettingsSshFieldName
                 | NodeIdKind::SettingsSshFieldHost

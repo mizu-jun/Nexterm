@@ -350,6 +350,7 @@ impl WgpuState {
                 SettingsCategory::Profiles => profiles_tab::draw_profiles_tab(
                     sp,
                     tokens,
+                    &metrics,
                     content_top,
                     content_inner_x,
                     content_w,
