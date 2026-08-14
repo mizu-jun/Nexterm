@@ -21,6 +21,52 @@ use nexterm_client_core::Connection;
 use nexterm_proto::{ClientKind, ClientToServer, PROTOCOL_VERSION};
 use tokio::io::AsyncReadExt;
 use tokio::net::UnixListener;
+use tokio::sync::Mutex;
+
+/// Serialises the tests that rewrite `XDG_RUNTIME_DIR`.
+///
+/// `set_var` is process-global and the harness runs the tests of one binary on
+/// parallel threads, so without this both tests below could be between their
+/// own `set_var` and their own read when the other one overwrites the variable
+/// — whoever lost the race then resolved the socket path into the other's
+/// tempdir. It surfaced as ubuntu-only CI failures that alternated between the
+/// two tests and passed on rerun (PR #57 hit one, PR #60 the other).
+///
+/// Same remedy as `nexterm-server/tests/snapshot_roundtrip.rs`, which hit this
+/// on Windows with `APPDATA`. A `tokio::sync::Mutex` rather than a `std` one
+/// because these tests hold the guard across an `.await`.
+static ENV_LOCK: Mutex<()> = Mutex::const_new(());
+
+/// Point `XDG_RUNTIME_DIR` at `dir`, restoring the previous value on drop.
+///
+/// Only sound while `ENV_LOCK` is held — construct it after taking the guard.
+struct RuntimeDirVar(Option<String>);
+
+impl RuntimeDirVar {
+    fn set(dir: &std::path::Path) -> Self {
+        let previous = std::env::var("XDG_RUNTIME_DIR").ok();
+        // SAFETY: `ENV_LOCK` serialises every test in this file that touches
+        // the environment, so no other thread here reads or writes it
+        // concurrently.
+        unsafe {
+            std::env::set_var("XDG_RUNTIME_DIR", dir);
+        }
+        Self(previous)
+    }
+}
+
+impl Drop for RuntimeDirVar {
+    fn drop(&mut self) {
+        // SAFETY: as above — still inside the `ENV_LOCK` critical section,
+        // because the guard outlives this value in both tests.
+        unsafe {
+            match self.0.take() {
+                Some(previous) => std::env::set_var("XDG_RUNTIME_DIR", previous),
+                None => std::env::remove_var("XDG_RUNTIME_DIR"),
+            }
+        }
+    }
+}
 
 /// Read one `[len LE u32][payload]` frame from the socket and deserialize
 /// it as `ClientToServer`.
@@ -51,13 +97,10 @@ async fn connect_sends_hello_with_current_protocol_version_first() {
     });
 
     // Point the client at our tmpdir socket. `unix_socket_path()` reads
-    // `XDG_RUNTIME_DIR`, so we override it for this process.
-    // SAFETY: this test does not run in parallel with anything that reads
-    // XDG_RUNTIME_DIR concurrently — cargo runs integration test files in
-    // separate processes by default.
-    unsafe {
-        std::env::set_var("XDG_RUNTIME_DIR", dir.path());
-    }
+    // `XDG_RUNTIME_DIR`, so we override it for this process — under `ENV_LOCK`,
+    // and for as long as `connect` needs to resolve the path.
+    let _env_guard = ENV_LOCK.lock().await;
+    let _runtime_dir = RuntimeDirVar::set(dir.path());
 
     let client_kind = ClientKind::Tui;
     let _conn = Connection::connect(client_kind, "0.0.0-test".to_string())
@@ -89,10 +132,8 @@ async fn connect_sends_hello_with_current_protocol_version_first() {
 #[tokio::test]
 async fn unix_socket_path_uses_xdg_runtime_dir_when_set() {
     let dir = tempfile::tempdir().expect("tmpdir");
-    // SAFETY: see note above; integration test files run in their own process.
-    unsafe {
-        std::env::set_var("XDG_RUNTIME_DIR", dir.path());
-    }
+    let _env_guard = ENV_LOCK.lock().await;
+    let _runtime_dir = RuntimeDirVar::set(dir.path());
     let path = nexterm_client_core::unix_socket_path();
     assert!(
         path.starts_with(dir.path().to_str().unwrap()),
