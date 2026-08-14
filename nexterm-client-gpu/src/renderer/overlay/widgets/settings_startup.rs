@@ -188,11 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn row_count_matches_the_panel_constant() {
-        assert_eq!(
-            STARTUP_ROW_COUNT,
-            SettingsPanel::STARTUP_FIELD_COUNT as usize
-        );
+    fn row_offsets_cover_every_row() {
         assert_eq!(ROW_OFFSETS.len(), STARTUP_ROW_COUNT);
     }
 

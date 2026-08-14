@@ -732,39 +732,36 @@ impl EventHandler {
                     }
                 }
                 WKeyCode::Tab | WKeyCode::ArrowDown if !editing => {
+                    use crate::renderer::overlay::widgets::navigation::focus_next;
                     use crate::settings_panel::SettingsCategory;
-                    // Phase 5-11-6 #6: in the Window category, reinterpret ↓ as field navigation.
-                    // Once past the last field, fall through to the next category.
-                    // Phase 5-11-8 Step 8-3 (Sub-phase A): the Ssh category similarly reinterprets ↓
-                    // as moving `focused_widget_index` 0 → 1 → 2 → 3 → 4 → 5.
+                    // ↓ walks the focus ring inside the category; once past the
+                    // last stop it falls through to the next category. Tab moves
+                    // straight to the next category regardless.
                     let sp = &mut self.app.state.settings_panel;
-                    if sp.category == SettingsCategory::Window && code == WKeyCode::ArrowDown {
-                        if !sp.next_window_field() {
-                            sp.next_category();
-                        }
-                    } else if sp.category == SettingsCategory::Ssh && code == WKeyCode::ArrowDown {
-                        // Phase 5-11-8 Step 8-3 (Sub-phase D): widened to 0..=7
-                        //   6=Add, 7=Delete. With an empty list, Delete (7) is treated as
-                        //   disabled and skipped, stopping at 6 (Add) (next press → next category).
+                    if code != WKeyCode::ArrowDown {
+                        sp.next_category();
+                    } else if sp.category == SettingsCategory::Ssh {
+                        // The list-shaped tabs keep bespoke handling: index 0
+                        // addresses the entry list as a whole, which a plain walk
+                        // over their descriptors cannot express (see
+                        // `widgets::navigation::focusable_indices`).
+                        //   6=Add, 7=Delete. With an empty list, Delete is
+                        //   disabled and skipped, stopping at Add.
                         let max_focus = if sp.ssh_hosts.is_empty() { 6 } else { 7 };
                         if sp.focused_widget_index < max_focus {
                             sp.focused_widget_index += 1;
                         } else {
                             sp.next_category();
                         }
-                    } else if sp.category == SettingsCategory::Keybindings
-                        && code == WKeyCode::ArrowDown
-                    {
-                        // Phase 5-11-9 Sub-phase A: ↓ walks focused_widget_index 0 → 1 → 2.
-                        // Sub-phase D extends the range to 3 (Add) and 4 (Delete).
-                        // Phase B4-P2 appends 5 (leader_key), always present regardless
-                        // of whether the binding list is empty (unlike 1/2/4).
-                        //   - When the list is empty: 0 (ListBox) → 3 (Add) → 5 (leader_key)
-                        //     → next category. Delete (4) is treated as disabled and skipped.
+                    } else if sp.category == SettingsCategory::Keybindings {
+                        // Likewise bespoke. 3=Add, 4=Delete, 5=leader_key, the
+                        // last of which is present even with no bindings.
+                        //   - Empty list: 0 (list) → 3 (Add) → 5 (leader_key)
+                        //     → next category. Delete (4) is skipped as disabled.
                         //   - With entries: 0 → 1 → 2 → 3 → 4 → 5 → next category.
                         if sp.keybindings.is_empty() {
                             if sp.focused_widget_index < 3 {
-                                // 0 → 3 directly (skip 1/2 which require a selected binding).
+                                // 0 → 3 directly (1/2 need a selected binding).
                                 sp.focused_widget_index = 3;
                             } else if sp.focused_widget_index < 5 {
                                 sp.focused_widget_index = 5;
@@ -776,62 +773,23 @@ impl EventHandler {
                         } else {
                             sp.next_category();
                         }
-                    } else if sp.category == SettingsCategory::Security
-                        && code == WKeyCode::ArrowDown
-                    {
-                        // ↓ walks the Security fields; past the last one, fall
-                        // through to the next category.
-                        if !sp.next_security_field() {
-                            sp.next_category();
-                        }
-                    } else if sp.category == SettingsCategory::Startup
-                        && code == WKeyCode::ArrowDown
-                    {
-                        // Phase B4: ↓ walks focused_widget_index 0 -> 1 -> 2 -> 3.
-                        if !sp.next_startup_field() {
-                            sp.next_category();
-                        }
-                    } else if sp.category == SettingsCategory::Font && code == WKeyCode::ArrowDown {
-                        // Phase B4-P2: ↓ walks focused_widget_index 0 -> 1 -> 2 -> 3.
-                        if !sp.next_font_field() {
-                            sp.next_category();
-                        }
-                    } else if sp.category == SettingsCategory::Theme && code == WKeyCode::ArrowDown
-                    {
-                        // Phase B4-P2: ↓ walks focused_widget_index 0 -> 1.
-                        if !sp.next_theme_field() {
-                            sp.next_category();
-                        }
-                    } else {
+                    } else if !focus_next(sp) {
+                        // Either the category is descriptor-driven and focus is
+                        // on its last stop, or it has no focus ring at all
+                        // (Profiles / Blocks).
                         sp.next_category();
                     }
                 }
                 WKeyCode::ArrowUp if !editing => {
+                    use crate::renderer::overlay::widgets::navigation::focus_prev;
                     use crate::settings_panel::SettingsCategory;
                     let sp = &mut self.app.state.settings_panel;
                     match &sp.category {
-                        SettingsCategory::Font => {
-                            // Phase B4-P2: ↑ navigates between fields. At the
-                            // top, fall back to the previous category.
-                            if !sp.prev_font_field() {
-                                sp.prev_category();
-                            }
-                        }
-                        SettingsCategory::Theme => {
-                            // Phase B4-P2: ↑ navigates between fields. At the
-                            // top, fall back to the previous category.
-                            if !sp.prev_theme_field() {
-                                sp.prev_category();
-                            }
-                        }
-                        SettingsCategory::Window => {
-                            // Phase 5-11-6 #6: ↑ navigates between fields. At the top, fall back to the previous category.
-                            if !sp.prev_window_field() {
-                                sp.prev_category();
-                            }
-                        }
+                        // The list-shaped tabs keep bespoke handling: index 0
+                        // addresses the entry list as a whole, which a plain walk
+                        // over their descriptors cannot express (see
+                        // `widgets::navigation::focusable_indices`).
                         SettingsCategory::Ssh => {
-                            // Phase 5-11-8 Step 8-3 (Sub-phase A): ↑ moves focused_widget_index back by one
                             if sp.focused_widget_index > 0 {
                                 sp.focused_widget_index -= 1;
                             } else {
@@ -839,9 +797,8 @@ impl EventHandler {
                             }
                         }
                         SettingsCategory::Keybindings => {
-                            // Phase 5-11-9 Sub-phase A: ↑ moves focused_widget_index back by one.
-                            // Sub-phase D: when the list is empty, jump from 3 (Add)
-                            //   directly to 0 (ListBox) — focuses 1/2 require a selection.
+                            // With an empty list, jump from 3 (Add) straight back
+                            // to 0 (the list) — 1/2 need a selected binding.
                             if sp.keybindings.is_empty() && sp.focused_widget_index == 3 {
                                 sp.focused_widget_index = 0;
                             } else if sp.focused_widget_index > 0 {
@@ -850,20 +807,14 @@ impl EventHandler {
                                 sp.prev_category();
                             }
                         }
-                        SettingsCategory::Security => {
-                            // ↑ moves back through the Security fields; at the
-                            // top, fall back to the previous category.
-                            if !sp.prev_security_field() {
+                        // Everything else walks its descriptor-driven focus ring
+                        // and, at the first stop (or with no ring at all), falls
+                        // back to the previous category.
+                        _ => {
+                            if !focus_prev(sp) {
                                 sp.prev_category();
                             }
                         }
-                        SettingsCategory::Startup => {
-                            // Phase B4: ↑ moves focused_widget_index back by one.
-                            if !sp.prev_startup_field() {
-                                sp.prev_category();
-                            }
-                        }
-                        _ => sp.prev_category(),
                     }
                 }
                 WKeyCode::ArrowRight if ssh_editing => {

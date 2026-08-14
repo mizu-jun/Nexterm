@@ -192,8 +192,7 @@ mod tests {
     }
 
     #[test]
-    fn row_count_matches_the_panel_constant() {
-        assert_eq!(FONT_ROW_COUNT, SettingsPanel::FONT_FIELD_COUNT as usize);
+    fn row_offsets_cover_every_row() {
         assert_eq!(ROW_OFFSETS.len(), FONT_ROW_COUNT);
     }
 

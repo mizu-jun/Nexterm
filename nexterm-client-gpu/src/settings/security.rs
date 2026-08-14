@@ -93,26 +93,6 @@ impl SettingsPanel {
         }
     }
 
-    /// Move focus to the next Security field (stops at the last one).
-    pub fn next_security_field(&mut self) -> bool {
-        if self.focused_widget_index + 1 < Self::SECURITY_FIELD_COUNT {
-            self.focused_widget_index += 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Move focus to the previous Security field (stops at the first one).
-    pub fn prev_security_field(&mut self) -> bool {
-        if self.focused_widget_index > 0 {
-            self.focused_widget_index -= 1;
-            true
-        } else {
-            false
-        }
-    }
-
     /// Cycle the focused policy field forward (Right arrow). No-op on numerics.
     pub fn security_field_increase(&mut self) {
         self.cycle_security_policy(true);

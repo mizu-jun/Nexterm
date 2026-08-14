@@ -325,14 +325,9 @@ mod tests {
     }
 
     #[test]
-    fn row_count_matches_the_panel_constant() {
-        // Guard against the two lists drifting apart, which would misalign
-        // every row below the added one.
-        assert_eq!(
-            WINDOW_ROW_COUNT,
-            SettingsPanel::WINDOW_FIELD_COUNT as usize,
-            "WINDOW_ROW_COUNT must track WINDOW_FIELD_COUNT"
-        );
+    fn search_labels_cover_every_row() {
+        // `window_row_labels` drives search collapse; if it drifts from the
+        // descriptor list, every row below the missing one misaligns.
         assert_eq!(panel().window_row_labels().len(), WINDOW_ROW_COUNT);
     }
 
