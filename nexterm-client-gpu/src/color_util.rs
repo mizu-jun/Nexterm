@@ -281,9 +281,24 @@ pub(crate) fn composite_over(fg: [f32; 4], bg: [f32; 3]) -> [f32; 3] {
     ]
 }
 
+/// Return `color` with its alpha channel replaced by `alpha`.
+///
+/// Design tokens carry their own alpha (usually 1.0); overlay elements such
+/// as the OSC 9;4 progress bar or the IME preedit backdrop keep their
+/// element-specific translucency while taking the hue from the token.
+pub(crate) fn with_alpha(color: [f32; 4], alpha: f32) -> [f32; 4] {
+    [color[0], color[1], color[2], alpha]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn with_alpha_replaces_only_the_alpha_channel() {
+        assert_eq!(with_alpha([0.2, 0.4, 0.6, 1.0], 0.5), [0.2, 0.4, 0.6, 0.5]);
+        assert_eq!(with_alpha([1.0, 0.0, 0.5, 0.3], 0.9), [1.0, 0.0, 0.5, 0.9]);
+    }
 
     #[test]
     fn contrast_black_on_white_is_21() {

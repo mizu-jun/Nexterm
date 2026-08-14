@@ -26,27 +26,30 @@ pub(crate) const THEME_FOLLOW_SYSTEM: u16 = 1;
 /// row indices leaves room for future rows without renumbering the swatches.
 pub(crate) const THEME_SWATCH_BASE: u16 = 10;
 
-/// The nine built-in schemes previewed as swatches, with the representative
-/// background color drawn in each chip.
-const SWATCHES: [(&str, [f32; 4]); 9] = [
-    ("dark", [0.15, 0.15, 0.18, 1.0]),
-    ("light", [0.95, 0.95, 0.92, 1.0]),
-    ("tokyonight", [0.10, 0.10, 0.20, 1.0]),
-    ("solarized", [0.00, 0.17, 0.21, 1.0]),
-    ("gruvbox", [0.28, 0.26, 0.22, 1.0]),
-    ("catppuccin", [0.19, 0.17, 0.23, 1.0]),
-    ("dracula", [0.16, 0.13, 0.23, 1.0]),
-    ("nord", [0.18, 0.20, 0.25, 1.0]),
-    ("onedark", [0.16, 0.18, 0.22, 1.0]),
-];
+/// The built-in schemes previewed as swatches, with the representative
+/// background color drawn in each chip. Derived from the canonical
+/// [`nexterm_config::BuiltinScheme::palette`] so the chips track the real
+/// schemes instead of a hand-copied approximation that drifts (UI/UX v3 G11).
+static SWATCHES: std::sync::LazyLock<Vec<(&'static str, [f32; 4])>> =
+    std::sync::LazyLock::new(|| {
+        nexterm_config::BuiltinScheme::all()
+            .iter()
+            .map(|scheme| {
+                let [r, g, b] = scheme.palette().bg;
+                let color = [
+                    f32::from(r) / 255.0,
+                    f32::from(g) / 255.0,
+                    f32::from(b) / 255.0,
+                    1.0,
+                ];
+                (scheme.toml_name(), color)
+            })
+            .collect()
+    });
 
 /// Display names of the swatches, in the same order as [`SWATCHES`].
-pub(crate) fn swatch_names() -> [&'static str; 9] {
-    let mut out = [""; 9];
-    for (i, (name, _)) in SWATCHES.iter().enumerate() {
-        out[i] = name;
-    }
-    out
+pub(crate) fn swatch_names() -> Vec<&'static str> {
+    SWATCHES.iter().map(|(name, _)| *name).collect()
 }
 
 /// Row height as a multiple of the cell height, matching the highlight
@@ -367,5 +370,25 @@ mod tests {
     fn swatch_names_match_the_swatch_count() {
         assert_eq!(swatch_names().len(), SWATCHES.len());
         assert_eq!(swatch_names()[0], "dark");
+    }
+
+    #[test]
+    fn swatches_track_the_builtin_scheme_palettes() {
+        // The swatch strip must mirror the canonical scheme list: same
+        // order, same names, and each chip painted with the scheme's real
+        // background — not a hand-copied approximation that drifts.
+        let schemes = nexterm_config::BuiltinScheme::all();
+        assert_eq!(SWATCHES.len(), schemes.len());
+        for (swatch, scheme) in SWATCHES.iter().zip(schemes) {
+            assert_eq!(swatch.0, scheme.toml_name());
+            let [r, g, b] = scheme.palette().bg;
+            let expected = [
+                f32::from(r) / 255.0,
+                f32::from(g) / 255.0,
+                f32::from(b) / 255.0,
+                1.0,
+            ];
+            assert_eq!(swatch.1, expected, "swatch color for {}", swatch.0);
+        }
     }
 }

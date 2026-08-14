@@ -2,6 +2,7 @@
 //!
 //! Six UI vertex-builder methods extracted from `renderer.rs`.
 
+use crate::color_util::with_alpha;
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::state::ClientState;
@@ -421,7 +422,7 @@ impl WgpuState {
             // OSC 9;4 progress indicator: a thin bar just above the accent
             // line, colored by state. Drawn for active and inactive tabs
             // alike so long-running jobs stay visible across tab switches.
-            if let Some((color, frac)) = progress_indicator_style(pane_progress) {
+            if let Some((color, frac)) = progress_indicator_style(pane_progress, tokens) {
                 add_px_rect(
                     x_offset,
                     bar_y + bar_h - accent_h - 3.0,
@@ -1561,17 +1562,22 @@ impl WgpuState {
 /// fraction)`. Returns `None` when no indicator should be drawn. Pure so it
 /// can be unit-tested without a GPU.
 ///
-/// State semantics (ConEmu / Windows Terminal): 1 = normal (green),
-/// 2 = error (red), 4 = paused (amber) — all sized by the percentage;
+/// State semantics (ConEmu / Windows Terminal): 1 = normal (success),
+/// 2 = error, 4 = paused (warning) — all sized by the percentage;
 /// 3 = indeterminate — full-width dim bar (no meaningful percentage).
-fn progress_indicator_style(progress: Option<(u8, u8)>) -> Option<([f32; 4], f32)> {
+/// Hues come from the scheme-derived semantic tokens (UI/UX v3 G11); the
+/// alpha stays an element-specific design value.
+fn progress_indicator_style(
+    progress: Option<(u8, u8)>,
+    tokens: &nexterm_config::DesignTokens,
+) -> Option<([f32; 4], f32)> {
     let (state, percent) = progress?;
     let frac = (percent.min(100) as f32) / 100.0;
     match state {
-        1 => Some(([0.30, 0.75, 0.35, 0.90], frac)),
-        2 => Some(([0.85, 0.25, 0.25, 0.90], frac)),
-        3 => Some(([0.55, 0.55, 0.60, 0.60], 1.0)),
-        4 => Some(([0.85, 0.65, 0.20, 0.90], frac)),
+        1 => Some((with_alpha(tokens.semantic_success, 0.90), frac)),
+        2 => Some((with_alpha(tokens.semantic_error, 0.90), frac)),
+        3 => Some((with_alpha(tokens.text_muted, 0.60), 1.0)),
+        4 => Some((with_alpha(tokens.semantic_warning, 0.90), frac)),
         _ => None,
     }
 }
@@ -1579,32 +1585,54 @@ fn progress_indicator_style(progress: Option<(u8, u8)>) -> Option<([f32; 4], f32
 #[cfg(test)]
 mod progress_indicator_tests {
     use super::progress_indicator_style;
+    use nexterm_config::DesignTokens;
+
+    fn tokens() -> DesignTokens {
+        DesignTokens::default()
+    }
 
     #[test]
     fn normal_progress_scales_with_the_percentage() {
-        let (color, frac) = progress_indicator_style(Some((1, 50))).expect("indicator");
+        let (color, frac) = progress_indicator_style(Some((1, 50)), &tokens()).expect("indicator");
         assert!((frac - 0.5).abs() < 1e-6);
         assert!(color[1] > color[0], "normal state is green-dominant");
     }
 
     #[test]
     fn error_state_is_red_and_indeterminate_is_full_width() {
-        let (color, _) = progress_indicator_style(Some((2, 30))).expect("indicator");
+        let (color, _) = progress_indicator_style(Some((2, 30)), &tokens()).expect("indicator");
         assert!(color[0] > color[1], "error state is red-dominant");
-        let (_, frac) = progress_indicator_style(Some((3, 5))).expect("indicator");
+        let (_, frac) = progress_indicator_style(Some((3, 5)), &tokens()).expect("indicator");
         assert!((frac - 1.0).abs() < 1e-6, "indeterminate ignores percent");
     }
 
     #[test]
     fn none_and_unknown_states_draw_nothing() {
-        assert!(progress_indicator_style(None).is_none());
-        assert!(progress_indicator_style(Some((0, 50))).is_none());
-        assert!(progress_indicator_style(Some((9, 50))).is_none());
+        assert!(progress_indicator_style(None, &tokens()).is_none());
+        assert!(progress_indicator_style(Some((0, 50)), &tokens()).is_none());
+        assert!(progress_indicator_style(Some((9, 50)), &tokens()).is_none());
     }
 
     #[test]
     fn overlong_percentages_are_clamped() {
-        let (_, frac) = progress_indicator_style(Some((1, 250))).expect("indicator");
+        let (_, frac) = progress_indicator_style(Some((1, 250)), &tokens()).expect("indicator");
         assert!((frac - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn indicator_hues_come_from_the_semantic_tokens() {
+        // G11: pin each OSC 9;4 state to its token so the bar follows the
+        // active scheme instead of a hard-coded palette. Alpha stays an
+        // element-specific design value, so only the hue is compared.
+        let t = tokens();
+        for (state, expected) in [
+            (1u8, t.semantic_success),
+            (2, t.semantic_error),
+            (3, t.text_muted),
+            (4, t.semantic_warning),
+        ] {
+            let (color, _) = progress_indicator_style(Some((state, 50)), &t).expect("indicator");
+            assert_eq!(color[..3], expected[..3], "hue for state {state}");
+        }
     }
 }
