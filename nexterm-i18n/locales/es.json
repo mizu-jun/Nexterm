@@ -121,6 +121,7 @@
   "settings-font-hint-slider": "(←/→ para cambiar, ↓ para el siguiente campo)",
   "settings-font-fallbacks-hint-editing": "(separados por comas. Intro=confirmar  Esc=cancelar)",
   "settings-font-fallbacks-hint-idle": "(Intro para editar, separados por comas)",
+  "settings-list-window": "Mostrando {from}-{to} de {total}",
   "settings-keybindings-header": "Atajos de teclado:",
   "settings-keybindings-empty": "No hay atajos de teclado configurados",
   "settings-keybindings-edit-record": "Editar el enlace seleccionado (Grabando: pulse cualquier tecla, Tab = Texto, Esc = cancelar):",

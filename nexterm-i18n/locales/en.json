@@ -121,6 +121,7 @@
   "settings-font-hint-slider": "(←/→ to change, ↓ for next field)",
   "settings-font-fallbacks-hint-editing": "(comma-separated. Enter=confirm  Esc=cancel)",
   "settings-font-fallbacks-hint-idle": "(Enter to edit, comma-separated)",
+  "settings-list-window": "Showing {from}-{to} of {total}",
   "settings-keybindings-header": "Key bindings:",
   "settings-keybindings-empty": "No key bindings configured",
   "settings-keybindings-edit-record": "Edit selected binding (Recording: press any key, Tab = Text, Esc = cancel):",

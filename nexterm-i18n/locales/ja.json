@@ -121,6 +121,7 @@
   "settings-font-hint-slider": "(←/→ で変更、↓ で次のフィールドへ)",
   "settings-font-fallbacks-hint-editing": "(カンマ区切り。Enter=確定  Esc=キャンセル)",
   "settings-font-fallbacks-hint-idle": "(Enter で編集、カンマ区切り)",
+  "settings-list-window": "{from}-{to} / {total} 件を表示中",
   "settings-keybindings-header": "キーバインド:",
   "settings-keybindings-empty": "キーバインドが設定されていません",
   "settings-keybindings-edit-record": "選択中のバインドを編集（記録中: 任意のキーを押す、Tab = テキスト入力、Esc = キャンセル）:",

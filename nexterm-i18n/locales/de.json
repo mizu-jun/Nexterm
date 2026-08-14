@@ -121,6 +121,7 @@
   "settings-font-hint-slider": "(←/→ zum Ändern, ↓ für nächstes Feld)",
   "settings-font-fallbacks-hint-editing": "(kommagetrennt. Enter=Bestätigen  Esc=Abbrechen)",
   "settings-font-fallbacks-hint-idle": "(Enter zum Bearbeiten, kommagetrennt)",
+  "settings-list-window": "Zeige {from}-{to} von {total}",
   "settings-keybindings-header": "Tastenkürzel:",
   "settings-keybindings-empty": "Keine Tastenkürzel konfiguriert",
   "settings-keybindings-edit-record": "Ausgewählte Zuordnung bearbeiten (Aufnahme: beliebige Taste drücken, Tab = Text, Esc = abbrechen):",
