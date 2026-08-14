@@ -409,7 +409,24 @@ gated behind a spike.
         the no-palette fallbacks in `color_util::resolve_color`. Shadow
         quads (`tooltip.rs`, `overlay/util.rs`) are G3's scope, not G11's
 - [ ] CONFIGURATION.md inventory PR
-- [ ] P2a soft shadows + stroke (shader attributes)
+- [x] P2a soft shadows + stroke attributes — shipped via #63. The BG shader
+      gains `shadow_softness` / `stroke_width` vertex attributes (5 → 7;
+      additive for `custom_bg_shader` — a 5-attribute custom shader keeps
+      validating because wgpu checks that shader inputs are a subset of the
+      layout). `spread = max(shadow_softness, 0.5)` reproduces the pre-P2a
+      1 px AA exactly when the extensions are off, so plain fills are
+      bit-identical. `draw_overlay_panel` and the tooltip now derive their
+      shadows from the elevation table via `shadow_params` (offset =
+      elevation/16, softness = elevation/8, alpha 0.45 — initial mapping,
+      needs on-device tuning): dialogs sit at `dialog` (128), the context
+      menu / pickers / settings panel at `flyout` (32), the tooltip keeps
+      `tooltip` (16). CI now parses and validates all three built-in WGSL
+      shaders through the `wgpu::naga` re-export — the first shader check
+      that runs without a GPU
+  - [ ] P2a follow-up — consume `stroke_width`: replace the two stacked
+        rects of `draw_focus_ring` with real outline quads (the "1 px focus
+        rings without rect stacking" half of the scope), then consider the
+        1 px border ring in `draw_overlay_panel`
 - [ ] P2b in-app acrylic (offscreen + Kawase blur)
 - [ ] P2c `window.backdrop` config (Win/macOS/Linux)
 - [ ] P3 motion language + reduced-motion detection

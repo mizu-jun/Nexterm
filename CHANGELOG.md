@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CompositeAlphaMode::PreMultiplied`. **Breaking for `[gpu]
   custom_bg_shader` / `custom_text_shader`**: custom shaders must premultiply
   their fragment output (`rgb * a`). (#35)
+- Overlay drop shadows are real soft shadows (UI/UX v3 P2a): the background
+  shader's vertex layout gains `shadow_softness` and `stroke_width`
+  attributes (5 → 7), and every overlay panel derives its shadow from the
+  Fluent elevation scale — dialogs now visibly float above flyouts and
+  tooltips instead of every surface sharing one hard offset quad. Additive
+  for `[gpu] custom_bg_shader`: existing 5-attribute custom shaders keep
+  working; the new attributes are available at `@location(5)` /
+  `@location(6)`.
 
 ### Fixed
 - Translucent windows (`window.background_opacity < 1.0`) no longer look

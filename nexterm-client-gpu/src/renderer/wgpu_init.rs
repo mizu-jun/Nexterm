@@ -151,14 +151,19 @@ impl WgpuState {
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<BgVertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    // Sprint 5-15 / UI/UX Modernization v2 Phase 1:
-                    // position + color + (SDF rect_center, rect_half_size, corner_radius).
+                    // Sprint 5-15 / UI/UX v2 Phase 1, extended by UI/UX v3
+                    // P2a: position + color + (SDF rect_center,
+                    // rect_half_size, corner_radius) + (shadow_softness,
+                    // stroke_width). Must stay in sync with the reload
+                    // layout in `shader_reload.rs`.
                     attributes: &wgpu::vertex_attr_array![
                         0 => Float32x2,
                         1 => Float32x4,
                         2 => Float32x2,
                         3 => Float32x2,
                         4 => Float32,
+                        5 => Float32,
+                        6 => Float32,
                     ],
                 }],
                 compilation_options: Default::default(),

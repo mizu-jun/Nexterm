@@ -28,6 +28,13 @@ pub(crate) struct BgVertex {
     pub rect_half_size: [f32; 2],
     /// Corner radius in pixels. `0.0` disables the SDF and produces a flat rect.
     pub corner_radius: f32,
+    /// Penumbra half-width in pixels (UI/UX v3 P2a). `> 0.0` widens the SDF
+    /// edge fade from the 1 px AA into a soft drop shadow; the quad must be
+    /// grown by the same amount (see `add_px_soft_shadow_sdf`).
+    pub shadow_softness: f32,
+    /// Outline band width in pixels (UI/UX v3 P2a). `> 0.0` paints only a
+    /// stroke hugging the inside of the rect edge instead of a fill.
+    pub stroke_width: f32,
 }
 
 /// Text vertex (position + UV + color).

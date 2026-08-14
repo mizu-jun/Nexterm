@@ -38,7 +38,10 @@ impl WgpuState {
         let py = (sh - ph) / 2.0;
 
         // Panel chrome: drop-shadow + border ring + rounded background.
-        draw_overlay_panel(px, py, pw, ph, tokens, 4.0, 6.0, sw, sh, bg_verts, bg_idx);
+        let elevation = nexterm_config::ElevationScale::default().dialog;
+        draw_overlay_panel(
+            px, py, pw, ph, tokens, elevation, 6.0, sw, sh, bg_verts, bg_idx,
+        );
         // Top accent stripe.
         let ap = tokens.accent_primary;
         add_px_rect(px, py, pw, 2.0, ap, sw, sh, bg_verts, bg_idx);
@@ -203,8 +206,9 @@ impl WgpuState {
         let my = menu.y;
 
         // Panel chrome: drop-shadow + border ring + rounded background.
+        let elevation = nexterm_config::ElevationScale::default().flyout;
         draw_overlay_panel(
-            mx, my, menu_w, menu_h, tokens, 3.0, 4.0, sw, sh, bg_verts, bg_idx,
+            mx, my, menu_w, menu_h, tokens, elevation, 4.0, sw, sh, bg_verts, bg_idx,
         );
 
         // Top accent line (3px thick)
@@ -358,7 +362,10 @@ impl WgpuState {
         let py = (sh - ph) / 2.0;
 
         // Panel chrome: drop-shadow + border ring + rounded background.
-        draw_overlay_panel(px, py, pw, ph, tokens, 5.0, 6.0, sw, sh, bg_verts, bg_idx);
+        let elevation = nexterm_config::ElevationScale::default().dialog;
+        draw_overlay_panel(
+            px, py, pw, ph, tokens, elevation, 6.0, sw, sh, bg_verts, bg_idx,
+        );
         // Top accent stripe (warning color).
         let warn_color = tokens.semantic_warning;
         add_px_rect(px, py, pw, 3.0, warn_color, sw, sh, bg_verts, bg_idx);
@@ -546,7 +553,10 @@ impl WgpuState {
         let py = (sh - ph) / 2.0;
 
         // Panel chrome: drop-shadow + border ring + rounded background.
-        draw_overlay_panel(px, py, pw, ph, tokens, 5.0, 6.0, sw, sh, bg_verts, bg_idx);
+        let elevation = nexterm_config::ElevationScale::default().dialog;
+        draw_overlay_panel(
+            px, py, pw, ph, tokens, elevation, 6.0, sw, sh, bg_verts, bg_idx,
+        );
         // Top accent stripe (error/danger color; stronger alert than the consent dialog).
         let err_color = tokens.semantic_error;
         add_px_rect(px, py, pw, 3.0, err_color, sw, sh, bg_verts, bg_idx);
@@ -681,7 +691,10 @@ impl WgpuState {
         let py = (sh - ph) / 2.0;
 
         // Panel chrome.
-        draw_overlay_panel(px, py, pw, ph, tokens, 4.0, 6.0, sw, sh, bg_verts, bg_idx);
+        let elevation = nexterm_config::ElevationScale::default().dialog;
+        draw_overlay_panel(
+            px, py, pw, ph, tokens, elevation, 6.0, sw, sh, bg_verts, bg_idx,
+        );
         // Top accent stripe in the same hue as block selection.
         add_px_rect(
             px,
