@@ -411,6 +411,7 @@ impl WgpuState {
                 SettingsCategory::Keybindings => keybindings_tab::draw_keybindings_tab(
                     sp,
                     tokens,
+                    &metrics,
                     px,
                     py,
                     panel_w,

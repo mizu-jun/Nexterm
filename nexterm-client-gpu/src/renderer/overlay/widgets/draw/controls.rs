@@ -110,10 +110,12 @@ pub(super) fn draw_cycle(
     };
     let chevron_color = ensure_readable(chevron_color, theme.tokens.surface_2, MIN_TEXT_CONTRAST);
     let value_color = ensure_readable(
-        if spec.enabled() {
-            theme.tokens.text_primary
-        } else {
+        if !spec.enabled() {
             theme.tokens.text_muted
+        } else if spec.desc.invalid {
+            theme.tokens.semantic_error
+        } else {
+            theme.tokens.text_primary
         },
         theme.tokens.surface_2,
         MIN_TEXT_CONTRAST,

@@ -180,6 +180,10 @@ fn draw_label(
 ) {
     let base = if !spec.enabled() {
         theme.tokens.text_muted
+    } else if spec.desc.invalid {
+        // A failed validation outranks the search accent: the row has to read
+        // as broken even while a filter is highlighting it.
+        theme.tokens.semantic_error
     } else if spec.desc.search_match {
         // While a search is active, matching rows pop out in the accent
         // colour so the eye lands on them first.

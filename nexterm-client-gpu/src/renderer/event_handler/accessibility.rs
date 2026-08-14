@@ -133,10 +133,10 @@ impl EventHandler {
         // `dispatch_settings_action`. On match, request a redraw and return early.
         //
         // The Profiles and Ssh entries ride the `SettingsWidget` route since
-        // UI/UX v3 P1c. The Ssh delete-confirmation dialog keeps hand-written
-        // nodes, so its three ids are routed explicitly — they were missing
-        // from this list before, which left the dialog's dispatch arms
-        // unreachable from a real action request.
+        // UI/UX v3 P1c. The Ssh and Keybindings delete-confirmation dialogs
+        // keep hand-written nodes, so their ids are routed explicitly — they
+        // were missing from this list before, which left the dialogs' dispatch
+        // arms unreachable from a real action request.
         if matches!(
             kind,
             NodeIdKind::SettingsTab { .. }
@@ -144,6 +144,9 @@ impl EventHandler {
                 | NodeIdKind::SettingsSshDeleteDialog
                 | NodeIdKind::SettingsSshDeleteConfirmBtn
                 | NodeIdKind::SettingsSshDeleteCancelBtn
+                | NodeIdKind::SettingsKeyDeleteDialog
+                | NodeIdKind::SettingsKeyDeleteConfirmBtn
+                | NodeIdKind::SettingsKeyDeleteCancelBtn
         ) {
             let handled = dispatch_settings_action(
                 &mut self.app.state.settings_panel,

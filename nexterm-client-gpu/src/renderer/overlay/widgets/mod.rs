@@ -15,14 +15,17 @@
 //!
 //! [`tooltip`] is the first component built on top of the layer.
 //!
-//! Migration is deliberately tab-by-tab: a migrated category builds specs,
-//! everything else keeps its bespoke code until its turn comes.
+//! Migration ran tab-by-tab and is complete: all nine settings categories
+//! build specs. What deliberately stays outside the layer is the pair of
+//! delete-confirmation modals (Ssh, Keybindings) — a modal over the whole
+//! panel is not a settings row, so it keeps its hand-written nodes.
 
 pub(crate) mod action;
 pub(crate) mod draw;
 pub(crate) mod geometry;
 pub(crate) mod settings_blocks;
 pub(crate) mod settings_font;
+pub(crate) mod settings_keybindings;
 pub(crate) mod settings_profiles;
 pub(crate) mod settings_security;
 pub(crate) mod settings_ssh;
