@@ -388,6 +388,7 @@ impl WgpuState {
                 SettingsCategory::Ssh => ssh_tab::draw_ssh_tab(
                     sp,
                     tokens,
+                    &metrics,
                     px,
                     py,
                     panel_w,

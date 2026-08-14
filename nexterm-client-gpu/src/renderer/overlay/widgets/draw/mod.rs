@@ -112,6 +112,11 @@ pub(crate) fn draw_widget(
         WidgetKind::Cycle { value } => {
             controls::draw_cycle(spec, value, theme, font, atlas, queue, sink)
         }
+        // A spin button shares the cycler's `< value >` visual language; the
+        // difference is purely semantic (numeric role for readers).
+        WidgetKind::SpinButton { display, .. } => {
+            controls::draw_cycle(spec, display, theme, font, atlas, queue, sink)
+        }
         kind @ WidgetKind::Slider { display, .. } => slider::draw_slider(
             spec,
             kind.slider_fraction(),
