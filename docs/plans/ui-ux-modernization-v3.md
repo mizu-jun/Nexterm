@@ -327,8 +327,8 @@ gated behind a spike.
 - [x] P1b widget layer + tooltip — `renderer/overlay/widgets/`, with
       `WidgetDesc` (semantics) / `WidgetSpec` (semantics + layout) consumed by
       the renderer, the hit-test and the AccessKit tree
-- [ ] P1c tab migration — **7 of 9 done** (Theme, Window, Font, Startup,
-      Blocks, Security, Profiles). Remaining:
+- [ ] P1c tab migration — **8 of 9 done** (Theme, Window, Font, Startup,
+      Blocks, Security, Profiles, Ssh). Remaining:
   - [x] Foundation for the list-shaped tabs — `draw.rs` split into `draw/`
         by control family (it was at 779 of the 800-line guideline);
         `WidgetId.index` widened to `u16` so a category can address one widget
@@ -341,9 +341,14 @@ gated behind a spike.
         Migrate smallest first (Profiles → Ssh → Keybindings). Profiles
         shipped via #56: first `ListItem` consumer, retires the hand-written
         `SettingsProfileItem` AccessKit range, and fixes the latent
-        hit-test-vs-scroll offset mismatch for every migrated tab. The delete
-        dialog is a modal over the whole panel, not a settings row, and stays
-        on its existing hand-written AccessKit nodes for now
+        hit-test-vs-scroll offset mismatch for every migrated tab. Ssh
+        shipped via #57: adds `WidgetKind::SpinButton` and disabled-widget
+        AccessKit support, windows the entry list via `list_window`, retires
+        the 800M host-item range and fixed ids 40..=46, and heals the
+        event-route gap that made the dialog/button dispatch arms
+        unreachable. The delete dialog is a modal over the whole panel, not
+        a settings row, and stays on its existing hand-written AccessKit
+        nodes for now
   - [x] Bounded list viewport — shipped via #54: the Ssh and Keybindings
         lists window to `MAX_LIST_ROWS` (8) rows around the selection with a
         range-indicator row (`list_window` in `layout.rs`), anchoring the
