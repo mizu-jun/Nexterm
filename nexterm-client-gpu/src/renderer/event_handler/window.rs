@@ -562,6 +562,8 @@ impl EventHandler {
                 &effective_scheme,
                 self.app.config.gpu.fps_limit,
                 self.app.config.window.background_opacity,
+                self.app.config.window.in_app_blur_enabled,
+                self.app.config.window.in_app_blur_strength,
                 &self.app.config.cursor_style,
                 self.app.config.window.padding_x as f32,
                 self.app.config.window.padding_y as f32,

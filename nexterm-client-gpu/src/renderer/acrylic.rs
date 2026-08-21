@@ -48,7 +48,12 @@ impl AcrylicCaptureState {
     pub(crate) fn mark_captured(&mut self) {
         self.captured_generation = Some(self.generation);
         self.captured_while_open = true;
-        let _ = self.captured_while_open; // silence unused-field lint until Task 7 reads it
+        // `captured_while_open` has no reader (Task 7 wired the rest of
+        // this state machine into `render_frame` without needing one);
+        // keep tracking it since `Debug`-deriving already exempts it from
+        // dead-code analysis, and drop this line if a future task adds a
+        // real reader instead of one manufactured here.
+        let _ = self.captured_while_open;
     }
 }
 
@@ -99,6 +104,11 @@ pub(crate) struct AcrylicUniformData {
 /// One level of the Kawase ping-pong chain: a texture, its view, and the
 /// bind group that samples the *previous* level into it.
 struct BlurLevel {
+    /// Never read after construction (only `view` is sampled/targeted) but
+    /// must stay alive for as long as `view` does — dropping it here would
+    /// be surprising even where wgpu's internal ref-counting happens to
+    /// tolerate it.
+    #[allow(dead_code)]
     texture: wgpu::Texture,
     view: wgpu::TextureView,
     width: u32,
@@ -137,6 +147,71 @@ impl BlurLevel {
     }
 }
 
+/// The "read" side of one Kawase blur pass input: a bind group sampling a
+/// specific level's texture at a specific resolution, plus the uniform
+/// buffer (`BlurParamsUniform.texel_size`) backing it. `run_blur_chain`'s 4
+/// render passes read from 3 of these — `half_res` is sampled by two
+/// passes (the down2 and up2 steps both read `half_res` at the same
+/// texel_size), so it is built once and reused rather than duplicated.
+struct BlurReadResources {
+    bind_group: wgpu::BindGroup,
+    /// Never read again after construction; kept alive because
+    /// `bind_group` samples through it, and its lifetime should not be
+    /// left to an implicit assumption about wgpu's internal ref-counting.
+    #[allow(dead_code)]
+    uniform_buf: wgpu::Buffer,
+}
+
+impl BlurReadResources {
+    #[allow(clippy::too_many_arguments)]
+    fn create(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+        view: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+        label: &str,
+    ) -> Self {
+        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size: std::mem::size_of::<BlurParamsUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let params = BlurParamsUniform {
+            texel_size: [1.0 / width.max(1) as f32, 1.0 / height.max(1) as f32],
+            _pad: [0.0, 0.0],
+        };
+        queue.write_buffer(&uniform_buf, 0, bytemuck::cast_slice(&[params]));
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer(uniform_buf.as_entire_buffer_binding()),
+                },
+            ],
+        });
+
+        Self {
+            bind_group,
+            uniform_buf,
+        }
+    }
+}
+
 /// Offscreen resources for the in-app acrylic material (UI/UX v3 P2b).
 /// Created once at `WgpuState::new` with a 1x1 placeholder so `bg_pipeline`
 /// always has a valid bind group, resized (recreated) whenever the surface
@@ -156,7 +231,6 @@ pub(crate) struct AcrylicState {
     blurred_result: BlurLevel,
     sampler: wgpu::Sampler,
     blur_bind_group_layout: wgpu::BindGroupLayout,
-    blur_pipeline_layout: wgpu::PipelineLayout,
     downsample_pipeline: wgpu::RenderPipeline,
     upsample_pipeline: wgpu::RenderPipeline,
     /// Bound to `bg_pipeline`'s group 0 every frame; points at
@@ -164,13 +238,26 @@ pub(crate) struct AcrylicState {
     /// placeholder before the first capture / when the feature is off.
     acrylic_bind_group: wgpu::BindGroup,
     acrylic_uniform_buf: wgpu::Buffer,
+    /// Never read after construction (`acrylic_bind_group` starts out
+    /// sampling it and is rebuilt to sample `blurred_result` on first
+    /// resize) but kept alive for the same reason as `BlurLevel::texture`.
+    #[allow(dead_code)]
     placeholder_texture: wgpu::Texture,
+    #[allow(dead_code)]
     placeholder_view: wgpu::TextureView,
+    /// `run_blur_chain`'s down1 input (reads `scene_color`).
+    blur_read_scene_color: BlurReadResources,
+    /// `run_blur_chain`'s down2 *and* up2 input (both read `half_res` at
+    /// the same texel_size) — built once, used by both passes.
+    blur_read_half_res: BlurReadResources,
+    /// `run_blur_chain`'s up1 input (reads `quarter_res`).
+    blur_read_quarter_res: BlurReadResources,
 }
 
 impl AcrylicState {
     pub(crate) fn new(
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
         acrylic_bind_group_layout: &wgpu::BindGroupLayout,
     ) -> Self {
@@ -302,21 +389,59 @@ impl AcrylicState {
         let downsample_pipeline = make_blur_pipeline("fs_downsample", "kawase_downsample_pipeline");
         let upsample_pipeline = make_blur_pipeline("fs_upsample", "kawase_upsample_pipeline");
 
+        let scene_color = BlurLevel::create(device, format, 1, 1, "acrylic_scene_color");
+        let half_res = BlurLevel::create(device, format, 1, 1, "acrylic_half_res");
+        let quarter_res = BlurLevel::create(device, format, 1, 1, "acrylic_quarter_res");
+        let blurred_result = BlurLevel::create(device, format, 1, 1, "acrylic_blurred_result");
+
+        let blur_read_scene_color = BlurReadResources::create(
+            device,
+            queue,
+            &blur_bind_group_layout,
+            &sampler,
+            &scene_color.view,
+            scene_color.width,
+            scene_color.height,
+            "acrylic_blur_read_scene_color",
+        );
+        let blur_read_half_res = BlurReadResources::create(
+            device,
+            queue,
+            &blur_bind_group_layout,
+            &sampler,
+            &half_res.view,
+            half_res.width,
+            half_res.height,
+            "acrylic_blur_read_half_res",
+        );
+        let blur_read_quarter_res = BlurReadResources::create(
+            device,
+            queue,
+            &blur_bind_group_layout,
+            &sampler,
+            &quarter_res.view,
+            quarter_res.width,
+            quarter_res.height,
+            "acrylic_blur_read_quarter_res",
+        );
+
         Self {
             format,
-            scene_color: BlurLevel::create(device, format, 1, 1, "acrylic_scene_color"),
-            half_res: BlurLevel::create(device, format, 1, 1, "acrylic_half_res"),
-            quarter_res: BlurLevel::create(device, format, 1, 1, "acrylic_quarter_res"),
-            blurred_result: BlurLevel::create(device, format, 1, 1, "acrylic_blurred_result"),
+            scene_color,
+            half_res,
+            quarter_res,
+            blurred_result,
             sampler,
             blur_bind_group_layout,
-            blur_pipeline_layout,
             downsample_pipeline,
             upsample_pipeline,
             acrylic_bind_group,
             acrylic_uniform_buf,
             placeholder_texture,
             placeholder_view,
+            blur_read_scene_color,
+            blur_read_half_res,
+            blur_read_quarter_res,
         }
     }
 
@@ -334,6 +459,7 @@ impl AcrylicState {
     pub(crate) fn ensure_size(
         &mut self,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         acrylic_bind_group_layout: &wgpu::BindGroupLayout,
         width: u32,
         height: u32,
@@ -360,6 +486,41 @@ impl AcrylicState {
         self.blurred_result =
             BlurLevel::create(device, self.format, width, height, "acrylic_blurred_result");
 
+        // Rebuild the 3 blur "read" resources too — same reasoning as
+        // rebuilding `acrylic_bind_group` below: they were built against
+        // the previous generation's texture views, which just got dropped
+        // above.
+        self.blur_read_scene_color = BlurReadResources::create(
+            device,
+            queue,
+            &self.blur_bind_group_layout,
+            &self.sampler,
+            &self.scene_color.view,
+            self.scene_color.width,
+            self.scene_color.height,
+            "acrylic_blur_read_scene_color",
+        );
+        self.blur_read_half_res = BlurReadResources::create(
+            device,
+            queue,
+            &self.blur_bind_group_layout,
+            &self.sampler,
+            &self.half_res.view,
+            self.half_res.width,
+            self.half_res.height,
+            "acrylic_blur_read_half_res",
+        );
+        self.blur_read_quarter_res = BlurReadResources::create(
+            device,
+            queue,
+            &self.blur_bind_group_layout,
+            &self.sampler,
+            &self.quarter_res.view,
+            self.quarter_res.width,
+            self.quarter_res.height,
+            "acrylic_blur_read_quarter_res",
+        );
+
         self.acrylic_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("acrylic_sample_bind_group"),
             layout: acrylic_bind_group_layout,
@@ -380,6 +541,108 @@ impl AcrylicState {
                 },
             ],
         });
+    }
+
+    /// The offscreen scene-color capture target: `render_frame` redraws the
+    /// grid-layer bg range into this instead of the swapchain, then
+    /// `run_blur_chain` consumes it as the first Kawase downsample input.
+    pub(crate) fn scene_color_view(&self) -> &wgpu::TextureView {
+        &self.scene_color.view
+    }
+
+    /// The composite bind group `bg_pipeline` must have bound at group 0 on
+    /// every draw call (its pipeline layout requires it unconditionally).
+    /// Samples `blurred_result` once a capture has run, or the 1x1
+    /// placeholder before that / while the feature is off.
+    pub(crate) fn bind_group(&self) -> &wgpu::BindGroup {
+        &self.acrylic_bind_group
+    }
+
+    /// Refresh the tint/viewport/strength uniform `bg_pipeline` reads when
+    /// compositing the acrylic material. Called once per dirty frame,
+    /// alongside `run_blur_chain`.
+    pub(crate) fn update_uniform(
+        &self,
+        queue: &wgpu::Queue,
+        tint: [f32; 4],
+        viewport_size: [f32; 2],
+        strength: f32,
+    ) {
+        let data = AcrylicUniformData {
+            tint,
+            viewport_size,
+            strength,
+            _pad: 0.0,
+        };
+        queue.write_buffer(&self.acrylic_uniform_buf, 0, bytemuck::cast_slice(&[data]));
+    }
+
+    /// Run the 4-pass dual-Kawase blur chain: 2 downsamples
+    /// (`scene_color -> half_res -> quarter_res`) then 2 upsamples
+    /// (`quarter_res -> half_res -> blurred_result`). Each pass is a
+    /// fullscreen triangle (`vs_fullscreen` in `KAWASE_BLUR_SHADER`) with no
+    /// vertex/index buffer.
+    ///
+    /// Must be called (and, since passes on one `CommandEncoder` execute in
+    /// recording order, will complete) before the same frame's
+    /// `main_render_pass`, which is what actually samples `blurred_result`
+    /// through `acrylic_bind_group` once a panel's `acrylic_mix > 0.0`.
+    pub(crate) fn run_blur_chain(&self, encoder: &mut wgpu::CommandEncoder) {
+        self.run_blur_pass(
+            encoder,
+            &self.downsample_pipeline,
+            &self.blur_read_scene_color.bind_group,
+            &self.half_res.view,
+            "acrylic_downsample_pass_1",
+        );
+        self.run_blur_pass(
+            encoder,
+            &self.downsample_pipeline,
+            &self.blur_read_half_res.bind_group,
+            &self.quarter_res.view,
+            "acrylic_downsample_pass_2",
+        );
+        self.run_blur_pass(
+            encoder,
+            &self.upsample_pipeline,
+            &self.blur_read_quarter_res.bind_group,
+            &self.half_res.view,
+            "acrylic_upsample_pass_1",
+        );
+        self.run_blur_pass(
+            encoder,
+            &self.upsample_pipeline,
+            &self.blur_read_half_res.bind_group,
+            &self.blurred_result.view,
+            "acrylic_upsample_pass_2",
+        );
+    }
+
+    fn run_blur_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        pipeline: &wgpu::RenderPipeline,
+        bind_group: &wgpu::BindGroup,
+        target: &wgpu::TextureView,
+        label: &str,
+    ) {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(label),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, bind_group, &[]);
+        pass.draw(0..3, 0..1);
     }
 }
 

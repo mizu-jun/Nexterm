@@ -38,10 +38,8 @@ pub(crate) mod overlay;
 mod ui_verts;
 
 // ---- In-app acrylic (UI/UX v3 P2b) ----
-// `AcrylicCaptureState` and `AcrylicState`'s capture/blur-selection paths are
-// not yet wired into per-frame rendering (Task 7 does that), so clippy sees
-// parts of this module as dead code until then.
-#[allow(dead_code)]
+// `AcrylicCaptureState` and `AcrylicState`'s capture/blur chain are wired
+// into per-frame rendering in `render_frame::render` (Task 7).
 mod acrylic;
 
 // ---- Runtime submodules (Sprint 2-1 Phase B/C) ----
@@ -237,6 +235,11 @@ pub(super) struct WgpuState {
     /// acrylic material (UI/UX v3 P2b). Created once in `WgpuState::new`
     /// with a 1x1 placeholder, resized in `WgpuState::resize`.
     acrylic: AcrylicState,
+    /// Capture-invalidation state machine for the acrylic material (UI/UX
+    /// v3 P2b): tracks whether `scene_color` needs to be re-captured and
+    /// the blur chain re-run this frame. See `render_frame`'s capture+blur
+    /// block for the read side.
+    acrylic_capture: acrylic::AcrylicCaptureState,
     text_pipeline: wgpu::RenderPipeline,
     text_bind_group_layout: wgpu::BindGroupLayout,
     /// Image rendering pipeline.

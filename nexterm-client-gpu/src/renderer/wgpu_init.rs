@@ -236,7 +236,7 @@ impl WgpuState {
         // acrylic material (UI/UX v3 P2b). Built against the layout above
         // — not a layout of its own — so its `acrylic_bind_group` is
         // wgpu-compatible with `bg_pipeline`.
-        let acrylic = AcrylicState::new(&device, format, &acrylic_bind_group_layout);
+        let acrylic = AcrylicState::new(&device, &queue, format, &acrylic_bind_group_layout);
 
         // ---- Text pipeline ----
         let text_bind_group_layout =
@@ -410,6 +410,7 @@ impl WgpuState {
             bg_pipeline,
             acrylic_bind_group_layout,
             acrylic,
+            acrylic_capture: super::acrylic::AcrylicCaptureState::default(),
             text_pipeline,
             text_bind_group_layout,
             image_pipeline,
@@ -441,10 +442,16 @@ impl WgpuState {
         self.surface.configure(&self.device, &self.surface_config);
         self.acrylic.ensure_size(
             &self.device,
+            &self.queue,
             &self.acrylic_bind_group_layout,
             new_size.width,
             new_size.height,
         );
+        // A resized scene_color/blurred_result invalidates any capture
+        // taken before the resize (UI/UX v3 P2b) — force the next dirty
+        // check in `render_frame` to recapture rather than compositing a
+        // stale-resolution blur.
+        self.acrylic_capture.note_resize();
     }
 
     /// Re-select the present mode from an updated `GpuConfig` (config hot-reload)
