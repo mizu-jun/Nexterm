@@ -149,6 +149,29 @@ pub(super) fn shadow_params(elevation: f32) -> ShadowParams {
     }
 }
 
+/// Alpha floor for a modal scrim.
+///
+/// High enough that a translucent terminal behind a modal stops reading as
+/// still-interactive, low enough that the veil stays a veil.
+pub(super) const SCRIM_ALPHA_FLOOR: f32 = 0.55;
+
+/// Full-screen veil drawn behind a modal surface.
+///
+/// `surface_0` is the deepest background in the active scheme, so the veil
+/// stays in the same colour family as the surface it sits behind, in light and
+/// dark themes alike. The settings panel already reasoned this way about its
+/// own scrim; UI/UX v3 (G11 follow-up) brings the other call sites — the
+/// password modal, the close-window dialog and the two settings-tab delete
+/// confirmations, which each carried their own hard-coded black — onto the
+/// same helper.
+///
+/// `alpha` stays a parameter because the settings panel fades its scrim in
+/// with the panel's open animation, while the modal dialogs snap straight to
+/// [`SCRIM_ALPHA_FLOOR`].
+pub(super) fn scrim_color(tokens: &nexterm_config::DesignTokens, alpha: f32) -> [f32; 4] {
+    crate::color_util::with_alpha(tokens.surface_0, alpha)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,5 +202,42 @@ mod tests {
         assert!(control.offset >= 1.0);
         assert!(control.softness >= 1.0);
         assert!(control.alpha > 0.0);
+    }
+
+    // ---- UI/UX v3 G11 follow-up: the shared modal scrim ----
+
+    fn tokens_for(scheme: nexterm_config::BuiltinScheme) -> nexterm_config::DesignTokens {
+        nexterm_config::DesignTokens::from_palette(&scheme.palette())
+    }
+
+    #[test]
+    fn scrim_takes_the_deepest_surface_at_the_requested_alpha() {
+        let tokens = tokens_for(nexterm_config::BuiltinScheme::TokyoNight);
+        let scrim = scrim_color(&tokens, SCRIM_ALPHA_FLOOR);
+        assert_eq!(
+            [scrim[0], scrim[1], scrim[2]],
+            [
+                tokens.surface_0[0],
+                tokens.surface_0[1],
+                tokens.surface_0[2]
+            ]
+        );
+        assert!((scrim[3] - SCRIM_ALPHA_FLOOR).abs() < 1e-6);
+    }
+
+    /// Regression guard against a hard-coded black coming back: a light scheme
+    /// and a dark one must veil in different colours, the way the settings
+    /// panel's scrim already did before the other call sites were migrated.
+    #[test]
+    fn scrim_follows_the_active_scheme() {
+        let dark = scrim_color(&tokens_for(nexterm_config::BuiltinScheme::Dark), 0.55);
+        let light = scrim_color(&tokens_for(nexterm_config::BuiltinScheme::Light), 0.55);
+        assert_ne!([dark[0], dark[1], dark[2]], [light[0], light[1], light[2]]);
+        // A light scheme's veil must actually be the light surface, not a
+        // near-black one that happens to differ in the last decimal.
+        assert!(
+            light[0] > dark[0] + 0.3,
+            "light scrim {light:?} is not meaningfully lighter than {dark:?}"
+        );
     }
 }

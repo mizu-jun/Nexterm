@@ -55,6 +55,53 @@ pub(in crate::renderer) fn ensure_readable(
     }
 }
 
+/// Fill / label pair for a destructive-confirmation button.
+///
+/// UI/UX v3 (G11 follow-up): the Ssh and Keybindings delete dialogs each
+/// hand-mixed their own reds and had already drifted apart — `[0.498, 0.196,
+/// 0.196]` against `[0.486, 0.180, 0.180]` for the focused fill, and two
+/// different resting treatments (a dark red against `surface_1`). Both now
+/// derive from `semantic_error`.
+///
+/// The error hue is blended *into* the panel surface rather than used raw: a
+/// saturated ANSI red leaves no headroom for a readable label, which is
+/// precisely why both call sites had darkened it by hand.
+///
+/// The two states take their label from different places, and the reason is
+/// measurable rather than aesthetic. The focused fill is red enough that the
+/// scheme's own foreground lands near 3:1 on it, so the label comes from
+/// [`crate::color_util::on_surface_text`], which picks whichever extreme the
+/// fill actually contrasts with. The resting fill is barely tinted, so
+/// `text_primary` reads comfortably on it and keeps the button in the same
+/// type colour as the rest of the panel. Both are pinned by the tests below.
+pub(in crate::renderer) fn danger_button_colors(
+    tokens: &nexterm_config::DesignTokens,
+    focused: bool,
+) -> ([f32; 4], [f32; 4]) {
+    let tint = |amount: f32| -> [f32; 4] {
+        let base = [
+            tokens.surface_1[0],
+            tokens.surface_1[1],
+            tokens.surface_1[2],
+        ];
+        let rgb = crate::color_util::composite_over(
+            crate::color_util::with_alpha(tokens.semantic_error, amount),
+            base,
+        );
+        [rgb[0], rgb[1], rgb[2], 1.0]
+    };
+    if focused {
+        let bg = tint(0.55);
+        (bg, crate::color_util::on_surface_text(bg))
+    } else {
+        let bg = tint(0.18);
+        (
+            bg,
+            ensure_readable(tokens.text_primary, bg, MIN_TEXT_CONTRAST),
+        )
+    }
+}
+
 /// Draw a section header line (bold, no control column, not truncated to a
 /// control width since it spans the full content width).
 #[allow(clippy::too_many_arguments)]
@@ -197,6 +244,47 @@ mod contrast_tests {
                     bg
                 );
             }
+        }
+    }
+
+    /// UI/UX v3 (G11 follow-up): the Ssh and Keybindings delete dialogs used
+    /// to hand-mix their own reds. Whatever the scheme, the confirmation
+    /// label must clear the panel's floor in both states — and on the focused
+    /// fill that is not automatic: the scheme's own foreground only reaches
+    /// ~3:1 there, which is why the label comes from `on_surface_text`
+    /// instead. Measured: 4.65 (Tokyo Night, white label) and 5.00 (Gruvbox
+    /// Light, dark label) focused; 6.55 at rest in both.
+    #[test]
+    fn danger_button_labels_clear_the_contrast_floor() {
+        for (name, tokens) in [
+            ("tokyo_night", tokyo_night_tokens()),
+            ("gruvbox_light", gruvbox_light_tokens()),
+        ] {
+            for focused in [true, false] {
+                let (bg, fg) = danger_button_colors(&tokens, focused);
+                let cr = contrast_of(fg, bg);
+                assert!(
+                    cr >= MIN_TEXT_CONTRAST,
+                    "{name} focused={focused}: label only reached {cr}"
+                );
+            }
+        }
+    }
+
+    /// The focused state has to read as the destructive one. Redness is
+    /// measured as the red channel's lead over the other two, because a light
+    /// scheme's resting fill is brighter overall — comparing raw channels
+    /// would call it the redder of the two.
+    #[test]
+    fn danger_button_focus_state_is_the_redder_one() {
+        let redness = |c: [f32; 4]| c[0] - (c[1] + c[2]) / 2.0;
+        for tokens in [tokyo_night_tokens(), gruvbox_light_tokens()] {
+            let (focused_bg, _) = danger_button_colors(&tokens, true);
+            let (resting_bg, _) = danger_button_colors(&tokens, false);
+            assert!(
+                redness(focused_bg) > redness(resting_bg),
+                "focused {focused_bg:?} is not redder than resting {resting_bg:?}"
+            );
         }
     }
 

@@ -8,7 +8,9 @@ use crate::state::{ClientState, ContextMenu};
 use crate::vertex_util::{add_px_rect, add_string_verts, visual_width};
 
 use super::super::WgpuState;
-use super::util::{draw_overlay_panel, pane_id_for, preview_text, wrap_text};
+use super::util::{
+    SCRIM_ALPHA_FLOOR, draw_overlay_panel, pane_id_for, preview_text, scrim_color, wrap_text,
+};
 
 impl WgpuState {
     /// Build vertices for the password input modal
@@ -348,7 +350,7 @@ impl WgpuState {
             0.0,
             sw,
             sh,
-            [0.0, 0.0, 0.0, 0.55],
+            scrim_color(tokens, SCRIM_ALPHA_FLOOR),
             sw,
             sh,
             bg_verts,
@@ -539,7 +541,7 @@ impl WgpuState {
             0.0,
             sw,
             sh,
-            [0.0, 0.0, 0.0, 0.55],
+            scrim_color(tokens, SCRIM_ALPHA_FLOOR),
             sw,
             sh,
             bg_verts,
