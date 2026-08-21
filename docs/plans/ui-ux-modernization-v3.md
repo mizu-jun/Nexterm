@@ -423,10 +423,26 @@ gated behind a spike.
       `tooltip` (16). CI now parses and validates all three built-in WGSL
       shaders through the `wgpu::naga` re-export — the first shader check
       that runs without a GPU
-  - [ ] P2a follow-up — consume `stroke_width`: replace the two stacked
-        rects of `draw_focus_ring` with real outline quads (the "1 px focus
-        rings without rect stacking" half of the scope), then consider the
-        1 px border ring in `draw_overlay_panel`
+  - [x] P2a follow-up — `stroke_width` has a consumer: `draw_focus_ring`'s
+        two bands are real outline quads via the new
+        `vertex_util::add_px_stroke_sdf` (tight quad — an outline band hugs
+        the *inside* of the rect edge, so unlike the soft shadow it needs no
+        growing; `width` clamped to half the shortest side, past which the
+        opposite bands fold back and carve a hole out of the centre). The
+        geometry is unchanged, so `list::focus_rect`'s inset still holds. Two
+        deliberate consequences: the area inside the ring is no longer
+        repainted (it was covered again by the row fill and the control —
+        harmless while every surface is opaque, a double blend once P2b's
+        acrylic is not), and the accent/surface boundary gains a shared
+        half-pixel of AA instead of an opaque butt joint (**on-device check**)
+  - [ ] P2a follow-up (deferred) — the 1 px border ring in
+        `draw_overlay_panel` is the same stacked-fill idiom, but its ring
+        colour is `border_default` at 18 % alpha, so a stroke would change
+        the visible band's alpha profile (a fill is opaque up to the panel
+        edge; a stroke fades on both sides). Unlike the focus ring this is a
+        real visual change on a surface that appears behind every overlay, so
+        it waits until the P2a shadow constants are tuned on-device rather
+        than stacking another unverified change
 - [ ] P2b in-app acrylic (offscreen + Kawase blur)
 - [ ] P2c `window.backdrop` config (Win/macOS/Linux)
 - [ ] P3 motion language + reduced-motion detection

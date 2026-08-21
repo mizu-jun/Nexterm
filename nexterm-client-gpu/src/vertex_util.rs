@@ -225,6 +225,56 @@ pub(crate) fn add_px_soft_shadow_sdf(
     );
 }
 
+/// Pixel-space rounded outline — a stroked ring rather than a fill
+/// (UI/UX v3 P2a).
+///
+/// The band hugs the *inside* of the rect edge, so the quad stays tight: only
+/// the outer half-pixel of anti-aliasing falls outside it, exactly as it does
+/// for [`add_px_rounded_rect_sdf`]. This replaces the older idiom of stacking
+/// a larger filled rect under a smaller one, which repainted everything inside
+/// the ring — fine while the surfaces underneath were opaque, wrong as soon as
+/// they are not.
+///
+/// `width` is clamped to half the shortest side: past that the two opposite
+/// bands would meet and the shader's `abs(dist + half_w)` would fold back and
+/// carve a hole out of the centre. A non-positive `width` degenerates to the
+/// plain rounded fill, matching the shader's `stroke_width > 0` gate.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn add_px_stroke_sdf(
+    px: f32,
+    py: f32,
+    pw: f32,
+    ph: f32,
+    radius: f32,
+    color: [f32; 4],
+    width: f32,
+    sw: f32,
+    sh: f32,
+    bg_verts: &mut Vec<BgVertex>,
+    bg_idx: &mut Vec<u16>,
+) {
+    let x0 = px / sw * 2.0 - 1.0;
+    let y0 = 1.0 - py / sh * 2.0;
+    let x1 = (px + pw) / sw * 2.0 - 1.0;
+    let y1 = 1.0 - (py + ph) / sh * 2.0;
+    let r = radius.max(0.0).min(pw * 0.5).min(ph * 0.5);
+    let w = width.max(0.0).min(pw * 0.5).min(ph * 0.5);
+    push_rect_verts_with_sdf(
+        x0,
+        y0,
+        x1,
+        y1,
+        color,
+        [px + pw * 0.5, py + ph * 0.5],
+        [pw * 0.5, ph * 0.5],
+        r,
+        0.0,
+        w,
+        bg_verts,
+        bg_idx,
+    );
+}
+
 /// Phase 5 (UI/UX v2): linear-gradient background quad.
 ///
 /// Emits a screen-spanning quad with **per-corner colours** derived from the
@@ -794,6 +844,103 @@ mod tests {
         assert!(approx(min_x, ndc_x(100.0 - 16.0)));
         assert!(approx(max_x, ndc_x(100.0 + 200.0 + 16.0)));
         assert!(approx(max_y, ndc_y(50.0 - 16.0)));
+    }
+
+    #[test]
+    fn stroke_helper_keeps_the_quad_tight_and_carries_the_band_width() {
+        // Unlike the soft shadow, an outline band is painted *inside* the rect
+        // edge (see `BG_SHADER`), so the quad needs no growing: only the outer
+        // half-pixel of anti-aliasing falls outside it, exactly as it does for
+        // a plain fill.
+        let mut v = Vec::new();
+        let mut i = Vec::new();
+        add_px_stroke_sdf(
+            100.0,
+            50.0,
+            200.0,
+            40.0,
+            8.0,
+            [0.1, 0.2, 0.3, 1.0],
+            2.0,
+            800.0,
+            600.0,
+            &mut v,
+            &mut i,
+        );
+        assert_eq!(v.len(), 4);
+        for vert in &v {
+            assert_eq!(vert.rect_center, [200.0, 70.0]);
+            assert_eq!(vert.rect_half_size, [100.0, 20.0]);
+            assert_eq!(vert.corner_radius, 8.0);
+            // A stroke is not a shadow: softness stays off so the shader takes
+            // its outline branch rather than widening the edge into a penumbra.
+            assert_eq!(vert.shadow_softness, 0.0);
+            assert_eq!(vert.stroke_width, 2.0);
+        }
+        let ndc_x = |px: f32| px / 800.0 * 2.0 - 1.0;
+        let min_x = v
+            .iter()
+            .map(|q| q.position[0])
+            .fold(f32::INFINITY, f32::min);
+        let max_x = v
+            .iter()
+            .map(|q| q.position[0])
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert!(approx(min_x, ndc_x(100.0)));
+        assert!(approx(max_x, ndc_x(300.0)));
+    }
+
+    #[test]
+    fn a_stroke_wider_than_the_rect_is_clamped_to_a_full_fill() {
+        // Past half the shortest side the two opposite bands would meet in the
+        // middle. Clamping there keeps the widest stroke a solid fill instead
+        // of letting the shader's `abs(dist + half_w)` fold back and carve a
+        // hole out of the centre.
+        let mut v = Vec::new();
+        let mut i = Vec::new();
+        add_px_stroke_sdf(
+            0.0,
+            0.0,
+            200.0,
+            40.0,
+            8.0,
+            [1.0, 1.0, 1.0, 1.0],
+            999.0,
+            800.0,
+            600.0,
+            &mut v,
+            &mut i,
+        );
+        for vert in &v {
+            assert_eq!(vert.stroke_width, 20.0);
+        }
+    }
+
+    #[test]
+    fn a_non_positive_stroke_degenerates_to_a_fill() {
+        // The shader's outline branch is gated on `stroke_width > 0`, so a
+        // zero or negative width must land on exactly zero and give the caller
+        // the plain rounded rect back rather than an invisible quad.
+        for w in [0.0, -4.0] {
+            let mut v = Vec::new();
+            let mut i = Vec::new();
+            add_px_stroke_sdf(
+                0.0,
+                0.0,
+                100.0,
+                20.0,
+                4.0,
+                [1.0, 1.0, 1.0, 1.0],
+                w,
+                800.0,
+                600.0,
+                &mut v,
+                &mut i,
+            );
+            for vert in &v {
+                assert_eq!(vert.stroke_width, 0.0);
+            }
+        }
     }
 
     #[test]

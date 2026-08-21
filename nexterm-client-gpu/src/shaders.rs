@@ -16,6 +16,7 @@
 ///     amount (`add_px_soft_shadow_sdf` does).
 ///   * `stroke_width > 0`: paints only an outline band hugging the inside
 ///     of the rect edge instead of a fill (wins over `shadow_softness`).
+///     The quad stays tight, so no growing is needed (`add_px_stroke_sdf`).
 ///
 /// **Custom-shader contract** (`[gpu] custom_bg_shader`), changes:
 ///   * since UI/UX v2 Phase 1: `rect_center`, `rect_half_size`,
