@@ -122,12 +122,13 @@ fn iterm_extract_component(dict: &str, component_key: &str) -> Option<f64> {
         let inner = &after[real_start + 6..];
         let end = inner.find("</real>")?;
         &inner[..end]
-    } else if let Some(int_start) = after.find("<integer>") {
+    } else {
+        // No <real>, so the component has to be an <integer>; a key followed by
+        // neither is malformed and yields None.
+        let int_start = after.find("<integer>")?;
         let inner = &after[int_start + 9..];
         let end = inner.find("</integer>")?;
         &inner[..end]
-    } else {
-        return None;
     };
     val_str.trim().parse::<f64>().ok()
 }
@@ -558,5 +559,53 @@ mod theme_gallery_tests {
         let content = std::fs::read_to_string(&tmp).unwrap();
         assert!(content.contains("colors = \"dracula\""));
         let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+/// Pins the `.itermcolors` component parser, which had no tests when the
+/// `clippy::question_mark` cleanup rewrote its tag dispatch.
+#[cfg(test)]
+mod iterm_parse_tests {
+    use super::*;
+
+    #[test]
+    fn a_real_component_parses() {
+        let dict = "<key>Red Component</key><real>0.5</real>";
+        assert_eq!(iterm_extract_component(dict, "Red Component"), Some(0.5));
+    }
+
+    #[test]
+    fn an_integer_component_parses() {
+        // iTerm2 writes whole values as <integer>, so both tags must work.
+        let dict = "<key>Green Component</key><integer>1</integer>";
+        assert_eq!(iterm_extract_component(dict, "Green Component"), Some(1.0));
+    }
+
+    #[test]
+    fn a_component_with_neither_tag_is_none() {
+        let dict = "<key>Blue Component</key><string>oops</string>";
+        assert_eq!(iterm_extract_component(dict, "Blue Component"), None);
+    }
+
+    #[test]
+    fn an_unterminated_value_is_none() {
+        // The closing tag is what bounds the value; without it there is nothing
+        // to parse. Both branches take this path.
+        assert_eq!(
+            iterm_extract_component("<key>Red Component</key><real>0.5", "Red Component"),
+            None
+        );
+        assert_eq!(
+            iterm_extract_component("<key>Red Component</key><integer>1", "Red Component"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_missing_key_is_none() {
+        assert_eq!(
+            iterm_extract_component("<key>Other</key><real>0.5</real>", "Red Component"),
+            None
+        );
     }
 }
