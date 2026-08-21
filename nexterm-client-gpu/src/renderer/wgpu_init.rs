@@ -20,6 +20,7 @@ use crate::glyph_atlas::{BgVertex, TextVertex};
 use crate::shaders::{BG_SHADER, IMAGE_SHADER, TEXT_SHADER};
 
 use super::WgpuState;
+use super::acrylic::AcrylicState;
 
 impl WgpuState {
     pub(super) async fn new(
@@ -231,6 +232,12 @@ impl WgpuState {
             cache: None,
         });
 
+        // Offscreen textures, blur pipelines and bind group for the in-app
+        // acrylic material (UI/UX v3 P2b). Built against the layout above
+        // — not a layout of its own — so its `acrylic_bind_group` is
+        // wgpu-compatible with `bg_pipeline`.
+        let acrylic = AcrylicState::new(&device, format, &acrylic_bind_group_layout);
+
         // ---- Text pipeline ----
         let text_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -402,6 +409,7 @@ impl WgpuState {
             present_modes: surface_caps.present_modes,
             bg_pipeline,
             acrylic_bind_group_layout,
+            acrylic,
             text_pipeline,
             text_bind_group_layout,
             image_pipeline,
@@ -431,6 +439,12 @@ impl WgpuState {
         self.surface_config.width = new_size.width;
         self.surface_config.height = new_size.height;
         self.surface.configure(&self.device, &self.surface_config);
+        self.acrylic.ensure_size(
+            &self.device,
+            &self.acrylic_bind_group_layout,
+            new_size.width,
+            new_size.height,
+        );
     }
 
     /// Re-select the present mode from an updated `GpuConfig` (config hot-reload)

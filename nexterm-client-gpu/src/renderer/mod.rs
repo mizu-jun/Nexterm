@@ -38,8 +38,9 @@ pub(crate) mod overlay;
 mod ui_verts;
 
 // ---- In-app acrylic (UI/UX v3 P2b) ----
-// `AcrylicCaptureState` is not yet wired into `WgpuState` (Task 7 does that),
-// so clippy sees it as dead code until then.
+// `AcrylicCaptureState` and `AcrylicState`'s capture/blur-selection paths are
+// not yet wired into per-frame rendering (Task 7 does that), so clippy sees
+// parts of this module as dead code until then.
 #[allow(dead_code)]
 mod acrylic;
 
@@ -59,6 +60,7 @@ mod wgpu_init;
 pub use app::NextermApp;
 pub use event_handler::{EventHandler, UserEvent};
 
+use acrylic::AcrylicState;
 use background_pass::BackgroundTexture;
 use image::ImageEntry;
 
@@ -231,6 +233,10 @@ pub(super) struct WgpuState {
     /// with this one, so keeping a single shared field is load-bearing,
     /// not just tidy.
     acrylic_bind_group_layout: wgpu::BindGroupLayout,
+    /// Offscreen textures, blur pipelines and bind group for the in-app
+    /// acrylic material (UI/UX v3 P2b). Created once in `WgpuState::new`
+    /// with a 1x1 placeholder, resized in `WgpuState::resize`.
+    acrylic: AcrylicState,
     text_pipeline: wgpu::RenderPipeline,
     text_bind_group_layout: wgpu::BindGroupLayout,
     /// Image rendering pipeline.
