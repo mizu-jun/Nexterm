@@ -861,12 +861,15 @@ impl WgpuState {
                 bg_idx,
             );
             // Text + cursor (append `|` at the end).
+            // UI/UX v3 (G11): the edit text follows the scheme's foreground
+            // instead of a hard-coded white, which had no contrast against the
+            // pale `surface_3` fill of a light scheme.
             let edit_text = format!(" {}|", state.settings_panel.tab_rename_text);
             add_string_verts(
                 &edit_text,
                 tx0 + padding,
                 text_y,
-                [1.0, 1.0, 1.0, 1.0],
+                tokens.text_primary,
                 true,
                 sw,
                 sh,
