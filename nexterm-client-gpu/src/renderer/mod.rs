@@ -221,6 +221,16 @@ pub(super) struct WgpuState {
     /// `set_present_mode` can re-select without re-querying the surface).
     present_modes: Vec<wgpu::PresentMode>,
     bg_pipeline: wgpu::RenderPipeline,
+    /// Bind group layout for the acrylic sampling inputs consumed by
+    /// `BG_SHADER` at `@group(0)` (texture, sampler, uniform buffer; UI/UX
+    /// v3 P2b). Created once in `WgpuState::new` and reused — by reference,
+    /// never recreated — by `bg_pipeline_layout` here, by
+    /// `shader_reload.rs`'s hot-reload path, and by the `AcrylicState`
+    /// bind group a later task builds. A second independently-created
+    /// `BindGroupLayout` with the same entries would be wgpu-incompatible
+    /// with this one, so keeping a single shared field is load-bearing,
+    /// not just tidy.
+    acrylic_bind_group_layout: wgpu::BindGroupLayout,
     text_pipeline: wgpu::RenderPipeline,
     text_bind_group_layout: wgpu::BindGroupLayout,
     /// Image rendering pipeline.

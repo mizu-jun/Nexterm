@@ -106,6 +106,9 @@ fn push_rect_verts_with_sdf(
         corner_radius,
         shadow_softness,
         stroke_width,
+        // Plain rects never carry the acrylic blend; only overlay panel
+        // fills opt in (UI/UX v3 P2b, wired up in a later task).
+        acrylic_mix: 0.0,
     };
     bg_verts.extend_from_slice(&[
         make([x0, y0]),
@@ -321,6 +324,8 @@ pub(crate) fn add_px_gradient_rect(
         corner_radius: 0.0,
         shadow_softness: 0.0,
         stroke_width: 0.0,
+        // Gradient rects never carry the acrylic blend (UI/UX v3 P2b).
+        acrylic_mix: 0.0,
     };
     bg_verts.extend_from_slice(&[
         make([x0, y0], lerp(from, to, t_tl)),

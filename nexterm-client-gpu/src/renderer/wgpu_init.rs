@@ -136,9 +136,50 @@ impl WgpuState {
             source: wgpu::ShaderSource::Wgsl(bg_shader_src),
         });
 
+        // Bind group layout for the acrylic sampling inputs `BG_SHADER`
+        // reads at `@group(0)` (UI/UX v3 P2b): the blurred/tinted scene
+        // texture, its sampler, and the `AcrylicUniform` (tint, viewport
+        // size, strength). Built once here and stored on `WgpuState` so
+        // `shader_reload.rs` and the later `AcrylicState` bind group (Task
+        // 6) reference this exact layout object rather than each creating
+        // their own — a real GPU rejects a bind group built against a
+        // different (even if structurally identical) layout.
+        let acrylic_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("acrylic_bind_group_layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
         let bg_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("bg_pipeline_layout"),
-            bind_group_layouts: &[],
+            bind_group_layouts: &[&acrylic_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -152,9 +193,8 @@ impl WgpuState {
                     array_stride: std::mem::size_of::<BgVertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     // Sprint 5-15 / UI/UX v2 Phase 1, extended by UI/UX v3
-                    // P2a: position + color + (SDF rect_center,
-                    // rect_half_size, corner_radius) + (shadow_softness,
-                    // stroke_width). Must stay in sync with the reload
+                    // P2a (shadow_softness, stroke_width) and P2b
+                    // (acrylic_mix). Must stay in sync with the reload
                     // layout in `shader_reload.rs`.
                     attributes: &wgpu::vertex_attr_array![
                         0 => Float32x2,
@@ -164,6 +204,7 @@ impl WgpuState {
                         4 => Float32,
                         5 => Float32,
                         6 => Float32,
+                        7 => Float32,
                     ],
                 }],
                 compilation_options: Default::default(),
@@ -360,6 +401,7 @@ impl WgpuState {
             surface_config,
             present_modes: surface_caps.present_modes,
             bg_pipeline,
+            acrylic_bind_group_layout,
             text_pipeline,
             text_bind_group_layout,
             image_pipeline,
