@@ -37,6 +37,12 @@ mod grid_verts;
 pub(crate) mod overlay;
 mod ui_verts;
 
+// ---- In-app acrylic (UI/UX v3 P2b) ----
+// `AcrylicCaptureState` is not yet wired into `WgpuState` (Task 7 does that),
+// so clippy sees it as dead code until then.
+#[allow(dead_code)]
+mod acrylic;
+
 // ---- Runtime submodules (Sprint 2-1 Phase B/C) ----
 mod app;
 mod event_handler;
