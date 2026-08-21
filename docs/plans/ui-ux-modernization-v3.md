@@ -1,8 +1,9 @@
 # UI/UX Modernization v3 — Fluent Design Foundation
 
-Status: approved 2026-07-30; last reconciled 2026-08-15 (P1 complete:
+Status: approved 2026-07-30; last reconciled 2026-08-21 (P1 complete:
 metric tokens, widget layer, all 9 settings tabs migrated, G11 colour
-migration — a G11 follow-up for out-of-plan sites remains below).
+migration and its follow-up — two sites stay out by decision, recorded
+below; on-device verification remains accepted-as-unverified).
 Target releases: v1.17–v1.21+.
 Execution order: P0 → P1 → P2 → {P3, P4, P5 parallelizable} → P6 → P7.
 Source: successor to `plans/archive/ui-ux-modernization-v2.md` and
@@ -395,20 +396,62 @@ gated behind a spike.
         `BuiltinScheme::palette().bg` — the hand-copied table had visibly
         drifted (dark and gruvbox most) and a new test pins the swatches to
         the scheme list
-  - [ ] G11 follow-up — the #62 sweep surfaced hard-coded colours *outside*
-        the plan's four sites, deliberately left out to keep that PR
-        reviewable: the selection highlights (`SEL_COLOR` duplicated in both
-        `grid_verts` builders, plus copy-mode's near-but-not-equal
-        `CM_SEL_COLOR` — `tokens` now reaches both builders, so this is a
-        one-line change each), the copy-mode cursor, the pane-number badges,
-        the dialog scrim/button colours (`overlay/dialog.rs`; the same scrim
-        literal appears in four files), the picker query/selection colours
-        (`overlay/picker.rs` — the purple/green macro & SSH branding is
-        intentional per its code comments and needs a product decision), the
-        delete-dialog reds that have already drifted apart between `ssh_tab`
-        and `keybindings_tab`, the tab-rename edit colour in `ui_verts`, and
-        the no-palette fallbacks in `color_util::resolve_color`. Shadow
-        quads (`tooltip.rs`, `overlay/util.rs`) are G3's scope, not G11's
+  - [x] G11 follow-up — the out-of-plan sites the #62 sweep surfaced,
+        shipped in three PRs split by surface so each stayed reviewable.
+        Shadow quads (`tooltip.rs`, `overlay/util.rs`) were and remain G3's
+        scope, not G11's
+    - [x] Terminal surfaces — #69. The selection highlight was
+          `[0.25, 0.55, 1.0, 0.40]` duplicated in both `grid_verts`
+          builders and had already drifted into a third value in copy mode
+          (`[0.40, 0.65, 1.0, 0.45]`); all three now call
+          `color_util::selection_color`, so the values cannot drift again.
+          Copy mode's block cursor and the pane-number badge move onto
+          `semantic_warning`, and the tab-rename edit text onto
+          `text_primary` (it was white over the pale `surface_3` a light
+          scheme gives it). The badge needed a second helper,
+          `color_util::on_surface_text`: `text_on_accent` is derived from
+          `accent_primary`'s luminance, so on a dark-accent scheme it picks
+          a *light* label and puts it on a pale yellow badge
+    - [x] Modal scrim + destructive-button reds — #70. The scrim was not
+          "one literal in four files" but an asymmetry: five surfaces veil
+          the screen behind a modal and only the settings panel derived its
+          veil from the scheme, so on a light scheme a black veil sat behind
+          a light panel. All five now call `util::scrim_color`, keeping
+          `surface_0` for the reason the panel already documented in place;
+          alpha stays a parameter because the panel fades its scrim in with
+          the open animation. The delete-dialog reds had drifted further
+          than the plan recorded — not only the focused fill (`[0.498,
+          0.196, 0.196]` against `[0.486, 0.180, 0.180]`) but the resting
+          treatment (dark red against `surface_1`) and the label rule.
+          Both tabs now call `row::danger_button_colors`
+    - [x] Modal dialog buttons — #71. The close-window Kill/Cancel fills
+          and the consent dialog's selected-button fill, via the new
+          `util::danger_fill` / `util::caution_fill`. Kill deliberately does
+          *not* reuse `danger_button_colors`: that helper answers "is this
+          focused", while Kill must read as destructive *before* selection,
+          so it steps between two blend strengths instead. Measuring the
+          labels across all nine built-in schemes produced the one finding
+          worth carrying forward: **no fixed blend strength works.** The
+          error hue at 0.85 lands at a middling luminance on Nord (4.42:1)
+          and `semantic_warning` used raw does the same on Solarized
+          (4.37:1) — luminances where *neither* a near-black nor a
+          near-white label has anything to contrast with. `semantic_fill`
+          therefore walks the blend back toward `surface_1` until the label
+          clears `MIN_TEXT_CONTRAST`, the same shape as
+          `row::ensure_readable`, trading a slightly quieter fill on some
+          schemes for a label that is always readable
+    - [ ] Remainder — two sites stay out, both deliberately, and neither is
+          a mechanical migration:
+      - `overlay/picker.rs`'s query/selection colours. The purple/green
+        macro & SSH branding is intentional per its code comments, so
+        migrating it is **a product decision about whether Nexterm keeps
+        per-feature brand hues at all**, not a token substitution
+      - `color_util::resolve_color`'s no-palette fallbacks (`[0.85, …]` /
+        `[0.05, …]`). `render_frame` builds `scheme_palette` as an
+        unconditional `Some`, so the `None` arm is reachable only from
+        tests: tokenising it would change nothing that renders. (The same
+        line makes the `DesignTokens::default()` branch beside it dead
+        too — worth folding into a future cleanup, not into G11)
 - [ ] CONFIGURATION.md inventory PR
 - [x] P2a soft shadows + stroke attributes — shipped via #63. The BG shader
       gains `shadow_softness` / `stroke_width` vertex attributes (5 → 7;
@@ -480,8 +523,27 @@ gated behind a spike.
     unchecked
   - #64 — the focus ring's accent/surface boundary, which now shares a
     half-pixel of AA instead of meeting as an opaque butt joint
+  - #69 — the selection highlight's new hue per scheme, whether the copy-mode
+    cursor stays distinguishable from the selection now that both derive from
+    the same palette, and the pane-number badge's label
+  - #70 — **the highest-value item in this list.** The scrim is the one place
+    the colour sweep changed what an existing surface *looks like* rather than
+    where its value comes from: four modals that veiled in black now veil in
+    `surface_0`, so on a light scheme they went from a dark veil to a light
+    one. Contrast was reasoned about, never seen
+  - #71 — whether the adaptive step-back leaves Kill visibly red enough on the
+    schemes that trigger it (Nord in particular), and the Cancel-selected fill
+    now that it is a blend rather than a flat yellow
   - The cross-cutting rule above still asks for hand-run screenshots under
     `docs/img/uiux-v3/`. That directory does not exist yet.
+  - What *is* machine-verified for the colour work, and did not exist before
+    it: the contrast floors are now pinned by tests rather than by reasoning
+    — every dialog fill/label pair across all nine built-in schemes (#71),
+    the danger button in both focus states (#70), and the badge label (#69).
+    Two of those tests fail if a hard-coded literal returns, and #71's fails
+    on Nord if the adaptive blend is removed. This does not substitute for
+    looking at the result, but it does mean the *readability* claims here
+    rest on measurement even though the *appearance* claims do not.
 
 ## References
 
