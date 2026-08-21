@@ -1,5 +1,7 @@
 //! Shared helpers used by overlay rendering.
 
+use super::settings::row::MIN_TEXT_CONTRAST;
+
 /// Extract the requesting pane ID from a consent-dialog kind
 pub(super) fn pane_id_for(kind: &crate::state::ConsentKind) -> Option<u32> {
     use crate::state::ConsentKind;
@@ -172,6 +174,78 @@ pub(super) fn scrim_color(tokens: &nexterm_config::DesignTokens, alpha: f32) -> 
     crate::color_util::with_alpha(tokens.surface_0, alpha)
 }
 
+/// Opaque fill for a destructive action: `semantic_error` blended into the
+/// panel's own `surface_1` at `strength`.
+///
+/// The raw ANSI red is deliberately never used as a fill — it leaves no
+/// headroom for a readable label, which is why every call site had been
+/// darkening it by hand before UI/UX v3 (G11 follow-up).
+///
+/// `strength` is what separates the two questions a destructive button
+/// answers. The settings delete dialogs only turn red once focused, so they
+/// step from a barely-tinted rest state to a mid blend. The close-window
+/// dialog's Kill button is red at all times — it sits next to Cancel and must
+/// read as the dangerous one before it is ever selected — so it steps from
+/// that same mid blend to a strong one. Callers pass the pair that carries
+/// their own semantics rather than sharing one focused/unfocused rule.
+pub(super) fn danger_fill(tokens: &nexterm_config::DesignTokens, strength: f32) -> [f32; 4] {
+    semantic_fill(tokens, tokens.semantic_error, strength)
+}
+
+/// Opaque fill for the *safe* side of a destructive choice, and for a
+/// selected button in the consent dialog: `semantic_warning` blended into
+/// `surface_1` the same way [`danger_fill`] blends the error hue.
+///
+/// Blending matters here for a measurable reason, not for symmetry. Used raw,
+/// `semantic_warning` sits at a middling luminance on some schemes — on
+/// Solarized neither a near-black nor a near-white label clears 4.5:1 against
+/// it (the best either extreme manages is 4.37:1). Blending the hue into the
+/// panel surface pulls the fill towards that surface's own end of the range,
+/// which gives the label an extreme to contrast against again.
+pub(super) fn caution_fill(tokens: &nexterm_config::DesignTokens, strength: f32) -> [f32; 4] {
+    semantic_fill(tokens, tokens.semantic_warning, strength)
+}
+
+/// Blend a semantic hue into the panel's `surface_1`, walking the blend back
+/// toward the surface until the label [`crate::color_util::on_surface_text`]
+/// would pick clears [`MIN_TEXT_CONTRAST`] against it.
+///
+/// A fixed strength cannot serve all nine built-in schemes. At 0.85 the error
+/// hue lands at a middling luminance on Nord (4.42:1) and the warning hue does
+/// the same on Solarized (4.37:1) — luminances where neither a near-black nor
+/// a near-white label has anything to contrast with. Stepping back toward the
+/// panel surface always terminates: `surface_1` is derived from the scheme's
+/// background, which is the end of the range a label can always be read
+/// against.
+///
+/// The consequence is that some schemes get a slightly quieter fill than the
+/// caller asked for. That is the intended trade — an unreadable label on a
+/// destructive button is worse than a less saturated one.
+fn semantic_fill(tokens: &nexterm_config::DesignTokens, hue: [f32; 4], strength: f32) -> [f32; 4] {
+    let base = [
+        tokens.surface_1[0],
+        tokens.surface_1[1],
+        tokens.surface_1[2],
+    ];
+    let blend = |s: f32| -> [f32; 4] {
+        let rgb = crate::color_util::composite_over(crate::color_util::with_alpha(hue, s), base);
+        [rgb[0], rgb[1], rgb[2], 1.0]
+    };
+    let mut s = strength;
+    loop {
+        let fill = blend(s);
+        let label = crate::color_util::on_surface_text(fill);
+        let cr = crate::color_util::contrast_ratio(
+            [label[0], label[1], label[2]],
+            [fill[0], fill[1], fill[2]],
+        );
+        if cr >= MIN_TEXT_CONTRAST || s <= 0.05 {
+            return fill;
+        }
+        s -= 0.05;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,6 +297,77 @@ mod tests {
             ]
         );
         assert!((scrim[3] - SCRIM_ALPHA_FLOOR).abs() < 1e-6);
+    }
+
+    /// Every fill the modal dialogs paint a label onto must leave that label
+    /// above the project's 4.5:1 floor, on every built-in scheme.
+    ///
+    /// This is the test that forced `caution_fill` to exist: used raw,
+    /// `semantic_warning` tops out at 4.37:1 on Solarized because neither
+    /// extreme contrasts with a middling luminance. Measured after blending —
+    /// worst cases: 4.63:1 (Gruvbox, Kill selected), 4.83:1 (Dark, Kill
+    /// selected), 4.87:1 (Solarized, Cancel selected).
+    #[test]
+    fn dialog_button_labels_clear_the_contrast_floor() {
+        // Mirrors `row::MIN_TEXT_CONTRAST`, which is scoped to the settings
+        // panel's module tree.
+        const FLOOR: f32 = 4.5;
+        for scheme in [
+            nexterm_config::BuiltinScheme::Dark,
+            nexterm_config::BuiltinScheme::Light,
+            nexterm_config::BuiltinScheme::Gruvbox,
+            nexterm_config::BuiltinScheme::Solarized,
+            nexterm_config::BuiltinScheme::Catppuccin,
+            nexterm_config::BuiltinScheme::Dracula,
+            nexterm_config::BuiltinScheme::Nord,
+            nexterm_config::BuiltinScheme::OneDark,
+            nexterm_config::BuiltinScheme::TokyoNight,
+        ] {
+            let tokens = tokens_for(scheme);
+            let fills = [
+                ("kill resting", danger_fill(&tokens, 0.55)),
+                ("kill selected", danger_fill(&tokens, 0.85)),
+                ("caution selected", caution_fill(&tokens, 0.85)),
+            ];
+            for (name, bg) in fills {
+                let fg = crate::color_util::on_surface_text(bg);
+                let cr =
+                    crate::color_util::contrast_ratio([fg[0], fg[1], fg[2]], [bg[0], bg[1], bg[2]]);
+                assert!(
+                    cr >= FLOOR,
+                    "{scheme:?} {name}: label only reached {cr} against {bg:?}"
+                );
+            }
+        }
+    }
+
+    /// UI/UX v3 (G11 follow-up): every destructive fill across the dialogs is
+    /// one hue at a different strength, so a stronger blend must always read
+    /// as redder. That ordering is what carries both "this is the dangerous
+    /// button" and "and it is the one currently selected"; if it inverted on
+    /// some scheme, the close-window dialog would highlight Kill by making it
+    /// *less* red.
+    #[test]
+    fn danger_fill_gets_redder_with_strength() {
+        let redness = |c: [f32; 4]| c[0] - (c[1] + c[2]) / 2.0;
+        for scheme in [
+            nexterm_config::BuiltinScheme::Dark,
+            nexterm_config::BuiltinScheme::Light,
+            nexterm_config::BuiltinScheme::Gruvbox,
+            nexterm_config::BuiltinScheme::Solarized,
+        ] {
+            let tokens = tokens_for(scheme);
+            let weak = danger_fill(&tokens, 0.18);
+            let mid = danger_fill(&tokens, 0.55);
+            let strong = danger_fill(&tokens, 0.85);
+            assert!(
+                redness(strong) > redness(mid) && redness(mid) > redness(weak),
+                "{scheme:?}: strength does not order by redness ({:?} / {:?} / {:?})",
+                redness(weak),
+                redness(mid),
+                redness(strong)
+            );
+        }
     }
 
     /// Regression guard against a hard-coded black coming back: a light scheme

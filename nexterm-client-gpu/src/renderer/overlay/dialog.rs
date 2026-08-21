@@ -9,7 +9,8 @@ use crate::vertex_util::{add_px_rect, add_string_verts, visual_width};
 
 use super::super::WgpuState;
 use super::util::{
-    SCRIM_ALPHA_FLOOR, draw_overlay_panel, pane_id_for, preview_text, scrim_color, wrap_text,
+    SCRIM_ALPHA_FLOOR, caution_fill, danger_fill, draw_overlay_panel, pane_id_for, preview_text,
+    scrim_color, wrap_text,
 };
 
 impl WgpuState {
@@ -453,14 +454,24 @@ impl WgpuState {
         for (i, btn) in buttons.iter().enumerate() {
             let bw = visual_width(btn) as f32 * cell_w + cell_w * 1.5;
             let is_selected = dialog.selected == i;
+            // UI/UX v3 (G11): the selected fill is the warning hue blended into
+            // the panel surface, not the raw token. Used raw it sits at a
+            // middling luminance on some schemes (Solarized: neither a dark nor
+            // a light label clears 4.5:1 against it); blending gives the label
+            // an extreme to contrast against. The 3 px stripe and the title
+            // above keep the raw hue — they are a line and text, not a fill.
             let bg = if is_selected {
-                warn_color
+                caution_fill(tokens, 0.85)
             } else {
                 tokens.surface_3
             };
             add_px_rect(bx, btn_y, bw, cell_h * 1.4, bg, sw, sh, bg_verts, bg_idx);
+            // UI/UX v3 (G11): the selected button is filled with the warning
+            // hue, so its label is chosen against *that* fill. `text_on_accent`
+            // would answer for `accent_primary` and could put a light label on
+            // a pale yellow button.
             let fg = if is_selected {
-                [0.10, 0.10, 0.10, 1.0]
+                crate::color_util::on_surface_text(bg)
             } else {
                 tokens.text_primary
             };
@@ -590,8 +601,16 @@ impl WgpuState {
         }
 
         // Button row: Kill (left, selected_button == 0) + Cancel (right, selected_button == 1)
+        //
+        // UI/UX v3 (G11): both buttons' fills now come from tokens. Kill keeps
+        // its "red even when not selected" reading — it has to be identifiable
+        // as the destructive choice before the user moves onto it — so it steps
+        // between two `danger_fill` strengths rather than reusing the settings
+        // dialogs' focused/unfocused pair. Cancel keeps its warm selected fill
+        // (the deliberate "you are on the safe side" signal that the consent
+        // dialog already spells with `semantic_warning`).
         let buttons: [(&str, [f32; 4]); 2] = [
-            (&dialog.kill_label, [0.75, 0.25, 0.25, 1.0]),
+            (&dialog.kill_label, danger_fill(tokens, 0.55)),
             (&dialog.cancel_label, tokens.surface_3),
         ];
         let btn_y = py + ph - cell_h * 2.6;
@@ -606,17 +625,20 @@ impl WgpuState {
             // Selected: fill with the accent color; unselected: base color
             let bg = if is_selected {
                 if i == 0 {
-                    [0.95, 0.40, 0.40, 1.0] // Kill selected: vivid red
+                    danger_fill(tokens, 0.85) // Kill selected: strongest red
                 } else {
-                    [0.95, 0.85, 0.40, 1.0] // Cancel selected: yellow (safe side)
+                    caution_fill(tokens, 0.85) // Cancel selected: warm (safe side)
                 }
             } else {
                 *base_bg
             };
             let bw = btn_widths[i];
             add_px_rect(bx, btn_y, bw, cell_h * 1.4, bg, sw, sh, bg_verts, bg_idx);
-            let fg = if is_selected {
-                [0.10, 0.10, 0.10, 1.0]
+            // A semantic fill (either Kill state, or a selected Cancel) needs
+            // its label chosen against that fill; a plain surface fill reads
+            // best in the scheme's own foreground.
+            let fg = if is_selected || i == 0 {
+                crate::color_util::on_surface_text(bg)
             } else {
                 tokens.text_primary
             };

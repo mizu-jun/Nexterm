@@ -26,7 +26,7 @@ use crate::font::FontManager;
 use crate::glyph_atlas::{GlyphAtlas, TextVertex};
 use crate::vertex_util::{add_string_verts, truncate_to_width};
 
-use super::super::util::wrap_text;
+use super::super::util::{danger_fill, wrap_text};
 
 /// WCAG 2.x contrast floor used throughout the settings panel (project
 /// accessibility guideline: see `CLAUDE.md` "UI/UX Guidelines").
@@ -63,9 +63,9 @@ pub(in crate::renderer) fn ensure_readable(
 /// different resting treatments (a dark red against `surface_1`). Both now
 /// derive from `semantic_error`.
 ///
-/// The error hue is blended *into* the panel surface rather than used raw: a
-/// saturated ANSI red leaves no headroom for a readable label, which is
-/// precisely why both call sites had darkened it by hand.
+/// The fills come from [`danger_fill`], which is shared with the close-window
+/// dialog: this is the focused/unfocused pair a *settings* delete button
+/// wants, where red means "focused" rather than "dangerous".
 ///
 /// The two states take their label from different places, and the reason is
 /// measurable rather than aesthetic. The focused fill is red enough that the
@@ -78,23 +78,11 @@ pub(in crate::renderer) fn danger_button_colors(
     tokens: &nexterm_config::DesignTokens,
     focused: bool,
 ) -> ([f32; 4], [f32; 4]) {
-    let tint = |amount: f32| -> [f32; 4] {
-        let base = [
-            tokens.surface_1[0],
-            tokens.surface_1[1],
-            tokens.surface_1[2],
-        ];
-        let rgb = crate::color_util::composite_over(
-            crate::color_util::with_alpha(tokens.semantic_error, amount),
-            base,
-        );
-        [rgb[0], rgb[1], rgb[2], 1.0]
-    };
     if focused {
-        let bg = tint(0.55);
+        let bg = danger_fill(tokens, 0.55);
         (bg, crate::color_util::on_surface_text(bg))
     } else {
-        let bg = tint(0.18);
+        let bg = danger_fill(tokens, 0.18);
         (
             bg,
             ensure_readable(tokens.text_primary, bg, MIN_TEXT_CONTRAST),
