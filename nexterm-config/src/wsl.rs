@@ -91,10 +91,15 @@ pub fn parse_wsl_list_output(bytes: &[u8]) -> Vec<String> {
         bytes
     };
 
-    // Decode pairs of bytes as UTF-16LE.
+    // Decode pairs of bytes as UTF-16LE. `as_chunks` rather than
+    // `chunks_exact`, since the chunk size is a constant
+    // (clippy::chunks_exact_to_as_chunks, new in Rust 1.98); a trailing odd
+    // byte lands in the ignored remainder either way.
     let utf16: Vec<u16> = payload
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| u16::from_le_bytes(*c))
         .collect();
 
     let text = String::from_utf16_lossy(&utf16);
