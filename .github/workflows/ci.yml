@@ -44,11 +44,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run Clippy (warnings as errors)
-        # -A clippy::question_mark: a newer stable clippy expanded this lint and
-        # now flags many pre-existing match/if-let sites across the workspace,
-        # unrelated to current changes. Allow it here (still deny every other
-        # warning) until a dedicated `cargo clippy --fix` cleanup pass lands.
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings -A clippy::question_mark
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Build
         run: cargo build --workspace --all-targets
