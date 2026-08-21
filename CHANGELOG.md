@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for `[gpu] custom_bg_shader`: existing 5-attribute custom shaders keep
   working; the new attributes are available at `@location(5)` /
   `@location(6)`.
+- Settings focus rings are drawn as outlines rather than as stacked filled
+  rectangles (UI/UX v3 P2a follow-up): the ring's two bands now use the
+  shader's `stroke_width` attribute, so a focused control no longer repaints
+  the area inside the ring twice. Geometry is unchanged; the boundary between
+  the accent and surface bands gains a shared half-pixel of anti-aliasing.
 
 ### Fixed
 - Translucent windows (`window.background_opacity < 1.0`) no longer look

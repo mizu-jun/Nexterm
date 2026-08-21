@@ -26,7 +26,9 @@ pub(crate) use slider::slider_track_rect;
 
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
-use crate::vertex_util::{add_px_rounded_rect_sdf, add_string_verts, truncate_to_width};
+use crate::vertex_util::{
+    add_px_rounded_rect_sdf, add_px_stroke_sdf, add_string_verts, truncate_to_width,
+};
 
 use super::super::settings::row::{MIN_TEXT_CONTRAST, ensure_readable};
 use super::spec::{WidgetKind, WidgetRect, WidgetSpec};
@@ -218,6 +220,14 @@ fn draw_label(
 ///
 /// The ring is painted *outside* `rect`, so a caller that must keep it within
 /// a row's bounds (a full-row control) passes an inset rectangle.
+///
+/// Both bands are real outlines (UI/UX v3 P2a's `stroke_width` attribute).
+/// They used to be two stacked *fills*, where the inner rect repainted the
+/// whole control area only to be covered again by the row fill and then by the
+/// control — invisible while every surface is opaque, but a double blend the
+/// moment one is not (which is where P2b's acrylic is heading). The two bands
+/// now meet with a shared half-pixel of anti-aliasing instead of an opaque
+/// butt joint, which is the one visible difference.
 pub(super) fn draw_focus_ring(
     rect: WidgetRect,
     theme: &WidgetTheme<'_>,
@@ -225,25 +235,27 @@ pub(super) fn draw_focus_ring(
 ) {
     let t = FOCUS_RING_PX;
     let r = theme.metrics.radius.control;
-    add_px_rounded_rect_sdf(
+    add_px_stroke_sdf(
         rect.x - t * 2.0,
         rect.y - t * 2.0,
         rect.w + t * 4.0,
         rect.h + t * 4.0,
         r + t * 2.0,
         theme.tokens.accent_primary,
+        t,
         theme.sw,
         theme.sh,
         sink.bg_verts,
         sink.bg_idx,
     );
-    add_px_rounded_rect_sdf(
+    add_px_stroke_sdf(
         rect.x - t,
         rect.y - t,
         rect.w + t * 2.0,
         rect.h + t * 2.0,
         r + t,
         theme.tokens.surface_2,
+        t,
         theme.sw,
         theme.sh,
         sink.bg_verts,
@@ -284,6 +296,14 @@ pub(super) mod test_support {
     pub(in crate::renderer::overlay::widgets::draw) fn bg_quads(
         f: impl FnOnce(&WidgetTheme<'_>, &mut WidgetSink<'_>),
     ) -> usize {
+        bg_vertices(f).len() / 4
+    }
+
+    /// Collect the background vertices a drawing closure emits, for the tests
+    /// that assert on the SDF metadata rather than on the quad count alone.
+    pub(in crate::renderer::overlay::widgets::draw) fn bg_vertices(
+        f: impl FnOnce(&WidgetTheme<'_>, &mut WidgetSink<'_>),
+    ) -> Vec<BgVertex> {
         let tokens = nexterm_config::DesignTokens::default();
         let metrics = nexterm_config::MetricTokens::default();
         let theme = WidgetTheme {
@@ -302,7 +322,7 @@ pub(super) mod test_support {
             text_idx: &mut ti,
         };
         f(&theme, &mut sink);
-        bv.len() / 4
+        bv
     }
 }
 
@@ -334,9 +354,34 @@ mod tests {
     }
 
     #[test]
-    fn the_focus_ring_is_two_concentric_rects() {
+    fn the_focus_ring_is_two_outline_quads() {
+        // UI/UX v3 P2a follow-up: the ring used to be two *filled* rects, the
+        // inner one repainting the whole control area just to be covered again
+        // by the row fill and the control. Both bands are now real outlines, so
+        // nothing but the ring itself is painted.
         let rect = WidgetRect::new(10.0, 10.0, 100.0, 20.0);
-        assert_eq!(bg_quads(|t, s| draw_focus_ring(rect, t, s)), 2);
+        let verts = bg_vertices(|t, s| draw_focus_ring(rect, t, s));
+        assert_eq!(verts.len() / 4, 2);
+        for v in &verts {
+            assert_eq!(v.stroke_width, FOCUS_RING_PX);
+            // Strokes and shadows are separate shader branches; a ring must
+            // not accidentally ask for a penumbra as well.
+            assert_eq!(v.shadow_softness, 0.0);
+        }
+    }
+
+    #[test]
+    fn the_focus_ring_keeps_its_pre_stroke_geometry() {
+        // The outer band still starts two ring widths outside the rect, which
+        // is the amount `list::focus_rect` insets a row by; moving it would let
+        // the ring bleed onto the neighbouring list entries.
+        let rect = WidgetRect::new(100.0, 100.0, 200.0, 24.0);
+        let verts = bg_vertices(|t, s| draw_focus_ring(rect, t, s));
+        let t = FOCUS_RING_PX;
+        assert_eq!(verts[0].rect_center, [200.0, 112.0]);
+        assert_eq!(verts[0].rect_half_size, [100.0 + t * 2.0, 12.0 + t * 2.0]);
+        assert_eq!(verts[4].rect_center, [200.0, 112.0]);
+        assert_eq!(verts[4].rect_half_size, [100.0 + t, 12.0 + t]);
     }
 
     #[test]
