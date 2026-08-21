@@ -26,6 +26,43 @@ Later-loaded values take precedence. Values set in TOML can be overridden by Lua
 
 ## nexterm.toml Reference
 
+> **Unknown keys are ignored silently.** The parser does not reject keys it
+> does not recognise, so a typo — or a key copied from an older revision of
+> this document — produces no error and no effect. If a setting appears to do
+> nothing, check its spelling against the tables below first.
+
+### Top-level keys
+
+Keys that live at the root of `nexterm.toml`, outside any table.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `api_version` | String | `"1.0"` | Configuration schema version |
+| `language` | String | `"auto"` | UI language: `auto` (detect from the OS), `en`, `ja`, `zh-CN`, `ko`, `de`, `fr`, `es`, `it` |
+| `leader_key` | String | `"ctrl+b"` | Leader key for prefixed bindings (tmux-style). See [`[[keys]]`](#keys--key-bindings) |
+| `scrollback_lines` | usize | `50000` | Scrollback buffer size — [detailed below](#scrollback_lines--scrollback-buffer-size) |
+| `cursor_style` | String | `"block"` | Cursor shape: `block`, `beam`, `underline`. Blink and motion live in [`[cursor]`](#cursor--cursor-blink--motion) |
+| `auto_check_update` | bool | `true` | Query the GitHub Releases API for a newer version five seconds after startup |
+| `colors_follow_system` | bool | `false` | Follow the OS light/dark preference instead of using `[colors]` unchanged |
+| `colors_light` | String | — | Built-in scheme to use while the OS reports **light**. Only consulted when `colors_follow_system = true`; unset falls back to `light` |
+| `colors_dark` | String | — | Built-in scheme to use while the OS reports **dark**. Only consulted when `colors_follow_system = true`; unset falls back to `tokyonight` |
+| `active_profile` | String | — | Name of the profile to apply — see [`[[profiles]]`](#profiles--named-configuration-profiles) |
+| `plugin_dir` | String | platform default | WASM plugin directory. Default: `~/.config/nexterm/plugins` (Linux/macOS), `%APPDATA%\nexterm\plugins` (Windows) |
+| `plugins_disabled` | bool | `false` | Disable the plugin runtime entirely |
+
+```toml
+api_version = "1.0"
+language = "ja"
+leader_key = "ctrl+b"
+cursor_style = "beam"
+auto_check_update = true
+
+# Follow the OS theme, choosing between two built-in schemes.
+colors_follow_system = true
+colors_light = "gruvbox"
+colors_dark = "tokyonight"
+```
+
 ### `[font]` — Font Settings
 
 | Key | Type | Default | Description |
@@ -63,6 +100,28 @@ font_fallbacks = ["Noto Sans CJK JP", "Noto Color Emoji", "Symbols Nerd Font"]
 [colors]
 scheme = "tokyonight"
 ```
+
+### `[inactive_pane_hsb]` — Dimming Unfocused Panes
+
+How an unfocused pane is visually pushed back when a window is split.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `hue` | f32 | `1.0` | Hue multiplier. **Currently a no-op** (see below) |
+| `saturation` | f32 | `0.6` | Saturation multiplier, `0.0`–`1.0`. `1.0` = untouched, `0.0` = grayscale |
+| `brightness` | f32 | `0.85` | Brightness multiplier, `0.0`–`1.0`. `1.0` = no dimming, `0.0` = black |
+
+```toml
+[inactive_pane_hsb]
+saturation = 0.6
+brightness = 0.85
+```
+
+A true HSB transform needs a post-process shader pass. The current
+implementation approximates it with a flat overlay: `brightness < 1.0` paints
+black at alpha `1.0 - brightness`, and `saturation < 1.0` mixes that overlay
+toward mid grey. A real hue shift is not possible this way, so `hue` is
+accepted and ignored.
 
 ### `[shell]` — Shell Settings
 
@@ -144,28 +203,170 @@ macos_window_background_blur = 20
 decorations = "notitle"
 ```
 
-### `[terminal]` — Terminal Feature Settings
+### `[cursor]` — Cursor Blink & Motion
+
+The cursor's *shape* is the top-level `cursor_style` key; this table controls
+how it blinks and moves.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `alt_screen_buffer` | bool | `true` | Alternate screen buffer support (SMCUP/RMCUP) |
-| `dec_mode_47_1047_1049` | bool | `true` | DEC Private Mode 47/1047/1049 support |
-| `osc_window_title` | bool | `true` | OSC 0/1/2 window title support |
-| `osc_notifications` | bool | `true` | OSC 9 desktop notification support |
-| `cjk_width` | bool | `true` | Accurate CJK character width calculation |
-| `ime_support` | bool | `true` | IME (Input Method Editor) support |
+| `blink_enabled` | bool | `true` | Blink the cursor (matches xterm) |
+| `blink_interval_ms` | u32 | `530` | Blink half-period in ms — one full on/off cycle is twice this. Values below 50 ms are clamped at render time to avoid flicker |
+| `smooth_motion` | bool | `true` | Interpolate the cursor between cells as it moves. `false` snaps it immediately |
 
 ```toml
-[terminal]
-alt_screen_buffer = true
-dec_mode_47_1047_1049 = true
-osc_window_title = true
-osc_notifications = true
-cjk_width = true
-ime_support = true
+cursor_style = "beam"
+
+[cursor]
+blink_enabled = true
+blink_interval_ms = 530
+smooth_motion = true
 ```
 
-The alternate screen buffer is used by applications such as `less`, `vim`, and `htop` to clear the display and switch between views.
+### `[ui]` — Chrome Rounding
+
+Corner radii, in pixels, for the SDF rounded-rect background pipeline. Setting a
+radius to `0.0` produces pixel-identical output to a build without rounding.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `corner_radius_chrome` | f32 | `10.0` | Tab pills, focused-pane outline, banners |
+| `corner_radius_overlay` | f32 | `10.0` | Command palette, settings panel, dialogs |
+
+Negative values are clamped to `0.0`.
+
+```toml
+[ui]
+corner_radius_chrome = 10.0
+corner_radius_overlay = 10.0
+```
+
+### `[animations]` — Motion
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `true` | Master switch. When `false`, every animation applies instantly regardless of `intensity` |
+| `intensity` | String | `"normal"` | `off`, `subtle` (×0.5), `normal` (×1.0), `energetic` (×1.5) |
+
+For a reduced-motion preference, set `enabled = false` or `intensity = "off"` —
+both make every duration 0 ms.
+
+```toml
+[animations]
+enabled = true
+intensity = "subtle"
+```
+
+### `[scrolling]` — Wheel & Touchpad
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `multiplier` | f32 | `3.0` | Rows per discrete wheel notch. Clamped to `1.0..=20.0` |
+| `momentum` | bool | `false` | Continue touchpad scrolls with simulated inertia after the fingers lift. Applies to pixel-precision (touchpad) scrolling only — a discrete wheel never gets inertia |
+
+`momentum` is off by default because Windows precision touchpads and macOS
+already synthesize inertial events at the OS level; it mainly helps on
+Linux/X11.
+
+```toml
+[scrolling]
+multiplier = 3.0
+momentum = false
+```
+
+### `[gpu]` — Renderer
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `fps_limit` | u32 | `60` | Frame-rate cap. `0` = unlimited |
+| `atlas_size` | u32 | `2048` | Square glyph-atlas size in pixels. `4096` helps on high-DPI displays or with very large fonts |
+| `present_mode` | String | `"mailbox"` | `fifo` (vsync, tearing-free, ~16 ms more latency at 60 Hz), `mailbox` (low latency), `auto` (the adapter chooses) |
+| `custom_bg_shader` | String | — | Path to a WGSL shader replacing the background-rectangle shader |
+| `custom_text_shader` | String | — | Path to a WGSL shader replacing the glyph shader |
+
+`mailbox` falls back to `fifo` automatically where it is unsupported (some
+Wayland compositors).
+
+```toml
+[gpu]
+fps_limit = 60
+atlas_size = 2048
+present_mode = "mailbox"
+```
+
+#### Custom shaders
+
+Both shaders must define `@vertex fn vs_main` and `@fragment fn fs_main`.
+
+- **Background** vertex input (7 attributes): `position: vec2<f32>`,
+  `color: vec4<f32>`, `rect_center: vec2<f32>`, `rect_half_size: vec2<f32>`,
+  `corner_radius: f32`, `shadow_softness: f32`, `stroke_width: f32`. The last
+  two were added for soft shadows and outlines; a shader reading only the first
+  five keeps working, because wgpu only requires that shader inputs be a subset
+  of the buffer layout.
+- **Text** vertex input: `position: vec2<f32>`, `uv: vec2<f32>`,
+  `color: vec4<f32>`. Bindings: `@group(0) @binding(0)` is the glyph texture,
+  `@binding(1)` its sampler.
+
+> **The fragment output must be premultiplied alpha (`rgb * a`).** Every
+> pipeline blends with `PREMULTIPLIED_ALPHA_BLENDING` against a premultiplied
+> surface. A shader written for straight alpha will look wrong wherever it is
+> not fully opaque.
+
+```toml
+[gpu]
+custom_bg_shader = "~/.config/nexterm/shaders/crt.wgsl"
+```
+
+### `[quake_mode]` — Drop-down Window
+
+Slides the window in from a screen edge on a global hotkey — the "hotkey
+window" of Guake, Tilix and iTerm2.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | When `false`, no hotkey is registered |
+| `hotkey` | String | `"ctrl+\`"` | Modifiers joined with `+`: `ctrl` / `alt` / `shift` / `super` (or `meta` / `cmd` / `win`), last token is the key |
+| `edge` | String | `"top"` | Anchor edge: `top`, `bottom`, `left`, `right` |
+| `height_pct` | u8 | `45` | Percentage of screen height (1–100), for a top/bottom edge |
+| `width_pct` | u8 | `100` | Percentage of screen width (1–100) |
+| `animation_ms` | u32 | `150` | Slide duration. `0` disables the animation |
+| `always_on_top` | bool | `true` | Keep the window topmost while visible |
+| `minimize_on_hide` | bool | `false` | Minimize when hiding instead of just hiding. On macOS this maps to `Hide`, which also removes the window from the Dock — leaving it `false` is recommended there |
+
+```toml
+[quake_mode]
+enabled = true
+hotkey = "ctrl+`"
+edge = "top"
+height_pct = 45
+animation_ms = 150
+```
+
+> **Wayland**: global hotkeys can only be registered through the compositor by
+> spec, so the hotkey works on Windows, macOS and Linux/X11 but **not on
+> Wayland**. On Wayland, bind `nexterm-ctl quake toggle` in your compositor
+> config instead.
+
+### Terminal features (always on — not configurable)
+
+These behaviours are unconditional and have **no configuration keys**:
+
+| Feature | Notes |
+|---------|-------|
+| Alternate screen buffer (SMCUP/RMCUP) | Used by `less`, `vim`, `htop` and friends to swap the display and restore it on exit |
+| DEC Private Mode 47 / 1047 / 1049 | The escape-sequence variants of the same mechanism |
+| OSC 0 / 1 / 2 window title | The window and tab titles follow what the application sets |
+| OSC 9 / 777 desktop notifications | Gated by consent policy, not by an on/off switch — see [`[security]`](#security--consent-policy) |
+| CJK width calculation | East-Asian wide characters occupy two cells |
+| IME (Input Method Editor) | Pre-edit composition is drawn inline |
+
+> **Removed from this document:** earlier revisions described a `[terminal]`
+> table with a boolean for each row above. **No such table has ever existed in
+> the code.** Because unknown keys are ignored silently, a config written
+> against that section parsed without complaint and changed nothing. If your
+> `nexterm.toml` still carries a `[terminal]` block, it is dead weight and can
+> be deleted.
 
 ### `[tab_bar]` — Tab Bar (WezTerm style)
 
@@ -271,12 +472,20 @@ Pre-register SSH connection targets. Registered hosts can be selected and connec
 | `username` | String | — | Username (required) |
 | `auth_type` | String | `"key"` | Authentication method: `"password"`, `"key"`, `"agent"` |
 | `key_path` | String | — | Path to private key file (when `auth_type = "key"`) |
-| `proxy_jump` | String | — | ProxyJump hostname (for multi-hop connections) |
-| `socks5_proxy` | String | — | SOCKS5 proxy address (`host:port` format) |
-| `local_forwards` | Table[] | — | Local port forwarding configuration |
-| `forward_remote` | Table[] | — | Remote port forwarding configuration (`-R`) |
+| `proxy_jump` | String | — | ProxyJump host — the `name` of another entry in `hosts` |
+| `forward_local` | String[] | `[]` | Local port forwards, each `"<local>:<host>:<remote>"` |
+| `forward_remote` | String[] | `[]` | Remote port forwards (`-R`), each `"<remote>:<host>:<local>"` |
 | `x11_forward` | bool | `false` | Enable X11 forwarding (equivalent to `ssh -X`) |
 | `x11_trusted` | bool | `false` | Trusted X11 forwarding (equivalent to `ssh -Y`, takes precedence over `x11_forward`) |
+| `group` | String | `""` | Free-form group name used to categorise hosts in the manager |
+| `tags` | String[] | `[]` | Labels used for filtering in the host manager |
+
+> Earlier revisions of this document listed a `socks5_proxy` key and described
+> the forwards as tables (`[[hosts.local_forwards]]` with `local_port` /
+> `remote_host` / `remote_port`). **Neither matches the code**: there is no
+> SOCKS5 key, and both forward lists are arrays of strings. Since unknown keys
+> are ignored silently, a config written that way connected with no forwarding
+> and no warning.
 
 #### SSH Authentication Methods
 
@@ -286,13 +495,15 @@ Pre-register SSH connection targets. Registered hosts can be selected and connec
 
 #### Local Port Forwarding
 
-Maps a local port to a remote host:port.
+Maps a local port onto a `host:port` reachable from the SSH server. Each entry
+is a single string, in the same `<local>:<host>:<remote>` order `ssh -L` uses.
 
 ```toml
-[[hosts.local_forwards]]
-local_port = 8080
-remote_host = "localhost"
-remote_port = 3000
+[[hosts]]
+name = "App Server"
+host = "app.internal"
+username = "deploy"
+forward_local = ["8080:localhost:3000"]
 ```
 
 #### SSH Host Configuration Examples
@@ -342,9 +553,8 @@ port = 22
 username = "user"
 auth_type = "key"
 key_path = "~/.ssh/id_rsa"
-socks5_proxy = "proxy.example.com:1080"
 
-# With local port forwarding
+# With local port forwarding, a group and tags
 [[hosts]]
 name = "DB Server"
 host = "db.internal"
@@ -352,11 +562,9 @@ port = 22
 username = "dbadmin"
 auth_type = "key"
 key_path = "~/.ssh/db_key"
-
-[[hosts.local_forwards]]
-local_port = 5432
-remote_host = "localhost"
-remote_port = 5432
+forward_local = ["5432:localhost:5432"]
+group = "production"
+tags = ["db", "postgres"]
 ```
 
 #### Remote Port Forwarding (`-R`)
@@ -371,11 +579,7 @@ port = 22
 username = "user"
 auth_type = "key"
 key_path = "~/.ssh/id_ed25519"
-
-[[hosts.forward_remote]]
-remote_port = 9090
-local_host  = "localhost"
-local_port  = 9090
+forward_remote = ["9090:localhost:9090"]
 ```
 
 #### Known Hosts Verification
@@ -420,6 +624,68 @@ ws://localhost:7681/ws?session=main&token=your-secret-token
 > Always set a `token` if you are using this locally.
 
 ---
+
+### `[security]` — Consent Policy
+
+Governs operations a remote program can ask the terminal to perform. Each policy
+is `allow`, `deny`, or `prompt` (show a modal and let the user decide).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `external_url` | String | `"prompt"` | Opening a URL via an OSC 8 hyperlink or Ctrl+click |
+| `osc52_clipboard` | String | `"prompt"` | An OSC 52 clipboard-write request |
+| `osc_notification` | String | `"prompt"` | An OSC 9 / 777 desktop-notification request |
+| `osc52_max_bytes` | usize | `1048576` | Hard cap (1 MiB) on an OSC 52 write. Larger requests are rejected outright, whatever the policy says |
+| `notification_max_bytes` | usize | `4096` | Cap on notification text. Excess is truncated |
+| `plugin_read` | String | `"deny"` | Whether WASM plugins may read terminal contents (`read_pane` / `read_grid` / `read_scrollback`) |
+| `plugin_read_max_bytes` | usize | `1048576` | Cap on a single plugin read. Larger results are truncated at a UTF-8 boundary (text) or byte boundary (grid dump) |
+
+```toml
+[security]
+external_url = "prompt"
+osc52_clipboard = "prompt"
+osc_notification = "prompt"
+plugin_read = "deny"
+```
+
+> **`plugin_read` defaults to `deny`, not `prompt`.** The plugin read API is an
+> information-egress channel and stays off until an operator opts in. There is
+> no synchronous prompt path for a server-side plugin call, so **`prompt` is
+> treated as `deny`** rather than silently allowing the read.
+
+### `[hooks]` — Event Hooks
+
+Commands or Lua functions run when a terminal event fires. Every field is
+optional.
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `on_pane_open` | String | Shell command run when a pane opens |
+| `on_pane_close` | String | Shell command run when a pane closes |
+| `on_session_start` | String | Shell command run when a session starts |
+| `on_attach` | String | Shell command run when a client attaches |
+| `on_detach` | String | Shell command run when a client detaches |
+| `lua_on_pane_open` | String | Name of a Lua function to call on pane open |
+| `lua_on_pane_close` | String | Name of a Lua function to call on pane close |
+| `lua_on_session_start` | String | Name of a Lua function to call on session start |
+| `lua_on_attach` | String | Name of a Lua function to call on attach |
+| `lua_on_detach` | String | Name of a Lua function to call on detach |
+
+Shell hooks run through `sh -c` with `$NEXTERM_PANE_ID` and `$NEXTERM_SESSION`
+available. Lua hooks take the *name* of a function defined in `nexterm.lua`.
+
+```toml
+[hooks]
+on_pane_open = "echo pane $NEXTERM_PANE_ID opened >> ~/nexterm.log"
+lua_on_session_start = "on_session_start"
+```
+
+```lua
+-- nexterm.lua
+function on_session_start(session)
+  print("session started: " .. session)
+end
+```
 
 ### `[[macros]]` — Lua Macro Definitions
 
@@ -500,15 +766,45 @@ mode 0600, capped at 10 000 entries.
 
 ---
 
-### `[[serial]]` — Serial Port Connection
+### `[[serial_ports]]` — Serial Port Presets
 
-Serial port settings used by `ConnectSerial` in the command palette can be entered directly in the connection dialog or specified via the protocol.
+Named serial-port presets. Each entry is one connection you can pick without
+retyping its parameters.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `name` | String | — | Display name (required) |
+| `port` | String | — | Device path — e.g. `/dev/ttyUSB0`, `COM3` (required) |
+| `baud_rate` | u32 | `115200` | Baud rate |
+| `data_bits` | u8 | `8` | Data bits: 5, 6, 7 or 8 |
+| `stop_bits` | u8 | `1` | Stop bits: 1 or 2 |
+| `parity` | String | `"none"` | Parity: `"none"`, `"odd"`, `"even"` |
+
+```toml
+[[serial_ports]]
+name = "Arduino"
+port = "/dev/ttyUSB0"
+baud_rate = 115200
+
+[[serial_ports]]
+name = "Router console"
+port = "/dev/ttyUSB1"
+baud_rate = 9600
+data_bits = 8
+stop_bits = 1
+parity = "none"
+```
+
+> The table name is `serial_ports`, **not `serial`** — earlier revisions of this
+> document titled this section `[[serial]]`, which the parser ignores.
+
+You can also connect ad hoc without a preset: `ConnectSerial` in the command
+palette prompts for the port and baud rate, and a key binding can pass them
+directly.
 
 ```
 ConnectSerial { path: "/dev/ttyUSB0", baud: 115200 }
 ```
-
-Selecting `Connect Serial` from the command palette displays an input prompt for the port and baud rate.
 
 ---
 
@@ -522,13 +818,8 @@ Settings for logging PTY output.
 | `log_dir` | String | — | Directory to save log files |
 | `timestamp` | bool | `false` | Prepend a `[HH:MM:SS]` timestamp to each line |
 | `strip_ansi` | bool | `false` | Strip ANSI escape sequences from log files |
-| `max_log_size` | u64 | `104857600` | Maximum log file size in bytes (default: 100MB) |
-| `log_template` | String | — | Log filename template (supports `{session}`, `{date}`, `{time}`) |
-| `binary` | bool | `false` | Binary PTY log mode — records raw bytes alongside text logs |
-
-#### Log Rotation
-
-When a log file reaches the size limit, rotation runs automatically. Existing files are renamed with `.1`, `.2`, ... suffixes, and new log data is written to a new file.
+| `file_name_template` | String | — | Log filename template (see below). Unset uses the directory plus a fixed file name |
+| `binary_log` | bool | `false` | Also write raw PTY bytes to a `.bin` file next to the text log |
 
 ```toml
 [log]
@@ -536,25 +827,40 @@ auto_log = true
 log_dir = "~/nexterm-logs"
 timestamp = true
 strip_ansi = true
-max_log_size = 52428800    # 50MB
-log_template = "{session}_{date}_{time}.log"   # e.g. main_2026-03-30_14-23-01.log
-binary = false
+file_name_template = "{session}_{pane}_{datetime}.log"
+binary_log = false
 ```
 
 #### Log Filename Template
 
-The following placeholders are available in `log_template`:
+Placeholders available in `file_name_template`:
 
 | Placeholder | Expanded value | Example |
 |-------------|---------------|---------|
 | `{session}` | Session name | `main` |
-| `{date}` | Date `YYYY-MM-DD` | `2026-03-30` |
-| `{time}` | Time `HH-MM-SS` | `14-23-01` |
+| `{pane}` | Pane ID | `3` |
+| `{datetime}` | Start time, `YYYYMMDD_HHMMSS` | `20260330_142301` |
 
 ```toml
-# Example: "work_2026-03-30_14-23-01.log"
-log_template = "{session}_{date}_{time}.log"
+# Produces e.g. "work_3_20260330_142301.log"
+file_name_template = "{session}_{pane}_{datetime}.log"
 ```
+
+#### Log size and rotation (current limitation)
+
+**Logs started from `nexterm.toml` are never rotated and grow without bound.**
+There is no size-limit key. Plan for the disk usage of a long-running session,
+or rotate the files with an external tool such as `logrotate`.
+
+The rotation machinery itself exists in the server (rename to `.1`, `.2`, …,
+keeping a bounded number of files), but the config-driven recording path passes
+a limit of `0`, which disables it. Wiring a size limit through to
+`nexterm.toml` is outstanding work.
+
+> Earlier revisions of this document listed a `max_log_size` key defaulting to
+> 100 MB and described rotation as automatic. **Neither was ever true of a
+> config-driven log**: the key does not exist, and — since unknown keys are
+> ignored silently — setting it produced no error and no rotation.
 
 #### Recording in asciinema v2 Format
 
@@ -572,6 +878,47 @@ asciinema play output.cast
 ```
 
 ---
+
+### `[[profiles]]` — Named Configuration Profiles
+
+A profile overrides part of the configuration under a name. Selecting one with
+the top-level `active_profile` key applies its overrides on top of everything
+else; any field left unset keeps the base value.
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `name` | String | Profile name, unique (required) |
+| `icon` | String | Icon shown in tabs and the context menu (emoji or ASCII) |
+| `font` | Table | Overrides `[font]` |
+| `colors` | Table | Overrides `[colors]` |
+| `shell` | Table | Overrides `[shell]` |
+| `scrollback_lines` | usize | Overrides the top-level `scrollback_lines` |
+| `tab_bar` | Table | Overrides `[tab_bar]` |
+| `working_dir` | String | Initial working directory |
+| `env` | Table | Extra environment variables for the launched shell |
+
+```toml
+active_profile = "work"
+
+[[profiles]]
+name = "work"
+icon = "🏢"
+working_dir = "~/projects"
+scrollback_lines = 100000
+
+[profiles.font]
+family = "Hack Nerd Font"
+size = 14.0
+
+[profiles.colors]
+scheme = "catppuccin"
+
+[profiles.env]
+NEXTERM_PROFILE = "work"
+```
+
+> `working_dir` and `env` are consumed when a shell is launched; the other
+> fields are merged into the effective `Config`.
 
 ### `[colors.custom]` — Custom Color Palette
 
@@ -605,8 +952,13 @@ ansi = [
 ## Complete nexterm.toml Example
 
 ```toml
-# Scrollback buffer size
+# Top-level keys
+api_version = "1.0"
+language = "auto"
+leader_key = "ctrl+b"
 scrollback_lines = 10000
+cursor_style = "block"
+auto_check_update = true
 
 [font]
 family = "JetBrains Mono"
@@ -637,12 +989,33 @@ active_tab_bg = "#ae8b2d"
 inactive_tab_bg = "#5c6d74"
 separator = "❯"
 
-[terminal]
-alt_screen_buffer = true
-osc_window_title = true
-osc_notifications = true
-cjk_width = true
-ime_support = true
+[cursor]
+blink_enabled = true
+blink_interval_ms = 530
+smooth_motion = true
+
+[ui]
+corner_radius_chrome = 10.0
+corner_radius_overlay = 10.0
+
+[animations]
+enabled = true
+intensity = "normal"
+
+[scrolling]
+multiplier = 3.0
+momentum = false
+
+[gpu]
+fps_limit = 60
+atlas_size = 2048
+present_mode = "mailbox"
+
+[security]
+external_url = "prompt"
+osc52_clipboard = "prompt"
+osc_notification = "prompt"
+plugin_read = "deny"
 
 [[keys]]
 key = "ctrl+shift+\\"
@@ -688,7 +1061,8 @@ auto_log = false
 log_dir = "~/nexterm-logs"
 timestamp = true
 strip_ansi = true
-max_log_size = 104857600
+file_name_template = "{session}_{pane}_{datetime}.log"
+binary_log = false
 ```
 
 ---
