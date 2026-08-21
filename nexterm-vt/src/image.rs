@@ -297,7 +297,13 @@ pub fn decode_kitty(apc_data: &[u8]) -> Option<DecodedImage> {
                 return None;
             }
             let mut rgba = Vec::with_capacity(rgba_capacity);
-            for chunk in pixel_data[..expected].chunks_exact(3) {
+            // `as_chunks` rather than `chunks_exact`, since the chunk size is a
+            // constant: the loop then works on fixed-size arrays instead of
+            // runtime-length slices (clippy::chunks_exact_to_as_chunks, new in
+            // Rust 1.98). `expected` is an exact multiple of 3, so the
+            // remainder is always empty.
+            let (pixels, _) = pixel_data[..expected].as_chunks::<3>();
+            for chunk in pixels {
                 rgba.extend_from_slice(chunk);
                 rgba.push(255);
             }

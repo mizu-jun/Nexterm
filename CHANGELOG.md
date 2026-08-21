@@ -34,6 +34,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   5-attribute) shader would fail pipeline validation. The reload path now
   mirrors the startup layout.
 
+### Security
+- **`h2` 0.4.13 → 0.4.18 (RUSTSEC-2026-0258)**: a peer could send unbounded
+  empty HTTP/2 DATA frames and keep a connection doing work indefinitely.
+  `h2` backs the web terminal's server stack (`axum` → `hyper`) and the
+  update checker's client stack (`reqwest` → `hyper-rustls`).
+- **`memmap2` 0.9.10 → 0.9.11 (RUSTSEC-2026-0186, unsound)**: an unchecked
+  pointer offset in a transitive dependency of the font stack
+  (`cosmic-text` → `fontdb`) and of the Wayland client-side decorations
+  (`winit` → `sctk-adwaita`).
+
 ## [1.16.0] - 2026-07-31
 
 ### Changed

@@ -408,8 +408,12 @@ impl Perform for Screen {
             // (same PTY write-back path as DA/DSR). Response size is bounded:
             // one reply per query pair and vte caps the OSC parameter count.
             "4" => {
-                let mut pairs = params[1..].chunks_exact(2);
-                for pair in &mut pairs {
+                // `as_chunks::<2>` rather than `chunks_exact(2)`, since the
+                // chunk size is a constant (clippy::chunks_exact_to_as_chunks,
+                // new in Rust 1.98). A trailing unpaired parameter lands in the
+                // ignored remainder, exactly as `chunks_exact` dropped it.
+                let (pairs, _) = params[1..].as_chunks::<2>();
+                for pair in pairs {
                     let Some(index) = std::str::from_utf8(pair[0])
                         .ok()
                         .and_then(|s| s.trim().parse::<u8>().ok())
