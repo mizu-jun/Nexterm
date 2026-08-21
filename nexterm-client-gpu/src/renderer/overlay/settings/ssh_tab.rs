@@ -13,13 +13,14 @@ use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::settings_panel::SettingsPanel;
 use crate::vertex_util::{add_px_rect, add_string_verts};
 
+use super::super::util::{SCRIM_ALPHA_FLOOR, scrim_color};
 use super::super::widgets::draw::{WidgetSink, WidgetTheme, draw_widget};
 use super::super::widgets::geometry::TabGeometry;
 use super::super::widgets::settings_ssh::{
     build_ssh_widgets, ssh_fields_top, ssh_list_window, ssh_note_y,
 };
 use super::layout::LIST_ROW_PITCH;
-use super::row::{MIN_TEXT_CONTRAST, draw_section_header, ensure_readable};
+use super::row::{MIN_TEXT_CONTRAST, danger_button_colors, draw_section_header, ensure_readable};
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::renderer) fn draw_ssh_tab(
@@ -238,7 +239,7 @@ fn draw_delete_dialog(
         py,
         panel_w,
         panel_h,
-        [0.0, 0.0, 0.0, 0.55],
+        scrim_color(tokens, SCRIM_ALPHA_FLOOR),
         sw,
         sh,
         bg_verts,
@@ -280,7 +281,7 @@ fn draw_delete_dialog(
         &nexterm_i18n::fl!("settings-ssh-delete-title"),
         dialog_x + cell_w,
         dialog_y + cell_h * 0.6,
-        [0.984, 0.808, 0.808, 1.0],
+        ensure_readable(tokens.semantic_error, tokens.surface_0, MIN_TEXT_CONTRAST),
         true,
         sw,
         sh,
@@ -341,11 +342,7 @@ fn draw_delete_dialog(
         text_idx,
     );
 
-    let confirm_bg = if confirm_focused {
-        [0.498, 0.196, 0.196, 1.0]
-    } else {
-        [0.235, 0.118, 0.118, 1.0]
-    };
+    let (confirm_bg, confirm_fg) = danger_button_colors(tokens, confirm_focused);
     let confirm_x = dlg_btns_x + dlg_btn_w + dlg_btn_gap;
     add_px_rect(
         confirm_x, dlg_btns_y, dlg_btn_w, dlg_btn_h, confirm_bg, sw, sh, bg_verts, bg_idx,
@@ -354,7 +351,7 @@ fn draw_delete_dialog(
         &nexterm_i18n::fl!("settings-ssh-delete-confirm"),
         confirm_x + cell_w * 0.5,
         dlg_btns_y + cell_h * 0.2,
-        [0.984, 0.808, 0.808, 1.0],
+        confirm_fg,
         confirm_focused,
         sw,
         sh,

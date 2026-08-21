@@ -14,13 +14,14 @@ use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::settings_panel::{KeyEditMode, SettingsPanel};
 use crate::vertex_util::{add_px_rect, add_string_verts};
 
+use super::super::util::{SCRIM_ALPHA_FLOOR, scrim_color};
 use super::super::widgets::draw::{WidgetSink, WidgetTheme, draw_widget};
 use super::super::widgets::geometry::TabGeometry;
 use super::super::widgets::settings_keybindings::{
     build_keybindings_widgets, key_fields_top, key_leader_y, key_list_window,
 };
 use super::layout::LIST_ROW_PITCH;
-use super::row::{MIN_TEXT_CONTRAST, draw_section_header, ensure_readable};
+use super::row::{MIN_TEXT_CONTRAST, danger_button_colors, draw_section_header, ensure_readable};
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::renderer) fn draw_keybindings_tab(
@@ -260,7 +261,7 @@ fn draw_delete_dialog(
         py,
         panel_w,
         panel_h,
-        [0.0, 0.0, 0.0, 0.55],
+        scrim_color(tokens, SCRIM_ALPHA_FLOOR),
         sw,
         sh,
         bg_verts,
@@ -302,7 +303,7 @@ fn draw_delete_dialog(
         &nexterm_i18n::fl!("settings-keybindings-delete-title"),
         dialog_x + cell_w,
         dialog_y + cell_h * 0.6,
-        [0.984, 0.808, 0.808, 1.0],
+        ensure_readable(tokens.semantic_error, tokens.surface_0, MIN_TEXT_CONTRAST),
         true,
         sw,
         sh,
@@ -368,19 +369,10 @@ fn draw_delete_dialog(
     );
 
     let confirm_x = dlg_btns_x + dlg_btn_w + dlg_btn_gap;
-    let confirm_bg = if confirm_focused {
-        [0.486, 0.180, 0.180, 1.0]
-    } else {
-        tokens.surface_1
-    };
+    let (confirm_bg, confirm_fg) = danger_button_colors(tokens, confirm_focused);
     add_px_rect(
         confirm_x, dlg_btns_y, dlg_btn_w, dlg_btn_h, confirm_bg, sw, sh, bg_verts, bg_idx,
     );
-    let confirm_fg = if confirm_focused {
-        [0.984, 0.808, 0.808, 1.0]
-    } else {
-        [0.776, 0.553, 0.553, 1.0]
-    };
     add_string_verts(
         &nexterm_i18n::fl!("settings-keybindings-delete-confirm"),
         confirm_x + cell_w,

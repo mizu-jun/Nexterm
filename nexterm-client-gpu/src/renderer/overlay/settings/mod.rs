@@ -14,7 +14,7 @@
 //!     `keybindings_tab` / `profiles_tab` / `blocks_tab` / `security_tab`:
 //!     one file per [`crate::settings_panel::SettingsCategory`] variant.
 
-use super::util::draw_overlay_panel;
+use super::util::{draw_overlay_panel, scrim_color};
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::state::ClientState;
@@ -120,11 +120,23 @@ impl WgpuState {
         // to track `eased` all the way to 1.0. This keeps the terminal
         // behind it reliably dimmed as soon as the panel appears, instead
         // of being only faintly dimmed for most of the open animation.
-        const SCRIM_ALPHA: f32 = 0.72; // >= 0.55 floor (Phase B3 mitigation)
-        let scrim = tokens.surface_0;
+        // UI/UX v3 (G11 follow-up): this panel's scrim was the only one built
+        // from `surface_0`; the modal dialogs each carried a hard-coded black.
+        // They now share `util::scrim_color`, which keeps its alpha a
+        // parameter so this call site can still fade with the open animation.
+        const SCRIM_ALPHA: f32 = 0.72; // >= SCRIM_ALPHA_FLOOR (Phase B3 mitigation)
         let scrim_alpha = if eased > 0.02 { SCRIM_ALPHA } else { eased };
-        let scrim_color = [scrim[0], scrim[1], scrim[2], scrim_alpha];
-        add_px_rect(0.0, 0.0, sw, sh, scrim_color, sw, sh, bg_verts, bg_idx);
+        add_px_rect(
+            0.0,
+            0.0,
+            sw,
+            sh,
+            scrim_color(tokens, scrim_alpha),
+            sw,
+            sh,
+            bg_verts,
+            bg_idx,
+        );
 
         // Panel size (with left sidebar)
         let panel_w = (sw * 0.72).min(sw - cell_w * 4.0);
