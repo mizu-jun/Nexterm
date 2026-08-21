@@ -45,6 +45,34 @@ impl AcrylicCaptureState {
     }
 }
 
+/// The 4 diagonal taps of one dual-Kawase downsample pass, in texels.
+/// Mirrors the WGSL `kawase_downsample` entry point in `shaders.rs` —
+/// keep the two in sync.
+#[allow(dead_code)] // CPU-side spec for the WGSL shader's tap math; exercised only by its own unit tests (see Task 5).
+pub(crate) fn kawase_downsample_offsets(texel_size: (f32, f32)) -> [(f32, f32); 4] {
+    let (hx, hy) = (texel_size.0 * 0.5, texel_size.1 * 0.5);
+    [(-hx, -hy), (hx, -hy), (-hx, hy), (hx, hy)]
+}
+
+/// The 8 taps of one dual-Kawase upsample pass (4 axis-aligned taps at
+/// 2 texels, weight 1; 4 diagonal taps at 1 texel, weight 2 — applied by
+/// the shader, not encoded here). Mirrors `kawase_upsample` in
+/// `shaders.rs`.
+#[allow(dead_code)] // CPU-side spec for the WGSL shader's tap math; exercised only by its own unit tests (see Task 5).
+pub(crate) fn kawase_upsample_offsets(texel_size: (f32, f32)) -> [(f32, f32); 8] {
+    let (x, y) = texel_size;
+    [
+        (-2.0 * x, 0.0),
+        (2.0 * x, 0.0),
+        (0.0, -2.0 * y),
+        (0.0, 2.0 * y),
+        (-x, y),
+        (x, y),
+        (-x, -y),
+        (x, -y),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,5 +122,30 @@ mod tests {
         state.note_overlay_open_count(0);
         state.note_overlay_open_count(1);
         assert!(state.is_dirty(true));
+    }
+}
+
+#[cfg(test)]
+mod offset_tests {
+    use super::*;
+
+    #[test]
+    fn downsample_offsets_are_symmetric_half_texel() {
+        let offsets = kawase_downsample_offsets((2.0, 4.0));
+        // half-texel = (1.0, 2.0); four diagonal corners.
+        assert_eq!(
+            offsets,
+            [(-1.0, -2.0), (1.0, -2.0), (-1.0, 2.0), (1.0, 2.0)]
+        );
+    }
+
+    #[test]
+    fn upsample_offsets_are_symmetric_full_and_double_texel() {
+        let offsets = kawase_upsample_offsets((2.0, 4.0));
+        assert_eq!(offsets.len(), 8);
+        // The four axis-aligned double-distance taps come first by
+        // construction, then the four single-distance diagonal taps.
+        assert_eq!(offsets[0], (-4.0, 0.0));
+        assert_eq!(offsets[4], (-2.0, 4.0));
     }
 }
