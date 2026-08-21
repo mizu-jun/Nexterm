@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shader's `stroke_width` attribute, so a focused control no longer repaints
   the area inside the ring twice. Geometry is unchanged; the boundary between
   the accent and surface bands gains a shared half-pixel of anti-aliasing.
+- `russh` 0.61.1 → 0.61.2, together with the crypto stack it pins
+  (`curve25519-dalek`, `ed25519-dalek`, the `p256`/`p384`/`p521` family).
+  Upstream fixes in this range are support for SEC1 EC keys that carry full
+  domain parameters, and `Send` bounds on dynamic `AgentClient` references.
 
 ### Fixed
 - Translucent windows (`window.background_opacity < 1.0`) no longer look
