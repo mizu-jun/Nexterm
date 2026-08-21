@@ -49,8 +49,9 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
-        // Selection highlight color (semi-transparent blue)
-        const SEL_COLOR: [f32; 4] = [0.25, 0.55, 1.0, 0.40];
+        // UI/UX v3 (G11): selection highlight takes the accent hue from the
+        // active scheme instead of a hard-coded blue.
+        let sel_color = crate::color_util::selection_color(tokens);
 
         // OSC 4/10/11 dynamic-color overrides (roadmap #10b); `None` in the
         // common no-override case so the lookups are skipped entirely.
@@ -68,7 +69,7 @@ impl WgpuState {
                 let bg = resolve_color_with_overrides(&cell.bg, false, palette, overrides);
                 add_px_rect(px, py, cell_w, cell_h, bg, sw, sh, bg_verts, bg_idx);
                 if mouse_sel.contains(col as u16, row as u16) {
-                    add_px_rect(px, py, cell_w, cell_h, SEL_COLOR, sw, sh, bg_verts, bg_idx);
+                    add_px_rect(px, py, cell_w, cell_h, sel_color, sw, sh, bg_verts, bg_idx);
                 }
             }
 
@@ -642,8 +643,9 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
-        // Selection highlight color (semi-transparent blue)
-        const SEL_COLOR: [f32; 4] = [0.25, 0.55, 1.0, 0.40];
+        // UI/UX v3 (G11): selection highlight takes the accent hue from the
+        // active scheme instead of a hard-coded blue.
+        let sel_color = crate::color_util::selection_color(tokens);
 
         // `tab_bar_h` already includes `padding_y` (the caller passes `grid_offset_y`)
         let off_x = layout.col_offset as f32 * cell_w;
@@ -680,7 +682,7 @@ impl WgpuState {
                 add_px_rect(px, py, cell_w, cell_h, bg, sw, sh, bg_verts, bg_idx);
                 // Selection highlight overlay (focused pane only)
                 if is_focused && mouse_sel.contains(col as u16, row as u16) {
-                    add_px_rect(px, py, cell_w, cell_h, SEL_COLOR, sw, sh, bg_verts, bg_idx);
+                    add_px_rect(px, py, cell_w, cell_h, sel_color, sw, sh, bg_verts, bg_idx);
                 }
                 if cell.ch == ' ' {
                     continue;

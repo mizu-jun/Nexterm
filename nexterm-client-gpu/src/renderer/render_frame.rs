@@ -569,8 +569,12 @@ impl WgpuState {
         // ---- Copy mode overlay (Vi-mode selection highlight + cursor block) ----
         // Drawn outside the pane vertex cache so it is always up-to-date.
         if state.copy_mode.is_active {
-            const CM_SEL_COLOR: [f32; 4] = [0.40, 0.65, 1.0, 0.45];
-            const CM_CURSOR_COLOR: [f32; 4] = [1.0, 1.0, 0.0, 0.60];
+            // UI/UX v3 (G11): copy mode shares the grid's selection colour
+            // (the two literals had drifted apart), and its block cursor takes
+            // the scheme's warning hue instead of a hard-coded yellow — which
+            // was invisible on schemes with a pale background.
+            let cm_sel_color = crate::color_util::selection_color(&tokens);
+            let cm_cursor_color = crate::color_util::with_alpha(tokens.semantic_warning, 0.60);
 
             // Resolve the focused pane's pixel origin and column count.
             let (pane_px, pane_py, pane_cols) = if let Some(pane_id) = state.focused_pane_id
@@ -601,7 +605,7 @@ impl WgpuState {
                                 pane_py + row as f32 * cell_h,
                                 pane_cols as f32 * cell_w,
                                 cell_h,
-                                CM_SEL_COLOR,
+                                cm_sel_color,
                                 sw,
                                 sh,
                                 &mut bg_verts,
@@ -625,7 +629,7 @@ impl WgpuState {
                                     pane_py + row as f32 * cell_h,
                                     (col_end - col_start + 1) as f32 * cell_w,
                                     cell_h,
-                                    CM_SEL_COLOR,
+                                    cm_sel_color,
                                     sw,
                                     sh,
                                     &mut bg_verts,
@@ -644,7 +648,7 @@ impl WgpuState {
                 pane_py + cursor_row as f32 * cell_h,
                 cell_w,
                 cell_h,
-                CM_CURSOR_COLOR,
+                cm_cursor_color,
                 sw,
                 sh,
                 &mut bg_verts,
@@ -654,6 +658,12 @@ impl WgpuState {
 
         // ---- Pane number overlay (when display_panes_mode is enabled) ----
         if state.display_panes_mode {
+            // UI/UX v3 (G11): the badge fill follows the scheme's warning hue,
+            // and its label is chosen against that fill — `text_on_accent`
+            // answers for `accent_primary` only, which would pick a light
+            // label over a pale yellow badge.
+            let badge_bg = crate::color_util::with_alpha(tokens.semantic_warning, 0.90);
+            let badge_fg = crate::color_util::on_surface_text(tokens.semantic_warning);
             let mut sorted_pane_ids: Vec<u32> = state.pane_layouts.keys().copied().collect();
             sorted_pane_ids.sort();
             for (number, pane_id) in sorted_pane_ids.iter().enumerate() {
@@ -662,13 +672,13 @@ impl WgpuState {
                     let py = layout.row_offset as f32 * cell_h + tab_bar_h;
                     let badge_w = cell_w * 2.0;
                     let badge_h = cell_h;
-                    // Yellow background badge
+                    // Badge fill
                     add_px_rect(
                         px,
                         py,
                         badge_w,
                         badge_h,
-                        [0.9, 0.75, 0.0, 0.90],
+                        badge_bg,
                         sw,
                         sh,
                         &mut bg_verts,
@@ -680,7 +690,7 @@ impl WgpuState {
                         &label,
                         px + 2.0,
                         py,
-                        [0.0, 0.0, 0.0, 1.0],
+                        badge_fg,
                         true,
                         sw,
                         sh,
@@ -702,7 +712,7 @@ impl WgpuState {
                     tab_bar_h,
                     cell_w * 2.0,
                     cell_h,
-                    [0.9, 0.75, 0.0, 0.90],
+                    badge_bg,
                     sw,
                     sh,
                     &mut bg_verts,
@@ -713,7 +723,7 @@ impl WgpuState {
                     &label,
                     2.0,
                     tab_bar_h,
-                    [0.0, 0.0, 0.0, 1.0],
+                    badge_fg,
                     true,
                     sw,
                     sh,

@@ -290,6 +290,41 @@ pub(crate) fn with_alpha(color: [f32; 4], alpha: f32) -> [f32; 4] {
     [color[0], color[1], color[2], alpha]
 }
 
+/// Alpha of the terminal selection highlight — low enough that the selected
+/// cells' glyphs still read through the fill drawn over them.
+const SELECTION_ALPHA: f32 = 0.40;
+
+/// Selection-highlight color, shared by the normal grid and by copy mode.
+///
+/// UI/UX v3 (G11 follow-up): the two grid builders and the copy-mode overlay
+/// each carried their own literal, and they had already drifted apart
+/// (`[0.25, 0.55, 1.0, 0.40]` against `[0.40, 0.65, 1.0, 0.45]`). Routing all
+/// three through one helper is what makes a scheme change reach every
+/// selection surface, and what keeps them from drifting again.
+pub(crate) fn selection_color(tokens: &nexterm_config::DesignTokens) -> [f32; 4] {
+    with_alpha(tokens.accent_primary, SELECTION_ALPHA)
+}
+
+/// Pick whichever of near-black / near-white text reads better on `fill`.
+///
+/// `DesignTokens::text_on_accent` answers this question for `accent_primary`
+/// alone. A badge painted in a warm semantic color needs the choice made
+/// against *its own* fill, otherwise a light-on-yellow pairing slips through.
+/// The two extremes match the ones `text_on_accent` chooses between, so both
+/// paths land on the same pair of values.
+pub(crate) fn on_surface_text(fill: [f32; 4]) -> [f32; 4] {
+    const DARK: [f32; 4] = [0.05, 0.05, 0.05, 1.0];
+    const LIGHT: [f32; 4] = [0.97, 0.97, 0.97, 1.0];
+    let fill_rgb = [fill[0], fill[1], fill[2]];
+    if contrast_ratio([DARK[0], DARK[1], DARK[2]], fill_rgb)
+        >= contrast_ratio([LIGHT[0], LIGHT[1], LIGHT[2]], fill_rgb)
+    {
+        DARK
+    } else {
+        LIGHT
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -553,6 +588,83 @@ mod tests {
         for (h, s, b) in [(1.0, 1.0, 1.0), (0.5, 0.5, 0.5), (2.0, 0.0, 0.3)] {
             let out = apply_hsb_multiplier(input, h, s, b);
             assert!(close(out[3], 0.42));
+        }
+    }
+
+    // ---- UI/UX v3 G11 follow-up: shared terminal-surface colours ----
+
+    fn tokens_for(scheme: nexterm_config::BuiltinScheme) -> nexterm_config::DesignTokens {
+        nexterm_config::DesignTokens::from_palette(&scheme.palette())
+    }
+
+    /// The highlight must take the accent hue and stay translucent, or the
+    /// selected cells' text disappears underneath it.
+    #[test]
+    fn selection_color_takes_the_accent_hue_and_stays_translucent() {
+        let tokens = tokens_for(nexterm_config::BuiltinScheme::TokyoNight);
+        let sel = selection_color(&tokens);
+        assert_eq!(
+            [sel[0], sel[1], sel[2]],
+            [
+                tokens.accent_primary[0],
+                tokens.accent_primary[1],
+                tokens.accent_primary[2]
+            ]
+        );
+        assert!(
+            sel[3] > 0.0 && sel[3] < 1.0,
+            "selection alpha must let the cell text show through, got {}",
+            sel[3]
+        );
+    }
+
+    /// Regression guard against a hard-coded literal coming back: two schemes
+    /// with different accents must produce different selection colours.
+    #[test]
+    fn selection_color_follows_the_active_scheme() {
+        let dark = selection_color(&tokens_for(nexterm_config::BuiltinScheme::Dark));
+        let gruvbox = selection_color(&tokens_for(nexterm_config::BuiltinScheme::Gruvbox));
+        assert_ne!(
+            [dark[0], dark[1], dark[2]],
+            [gruvbox[0], gruvbox[1], gruvbox[2]]
+        );
+    }
+
+    /// The pane-number badge draws its label over a warm, opaque-ish fill, so
+    /// the label colour has to follow the fill rather than the accent (which
+    /// is what `text_on_accent` is derived from).
+    #[test]
+    fn on_surface_text_picks_the_readable_extreme() {
+        let on_yellow = on_surface_text([0.9, 0.75, 0.0, 1.0]);
+        assert!(
+            on_yellow[0] < 0.5,
+            "a bright fill needs dark text, got {on_yellow:?}"
+        );
+        let on_near_black = on_surface_text([0.05, 0.05, 0.10, 1.0]);
+        assert!(
+            on_near_black[0] > 0.5,
+            "a dark fill needs light text, got {on_near_black:?}"
+        );
+    }
+
+    /// Whichever extreme is picked, it must clear the WCAG AA floor for
+    /// large text against the fill it sits on.
+    #[test]
+    fn on_surface_text_clears_the_contrast_floor() {
+        for scheme in [
+            nexterm_config::BuiltinScheme::Dark,
+            nexterm_config::BuiltinScheme::Light,
+            nexterm_config::BuiltinScheme::Gruvbox,
+            nexterm_config::BuiltinScheme::Solarized,
+        ] {
+            let tokens = tokens_for(scheme);
+            let fill = tokens.semantic_warning;
+            let text = on_surface_text(fill);
+            let ratio = contrast_ratio([text[0], text[1], text[2]], [fill[0], fill[1], fill[2]]);
+            assert!(
+                ratio >= 3.0,
+                "{scheme:?}: badge label only reached {ratio} against its fill"
+            );
         }
     }
 }
