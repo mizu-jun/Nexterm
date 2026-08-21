@@ -324,7 +324,8 @@ gated behind a spike.
 
 - [x] P0 (SDF half) rounded-rect unification — shipped via #47 (2026-07-30)
 - [x] P0 (compositing half) premultiplied-alpha contract — shipped via #45
-      (2026-07-31; on-device visual checks listed in the PR remain pending)
+      (2026-07-31; the on-device visual checks listed in that PR were never
+      run — see the on-device verification backlog at the end of this section)
 - [x] P1a metric tokens (`metrics.rs`) — `MetricTokens` with the spacing,
       radius, type, elevation and motion ramps
 - [x] P1b widget layer + tooltip — `renderer/overlay/widgets/`, with
@@ -453,6 +454,34 @@ gated behind a spike.
 - [x] P7 spike: Windows 11 snap layouts — answered in production via #49 (2026-07-31)
 - [x] P7 default-on decision — `notitle` default on Windows/Linux via #50 (2026-07-31)
 - [ ] P7 remainder — absorbed into P1 (button widget), P3 (state motion), P5 (macOS coexistence)
+- [ ] **On-device verification backlog — accepted as unverified (2026-08-21).**
+      GPU output is not CI-verifiable, and the visual checks each PR listed have
+      accumulated unrun since #45. The maintainer has decided to carry them
+      forward rather than block further phases on them. **There is no
+      measurement behind this entry: treat every item below as untested, not as
+      passing.** What was never looked at:
+  - #45 — translucency under the premultiplied-alpha contract
+  - #51 / #52 — the shared widget visuals (`Button` outline, `ListItem`
+    selection bar, `KeyCapture` accent frame)
+  - #54 — the 8-row bounded list viewport and its range-indicator row past
+    20 entries
+  - #56 / #57 / #58 — the three migrated list tabs as a whole, in particular
+    Keybindings: the `KeyCapture` recording state, the `invalid` red, and
+    whether the leader-key row, its hint and the duplicate warning overlap
+  - #59 / #60 — keyboard navigation in every category (Tab / ↑ / ↓ / Enter);
+    the counter collapse and the descriptor walk were matched against the old
+    behaviour by reading, then by tests, but never by hand
+  - #62 — the four migrated colour sites in both dark and light schemes:
+    cursor visibility, IME preedit, the OSC 9;4 bar in each state, and the
+    dark / gruvbox swatches
+  - #63 — soft-shadow weight ordering and the alpha 0.45 mapping. The
+    `shadow_params` constants shipped as an initial recipe explicitly meant to
+    be tuned on a real GPU, so these are *expected* to be wrong, not merely
+    unchecked
+  - #64 — the focus ring's accent/surface boundary, which now shares a
+    half-pixel of AA instead of meeting as an opaque butt joint
+  - The cross-cutting rule above still asks for hand-run screenshots under
+    `docs/img/uiux-v3/`. That directory does not exist yet.
 
 ## References
 
