@@ -201,6 +201,66 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
+/// Dual-Kawase blur (Bjørge, "Bandwidth-Efficient Rendering", 2015; the
+/// same downsample/upsample tap pattern Godot and Unity's URP use for
+/// cheap glass-blur effects). UI/UX v3 P2b: the downsample pass halves
+/// resolution each step (4 taps), the upsample pass doubles it back up
+/// (8 taps, weighted 1/1/1/1 axis-aligned + 2/2/2/2 diagonal). Tap
+/// offsets here must match `acrylic::kawase_downsample_offsets` /
+/// `kawase_upsample_offsets` in `renderer/acrylic.rs`.
+#[allow(dead_code)] // wired into render pipelines in Task 6; exercised by its own test until then.
+pub(crate) const KAWASE_BLUR_SHADER: &str = r#"
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+}
+
+// A single oversized triangle covering the full viewport — cheaper than a
+// quad (no index buffer, no diagonal seam) for a fullscreen pass.
+@vertex
+fn vs_fullscreen(@builtin(vertex_index) idx: u32) -> VertexOutput {
+    var out: VertexOutput;
+    let x = f32(i32(idx) - 1) * 2.0;
+    let y = f32(i32(idx & 1u) * 2 - 1) * 2.0;
+    out.clip_position = vec4<f32>(x, y, 0.0, 1.0);
+    out.uv = vec2<f32>(x * 0.5 + 0.5, 1.0 - (y * 0.5 + 0.5));
+    return out;
+}
+
+struct BlurParams {
+    texel_size: vec2<f32>,
+    _pad: vec2<f32>,
+}
+
+@group(0) @binding(0) var src_tex: texture_2d<f32>;
+@group(0) @binding(1) var src_sampler: sampler;
+@group(0) @binding(2) var<uniform> params: BlurParams;
+
+@fragment
+fn fs_downsample(in: VertexOutput) -> @location(0) vec4<f32> {
+    let h = params.texel_size * 0.5;
+    var c = textureSample(src_tex, src_sampler, in.uv + vec2<f32>(-h.x, -h.y));
+    c += textureSample(src_tex, src_sampler, in.uv + vec2<f32>(h.x, -h.y));
+    c += textureSample(src_tex, src_sampler, in.uv + vec2<f32>(-h.x, h.y));
+    c += textureSample(src_tex, src_sampler, in.uv + vec2<f32>(h.x, h.y));
+    return c * 0.25;
+}
+
+@fragment
+fn fs_upsample(in: VertexOutput) -> @location(0) vec4<f32> {
+    let t = params.texel_size;
+    var c = textureSample(src_tex, src_sampler, in.uv + vec2<f32>(-2.0 * t.x, 0.0));
+    c += textureSample(src_tex, src_sampler, in.uv + vec2<f32>(2.0 * t.x, 0.0));
+    c += textureSample(src_tex, src_sampler, in.uv + vec2<f32>(0.0, -2.0 * t.y));
+    c += textureSample(src_tex, src_sampler, in.uv + vec2<f32>(0.0, 2.0 * t.y));
+    c += textureSample(src_tex, src_sampler, in.uv + vec2<f32>(-t.x, t.y)) * 2.0;
+    c += textureSample(src_tex, src_sampler, in.uv + vec2<f32>(t.x, t.y)) * 2.0;
+    c += textureSample(src_tex, src_sampler, in.uv + vec2<f32>(-t.x, -t.y)) * 2.0;
+    c += textureSample(src_tex, src_sampler, in.uv + vec2<f32>(t.x, -t.y)) * 2.0;
+    return c * (1.0 / 12.0);
+}
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,6 +275,7 @@ mod tests {
             ("bg", BG_SHADER),
             ("image", IMAGE_SHADER),
             ("text", TEXT_SHADER),
+            ("kawase_blur", KAWASE_BLUR_SHADER),
         ] {
             let module = wgpu::naga::front::wgsl::parse_str(src)
                 .unwrap_or_else(|e| panic!("{name} shader failed to parse: {e}"));
