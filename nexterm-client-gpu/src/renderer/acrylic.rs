@@ -64,6 +64,26 @@ pub(super) fn panel_acrylic_mix(enabled: bool, strength: f32) -> f32 {
     if enabled { strength } else { 0.0 }
 }
 
+/// Fluent's in-app-acrylic tint opacity: how much of the panel's own token
+/// color (`surface_2`) is mixed back into the blurred backdrop sample before
+/// the result reaches the panel fill, independent of the user-configured
+/// blur strength.
+///
+/// This is deliberately fixed rather than exposed on the settings-panel
+/// slider — the same call the design spec already made for the grain
+/// intensity in `acrylic_noise` (`shaders.rs`). Before this constant existed
+/// the call site passed the user's `in_app_blur_strength` here too, which
+/// made the composite non-monotonic: at the slider's maximum the tint mix
+/// also hit 1.0 and the fill returned to the fully opaque `surface_2` color
+/// — the exact opposite of the design spec (lines 88-90, 180-182), which
+/// requires strength 1.0 to reach "the full blur/tint mix". Feeding a fixed
+/// `0.85` here instead keeps `in_app_blur_strength` (the vertex
+/// `acrylic_mix`) as the only thing that moves the blend, monotonically,
+/// from the opaque fallback (`0.0`) to the full blur/tint mix (`1.0`), while
+/// `0.85` itself keeps the material always reading as a tinted surface
+/// rather than a bare, undistorted window onto the blurred scene.
+pub(super) const ACRYLIC_TINT_OPACITY: f32 = 0.85;
+
 /// The 4 diagonal taps of one dual-Kawase downsample pass, in texels.
 /// Mirrors the WGSL `kawase_downsample` entry point in `shaders.rs` —
 /// keep the two in sync.

@@ -1431,7 +1431,11 @@ impl WgpuState {
                     self.surface_config.width as f32,
                     self.surface_config.height as f32,
                 ],
-                in_app_blur_strength,
+                // Fixed tint opacity, not the user's blur strength — see
+                // `ACRYLIC_TINT_OPACITY`'s doc comment for why decoupling
+                // these two is what makes the blend monotonic in
+                // `in_app_blur_strength` (P2b Task 9 / ruling 9-E).
+                super::acrylic::ACRYLIC_TINT_OPACITY,
             );
             self.acrylic_capture.mark_captured();
         }
