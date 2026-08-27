@@ -14,7 +14,8 @@
 use crate::font::FontManager;
 use crate::glyph_atlas::GlyphAtlas;
 use crate::vertex_util::{
-    add_px_rounded_rect_sdf, add_px_soft_shadow_sdf, add_string_verts, visual_width,
+    add_px_rounded_rect_sdf, add_px_rounded_rect_sdf_with_acrylic, add_px_soft_shadow_sdf,
+    add_string_verts, visual_width,
 };
 
 use super::super::util::shadow_params;
@@ -64,10 +65,16 @@ pub(crate) fn place_tooltip(
 }
 
 /// Draw a tooltip: shadow, border ring, surface, then the text.
+///
+/// `acrylic_mix` reaches the surface fill only — the shadow and border ring
+/// stay opaque, matching how `draw_overlay_panel`'s three-layer chrome treats
+/// acrylic (UI/UX v3 P2b).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_tooltip(
     rect: WidgetRect,
     text: &str,
     theme: &WidgetTheme<'_>,
+    acrylic_mix: f32,
     font: &mut FontManager,
     atlas: &mut GlyphAtlas,
     queue: &wgpu::Queue,
@@ -105,7 +112,7 @@ pub(crate) fn draw_tooltip(
         sink.bg_verts,
         sink.bg_idx,
     );
-    add_px_rounded_rect_sdf(
+    add_px_rounded_rect_sdf_with_acrylic(
         rect.x,
         rect.y,
         rect.w,
@@ -114,6 +121,7 @@ pub(crate) fn draw_tooltip(
         theme.tokens.surface_3,
         theme.sw,
         theme.sh,
+        acrylic_mix,
         sink.bg_verts,
         sink.bg_idx,
     );

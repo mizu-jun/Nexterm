@@ -83,10 +83,13 @@ pub(super) fn draw_overlay_panel(
     radius: f32,
     sw: f32,
     sh: f32,
+    acrylic_mix: f32,
     bg_verts: &mut Vec<crate::glyph_atlas::BgVertex>,
     bg_idx: &mut Vec<u16>,
 ) {
-    use crate::vertex_util::{add_px_rounded_rect_sdf, add_px_soft_shadow_sdf};
+    use crate::vertex_util::{
+        add_px_rounded_rect_sdf, add_px_rounded_rect_sdf_with_acrylic, add_px_soft_shadow_sdf,
+    };
 
     // 1. Soft drop shadow scaled by the surface's Fluent elevation
     //    (UI/UX v3 P2a; was a hard offset quad with a per-caller offset).
@@ -121,9 +124,22 @@ pub(super) fn draw_overlay_panel(
         bg_idx,
     );
 
-    // 3. Panel background — tokens.surface_2, fully opaque.
+    // 3. Panel background — the only part that samples acrylic, via the
+    //    trailing acrylic_mix vertex field (UI/UX v3 P2b).
     let bg = tokens.surface_2;
-    add_px_rounded_rect_sdf(px, py, pw, ph, radius, bg, sw, sh, bg_verts, bg_idx);
+    add_px_rounded_rect_sdf_with_acrylic(
+        px,
+        py,
+        pw,
+        ph,
+        radius,
+        bg,
+        sw,
+        sh,
+        acrylic_mix,
+        bg_verts,
+        bg_idx,
+    );
 }
 
 /// Soft-shadow recipe for one overlay surface (UI/UX v3 P2a).
@@ -384,5 +400,232 @@ mod tests {
             light[0] > dark[0] + 0.3,
             "light scrim {light:?} is not meaningfully lighter than {dark:?}"
         );
+    }
+
+    // ---- UI/UX v3 P2b: panel-fill contrast under the acrylic blend ----
+
+    /// Model of the shipped acrylic blend (`shaders.rs` `fs_main`,
+    /// `render_frame.rs`'s acrylic uniform update), re-derived here because
+    /// there is no GPU in this environment to sample the real shader output.
+    ///
+    /// The shader does, per background-quad fragment with `acrylic_mix > 0`:
+    ///
+    ///   tinted = mix(blurred, acrylic.tint, acrylic.strength)
+    ///   result = mix(in.color, tinted + grain, in.acrylic_mix)
+    ///
+    /// For a panel-fill quad, `acrylic.tint == in.color == surface_2` (`S`,
+    /// set in `render_frame.rs`). Task 8 assigns the vertex `acrylic_mix`
+    /// the user-configured `in_app_blur_strength` (`m`); ruling 9-E fixed a
+    /// spec violation where the uniform `strength` also carried `m` (making
+    /// the blend fold back to the opaque `S` at `m=1`, the opposite of the
+    /// design spec) by feeding the uniform a fixed [`ACRYLIC_TINT_OPACITY`]
+    /// (`T`) instead. Substituting `acrylic.strength = T` and expanding:
+    ///
+    ///   tinted = mix(blurred, S, T) = S + (1 - T) * (blurred - S)
+    ///   result = mix(S, tinted + grain, m)
+    ///          = S + m * (tinted + grain - S)
+    ///          = S + m * (1 - T) * (blurred - S) + m * grain
+    ///
+    /// With `T` fixed, the deviation coefficient `m * (1 - T)` is monotonic
+    /// in `m` (zero at `m=0`, `(1-T)` at `m=1`), so unlike the pre-9-E model
+    /// there is no interior worst case — strength alone no longer needs
+    /// bisecting, though the sweep below still walks it for the record.
+    ///
+    /// `blurred` (the backdrop) is modelled by the scheme's own `surface_0`/
+    /// `surface_1` tokens, not by pure black/white: Task 7 documents the
+    /// capture as the `bg_pipeline`'s pre-overlay range (cell backgrounds
+    /// plus the gradient, chrome bars, and pane/copy-mode overlays — not
+    /// the background image or glyphs, which other pipelines draw), so the
+    /// backdrop a panel can actually blur is painted from the same
+    /// scheme's own palette (ruling 9-F).
+    ///
+    /// `grain` is deliberately **excluded** from this model (ruling 9-H).
+    /// `acrylic_noise` (`shaders.rs`) is a zero-mean, per-pixel spatial
+    /// dither of `+-1.5%` luma — high-frequency noise, not a systematic
+    /// shift of the surface color. WCAG contrast is defined against the
+    /// background's color, and a reader perceives text against the local
+    /// *mean* of a dithered background, not against the worst single-pixel
+    /// excursion of the dither. Folding `m * grain` into the background as
+    /// a one-directional bias (the pre-9-H model did this) manufactures
+    /// contrast failures no reader actually experiences. The grain's
+    /// measured effect is instead documented as a caveat alongside the
+    /// (also-unasserted) extreme-backdrop table — see
+    /// `panel_body_text_clears_contrast_floor_across_acrylic_strengths`'s
+    /// doc comment and `task-9-report.md`. Do not add it back here.
+    fn acrylic_perturbed_surface(surface_2: [f32; 4], backdrop: [f32; 4], m: f32) -> [f32; 3] {
+        let s = [surface_2[0], surface_2[1], surface_2[2]];
+        let b = [backdrop[0], backdrop[1], backdrop[2]];
+        let deviation = m * (1.0 - crate::renderer::acrylic::ACRYLIC_TINT_OPACITY);
+        [
+            (s[0] + deviation * (b[0] - s[0])).clamp(0.0, 1.0),
+            (s[1] + deviation * (b[1] - s[1])).clamp(0.0, 1.0),
+            (s[2] + deviation * (b[2] - s[2])).clamp(0.0, 1.0),
+        ]
+    }
+
+    /// (scheme, label) pairs whose panel-body-text contrast against
+    /// `surface_2` is already under [`MIN_TEXT_CONTRAST`] with **no acrylic
+    /// involved at all** (`m = 0.0`, today's shipped opaque fill). These are
+    /// pre-existing design-token defects, out of P2b's scope to fix in this
+    /// task. Pinned explicitly rather than skipped: the sweep below still
+    /// exercises every one of these pairs and asserts the `m = 0.0` baseline
+    /// stays sub-floor, so if a future token fix ever raises one back above
+    /// the floor, *this* assertion starts failing — a signal to remove that
+    /// pair from the list, not a false alarm.
+    ///
+    /// Measured baselines (`m = 0.0`, ratio against unperturbed
+    /// `surface_2`; see `task-9-report.md` for the full sweep):
+    ///   - Solarized: text_primary 3.33, text_secondary 2.61 — stays
+    ///     sub-floor across the *entire* sweep (worst-to-best: 3.33-3.52 /
+    ///     2.61-2.73).
+    ///   - OneDark:   text_secondary 3.38 — likewise stays sub-floor across
+    ///     the entire sweep (3.38-3.55).
+    ///   - OneDark:   text_primary 4.48 at `m = 0.0` **only**. Once acrylic
+    ///     is engaged (`m >= 0.25`, either backdrop) this specific pair
+    ///     actually clears the floor (4.51-4.75) — moving the fill toward
+    ///     `surface_0`/`surface_1` happens to help this particular
+    ///     already-marginal pair more than it hurts it. The assertion below
+    ///     therefore only pins this pair's `m = 0.0` point, not the whole
+    ///     sweep; `m > 0` for this one pair runs through the ordinary
+    ///     branch and is expected to pass.
+    ///
+    /// Nord's `text_secondary` (baseline 4.52, only 0.02 of headroom) is
+    /// *not* pinned: per ruling 9-H the asserted model excludes
+    /// `acrylic_noise`'s grain term (a zero-mean dither, not a systematic
+    /// bias), and without grain Nord clears the floor at every point in the
+    /// sweep (4.52-4.76) — see `task-9-report.md` for the full table and the
+    /// ruling this was escalated under before being resolved.
+    const PRE_EXISTING_SUBFLOOR_LABELS: &[(nexterm_config::BuiltinScheme, &str)] = &[
+        (nexterm_config::BuiltinScheme::Solarized, "text_primary"),
+        (nexterm_config::BuiltinScheme::Solarized, "text_secondary"),
+        (nexterm_config::BuiltinScheme::OneDark, "text_primary"),
+        (nexterm_config::BuiltinScheme::OneDark, "text_secondary"),
+    ];
+
+    /// Panel body text (`text_primary` / `text_secondary`, drawn directly
+    /// over the panel fill — e.g. `picker.rs`'s SFTP field labels) must stay
+    /// above the contrast floor across the acrylic fill's whole strength
+    /// range, against the backdrops the in-app capture can actually produce
+    /// (ruling 9-F), on every built-in scheme except the pinned sub-floor
+    /// list above. Button labels are out of scope: `danger_fill`/
+    /// `caution_fill` quads are drawn with `acrylic_mix = 0.0` and cannot be
+    /// perturbed by this feature.
+    ///
+    /// The asserted background model is `effective_bg = S + m*(1-T)*(B-S)`
+    /// (`acrylic_perturbed_surface`) — no grain term. Ruling 9-H: an earlier
+    /// version of this test folded `acrylic_noise`'s dither into the
+    /// background as a directional bias and that manufactured a failure
+    /// (Nord `text_secondary` at ~4.42 instead of ~4.47) that no reader
+    /// would perceive, since the dither is zero-mean per-pixel noise, not a
+    /// shift of the background a reader's eye averages against. The grain's
+    /// measured effect is kept only as documented, unasserted caveat
+    /// material in `task-9-report.md`, alongside the pure-black/white
+    /// extreme-backdrop table (ruling 9-G) — both are real limitations of a
+    /// translucent material over arbitrary content, just not ones this
+    /// floor check should fail on.
+    #[test]
+    fn panel_body_text_clears_contrast_floor_across_acrylic_strengths() {
+        for scheme in [
+            nexterm_config::BuiltinScheme::Dark,
+            nexterm_config::BuiltinScheme::Light,
+            nexterm_config::BuiltinScheme::Gruvbox,
+            nexterm_config::BuiltinScheme::Solarized,
+            nexterm_config::BuiltinScheme::Catppuccin,
+            nexterm_config::BuiltinScheme::Dracula,
+            nexterm_config::BuiltinScheme::Nord,
+            nexterm_config::BuiltinScheme::OneDark,
+            nexterm_config::BuiltinScheme::TokyoNight,
+        ] {
+            let tokens = tokens_for(scheme);
+            for backdrop in [tokens.surface_0, tokens.surface_1] {
+                for m in [0.0_f32, 0.25, 0.5, 0.75, 1.0] {
+                    let bg = acrylic_perturbed_surface(tokens.surface_2, backdrop, m);
+                    let labels = [
+                        ("text_primary", tokens.text_primary),
+                        ("text_secondary", tokens.text_secondary),
+                    ];
+                    for (label_name, label) in labels {
+                        // text_primary is opaque (alpha 1.0); text_secondary
+                        // carries alpha 0.78 and is alpha-blended onto
+                        // whatever is beneath it at draw time (see
+                        // `DesignTokens`'s field doc-comments), so composite
+                        // it over `bg` first, matching `ensure_readable`.
+                        let effective = crate::color_util::composite_over(label, bg);
+                        let ratio = crate::color_util::contrast_ratio(effective, bg);
+                        let pinned_sub_floor =
+                            PRE_EXISTING_SUBFLOOR_LABELS.contains(&(scheme, label_name));
+                        // OneDark's `text_primary` is pinned only for its
+                        // `m = 0.0` baseline — see the doc comment on
+                        // `PRE_EXISTING_SUBFLOOR_LABELS`. It measurably
+                        // clears the floor once acrylic engages, so beyond
+                        // `m = 0.0` it falls through to the ordinary branch
+                        // like any non-pinned pair.
+                        let onedark_text_primary_recovers = scheme
+                            == nexterm_config::BuiltinScheme::OneDark
+                            && label_name == "text_primary";
+                        if pinned_sub_floor && (m == 0.0 || !onedark_text_primary_recovers) {
+                            assert!(
+                                ratio < MIN_TEXT_CONTRAST,
+                                "{scheme:?} {label_name} is pinned in \
+                                 PRE_EXISTING_SUBFLOOR_LABELS as always \
+                                 sub-floor, but backdrop={backdrop:?} m={m} \
+                                 cleared the floor (ratio {ratio:.2}) — \
+                                 remove it from the list and update the doc \
+                                 comment"
+                            );
+                        } else {
+                            assert!(
+                                ratio >= MIN_TEXT_CONTRAST,
+                                "{scheme:?} {label_name}: backdrop={backdrop:?} \
+                                 m={m}: ratio {ratio:.2} < {MIN_TEXT_CONTRAST} \
+                                 (bg={bg:?})"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod acrylic_mix_tests {
+    use super::*;
+
+    #[test]
+    fn fill_vertices_carry_the_requested_acrylic_mix() {
+        // Built via `from_palette` with a built-in scheme, matching this
+        // file's other token-consuming tests (see `tokens_for` above).
+        let tokens = nexterm_config::DesignTokens::from_palette(
+            &nexterm_config::BuiltinScheme::TokyoNight.palette(),
+        );
+        let mut bg_verts = Vec::new();
+        let mut bg_idx = Vec::new();
+        draw_overlay_panel(
+            10.0,
+            10.0,
+            100.0,
+            50.0,
+            &tokens,
+            128.0,
+            6.0,
+            800.0,
+            600.0,
+            0.75,
+            &mut bg_verts,
+            &mut bg_idx,
+        );
+        // The panel background fill is the *last* 4 vertices pushed (shadow,
+        // then border, then fill — see draw_overlay_panel's own comments).
+        let fill_verts = &bg_verts[bg_verts.len() - 4..];
+        assert!(
+            fill_verts
+                .iter()
+                .all(|v| (v.acrylic_mix - 0.75).abs() < f32::EPSILON)
+        );
+        // The shadow and border ring stay opaque regardless of the panel's
+        // acrylic_mix — only the fill itself is translucent acrylic.
+        let non_fill_verts = &bg_verts[..bg_verts.len() - 4];
+        assert!(non_fill_verts.iter().all(|v| v.acrylic_mix == 0.0));
     }
 }

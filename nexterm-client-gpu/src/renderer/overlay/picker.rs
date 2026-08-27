@@ -22,6 +22,7 @@ impl WgpuState {
         sh: f32,
         cell_w: f32,
         cell_h: f32,
+        acrylic_mix: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         bg_verts: &mut Vec<BgVertex>,
@@ -42,7 +43,18 @@ impl WgpuState {
         // Panel chrome: drop-shadow + border ring + rounded background.
         let elevation = nexterm_config::ElevationScale::default().flyout;
         draw_overlay_panel(
-            px, py, pw, ph, tokens, elevation, 6.0, sw, sh, bg_verts, bg_idx,
+            px,
+            py,
+            pw,
+            ph,
+            tokens,
+            elevation,
+            6.0,
+            sw,
+            sh,
+            acrylic_mix,
+            bg_verts,
+            bg_idx,
         );
         // Top accent stripe (accent_primary)
         let ap = tokens.accent_primary;
@@ -120,6 +132,7 @@ impl WgpuState {
         sh: f32,
         cell_w: f32,
         cell_h: f32,
+        acrylic_mix: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         bg_verts: &mut Vec<BgVertex>,
@@ -139,7 +152,18 @@ impl WgpuState {
         // Panel chrome: drop-shadow + border ring + rounded background.
         let elevation = nexterm_config::ElevationScale::default().flyout;
         draw_overlay_panel(
-            px, py, pw, ph, tokens, elevation, 6.0, sw, sh, bg_verts, bg_idx,
+            px,
+            py,
+            pw,
+            ph,
+            tokens,
+            elevation,
+            6.0,
+            sw,
+            sh,
+            acrylic_mix,
+            bg_verts,
+            bg_idx,
         );
         // Top accent stripe — upload: accent_primary (cyan), download: semantic_success (green).
         let accent = if ft.mode == "upload" {
@@ -257,6 +281,7 @@ impl WgpuState {
         sh: f32,
         cell_w: f32,
         cell_h: f32,
+        acrylic_mix: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         bg_verts: &mut Vec<BgVertex>,
@@ -277,7 +302,18 @@ impl WgpuState {
         // Panel chrome: shared drop-shadow + border + rounded background.
         let elevation = nexterm_config::ElevationScale::default().flyout;
         draw_overlay_panel(
-            px, py, pw, ph, tokens, elevation, 6.0, sw, sh, bg_verts, bg_idx,
+            px,
+            py,
+            pw,
+            ph,
+            tokens,
+            elevation,
+            6.0,
+            sw,
+            sh,
+            acrylic_mix,
+            bg_verts,
+            bg_idx,
         );
         // Top accent line — intentional purple branding, kept as-is.
         add_px_rect(
@@ -405,6 +441,7 @@ impl WgpuState {
         sh: f32,
         cell_w: f32,
         cell_h: f32,
+        acrylic_mix: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         bg_verts: &mut Vec<BgVertex>,
@@ -425,7 +462,18 @@ impl WgpuState {
         // Panel chrome: shared drop-shadow + border + rounded background.
         let elevation = nexterm_config::ElevationScale::default().flyout;
         draw_overlay_panel(
-            px, py, pw, ph, tokens, elevation, 6.0, sw, sh, bg_verts, bg_idx,
+            px,
+            py,
+            pw,
+            ph,
+            tokens,
+            elevation,
+            6.0,
+            sw,
+            sh,
+            acrylic_mix,
+            bg_verts,
+            bg_idx,
         );
         // Top accent line — intentional green SSH branding, kept as-is.
         add_px_rect(

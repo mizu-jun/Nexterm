@@ -28,6 +28,8 @@ impl SettingsPanel {
             11 => self.next_window_decorations(),
             12 => self.next_window_close_action(),
             13 => self.increase_fps_limit(),
+            14 => self.toggle_in_app_blur(),
+            15 => self.increase_in_app_blur_strength(),
             _ => {}
         }
     }
@@ -49,6 +51,8 @@ impl SettingsPanel {
             11 => self.prev_window_decorations(),
             12 => self.prev_window_close_action(),
             13 => self.decrease_fps_limit(),
+            14 => self.toggle_in_app_blur(),
+            15 => self.decrease_in_app_blur_strength(),
             _ => {}
         }
     }
@@ -58,6 +62,13 @@ impl SettingsPanel {
     /// convention.
     pub fn toggle_cursor_blink(&mut self) {
         self.cursor_blink_enabled = !self.cursor_blink_enabled;
+        self.dirty = true;
+    }
+
+    /// Toggle `[window].in_app_blur_enabled` (P2b). Left/Right both toggle,
+    /// mirroring `toggle_cursor_blink`.
+    pub fn toggle_in_app_blur(&mut self) {
+        self.in_app_blur_enabled = !self.in_app_blur_enabled;
         self.dirty = true;
     }
 
@@ -162,6 +173,16 @@ mod tests {
         let initial = panel.cursor_blink_enabled;
         panel.toggle_cursor_blink();
         assert_eq!(panel.cursor_blink_enabled, !initial);
+        assert!(panel.dirty);
+    }
+
+    #[test]
+    fn toggle_in_app_blur_flips_and_marks_dirty() {
+        let config = Config::default();
+        let mut panel = SettingsPanel::new(&config);
+        assert!(!panel.in_app_blur_enabled, "default is false (Task 1)");
+        panel.toggle_in_app_blur();
+        assert!(panel.in_app_blur_enabled);
         assert!(panel.dirty);
     }
 
@@ -288,6 +309,40 @@ mod tests {
         panel.cursor_blink_enabled = false;
         let toml_str = panel.apply_to_toml_string("");
         assert!(toml_str.contains("blink_enabled = false"));
+    }
+
+    #[test]
+    fn save_writes_in_app_blur_enabled() {
+        let config = Config::default();
+        let mut panel = SettingsPanel::new(&config);
+        panel.toggle_in_app_blur();
+        assert!(panel.in_app_blur_enabled);
+        let toml_str = panel.apply_to_toml_string("");
+        assert!(toml_str.contains("in_app_blur_enabled = true"));
+    }
+
+    #[test]
+    fn window_field_increase_decrease_dispatch_in_app_blur_rows() {
+        // The physical arrow-key handler calls `window_field_increase` /
+        // `window_field_decrease` directly (bypassing `apply_window_action`),
+        // so the new P2b rows need their own arms here to be keyboard
+        // reachable at all, exactly like every other Window row.
+        let config = Config::default();
+        let mut panel = SettingsPanel::new(&config);
+
+        panel.focused_widget_index = 14;
+        let before = panel.in_app_blur_enabled;
+        panel.window_field_increase();
+        assert_eq!(panel.in_app_blur_enabled, !before);
+        panel.window_field_decrease();
+        assert_eq!(panel.in_app_blur_enabled, before);
+
+        panel.focused_widget_index = 15;
+        panel.in_app_blur_strength = 0.5;
+        panel.window_field_increase();
+        assert!((panel.in_app_blur_strength - 0.55).abs() < 0.001);
+        panel.window_field_decrease();
+        assert!((panel.in_app_blur_strength - 0.5).abs() < 0.001);
     }
 
     #[test]

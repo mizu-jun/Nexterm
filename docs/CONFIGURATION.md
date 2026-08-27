@@ -187,6 +187,8 @@ Evaluation occurs **every 1 second** (inside the GPU client's `about_to_wait` ho
 | `background_opacity` | float | `1.0` | Window background opacity (0.0 = fully transparent, 1.0 = opaque). A compositor is required for transparency |
 | `macos_window_background_blur` | u32 | `0` | macOS window background blur intensity (0 = disabled) |
 | `decorations` | String | `"notitle"` (`"full"` on macOS) | Window decoration style |
+| `in_app_blur_enabled` | bool | `false` | Enable the in-app acrylic material (blurred terminal behind overlay panels). Opt-in — unverified on real GPU hardware as of this writing |
+| `in_app_blur_strength` | float | `0.6` | Blend ratio between the opaque panel fill (0.0) and the full blur+tint acrylic material (1.0). Only used when `in_app_blur_enabled` is true |
 
 #### `decorations` Values
 
@@ -981,6 +983,8 @@ widgets = ['os.date("%H:%M:%S")', '"nexterm"']
 background_opacity = 0.95
 macos_window_background_blur = 0
 decorations = "notitle"
+in_app_blur_enabled = false
+in_app_blur_strength = 0.6
 
 [tab_bar]
 enabled = true

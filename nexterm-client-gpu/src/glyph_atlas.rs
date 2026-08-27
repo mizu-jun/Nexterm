@@ -35,6 +35,11 @@ pub(crate) struct BgVertex {
     /// Outline band width in pixels (UI/UX v3 P2a). `> 0.0` paints only a
     /// stroke hugging the inside of the rect edge instead of a fill.
     pub stroke_width: f32,
+    /// Acrylic blend factor in `0.0..=1.0` (UI/UX v3 P2b). `0.0` (the
+    /// default for every non-overlay vertex) draws the flat `color` as
+    /// today; `> 0.0` mixes in the blurred/tinted `scene_color` sample by
+    /// this amount. Only overlay panel fills ever set this to non-zero.
+    pub acrylic_mix: f32,
 }
 
 /// Text vertex (position + UV + color).

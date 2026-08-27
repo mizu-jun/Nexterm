@@ -301,6 +301,20 @@ pub struct WindowConfig {
     /// See [`CloseAction`] for details.
     #[serde(default)]
     pub close_action: CloseAction,
+    /// Enable the in-app acrylic material for overlay panels (dialogs,
+    /// flyouts, tooltips): an offscreen Kawase blur of the terminal grid,
+    /// tinted by the active scheme (UI/UX v3 P2b). Opt-in and off by
+    /// default — this environment has no GPU to verify the visual result
+    /// against, so the feature ships unverified-by-default rather than
+    /// on-by-default.
+    #[serde(default)]
+    pub in_app_blur_enabled: bool,
+    /// Blend ratio between the existing opaque panel fill (0.0) and the
+    /// full blur+tint acrylic material (1.0). Only meaningful when
+    /// `in_app_blur_enabled` is true. Does not affect the fixed procedural
+    /// noise grain (UI/UX v3 P2b).
+    #[serde(default = "default_in_app_blur_strength")]
+    pub in_app_blur_strength: f32,
 }
 
 fn default_background_opacity() -> f32 {
@@ -311,6 +325,10 @@ fn default_background_opacity() -> f32 {
 
 fn default_layout_mode() -> String {
     "bsp".to_string()
+}
+
+fn default_in_app_blur_strength() -> f32 {
+    0.6
 }
 
 impl Default for WindowConfig {
@@ -325,6 +343,8 @@ impl Default for WindowConfig {
             background_image: None,
             gradient: None,
             close_action: CloseAction::default(),
+            in_app_blur_enabled: false,
+            in_app_blur_strength: default_in_app_blur_strength(),
         }
     }
 }
@@ -749,5 +769,28 @@ smooth_motion = false
         assert!(!parsed.cursor.blink_enabled);
         assert_eq!(parsed.cursor.blink_interval_ms, 250);
         assert!(!parsed.cursor.smooth_motion);
+    }
+}
+
+#[cfg(test)]
+mod acrylic_config_tests {
+    use super::*;
+
+    #[test]
+    fn in_app_blur_defaults_to_disabled() {
+        let cfg = WindowConfig::default();
+        assert!(!cfg.in_app_blur_enabled);
+        assert!((cfg.in_app_blur_strength - 0.6).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn in_app_blur_round_trips_through_toml() {
+        let toml_str = r#"
+            in_app_blur_enabled = true
+            in_app_blur_strength = 0.25
+        "#;
+        let cfg: WindowConfig = toml::from_str(toml_str).expect("valid partial WindowConfig");
+        assert!(cfg.in_app_blur_enabled);
+        assert!((cfg.in_app_blur_strength - 0.25).abs() < f32::EPSILON);
     }
 }

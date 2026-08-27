@@ -74,6 +74,7 @@ pub(crate) fn add_rect_verts(
         0.0,
         0.0,
         0.0,
+        0.0,
         bg_verts,
         bg_idx,
     );
@@ -94,6 +95,7 @@ fn push_rect_verts_with_sdf(
     corner_radius: f32,
     shadow_softness: f32,
     stroke_width: f32,
+    acrylic_mix: f32,
     bg_verts: &mut Vec<BgVertex>,
     bg_idx: &mut Vec<u16>,
 ) {
@@ -106,6 +108,10 @@ fn push_rect_verts_with_sdf(
         corner_radius,
         shadow_softness,
         stroke_width,
+        // Plain rects never carry the acrylic blend; only the overlay panel
+        // fill opts in, via `add_px_rounded_rect_sdf_with_acrylic` (UI/UX v3
+        // P2b).
+        acrylic_mix,
     };
     bg_verts.extend_from_slice(&[
         make([x0, y0]),
@@ -144,6 +150,11 @@ pub(crate) fn add_px_rect(
 /// three-rect cross that left square holes at the corners) was removed once
 /// the last overlay chrome migrated here. Passing `radius == 0.0` falls
 /// through to a flat rect, matching [`add_px_rect`] byte-for-byte.
+///
+/// Delegates to [`add_px_rounded_rect_sdf_with_acrylic`] with `acrylic_mix =
+/// 0.0` — every caller here wants an opaque fill, and duplicating the
+/// coordinate-transform math for that one constant would just be two copies
+/// to keep in sync (UI/UX v3 P2b review fix).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn add_px_rounded_rect_sdf(
     px: f32,
@@ -154,6 +165,32 @@ pub(crate) fn add_px_rounded_rect_sdf(
     color: [f32; 4],
     sw: f32,
     sh: f32,
+    bg_verts: &mut Vec<BgVertex>,
+    bg_idx: &mut Vec<u16>,
+) {
+    add_px_rounded_rect_sdf_with_acrylic(
+        px, py, pw, ph, radius, color, sw, sh, 0.0, bg_verts, bg_idx,
+    );
+}
+
+/// Same as [`add_px_rounded_rect_sdf`], but threading a non-zero
+/// `acrylic_mix` through to the pushed vertices instead of the hardcoded
+/// `0.0` every other rounded-rect caller uses.
+///
+/// Used exclusively by the overlay panel's background fill and the tooltip
+/// surface fill (UI/UX v3 P2b): the shadow and border ring stay opaque, only
+/// the fill itself samples the blurred scene behind the panel.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn add_px_rounded_rect_sdf_with_acrylic(
+    px: f32,
+    py: f32,
+    pw: f32,
+    ph: f32,
+    radius: f32,
+    color: [f32; 4],
+    sw: f32,
+    sh: f32,
+    acrylic_mix: f32,
     bg_verts: &mut Vec<BgVertex>,
     bg_idx: &mut Vec<u16>,
 ) {
@@ -177,6 +214,7 @@ pub(crate) fn add_px_rounded_rect_sdf(
         r,
         0.0,
         0.0,
+        acrylic_mix,
         bg_verts,
         bg_idx,
     );
@@ -219,6 +257,7 @@ pub(crate) fn add_px_soft_shadow_sdf(
         [pw * 0.5, ph * 0.5],
         r,
         s,
+        0.0,
         0.0,
         bg_verts,
         bg_idx,
@@ -270,6 +309,7 @@ pub(crate) fn add_px_stroke_sdf(
         r,
         0.0,
         w,
+        0.0,
         bg_verts,
         bg_idx,
     );
@@ -321,6 +361,8 @@ pub(crate) fn add_px_gradient_rect(
         corner_radius: 0.0,
         shadow_softness: 0.0,
         stroke_width: 0.0,
+        // Gradient rects never carry the acrylic blend (UI/UX v3 P2b).
+        acrylic_mix: 0.0,
     };
     bg_verts.extend_from_slice(&[
         make([x0, y0], lerp(from, to, t_tl)),

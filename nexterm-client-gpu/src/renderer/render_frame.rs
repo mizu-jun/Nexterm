@@ -92,6 +92,52 @@ fn append_pane_verts(
     text_idx.extend(src_text_idx.iter().map(|i| i + txt_base));
 }
 
+/// How many of the mutually-independent overlay surfaces are open right
+/// now (UI/UX v3 P2b — there is no single "any overlay open" flag in
+/// `ClientState`, so this counts the ones acrylic capture cares about).
+/// Order matches nothing in particular; only the count matters.
+fn count_open_overlays(
+    context_menu_open: bool,
+    host_manager_open: bool,
+    macro_picker_open: bool,
+    file_transfer_open: bool,
+    settings_panel_open: bool,
+    palette_open: bool,
+) -> u32 {
+    [
+        context_menu_open,
+        host_manager_open,
+        macro_picker_open,
+        file_transfer_open,
+        settings_panel_open,
+        palette_open,
+    ]
+    .into_iter()
+    .filter(|open| *open)
+    .count() as u32
+}
+
+#[cfg(test)]
+mod overlay_count_tests {
+    use super::*;
+
+    #[test]
+    fn counts_each_independent_overlay_flag() {
+        assert_eq!(
+            count_open_overlays(false, false, false, false, false, false),
+            0
+        );
+        assert_eq!(
+            count_open_overlays(true, false, false, false, false, false),
+            1
+        );
+        assert_eq!(
+            count_open_overlays(true, true, false, false, false, false),
+            2
+        );
+    }
+}
+
 impl WgpuState {
     /// Render a single frame.
     #[allow(clippy::too_many_arguments)]
@@ -104,6 +150,10 @@ impl WgpuState {
         color_scheme: &nexterm_config::ColorScheme,
         fps_limit: u32,
         background_opacity: f32,
+        // UI/UX v3 P2b: in-app acrylic material for overlay panels. Threaded
+        // through the same way `background_opacity` already is.
+        in_app_blur_enabled: bool,
+        in_app_blur_strength: f32,
         cursor_style: &nexterm_config::CursorStyle,
         padding_x: f32,
         padding_y: f32,
@@ -864,6 +914,39 @@ impl WgpuState {
         let overlay_bg_start = bg_idx.len();
         let overlay_text_start = text_idx.len();
 
+        // ---- Acrylic capture bookkeeping (UI/UX v3 P2b) ----
+        // Counts every independent overlay surface `ClientState` tracks
+        // (there is no single "any overlay open" flag) so the capture
+        // state machine below knows whether an offscreen blur target is
+        // even needed this frame, and whether a 0 -> N transition just
+        // happened (which forces a fresh capture regardless of the
+        // generation counter). Must run before `is_dirty` is checked in
+        // the capture+blur block further down, since it's what
+        // `is_dirty` reacts to.
+        let overlay_open_count = count_open_overlays(
+            state.context_menu.is_some(),
+            state.host_manager.is_open,
+            state.macro_picker.is_open,
+            state.file_transfer.is_open,
+            state.settings_panel.is_open,
+            state.palette.is_open,
+        ) + state.pending_consent.is_some() as u32
+            + state.close_window_dialog.is_some() as u32
+            + state.host_manager.password_modal.is_some() as u32;
+        self.acrylic_capture
+            .note_overlay_open_count(overlay_open_count as usize);
+        let overlay_open = overlay_open_count > 0;
+
+        // Panel fill acrylic mix (UI/UX v3 P2b): every overlay panel built
+        // below samples the blurred scene behind it at this strength when
+        // in-app blur is enabled, and stays a flat opaque fill (mix 0) when
+        // it is not. Computed once so every call site keys off the same
+        // value the capture+blur chain further down uses. The decision
+        // itself lives in `acrylic::panel_acrylic_mix` so it is unit-testable
+        // without a GPU (this function is not).
+        let panel_acrylic_mix =
+            super::acrylic::panel_acrylic_mix(in_app_blur_enabled, in_app_blur_strength);
+
         // ---- SFTP file transfer dialog (when open) ----
         if state.file_transfer.is_open {
             self.build_file_transfer_verts(
@@ -873,6 +956,7 @@ impl WgpuState {
                 sh,
                 cell_w,
                 cell_h,
+                panel_acrylic_mix,
                 font,
                 atlas,
                 &mut bg_verts,
@@ -891,6 +975,7 @@ impl WgpuState {
                 sh,
                 cell_w,
                 cell_h,
+                panel_acrylic_mix,
                 font,
                 atlas,
                 &mut bg_verts,
@@ -909,6 +994,7 @@ impl WgpuState {
                 sh,
                 cell_w,
                 cell_h,
+                panel_acrylic_mix,
                 font,
                 atlas,
                 &mut bg_verts,
@@ -925,6 +1011,7 @@ impl WgpuState {
                 sh,
                 cell_w,
                 cell_h,
+                panel_acrylic_mix,
                 font,
                 atlas,
                 &mut bg_verts,
@@ -942,6 +1029,7 @@ impl WgpuState {
                 sh,
                 cell_w,
                 cell_h,
+                panel_acrylic_mix,
                 font,
                 atlas,
                 &mut bg_verts,
@@ -960,6 +1048,7 @@ impl WgpuState {
                 sh,
                 cell_w,
                 cell_h,
+                panel_acrylic_mix,
                 font,
                 atlas,
                 &mut bg_verts,
@@ -985,6 +1074,7 @@ impl WgpuState {
                 sh,
                 cell_w,
                 cell_h,
+                panel_acrylic_mix,
                 font,
                 atlas,
                 &mut bg_verts,
@@ -1009,6 +1099,7 @@ impl WgpuState {
                 sh,
                 cell_w,
                 cell_h,
+                panel_acrylic_mix,
                 font,
                 atlas,
                 &mut bg_verts,
@@ -1087,6 +1178,7 @@ impl WgpuState {
                 sh,
                 cell_w,
                 cell_h,
+                panel_acrylic_mix,
                 font,
                 atlas,
                 &mut bg_verts,
@@ -1107,6 +1199,7 @@ impl WgpuState {
                 sh,
                 cell_w,
                 cell_h,
+                panel_acrylic_mix,
                 font,
                 atlas,
                 &mut bg_verts,
@@ -1284,6 +1377,71 @@ impl WgpuState {
             }
         }
 
+        // ---- Acrylic capture + blur chain (UI/UX v3 P2b) ----
+        // Must run — and, since render passes on one `CommandEncoder`
+        // execute in the order they are recorded, complete — before
+        // `main_render_pass` below: that pass is what samples
+        // `blurred_result` through `acrylic_bind_group` on overlay panel
+        // fills (once a later task sets `acrylic_mix > 0.0` on their
+        // vertices). Gated on `blur_enabled` (config), `overlay_open`
+        // (nothing to composite behind if no panel is showing) and
+        // `is_dirty` (the capture is a frozen snapshot per open/resize
+        // transition, not refreshed every frame — see `AcrylicCaptureState`).
+        let blur_enabled = in_app_blur_enabled;
+        if blur_enabled && overlay_open && self.acrylic_capture.is_dirty(overlay_open) {
+            self.acrylic.ensure_size(
+                &self.device,
+                &self.queue,
+                &self.acrylic_bind_group_layout,
+                self.surface_config.width,
+                self.surface_config.height,
+            );
+            {
+                let mut capture_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("acrylic_capture_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: self.acrylic.scene_color_view(),
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                // Re-draw only the pre-overlay bg range (index 0..overlay_bg_start
+                // — cell backgrounds plus the gradient, chrome bars, and
+                // pane/copy-mode overlays, but not the overlay layer itself) —
+                // the same vertex/index buffers `main_render_pass` below will
+                // use, just targeting the offscreen texture instead of the
+                // swapchain. `acrylic_mix` is 0 on every vertex in that range,
+                // so group 0 is bound only to satisfy the pipeline layout,
+                // never actually sampled by this draw.
+                capture_pass.set_pipeline(&self.bg_pipeline);
+                capture_pass.set_bind_group(0, self.acrylic.bind_group(), &[]);
+                capture_pass.set_vertex_buffer(0, self.buf_bg_v.slice(..));
+                capture_pass.set_index_buffer(self.buf_bg_i.slice(..), wgpu::IndexFormat::Uint16);
+                capture_pass.draw_indexed(0..(overlay_bg_start as u32), 0, 0..1);
+            }
+            self.acrylic.run_blur_chain(&mut encoder);
+            self.acrylic.update_uniform(
+                &self.queue,
+                tokens.surface_2,
+                [
+                    self.surface_config.width as f32,
+                    self.surface_config.height as f32,
+                ],
+                // Fixed tint opacity, not the user's blur strength — see
+                // `ACRYLIC_TINT_OPACITY`'s doc comment for why decoupling
+                // these two is what makes the blend monotonic in
+                // `in_app_blur_strength` (P2b Task 9 / ruling 9-E).
+                super::acrylic::ACRYLIC_TINT_OPACITY,
+            );
+            self.acrylic_capture.mark_captured();
+        }
+
         // ---- Main render pass (cell backgrounds + text) ----
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1333,6 +1491,12 @@ impl WgpuState {
             for layer in 0..bg_layers.len() {
                 if !bg_layers[layer].is_empty() {
                     pass.set_pipeline(&self.bg_pipeline);
+                    // `bg_pipeline_layout` requires group 0 bound
+                    // unconditionally (UI/UX v3 P2b); re-set on every
+                    // iteration because the text branch below rebinds
+                    // group 0 to `text_bind_group` for the other pipeline,
+                    // so it cannot be hoisted above this loop.
+                    pass.set_bind_group(0, self.acrylic.bind_group(), &[]);
                     pass.set_vertex_buffer(0, self.buf_bg_v.slice(..));
                     pass.set_index_buffer(self.buf_bg_i.slice(..), wgpu::IndexFormat::Uint16);
                     for (range, scissor) in &bg_layers[layer] {

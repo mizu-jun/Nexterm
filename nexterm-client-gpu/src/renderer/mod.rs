@@ -37,6 +37,11 @@ mod grid_verts;
 pub(crate) mod overlay;
 mod ui_verts;
 
+// ---- In-app acrylic (UI/UX v3 P2b) ----
+// `AcrylicCaptureState` and `AcrylicState`'s capture/blur chain are wired
+// into per-frame rendering in `render_frame::render` (Task 7).
+mod acrylic;
+
 // ---- Runtime submodules (Sprint 2-1 Phase B/C) ----
 mod app;
 mod event_handler;
@@ -53,6 +58,7 @@ mod wgpu_init;
 pub use app::NextermApp;
 pub use event_handler::{EventHandler, UserEvent};
 
+use acrylic::AcrylicState;
 use background_pass::BackgroundTexture;
 use image::ImageEntry;
 
@@ -215,6 +221,25 @@ pub(super) struct WgpuState {
     /// `set_present_mode` can re-select without re-querying the surface).
     present_modes: Vec<wgpu::PresentMode>,
     bg_pipeline: wgpu::RenderPipeline,
+    /// Bind group layout for the acrylic sampling inputs consumed by
+    /// `BG_SHADER` at `@group(0)` (texture, sampler, uniform buffer; UI/UX
+    /// v3 P2b). Created once in `WgpuState::new` and reused — by reference,
+    /// never recreated — by `bg_pipeline_layout` here, by
+    /// `shader_reload.rs`'s hot-reload path, and by `AcrylicState`'s
+    /// `acrylic_bind_group`. A second independently-created
+    /// `BindGroupLayout` with the same entries would be wgpu-incompatible
+    /// with this one, so keeping a single shared field is load-bearing,
+    /// not just tidy.
+    acrylic_bind_group_layout: wgpu::BindGroupLayout,
+    /// Offscreen textures, blur pipelines and bind group for the in-app
+    /// acrylic material (UI/UX v3 P2b). Created once in `WgpuState::new`
+    /// with a 1x1 placeholder, resized in `WgpuState::resize`.
+    acrylic: AcrylicState,
+    /// Capture-invalidation state machine for the acrylic material (UI/UX
+    /// v3 P2b): tracks whether `scene_color` needs to be re-captured and
+    /// the blur chain re-run this frame. See `render_frame`'s capture+blur
+    /// block for the read side.
+    acrylic_capture: acrylic::AcrylicCaptureState,
     text_pipeline: wgpu::RenderPipeline,
     text_bind_group_layout: wgpu::BindGroupLayout,
     /// Image rendering pipeline.

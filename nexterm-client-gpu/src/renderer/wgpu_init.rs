@@ -20,6 +20,7 @@ use crate::glyph_atlas::{BgVertex, TextVertex};
 use crate::shaders::{BG_SHADER, IMAGE_SHADER, TEXT_SHADER};
 
 use super::WgpuState;
+use super::acrylic::AcrylicState;
 
 impl WgpuState {
     pub(super) async fn new(
@@ -136,9 +137,50 @@ impl WgpuState {
             source: wgpu::ShaderSource::Wgsl(bg_shader_src),
         });
 
+        // Bind group layout for the acrylic sampling inputs `BG_SHADER`
+        // reads at `@group(0)` (UI/UX v3 P2b): the blurred/tinted scene
+        // texture, its sampler, and the `AcrylicUniform` (tint, viewport
+        // size, strength). Built once here and stored on `WgpuState` so
+        // `shader_reload.rs` and the later `AcrylicState` bind group (Task
+        // 6) reference this exact layout object rather than each creating
+        // their own — a real GPU rejects a bind group built against a
+        // different (even if structurally identical) layout.
+        let acrylic_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("acrylic_bind_group_layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
         let bg_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("bg_pipeline_layout"),
-            bind_group_layouts: &[],
+            bind_group_layouts: &[&acrylic_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -152,9 +194,8 @@ impl WgpuState {
                     array_stride: std::mem::size_of::<BgVertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     // Sprint 5-15 / UI/UX v2 Phase 1, extended by UI/UX v3
-                    // P2a: position + color + (SDF rect_center,
-                    // rect_half_size, corner_radius) + (shadow_softness,
-                    // stroke_width). Must stay in sync with the reload
+                    // P2a (shadow_softness, stroke_width) and P2b
+                    // (acrylic_mix). Must stay in sync with the reload
                     // layout in `shader_reload.rs`.
                     attributes: &wgpu::vertex_attr_array![
                         0 => Float32x2,
@@ -164,6 +205,7 @@ impl WgpuState {
                         4 => Float32,
                         5 => Float32,
                         6 => Float32,
+                        7 => Float32,
                     ],
                 }],
                 compilation_options: Default::default(),
@@ -189,6 +231,12 @@ impl WgpuState {
             multiview: None,
             cache: None,
         });
+
+        // Offscreen textures, blur pipelines and bind group for the in-app
+        // acrylic material (UI/UX v3 P2b). Built against the layout above
+        // — not a layout of its own — so its `acrylic_bind_group` is
+        // wgpu-compatible with `bg_pipeline`.
+        let acrylic = AcrylicState::new(&device, &queue, format, &acrylic_bind_group_layout);
 
         // ---- Text pipeline ----
         let text_bind_group_layout =
@@ -360,6 +408,9 @@ impl WgpuState {
             surface_config,
             present_modes: surface_caps.present_modes,
             bg_pipeline,
+            acrylic_bind_group_layout,
+            acrylic,
+            acrylic_capture: super::acrylic::AcrylicCaptureState::default(),
             text_pipeline,
             text_bind_group_layout,
             image_pipeline,
@@ -389,6 +440,40 @@ impl WgpuState {
         self.surface_config.width = new_size.width;
         self.surface_config.height = new_size.height;
         self.surface.configure(&self.device, &self.surface_config);
+        // Deliberately do NOT call `self.acrylic.ensure_size` here. This
+        // runs on every `WindowEvent::Resized` (window drags fire it
+        // repeatedly), and reallocating the 4 offscreen textures plus the 3
+        // `BlurReadResources` unconditionally would pay that cost for every
+        // user, including the overwhelming majority who never enable
+        // in-app blur — the opposite of the design spec's "lazily created
+        // on first use" promise. `render_frame`'s capture block already
+        // calls `self.acrylic.ensure_size` with the current
+        // `surface_config` dimensions whenever it is actually about to
+        // recapture (`blur_enabled && overlay_open && is_dirty`), and
+        // `ensure_size` early-returns when the size already matches, so
+        // sizing still lands before anything ever samples `blurred_result`
+        // — just lazily, gated on the feature actually being used, whether
+        // that dirty frame comes from resizing while enabled or from
+        // enabling the feature at runtime (config hot-reload) without a
+        // resize at all.
+        //
+        // A resized scene_color/blurred_result invalidates any capture
+        // taken before the resize (UI/UX v3 P2b) — force the next dirty
+        // check in `render_frame` to recapture rather than compositing a
+        // stale-resolution blur. This part must stay unconditional
+        // (invalidating a capture is nearly free, unlike resizing the
+        // textures) so a stale capture cannot survive being enabled later
+        // without an intervening resize.
+        self.acrylic_capture.note_resize();
+    }
+
+    /// Invalidate the acrylic capture on `WindowEvent::ScaleFactorChanged`.
+    /// `AcrylicCaptureState::note_resize`'s doc contract explicitly covers a
+    /// DPI change, not just a pixel-size resize — call this independently of
+    /// `resize()`, since nothing guarantees a `Resized` event follows a
+    /// `ScaleFactorChanged` one.
+    pub(super) fn note_dpi_change(&mut self) {
+        self.acrylic_capture.note_resize();
     }
 
     /// Re-select the present mode from an updated `GpuConfig` (config hot-reload)

@@ -92,6 +92,10 @@ impl SettingsPanel {
         doc["window"]["close_action"] = toml_edit::value(self.window_close_action_toml_key());
         doc["gpu"]["fps_limit"] = toml_edit::value(self.fps_limit as i64);
 
+        // [window].in_app_blur_enabled / in_app_blur_strength (P2b).
+        doc["window"]["in_app_blur_enabled"] = toml_edit::value(self.in_app_blur_enabled);
+        doc["window"]["in_app_blur_strength"] = toml_edit::value(self.in_app_blur_strength as f64);
+
         // colors_follow_system (Phase B4-P2).
         doc["colors_follow_system"] = toml_edit::value(self.colors_follow_system);
 
@@ -173,5 +177,19 @@ mod tests {
         assert!(toml_str.contains("enabled = false"));
         assert!(toml_str.contains("border_width_px = 5"));
         assert!(toml_str.contains("show_exit_code_badge = false"));
+    }
+
+    #[test]
+    fn in_app_blur_settings_round_trip_through_save() {
+        // P2b: end-to-end check that the toggle, the slider setter and the
+        // TOML write-back all agree, mirroring `save_writes_blocks_fields`.
+        let mut sp = SettingsPanel::new(&Config::default());
+        assert!(!sp.in_app_blur_enabled);
+        sp.toggle_in_app_blur();
+        assert!(sp.in_app_blur_enabled);
+        sp.set_in_app_blur_strength_value(0.3);
+        assert!((sp.in_app_blur_strength - 0.3).abs() < 0.05);
+        let toml_str = sp.apply_to_toml_string("");
+        assert!(toml_str.contains("in_app_blur_enabled = true"));
     }
 }

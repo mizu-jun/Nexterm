@@ -487,7 +487,7 @@ gated behind a spike.
         real visual change on a surface that appears behind every overlay, so
         it waits until the P2a shadow constants are tuned on-device rather
         than stacking another unverified change
-- [ ] P2b in-app acrylic (offscreen + Kawase blur)
+- [x] P2b in-app acrylic (offscreen + Kawase blur) — shipped via #74
 - [ ] P2c `window.backdrop` config (Win/macOS/Linux)
 - [ ] P3 motion language + reduced-motion detection
 - [ ] P4 icon font + chrome type ramp
@@ -534,6 +534,47 @@ gated behind a spike.
   - #71 — whether the adaptive step-back leaves Kill visibly red enough on the
     schemes that trigger it (Nord in particular), and the Cancel-selected fill
     now that it is a blend rather than a flat yellow
+  - #74 — P2b in-app acrylic. Not measured on real hardware:
+    perceived blur quality and the Kawase tap radius; the carried-over P2a
+    risk that `draw_focus_ring`'s stroke-only interior (#64) may
+    double-blend against a now-translucent panel fill; frame-time cost of
+    the extra offscreen pass + 4-pass blur chain, particularly on
+    integrated GPUs; recapture correctness across a real multi-monitor /
+    DPI-change transition; whether the fixed-intensity procedural noise
+    reads as grain or banding on various panel colours. Four more surfaced
+    while building it, not while planning it. What the capture actually
+    contains: the captured `scene_color` is the `bg_pipeline`'s pre-overlay
+    range — cell backgrounds plus the gradient, chrome bars, and
+    pane/copy-mode overlays — by design; the overlay layer, the background
+    image, and terminal text glyphs (drawn by other pipelines) are not in
+    it, so a blurred panel shows a frosted composite of that chrome, not a
+    frosted terminal.
+    Nobody has seen whether that reads as intended or as a flat colour
+    field, and it is the single most likely way the effect disappoints.
+    The tint constant: `ACRYLIC_TINT_OPACITY = 0.85`
+    (`nexterm-client-gpu/src/renderer/acrylic.rs`) was chosen to match
+    Fluent's in-app acrylic and to keep the strength slider monotonic — an
+    unmeasured initial recipe, exactly like #63's `shadow_params`, that
+    should be expected to need tuning on real hardware rather than merely
+    confirming. Contrast under an adversarial backdrop: the shipped test
+    (`panel_body_text_clears_contrast_floor_across_acrylic_strengths`, in
+    `nexterm-client-gpu/src/renderer/overlay/util.rs`) asserts the 4.5:1
+    floor only against scheme-realistic backdrops (`surface_0`/
+    `surface_1`), because that is what the captured bg range paints; it
+    deliberately does not assert the pure-black/pure-white extreme, since
+    no non-zero blur can satisfy that bound on this palette set (Nord's
+    `text_secondary` has 0.02:1 of baseline headroom), so a program
+    painting a full-screen high-luminance background behind an overlay
+    panel can push panel body text below the floor at mid-to-high
+    strengths — measured, documented, accepted for a feature that is off
+    by default, but never seen. The grain's effect on readability: the
+    contrast model excludes the ±1.5% luma procedural dither on the
+    grounds that WCAG contrast is a property of the mean background
+    rather than a zero-mean per-pixel excursion — sound on paper and
+    unverified in the eye; whether the dither degrades small-glyph
+    legibility on a real panel is exactly the kind of thing only looking
+    can answer. Ships with `in_app_blur_enabled = false` by default
+    specifically because none of this is measured yet.
   - The cross-cutting rule above still asks for hand-run screenshots under
     `docs/img/uiux-v3/`. That directory does not exist yet.
   - What *is* machine-verified for the colour work, and did not exist before
@@ -543,7 +584,11 @@ gated behind a spike.
     Two of those tests fail if a hard-coded literal returns, and #71's fails
     on Nord if the adaptive blend is removed. This does not substitute for
     looking at the result, but it does mean the *readability* claims here
-    rest on measurement even though the *appearance* claims do not.
+    rest on measurement even though the *appearance* claims do not. P2b's
+    readability claim is pinned the same way: one test sweeps all nine
+    schemes at five strengths, including the two (Solarized, OneDark) whose
+    tokens already fail the floor with no acrylic involved, so the test
+    fires if either is ever "fixed" without updating it.
 
 ## References
 

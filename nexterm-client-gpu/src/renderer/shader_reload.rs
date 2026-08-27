@@ -70,11 +70,18 @@ impl WgpuState {
                 label: Some("bg_shader_hot"),
                 source: wgpu::ShaderSource::Wgsl(bg_src),
             });
+        // Reuse the acrylic bind group layout created once in
+        // `WgpuState::new` (UI/UX v3 P2b) instead of building a second,
+        // independent `BindGroupLayout` with the same entries — wgpu
+        // treats bind group layouts as distinct objects even when
+        // structurally identical, so a reload-time duplicate would make
+        // the `AcrylicState` bind group (built against the `new()`-time
+        // layout) incompatible with this reloaded pipeline.
         let bg_layout = self
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("bg_pipeline_layout"),
-                bind_group_layouts: &[],
+                bind_group_layouts: &[&self.acrylic_bind_group_layout],
                 push_constant_ranges: &[],
             });
         self.bg_pipeline = self
@@ -88,13 +95,13 @@ impl WgpuState {
                     buffers: &[wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<BgVertex>() as u64,
                         step_mode: wgpu::VertexStepMode::Vertex,
-                        // Must mirror the 7-attribute layout in `wgpu_init.rs`
+                        // Must mirror the 8-attribute layout in `wgpu_init.rs`
                         // (position + color + SDF rect_center / rect_half_size /
-                        // corner_radius + P2a shadow_softness / stroke_width);
-                        // the built-in shader consumes all seven, so a stale
-                        // shorter layout here fails pipeline validation on
-                        // reload — exactly what happened with the pre-v1.11
-                        // 2-attribute layout.
+                        // corner_radius + P2a shadow_softness / stroke_width +
+                        // P2b acrylic_mix); the built-in shader consumes all
+                        // eight, so a stale shorter layout here fails pipeline
+                        // validation on reload — exactly what happened with
+                        // the pre-v1.11 2-attribute layout.
                         attributes: &wgpu::vertex_attr_array![
                             0 => Float32x2,
                             1 => Float32x4,
@@ -103,6 +110,7 @@ impl WgpuState {
                             4 => Float32,
                             5 => Float32,
                             6 => Float32,
+                            7 => Float32,
                         ],
                     }],
                     compilation_options: Default::default(),

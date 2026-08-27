@@ -24,6 +24,7 @@ impl WgpuState {
         sh: f32,
         cell_w: f32,
         cell_h: f32,
+        acrylic_mix: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         bg_verts: &mut Vec<BgVertex>,
@@ -43,7 +44,18 @@ impl WgpuState {
         // Panel chrome: drop-shadow + border ring + rounded background.
         let elevation = nexterm_config::ElevationScale::default().dialog;
         draw_overlay_panel(
-            px, py, pw, ph, tokens, elevation, 6.0, sw, sh, bg_verts, bg_idx,
+            px,
+            py,
+            pw,
+            ph,
+            tokens,
+            elevation,
+            6.0,
+            sw,
+            sh,
+            acrylic_mix,
+            bg_verts,
+            bg_idx,
         );
         // Top accent stripe.
         let ap = tokens.accent_primary;
@@ -181,6 +193,7 @@ impl WgpuState {
         sh: f32,
         cell_w: f32,
         cell_h: f32,
+        acrylic_mix: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         bg_verts: &mut Vec<BgVertex>,
@@ -211,7 +224,18 @@ impl WgpuState {
         // Panel chrome: drop-shadow + border ring + rounded background.
         let elevation = nexterm_config::ElevationScale::default().flyout;
         draw_overlay_panel(
-            mx, my, menu_w, menu_h, tokens, elevation, 4.0, sw, sh, bg_verts, bg_idx,
+            mx,
+            my,
+            menu_w,
+            menu_h,
+            tokens,
+            elevation,
+            4.0,
+            sw,
+            sh,
+            acrylic_mix,
+            bg_verts,
+            bg_idx,
         );
 
         // Top accent line (3px thick)
@@ -332,6 +356,7 @@ impl WgpuState {
         sh: f32,
         cell_w: f32,
         cell_h: f32,
+        acrylic_mix: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         bg_verts: &mut Vec<BgVertex>,
@@ -367,7 +392,18 @@ impl WgpuState {
         // Panel chrome: drop-shadow + border ring + rounded background.
         let elevation = nexterm_config::ElevationScale::default().dialog;
         draw_overlay_panel(
-            px, py, pw, ph, tokens, elevation, 6.0, sw, sh, bg_verts, bg_idx,
+            px,
+            py,
+            pw,
+            ph,
+            tokens,
+            elevation,
+            6.0,
+            sw,
+            sh,
+            acrylic_mix,
+            bg_verts,
+            bg_idx,
         );
         // Top accent stripe (warning color).
         let warn_color = tokens.semantic_warning;
@@ -535,6 +571,7 @@ impl WgpuState {
         sh: f32,
         cell_w: f32,
         cell_h: f32,
+        acrylic_mix: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         bg_verts: &mut Vec<BgVertex>,
@@ -568,7 +605,18 @@ impl WgpuState {
         // Panel chrome: drop-shadow + border ring + rounded background.
         let elevation = nexterm_config::ElevationScale::default().dialog;
         draw_overlay_panel(
-            px, py, pw, ph, tokens, elevation, 6.0, sw, sh, bg_verts, bg_idx,
+            px,
+            py,
+            pw,
+            ph,
+            tokens,
+            elevation,
+            6.0,
+            sw,
+            sh,
+            acrylic_mix,
+            bg_verts,
+            bg_idx,
         );
         // Top accent stripe (error/danger color; stronger alert than the consent dialog).
         let err_color = tokens.semantic_error;
@@ -698,6 +746,7 @@ impl WgpuState {
         sh: f32,
         cell_w: f32,
         cell_h: f32,
+        acrylic_mix: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         bg_verts: &mut Vec<BgVertex>,
@@ -717,7 +766,18 @@ impl WgpuState {
         // Panel chrome.
         let elevation = nexterm_config::ElevationScale::default().dialog;
         draw_overlay_panel(
-            px, py, pw, ph, tokens, elevation, 6.0, sw, sh, bg_verts, bg_idx,
+            px,
+            py,
+            pw,
+            ph,
+            tokens,
+            elevation,
+            6.0,
+            sw,
+            sh,
+            acrylic_mix,
+            bg_verts,
+            bg_idx,
         );
         // Top accent stripe in the same hue as block selection.
         add_px_rect(
