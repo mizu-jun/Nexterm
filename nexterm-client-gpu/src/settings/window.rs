@@ -240,6 +240,61 @@ impl SettingsPanel {
         }
     }
 
+    // This task (P2c-2 Task 7) lands only the panel state and the cycler;
+    // the Window-tab row that calls `next_window_backdrop` /
+    // `prev_window_backdrop` / `window_backdrop_label` lands in the next
+    // commit (Task 8), so nothing outside the tests below calls them yet.
+    // `#[allow(dead_code)]` follows the same staged-landing precedent as
+    // `OsWindowBounds` in `drop_target.rs`.
+    #[allow(dead_code)]
+    pub fn next_window_backdrop(&mut self) {
+        use nexterm_config::WindowBackdrop::*;
+        self.window_backdrop = match self.window_backdrop {
+            Auto => Mica,
+            Mica => MicaAlt,
+            MicaAlt => Acrylic,
+            Acrylic => None,
+            None => Auto,
+        };
+        self.dirty = true;
+    }
+
+    #[allow(dead_code)]
+    pub fn prev_window_backdrop(&mut self) {
+        use nexterm_config::WindowBackdrop::*;
+        self.window_backdrop = match self.window_backdrop {
+            Auto => None,
+            Mica => Auto,
+            MicaAlt => Mica,
+            Acrylic => MicaAlt,
+            None => Acrylic,
+        };
+        self.dirty = true;
+    }
+
+    #[allow(dead_code)]
+    pub fn window_backdrop_label(&self) -> String {
+        use nexterm_config::WindowBackdrop::*;
+        match self.window_backdrop {
+            Auto => fl!("settings-value-backdrop-auto"),
+            Mica => fl!("settings-value-backdrop-mica"),
+            MicaAlt => fl!("settings-value-backdrop-mica-alt"),
+            Acrylic => fl!("settings-value-backdrop-acrylic"),
+            None => fl!("settings-value-backdrop-none"),
+        }
+    }
+
+    pub fn window_backdrop_toml_key(&self) -> &'static str {
+        use nexterm_config::WindowBackdrop::*;
+        match self.window_backdrop {
+            Auto => "auto",
+            Mica => "mica",
+            MicaAlt => "mica-alt",
+            Acrylic => "acrylic",
+            None => "none",
+        }
+    }
+
     pub fn next_window_close_action(&mut self) {
         use nexterm_config::CloseAction::*;
         self.window_close_action = match self.window_close_action {
@@ -586,5 +641,36 @@ mod tests {
         panel.fps_limit = SettingsPanel::FPS_LIMIT_MAX;
         panel.increase_fps_limit();
         assert_eq!(panel.fps_limit, SettingsPanel::FPS_LIMIT_MAX);
+    }
+
+    #[test]
+    fn backdrop_cycles_and_writes_back() {
+        let config = Config::default();
+        let mut panel = SettingsPanel::new(&config);
+        assert_eq!(panel.window_backdrop, nexterm_config::WindowBackdrop::Auto);
+
+        panel.next_window_backdrop();
+        assert_eq!(panel.window_backdrop, nexterm_config::WindowBackdrop::Mica);
+
+        let toml_str = panel.apply_to_toml_string("");
+        assert!(
+            toml_str.contains("backdrop = \"mica\""),
+            "the cycled value must reach the file: {toml_str}"
+        );
+    }
+
+    #[test]
+    fn backdrop_cycling_is_a_closed_loop_in_both_directions() {
+        use nexterm_config::WindowBackdrop::*;
+        let config = Config::default();
+        let mut panel = SettingsPanel::new(&config);
+        for expected in [Mica, MicaAlt, Acrylic, None, Auto] {
+            panel.next_window_backdrop();
+            assert_eq!(panel.window_backdrop, expected);
+        }
+        for expected in [None, Acrylic, MicaAlt, Mica, Auto] {
+            panel.prev_window_backdrop();
+            assert_eq!(panel.window_backdrop, expected);
+        }
     }
 }

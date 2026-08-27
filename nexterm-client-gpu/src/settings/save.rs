@@ -96,6 +96,9 @@ impl SettingsPanel {
         doc["window"]["in_app_blur_enabled"] = toml_edit::value(self.in_app_blur_enabled);
         doc["window"]["in_app_blur_strength"] = toml_edit::value(self.in_app_blur_strength as f64);
 
+        // [window].backdrop (P2c).
+        doc["window"]["backdrop"] = toml_edit::value(self.window_backdrop_toml_key());
+
         // colors_follow_system (Phase B4-P2).
         doc["colors_follow_system"] = toml_edit::value(self.colors_follow_system);
 

@@ -251,6 +251,9 @@ pub struct SettingsPanel {
     // ===== Phase B4-P2: additional Window-category fields =====
     /// `[window].decorations` mirror. Cycled via ←/→ at Window `focused_widget_index == 11`.
     pub window_decorations: nexterm_config::WindowDecorations,
+    /// `[window].backdrop` (UI/UX v3 P2c). Applied at the next launch, like
+    /// `decorations`.
+    pub window_backdrop: nexterm_config::WindowBackdrop,
     /// `[window].close_action` mirror. Cycled via ←/→ at Window `focused_widget_index == 12`.
     pub window_close_action: nexterm_config::CloseAction,
     /// `[gpu].fps_limit` mirror. 0 = unlimited. Adjusted in 10-fps steps,
@@ -414,6 +417,7 @@ impl SettingsPanel {
             animations_enabled: config.animations.enabled,
             animations_intensity: config.animations.intensity.clone(),
             window_decorations: config.window.decorations.clone(),
+            window_backdrop: config.window.backdrop,
             window_close_action: config.window.close_action,
             fps_limit: config.gpu.fps_limit,
             colors_follow_system: config.colors_follow_system,
