@@ -7,7 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `window.backdrop` (`auto` | `mica` | `mica-alt` | `acrylic` | `none`) selects the
+  OS-native window backdrop material. Windows maps it to
+  `DWMWA_SYSTEMBACKDROP_TYPE` (Windows 11 build 22621+), macOS to
+  `NSVisualEffectView` vibrancy via `window-vibrancy`, and Linux to nothing —
+  `in_app_blur_enabled` is the in-app substitute there. Secondary OS windows now
+  receive the backdrop too; before this they received none.
+
 ### Changed
+- Requesting a backdrop now creates the window transparent on its own. Previously
+  only `background_opacity < 1.0` did, so a backdrop on an opaque-configured
+  window could never be visible.
 - GPU compositing contract (UI/UX v3 P0): every built-in shader now outputs
   premultiplied alpha and every pipeline blends with
   `PREMULTIPLIED_ALPHA_BLENDING`, matching the surface's
@@ -33,6 +44,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   domain parameters, and `Send` bounds on dynamic `AgentClient` references.
 
 ### Fixed
+- The Windows backdrop was documented, named and logged as "Acrylic" while
+  actually applying Mica Alt: `apply_acrylic_blur` passed `4` to
+  `DWMWA_SYSTEMBACKDROP_TYPE`, which is `DWMSBT_TABBEDWINDOW`. The default
+  (`backdrop = "auto"`) deliberately keeps applying Mica Alt, so no existing
+  Windows window changes appearance — only the naming was wrong.
+- `docs/CONFIGURATION.md` documented `background_opacity`'s default as `1.0`; the
+  schema default is `0.95`.
 - Translucent windows (`window.background_opacity < 1.0`) no longer look
   washed out: the clear color and all blending honor the premultiplied
   surface. (#35)
@@ -42,6 +60,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   2-attribute vertex layout; reloading with the built-in (or any
   5-attribute) shader would fail pipeline validation. The reload path now
   mirrors the startup layout.
+
+### Removed
+- `window.macos_window_background_blur`, which had no reader anywhere in the
+  workspace while both `CONFIGURATION.md` and `ARCHITECTURE.md` described it as a
+  working setting. Config files still carrying the key keep loading — unknown keys
+  are ignored — and `window.backdrop` replaces it.
 
 ### Security
 - **`h2` 0.4.13 → 0.4.18 (RUSTSEC-2026-0258)**: a peer could send unbounded

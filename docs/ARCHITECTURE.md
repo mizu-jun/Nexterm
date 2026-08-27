@@ -424,7 +424,7 @@ When a configuration file changes, `ConfigWatcher` reloads it and updates the `C
 | `status_bar.enabled` | bool | `false` |
 | `window.background_opacity` | f32 | `1.0` |
 | `window.decorations` | WindowDecorations | `NoTitle` (`Full` on macOS) |
-| `window.macos_window_background_blur` | u32 | `0` |
+| `window.backdrop` | String | `"auto"` |
 | `tab_bar.enabled` | bool | `true` |
 | `tab_bar.height` | u32 | `28` |
 | `tab_bar.active_tab_bg` | String | `"#ae8b2d"` |

@@ -79,11 +79,15 @@ that resizes constantly — and a Windows-side adoption would pull `windows-sys`
 0.60 alongside the workspace's 0.59.
 
 The crate is declared under `[target.'cfg(target_os = "macos")'.dependencies]`,
-so its Windows dependencies are never compiled. **To verify during
-implementation:** `Cargo.lock` records the union across all targets, so
-`windows-sys 0.60` may still appear as a lock entry (and therefore in
-`pkg/flatpak/cargo-sources.json`) without ever being built. Inspect the lock
-after adding the dependency and record what actually happened.
+so its Windows dependencies are never compiled. **Measured during
+implementation:** `Cargo.lock` does record the union across all targets —
+adding `window-vibrancy` brought in 12 new lock entries (`windows-sys 0.60.2`,
+`windows-targets`, the seven per-architecture `windows_*` target crates, and
+`objc2-quartz-core`), which also landed in `pkg/flatpak/cargo-sources.json`
+(156 added lines) once it was regenerated. None of it is built on Linux:
+`window-vibrancy` itself is gated to `cfg(target_os = "macos")`, so `cargo
+check`/`test`/`clippy` never touch it or anything it depends on outside a
+macOS build.
 
 ## Architecture
 

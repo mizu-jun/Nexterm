@@ -452,7 +452,16 @@ gated behind a spike.
         tests: tokenising it would change nothing that renders. (The same
         line makes the `DesignTokens::default()` branch beside it dead
         too — worth folding into a future cleanup, not into G11)
-- [ ] CONFIGURATION.md inventory PR
+- [x] CONFIGURATION.md inventory PR — shipped via #73. `Config` has 36 fields; the
+      document covered 13 and described ten keys that never existed in the code.
+      `nexterm-config/tests/doc_matches_schema.rs` now fails if a documented key
+      is not a real field, but `complete_example_uses_only_real_config_keys`
+      only walks the example's **top-level** keys, so a key nested under
+      `[window]` is invisible to it — it did **not** catch P2c's removal of
+      `macos_window_background_blur`. The guard that did is
+      `removed_phantom_keys_do_not_return`, which scans the document textually
+      at any nesting depth and which Task 2 armed by adding the key to its
+      `PHANTOM` list
 - [x] P2a soft shadows + stroke attributes — shipped via #63. The BG shader
       gains `shadow_softness` / `stroke_width` vertex attributes (5 → 7;
       additive for `custom_bg_shader` — a 5-attribute custom shader keeps
@@ -488,7 +497,12 @@ gated behind a spike.
         it waits until the P2a shadow constants are tuned on-device rather
         than stacking another unverified change
 - [x] P2b in-app acrylic (offscreen + Kawase blur) — shipped via #74
-- [ ] P2c `window.backdrop` config (Win/macOS/Linux)
+- [x] P2c `window.backdrop` config (Win/macOS/Linux) — shipped via P2c-1/P2c-2.
+      Closes P2. The Windows material was mislabelled Acrylic throughout while
+      applying Mica Alt (`DWMSBT_TABBEDWINDOW`); `auto` keeps applying Mica Alt so
+      the correction changes no appearance. macOS resolves every non-`none` value
+      to one `NSVisualEffectView` material, since AppKit has no Mica/Acrylic
+      distinction; Linux resolves everything to `none`
 - [ ] P3 motion language + reduced-motion detection
 - [ ] P4 icon font + chrome type ramp
 - [ ] P5 contrast everywhere + high-contrast scheme
@@ -549,6 +563,18 @@ gated behind a spike.
     image, and terminal text glyphs (drawn by other pipelines) are not in
     it, so a blurred panel shows a frosted composite of that chrome, not a
     frosted terminal.
+  - P2c — the backdrop materials themselves, on both OSes that have any. Not
+    measured: whether Mica, Mica Alt and Acrylic are distinguishable in Nexterm at
+    all, given that the terminal paints `background_opacity` over the surface (at
+    the 0.95 default only 5% of the material shows through, which may be why the
+    Mica Alt that has shipped since v1.1 has never been remarked on); the macOS
+    `NSVisualEffectMaterial::UnderWindowBackground` choice, which is an unmeasured
+    initial recipe of exactly the same kind as #63's `shadow_params` and #74's
+    `ACRYLIC_TINT_OPACITY`; whether an OS backdrop and P2b's in-app acrylic look
+    coherent when both are on. What *is* machine-verified: the five-value routing
+    table across three OSes, and the DWM constant for each material — the mapping
+    is a plain `const fn`, so a wrong constant fails on a Linux runner rather than
+    surviving to a Windows release.
     Nobody has seen whether that reads as intended or as a flat colour
     field, and it is the single most likely way the effect disappoints.
     The tint constant: `ACRYLIC_TINT_OPACITY = 0.85`
