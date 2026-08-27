@@ -309,7 +309,10 @@ impl EventHandler {
         server_window_id: u32,
     ) -> Option<WindowId> {
         let win_cfg = &self.app.config.window;
-        let transparent = win_cfg.background_opacity < 1.0;
+        let backdrop = win_cfg
+            .backdrop
+            .resolve(nexterm_config::BackdropTarget::current());
+        let transparent = win_cfg.background_opacity < 1.0 || backdrop.needs_transparent_window();
         // Secondary OS windows never get the custom title bar: the mouse
         // handlers only act on the primary window, so a `notitle` secondary
         // window would have no working buttons, drag, or resize. `NoTitle`
@@ -339,6 +342,11 @@ impl EventHandler {
             }
         };
         window.set_ime_allowed(true);
+
+        // Secondary OS windows got no backdrop at all before P2c, so a second
+        // window did not match the first. The opacity warning stays on the
+        // primary path: it is a config problem, not a per-window one.
+        crate::platform::apply_backdrop(&window, backdrop);
 
         // Sprint 5-11-2 Step 2-3: initialize the AccessKit Adapter for the new OS window (before visibility).
         let accesskit_adapter = accesskit_winit::Adapter::with_event_loop_proxy(
