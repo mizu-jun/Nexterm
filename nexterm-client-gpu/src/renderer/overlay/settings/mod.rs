@@ -82,6 +82,7 @@ impl WgpuState {
         sh: f32,
         cell_w: f32,
         cell_h: f32,
+        acrylic_mix: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         bg_verts: &mut Vec<BgVertex>,
@@ -169,7 +170,18 @@ impl WgpuState {
         // Panel chrome: drop-shadow + border ring + rounded background via shared helper.
         let elevation = nexterm_config::ElevationScale::default().flyout;
         draw_overlay_panel(
-            px, py, panel_w, panel_h, tokens, elevation, 6.0, sw, sh, bg_verts, bg_idx,
+            px,
+            py,
+            panel_w,
+            panel_h,
+            tokens,
+            elevation,
+            6.0,
+            sw,
+            sh,
+            acrylic_mix,
+            bg_verts,
+            bg_idx,
         );
 
         // Title bar (tokens.surface_3, opaque)
@@ -547,6 +559,7 @@ impl WgpuState {
             sh,
             cell_w,
             cell_h,
+            acrylic_mix,
             font,
             atlas,
             &self.queue,

@@ -83,10 +83,13 @@ pub(super) fn draw_overlay_panel(
     radius: f32,
     sw: f32,
     sh: f32,
+    acrylic_mix: f32,
     bg_verts: &mut Vec<crate::glyph_atlas::BgVertex>,
     bg_idx: &mut Vec<u16>,
 ) {
-    use crate::vertex_util::{add_px_rounded_rect_sdf, add_px_soft_shadow_sdf};
+    use crate::vertex_util::{
+        add_px_rounded_rect_sdf, add_px_rounded_rect_sdf_with_acrylic, add_px_soft_shadow_sdf,
+    };
 
     // 1. Soft drop shadow scaled by the surface's Fluent elevation
     //    (UI/UX v3 P2a; was a hard offset quad with a per-caller offset).
@@ -121,9 +124,22 @@ pub(super) fn draw_overlay_panel(
         bg_idx,
     );
 
-    // 3. Panel background — tokens.surface_2, fully opaque.
+    // 3. Panel background — the only part that samples acrylic, via the
+    //    trailing acrylic_mix vertex field (UI/UX v3 P2b).
     let bg = tokens.surface_2;
-    add_px_rounded_rect_sdf(px, py, pw, ph, radius, bg, sw, sh, bg_verts, bg_idx);
+    add_px_rounded_rect_sdf_with_acrylic(
+        px,
+        py,
+        pw,
+        ph,
+        radius,
+        bg,
+        sw,
+        sh,
+        acrylic_mix,
+        bg_verts,
+        bg_idx,
+    );
 }
 
 /// Soft-shadow recipe for one overlay surface (UI/UX v3 P2a).
@@ -384,5 +400,47 @@ mod tests {
             light[0] > dark[0] + 0.3,
             "light scrim {light:?} is not meaningfully lighter than {dark:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod acrylic_mix_tests {
+    use super::*;
+
+    #[test]
+    fn fill_vertices_carry_the_requested_acrylic_mix() {
+        // Built via `from_palette` with a built-in scheme, matching this
+        // file's other token-consuming tests (see `tokens_for` above).
+        let tokens = nexterm_config::DesignTokens::from_palette(
+            &nexterm_config::BuiltinScheme::TokyoNight.palette(),
+        );
+        let mut bg_verts = Vec::new();
+        let mut bg_idx = Vec::new();
+        draw_overlay_panel(
+            10.0,
+            10.0,
+            100.0,
+            50.0,
+            &tokens,
+            128.0,
+            6.0,
+            800.0,
+            600.0,
+            0.75,
+            &mut bg_verts,
+            &mut bg_idx,
+        );
+        // The panel background fill is the *last* 4 vertices pushed (shadow,
+        // then border, then fill — see draw_overlay_panel's own comments).
+        let fill_verts = &bg_verts[bg_verts.len() - 4..];
+        assert!(
+            fill_verts
+                .iter()
+                .all(|v| (v.acrylic_mix - 0.75).abs() < f32::EPSILON)
+        );
+        // The shadow and border ring stay opaque regardless of the panel's
+        // acrylic_mix — only the fill itself is translucent acrylic.
+        let non_fill_verts = &bg_verts[..bg_verts.len() - 4];
+        assert!(non_fill_verts.iter().all(|v| v.acrylic_mix == 0.0));
     }
 }

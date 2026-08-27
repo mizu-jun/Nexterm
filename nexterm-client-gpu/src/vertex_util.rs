@@ -74,6 +74,7 @@ pub(crate) fn add_rect_verts(
         0.0,
         0.0,
         0.0,
+        0.0,
         bg_verts,
         bg_idx,
     );
@@ -94,6 +95,7 @@ fn push_rect_verts_with_sdf(
     corner_radius: f32,
     shadow_softness: f32,
     stroke_width: f32,
+    acrylic_mix: f32,
     bg_verts: &mut Vec<BgVertex>,
     bg_idx: &mut Vec<u16>,
 ) {
@@ -106,9 +108,10 @@ fn push_rect_verts_with_sdf(
         corner_radius,
         shadow_softness,
         stroke_width,
-        // Plain rects never carry the acrylic blend; only overlay panel
-        // fills opt in (UI/UX v3 P2b, wired up in a later task).
-        acrylic_mix: 0.0,
+        // Plain rects never carry the acrylic blend; only the overlay panel
+        // fill opts in, via `add_px_rounded_rect_sdf_with_acrylic` (UI/UX v3
+        // P2b).
+        acrylic_mix,
     };
     bg_verts.extend_from_slice(&[
         make([x0, y0]),
@@ -180,6 +183,52 @@ pub(crate) fn add_px_rounded_rect_sdf(
         r,
         0.0,
         0.0,
+        0.0,
+        bg_verts,
+        bg_idx,
+    );
+}
+
+/// Same as [`add_px_rounded_rect_sdf`], but threading a non-zero
+/// `acrylic_mix` through to the pushed vertices instead of the hardcoded
+/// `0.0` every other rounded-rect caller uses.
+///
+/// Used exclusively by the overlay panel's background fill (UI/UX v3 P2b):
+/// the shadow and border ring stay opaque, only the fill itself samples the
+/// blurred scene behind the panel.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn add_px_rounded_rect_sdf_with_acrylic(
+    px: f32,
+    py: f32,
+    pw: f32,
+    ph: f32,
+    radius: f32,
+    color: [f32; 4],
+    sw: f32,
+    sh: f32,
+    acrylic_mix: f32,
+    bg_verts: &mut Vec<BgVertex>,
+    bg_idx: &mut Vec<u16>,
+) {
+    let x0 = px / sw * 2.0 - 1.0;
+    let y0 = 1.0 - py / sh * 2.0;
+    let x1 = (px + pw) / sw * 2.0 - 1.0;
+    let y1 = 1.0 - (py + ph) / sh * 2.0;
+    let r = radius.max(0.0).min(pw * 0.5).min(ph * 0.5);
+    let rect_center = [px + pw * 0.5, py + ph * 0.5];
+    let rect_half_size = [pw * 0.5, ph * 0.5];
+    push_rect_verts_with_sdf(
+        x0,
+        y0,
+        x1,
+        y1,
+        color,
+        rect_center,
+        rect_half_size,
+        r,
+        0.0,
+        0.0,
+        acrylic_mix,
         bg_verts,
         bg_idx,
     );
@@ -222,6 +271,7 @@ pub(crate) fn add_px_soft_shadow_sdf(
         [pw * 0.5, ph * 0.5],
         r,
         s,
+        0.0,
         0.0,
         bg_verts,
         bg_idx,
@@ -273,6 +323,7 @@ pub(crate) fn add_px_stroke_sdf(
         r,
         0.0,
         w,
+        0.0,
         bg_verts,
         bg_idx,
     );

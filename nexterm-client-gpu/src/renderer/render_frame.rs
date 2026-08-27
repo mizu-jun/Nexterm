@@ -937,6 +937,17 @@ impl WgpuState {
             .note_overlay_open_count(overlay_open_count as usize);
         let overlay_open = overlay_open_count > 0;
 
+        // Panel fill acrylic mix (UI/UX v3 P2b): every overlay panel built
+        // below samples the blurred scene behind it at this strength when
+        // in-app blur is enabled, and stays a flat opaque fill (mix 0) when
+        // it is not. Computed once so every call site keys off the same
+        // value the capture+blur chain further down uses.
+        let panel_acrylic_mix = if in_app_blur_enabled {
+            in_app_blur_strength
+        } else {
+            0.0
+        };
+
         // ---- SFTP file transfer dialog (when open) ----
         if state.file_transfer.is_open {
             self.build_file_transfer_verts(
@@ -946,6 +957,7 @@ impl WgpuState {
                 sh,
                 cell_w,
                 cell_h,
+                panel_acrylic_mix,
                 font,
                 atlas,
                 &mut bg_verts,
@@ -964,6 +976,7 @@ impl WgpuState {
                 sh,
                 cell_w,
                 cell_h,
+                panel_acrylic_mix,
                 font,
                 atlas,
                 &mut bg_verts,
@@ -982,6 +995,7 @@ impl WgpuState {
                 sh,
                 cell_w,
                 cell_h,
+                panel_acrylic_mix,
                 font,
                 atlas,
                 &mut bg_verts,
@@ -998,6 +1012,7 @@ impl WgpuState {
                 sh,
                 cell_w,
                 cell_h,
+                panel_acrylic_mix,
                 font,
                 atlas,
                 &mut bg_verts,
@@ -1015,6 +1030,7 @@ impl WgpuState {
                 sh,
                 cell_w,
                 cell_h,
+                panel_acrylic_mix,
                 font,
                 atlas,
                 &mut bg_verts,
@@ -1033,6 +1049,7 @@ impl WgpuState {
                 sh,
                 cell_w,
                 cell_h,
+                panel_acrylic_mix,
                 font,
                 atlas,
                 &mut bg_verts,
@@ -1058,6 +1075,7 @@ impl WgpuState {
                 sh,
                 cell_w,
                 cell_h,
+                panel_acrylic_mix,
                 font,
                 atlas,
                 &mut bg_verts,
@@ -1082,6 +1100,7 @@ impl WgpuState {
                 sh,
                 cell_w,
                 cell_h,
+                panel_acrylic_mix,
                 font,
                 atlas,
                 &mut bg_verts,
@@ -1160,6 +1179,7 @@ impl WgpuState {
                 sh,
                 cell_w,
                 cell_h,
+                panel_acrylic_mix,
                 font,
                 atlas,
                 &mut bg_verts,
@@ -1180,6 +1200,7 @@ impl WgpuState {
                 sh,
                 cell_w,
                 cell_h,
+                panel_acrylic_mix,
                 font,
                 atlas,
                 &mut bg_verts,

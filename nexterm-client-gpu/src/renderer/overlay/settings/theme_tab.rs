@@ -119,6 +119,7 @@ pub(in crate::renderer) fn draw_theme_tooltip(
     sh: f32,
     cell_w: f32,
     cell_h: f32,
+    acrylic_mix: f32,
     font: &mut FontManager,
     atlas: &mut GlyphAtlas,
     queue: &wgpu::Queue,
@@ -164,5 +165,14 @@ pub(in crate::renderer) fn draw_theme_tooltip(
         text_verts,
         text_idx,
     };
-    draw_tooltip(rect, text, &theme, font, atlas, queue, &mut sink);
+    draw_tooltip(
+        rect,
+        text,
+        &theme,
+        acrylic_mix,
+        font,
+        atlas,
+        queue,
+        &mut sink,
+    );
 }
