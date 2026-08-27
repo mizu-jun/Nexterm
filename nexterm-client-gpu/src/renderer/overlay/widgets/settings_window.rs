@@ -50,10 +50,14 @@ pub(crate) mod row {
     pub const CLOSE_ACTION: u16 = 12;
     /// FPS limit (slider).
     pub const FPS_LIMIT: u16 = 13;
+    /// In-app blur enabled (toggle).
+    pub const IN_APP_BLUR_ENABLED: u16 = 14;
+    /// In-app blur strength (slider).
+    pub const IN_APP_BLUR_STRENGTH: u16 = 15;
 }
 
 /// Number of rows in the Window category.
-pub(crate) const WINDOW_ROW_COUNT: usize = 14;
+pub(crate) const WINDOW_ROW_COUNT: usize = 16;
 
 // Slider ranges, mirroring the clamps the `set_*` / `*_increase` setters
 // already apply. They live here so the slider fraction, the AccessKit
@@ -85,6 +89,8 @@ fn label(index: u16) -> String {
         row::DECORATIONS => fl!("settings-window-decorations"),
         row::CLOSE_ACTION => fl!("settings-window-close-action"),
         row::FPS_LIMIT => fl!("settings-window-fps-limit-label"),
+        row::IN_APP_BLUR_ENABLED => fl!("settings-window-in-app-blur-label"),
+        row::IN_APP_BLUR_STRENGTH => fl!("settings-window-in-app-blur-strength-label"),
         _ => String::new(),
     }
 }
@@ -153,6 +159,16 @@ fn kind(sp: &SettingsPanel, index: u16) -> WidgetKind {
             max: FPS_RANGE.1,
             step: 10.0,
             display: sp.fps_limit_label(),
+        },
+        row::IN_APP_BLUR_ENABLED => WidgetKind::Toggle {
+            on: sp.in_app_blur_enabled,
+        },
+        row::IN_APP_BLUR_STRENGTH => WidgetKind::Slider {
+            value: sp.in_app_blur_strength,
+            min: 0.0,
+            max: 1.0,
+            step: 0.05,
+            display: format!("{:.0}%", sp.in_app_blur_strength * 100.0),
         },
         _ => WidgetKind::Label,
     }
@@ -270,6 +286,7 @@ pub(crate) fn apply_window_action(
             row::OPACITY => sp.set_opacity_value(v),
             row::PADDING_X => sp.set_padding_x_value(v),
             row::PADDING_Y => sp.set_padding_y_value(v),
+            row::IN_APP_BLUR_STRENGTH => sp.set_in_app_blur_strength_value(v),
             // No setter for the remaining rows; refuse rather than guess.
             _ => return false,
         },
@@ -286,6 +303,7 @@ pub(crate) fn apply_window_action(
             row::ANIMATION_INTENSITY => sp.next_animations_intensity(),
             row::DECORATIONS => sp.next_window_decorations(),
             row::CLOSE_ACTION => sp.next_window_close_action(),
+            row::IN_APP_BLUR_ENABLED => sp.toggle_in_app_blur(),
             _ => return true,
         },
     }
@@ -347,8 +365,8 @@ mod tests {
     fn sliders_and_toggles_and_cyclers_are_all_present() {
         let descs = window_widget_descs(&panel());
         let count = |f: fn(&WidgetKind) -> bool| descs.iter().filter(|d| f(&d.kind)).count();
-        assert_eq!(count(|k| matches!(k, WidgetKind::Slider { .. })), 5);
-        assert_eq!(count(|k| matches!(k, WidgetKind::Toggle { .. })), 4);
+        assert_eq!(count(|k| matches!(k, WidgetKind::Slider { .. })), 6);
+        assert_eq!(count(|k| matches!(k, WidgetKind::Toggle { .. })), 5);
         assert_eq!(count(|k| matches!(k, WidgetKind::Cycle { .. })), 5);
     }
 
@@ -568,6 +586,26 @@ mod tests {
         assert!(sp.padding_x > 4);
         apply_window_action(&mut sp, row::PADDING_X, WidgetAction::Prev);
         assert_eq!(sp.padding_x, 4);
+    }
+
+    #[test]
+    fn in_app_blur_toggle_and_slider_apply_through_widget_actions() {
+        use super::super::action::WidgetAction;
+
+        let mut sp = panel();
+        assert!(apply_window_action(
+            &mut sp,
+            row::IN_APP_BLUR_ENABLED,
+            WidgetAction::Activate
+        ));
+        assert!(sp.in_app_blur_enabled);
+
+        assert!(apply_window_action(
+            &mut sp,
+            row::IN_APP_BLUR_STRENGTH,
+            WidgetAction::SetValue(0.4)
+        ));
+        assert!((sp.in_app_blur_strength - 0.4).abs() < 0.05);
     }
 
     #[test]

@@ -51,6 +51,27 @@ impl SettingsPanel {
         self.dirty = true;
     }
 
+    /// Increment `[window].in_app_blur_strength` (P2b), mirroring `increase_opacity`.
+    pub fn increase_in_app_blur_strength(&mut self) {
+        self.in_app_blur_strength = (self.in_app_blur_strength + 0.05).min(1.0);
+        self.dirty = true;
+    }
+
+    /// Decrement `[window].in_app_blur_strength` (P2b), mirroring `decrease_opacity`.
+    pub fn decrease_in_app_blur_strength(&mut self) {
+        self.in_app_blur_strength = (self.in_app_blur_strength - 0.05).max(0.0);
+        self.dirty = true;
+    }
+
+    /// Used by SR via `Action::SetValue(NumericValue)`: clamp the f64 value to
+    /// `0.0..=1.0`, snap to 0.05 steps, and store it as the in-app blur
+    /// strength. Mirrors `set_opacity_value`'s clamp-then-quantize shape.
+    pub fn set_in_app_blur_strength_value(&mut self, v: f64) {
+        let raw = (v as f32).clamp(0.0, 1.0);
+        self.in_app_blur_strength = (raw * 20.0).round() / 20.0;
+        self.dirty = true;
+    }
+
     pub fn next_cursor_style(&mut self) {
         use nexterm_config::CursorStyle::*;
         self.cursor_style = match self.cursor_style {
@@ -400,6 +421,41 @@ mod tests {
     }
 
     #[test]
+    fn in_app_blur_strength_value_clamps_and_rounds() {
+        let config = Config::default();
+        let mut panel = SettingsPanel::new(&config);
+        panel.set_in_app_blur_strength_value(-0.5);
+        assert_eq!(
+            panel.in_app_blur_strength, 0.0,
+            "negative values clamp to 0.0"
+        );
+        panel.set_in_app_blur_strength_value(2.0);
+        assert_eq!(
+            panel.in_app_blur_strength, 1.0,
+            "values above 1.0 clamp to 1.0"
+        );
+        panel.set_in_app_blur_strength_value(0.3);
+        assert!(
+            (panel.in_app_blur_strength - 0.3).abs() < 0.05,
+            "slider step-rounded, same tolerance as opacity's test"
+        );
+        assert!(panel.dirty);
+    }
+
+    #[test]
+    fn in_app_blur_strength_increase_decrease_clamps() {
+        let config = Config::default();
+        let mut panel = SettingsPanel::new(&config);
+        panel.in_app_blur_strength = 0.98;
+        panel.increase_in_app_blur_strength();
+        assert_eq!(panel.in_app_blur_strength, 1.0, "clamps at the upper bound");
+
+        panel.in_app_blur_strength = 0.02;
+        panel.decrease_in_app_blur_strength();
+        assert_eq!(panel.in_app_blur_strength, 0.0, "clamps at the lower bound");
+    }
+
+    #[test]
     fn present_mode_cycle_forward_and_back() {
         use nexterm_config::PresentModeConfig::*;
         let config = Config::default();
@@ -499,6 +555,17 @@ mod tests {
         panel.fps_limit = 144;
         let toml_str = panel.apply_to_toml_string("");
         assert!(toml_str.contains("fps_limit = 144"));
+    }
+
+    #[test]
+    fn save_writes_in_app_blur_strength() {
+        // 0.5 is exactly representable in f32, so the f64-cast TOML value
+        // round-trips without float-precision noise in the string check.
+        let config = Config::default();
+        let mut panel = SettingsPanel::new(&config);
+        panel.set_in_app_blur_strength_value(0.5);
+        let toml_str = panel.apply_to_toml_string("");
+        assert!(toml_str.contains("in_app_blur_strength = 0.5"));
     }
 
     #[test]

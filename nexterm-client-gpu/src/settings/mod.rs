@@ -230,6 +230,12 @@ pub struct SettingsPanel {
     // ===== Phase B4: additional Window-category fields =====
     /// `[cursor].blink_enabled` mirror. On save writes back to `[cursor].blink_enabled`.
     pub cursor_blink_enabled: bool,
+
+    // ===== P2b: in-app acrylic blur toggle/strength =====
+    /// `[window].in_app_blur_enabled` mirror.
+    pub in_app_blur_enabled: bool,
+    /// `[window].in_app_blur_strength` mirror (0.0..=1.0, snapped to 5% steps).
+    pub in_app_blur_strength: f32,
     /// `scrollback_lines` mirror (top-level key). Adjusted in 1000-line steps,
     /// clamped to `100..=1_000_000`.
     pub scrollback_lines: usize,
@@ -400,6 +406,8 @@ impl SettingsPanel {
             search_query: String::new(),
             search_focused: false,
             cursor_blink_enabled: config.cursor.blink_enabled,
+            in_app_blur_enabled: config.window.in_app_blur_enabled,
+            in_app_blur_strength: config.window.in_app_blur_strength,
             scrollback_lines: config.scrollback_lines,
             tab_show_tab_number: config.tab_bar.show_tab_number,
             tab_show_new_tab_button: config.tab_bar.show_new_tab_button,

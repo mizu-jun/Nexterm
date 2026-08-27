@@ -59,6 +59,8 @@ impl SettingsPanel {
             fl!("settings-window-decorations"),
             fl!("settings-window-close-action"),
             fl!("settings-window-fps-limit", value = ""),
+            fl!("settings-window-in-app-blur", value = ""),
+            fl!("settings-window-in-app-blur-strength", value = ""),
         ]
     }
 
