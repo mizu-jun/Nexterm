@@ -184,8 +184,8 @@ Evaluation occurs **every 1 second** (inside the GPU client's `about_to_wait` ho
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `background_opacity` | float | `1.0` | Window background opacity (0.0 = fully transparent, 1.0 = opaque). A compositor is required for transparency |
-| `macos_window_background_blur` | u32 | `0` | macOS window background blur intensity (0 = disabled) |
+| `background_opacity` | float | `0.95` | Window background opacity (0.0 = fully transparent, 1.0 = opaque). A compositor is required for transparency |
+| `backdrop` | String | `"auto"` | OS-native window backdrop material. See below — a backdrop is only visible where `background_opacity` is below `1.0` |
 | `decorations` | String | `"notitle"` (`"full"` on macOS) | Window decoration style |
 | `in_app_blur_enabled` | bool | `false` | Enable the in-app acrylic material (blurred terminal behind overlay panels). Opt-in — unverified on real GPU hardware as of this writing |
 | `in_app_blur_strength` | float | `0.6` | Blend ratio between the opaque panel fill (0.0) and the full blur+tint acrylic material (1.0). Only used when `in_app_blur_enabled` is true |
@@ -198,10 +198,35 @@ Evaluation occurs **every 1 second** (inside the GPU client's `about_to_wait` ho
 | `"none"` | Hide title bar and borders (borderless) |
 | `"notitle"` | Windows Terminal-style custom title bar: borderless, the tab bar doubles as the title bar (window buttons, drag-to-move, double-click maximize, edge resize). Default on Windows/Linux |
 
+#### `backdrop` Values
+
+| Value | Windows | macOS | Linux |
+|-------|---------|-------|-------|
+| `"auto"` | Mica Alt (the material Nexterm has always applied) | None | None |
+| `"mica"` | Mica | Vibrancy | None |
+| `"mica-alt"` | Mica Alt | Vibrancy | None |
+| `"acrylic"` | Acrylic | Vibrancy | None |
+| `"none"` | None | None | None |
+
+macOS has a single `NSVisualEffectView` material family, so `mica`,
+`mica-alt` and `acrylic` all resolve to the same vibrancy there. Linux has no
+cross-compositor equivalent; use `in_app_blur_enabled` instead, which blurs
+the terminal behind overlay panels inside the app.
+
+Windows requires Windows 11 build 22621 (22H2) or later —
+`DWMWA_SYSTEMBACKDROP_TYPE` does not exist on older builds and the request is
+ignored.
+
+> **A backdrop is drawn *behind* the window, so the terminal has to let it
+> through.** With `background_opacity = 1.0` the terminal paints over the
+> material and nothing is visible; Nexterm logs a warning at startup when that
+> combination is configured. Lower `background_opacity` to see the backdrop.
+> Nexterm does not override the opacity you configured.
+
 ```toml
 [window]
 background_opacity = 0.92
-macos_window_background_blur = 20
+backdrop = "mica-alt"
 decorations = "notitle"
 ```
 
@@ -981,7 +1006,7 @@ widgets = ['os.date("%H:%M:%S")', '"nexterm"']
 
 [window]
 background_opacity = 0.95
-macos_window_background_blur = 0
+backdrop = "auto"
 decorations = "notitle"
 in_app_blur_enabled = false
 in_app_blur_strength = 0.6
@@ -1203,7 +1228,7 @@ When a configuration file is saved, the **GPU client automatically detects the f
 | Key bindings | Immediately (hot reload) | Applied from the next key event |
 | Status bar settings | Immediately (hot reload) | Changes to `enabled` take effect from the next frame |
 | Lua widget expressions | Re-evaluated every 1 second | Changes to `nexterm.lua` are reflected in the next evaluation cycle |
-| Window transparency / decorations | On restart | `background_opacity` / `decorations` are applied as window attributes at startup |
+| Window transparency / decorations / backdrop | On restart | `background_opacity` / `decorations` / `backdrop` are applied as window attributes at startup |
 | Tab bar settings | Immediately (hot reload) | Changes to `enabled`, colors, and separator take effect from the next frame |
 
 > Hot reload is implemented using filesystem watching via the `notify` crate. Changes are typically reflected within 100ms of detection.

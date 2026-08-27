@@ -271,9 +271,10 @@ pub struct WindowConfig {
     /// Window opacity (0.0 = fully transparent, 1.0 = opaque).
     #[serde(default = "default_background_opacity")]
     pub background_opacity: f32,
-    /// macOS window blur strength (0 = none).
+    /// OS-native backdrop material (UI/UX v3 P2c). Replaces the never-wired
+    /// `macos_window_background_blur`, which was removed in the same change.
     #[serde(default)]
-    pub macos_window_background_blur: u32,
+    pub backdrop: WindowBackdrop,
     /// Window decorations.
     #[serde(default)]
     pub decorations: WindowDecorations,
@@ -335,7 +336,7 @@ impl Default for WindowConfig {
     fn default() -> Self {
         Self {
             background_opacity: default_background_opacity(),
-            macos_window_background_blur: 0,
+            backdrop: WindowBackdrop::default(),
             decorations: WindowDecorations::default(),
             layout_mode: default_layout_mode(),
             padding_x: 0,
@@ -948,6 +949,53 @@ mod window_backdrop_tests {
         ] {
             assert!(resolved.needs_transparent_window(), "{resolved:?}");
         }
+    }
+
+    #[test]
+    fn defaults_to_auto() {
+        assert_eq!(WindowConfig::default().backdrop, WindowBackdrop::Auto);
+    }
+
+    #[test]
+    fn parses_kebab_case_from_toml() {
+        let parsed: super::super::Config = toml::from_str(
+            r#"
+[window]
+backdrop = "mica-alt"
+"#,
+        )
+        .expect("mica-alt must parse");
+        assert_eq!(parsed.window.backdrop, WindowBackdrop::MicaAlt);
+    }
+
+    #[test]
+    fn rejects_an_unknown_backdrop() {
+        let parsed: Result<super::super::Config, _> = toml::from_str(
+            r#"
+[window]
+backdrop = "frosted"
+"#,
+        );
+        assert!(
+            parsed.is_err(),
+            "an unknown backdrop must be a load error, not a silent fallback"
+        );
+    }
+
+    /// The removed `macos_window_background_blur` never had a reader. Config
+    /// files still carrying it must keep loading — the TOML parser ignores
+    /// unknown keys, and this pins that it stays that way.
+    #[test]
+    fn a_config_carrying_the_removed_macos_blur_key_still_loads() {
+        let parsed: super::super::Config = toml::from_str(
+            r#"
+[window]
+macos_window_background_blur = 20
+background_opacity = 0.9
+"#,
+        )
+        .expect("an old config must not become a load error");
+        assert!((parsed.window.background_opacity - 0.9).abs() < f32::EPSILON);
     }
 }
 

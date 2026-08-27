@@ -83,8 +83,9 @@ fn complete_example_uses_only_real_config_keys() {
 }
 
 /// Keys that lived in the document for a long time without ever existing in
-/// the code. They are named here so that copying an old revision back in fails
-/// loudly instead of quietly documenting a no-op again.
+/// the code, plus fields that did exist but were removed. They are named here
+/// so that copying an old revision back in fails loudly instead of quietly
+/// documenting a no-op again.
 ///
 /// The prose that explains their removal is allowed to mention them; only
 /// key-like usage (a table row, or an assignment inside an example) counts.
@@ -104,6 +105,9 @@ fn removed_phantom_keys_do_not_return() {
         // SSH.
         "socks5_proxy",
         "local_forwards",
+        // Window: existed as a field but never had a reader; removed in P2c
+        // and replaced by `backdrop`.
+        "macos_window_background_blur",
     ];
 
     for (lineno, line) in DOC.lines().enumerate() {
