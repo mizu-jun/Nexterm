@@ -68,6 +68,16 @@ global-hotkey = "0.8"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# UI/UX v3 P2c: NSVisualEffectView-backed window backdrop.
+# macOS only, deliberately. The crate's Windows Acrylic path falls back on
+# Windows 10 to the undocumented SetWindowCompositionAttribute, whose resize
+# cost its own README documents — a bad trade for a terminal — and it wants
+# windows-sys 0.60 against this workspace's 0.59. Nexterm keeps its own
+# DwmSetWindowAttribute call on Windows instead.
+# Licensed Apache-2.0 OR MIT, matching this workspace.
+window-vibrancy = "0.8"
+
 [target.'cfg(windows)'.dependencies]
 dirs = "5"
 windows-sys = { version = "0.59", features = [

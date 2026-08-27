@@ -46,10 +46,38 @@ pub(crate) const fn dwm_backdrop_value(resolved: ResolvedBackdrop) -> Option<u32
 pub(crate) fn apply_backdrop(window: &winit::window::Window, resolved: ResolvedBackdrop) {
     #[cfg(windows)]
     apply_backdrop_windows(window, resolved);
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    apply_backdrop_macos(window, resolved);
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
-        // Task 4 adds the macOS arm here.
         let _ = (window, resolved);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn apply_backdrop_macos(window: &winit::window::Window, resolved: ResolvedBackdrop) {
+    use window_vibrancy::{NSVisualEffectMaterial, apply_vibrancy, clear_vibrancy};
+
+    let result = match resolved {
+        ResolvedBackdrop::None => clear_vibrancy(window).map(|_| ()),
+        // AppKit has a single material family, so Mica, Mica Alt and Acrylic
+        // all land here (see `WindowBackdrop::resolve`).
+        //
+        // `UnderWindowBackground` is AppKit's material for window backgrounds.
+        // It is an unmeasured initial recipe, in the same class as P2a's
+        // `shadow_params` and P2b's `ACRYLIC_TINT_OPACITY`: expected to need
+        // tuning against real hardware rather than merely confirming, because
+        // nobody on this project can run macOS.
+        _ => apply_vibrancy(
+            window,
+            NSVisualEffectMaterial::UnderWindowBackground,
+            None,
+            None,
+        )
+        .map(|_| ()),
+    };
+    if let Err(e) = result {
+        tracing::warn!("failed to apply the macOS window backdrop: {e}");
     }
 }
 
