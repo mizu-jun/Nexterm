@@ -772,6 +772,185 @@ smooth_motion = false
     }
 }
 
+/// OS-native window backdrop material (UI/UX v3 P2c).
+///
+/// Windows draws these through `DWMWA_SYSTEMBACKDROP_TYPE`; macOS has a single
+/// `NSVisualEffectView` material family, so every non-`None` value resolves to
+/// the same vibrancy there; Linux has no cross-compositor equivalent and
+/// resolves everything to `None` (`window.in_app_blur_enabled` is the
+/// in-app substitute).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum WindowBackdrop {
+    /// Whatever each OS already did before this setting existed: Mica Alt on
+    /// Windows, nothing on macOS and Linux.
+    #[default]
+    Auto,
+    /// Windows Mica (`DWMSBT_MAINWINDOW`). macOS resolves this to vibrancy.
+    Mica,
+    /// Windows Mica Alt (`DWMSBT_TABBEDWINDOW`). macOS resolves this to
+    /// vibrancy.
+    MicaAlt,
+    /// Windows Acrylic (`DWMSBT_TRANSIENTWINDOW`). macOS resolves this to
+    /// vibrancy.
+    Acrylic,
+    /// No OS backdrop.
+    None,
+}
+
+/// The OS a backdrop is resolved for.
+///
+/// Taken as a parameter rather than read from `cfg!`, so the Windows and macOS
+/// routing can be asserted on any platform — including the Linux CI runners,
+/// which are the only machines that run these tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackdropTarget {
+    /// Windows.
+    Windows,
+    /// macOS.
+    MacOs,
+    /// Linux and everything else.
+    Other,
+}
+
+impl BackdropTarget {
+    /// The target this binary was compiled for.
+    pub const fn current() -> Self {
+        if cfg!(windows) {
+            Self::Windows
+        } else if cfg!(target_os = "macos") {
+            Self::MacOs
+        } else {
+            Self::Other
+        }
+    }
+}
+
+/// A [`WindowBackdrop`] resolved for one OS: what the platform layer must
+/// actually apply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolvedBackdrop {
+    /// Apply no backdrop (and clear any previously applied one).
+    None,
+    /// Windows Mica.
+    Mica,
+    /// Windows Mica Alt.
+    MicaAlt,
+    /// Windows Acrylic.
+    Acrylic,
+    /// macOS `NSVisualEffectView` vibrancy.
+    Vibrancy,
+}
+
+impl ResolvedBackdrop {
+    /// Whether the window must be created transparent for this material to be
+    /// visible. An opaque surface hides the backdrop entirely, no matter what
+    /// DWM or AppKit was told.
+    pub const fn needs_transparent_window(self) -> bool {
+        !matches!(self, ResolvedBackdrop::None)
+    }
+}
+
+impl WindowBackdrop {
+    /// Resolve this setting for one OS. See the table in
+    /// `docs/superpowers/specs/2026-08-28-p2c-window-backdrop-design.md`.
+    pub const fn resolve(self, target: BackdropTarget) -> ResolvedBackdrop {
+        use BackdropTarget as T;
+        use WindowBackdrop as B;
+        match (self, target) {
+            // Linux and everything else: no native material exists.
+            (_, T::Other) => ResolvedBackdrop::None,
+            (B::None, _) => ResolvedBackdrop::None,
+            (B::Auto, T::Windows) => ResolvedBackdrop::MicaAlt,
+            (B::Auto, T::MacOs) => ResolvedBackdrop::None,
+            (B::Mica, T::Windows) => ResolvedBackdrop::Mica,
+            (B::MicaAlt, T::Windows) => ResolvedBackdrop::MicaAlt,
+            (B::Acrylic, T::Windows) => ResolvedBackdrop::Acrylic,
+            // AppKit has one material family, so an explicit request for any
+            // of the three lands on the one material that exists. Mapping it
+            // to `None` instead would silently ignore what the user asked for.
+            (B::Mica | B::MicaAlt | B::Acrylic, T::MacOs) => ResolvedBackdrop::Vibrancy,
+        }
+    }
+}
+
+#[cfg(test)]
+mod window_backdrop_tests {
+    use super::*;
+
+    /// The whole routing table, spelled out. This is the only place the
+    /// Windows and macOS behaviour can be asserted from a Linux machine, so it
+    /// is written as data rather than as three separate tests.
+    #[test]
+    fn resolution_table_is_stable() {
+        use BackdropTarget::*;
+        use ResolvedBackdrop as R;
+        use WindowBackdrop::*;
+
+        let cases = [
+            (Auto, Windows, R::MicaAlt),
+            (Auto, MacOs, R::None),
+            (Auto, Other, R::None),
+            (Mica, Windows, R::Mica),
+            (Mica, MacOs, R::Vibrancy),
+            (Mica, Other, R::None),
+            (MicaAlt, Windows, R::MicaAlt),
+            (MicaAlt, MacOs, R::Vibrancy),
+            (MicaAlt, Other, R::None),
+            (Acrylic, Windows, R::Acrylic),
+            (Acrylic, MacOs, R::Vibrancy),
+            (Acrylic, Other, R::None),
+            (None, Windows, R::None),
+            (None, MacOs, R::None),
+            (None, Other, R::None),
+        ];
+        assert_eq!(cases.len(), 15, "5 config values x 3 targets");
+
+        for (backdrop, target, expected) in cases {
+            assert_eq!(
+                backdrop.resolve(target),
+                expected,
+                "{backdrop:?} on {target:?}"
+            );
+        }
+    }
+
+    /// Before P2c the client hard-coded `DWMSBT_TABBEDWINDOW`. `auto` is the
+    /// default, so if it stopped resolving to Mica Alt every Windows user's
+    /// window would change appearance on upgrade.
+    #[test]
+    fn auto_preserves_the_shipped_windows_behaviour() {
+        assert_eq!(
+            WindowBackdrop::Auto.resolve(BackdropTarget::Windows),
+            ResolvedBackdrop::MicaAlt
+        );
+    }
+
+    /// `macos_window_background_blur` never had a reader, so macOS shipped
+    /// with no backdrop. `auto` must not turn one on: nobody on this project
+    /// can look at the result.
+    #[test]
+    fn auto_preserves_the_shipped_macos_behaviour() {
+        assert_eq!(
+            WindowBackdrop::Auto.resolve(BackdropTarget::MacOs),
+            ResolvedBackdrop::None
+        );
+    }
+
+    #[test]
+    fn only_none_skips_the_transparent_window() {
+        assert!(!ResolvedBackdrop::None.needs_transparent_window());
+        for resolved in [
+            ResolvedBackdrop::Mica,
+            ResolvedBackdrop::MicaAlt,
+            ResolvedBackdrop::Acrylic,
+            ResolvedBackdrop::Vibrancy,
+        ] {
+            assert!(resolved.needs_transparent_window(), "{resolved:?}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod acrylic_config_tests {
     use super::*;
