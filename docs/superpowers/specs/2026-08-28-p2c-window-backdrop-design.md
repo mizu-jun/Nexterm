@@ -82,7 +82,7 @@ The crate is declared under `[target.'cfg(target_os = "macos")'.dependencies]`,
 so its Windows dependencies are never compiled. **Measured during
 implementation:** `Cargo.lock` does record the union across all targets —
 adding `window-vibrancy` brought in 12 new lock entries (`windows-sys 0.60.2`,
-`windows-targets`, the seven per-architecture `windows_*` target crates, and
+`windows-targets`, the eight per-architecture `windows_*` target crates, and
 `objc2-quartz-core`), which also landed in `pkg/flatpak/cargo-sources.json`
 (156 added lines) once it was regenerated. None of it is built on Linux:
 `window-vibrancy` itself is gated to `cfg(target_os = "macos")`, so `cargo
