@@ -487,7 +487,7 @@ gated behind a spike.
         real visual change on a surface that appears behind every overlay, so
         it waits until the P2a shadow constants are tuned on-device rather
         than stacking another unverified change
-- [x] P2b in-app acrylic (offscreen + Kawase blur) — (PR pending)
+- [x] P2b in-app acrylic (offscreen + Kawase blur) — shipped via #74
 - [ ] P2c `window.backdrop` config (Win/macOS/Linux)
 - [ ] P3 motion language + reduced-motion detection
 - [ ] P4 icon font + chrome type ramp
@@ -534,7 +534,7 @@ gated behind a spike.
   - #71 — whether the adaptive step-back leaves Kill visibly red enough on the
     schemes that trigger it (Nord in particular), and the Cancel-selected fill
     now that it is a blend rather than a flat yellow
-  - (PR pending) — P2b in-app acrylic. Not measured on real hardware:
+  - #74 — P2b in-app acrylic. Not measured on real hardware:
     perceived blur quality and the Kawase tap radius; the carried-over P2a
     risk that `draw_focus_ring`'s stroke-only interior (#64) may
     double-blend against a now-translucent panel fill; frame-time cost of
