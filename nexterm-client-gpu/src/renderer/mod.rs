@@ -225,8 +225,8 @@ pub(super) struct WgpuState {
     /// `BG_SHADER` at `@group(0)` (texture, sampler, uniform buffer; UI/UX
     /// v3 P2b). Created once in `WgpuState::new` and reused — by reference,
     /// never recreated — by `bg_pipeline_layout` here, by
-    /// `shader_reload.rs`'s hot-reload path, and by the `AcrylicState`
-    /// bind group a later task builds. A second independently-created
+    /// `shader_reload.rs`'s hot-reload path, and by `AcrylicState`'s
+    /// `acrylic_bind_group`. A second independently-created
     /// `BindGroupLayout` with the same entries would be wgpu-incompatible
     /// with this one, so keeping a single shared field is load-bearing,
     /// not just tidy.

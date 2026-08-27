@@ -543,10 +543,12 @@ gated behind a spike.
     DPI-change transition; whether the fixed-intensity procedural noise
     reads as grain or banding on various panel colours. Four more surfaced
     while building it, not while planning it. What the capture actually
-    contains: the captured `scene_color` is only the grid layer's
-    `bg_pipeline` range — terminal cell backgrounds — by design; the
-    background image and the terminal text glyphs are not in it, so a
-    blurred panel shows frosted cell backgrounds, not a frosted terminal.
+    contains: the captured `scene_color` is the `bg_pipeline`'s pre-overlay
+    range — cell backgrounds plus the gradient, chrome bars, and
+    pane/copy-mode overlays — by design; the overlay layer, the background
+    image, and terminal text glyphs (drawn by other pipelines) are not in
+    it, so a blurred panel shows a frosted composite of that chrome, not a
+    frosted terminal.
     Nobody has seen whether that reads as intended or as a flat colour
     field, and it is the single most likely way the effect disappoints.
     The tint constant: `ACRYLIC_TINT_OPACITY = 0.85`
@@ -558,7 +560,7 @@ gated behind a spike.
     (`panel_body_text_clears_contrast_floor_across_acrylic_strengths`, in
     `nexterm-client-gpu/src/renderer/overlay/util.rs`) asserts the 4.5:1
     floor only against scheme-realistic backdrops (`surface_0`/
-    `surface_1`), because that is what the grid layer paints; it
+    `surface_1`), because that is what the captured bg range paints; it
     deliberately does not assert the pure-black/pure-white extreme, since
     no non-zero blur can satisfy that bound on this palette set (Nord's
     `text_secondary` has 0.02:1 of baseline headroom), so a program

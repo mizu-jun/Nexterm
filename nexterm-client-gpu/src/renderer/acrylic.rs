@@ -571,8 +571,10 @@ impl AcrylicState {
     }
 
     /// The offscreen scene-color capture target: `render_frame` redraws the
-    /// grid-layer bg range into this instead of the swapchain, then
-    /// `run_blur_chain` consumes it as the first Kawase downsample input.
+    /// pre-overlay bg range (cell backgrounds plus the gradient, chrome
+    /// bars, and pane/copy-mode overlays — not the overlay layer itself)
+    /// into this instead of the swapchain, then `run_blur_chain` consumes
+    /// it as the first Kawase downsample input.
     pub(crate) fn scene_color_view(&self) -> &wgpu::TextureView {
         &self.scene_color.view
     }

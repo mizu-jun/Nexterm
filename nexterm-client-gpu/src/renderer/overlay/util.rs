@@ -433,9 +433,11 @@ mod tests {
     ///
     /// `blurred` (the backdrop) is modelled by the scheme's own `surface_0`/
     /// `surface_1` tokens, not by pure black/white: Task 7 documents the
-    /// capture as the grid layer's cell-background range only (no
-    /// background image, no glyphs), so the backdrop a panel can actually
-    /// blur is painted from the same scheme's own palette (ruling 9-F).
+    /// capture as the `bg_pipeline`'s pre-overlay range (cell backgrounds
+    /// plus the gradient, chrome bars, and pane/copy-mode overlays — not
+    /// the background image or glyphs, which other pipelines draw), so the
+    /// backdrop a panel can actually blur is painted from the same
+    /// scheme's own palette (ruling 9-F).
     ///
     /// `grain` is deliberately **excluded** from this model (ruling 9-H).
     /// `acrylic_noise` (`shaders.rs`) is a zero-mean, per-pixel spatial

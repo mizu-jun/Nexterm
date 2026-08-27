@@ -440,17 +440,39 @@ impl WgpuState {
         self.surface_config.width = new_size.width;
         self.surface_config.height = new_size.height;
         self.surface.configure(&self.device, &self.surface_config);
-        self.acrylic.ensure_size(
-            &self.device,
-            &self.queue,
-            &self.acrylic_bind_group_layout,
-            new_size.width,
-            new_size.height,
-        );
+        // Deliberately do NOT call `self.acrylic.ensure_size` here. This
+        // runs on every `WindowEvent::Resized` (window drags fire it
+        // repeatedly), and reallocating the 4 offscreen textures plus the 3
+        // `BlurReadResources` unconditionally would pay that cost for every
+        // user, including the overwhelming majority who never enable
+        // in-app blur — the opposite of the design spec's "lazily created
+        // on first use" promise. `render_frame`'s capture block already
+        // calls `self.acrylic.ensure_size` with the current
+        // `surface_config` dimensions whenever it is actually about to
+        // recapture (`blur_enabled && overlay_open && is_dirty`), and
+        // `ensure_size` early-returns when the size already matches, so
+        // sizing still lands before anything ever samples `blurred_result`
+        // — just lazily, gated on the feature actually being used, whether
+        // that dirty frame comes from resizing while enabled or from
+        // enabling the feature at runtime (config hot-reload) without a
+        // resize at all.
+        //
         // A resized scene_color/blurred_result invalidates any capture
         // taken before the resize (UI/UX v3 P2b) — force the next dirty
         // check in `render_frame` to recapture rather than compositing a
-        // stale-resolution blur.
+        // stale-resolution blur. This part must stay unconditional
+        // (invalidating a capture is nearly free, unlike resizing the
+        // textures) so a stale capture cannot survive being enabled later
+        // without an intervening resize.
+        self.acrylic_capture.note_resize();
+    }
+
+    /// Invalidate the acrylic capture on `WindowEvent::ScaleFactorChanged`.
+    /// `AcrylicCaptureState::note_resize`'s doc contract explicitly covers a
+    /// DPI change, not just a pixel-size resize — call this independently of
+    /// `resize()`, since nothing guarantees a `Resized` event follows a
+    /// `ScaleFactorChanged` one.
+    pub(super) fn note_dpi_change(&mut self) {
         self.acrylic_capture.note_resize();
     }
 

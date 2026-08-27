@@ -277,6 +277,13 @@ impl EventHandler {
             );
             self.atlas = Some(atlas);
         }
+        // A DPI change invalidates any in-app-acrylic capture the same way a
+        // resize does (`AcrylicCaptureState::note_resize`'s doc contract
+        // covers both) — do this independently of `WgpuState::resize`,
+        // since nothing guarantees a `Resized` event follows this one.
+        if let Some(wgpu) = &mut self.wgpu_state {
+            wgpu.note_dpi_change();
+        }
         // After the DPI change, recompute cols/rows to match the new cell size
         // and notify the server.
         if let Some(win) = &self.window {

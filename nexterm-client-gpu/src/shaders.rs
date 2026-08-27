@@ -208,7 +208,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 /// (8 taps, weighted 1/1/1/1 axis-aligned + 2/2/2/2 diagonal). Tap
 /// offsets here must match `acrylic::kawase_downsample_offsets` /
 /// `kawase_upsample_offsets` in `renderer/acrylic.rs`.
-#[allow(dead_code)] // wired into render pipelines in Task 6; exercised by its own test until then.
 pub(crate) const KAWASE_BLUR_SHADER: &str = r#"
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,

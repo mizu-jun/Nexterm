@@ -1411,12 +1411,14 @@ impl WgpuState {
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
-                // Re-draw only the grid-layer bg range (index 0..overlay_bg_start)
-                // — the same vertex/index buffers `main_render_pass` below will
+                // Re-draw only the pre-overlay bg range (index 0..overlay_bg_start
+                // — cell backgrounds plus the gradient, chrome bars, and
+                // pane/copy-mode overlays, but not the overlay layer itself) —
+                // the same vertex/index buffers `main_render_pass` below will
                 // use, just targeting the offscreen texture instead of the
-                // swapchain. `acrylic_mix` is 0 on every grid-layer vertex, so
-                // group 0 is bound only to satisfy the pipeline layout, never
-                // actually sampled by this draw.
+                // swapchain. `acrylic_mix` is 0 on every vertex in that range,
+                // so group 0 is bound only to satisfy the pipeline layout,
+                // never actually sampled by this draw.
                 capture_pass.set_pipeline(&self.bg_pipeline);
                 capture_pass.set_bind_group(0, self.acrylic.bind_group(), &[]);
                 capture_pass.set_vertex_buffer(0, self.buf_bg_v.slice(..));
