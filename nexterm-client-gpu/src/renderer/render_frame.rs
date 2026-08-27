@@ -941,12 +941,11 @@ impl WgpuState {
         // below samples the blurred scene behind it at this strength when
         // in-app blur is enabled, and stays a flat opaque fill (mix 0) when
         // it is not. Computed once so every call site keys off the same
-        // value the capture+blur chain further down uses.
-        let panel_acrylic_mix = if in_app_blur_enabled {
-            in_app_blur_strength
-        } else {
-            0.0
-        };
+        // value the capture+blur chain further down uses. The decision
+        // itself lives in `acrylic::panel_acrylic_mix` so it is unit-testable
+        // without a GPU (this function is not).
+        let panel_acrylic_mix =
+            super::acrylic::panel_acrylic_mix(in_app_blur_enabled, in_app_blur_strength);
 
         // ---- SFTP file transfer dialog (when open) ----
         if state.file_transfer.is_open {

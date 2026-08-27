@@ -150,6 +150,11 @@ pub(crate) fn add_px_rect(
 /// three-rect cross that left square holes at the corners) was removed once
 /// the last overlay chrome migrated here. Passing `radius == 0.0` falls
 /// through to a flat rect, matching [`add_px_rect`] byte-for-byte.
+///
+/// Delegates to [`add_px_rounded_rect_sdf_with_acrylic`] with `acrylic_mix =
+/// 0.0` — every caller here wants an opaque fill, and duplicating the
+/// coordinate-transform math for that one constant would just be two copies
+/// to keep in sync (UI/UX v3 P2b review fix).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn add_px_rounded_rect_sdf(
     px: f32,
@@ -163,29 +168,8 @@ pub(crate) fn add_px_rounded_rect_sdf(
     bg_verts: &mut Vec<BgVertex>,
     bg_idx: &mut Vec<u16>,
 ) {
-    let x0 = px / sw * 2.0 - 1.0;
-    let y0 = 1.0 - py / sh * 2.0;
-    let x1 = (px + pw) / sw * 2.0 - 1.0;
-    let y1 = 1.0 - (py + ph) / sh * 2.0;
-    // Clamp the radius to half the shortest side. A negative radius collapses
-    // to zero so the shader takes the flat path instead of producing garbage.
-    let r = radius.max(0.0).min(pw * 0.5).min(ph * 0.5);
-    let rect_center = [px + pw * 0.5, py + ph * 0.5];
-    let rect_half_size = [pw * 0.5, ph * 0.5];
-    push_rect_verts_with_sdf(
-        x0,
-        y0,
-        x1,
-        y1,
-        color,
-        rect_center,
-        rect_half_size,
-        r,
-        0.0,
-        0.0,
-        0.0,
-        bg_verts,
-        bg_idx,
+    add_px_rounded_rect_sdf_with_acrylic(
+        px, py, pw, ph, radius, color, sw, sh, 0.0, bg_verts, bg_idx,
     );
 }
 
@@ -193,9 +177,9 @@ pub(crate) fn add_px_rounded_rect_sdf(
 /// `acrylic_mix` through to the pushed vertices instead of the hardcoded
 /// `0.0` every other rounded-rect caller uses.
 ///
-/// Used exclusively by the overlay panel's background fill (UI/UX v3 P2b):
-/// the shadow and border ring stay opaque, only the fill itself samples the
-/// blurred scene behind the panel.
+/// Used exclusively by the overlay panel's background fill and the tooltip
+/// surface fill (UI/UX v3 P2b): the shadow and border ring stay opaque, only
+/// the fill itself samples the blurred scene behind the panel.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn add_px_rounded_rect_sdf_with_acrylic(
     px: f32,
@@ -214,6 +198,8 @@ pub(crate) fn add_px_rounded_rect_sdf_with_acrylic(
     let y0 = 1.0 - py / sh * 2.0;
     let x1 = (px + pw) / sw * 2.0 - 1.0;
     let y1 = 1.0 - (py + ph) / sh * 2.0;
+    // Clamp the radius to half the shortest side. A negative radius collapses
+    // to zero so the shader takes the flat path instead of producing garbage.
     let r = radius.max(0.0).min(pw * 0.5).min(ph * 0.5);
     let rect_center = [px + pw * 0.5, py + ph * 0.5];
     let rect_half_size = [pw * 0.5, ph * 0.5];

@@ -57,6 +57,13 @@ impl AcrylicCaptureState {
     }
 }
 
+/// Panel fill mix for one frame: the configured strength when in-app acrylic
+/// is enabled, and exactly 0.0 when it is not (the feature ships opt-in, so
+/// the default path must stay fully opaque).
+pub(super) fn panel_acrylic_mix(enabled: bool, strength: f32) -> f32 {
+    if enabled { strength } else { 0.0 }
+}
+
 /// The 4 diagonal taps of one dual-Kawase downsample pass, in texels.
 /// Mirrors the WGSL `kawase_downsample` entry point in `shaders.rs` —
 /// keep the two in sync.
@@ -668,6 +675,26 @@ mod resource_shape_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn panel_acrylic_mix_is_exactly_zero_when_disabled() {
+        // The feature ships opt-in: the default (disabled) path must render
+        // bit-for-bit identical to a build with no acrylic support at all,
+        // so this asserts the exact value rather than a tolerance.
+        assert_eq!(panel_acrylic_mix(false, 0.6), 0.0);
+    }
+
+    #[test]
+    fn panel_acrylic_mix_ignores_strength_when_disabled() {
+        // A non-zero configured strength must not leak through while the
+        // feature is off.
+        assert_eq!(panel_acrylic_mix(false, 0.9), 0.0);
+    }
+
+    #[test]
+    fn panel_acrylic_mix_passes_through_a_non_default_strength_when_enabled() {
+        assert_eq!(panel_acrylic_mix(true, 0.37), 0.37);
+    }
 
     #[test]
     fn transition_from_zero_to_one_overlay_is_dirty() {
