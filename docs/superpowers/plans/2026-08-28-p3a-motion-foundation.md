@@ -287,6 +287,12 @@ Prepend to `nexterm-client-gpu/src/animations/curve.rs`, above the test module:
 //! They are `const fn` data with no runtime cost.
 
 /// Animation durations from the Fluent 2 token set, in milliseconds.
+///
+/// `dead_code` is allowed for the module as a whole: this is a verbatim
+/// transcription of an external table, and the steps P3a does not consume
+/// yet are consumed by P3b. Silencing them individually as they are picked
+/// up would churn this file for no gain.
+#[allow(dead_code)]
 pub mod duration {
     /// Checkbox tick, toggle snap.
     pub const ULTRA_FAST: u32 = 50;
@@ -311,7 +317,12 @@ pub mod duration {
 ///
 /// Accelerate curves start slow and leave quickly (use them for exits);
 /// decelerate curves arrive quickly and settle (use them for entrances).
+///
+/// `dead_code` is allowed for the same reason as `duration` above: the
+/// table is transcribed whole, and the variants P3a does not construct are
+/// P3b's to construct.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum Curve {
     /// No easing. Progress bars and spinners.
     Linear,
@@ -441,7 +452,7 @@ cargo clippy -p nexterm-client-gpu -- -D warnings
 cargo fmt --check
 ```
 
-If clippy flags `duration` as unused, leave it — Task 5 and Task 6 consume it. If it flags it as *dead code* and fails the build, add `#[allow(dead_code)]` to the individual unused constants and remove the attribute again in the task that first uses each.
+The `#[allow(dead_code)]` on `Curve` and on `duration` is deliberate and already in the code above: this crate is a binary, so an unconstructed enum variant or an unread constant is a `dead_code` warning, and `-D warnings` would fail the build over a table that is intentionally transcribed whole. Do not remove either attribute.
 
 - [ ] **Step 6: Commit**
 
@@ -698,7 +709,7 @@ The P3 acceptance criterion needs something to measure. This is independent of t
 
 - [ ] **Step 1: Write the failing test**
 
-Add this test module at the end of `nexterm-client-gpu/src/renderer/render_frame.rs`, inside the existing `#[cfg(test)] mod tests` block if there is one, otherwise as a new block:
+Add this as a **new** top-level module at the very end of `nexterm-client-gpu/src/renderer/render_frame.rs`. The file already has `#[cfg(test)]` blocks at lines 120 and 1777; do not put this inside either of them.
 
 ```rust
 #[cfg(test)]
@@ -849,9 +860,13 @@ instrument for the cursor-blink invalidation debt in audit-round3 P3."
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to the existing `#[cfg(test)] mod tests` in `nexterm-client-gpu/src/state/mod.rs` (the block starting at line 830):
+Add a **new** test module at the end of `nexterm-client-gpu/src/state/mod.rs`. The existing `#[cfg(test)]` block there is `mod pane_border_hit_tests`, which is about split-border hit-testing; these tests do not belong in it.
 
 ```rust
+#[cfg(test)]
+mod animation_frame_tests {
+    use super::*;
+
     /// The UI/UX v3 P3a acceptance criterion in test form: a state with
     /// nothing animating must not ask for a frame. If this ever returns
     /// true at rest, the event loop spins at 60 fps and every pane-vertex
@@ -890,6 +905,7 @@ Add to the existing `#[cfg(test)] mod tests` in `nexterm-client-gpu/src/state/mo
         state.animations.record_pane_added(1, now);
         assert!(!state.has_active_animation(now, 0));
     }
+}
 ```
 
 Note: `tick_by_dt` is `#[cfg(test)]`-only on `AnimationManager` and is available here because the whole crate compiles as one test binary.
@@ -1325,7 +1341,7 @@ The redraw request added in Task 5 already covers both animations, because the a
 
 - [ ] **Step 9: Add the aggregate tests for the panel**
 
-Add to the same `#[cfg(test)] mod tests` in `state/mod.rs` that Task 5 used:
+Add to the `animation_frame_tests` module in `state/mod.rs` that Task 5 created:
 
 ```rust
     #[test]
