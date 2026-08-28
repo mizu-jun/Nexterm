@@ -703,6 +703,9 @@ impl ClientState {
         {
             return true;
         }
+        if self.host_manager.password_modal_is_active(now) {
+            return true;
+        }
         false
     }
 

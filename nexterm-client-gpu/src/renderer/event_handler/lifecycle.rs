@@ -675,6 +675,7 @@ impl EventHandler {
         self.app.state.block_name_modal.motion.retire(now);
         self.app.state.file_transfer.motion.retire(now);
         self.app.state.retire_ghosts(now);
+        self.app.state.host_manager.retire_password_modal(now);
 
         // Sprint 5-7 / Phase 2-2: Quake-mode handling.
         // 1) Drain global-hotkey press events. Any press is treated as "toggle".

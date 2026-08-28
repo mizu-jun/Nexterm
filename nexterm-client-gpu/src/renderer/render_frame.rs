@@ -1044,9 +1044,10 @@ impl WgpuState {
                 state.host_manager.motion.progress(frame_now),
             );
         }
-        if state.host_manager.password_modal.is_some() {
+        if let Some(view) = state.host_manager.password_modal_view() {
+            let (bg_start, text_start) = (bg_verts.len(), text_verts.len());
             self.build_password_modal_verts(
-                state,
+                &view,
                 &tokens,
                 sw,
                 sh,
@@ -1059,6 +1060,11 @@ impl WgpuState {
                 &mut bg_idx,
                 &mut text_verts,
                 &mut text_idx,
+            );
+            super::overlay::fade::apply_surface_fade(
+                &mut bg_verts[bg_start..],
+                &mut text_verts[text_start..],
+                state.host_manager.password_modal_progress(frame_now),
             );
         }
         // Phase 2c-4: block-name input modal (while visible).

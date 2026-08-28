@@ -1099,7 +1099,10 @@ impl EventHandler {
         if self.app.state.host_manager.password_modal.is_some() {
             match code {
                 WKeyCode::Escape => {
-                    self.app.state.host_manager.password_modal = None;
+                    self.app.state.host_manager.dismiss_password_modal(
+                        std::time::Instant::now(),
+                        &self.app.config.animations,
+                    );
                 }
                 WKeyCode::Tab => {
                     // Toggle the "save to OS keychain" flag (later half of Sprint 3-2)
@@ -1119,7 +1122,10 @@ impl EventHandler {
                         // (sent over IPC as `ephemeral_password = !remember`).
                         let remember = m.remember;
                         let password = m.take_password();
-                        self.app.state.host_manager.password_modal = None;
+                        self.app.state.host_manager.dismiss_password_modal(
+                            std::time::Instant::now(),
+                            &self.app.config.animations,
+                        );
                         self.app.state.host_manager.record_connection(&host);
                         self.connect_ssh_host_with_password(&host, password, remember);
                     }
@@ -1154,8 +1160,11 @@ impl EventHandler {
                             .close(std::time::Instant::now(), &self.app.config.animations);
                         if host.auth_type == "password" {
                             // For password-auth hosts, open the modal first, then connect
-                            self.app.state.host_manager.password_modal =
-                                Some(crate::host_manager::PasswordModal::new(host));
+                            self.app.state.host_manager.show_password_modal(
+                                crate::host_manager::PasswordModal::new(host),
+                                std::time::Instant::now(),
+                                &self.app.config.animations,
+                            );
                         } else {
                             self.app.state.host_manager.record_connection(&host);
                             self.connect_ssh_host_new_tab(&host);
