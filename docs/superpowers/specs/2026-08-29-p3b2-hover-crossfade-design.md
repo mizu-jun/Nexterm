@@ -102,21 +102,48 @@ extension of it, and the two coexist without interacting.
 /// globally: moving the pointer from a settings row to a tab starts a
 /// tab-bar transition while the widget layer's is still fading out.
 pub struct HoverTransition<Id> {
-    from: Option<Id>,
+    /// The item fading out, and the weight it held when it started to.
+    from: Option<(Id, f32)>,
+    from_anim: Timed,
+    /// The item fading in.
     to: Option<Id>,
-    anim: Timed,
+    to_anim: Timed,
 }
 
 impl<Id: Copy + PartialEq> HoverTransition<Id> {
     /// Point the transition at `to`, resuming from whatever is on screen.
     pub fn retarget(&mut self, to: Option<Id>, now: Instant, anim: &AnimationsConfig);
-    /// Hover weight for `id` in `[0, 1]`: `progress` for the incoming item,
-    /// `1 - progress` for the outgoing one, 0 for everything else.
+    /// Hover weight for `id` in `[0, 1]`.
     pub fn weight(&self, id: Id, now: Instant) -> f32;
     /// Whether another frame is needed.
     pub fn is_active(&self, now: Instant) -> bool;
 }
 ```
+
+**Two timers, not one.** The obvious form of this type is a single `Timed`
+with the outgoing item at `1 - progress` and the incoming one at `progress`,
+so the pair always sums to 1. That is wrong, and wrong in a way that shows:
+the sum-to-1 invariant only holds when the outgoing item was already at
+weight 1. Enter row A, and 50 ms later — while A is still at 0.5 — move to
+row B: a single timer makes B *jump* to 0.5 on the frame the pointer crosses
+the boundary. Sweeping a pointer down a list crosses boundaries faster than
+100 ms routinely, so the naive form pops on exactly the gesture hover exists
+to support.
+
+With two timers the outgoing item decays from the weight it actually held
+and the incoming one rises from the weight *it* actually held (0 normally,
+or its partly-decayed value if the pointer came back to it). Neither jumps,
+and the pair simply does not sum to 1 mid-handoff — which is correct, because
+at that instant neither row is fully hovered.
+
+**One slot remains a real limitation, stated plainly.** Only one item can be
+fading out at a time, so sweeping across five rows in 200 ms drops the three
+intermediate rows to 0 the moment each is replaced, leaving a trail that cuts
+off rather than one that fades. A fixed-capacity map of `id → Timed` would
+fix it; a single slot is bounded, trivially reasoned about, and matches what
+the parent design chose. If the cut-off trail looks wrong on hardware, that
+map is the follow-up — it is a change of internals behind an unchanged
+`weight()` call, so no consumer would move.
 
 `retarget` is idempotent when `to` is unchanged — the same edge-detector
 discipline `tick_tooltip` needed in P3b1, and for the same reason: it is called
