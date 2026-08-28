@@ -497,15 +497,24 @@ gated behind a spike.
         it waits until the P2a shadow constants are tuned on-device rather
         than stacking another unverified change
 - [x] P2b in-app acrylic (offscreen + Kawase blur) — shipped via #74
-- [ ] P2c `window.backdrop` config (Win/macOS/Linux) — implemented via P2c-1
-      (config enum, resolver, platform layer, window creation, docs) and P2c-2
-      (settings-panel row, locale strings) on branch `p2c-window-backdrop`;
-      not yet merged, no PR opened. Will close P2 once both land. The Windows
-      material was mislabelled Acrylic throughout while applying Mica Alt
-      (`DWMSBT_TABBEDWINDOW`); `auto` keeps applying Mica Alt so the
-      correction changes no appearance. macOS resolves every non-`none` value
-      to one `NSVisualEffectView` material, since AppKit has no Mica/Acrylic
-      distinction; Linux resolves everything to `none`
+- [x] P2c `window.backdrop` config (Win/macOS/Linux) — shipped via #75.
+      **This closes P2.** The Windows material was mislabelled Acrylic
+      throughout while applying Mica Alt (`DWMSBT_TABBEDWINDOW` = 4, against
+      `DWMSBT_TRANSIENTWINDOW` = 3 for Acrylic); `auto` keeps applying Mica Alt
+      so the correction changes no appearance. macOS resolves every non-`none`
+      value to one `NSVisualEffectView` material, since AppKit has no
+      Mica/Acrylic distinction; Linux resolves everything to `none` and leans
+      on P2b's in-app blur. Two latent defects closed alongside: a requested
+      backdrop now makes the window transparent on its own (previously only
+      `background_opacity < 1.0` did, so a backdrop on an opaque-configured
+      window could never show), and `spawn_os_window`'s secondary windows get
+      the backdrop at all (they never had one). The dead
+      `macos_window_background_blur` field is removed. `WindowBackdrop::resolve`
+      takes the target OS as a parameter rather than reading `cfg!`, and
+      `dwm_backdrop_value` is a plain `const fn` compiled everywhere, so the
+      Windows and macOS routing tables and every DWM constant are asserted on
+      the Linux runners — a wrong constant fails there instead of reaching a
+      Windows release
 - [ ] P3 motion language + reduced-motion detection
 - [ ] P4 icon font + chrome type ramp
 - [ ] P5 contrast everywhere + high-contrast scheme
