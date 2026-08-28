@@ -422,6 +422,16 @@ impl EventHandler {
             // panel reopens under a stationary cursor, skipping its delay.
             self.app.state.settings_panel.theme_hover_preview = None;
             self.app.state.settings_panel.hover_widget = None;
+            // Also retarget the cross-fade to `None`, or the fade-out that
+            // should start the instant the panel closes would instead wait
+            // for the next pointer move (up to 100 ms later), keeping
+            // `has_active_animation` true for a panel that draws nothing.
+            let anim = self.app.config.animations.clone();
+            self.app.state.settings_panel.hover_transition.retarget(
+                None,
+                std::time::Instant::now(),
+                &anim,
+            );
         }
 
         let col = (position.x / cell_w) as u16;

@@ -1231,6 +1231,50 @@ mod animation_frame_tests {
         assert!(!state.has_active_animation(done, 200));
     }
 
+    /// Dismissing the settings panel (e.g. Esc) while a row is hovered must
+    /// retarget the cross-fade to `None`, not just clear `hover_widget`.
+    /// Otherwise the fade-out that should start immediately would instead
+    /// wait for the next pointer move, and `has_active_animation` would stay
+    /// true for a panel that is already closed and drawing nothing. This
+    /// pins the state-level property the closed-panel branch in
+    /// `renderer/event_handler/mouse.rs` relies on: retargeting to `None`
+    /// settles the transition on the normal schedule rather than leaving it
+    /// running forever.
+    #[test]
+    fn retargeting_settings_hover_to_none_settles_the_transition() {
+        use crate::renderer::overlay::widgets::spec::WidgetId;
+
+        let mut state = ClientState::new(80, 24, 1000);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+        let id = WidgetId::new(2, 0);
+
+        state
+            .settings_panel
+            .hover_transition
+            .retarget(Some(id), t0, &anim);
+        assert!(state.has_active_animation(t0, 200));
+
+        // Simulate the panel-closed retarget: point the transition at
+        // `None` while the previous item is still fading in.
+        let closed_at = t0 + Duration::from_millis(20);
+        state
+            .settings_panel
+            .hover_transition
+            .retarget(None, closed_at, &anim);
+        assert!(
+            state.has_active_animation(closed_at, 200),
+            "the outgoing item must still fade out, not vanish instantly"
+        );
+
+        let done = closed_at + Duration::from_millis(100);
+        assert!(state.settings_panel.hover_transition.weight(id, done).abs() < 1e-3);
+        assert!(
+            !state.has_active_animation(done, 200),
+            "a transition retargeted to None must settle, not run forever"
+        );
+    }
+
     /// The menu's hover cross-fade is independent of the widget layer's:
     /// moving the pointer from a settings row into a context menu runs both
     /// at once, which is why each model owns its own transition.

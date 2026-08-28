@@ -60,7 +60,10 @@ pub struct HoverTransition<Id> {
 impl<Id> Default for HoverTransition<Id> {
     fn default() -> Self {
         // Both animations are born finished; with `from` and `to` both
-        // `None`, every id weighs 0 regardless.
+        // `None`, every id weighs 0 regardless. `Instant::now()` here is an
+        // arbitrary start: at a zero duration, `Timed::raw_progress` and
+        // `Timed::resuming_at` short-circuit without reading `start`, so any
+        // instant is equally harmless.
         let zero = Timed::new(Instant::now(), 0, Curve::EasyEase);
         Self {
             from: None,

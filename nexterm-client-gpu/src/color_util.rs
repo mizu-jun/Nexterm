@@ -380,6 +380,13 @@ mod tests {
     /// A weight arrives from an eased curve and is already clamped, but a
     /// colour helper that trusts its caller is a colour helper that produces
     /// out-of-range channels the first time someone doesn't.
+    ///
+    /// Note: `[0,0,0,0]` and `[1,1,1,1]` are exactly representable, so a
+    /// naive `a + (b - a) * t.clamp(0,1)` would reproduce this test's
+    /// expectations too. This test does not on its own distinguish the
+    /// early-return implementation from a clamp-then-lerp one — that is
+    /// `lerp_rgba_hits_both_endpoints_exactly`, which uses non-trivial
+    /// endpoints and genuinely needs the early returns.
     #[test]
     fn lerp_rgba_clamps_t() {
         let a = [0.0, 0.0, 0.0, 0.0];
