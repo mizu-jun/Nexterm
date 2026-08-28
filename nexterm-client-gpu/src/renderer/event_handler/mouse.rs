@@ -491,6 +491,12 @@ impl EventHandler {
         };
         if prev_button != new_button {
             self.app.state.hovered_window_button = new_button;
+            let anim = self.app.config.animations.clone();
+            self.app.state.window_button_hover.retarget(
+                new_button,
+                std::time::Instant::now(),
+                &anim,
+            );
             if let Some(w) = &self.window {
                 w.request_redraw();
             }
