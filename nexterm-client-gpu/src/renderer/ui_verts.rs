@@ -180,6 +180,7 @@ impl WgpuState {
         sh: f32,
         cell_w: f32,
         cell_h: f32,
+        now: std::time::Instant,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         bg_verts: &mut Vec<BgVertex>,
@@ -354,19 +355,27 @@ impl WgpuState {
             // Decide the tab background color:
             //   1. Active -> active_bg
             //   2. Inactive but has activity -> activity_bg (from config)
-            //   3. Hovered -> brightened inactive_bg
+            //   3. Hovered -> brightened inactive_bg, cross-faded (P3b2b)
             //   4. Normal -> inactive_bg
             let tab_bg = if is_active {
                 active_bg
             } else if has_activity {
                 activity_bg
-            } else if is_hovered && cfg.hover_highlight {
-                [
+            } else if cfg.hover_highlight {
+                // The quad is always drawn, so the *colour* moves — alpha
+                // scaling would fade the tab out of the bar instead of into
+                // its hover tint.
+                let hovered_bg = [
                     (inactive_bg[0] + 0.06).min(1.0),
                     (inactive_bg[1] + 0.06).min(1.0),
                     (inactive_bg[2] + 0.08).min(1.0),
                     inactive_bg[3],
-                ]
+                ];
+                crate::color_util::lerp_rgba(
+                    inactive_bg,
+                    hovered_bg,
+                    state.tab_hover.weight(pane_id, now),
+                )
             } else {
                 inactive_bg
             };

@@ -213,6 +213,13 @@ pub struct ClientState {
     /// Updated by `renderer/event_handler/mouse.rs` on mouse-move; the tab-bar
     /// renderer brightens the background for the hovered tab.
     pub hovered_tab_id: Option<u32>,
+    /// Hover cross-fade over the tab bar (UI/UX v3 P3b2b).
+    ///
+    /// `hovered_tab_id` above stays the truth for hit-testing and for
+    /// whether the tear-out and close buttons are drawn; this is render-only
+    /// and outlives it by one fade so the tab the pointer left can dim back
+    /// down.
+    pub tab_hover: crate::animations::HoverTransition<u32>,
     /// OS-reported light/dark preference (Sprint 5-15 / Phase 3).
     /// `Some(true)` = dark, `Some(false)` = light, `None` = unknown.
     /// Updated by `WindowEvent::ThemeChanged` and at window creation.
@@ -723,6 +730,9 @@ impl ClientState {
         {
             return true;
         }
+        if self.tab_hover.is_active(now) {
+            return true;
+        }
         false
     }
 
@@ -895,6 +905,7 @@ impl ClientState {
             hovered_window_button: None,
             wsl_profiles: Vec::new(),
             hovered_tab_id: None,
+            tab_hover: Default::default(),
             os_dark_mode: None,
             key_hint_visible_until: None,
             prefix_pending_until: None,
@@ -1298,6 +1309,64 @@ mod animation_frame_tests {
         assert!((menu.hover_transition.weight(1, done) - 1.0).abs() < 1e-3);
         assert!(menu.hover_transition.weight(0, done).abs() < 1e-4);
         assert!(!state.has_active_animation(done, 200));
+    }
+
+    /// Hovering a tab must ask for frames until the cross-fade finishes, and
+    /// stop afterwards.
+    #[test]
+    fn a_hovered_tab_wants_animation_frames_until_it_settles() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+
+        state.tab_hover.retarget(Some(7), t0, &anim);
+        assert!(state.has_active_animation(t0, 200));
+        assert!(
+            state.tab_hover.weight(7, t0).abs() < 1e-3,
+            "the fade starts from nothing"
+        );
+
+        let done = t0 + Duration::from_millis(100);
+        assert!((state.tab_hover.weight(7, done) - 1.0).abs() < 1e-3);
+        assert!(!state.has_active_animation(done, 200));
+    }
+
+    /// Leaving the tab bar must fade the last tab out rather than snapping —
+    /// the same property `HoverTransition` guarantees for the other models.
+    #[test]
+    fn leaving_the_tab_bar_fades_the_last_tab_out() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+        state.tab_hover.retarget(Some(7), t0, &anim);
+        let settled = t0 + Duration::from_millis(100);
+
+        state.tab_hover.retarget(None, settled, &anim);
+        let mid = settled + Duration::from_millis(50);
+        let w = state.tab_hover.weight(7, mid);
+        assert!(w > 0.1 && w < 0.9, "must still be tinted while fading: {w}");
+        assert!(state.has_active_animation(mid, 200));
+
+        let done = settled + Duration::from_millis(100);
+        assert!(state.tab_hover.weight(7, done).abs() < 1e-3);
+        assert!(!state.has_active_animation(done, 200));
+    }
+
+    /// The spec's gate requirement: with `tab_bar.hover_highlight = false`
+    /// there is no transition at all, not a transition toward a zero-weight
+    /// target, so the config key keeps meaning exactly what it means today.
+    ///
+    /// The gate itself lives in the pointer-motion handler, which needs an
+    /// `EventHandler`, a window and a config to drive. What is checkable here
+    /// is the invariant that decision must preserve: a transition never
+    /// retargeted stays quiet and weighs nothing.
+    #[test]
+    fn a_tab_transition_that_is_never_retargeted_stays_quiet() {
+        let state = ClientState::new(80, 24, 1000);
+        let now = Instant::now();
+        assert!(state.tab_hover.weight(7, now).abs() < 1e-4);
+        assert!(!state.has_active_animation(now, 200));
+        assert!(!state.has_active_animation(now, 0));
     }
 
     /// P3b's acceptance criterion: a state with nothing animating must not
