@@ -523,7 +523,29 @@ gated behind a spike.
       the Linux runners — a wrong constant fails there instead of reaching a
       Windows release
 - [ ] P3 motion language + reduced-motion detection
-  - [ ] P3a motion foundation (`Timed`, Fluent curves, animation-driven redraw, settings panel)
+  - [x] P3a motion foundation — shipped via #77. `Timed { start, duration_ms,
+        curve }` plus the nine Fluent 2 cubic-bezier curves and eight duration
+        steps, transcribed from `microsoft/fluentui` `packages/tokens` (the
+        Fluent 2 design site documents motion qualitatively and publishes no
+        token values). `AnimationManager::has_active_animation` had been dead
+        code since it was written, so a spring mid-flight only advanced when an
+        unrelated redraw happened; `ClientState::has_active_animation` now
+        aggregates it and the event loop requests a frame only while it is true
+        — an idle terminal asks for exactly the frames it asked for before.
+        The settings panel is the first consumer: its entrance was a
+        frame-count hack (`open_progress += 0.15`, "assumes 60 fps") that
+        ignored `animations.intensity` and had no exit at all; it is now a
+        200 ms Direct Entrance and a 150 ms Gentle Exit, both intensity-scaled.
+        `is_open` stays the single truth for input routing and the AccessKit
+        tree and still goes false the instant the user dismisses the panel —
+        the new `closing` field is render-only, which kept the change out of
+        `accessibility.rs` and the input path entirely. Two corrections landed
+        with it: the acceptance criterion below named a `build_pane_vertices`
+        that does not exist, and the design spec had `Timed` delegate to
+        `compute_progress`, whose `Duration::as_millis()` truncation quantises
+        the recovered curve parameter enough to move `Curve::AccelerateMax` by
+        ~0.1 near its tail — the exact curve and duration the panel exit uses,
+        so reopening mid-fade would have visibly jumped
   - [ ] P3b widget and overlay motion
   - [ ] P3c OS reduced-motion detection
 - [ ] P4 icon font + chrome type ramp
@@ -623,8 +645,29 @@ gated behind a spike.
     legibility on a real panel is exactly the kind of thing only looking
     can answer. Ships with `in_app_blur_enabled = false` by default
     specifically because none of this is measured yet.
+  - P3a — motion is the one thing on this list that a still screenshot cannot
+    capture at all, so it is the item most dependent on someone actually
+    watching it. Not measured: whether the 200 ms Direct Entrance and 150 ms
+    Gentle Exit read as calm or as sluggish at the settings panel's size;
+    whether `DecelerateMax` and `AccelerateMax` are the right two of the nine
+    curves for a panel this large, given that Fluent's guidance scales duration
+    with the element's size and travel; whether reopening mid-fade looks
+    continuous in the eye and not merely in the arithmetic. Also unmeasured is
+    the acceptance criterion itself: the shipped test proves only that P3a
+    requests no redraws the previous code would not have requested, while the
+    number the criterion actually names — the idle pane-vertex-cache miss rate
+    — needs a real session with `NEXTERM_LOG=trace`. That reading is worth
+    taking early: it is the first observation of the cursor-blink invalidation
+    debt (`plans/audit-round3-2026h2.md` P3), which has carried a "needs
+    measurement" label since it was written and now finally has an instrument.
+    One known artefact, accepted rather than unknown: `close()` tears down
+    in-flight edit state immediately, so the 150 ms fade renders the panel with
+    those edits already cancelled — a text caret disappears as the panel goes.
   - The cross-cutting rule above still asks for hand-run screenshots under
-    `docs/img/uiux-v3/`. That directory does not exist yet.
+    `docs/img/uiux-v3/`. That directory does not exist yet. P3a makes the gap
+    wider than "nobody took a screenshot": a screenshot cannot show a
+    transition, so the motion work needs a capture format nothing in this
+    project has established.
   - What *is* machine-verified for the colour work, and did not exist before
     it: the contrast floors are now pinned by tests rather than by reasoning
     — every dialog fill/label pair across all nine built-in schemes (#71),
