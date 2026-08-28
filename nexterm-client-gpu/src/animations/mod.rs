@@ -23,6 +23,7 @@
 
 mod curve;
 mod easing;
+mod timed;
 
 // `unused_imports` is allowed here for the same reason as the `dead_code`
 // allows inside `curve.rs`: `Curve` and `duration` are re-exported now but
@@ -31,6 +32,8 @@ mod easing;
 #[allow(unused_imports)]
 pub use curve::{Curve, duration};
 pub use easing::{compute_progress, ease_out_cubic};
+#[allow(unused_imports)]
+pub use timed::Timed;
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
