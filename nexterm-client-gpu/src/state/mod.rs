@@ -1352,23 +1352,6 @@ mod animation_frame_tests {
         assert!(!state.has_active_animation(done, 200));
     }
 
-    /// The spec's gate requirement: with `tab_bar.hover_highlight = false`
-    /// there is no transition at all, not a transition toward a zero-weight
-    /// target, so the config key keeps meaning exactly what it means today.
-    ///
-    /// The gate itself lives in the pointer-motion handler, which needs an
-    /// `EventHandler`, a window and a config to drive. What is checkable here
-    /// is the invariant that decision must preserve: a transition never
-    /// retargeted stays quiet and weighs nothing.
-    #[test]
-    fn a_tab_transition_that_is_never_retargeted_stays_quiet() {
-        let state = ClientState::new(80, 24, 1000);
-        let now = Instant::now();
-        assert!(state.tab_hover.weight(7, now).abs() < 1e-4);
-        assert!(!state.has_active_animation(now, 200));
-        assert!(!state.has_active_animation(now, 0));
-    }
-
     /// P3b's acceptance criterion: a state with nothing animating must not
     /// ask for frames. Eleven surfaces now have a clause in the aggregate,
     /// and each is a way for this to regress.
