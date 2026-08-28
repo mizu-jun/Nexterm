@@ -547,6 +547,22 @@ gated behind a spike.
         ~0.1 near its tail — the exact curve and duration the panel exit uses,
         so reopening mid-fade would have visibly jumped
   - [ ] P3b widget and overlay motion
+    - [x] P3b2 hover cross-fade — shipped via #80 (P3b2a: the settings-panel
+          rows and the context menu) and this branch (P3b2b: the tab bar and
+          the window buttons), closing all four of the client's
+          pointer-hover models. `HoverTransition<Id>` (`animations/hover.rs`)
+          is the shared two-timer cross-fade every model retargets from the
+          handler(s) that write its hovered id — the window buttons have
+          two, the pointer-motion handler and the Windows snap-layout
+          `UserEvent`, and missing the second would have left that path
+          snapping with nothing failing to compile. The tab bar's tear-out
+          button keeps its boolean hover reader alongside the fading tint,
+          because a button drawn at weight 0.05 must stay clickable.
+          `HoverTransition::target()` is `#[cfg(test)]`-gated rather than
+          carrying an `#[allow(dead_code)]`, following
+          `AnimationManager::tick_by_dt`'s precedent: no production caller
+          exists, but the method pins that `retarget` actually moved the
+          target, a property the weight assertions alone do not cover
   - [ ] P3c OS reduced-motion detection
 - [ ] P4 icon font + chrome type ramp
 - [ ] P5 contrast everywhere + high-contrast scheme
@@ -663,6 +679,21 @@ gated behind a spike.
     One known artefact, accepted rather than unknown: `close()` tears down
     in-flight edit state immediately, so the 150 ms fade renders the panel with
     those edits already cancelled — a text caret disappears as the panel goes.
+  - P3b2 — hover cross-fade for the tab bar and window buttons. Not measured:
+    whether the tab bar's `+0.06/+0.06/+0.08` brightening is perceptible *as a
+    fade* at all, or whether the delta is too small for the transition to
+    register — the design flags this as P3b2's open question and assumes
+    "leave it"; if it proves invisible, the options are to increase the delta
+    (a visual change beyond motion) or to drop the tab model. Also unmeasured:
+    whether the Close button **fading** to `semantic_error` rather than
+    snapping to it weakens the "this is destructive" signal — the only place
+    in P3b2 where the hovered appearance is a warning rather than an
+    affordance. A third gap, not a hardware question but one this phase
+    surfaced and that belongs on this list rather than only in a scratch
+    ledger: the tab bar's `hover_highlight` gate is verified by code
+    inspection only, not by test — covering it needs an `EventHandler` test
+    harness the crate does not have, which is out of scope for P3b2 and
+    deserves its own decision.
   - The cross-cutting rule above still asks for hand-run screenshots under
     `docs/img/uiux-v3/`. That directory does not exist yet. P3a makes the gap
     wider than "nobody took a screenshot": a screenshot cannot show a
