@@ -547,9 +547,22 @@ gated behind a spike.
         ~0.1 near its tail — the exact curve and duration the panel exit uses,
         so reopening mid-fade would have visibly jumped
   - [ ] P3b widget and overlay motion
-    - [x] P3b2 hover cross-fade — shipped via #80 (P3b2a: the settings-panel
-          rows and the context menu) and this branch (P3b2b: the tab bar and
-          the window buttons), closing all four of the client's
+    - [x] P3b1 overlay open/close motion — shipped via #79 (squash
+          `5d6e167`), merged to `master`. A shared `SurfaceMotion` open/close
+          timer pair drives open/close motion across eleven overlay
+          surfaces: six `bool`-shaped ones directly, and four
+          `Option`-shaped ones via render-only ghosts (a clone of the
+          content that lets the live field go `None` immediately while the
+          ghost still animates out), plus the settings tooltip, which has no
+          stored openness and is instead driven from a hover-dwell
+          predicate. The password modal's ghost is redacted:
+          `PasswordModalGhost` carries only `input_len: usize`, no password,
+          and a `PasswordModalView` makes that boundary structural rather
+          than advisory
+    - [ ] P3b2 hover cross-fade — P3b2a (the settings-panel rows and the
+          context menu) is pending review in #80; P3b2b (the tab bar and
+          the window buttons) is pending review in #81. Together they close
+          all four of the client's
           pointer-hover models. `HoverTransition<Id>` (`animations/hover.rs`)
           is the shared two-timer cross-fade every model retargets from the
           handler(s) that write its hovered id — the window buttons have
