@@ -784,8 +784,10 @@ impl WgpuState {
             ];
             for (i, &(button, glyph)) in buttons.iter().enumerate() {
                 let bx = sw - (3 - i) as f32 * window_button_w;
-                let hovered = state.hovered_window_button == Some(button);
-                if hovered {
+                let w = state.window_button_hover.weight(button, now);
+                // The fill is an additive layer — absent when not hovered —
+                // so its alpha carries the fade and nothing is emitted at 0.
+                if w > 0.0 {
                     let bg = if button == WindowButton::Close {
                         tokens.semantic_error
                     } else {
@@ -802,18 +804,17 @@ impl WgpuState {
                         window_button_w,
                         bar_h,
                         radius,
-                        bg,
+                        [bg[0], bg[1], bg[2], bg[3] * w],
                         sw,
                         sh,
                         bg_verts,
                         bg_idx,
                     );
                 }
-                let fg = if hovered {
-                    tokens.text_primary
-                } else {
-                    tokens.text_secondary
-                };
+                // The glyph is an opaque swap between two tokens, so the
+                // colour itself moves.
+                let fg =
+                    crate::color_util::lerp_rgba(tokens.text_secondary, tokens.text_primary, w);
                 let glyph_x =
                     bx + (window_button_w - glyph.chars().count() as f32 * cell_w).max(0.0) * 0.5;
                 add_string_verts(
