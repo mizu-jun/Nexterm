@@ -21,8 +21,15 @@
 //!   time-based progress live in `easing.rs`, so this file stays within the
 //!   file-size guidance while `Curve` and `Timed` join it.
 
+mod curve;
 mod easing;
 
+// `unused_imports` is allowed here for the same reason as the `dead_code`
+// allows inside `curve.rs`: `Curve` and `duration` are re-exported now but
+// not consumed by any caller until Task 3 (Curve::invert) and Tasks 5/6
+// (duration) of UI/UX v3 P3a.
+#[allow(unused_imports)]
+pub use curve::{Curve, duration};
 pub use easing::{compute_progress, ease_out_cubic};
 
 use std::collections::HashMap;
