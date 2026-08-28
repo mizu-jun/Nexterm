@@ -523,4 +523,18 @@ mod tests {
         assert_eq!(hit_test(&specs, 25.0, 10.0), Some(WidgetId::new(1, 9)));
         assert_eq!(hit_test(&specs, 60.0, 10.0), Some(WidgetId::new(1, 0)));
     }
+
+    #[test]
+    fn builder_methods_set_focused_and_tooltip() {
+        let desc = WidgetDesc::new(
+            WidgetId::new(1, 0),
+            WidgetKind::Toggle { on: false },
+            "row 0",
+        )
+        .focused(true)
+        .tooltip("hint");
+        let w = desc.place(WidgetRect::default(), WidgetRect::default());
+        assert!(w.focused());
+        assert_eq!(w.desc.tooltip.as_deref(), Some("hint"));
+    }
 }
