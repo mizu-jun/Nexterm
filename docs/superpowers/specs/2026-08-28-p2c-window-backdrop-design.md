@@ -90,6 +90,18 @@ itself, `windows-sys 0.60.2`, `windows-targets`, the eight per-architecture
 check`/`test`/`clippy` never touch it or anything it depends on outside a
 macOS build.
 
+Re-resolving the dependency graph to satisfy `window-vibrancy`'s `windows-sys
+^0.60` requirement also moved several existing crates' `windows-sys`
+dependency edge onto `0.61.2` (`dirs-sys`, `errno`, `is-terminal`,
+`nu-ansi-term`, `rustix`, `tempfile`, and others), and `iana-time-zone`'s
+`windows-core` edge onto `0.62.2` — both versions already present elsewhere in
+the lock file, so no new package version entered the tree and nothing on
+Linux behaves differently. An earlier pass through this document's own
+history disputed this and was wrong: the check used to refute it
+(`grep -c '^-version'`) matches only a package's own top-level `version =`
+field, never a version string quoted inside another package's `dependencies`
+array, so it could not have seen this kind of change either way.
+
 ## Architecture
 
 ### 1. Config layer — a pure resolver

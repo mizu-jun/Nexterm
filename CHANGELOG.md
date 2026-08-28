@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Requesting a backdrop now creates the window transparent on its own. Previously
   only `background_opacity < 1.0` did, so a backdrop on an opaque-configured
   window could never be visible.
+- Adding `window-vibrancy` (macOS-only) re-resolved several existing crates'
+  `windows-sys` dependency onto the version already present elsewhere in the
+  lock file (`0.59.0`/`0.48.0` → `0.61.2` for `dirs-sys`, `errno`,
+  `is-terminal`, `nu-ansi-term`, `rustix`, `tempfile`, and others). No new
+  package version was introduced and nothing on Linux behaves differently —
+  this is Cargo consolidating onto a version already in the tree — but it is
+  why unrelated crates move in the `Cargo.lock` diff for this change.
 - GPU compositing contract (UI/UX v3 P0): every built-in shader now outputs
   premultiplied alpha and every pipeline blends with
   `PREMULTIPLIED_ALPHA_BLENDING`, matching the surface's
