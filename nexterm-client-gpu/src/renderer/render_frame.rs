@@ -1239,10 +1239,25 @@ impl WgpuState {
         }
 
         // ---- Consent dialog (Sprint 4-1: sensitive-operation confirmation modal) ----
-        // Appended last so it is rendered on top
-        if state.pending_consent.is_some() {
+        // Appended last so it is rendered on top. Ghost while it fades
+        // (UI/UX v3 P3b), same shape as the context menu / close-window
+        // dialog — `pending_consent` itself already went `None` at dismiss
+        // time (see `dismiss_consent_dialog`), so only the ghost clone is
+        // read here.
+        let consent_to_draw = state
+            .pending_consent
+            .as_ref()
+            .or(state.pending_consent_closing.as_ref().map(|(d, _)| d));
+        if let Some(dialog) = consent_to_draw {
+            let progress = ClientState::option_surface_progress(
+                state.pending_consent.is_some(),
+                state.pending_consent_opening,
+                state.pending_consent_closing.as_ref().map(|(_, t)| t),
+                frame_now,
+            );
+            let (bg_start, text_start) = (bg_verts.len(), text_verts.len());
             self.build_consent_dialog_verts(
-                state,
+                dialog,
                 &tokens,
                 sw,
                 sh,
@@ -1255,6 +1270,11 @@ impl WgpuState {
                 &mut bg_idx,
                 &mut text_verts,
                 &mut text_idx,
+            );
+            super::overlay::fade::apply_surface_fade(
+                &mut bg_verts[bg_start..],
+                &mut text_verts[text_start..],
+                progress,
             );
         }
 

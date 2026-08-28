@@ -4,7 +4,7 @@
 
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
-use crate::state::{ClientState, CloseWindowDialog, ContextMenu};
+use crate::state::{ClientState, CloseWindowDialog, ConsentDialog, ContextMenu};
 use crate::vertex_util::{add_px_rect, add_string_verts, visual_width};
 
 use super::super::WgpuState;
@@ -350,7 +350,7 @@ impl WgpuState {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::renderer) fn build_consent_dialog_verts(
         &self,
-        state: &ClientState,
+        dialog: &ConsentDialog,
         tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
@@ -365,10 +365,6 @@ impl WgpuState {
         text_idx: &mut Vec<u16>,
     ) {
         use crate::state::ConsentKind;
-
-        let Some(dialog) = &state.pending_consent else {
-            return;
-        };
 
         // Semi-transparent backdrop overlay (full screen)
         add_px_rect(

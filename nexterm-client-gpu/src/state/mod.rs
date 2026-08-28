@@ -245,6 +245,17 @@ pub struct ClientState {
     /// Consent dialog for sensitive operations (Sprint 4-1).
     /// While `Some`, the dialog consumes every key input.
     pub pending_consent: Option<ConsentDialog>,
+    /// Entrance animation for the consent dialog (UI/UX v3 P3b).
+    pub pending_consent_opening: Option<crate::animations::Timed>,
+    /// Exit animation for the consent dialog (UI/UX v3 P3b) — **render-only**.
+    ///
+    /// `pending_consent` is the security-relevant field: it goes `None` the
+    /// instant the dialog is answered or cancelled, since every input path
+    /// (keyboard, accessibility, the consent decision itself) consults it to
+    /// decide whether a prompt is still answerable. The ghost owns a clone
+    /// purely so the renderer has something to fade out; no input path may
+    /// read it. See `context_menu_closing` for the general rationale.
+    pub pending_consent_closing: Option<(ConsentDialog, crate::animations::Timed)>,
     /// "Always allow" decisions for the current session (reset on next launch)
     pub session_consent_overrides: SessionConsentOverrides,
     /// Name of the currently active workspace (Sprint 5-7 / Phase 2-1).
@@ -682,6 +693,13 @@ impl ClientState {
             || self
                 .close_window_dialog_opening
                 .is_some_and(|t| self.close_window_dialog.is_some() && !t.is_done(now))
+            || self
+                .pending_consent_closing
+                .as_ref()
+                .is_some_and(|(_, t)| !t.is_done(now))
+            || self
+                .pending_consent_opening
+                .is_some_and(|t| self.pending_consent.is_some() && !t.is_done(now))
         {
             return true;
         }
@@ -743,6 +761,39 @@ impl ClientState {
         }
     }
 
+    /// Show a consent dialog, starting its entrance (UI/UX v3 P3b).
+    pub fn show_consent_dialog(
+        &mut self,
+        dialog: ConsentDialog,
+        now: Instant,
+        anim: &nexterm_config::AnimationsConfig,
+    ) {
+        use crate::animations::{Curve, Timed, duration};
+
+        let ms = anim.scaled_duration_ms(duration::SLOW);
+        self.pending_consent_closing = None;
+        self.pending_consent_opening = Some(Timed::new(now, ms, Curve::DecelerateMax));
+        self.pending_consent = Some(dialog);
+    }
+
+    /// Dismiss the consent dialog, leaving a render-only ghost.
+    ///
+    /// `pending_consent` goes `None` here, not when the fade ends: a
+    /// security prompt stops accepting input the moment it is answered.
+    pub fn dismiss_consent_dialog(
+        &mut self,
+        now: Instant,
+        anim: &nexterm_config::AnimationsConfig,
+    ) {
+        use crate::animations::{Curve, Timed, duration};
+
+        if let Some(dialog) = self.pending_consent.take() {
+            let ms = anim.scaled_duration_ms(duration::FAST);
+            self.pending_consent_closing =
+                Some((dialog, Timed::new(now, ms, Curve::AccelerateMax)));
+        }
+    }
+
     /// Drop every finished ghost (UI/UX v3 P3b). Called once per frame.
     pub fn retire_ghosts(&mut self, now: Instant) {
         if self
@@ -758,6 +809,13 @@ impl ClientState {
             .is_some_and(|(_, t)| t.is_done(now))
         {
             self.close_window_dialog_closing = None;
+        }
+        if self
+            .pending_consent_closing
+            .as_ref()
+            .is_some_and(|(_, t)| t.is_done(now))
+        {
+            self.pending_consent_closing = None;
         }
     }
 
@@ -823,6 +881,8 @@ impl ClientState {
             update_banner: None,
             offline_banner_since: None,
             pending_consent: None,
+            pending_consent_opening: None,
+            pending_consent_closing: None,
             session_consent_overrides: SessionConsentOverrides::default(),
             current_workspace: "default".to_string(),
             workspaces: Vec::new(),
@@ -1327,5 +1387,34 @@ mod animation_frame_tests {
         state.dismiss_context_menu(t0, &anim);
         assert!(state.context_menu_closing.is_none());
         assert!(!state.has_active_animation(t0, 200));
+    }
+
+    /// The security-relevant property: a consent dialog that is fading out
+    /// is no longer answerable. `pending_consent` is what every input path
+    /// consults, and it is `None` from the instant the user answered.
+    #[test]
+    fn a_fading_consent_dialog_cannot_be_answered() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+        state.show_consent_dialog(
+            ConsentDialog::new(ConsentKind::OpenUrl("https://example.invalid".to_string())),
+            t0,
+            &anim,
+        );
+        assert!(state.pending_consent.is_some());
+
+        state.dismiss_consent_dialog(t0, &anim);
+        assert!(
+            state.pending_consent.is_none(),
+            "no input path may see an answerable dialog during the fade"
+        );
+        assert!(state.pending_consent_closing.is_some());
+        assert!(state.has_active_animation(t0, 200));
+
+        let done = t0 + Duration::from_millis(150);
+        state.retire_ghosts(done);
+        assert!(state.pending_consent_closing.is_none());
+        assert!(!state.has_active_animation(done, 200));
     }
 }
