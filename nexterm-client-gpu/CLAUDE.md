@@ -32,3 +32,16 @@ Guidance for working inside the GPU client crate. The repo-wide rules — langua
     if the surface is drawn from a nested helper like the tooltip, at the
     point closest to where its vertices are appended. There is no registry
     that catches an omission.
+  - **Adding a hover model**: give it its own `HoverTransition<Id>` on the
+    state that owns the hovered id, retarget it from the same handler that
+    writes that id (**every** such handler — the window buttons have two, one
+    of them the Windows snap-layout event), and add an `is_active` clause to
+    `has_active_animation`. Then pick the interpolation by the shape of the
+    hovered appearance, not by habit: an **additive** layer (a fill that is
+    absent when not hovered) scales its alpha by the weight and emits no
+    geometry at 0; a colour that is **always drawn** in one of several variants
+    lerps with `color_util::lerp_rgba`. `apply_surface_fade` is for whole
+    surfaces opening and closing and does not apply to hover. Finally, check
+    whether the hovered flag has a *behavioural* reader as well as a colour
+    one — the tab bar's tear-out button is gated on hover and must keep the
+    boolean, because a button drawn at weight 0.05 is still clickable.
