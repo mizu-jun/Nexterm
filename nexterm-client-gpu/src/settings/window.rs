@@ -240,13 +240,6 @@ impl SettingsPanel {
         }
     }
 
-    // This task (P2c-2 Task 7) lands only the panel state and the cycler;
-    // the Window-tab row that calls `next_window_backdrop` /
-    // `prev_window_backdrop` / `window_backdrop_label` lands in the next
-    // commit (Task 8), so nothing outside the tests below calls them yet.
-    // `#[allow(dead_code)]` follows the same staged-landing precedent as
-    // `OsWindowBounds` in `drop_target.rs`.
-    #[allow(dead_code)]
     pub fn next_window_backdrop(&mut self) {
         use nexterm_config::WindowBackdrop::*;
         self.window_backdrop = match self.window_backdrop {
@@ -259,7 +252,6 @@ impl SettingsPanel {
         self.dirty = true;
     }
 
-    #[allow(dead_code)]
     pub fn prev_window_backdrop(&mut self) {
         use nexterm_config::WindowBackdrop::*;
         self.window_backdrop = match self.window_backdrop {
@@ -272,7 +264,6 @@ impl SettingsPanel {
         self.dirty = true;
     }
 
-    #[allow(dead_code)]
     pub fn window_backdrop_label(&self) -> String {
         use nexterm_config::WindowBackdrop::*;
         match self.window_backdrop {

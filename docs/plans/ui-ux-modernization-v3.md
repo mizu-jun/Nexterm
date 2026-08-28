@@ -497,10 +497,13 @@ gated behind a spike.
         it waits until the P2a shadow constants are tuned on-device rather
         than stacking another unverified change
 - [x] P2b in-app acrylic (offscreen + Kawase blur) — shipped via #74
-- [x] P2c `window.backdrop` config (Win/macOS/Linux) — shipped via P2c-1/P2c-2.
-      Closes P2. The Windows material was mislabelled Acrylic throughout while
-      applying Mica Alt (`DWMSBT_TABBEDWINDOW`); `auto` keeps applying Mica Alt so
-      the correction changes no appearance. macOS resolves every non-`none` value
+- [ ] P2c `window.backdrop` config (Win/macOS/Linux) — implemented via P2c-1
+      (config enum, resolver, platform layer, window creation, docs) and P2c-2
+      (settings-panel row, locale strings) on branch `p2c-window-backdrop`;
+      not yet merged, no PR opened. Will close P2 once both land. The Windows
+      material was mislabelled Acrylic throughout while applying Mica Alt
+      (`DWMSBT_TABBEDWINDOW`); `auto` keeps applying Mica Alt so the
+      correction changes no appearance. macOS resolves every non-`none` value
       to one `NSVisualEffectView` material, since AppKit has no Mica/Acrylic
       distinction; Linux resolves everything to `none`
 - [ ] P3 motion language + reduced-motion detection

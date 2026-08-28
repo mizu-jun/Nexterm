@@ -422,7 +422,7 @@ When a configuration file changes, `ConfigWatcher` reloads it and updates the `C
 | `shell.program` | String | OS-dependent |
 | `scrollback_lines` | usize | `50000` |
 | `status_bar.enabled` | bool | `false` |
-| `window.background_opacity` | f32 | `1.0` |
+| `window.background_opacity` | f32 | `0.95` |
 | `window.decorations` | WindowDecorations | `NoTitle` (`Full` on macOS) |
 | `window.backdrop` | String | `"auto"` |
 | `tab_bar.enabled` | bool | `true` |

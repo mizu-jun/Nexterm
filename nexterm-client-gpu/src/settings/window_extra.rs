@@ -30,6 +30,7 @@ impl SettingsPanel {
             13 => self.increase_fps_limit(),
             14 => self.toggle_in_app_blur(),
             15 => self.increase_in_app_blur_strength(),
+            16 => self.next_window_backdrop(),
             _ => {}
         }
     }
@@ -53,6 +54,7 @@ impl SettingsPanel {
             13 => self.decrease_fps_limit(),
             14 => self.toggle_in_app_blur(),
             15 => self.decrease_in_app_blur_strength(),
+            16 => self.prev_window_backdrop(),
             _ => {}
         }
     }
@@ -375,5 +377,24 @@ mod tests {
         let toml_str = panel.apply_to_toml_string("");
         assert!(toml_str.contains("enabled = false"));
         assert!(toml_str.contains("intensity = \"subtle\""));
+    }
+
+    #[test]
+    fn window_field_increase_decrease_dispatch_backdrop_row() {
+        // The arrow-key handler calls `window_field_increase` /
+        // `window_field_decrease` directly (bypassing `apply_window_action`),
+        // so the P2c-2 backdrop row needs its own arm here to be keyboard
+        // reachable at all, exactly like every other Window row.
+        use nexterm_config::WindowBackdrop;
+
+        let config = Config::default();
+        let mut panel = SettingsPanel::new(&config);
+
+        panel.focused_widget_index = 16;
+        assert_eq!(panel.window_backdrop, WindowBackdrop::Auto);
+        panel.window_field_increase();
+        assert_eq!(panel.window_backdrop, WindowBackdrop::Mica);
+        panel.window_field_decrease();
+        assert_eq!(panel.window_backdrop, WindowBackdrop::Auto);
     }
 }
