@@ -215,11 +215,17 @@ impl Timed {
 }
 ```
 
-`progress` delegates to the existing `compute_progress`, so
-`duration_ms == 0` yields `1.0` immediately. That is the whole reduced-motion
-path: `AnimationsConfig::scaled_duration_ms` already returns 0 when
-`enabled = false` or `intensity = "off"`, so every `Timed` constructed through
-it is instant, and `is_done` is true on the first query.
+`progress` keeps elapsed time at full `Duration` precision rather than
+delegating to `compute_progress`, which truncates to whole milliseconds:
+that truncation quantises the recovered curve parameter in steps of
+`1/duration_ms`, and near the steep tail of `Curve::AccelerateMax` — the
+curve the settings-panel exit uses, over 150 ms — a step that small already
+moves the value by ~0.1, enough to see. `raw_progress` keeps
+`compute_progress`'s contract of returning `1.0` when `duration_ms == 0`, as
+an explicit first branch. That is the whole reduced-motion path:
+`AnimationsConfig::scaled_duration_ms` already returns 0 when
+`enabled = false` or `intensity = "off"`, so every `Timed` constructed
+through it is instant, and `is_done` is true on the first query.
 
 `resuming_at` is how an interruption is expressed: the caller reads whatever
 value is on screen and asks for an animation that starts there. It finds the
