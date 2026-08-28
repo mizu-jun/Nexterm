@@ -32,7 +32,6 @@ mod timed;
 pub use curve::{Curve, duration};
 pub use easing::{compute_progress, ease_out_cubic};
 // Consumed by the two overlay models in Tasks 3 and 4.
-#[allow(unused_imports)]
 pub use hover::HoverTransition;
 pub use surface::SurfaceMotion;
 pub use timed::Timed;

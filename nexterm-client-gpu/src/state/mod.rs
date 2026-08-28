@@ -709,6 +709,9 @@ impl ClientState {
         if self.settings_panel.tooltip_motion.is_active(now) {
             return true;
         }
+        if self.settings_panel.hover_transition.is_active(now) {
+            return true;
+        }
         false
     }
 
@@ -1189,6 +1192,32 @@ mod animation_frame_tests {
     fn an_idle_state_wants_no_animation_frames() {
         let state = ClientState::new(80, 24, 1000);
         assert!(!state.has_active_animation(std::time::Instant::now(), 250));
+    }
+
+    /// Hovering a settings row must ask for frames until the cross-fade
+    /// finishes, and stop afterwards.
+    #[test]
+    fn a_hovered_settings_row_wants_animation_frames_until_it_settles() {
+        use crate::renderer::overlay::widgets::spec::WidgetId;
+
+        let mut state = ClientState::new(80, 24, 1000);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+        let id = WidgetId::new(2, 0);
+
+        state
+            .settings_panel
+            .hover_transition
+            .retarget(Some(id), t0, &anim);
+        assert!(state.has_active_animation(t0, 200));
+        assert!(
+            state.settings_panel.hover_transition.weight(id, t0).abs() < 1e-3,
+            "the fade starts from nothing"
+        );
+
+        let done = t0 + Duration::from_millis(100);
+        assert!((state.settings_panel.hover_transition.weight(id, done) - 1.0).abs() < 1e-3);
+        assert!(!state.has_active_animation(done, 200));
     }
 
     /// P3b's acceptance criterion: a state with nothing animating must not

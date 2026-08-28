@@ -99,6 +99,13 @@ pub struct SettingsPanel {
     /// start time. Drives tooltips; `None` when the pointer is not over a
     /// widget of a migrated category.
     pub hover_widget: Option<HoverDwell>,
+    /// Hover cross-fade for this panel's widget rows (UI/UX v3 P3b2).
+    ///
+    /// `hover_widget` above stays the truth for the tooltip dwell timer and
+    /// goes `None` the moment the pointer leaves the panel; this outlives it
+    /// by exactly one fade so the row the pointer left can still dim out.
+    pub hover_transition:
+        crate::animations::HoverTransition<crate::renderer::overlay::widgets::spec::WidgetId>,
     /// Tooltip entrance/exit (UI/UX v3 P3b). The tooltip has no stored
     /// openness — it is a predicate over `hover_widget`'s dwell timer — so
     /// `tick_tooltip` translates that predicate into motion once per frame.
@@ -375,6 +382,7 @@ impl SettingsPanel {
             scheme_index,
             theme_hover_preview: None,
             hover_widget: None,
+            hover_transition: Default::default(),
             tooltip_motion: crate::animations::SurfaceMotion::default(),
             tooltip_shown: false,
             tooltip_snapshot: None,

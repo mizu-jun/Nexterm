@@ -47,7 +47,6 @@ use super::{Curve, Timed, duration};
 /// fixed-capacity `id → Timed` map would fix it behind an unchanged
 /// `weight()`; a single slot is bounded and matches what the design chose.
 // Consumed by the two overlay models in Tasks 3 and 4.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub struct HoverTransition<Id> {
     /// The item fading out, and the weight it held when it started to.
@@ -73,7 +72,6 @@ impl<Id> Default for HoverTransition<Id> {
 }
 
 // Consumed by the two overlay models in Tasks 3 and 4.
-#[allow(dead_code)]
 impl<Id: Copy + PartialEq> HoverTransition<Id> {
     /// Point the transition at `to`, resuming from whatever is on screen.
     ///
@@ -116,6 +114,11 @@ impl<Id: Copy + PartialEq> HoverTransition<Id> {
     }
 
     /// The item currently being hovered, as far as the transition knows.
+    ///
+    /// No production caller yet — Task 3 (settings rows) reads `weight`
+    /// directly and Task 4 (context menu) may or may not need this. Exercised
+    /// by this module's own tests, which does not count for a non-test build.
+    #[allow(dead_code)]
     pub fn target(&self) -> Option<Id> {
         self.to
     }

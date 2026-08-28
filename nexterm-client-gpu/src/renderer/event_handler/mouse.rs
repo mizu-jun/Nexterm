@@ -391,6 +391,8 @@ impl EventHandler {
                 SettingsPanelHit::KeybindingsRow(index) => Some((KEYBINDINGS_CATEGORY, index)),
                 _ => None,
             };
+            // Read before `sp` borrows `self.app.state` mutably below.
+            let anim = self.app.config.animations.clone();
             let sp = &mut self.app.state.settings_panel;
             sp.hover_widget = hovered.map(|(category, index)| {
                 crate::settings_panel::HoverDwell::enter(
@@ -400,6 +402,17 @@ impl EventHandler {
                     std::time::Instant::now(),
                 )
             });
+            // UI/UX v3 P3b2: the same pointer move drives the cross-fade. This
+            // is idempotent while the hovered row is unchanged, so a slow
+            // drag across one row does not restart the fade.
+            let now = std::time::Instant::now();
+            sp.hover_transition.retarget(
+                hovered.map(|(category, index)| {
+                    crate::renderer::overlay::widgets::spec::WidgetId::new(category, index)
+                }),
+                now,
+                &anim,
+            );
         } else if self.app.state.settings_panel.theme_hover_preview.is_some()
             || self.app.state.settings_panel.hover_widget.is_some()
         {

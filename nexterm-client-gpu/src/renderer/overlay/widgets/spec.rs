@@ -347,6 +347,11 @@ pub(crate) struct WidgetSpec {
     /// The interactive control itself, inside `rect`.
     pub control_rect: WidgetRect,
     /// Whether the pointer is over this widget.
+    ///
+    /// Dead as of UI/UX v3 P3b2a: `draw_row_background` now reads the hover
+    /// *weight* instead. Removed, with the nine `.hovered(...)` call sites,
+    /// in the follow-up task.
+    #[allow(dead_code)]
     pub hovered: bool,
 }
 
