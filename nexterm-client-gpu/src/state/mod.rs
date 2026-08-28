@@ -13,6 +13,7 @@
 //! do not need to change.
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use nexterm_proto::PaneLayout;
 use winit::window::WindowId;
@@ -623,6 +624,24 @@ pub fn hit_test_pane_border(
 }
 
 impl ClientState {
+    /// Whether anything on screen still needs another frame (UI/UX v3 P3a).
+    ///
+    /// The event loop calls this once per tick and requests a redraw only
+    /// when it is true, so an idle terminal keeps costing exactly what it
+    /// cost before P3a — no extra frames, and therefore no extra
+    /// pane-vertex-cache misses.
+    ///
+    /// `fade_duration_ms` is the pane fade-in duration the caller is using,
+    /// already scaled by `AnimationsConfig::scaled_duration_ms`; 0 means
+    /// animations are off and nothing is running.
+    ///
+    /// Overlay surfaces that own a `Timed` are ORed in here as they are
+    /// migrated. Adding a surface means adding a clause; there is no
+    /// registry to keep in sync.
+    pub fn has_active_animation(&self, now: Instant, fade_duration_ms: u32) -> bool {
+        self.animations.has_active_animation(now, fade_duration_ms)
+    }
+
     pub fn new(cols: u16, rows: u16, scrollback_capacity: usize) -> Self {
         Self {
             panes: HashMap::new(),
@@ -951,5 +970,49 @@ mod pane_border_hit_tests {
         layouts.insert(1, layout(1, 0, 0, 40, 24));
         assert!(hit_test_pane_border(&layouts, 100.0, 100.0, 0.0, 10.0, 0.0, 0.0).is_none());
         assert!(hit_test_pane_border(&layouts, 100.0, 100.0, 10.0, 0.0, 0.0, 0.0).is_none());
+    }
+}
+
+#[cfg(test)]
+mod animation_frame_tests {
+    use super::*;
+
+    /// The UI/UX v3 P3a acceptance criterion in test form: a state with
+    /// nothing animating must not ask for a frame. If this ever returns
+    /// true at rest, the event loop spins at 60 fps and every pane-vertex
+    /// cache miss that follows is a regression P3a introduced.
+    #[test]
+    fn an_idle_state_wants_no_animation_frames() {
+        let state = ClientState::new(80, 24, 1000);
+        assert!(!state.has_active_animation(std::time::Instant::now(), 250));
+    }
+
+    #[test]
+    fn a_running_spring_wants_animation_frames() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let now = std::time::Instant::now();
+        state.animations.record_tab_switch(7, now);
+        assert!(state.has_active_animation(now, 250));
+    }
+
+    #[test]
+    fn a_settled_spring_wants_no_more_frames() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let now = std::time::Instant::now();
+        state.animations.record_tab_switch(7, now);
+        for _ in 0..600 {
+            state.animations.tick_by_dt(0.016);
+        }
+        assert!(!state.has_active_animation(now, 250));
+    }
+
+    /// With animations disabled the scaled duration is 0, and nothing may
+    /// ask for a frame on their behalf.
+    #[test]
+    fn disabled_animations_want_no_frames() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let now = std::time::Instant::now();
+        state.animations.record_pane_added(1, now);
+        assert!(!state.has_active_animation(now, 0));
     }
 }

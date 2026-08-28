@@ -18,6 +18,7 @@ use winit::{
 };
 
 use super::EventHandler;
+use crate::animations::duration::GENTLE;
 use crate::connection::{Connection, ConnectionExt};
 use crate::glyph_atlas::{GlyphAtlas, GlyphKey};
 use crate::renderer::WgpuState;
@@ -697,6 +698,17 @@ impl EventHandler {
                 "pane vertex cache: {misses} misses in {:.2}s",
                 since_report.as_secs_f32()
             );
+        }
+
+        // UI/UX v3 P3a: an animation is the only thing that knows it needs
+        // another frame. `on_new_events` already wakes the loop every 16 ms,
+        // so this costs one predicate per tick and requests a redraw only
+        // while something is actually moving.
+        let fade_ms = self.app.config.animations.scaled_duration_ms(GENTLE);
+        if self.app.state.has_active_animation(Instant::now(), fade_ms)
+            && let Some(w) = &self.window
+        {
+            w.request_redraw();
         }
     }
 

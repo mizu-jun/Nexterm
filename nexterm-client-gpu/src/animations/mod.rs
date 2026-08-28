@@ -312,7 +312,6 @@ impl AnimationManager {
     }
 
     /// Whether any animation is currently active (useful for redraw scheduling).
-    #[allow(dead_code)]
     pub fn has_active_animation(&self, now: Instant, duration_ms: u32) -> bool {
         if duration_ms == 0 {
             return false;

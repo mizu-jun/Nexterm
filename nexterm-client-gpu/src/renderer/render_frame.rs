@@ -813,7 +813,9 @@ impl WgpuState {
         // Since this is alpha-blended on top of existing cell backgrounds, we append
         // additional vertices.
         {
-            let fade_duration = config.animations.scaled_duration_ms(250);
+            let fade_duration = config
+                .animations
+                .scaled_duration_ms(crate::animations::duration::GENTLE);
             if fade_duration > 0 && !state.pane_layouts.is_empty() {
                 let now = std::time::Instant::now();
                 let layout_ids: Vec<u32> = state.pane_layouts.keys().copied().collect();
