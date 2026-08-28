@@ -17,41 +17,19 @@
 //!   When `enabled = false` (animations disabled in config), every spring snaps to
 //!   its target instantly.
 //! - Easing functions are kept for the time-based fade-in overlay.
+//! - Split into an `animations/` module in UI/UX v3 P3a: the easing helpers and
+//!   time-based progress live in `easing.rs`, so this file stays within the
+//!   file-size guidance while `Curve` and `Timed` join it.
+
+mod easing;
+
+pub use easing::{compute_progress, ease_out_cubic};
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 /// Maximum alpha for the dim overlay on non-focused panes.
 pub const MAX_DIM_ALPHA: f32 = 0.06;
-
-// ---------------------------------------------------------------------------
-// Easing helpers (kept for the pane fade-in overlay in render_frame.rs)
-// ---------------------------------------------------------------------------
-
-/// Cubic ease-out. Maps `t ∈ [0, 1]` to `[0, 1]`.
-pub fn ease_out_cubic(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    let inv = 1.0 - t;
-    1.0 - inv * inv * inv
-}
-
-/// Linear (identity).
-#[allow(dead_code)]
-pub fn linear(t: f32) -> f32 {
-    t.clamp(0.0, 1.0)
-}
-
-/// Compute `progress ∈ [0, 1]` from a start time, the current time, and a duration.
-///
-/// - When `duration_ms == 0`, the result is always `1.0` (animations disabled).
-/// - When `elapsed ≥ duration`, the result is `1.0`.
-pub fn compute_progress(start: Instant, now: Instant, duration_ms: u32) -> f32 {
-    if duration_ms == 0 {
-        return 1.0;
-    }
-    let elapsed_ms = now.saturating_duration_since(start).as_millis() as f32;
-    (elapsed_ms / duration_ms as f32).clamp(0.0, 1.0)
-}
 
 // ---------------------------------------------------------------------------
 // Spring physics
@@ -370,74 +348,6 @@ mod tests {
 
     fn approx_loose(a: f32, b: f32) -> bool {
         (a - b).abs() < 0.01
-    }
-
-    // ---- easing functions ----
-
-    #[test]
-    fn ease_out_cubic_is_0_and_1_at_endpoints() {
-        assert!(approx(ease_out_cubic(0.0), 0.0));
-        assert!(approx(ease_out_cubic(1.0), 1.0));
-    }
-
-    #[test]
-    fn ease_out_cubic_is_monotonically_increasing() {
-        let v00 = ease_out_cubic(0.0);
-        let v25 = ease_out_cubic(0.25);
-        let v50 = ease_out_cubic(0.5);
-        let v75 = ease_out_cubic(0.75);
-        let v100 = ease_out_cubic(1.0);
-        assert!(v00 < v25 && v25 < v50 && v50 < v75 && v75 < v100);
-    }
-
-    #[test]
-    fn ease_out_cubic_exceeds_linear_near_middle() {
-        assert!(ease_out_cubic(0.3) > linear(0.3));
-    }
-
-    #[test]
-    fn ease_out_cubic_clamps_out_of_range_inputs() {
-        assert!(approx(ease_out_cubic(-1.0), 0.0));
-        assert!(approx(ease_out_cubic(2.0), 1.0));
-    }
-
-    #[test]
-    fn linear_is_identity() {
-        assert!(approx(linear(0.0), 0.0));
-        assert!(approx(linear(0.5), 0.5));
-        assert!(approx(linear(1.0), 1.0));
-        assert!(approx(linear(-0.5), 0.0));
-        assert!(approx(linear(1.5), 1.0));
-    }
-
-    // ---- compute_progress ----
-
-    #[test]
-    fn compute_progress_with_duration_0_is_always_1() {
-        let now = Instant::now();
-        assert!(approx(compute_progress(now, now, 0), 1.0));
-        let later = now + Duration::from_secs(60);
-        assert!(approx(compute_progress(now, later, 0), 1.0));
-    }
-
-    #[test]
-    fn compute_progress_with_zero_elapsed_is_0() {
-        let now = Instant::now();
-        assert!(approx(compute_progress(now, now, 200), 0.0));
-    }
-
-    #[test]
-    fn compute_progress_at_half_duration_is_0_5() {
-        let start = Instant::now();
-        let now = start + Duration::from_millis(100);
-        assert!(approx(compute_progress(start, now, 200), 0.5));
-    }
-
-    #[test]
-    fn compute_progress_beyond_duration_clamps_to_1() {
-        let start = Instant::now();
-        let now = start + Duration::from_millis(500);
-        assert!(approx(compute_progress(start, now, 200), 1.0));
     }
 
     // ---- SpringState ----
