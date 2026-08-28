@@ -5,6 +5,7 @@
 //!   grid/overlay vertex construction → upload → main pass (bg + text)
 //!   → image pass, in that order.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -20,6 +21,25 @@ use super::WgpuState;
 use super::background_pass::build_background_verts;
 use super::image::{ImageEntry, build_image_verts};
 use super::overlay::SettingsPanelScrollMetrics;
+
+/// Per-pane vertex-cache misses since the last drain (UI/UX v3 P3a).
+///
+/// The UI/UX v3 plan states the P3 acceptance criterion as "idle
+/// `build_pane_vertices` call count does not regress". No function by that
+/// name exists. The equivalent is a miss on the C4 pane cache below, which
+/// is the only path that rebuilds a pane's cell vertices, so misses per
+/// second is the quantity that criterion is really about.
+///
+/// It is also the first instrument for the cursor-blink invalidation debt
+/// tracked as P3 in `docs/plans/audit-round3-2026h2.md`: the cache key
+/// includes `cursor_visible`, so a blink alone can force a rebuild. That
+/// entry has been marked "needs measurement" ever since it was written.
+static PANE_CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
+
+/// Read the miss count and reset it to zero.
+pub(super) fn take_pane_cache_misses() -> u64 {
+    PANE_CACHE_MISSES.swap(0, Ordering::Relaxed)
+}
 
 impl WgpuState {
     /// Phase 5b (UI/UX v2): advance the per-pane cursor motion state
@@ -400,6 +420,7 @@ impl WgpuState {
                                 &mut text_idx,
                             );
                         } else {
+                            PANE_CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
                             // Cache miss: rebuild into local vecs, then store and append.
                             let mut l_bg_v: Vec<BgVertex> = Vec::new();
                             let mut l_bg_i: Vec<u16> = Vec::new();
@@ -792,7 +813,9 @@ impl WgpuState {
         // Since this is alpha-blended on top of existing cell backgrounds, we append
         // additional vertices.
         {
-            let fade_duration = config.animations.scaled_duration_ms(250);
+            let fade_duration = config
+                .animations
+                .scaled_duration_ms(crate::animations::duration::GENTLE);
             if fade_duration > 0 && !state.pane_layouts.is_empty() {
                 let now = std::time::Instant::now();
                 let layout_ids: Vec<u32> = state.pane_layouts.keys().copied().collect();
@@ -1066,7 +1089,7 @@ impl WgpuState {
         // here — where `state` is `&mut` — we feed it back and stash the
         // scissor rect + index ranges for the main render pass below.
         let mut settings_scroll_clip: Option<SettingsPanelScrollMetrics> = None;
-        if state.settings_panel.is_open {
+        if state.settings_panel.is_visible() {
             let metrics = self.build_settings_panel_verts(
                 state,
                 &tokens,
@@ -1074,6 +1097,7 @@ impl WgpuState {
                 sh,
                 cell_w,
                 cell_h,
+                frame_now,
                 panel_acrylic_mix,
                 font,
                 atlas,
@@ -1854,5 +1878,21 @@ mod tests {
             split_scissored_range(50, 80, Some((SCISSOR, (70, 120)))),
             vec![(50..70, None), (70..80, Some(SCISSOR))]
         );
+    }
+}
+
+#[cfg(test)]
+mod pane_cache_counter_tests {
+    use super::*;
+
+    /// The counter is a process-global, so this test both reads and resets
+    /// it. It runs in the same process as other tests, which never render,
+    /// so nothing else touches it.
+    #[test]
+    fn take_pane_cache_misses_drains_the_counter() {
+        take_pane_cache_misses(); // start from a known state
+        PANE_CACHE_MISSES.fetch_add(3, Ordering::Relaxed);
+        assert_eq!(take_pane_cache_misses(), 3);
+        assert_eq!(take_pane_cache_misses(), 0);
     }
 }

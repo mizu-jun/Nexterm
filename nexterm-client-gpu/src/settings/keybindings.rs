@@ -630,7 +630,10 @@ mod tests {
         let mut panel = panel_with_one_binding();
         panel.open_key_delete_dialog();
         panel.key_delete_dialog_confirm_focused = true;
-        panel.close();
+        panel.close(
+            std::time::Instant::now(),
+            &nexterm_config::AnimationsConfig::default(),
+        );
         assert!(!panel.key_delete_dialog_open);
         assert!(!panel.key_delete_dialog_confirm_focused);
     }

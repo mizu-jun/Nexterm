@@ -126,6 +126,8 @@ pub struct EventHandler {
     pub(super) status_eval: Option<StatusBarEvaluator>,
     /// Last time the status bar was evaluated.
     pub(super) last_status_eval: Instant,
+    /// Last time the pane-cache-miss counter was reported (UI/UX v3 P3a).
+    pub(super) last_cache_miss_report: Instant,
     /// Display DPI scale factor (obtained from winit).
     pub(super) scale_factor: f32,
     /// Shader-file change notification channel (`Some` = watching custom shaders).

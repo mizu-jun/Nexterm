@@ -164,7 +164,10 @@ mod theme_preview_tests {
             theme_hover_preview: Some(3),
             ..SettingsPanel::default()
         };
-        panel.close();
+        panel.close(
+            std::time::Instant::now(),
+            &nexterm_config::AnimationsConfig::default(),
+        );
         assert_eq!(panel.theme_hover_preview, None);
         assert!(!panel.is_open);
     }

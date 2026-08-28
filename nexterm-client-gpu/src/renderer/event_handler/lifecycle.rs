@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use nexterm_proto::{ClientToServer, ServerToClient};
-use tracing::{info, warn};
+use tracing::{info, trace, warn};
 use winit::{
     dpi::PhysicalSize,
     event::StartCause,
@@ -18,6 +18,7 @@ use winit::{
 };
 
 use super::EventHandler;
+use crate::animations::duration::GENTLE;
 use crate::connection::{Connection, ConnectionExt};
 use crate::glyph_atlas::{GlyphAtlas, GlyphKey};
 use crate::renderer::WgpuState;
@@ -663,14 +664,13 @@ impl EventHandler {
             w.request_redraw();
         }
 
-        // Advance the settings-panel open/close animation
-        // (assumes 60 fps: about 8 frames = 0.13 s).
+        // UI/UX v3 P3a: drop a finished exit animation so the renderer stops
+        // drawing the panel. The entrance animation is left in place; it is
+        // the panel's visibility while it is open.
+        let now = Instant::now();
         let sp = &mut self.app.state.settings_panel;
-        if sp.is_open && sp.open_progress < 1.0 {
-            sp.open_progress = (sp.open_progress + 0.15).min(1.0);
-            if let Some(w) = &self.window {
-                w.request_redraw();
-            }
+        if sp.closing.is_some_and(|c| c.is_done(now)) {
+            sp.closing = None;
         }
 
         // Sprint 5-7 / Phase 2-2: Quake-mode handling.
@@ -685,6 +685,30 @@ impl EventHandler {
         // calling this every frame is safe. When no SR is connected,
         // `update_if_active` is a no-op, so the overhead is essentially zero.
         self.update_accesskit_tree_if_needed();
+
+        // UI/UX v3 P3a: report the pane-vertex-cache miss rate. Idle should
+        // read 0; anything above that on a still screen is the cursor-blink
+        // invalidation debt (audit-round3 P3) showing itself.
+        let since_report = self.last_cache_miss_report.elapsed();
+        if since_report >= Duration::from_secs(1) {
+            self.last_cache_miss_report = Instant::now();
+            let misses = crate::renderer::render_frame::take_pane_cache_misses();
+            trace!(
+                "pane vertex cache: {misses} misses in {:.2}s",
+                since_report.as_secs_f32()
+            );
+        }
+
+        // UI/UX v3 P3a: an animation is the only thing that knows it needs
+        // another frame. `on_new_events` already wakes the loop every 16 ms,
+        // so this costs one predicate per tick and requests a redraw only
+        // while something is actually moving.
+        let fade_ms = self.app.config.animations.scaled_duration_ms(GENTLE);
+        if self.app.state.has_active_animation(Instant::now(), fade_ms)
+            && let Some(w) = &self.window
+        {
+            w.request_redraw();
+        }
     }
 
     /// Process Quake-mode toggle requests at most once per frame.

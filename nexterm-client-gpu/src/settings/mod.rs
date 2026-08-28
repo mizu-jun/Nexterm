@@ -75,9 +75,14 @@ pub struct SliderDrag {
 /// Settings-panel state.
 pub struct SettingsPanel {
     pub is_open: bool,
-    /// Open/close animation progress (0.0 = fully closed, 1.0 = fully open).
-    /// Incremented every frame by the renderer.
-    pub open_progress: f32,
+    /// Entrance animation. `Some` from the moment the panel opens; its
+    /// progress is the panel's visibility while `is_open`.
+    pub open_anim: Option<crate::animations::Timed>,
+    /// Exit animation — **render-only**. `is_open` goes false the instant
+    /// the user dismisses the panel, so input routing and the AccessKit
+    /// tree see it as closed immediately; this field is the renderer's
+    /// permission to keep drawing it for another few frames while it fades.
+    pub closing: Option<crate::animations::Timed>,
     /// Slider currently being dragged with the mouse (`None` when no drag).
     pub drag_slider: Option<SliderDrag>,
     /// Currently selected category.
@@ -355,7 +360,8 @@ impl SettingsPanel {
             .unwrap_or(0);
         Self {
             is_open: false,
-            open_progress: 0.0,
+            open_anim: None,
+            closing: None,
             drag_slider: None,
             category: SettingsCategory::Font,
             font_size: config.font.size,
@@ -433,15 +439,47 @@ impl SettingsPanel {
         }
     }
 
-    pub fn open(&mut self) {
+    /// Open the panel and start its entrance animation.
+    ///
+    /// Fluent calls this a Direct Entrance: arrive quickly, settle gently.
+    /// Reopening while the exit animation is still running resumes from the
+    /// value already on screen rather than replaying from 0.
+    pub fn open(&mut self, now: std::time::Instant, anim: &nexterm_config::AnimationsConfig) {
+        use crate::animations::{Curve, Timed, duration};
+
+        let ms = anim.scaled_duration_ms(duration::NORMAL);
+        // Read the value on screen *before* touching either field —
+        // `eased_progress` derives it from them.
+        let resume_from = self.closing.is_some().then(|| self.eased_progress(now));
+        self.closing = None;
+        self.open_anim = Some(match resume_from {
+            Some(v) => Timed::resuming_at(now, v, ms, Curve::DecelerateMax),
+            None => Timed::new(now, ms, Curve::DecelerateMax),
+        });
         self.is_open = true;
-        // Start the animation from 0 to replay the open transition.
-        self.open_progress = 0.0;
     }
 
-    pub fn close(&mut self) {
+    /// Close the panel and start its exit animation.
+    ///
+    /// Fluent calls this a Gentle Exit: linger, then leave quickly. `is_open`
+    /// goes false here, not when the animation ends — pressing Esc means the
+    /// panel is closed, whatever is still on screen.
+    pub fn close(&mut self, now: std::time::Instant, anim: &nexterm_config::AnimationsConfig) {
+        use crate::animations::{Curve, Timed, duration};
+
+        let ms = anim.scaled_duration_ms(duration::FAST);
+        // As in `open`: read the on-screen value first. `closing` counts up
+        // while visibility counts down, hence the inversion.
+        let visibility = self.eased_progress(now);
+        self.open_anim = None;
+        self.closing = Some(Timed::resuming_at(
+            now,
+            1.0 - visibility,
+            ms,
+            Curve::AccelerateMax,
+        ));
         self.is_open = false;
-        self.open_progress = 0.0;
+
         self.drag_slider = None;
         self.dirty = false;
         self.font_family_editing = false;
@@ -468,6 +506,13 @@ impl SettingsPanel {
         self.scroll.reset();
         // Phase B4: also leave shell-field edit mode.
         self.shell_field_editing = None;
+    }
+
+    /// Whether the renderer should draw the panel at all.
+    ///
+    /// True while open, and while an exit animation is still running.
+    pub fn is_visible(&self) -> bool {
+        self.is_open || self.closing.is_some()
     }
 
     /// Switch to `cat`, resetting the state that only made sense in the
@@ -670,9 +715,14 @@ mod tests {
     fn close_resets_scroll_offset() {
         let config = Config::default();
         let mut panel = SettingsPanel::new(&config);
-        panel.open();
+        let now = std::time::Instant::now();
+        let anim = nexterm_config::AnimationsConfig::default();
+        panel.open(now, &anim);
         panel.scroll.offset_px = 80.0;
-        panel.close();
+        panel.close(now, &anim);
         assert_eq!(panel.scroll.offset_px, 0.0);
     }
 }
+
+#[cfg(test)]
+mod open_close_animation_tests;

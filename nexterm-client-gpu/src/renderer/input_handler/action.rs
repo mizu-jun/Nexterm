@@ -139,7 +139,11 @@ impl EventHandler {
                 }
             }
             "ShowSettings" => {
-                self.app.state.settings_panel.open();
+                let now = std::time::Instant::now();
+                self.app
+                    .state
+                    .settings_panel
+                    .open(now, &self.app.config.animations);
             }
             "ShowHostManager" => {
                 self.app
@@ -339,7 +343,11 @@ impl EventHandler {
                 self.app.state.start_search();
             }
             ContextMenuAction::OpenSettings => {
-                self.app.state.settings_panel.open();
+                let now = std::time::Instant::now();
+                self.app
+                    .state
+                    .settings_panel
+                    .open(now, &self.app.config.animations);
             }
             ContextMenuAction::OpenProfile { profile_name } => {
                 // Open a new tab running the profile's shell / cwd / env

@@ -200,10 +200,17 @@ Addresses G6 (principles: Effortless, Calm).
   `accessibilityDisplayShouldReduceMotion` (shares the objc2 dependency
   decision with P2); Linux: manual `animations.enabled` config remains the
   fallback. Detection only ever *disables* motion.
-- Acceptance: idle `build_pane_vertices` call count does not regress
-  (measured with the tracing counter recommended by
-  `plans/audit-round3-2026h2.md` P3); reduced-motion ON renders every
-  animation instantly.
+- P3 ships in three PRs: **P3a** motion foundation (`Timed`, the Fluent
+  curve/duration tables, animation-driven redraw, settings-panel open/close),
+  **P3b** widget hover/press and overlay open-close, **P3c** OS
+  reduced-motion detection.
+- Acceptance: the idle pane-vertex-cache miss rate does not regress
+  (measured with the counter added in P3a — `NEXTERM_LOG=trace`); with
+  reduced motion on, every animation renders instantly. The criterion
+  previously named `build_pane_vertices`, which does not exist in the
+  codebase; the C4 pane cache miss is the equivalent, and the cursor-blink
+  invalidation debt behind it stays tracked in
+  `plans/audit-round3-2026h2.md` P3.
 
 ### P4 — Iconography & chrome typography (M)
 
@@ -516,6 +523,9 @@ gated behind a spike.
       the Linux runners — a wrong constant fails there instead of reaching a
       Windows release
 - [ ] P3 motion language + reduced-motion detection
+  - [ ] P3a motion foundation (`Timed`, Fluent curves, animation-driven redraw, settings panel)
+  - [ ] P3b widget and overlay motion
+  - [ ] P3c OS reduced-motion detection
 - [ ] P4 icon font + chrome type ramp
 - [ ] P5 contrast everywhere + high-contrast scheme
 - [ ] P6 InfoBar + consent reclassification

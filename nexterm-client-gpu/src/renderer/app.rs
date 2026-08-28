@@ -82,6 +82,7 @@ impl NextermApp {
             _config_watcher: config_watcher,
             status_eval,
             last_status_eval: Instant::now(),
+            last_cache_miss_report: Instant::now(),
             scale_factor: 1.0,
             shader_reload_rx,
             _shader_watcher,
