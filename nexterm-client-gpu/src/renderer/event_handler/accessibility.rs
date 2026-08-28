@@ -360,8 +360,11 @@ impl EventHandler {
                         .host_manager
                         .close(std::time::Instant::now(), &self.app.config.animations);
                     if host.auth_type == "password" {
-                        self.app.state.host_manager.password_modal =
-                            Some(crate::host_manager::PasswordModal::new(host));
+                        self.app.state.host_manager.show_password_modal(
+                            crate::host_manager::PasswordModal::new(host),
+                            std::time::Instant::now(),
+                            &self.app.config.animations,
+                        );
                     } else {
                         self.app.state.host_manager.record_connection(&host);
                         self.connect_ssh_host_new_tab(&host);

@@ -28,5 +28,7 @@ Guidance for working inside the GPU client crate. The repo-wide rules — langua
     `(ghost, Timed)` exit), then add it in three places or it will not
     animate: the `has_active_animation` clause in `state/mod.rs`, the retire
     call in `renderer/event_handler/lifecycle.rs`, and the recorded-range
-    `apply_surface_fade` call around its builder in `render_frame.rs`. There
-    is no registry that catches an omission.
+    `apply_surface_fade` call around its builder in `render_frame.rs` — or,
+    if the surface is drawn from a nested helper like the tooltip, at the
+    point closest to where its vertices are appended. There is no registry
+    that catches an omission.
