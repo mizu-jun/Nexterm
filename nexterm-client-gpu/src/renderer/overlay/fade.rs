@@ -25,7 +25,6 @@ use crate::glyph_atlas::{BgVertex, TextVertex};
 ///     progress,
 /// );
 /// ```
-#[allow(dead_code)] // First consumer lands in Task 4.
 pub(in crate::renderer) fn apply_surface_fade(
     bg: &mut [BgVertex],
     text: &mut [TextVertex],

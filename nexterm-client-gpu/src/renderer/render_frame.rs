@@ -989,8 +989,9 @@ impl WgpuState {
             );
         }
 
-        // ---- Lua macro picker (when open) ----
-        if state.macro_picker.is_open {
+        // ---- Lua macro picker (while visible) ----
+        if state.macro_picker.motion.is_visible() {
+            let (bg_start, text_start) = (bg_verts.len(), text_verts.len());
             self.build_macro_picker_verts(
                 state,
                 &tokens,
@@ -1006,10 +1007,16 @@ impl WgpuState {
                 &mut text_verts,
                 &mut text_idx,
             );
+            super::overlay::fade::apply_surface_fade(
+                &mut bg_verts[bg_start..],
+                &mut text_verts[text_start..],
+                state.macro_picker.motion.progress(frame_now),
+            );
         }
 
-        // ---- Host manager (when open) ----
-        if state.host_manager.is_open {
+        // ---- Host manager (while visible) ----
+        if state.host_manager.motion.is_visible() {
+            let (bg_start, text_start) = (bg_verts.len(), text_verts.len());
             self.build_host_manager_verts(
                 state,
                 &tokens,
@@ -1024,6 +1031,11 @@ impl WgpuState {
                 &mut bg_idx,
                 &mut text_verts,
                 &mut text_idx,
+            );
+            super::overlay::fade::apply_surface_fade(
+                &mut bg_verts[bg_start..],
+                &mut text_verts[text_start..],
+                state.host_manager.motion.progress(frame_now),
             );
         }
         if state.host_manager.password_modal.is_some() {
@@ -1062,8 +1074,9 @@ impl WgpuState {
             );
         }
 
-        // ---- Command palette (when open) ----
-        if state.palette.is_open {
+        // ---- Command palette (while visible) ----
+        if state.palette.motion.is_visible() {
+            let (bg_start, text_start) = (bg_verts.len(), text_verts.len());
             self.build_palette_verts(
                 state,
                 &tokens,
@@ -1078,6 +1091,11 @@ impl WgpuState {
                 &mut bg_idx,
                 &mut text_verts,
                 &mut text_idx,
+            );
+            super::overlay::fade::apply_surface_fade(
+                &mut bg_verts[bg_start..],
+                &mut text_verts[text_start..],
+                state.palette.motion.progress(frame_now),
             );
         }
 

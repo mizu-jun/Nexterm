@@ -669,6 +669,9 @@ impl EventHandler {
         // place; they are a surface's visibility while it is open.
         let now = Instant::now();
         self.app.state.settings_panel.motion.retire(now);
+        self.app.state.palette.motion.retire(now);
+        self.app.state.macro_picker.motion.retire(now);
+        self.app.state.host_manager.motion.retire(now);
 
         // Sprint 5-7 / Phase 2-2: Quake-mode handling.
         // 1) Drain global-hotkey press events. Any press is treated as "toggle".

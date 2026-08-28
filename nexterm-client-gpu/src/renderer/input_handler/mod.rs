@@ -138,8 +138,12 @@ impl EventHandler {
 
         // Ctrl+Shift+P: toggle the command palette
         if ctrl && shift && code == WKeyCode::KeyP {
+            let now = std::time::Instant::now();
             if self.app.state.palette.is_open {
-                self.app.state.palette.close();
+                self.app
+                    .state
+                    .palette
+                    .close(now, &self.app.config.animations);
             } else {
                 // Phase 2c-F: refresh the @-prefix named-block list against
                 // the focused pane *before* opening, so the palette already
@@ -150,7 +154,10 @@ impl EventHandler {
                     .state
                     .palette
                     .set_named_block_actions(block_actions);
-                self.app.state.palette.open();
+                self.app
+                    .state
+                    .palette
+                    .open(now, &self.app.config.animations);
             }
             return true;
         }
@@ -169,29 +176,43 @@ impl EventHandler {
 
         // Ctrl+Shift+M: toggle the Lua macro picker
         if ctrl && shift && code == WKeyCode::KeyM {
+            let now = std::time::Instant::now();
             if self.app.state.macro_picker.is_open {
-                self.app.state.macro_picker.close();
+                self.app
+                    .state
+                    .macro_picker
+                    .close(now, &self.app.config.animations);
             } else {
                 self.app
                     .state
                     .macro_picker
                     .reload(self.app.config.macros.clone());
-                self.app.state.macro_picker.open();
+                self.app
+                    .state
+                    .macro_picker
+                    .open(now, &self.app.config.animations);
             }
             return true;
         }
 
         // Ctrl+Shift+H: toggle the host manager
         if ctrl && shift && code == WKeyCode::KeyH {
+            let now = std::time::Instant::now();
             if self.app.state.host_manager.is_open {
-                self.app.state.host_manager.close();
+                self.app
+                    .state
+                    .host_manager
+                    .close(now, &self.app.config.animations);
             } else {
                 // Reload the configured host list before opening
                 self.app
                     .state
                     .host_manager
                     .reload(self.app.config.hosts.clone());
-                self.app.state.host_manager.open();
+                self.app
+                    .state
+                    .host_manager
+                    .open(now, &self.app.config.animations);
             }
             return true;
         }
@@ -328,13 +349,20 @@ impl EventHandler {
             match code {
                 WKeyCode::ArrowDown => self.app.state.macro_picker.select_next(),
                 WKeyCode::ArrowUp => self.app.state.macro_picker.select_prev(),
-                WKeyCode::Escape => self.app.state.macro_picker.close(),
+                WKeyCode::Escape => self
+                    .app
+                    .state
+                    .macro_picker
+                    .close(std::time::Instant::now(), &self.app.config.animations),
                 WKeyCode::Backspace => self.app.state.macro_picker.pop_char(),
                 WKeyCode::Enter => {
                     if let Some(mac) = self.app.state.macro_picker.selected_macro() {
                         let fn_name = mac.lua_fn.clone();
                         let display_name = mac.name.clone();
-                        self.app.state.macro_picker.close();
+                        self.app
+                            .state
+                            .macro_picker
+                            .close(std::time::Instant::now(), &self.app.config.animations);
                         if let Some(conn) = &self.connection {
                             let _ = conn.send_tx.try_send(ClientToServer::RunMacro {
                                 macro_fn: fn_name,
@@ -394,13 +422,22 @@ impl EventHandler {
                     .close(now, &self.app.config.animations);
                 return true;
             } else if self.app.state.palette.is_open {
-                self.app.state.palette.close();
+                self.app
+                    .state
+                    .palette
+                    .close(std::time::Instant::now(), &self.app.config.animations);
                 return true;
             } else if self.app.state.host_manager.is_open {
-                self.app.state.host_manager.close();
+                self.app
+                    .state
+                    .host_manager
+                    .close(std::time::Instant::now(), &self.app.config.animations);
                 return true;
             } else if self.app.state.macro_picker.is_open {
-                self.app.state.macro_picker.close();
+                self.app
+                    .state
+                    .macro_picker
+                    .close(std::time::Instant::now(), &self.app.config.animations);
                 return true;
             } else if self.app.state.file_transfer.is_open {
                 self.app.state.file_transfer.close();
@@ -999,7 +1036,10 @@ impl EventHandler {
                 WKeyCode::Enter => {
                     if let Some(action) = self.app.state.palette.selected_action() {
                         let action_id = action.action.clone();
-                        self.app.state.palette.close();
+                        self.app
+                            .state
+                            .palette
+                            .close(std::time::Instant::now(), &self.app.config.animations);
                         // Sprint 5-7 / Phase 3-3: record usage history and persist it
                         self.app.state.palette.record_use(&action_id);
                         self.execute_action(&action_id, event_loop);
@@ -1080,12 +1120,19 @@ impl EventHandler {
             match code {
                 WKeyCode::ArrowDown => self.app.state.host_manager.select_next(),
                 WKeyCode::ArrowUp => self.app.state.host_manager.select_prev(),
-                WKeyCode::Escape => self.app.state.host_manager.close(),
+                WKeyCode::Escape => self
+                    .app
+                    .state
+                    .host_manager
+                    .close(std::time::Instant::now(), &self.app.config.animations),
                 WKeyCode::Backspace => self.app.state.host_manager.pop_char(),
                 WKeyCode::Enter => {
                     if let Some(host) = self.app.state.host_manager.selected_host() {
                         let host = host.clone();
-                        self.app.state.host_manager.close();
+                        self.app
+                            .state
+                            .host_manager
+                            .close(std::time::Instant::now(), &self.app.config.animations);
                         if host.auth_type == "password" {
                             // For password-auth hosts, open the modal first, then connect
                             self.app.state.host_manager.password_modal =

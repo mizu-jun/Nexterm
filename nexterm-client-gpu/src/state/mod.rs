@@ -645,6 +645,12 @@ impl ClientState {
         if self.settings_panel.motion.is_active(now) {
             return true;
         }
+        if self.palette.motion.is_active(now)
+            || self.macro_picker.motion.is_active(now)
+            || self.host_manager.motion.is_active(now)
+        {
+            return true;
+        }
         false
     }
 
@@ -843,11 +849,11 @@ impl ClientState {
     }
 
     /// Toggle the command palette
-    pub fn toggle_palette(&mut self) {
+    pub fn toggle_palette(&mut self, now: Instant, anim: &nexterm_config::AnimationsConfig) {
         if self.palette.is_open {
-            self.palette.close();
+            self.palette.close(now, anim);
         } else {
-            self.palette.open();
+            self.palette.open(now, anim);
         }
     }
 }
@@ -982,6 +988,7 @@ mod pane_border_hit_tests {
 #[cfg(test)]
 mod animation_frame_tests {
     use super::*;
+    use std::time::Duration;
 
     /// The UI/UX v3 P3a acceptance criterion in test form: a state with
     /// nothing animating must not ask for a frame. If this ever returns
@@ -1047,5 +1054,61 @@ mod animation_frame_tests {
         assert!(state.has_active_animation(opened, 250));
         let done = opened + std::time::Duration::from_millis(150);
         assert!(!state.has_active_animation(done, 250));
+    }
+
+    /// The three large panels share one shape: the logical flag closes at
+    /// once, the surface stays visible while it fades, and the frame loop
+    /// wants frames for the whole transition.
+    #[test]
+    fn a_closing_command_palette_stays_visible_and_wants_frames() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+        state.palette.open(t0, &anim);
+        assert!(state.palette.is_open);
+        assert!(state.has_active_animation(t0, 200));
+
+        let opened = t0 + Duration::from_millis(300);
+        state.palette.close(opened, &anim);
+        assert!(!state.palette.is_open, "input must see it as closed");
+        assert!(state.palette.motion.is_visible(), "renderer keeps drawing");
+        assert!(state.has_active_animation(opened, 200));
+
+        let done = opened + Duration::from_millis(150);
+        state.palette.motion.retire(done);
+        assert!(!state.palette.motion.is_visible());
+        assert!(!state.has_active_animation(done, 200));
+    }
+
+    #[test]
+    fn a_closing_macro_picker_stays_visible_and_wants_frames() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+        state.macro_picker.open(t0, &anim);
+        let opened = t0 + Duration::from_millis(300);
+        state.macro_picker.close(opened, &anim);
+        assert!(!state.macro_picker.is_open);
+        assert!(state.macro_picker.motion.is_visible());
+        assert!(state.has_active_animation(opened, 200));
+        let done = opened + Duration::from_millis(150);
+        state.macro_picker.motion.retire(done);
+        assert!(!state.has_active_animation(done, 200));
+    }
+
+    #[test]
+    fn a_closing_host_manager_stays_visible_and_wants_frames() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+        state.host_manager.open(t0, &anim);
+        let opened = t0 + Duration::from_millis(300);
+        state.host_manager.close(opened, &anim);
+        assert!(!state.host_manager.is_open);
+        assert!(state.host_manager.motion.is_visible());
+        assert!(state.has_active_animation(opened, 200));
+        let done = opened + Duration::from_millis(150);
+        state.host_manager.motion.retire(done);
+        assert!(!state.has_active_animation(done, 200));
     }
 }

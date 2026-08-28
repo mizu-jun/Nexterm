@@ -45,6 +45,9 @@ pub struct CommandPalette {
     pub query: String,
     /// Whether the palette is open.
     pub is_open: bool,
+    /// Open/close animation (UI/UX v3 P3b). `is_open` above stays the truth
+    /// for input routing and the AccessKit tree; this is render-only.
+    pub motion: crate::animations::SurfaceMotion,
     /// Selected index (within the filtered list).
     pub selected: usize,
     /// Fuzzy matcher.
@@ -72,6 +75,7 @@ impl CommandPalette {
             actions,
             query: String::new(),
             is_open: false,
+            motion: crate::animations::SurfaceMotion::default(),
             selected: 0,
             matcher: SkimMatcherV2::default(),
             history: PaletteHistory::new(),
@@ -91,14 +95,22 @@ impl CommandPalette {
     }
 
     /// Open the palette.
-    pub fn open(&mut self) {
+    pub fn open(&mut self, now: std::time::Instant, anim: &nexterm_config::AnimationsConfig) {
+        use crate::animations::{Curve, duration};
+
+        self.motion
+            .open(now, anim, duration::SLOW, Curve::DecelerateMax);
         self.query.clear();
         self.selected = 0;
         self.is_open = true;
     }
 
     /// Close the palette.
-    pub fn close(&mut self) {
+    pub fn close(&mut self, now: std::time::Instant, anim: &nexterm_config::AnimationsConfig) {
+        use crate::animations::{Curve, duration};
+
+        self.motion
+            .close(now, anim, duration::FAST, Curve::AccelerateMax);
         self.is_open = false;
         self.query.clear();
     }
