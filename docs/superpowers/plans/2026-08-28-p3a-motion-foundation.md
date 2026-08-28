@@ -1372,7 +1372,17 @@ Add to the `animation_frame_tests` module in `state/mod.rs` that Task 5 created:
     }
 ```
 
-- [ ] **Step 10: Verify the whole crate**
+- [ ] **Step 10: Retire the placeholder `#[allow(...)]` attributes**
+
+Task 2 added five `#[allow(...)]` attributes to `animations/curve.rs` and `animations/mod.rs`, and Task 3 may have added more to `animations/timed.rs`, purely because nothing consumed those modules yet in a binary crate. This task is the consumer that makes them unnecessary.
+
+Delete every such attribute **except** the two the design deliberately keeps: `#[allow(dead_code)]` on the `Curve` enum and on the `duration` module, which exist because the tables are transcribed whole and P3a uses only part of them. Concretely, the candidates to remove are the ones on `impl Curve`, on the `axis` / `axis_derivative` / `solve_for_x` helpers, on the `pub use curve::{Curve, duration};` re-export in `mod.rs`, and any equivalent on `Timed`.
+
+Remove them, then run `cargo clippy -p nexterm-client-gpu -- -D warnings`. If clippy still objects to a specific item, put that one attribute back and note in your report which item and what the lint said — do not restore the whole set.
+
+While you are in `animations/mod.rs`, fix the stale parenthetical on the re-export comment: it says the import is unused "until Task 3 (`Curve::invert`)", but `Curve::invert` is consumed by `timed.rs` today and the re-export's real first consumer is this task.
+
+- [ ] **Step 11: Verify the whole crate**
 
 ```bash
 cargo test -p nexterm-client-gpu 2>&1 | tail -15
@@ -1382,7 +1392,7 @@ cargo fmt --check
 
 Expected: everything green. If `panel_drag_tests` in `settings/drag.rs` fails to compile because it constructed a panel with `open_progress`, update those constructions to set `open_anim` / `closing` — do not change what the tests assert.
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
 git add nexterm-client-gpu/src
@@ -1447,7 +1457,29 @@ In the "## Progress" section, replace the `- [ ] P3 motion language + reduced-mo
   - [ ] P3c OS reduced-motion detection
 ```
 
-- [ ] **Step 3: Verify nothing else drifted**
+- [ ] **Step 3: Correct the spec's `Timed` section**
+
+`docs/superpowers/specs/2026-08-28-p3a-motion-foundation-design.md`, section "### 3. `Timed`", says `progress` delegates to `compute_progress`. Task 3 found that delegating truncates elapsed time to whole milliseconds, which quantises the recovered curve parameter in steps of `1/duration_ms` — enough to move `Curve::AccelerateMax` by ~0.1 in value near its steep tail, and the settings-panel exit uses exactly that curve over 150 ms. `Timed` therefore keeps full `Duration` precision internally instead.
+
+Replace the sentence beginning "`progress` delegates to the existing `compute_progress`" with:
+
+```markdown
+`progress` keeps elapsed time at full `Duration` precision rather than
+delegating to `compute_progress`, which truncates to whole milliseconds:
+that truncation quantises the recovered curve parameter in steps of
+`1/duration_ms`, and near the steep tail of `Curve::AccelerateMax` — the
+curve the settings-panel exit uses, over 150 ms — a step that small already
+moves the value by ~0.1, enough to see. `raw_progress` keeps
+`compute_progress`'s contract of returning `1.0` when `duration_ms == 0`, as
+an explicit first branch. That is the whole reduced-motion path:
+`AnimationsConfig::scaled_duration_ms` already returns 0 when
+`enabled = false` or `intensity = "off"`, so every `Timed` constructed
+through it is instant, and `is_done` is true on the first query.
+```
+
+Leave the rest of the spec alone. It is a record of what was decided, and this is the one place implementation proved a stated mechanism wrong.
+
+- [ ] **Step 4: Verify nothing else drifted**
 
 ```bash
 cargo test -p nexterm-config doc_matches_schema 2>&1 | tail -5
