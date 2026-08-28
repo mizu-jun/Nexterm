@@ -64,7 +64,12 @@ fn the_close_animation_fades_to_0_and_then_stops_being_visible() {
     assert!(sp.eased_progress(opened) > 0.9);
     let done = opened + Duration::from_millis(150);
     assert!(sp.eased_progress(done).abs() < 1e-3);
-    assert!(sp.closing.is_some_and(|c| c.is_done(done)));
+    assert!(
+        sp.is_visible(),
+        "still drawn until the frame loop retires it"
+    );
+    sp.motion.retire(done);
+    assert!(!sp.is_visible());
 }
 
 /// Reopening mid-fade must pick up the value already on screen, not
@@ -80,7 +85,7 @@ fn reopening_during_the_fade_out_is_continuous() {
     let before = sp.eased_progress(mid);
     sp.open(mid, &on());
     let after = sp.eased_progress(mid);
-    assert!(sp.closing.is_none(), "reopening must cancel the fade-out");
+    assert!(sp.is_open, "reopening must cancel the fade-out");
     assert!(
         (after - before).abs() < 5e-2,
         "value jumped on reopen: {before} -> {after}"
@@ -98,5 +103,6 @@ fn disabled_animations_open_and_close_instantly() {
     assert!((sp.eased_progress(t0) - 1.0).abs() < 1e-4);
     sp.close(t0, &off());
     assert!(sp.eased_progress(t0).abs() < 1e-4);
-    assert!(sp.closing.is_some_and(|c| c.is_done(t0)));
+    sp.motion.retire(t0);
+    assert!(!sp.is_visible());
 }

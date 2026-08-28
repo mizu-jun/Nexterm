@@ -664,14 +664,11 @@ impl EventHandler {
             w.request_redraw();
         }
 
-        // UI/UX v3 P3a: drop a finished exit animation so the renderer stops
-        // drawing the panel. The entrance animation is left in place; it is
-        // the panel's visibility while it is open.
+        // UI/UX v3 P3a/P3b: drop finished exit animations so the renderer
+        // stops drawing those surfaces. Finished entrances are left in
+        // place; they are a surface's visibility while it is open.
         let now = Instant::now();
-        let sp = &mut self.app.state.settings_panel;
-        if sp.closing.is_some_and(|c| c.is_done(now)) {
-            sp.closing = None;
-        }
+        self.app.state.settings_panel.motion.retire(now);
 
         // Sprint 5-7 / Phase 2-2: Quake-mode handling.
         // 1) Drain global-hotkey press events. Any press is treated as "toggle".

@@ -642,11 +642,10 @@ impl ClientState {
         if self.animations.has_active_animation(now, fade_duration_ms) {
             return true;
         }
-        let sp = &self.settings_panel;
-        if sp.closing.is_some_and(|c| !c.is_done(now)) {
+        if self.settings_panel.motion.is_active(now) {
             return true;
         }
-        sp.is_open && sp.open_anim.is_some_and(|a| !a.is_done(now))
+        false
     }
 
     pub fn new(cols: u16, rows: u16, scrollback_capacity: usize) -> Self {

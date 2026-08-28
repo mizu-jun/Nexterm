@@ -42,13 +42,10 @@ impl SettingsPanel {
 
     /// Panel visibility in `[0, 1]`: 0 fully hidden, 1 fully shown.
     ///
-    /// The curve now comes from the `Timed` (UI/UX v3 P3a) rather than the
+    /// The curve now comes from `SurfaceMotion` (UI/UX v3 P3b) rather than the
     /// hand-rolled ease-out this used to apply.
     pub fn eased_progress(&self, now: std::time::Instant) -> f32 {
-        if let Some(closing) = self.closing {
-            return 1.0 - closing.progress(now);
-        }
-        self.open_anim.map_or(0.0, |a| a.progress(now))
+        self.motion.progress(now)
     }
 }
 

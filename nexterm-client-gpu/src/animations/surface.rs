@@ -30,8 +30,6 @@ pub struct SurfaceMotion {
     closing: Option<Timed>,
 }
 
-// Consumed by the surfaces migrated in the following tasks.
-#[allow(dead_code)]
 impl SurfaceMotion {
     /// Start the entrance, resuming from whatever is on screen.
     ///

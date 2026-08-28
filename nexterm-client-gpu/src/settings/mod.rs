@@ -75,14 +75,11 @@ pub struct SliderDrag {
 /// Settings-panel state.
 pub struct SettingsPanel {
     pub is_open: bool,
-    /// Entrance animation. `Some` from the moment the panel opens; its
-    /// progress is the panel's visibility while `is_open`.
-    pub open_anim: Option<crate::animations::Timed>,
-    /// Exit animation — **render-only**. `is_open` goes false the instant
-    /// the user dismisses the panel, so input routing and the AccessKit
-    /// tree see it as closed immediately; this field is the renderer's
-    /// permission to keep drawing it for another few frames while it fades.
-    pub closing: Option<crate::animations::Timed>,
+    /// Open/close animation (UI/UX v3 P3b: was a hand-written `Timed` pair
+    /// in P3a). `is_open` above remains the truth for input routing and the
+    /// AccessKit tree; this is the renderer's permission to keep drawing
+    /// the panel while it fades out.
+    pub motion: crate::animations::SurfaceMotion,
     /// Slider currently being dragged with the mouse (`None` when no drag).
     pub drag_slider: Option<SliderDrag>,
     /// Currently selected category.
@@ -360,8 +357,7 @@ impl SettingsPanel {
             .unwrap_or(0);
         Self {
             is_open: false,
-            open_anim: None,
-            closing: None,
+            motion: crate::animations::SurfaceMotion::default(),
             drag_slider: None,
             category: SettingsCategory::Font,
             font_size: config.font.size,
@@ -445,17 +441,13 @@ impl SettingsPanel {
     /// Reopening while the exit animation is still running resumes from the
     /// value already on screen rather than replaying from 0.
     pub fn open(&mut self, now: std::time::Instant, anim: &nexterm_config::AnimationsConfig) {
-        use crate::animations::{Curve, Timed, duration};
+        use crate::animations::{Curve, duration};
 
-        let ms = anim.scaled_duration_ms(duration::NORMAL);
-        // Read the value on screen *before* touching either field —
-        // `eased_progress` derives it from them.
-        let resume_from = self.closing.is_some().then(|| self.eased_progress(now));
-        self.closing = None;
-        self.open_anim = Some(match resume_from {
-            Some(v) => Timed::resuming_at(now, v, ms, Curve::DecelerateMax),
-            None => Timed::new(now, ms, Curve::DecelerateMax),
-        });
+        // P3a's 200 ms Direct Entrance is kept deliberately: the spec's
+        // 300 ms dialog row applies to the surfaces getting motion for the
+        // first time, and changing a shipped feel is a separate decision.
+        self.motion
+            .open(now, anim, duration::NORMAL, Curve::DecelerateMax);
         self.is_open = true;
     }
 
@@ -465,19 +457,10 @@ impl SettingsPanel {
     /// goes false here, not when the animation ends — pressing Esc means the
     /// panel is closed, whatever is still on screen.
     pub fn close(&mut self, now: std::time::Instant, anim: &nexterm_config::AnimationsConfig) {
-        use crate::animations::{Curve, Timed, duration};
+        use crate::animations::{Curve, duration};
 
-        let ms = anim.scaled_duration_ms(duration::FAST);
-        // As in `open`: read the on-screen value first. `closing` counts up
-        // while visibility counts down, hence the inversion.
-        let visibility = self.eased_progress(now);
-        self.open_anim = None;
-        self.closing = Some(Timed::resuming_at(
-            now,
-            1.0 - visibility,
-            ms,
-            Curve::AccelerateMax,
-        ));
+        self.motion
+            .close(now, anim, duration::FAST, Curve::AccelerateMax);
         self.is_open = false;
 
         self.drag_slider = None;
@@ -512,7 +495,7 @@ impl SettingsPanel {
     ///
     /// True while open, and while an exit animation is still running.
     pub fn is_visible(&self) -> bool {
-        self.is_open || self.closing.is_some()
+        self.is_open || self.motion.is_visible()
     }
 
     /// Switch to `cat`, resetting the state that only made sense in the

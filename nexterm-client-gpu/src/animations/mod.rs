@@ -30,8 +30,6 @@ mod timed;
 // settings panel (Task 6 of UI/UX v3 P3a) is the first consumer.
 pub use curve::{Curve, duration};
 pub use easing::{compute_progress, ease_out_cubic};
-// Consumed by the surfaces migrated in the following tasks.
-#[allow(unused_imports)]
 pub use surface::SurfaceMotion;
 pub use timed::Timed;
 
