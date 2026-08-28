@@ -21,14 +21,15 @@ pub mod wsl;
 pub use loader::{ConfigLoader, lua_path, toml_path};
 pub use lua_hooks::{HookEvent, LuaHookRunner};
 pub use schema::{
-    AccessLogConfig, AnimationIntensity, AnimationsConfig, BackgroundFit, BackgroundImageConfig,
-    BlocksConfig, BuiltinScheme, CloseAction, ColorScheme, Config, ConsentPolicy, CubicBezier,
-    CursorConfig, CursorStyle, CustomPalette, DesignTokens, ElevationScale, FontConfig, GpuConfig,
-    GradientConfig, HooksConfig, HostConfig, InactivePaneHsbConfig, KeyBinding, LogConfig,
-    MacroConfig, MetricTokens, MotionTokens, OAuthConfig, PresentModeConfig, Profile, QuakeEdge,
-    QuakeModeConfig, RadiusTokens, SchemePalette, SecurityConfig, SerialPortConfig, ShellConfig,
-    SpacingRamp, StatusBarConfig, TabBarConfig, TlsConfig, TypeRamp, TypeStyle, UiConfig,
-    WebAuthConfig, WebConfig, WindowConfig, WindowDecorations, parse_hex_color, resolve_color,
+    AccessLogConfig, AnimationIntensity, AnimationsConfig, BackdropTarget, BackgroundFit,
+    BackgroundImageConfig, BlocksConfig, BuiltinScheme, CloseAction, ColorScheme, Config,
+    ConsentPolicy, CubicBezier, CursorConfig, CursorStyle, CustomPalette, DesignTokens,
+    ElevationScale, FontConfig, GpuConfig, GradientConfig, HooksConfig, HostConfig,
+    InactivePaneHsbConfig, KeyBinding, LogConfig, MacroConfig, MetricTokens, MotionTokens,
+    OAuthConfig, PresentModeConfig, Profile, QuakeEdge, QuakeModeConfig, RadiusTokens,
+    ResolvedBackdrop, SchemePalette, SecurityConfig, SerialPortConfig, ShellConfig, SpacingRamp,
+    StatusBarConfig, TabBarConfig, TlsConfig, TypeRamp, TypeStyle, UiConfig, WebAuthConfig,
+    WebConfig, WindowBackdrop, WindowConfig, WindowDecorations, parse_hex_color, resolve_color,
 };
 pub use status_bar::{StatusBarEvaluator, WidgetContext, evaluate_builtin};
 pub use watcher::{ConfigRx, watch_config};

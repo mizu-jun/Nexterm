@@ -271,9 +271,10 @@ pub struct WindowConfig {
     /// Window opacity (0.0 = fully transparent, 1.0 = opaque).
     #[serde(default = "default_background_opacity")]
     pub background_opacity: f32,
-    /// macOS window blur strength (0 = none).
+    /// OS-native backdrop material (UI/UX v3 P2c). Replaces the never-wired
+    /// `macos_window_background_blur`, which was removed in the same change.
     #[serde(default)]
-    pub macos_window_background_blur: u32,
+    pub backdrop: WindowBackdrop,
     /// Window decorations.
     #[serde(default)]
     pub decorations: WindowDecorations,
@@ -335,7 +336,7 @@ impl Default for WindowConfig {
     fn default() -> Self {
         Self {
             background_opacity: default_background_opacity(),
-            macos_window_background_blur: 0,
+            backdrop: WindowBackdrop::default(),
             decorations: WindowDecorations::default(),
             layout_mode: default_layout_mode(),
             padding_x: 0,
@@ -769,6 +770,232 @@ smooth_motion = false
         assert!(!parsed.cursor.blink_enabled);
         assert_eq!(parsed.cursor.blink_interval_ms, 250);
         assert!(!parsed.cursor.smooth_motion);
+    }
+}
+
+/// OS-native window backdrop material (UI/UX v3 P2c).
+///
+/// Windows draws these through `DWMWA_SYSTEMBACKDROP_TYPE`; macOS has a single
+/// `NSVisualEffectView` material family, so every non-`None` value resolves to
+/// the same vibrancy there; Linux has no cross-compositor equivalent and
+/// resolves everything to `None` (`window.in_app_blur_enabled` is the
+/// in-app substitute).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum WindowBackdrop {
+    /// Whatever each OS already did before this setting existed: Mica Alt on
+    /// Windows, nothing on macOS and Linux.
+    #[default]
+    Auto,
+    /// Windows Mica (`DWMSBT_MAINWINDOW`). macOS resolves this to vibrancy.
+    Mica,
+    /// Windows Mica Alt (`DWMSBT_TABBEDWINDOW`). macOS resolves this to
+    /// vibrancy.
+    MicaAlt,
+    /// Windows Acrylic (`DWMSBT_TRANSIENTWINDOW`). macOS resolves this to
+    /// vibrancy.
+    Acrylic,
+    /// No OS backdrop.
+    None,
+}
+
+/// The OS a backdrop is resolved for.
+///
+/// Taken as a parameter rather than read from `cfg!`, so the Windows and macOS
+/// routing can be asserted on any platform — including the Linux CI runners,
+/// which are the only machines that run these tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackdropTarget {
+    /// Windows.
+    Windows,
+    /// macOS.
+    MacOs,
+    /// Linux and everything else.
+    Other,
+}
+
+impl BackdropTarget {
+    /// The target this binary was compiled for.
+    pub const fn current() -> Self {
+        if cfg!(windows) {
+            Self::Windows
+        } else if cfg!(target_os = "macos") {
+            Self::MacOs
+        } else {
+            Self::Other
+        }
+    }
+}
+
+/// A [`WindowBackdrop`] resolved for one OS: what the platform layer must
+/// actually apply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolvedBackdrop {
+    /// Apply no backdrop (and clear any previously applied one).
+    None,
+    /// Windows Mica.
+    Mica,
+    /// Windows Mica Alt.
+    MicaAlt,
+    /// Windows Acrylic.
+    Acrylic,
+    /// macOS `NSVisualEffectView` vibrancy.
+    Vibrancy,
+}
+
+impl ResolvedBackdrop {
+    /// Whether the window must be created transparent for this material to be
+    /// visible. An opaque surface hides the backdrop entirely, no matter what
+    /// DWM or AppKit was told.
+    pub const fn needs_transparent_window(self) -> bool {
+        !matches!(self, ResolvedBackdrop::None)
+    }
+}
+
+impl WindowBackdrop {
+    /// Resolve this setting for one OS. See the table in
+    /// `docs/superpowers/specs/2026-08-28-p2c-window-backdrop-design.md`.
+    pub const fn resolve(self, target: BackdropTarget) -> ResolvedBackdrop {
+        use BackdropTarget as T;
+        use WindowBackdrop as B;
+        match (self, target) {
+            // Linux and everything else: no native material exists.
+            (_, T::Other) => ResolvedBackdrop::None,
+            (B::None, _) => ResolvedBackdrop::None,
+            (B::Auto, T::Windows) => ResolvedBackdrop::MicaAlt,
+            (B::Auto, T::MacOs) => ResolvedBackdrop::None,
+            (B::Mica, T::Windows) => ResolvedBackdrop::Mica,
+            (B::MicaAlt, T::Windows) => ResolvedBackdrop::MicaAlt,
+            (B::Acrylic, T::Windows) => ResolvedBackdrop::Acrylic,
+            // AppKit has one material family, so an explicit request for any
+            // of the three lands on the one material that exists. Mapping it
+            // to `None` instead would silently ignore what the user asked for.
+            (B::Mica | B::MicaAlt | B::Acrylic, T::MacOs) => ResolvedBackdrop::Vibrancy,
+        }
+    }
+}
+
+#[cfg(test)]
+mod window_backdrop_tests {
+    use super::*;
+
+    /// The whole routing table, spelled out. This is the only place the
+    /// Windows and macOS behaviour can be asserted from a Linux machine, so it
+    /// is written as data rather than as three separate tests.
+    #[test]
+    fn resolution_table_is_stable() {
+        use BackdropTarget::*;
+        use ResolvedBackdrop as R;
+        use WindowBackdrop::*;
+
+        let cases = [
+            (Auto, Windows, R::MicaAlt),
+            (Auto, MacOs, R::None),
+            (Auto, Other, R::None),
+            (Mica, Windows, R::Mica),
+            (Mica, MacOs, R::Vibrancy),
+            (Mica, Other, R::None),
+            (MicaAlt, Windows, R::MicaAlt),
+            (MicaAlt, MacOs, R::Vibrancy),
+            (MicaAlt, Other, R::None),
+            (Acrylic, Windows, R::Acrylic),
+            (Acrylic, MacOs, R::Vibrancy),
+            (Acrylic, Other, R::None),
+            (None, Windows, R::None),
+            (None, MacOs, R::None),
+            (None, Other, R::None),
+        ];
+        assert_eq!(cases.len(), 15, "5 config values x 3 targets");
+
+        for (backdrop, target, expected) in cases {
+            assert_eq!(
+                backdrop.resolve(target),
+                expected,
+                "{backdrop:?} on {target:?}"
+            );
+        }
+    }
+
+    /// Before P2c the client hard-coded `DWMSBT_TABBEDWINDOW`. `auto` is the
+    /// default, so if it stopped resolving to Mica Alt every Windows user's
+    /// window would change appearance on upgrade.
+    #[test]
+    fn auto_preserves_the_shipped_windows_behaviour() {
+        assert_eq!(
+            WindowBackdrop::Auto.resolve(BackdropTarget::Windows),
+            ResolvedBackdrop::MicaAlt
+        );
+    }
+
+    /// `macos_window_background_blur` never had a reader, so macOS shipped
+    /// with no backdrop. `auto` must not turn one on: nobody on this project
+    /// can look at the result.
+    #[test]
+    fn auto_preserves_the_shipped_macos_behaviour() {
+        assert_eq!(
+            WindowBackdrop::Auto.resolve(BackdropTarget::MacOs),
+            ResolvedBackdrop::None
+        );
+    }
+
+    #[test]
+    fn only_none_skips_the_transparent_window() {
+        assert!(!ResolvedBackdrop::None.needs_transparent_window());
+        for resolved in [
+            ResolvedBackdrop::Mica,
+            ResolvedBackdrop::MicaAlt,
+            ResolvedBackdrop::Acrylic,
+            ResolvedBackdrop::Vibrancy,
+        ] {
+            assert!(resolved.needs_transparent_window(), "{resolved:?}");
+        }
+    }
+
+    #[test]
+    fn defaults_to_auto() {
+        assert_eq!(WindowConfig::default().backdrop, WindowBackdrop::Auto);
+    }
+
+    #[test]
+    fn parses_kebab_case_from_toml() {
+        let parsed: super::super::Config = toml::from_str(
+            r#"
+[window]
+backdrop = "mica-alt"
+"#,
+        )
+        .expect("mica-alt must parse");
+        assert_eq!(parsed.window.backdrop, WindowBackdrop::MicaAlt);
+    }
+
+    #[test]
+    fn rejects_an_unknown_backdrop() {
+        let parsed: Result<super::super::Config, _> = toml::from_str(
+            r#"
+[window]
+backdrop = "frosted"
+"#,
+        );
+        assert!(
+            parsed.is_err(),
+            "an unknown backdrop must be a load error, not a silent fallback"
+        );
+    }
+
+    /// The removed `macos_window_background_blur` never had a reader. Config
+    /// files still carrying it must keep loading — the TOML parser ignores
+    /// unknown keys, and this pins that it stays that way.
+    #[test]
+    fn a_config_carrying_the_removed_macos_blur_key_still_loads() {
+        let parsed: super::super::Config = toml::from_str(
+            r#"
+[window]
+macos_window_background_blur = 20
+background_opacity = 0.9
+"#,
+        )
+        .expect("an old config must not become a load error");
+        assert!((parsed.window.background_opacity - 0.9).abs() < f32::EPSILON);
     }
 }
 

@@ -40,8 +40,9 @@ pub use tokens::{DesignTokens, parse_hex_color, resolve as resolve_color};
 pub use ui::UiConfig;
 pub use web::{AccessLogConfig, OAuthConfig, TlsConfig, WebAuthConfig, WebConfig};
 pub use window::{
-    BackgroundFit, BackgroundImageConfig, CloseAction, CursorConfig, CursorStyle, GradientConfig,
-    TabBarConfig, WindowConfig, WindowDecorations,
+    BackdropTarget, BackgroundFit, BackgroundImageConfig, CloseAction, CursorConfig, CursorStyle,
+    GradientConfig, ResolvedBackdrop, TabBarConfig, WindowBackdrop, WindowConfig,
+    WindowDecorations,
 };
 
 use serde::{Deserialize, Serialize};
@@ -594,7 +595,7 @@ separator = " | "
     fn window_config_default_values() {
         let w = WindowConfig::default();
         assert!((w.background_opacity - 0.95).abs() < f32::EPSILON);
-        assert_eq!(w.macos_window_background_blur, 0);
+        assert_eq!(w.backdrop, WindowBackdrop::Auto);
         // The concrete platform default (notitle; full on macOS) is covered
         // by `window::window_decorations_tests`; here just pin that
         // WindowConfig follows the enum's default.

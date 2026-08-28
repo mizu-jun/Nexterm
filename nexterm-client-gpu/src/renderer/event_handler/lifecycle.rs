@@ -35,8 +35,27 @@ impl EventHandler {
     pub(super) fn on_resumed(&mut self, event_loop: &ActiveEventLoop) {
         // Create the window (apply transparency, blur, and decorations per config).
         let win_cfg = &self.app.config.window;
-        let transparent = win_cfg.background_opacity < 1.0;
+        let backdrop = win_cfg
+            .backdrop
+            .resolve(nexterm_config::BackdropTarget::current());
+        // An OS backdrop is drawn behind the window, so it can only show
+        // through a transparent surface. Requesting one is therefore itself a
+        // reason to create the window transparent, independently of
+        // `background_opacity`.
+        let transparent = win_cfg.background_opacity < 1.0 || backdrop.needs_transparent_window();
         let decorations = win_cfg.decorations.wants_os_chrome();
+
+        // The terminal still paints `background_opacity` over that surface, so
+        // a fully opaque terminal hides the material whatever the OS was told.
+        // Say so rather than silently overriding what the user configured.
+        if backdrop.needs_transparent_window() && win_cfg.background_opacity >= 1.0 {
+            warn!(
+                "window.backdrop is set but window.background_opacity is {:.2}: the terminal \
+                 paints over the material, so no backdrop will be visible. Lower \
+                 background_opacity to see it.",
+                win_cfg.background_opacity
+            );
+        }
 
         // Sprint 5-11-1 / H1 PoC: the AccessKit Adapter must be created
         // **before the window is made visible** (see the docs for
@@ -103,9 +122,9 @@ impl EventHandler {
             .font
             .set_scale_factor(self.app.config.font.size, scale_factor);
 
-        // Apply the Acrylic (frosted-glass) background (Windows 11 only).
-        #[cfg(windows)]
-        crate::platform::apply_acrylic_blur(&window);
+        // Apply the configured OS-native backdrop material (`window.backdrop`).
+        // No-op on Linux; see `platform::apply_backdrop`.
+        crate::platform::apply_backdrop(&window, backdrop);
 
         // Windows 11 snap layouts: subclass the window procedure so the
         // custom title bar's maximize button can answer WM_NCHITTEST with

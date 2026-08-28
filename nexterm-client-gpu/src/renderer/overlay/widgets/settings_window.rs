@@ -54,10 +54,12 @@ pub(crate) mod row {
     pub const IN_APP_BLUR_ENABLED: u16 = 14;
     /// In-app blur strength (slider).
     pub const IN_APP_BLUR_STRENGTH: u16 = 15;
+    /// OS-native window backdrop (cycler).
+    pub const BACKDROP: u16 = 16;
 }
 
 /// Number of rows in the Window category.
-pub(crate) const WINDOW_ROW_COUNT: usize = 16;
+pub(crate) const WINDOW_ROW_COUNT: usize = 17;
 
 // Slider ranges, mirroring the clamps the `set_*` / `*_increase` setters
 // already apply. They live here so the slider fraction, the AccessKit
@@ -91,6 +93,7 @@ fn label(index: u16) -> String {
         row::FPS_LIMIT => fl!("settings-window-fps-limit-label"),
         row::IN_APP_BLUR_ENABLED => fl!("settings-window-in-app-blur-label"),
         row::IN_APP_BLUR_STRENGTH => fl!("settings-window-in-app-blur-strength-label"),
+        row::BACKDROP => fl!("settings-window-backdrop"),
         _ => String::new(),
     }
 }
@@ -169,6 +172,9 @@ fn kind(sp: &SettingsPanel, index: u16) -> WidgetKind {
             max: 1.0,
             step: 0.05,
             display: format!("{:.0}%", sp.in_app_blur_strength * 100.0),
+        },
+        row::BACKDROP => WidgetKind::Cycle {
+            value: sp.window_backdrop_label(),
         },
         _ => WidgetKind::Label,
     }
@@ -304,6 +310,7 @@ pub(crate) fn apply_window_action(
             row::DECORATIONS => sp.next_window_decorations(),
             row::CLOSE_ACTION => sp.next_window_close_action(),
             row::IN_APP_BLUR_ENABLED => sp.toggle_in_app_blur(),
+            row::BACKDROP => sp.next_window_backdrop(),
             _ => return true,
         },
     }
@@ -367,7 +374,7 @@ mod tests {
         let count = |f: fn(&WidgetKind) -> bool| descs.iter().filter(|d| f(&d.kind)).count();
         assert_eq!(count(|k| matches!(k, WidgetKind::Slider { .. })), 6);
         assert_eq!(count(|k| matches!(k, WidgetKind::Toggle { .. })), 5);
-        assert_eq!(count(|k| matches!(k, WidgetKind::Cycle { .. })), 5);
+        assert_eq!(count(|k| matches!(k, WidgetKind::Cycle { .. })), 6);
     }
 
     #[test]

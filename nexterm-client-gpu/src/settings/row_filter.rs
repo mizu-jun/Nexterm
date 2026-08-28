@@ -61,6 +61,7 @@ impl SettingsPanel {
             fl!("settings-window-fps-limit", value = ""),
             fl!("settings-window-in-app-blur", value = ""),
             fl!("settings-window-in-app-blur-strength", value = ""),
+            fl!("settings-window-backdrop"),
         ]
     }
 

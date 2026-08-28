@@ -1,18 +1,94 @@
 //! Platform-specific window and OS integration utilities.
 //!
-//! - `apply_acrylic_blur`: enable the Windows 11 Acrylic (frosted glass) effect.
+//! - `apply_backdrop`: apply the configured OS-native window backdrop material.
 //! - `open_releases_url`: open the GitHub releases page in the default browser.
 //! - `cursor_screen_pos`: get the global screen position of the mouse cursor (Phase 4-2).
 
-/// Apply the Windows 11 Acrylic (frosted glass) effect to a window.
+use nexterm_config::ResolvedBackdrop;
+
+/// The `DWMWA_SYSTEMBACKDROP_TYPE` value for a resolved backdrop.
 ///
-/// Calls `DwmSetWindowAttribute` with `DWMWA_SYSTEMBACKDROP_TYPE = 4` (`DWMWCP_ACRYLIC`).
-/// On Windows 10 and earlier this attribute does not exist, so the call is a no-op.
+/// The documented enum is `DWMSBT_AUTO = 0`, `DWMSBT_NONE = 1`,
+/// `DWMSBT_MAINWINDOW = 2` (Mica), `DWMSBT_TRANSIENTWINDOW = 3` (Acrylic) and
+/// `DWMSBT_TABBEDWINDOW = 4` (Mica Alt). Returns `None` for
+/// [`ResolvedBackdrop::Vibrancy`], which is a macOS material with no DWM
+/// equivalent.
+///
+/// Compiled on every platform on purpose: the mapping is then testable without
+/// a Windows machine, and the Windows CI job is not the only thing standing
+/// between a wrong constant and a release.
+///
+/// Its only non-test caller is Windows-only (`apply_backdrop_windows`), so on
+/// every other target it would otherwise be flagged as dead code despite
+/// being exercised by `backdrop_tests` below.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) const fn dwm_backdrop_value(resolved: ResolvedBackdrop) -> Option<u32> {
+    match resolved {
+        ResolvedBackdrop::None => Some(1),
+        ResolvedBackdrop::Mica => Some(2),
+        ResolvedBackdrop::Acrylic => Some(3),
+        ResolvedBackdrop::MicaAlt => Some(4),
+        ResolvedBackdrop::Vibrancy => None,
+    }
+}
+
+/// Apply the OS-native backdrop material to a window.
+///
+/// - **Windows**: `DwmSetWindowAttribute(DWMWA_SYSTEMBACKDROP_TYPE)`. Requires
+///   Windows 11 build 22621 (22H2); on older builds the attribute does not
+///   exist and the call fails harmlessly.
+/// - **macOS**: `NSVisualEffectView` vibrancy, via `window-vibrancy`.
+/// - **Everything else**: nothing. Linux has no cross-compositor equivalent;
+///   `window.in_app_blur_enabled` (P2b) is the in-app substitute.
+///
+/// A backdrop that cannot be applied must never stop a window from opening, so
+/// every failure here is logged and swallowed.
+pub(crate) fn apply_backdrop(window: &winit::window::Window, resolved: ResolvedBackdrop) {
+    #[cfg(windows)]
+    apply_backdrop_windows(window, resolved);
+    #[cfg(target_os = "macos")]
+    apply_backdrop_macos(window, resolved);
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = (window, resolved);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn apply_backdrop_macos(window: &winit::window::Window, resolved: ResolvedBackdrop) {
+    use window_vibrancy::{NSVisualEffectMaterial, apply_vibrancy, clear_vibrancy};
+
+    let result = match resolved {
+        ResolvedBackdrop::None => clear_vibrancy(window).map(|_| ()),
+        // AppKit has a single material family, so Mica, Mica Alt and Acrylic
+        // all land here (see `WindowBackdrop::resolve`).
+        //
+        // `UnderWindowBackground` is AppKit's material for window backgrounds.
+        // It is an unmeasured initial recipe, in the same class as P2a's
+        // `shadow_params` and P2b's `ACRYLIC_TINT_OPACITY`: expected to need
+        // tuning against real hardware rather than merely confirming, because
+        // nobody on this project can run macOS.
+        _ => apply_vibrancy(
+            window,
+            NSVisualEffectMaterial::UnderWindowBackground,
+            None,
+            None,
+        )
+        .map(|_| ()),
+    };
+    if let Err(e) = result {
+        tracing::warn!("failed to apply the macOS window backdrop: {e}");
+    }
+}
+
 #[cfg(windows)]
-pub(crate) fn apply_acrylic_blur(window: &winit::window::Window) {
+fn apply_backdrop_windows(window: &winit::window::Window, resolved: ResolvedBackdrop) {
     use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
+    let Some(backdrop_type) = dwm_backdrop_value(resolved) else {
+        return;
+    };
     let Ok(handle) = window.window_handle() else {
         return;
     };
@@ -23,16 +99,25 @@ pub(crate) fn apply_acrylic_blur(window: &winit::window::Window) {
     // In windows-sys 0.59, `HWND = *mut c_void`, so convert from isize.
     let hwnd = h.hwnd.get() as *mut ::core::ffi::c_void;
 
-    // DWMWA_SYSTEMBACKDROP_TYPE = 38; 4 = DWMWCP_ACRYLIC (Windows 11 22H2+).
-    let backdrop_type: u32 = 4;
-    // SAFETY: `hwnd` is a valid window handle obtained from winit.
-    //         DwmSetWindowAttribute may fail, but we ignore the return value and continue.
-    unsafe {
+    // DWMWA_SYSTEMBACKDROP_TYPE = 38.
+    // SAFETY: `hwnd` is a valid window handle obtained from winit, and
+    //         `backdrop_type` is a live local `u32` for the duration of the
+    //         call, matching the 4-byte size passed alongside it. The
+    //         attribute only exists on Windows 11 build 22621 and later; below
+    //         that the call returns a failure HRESULT, which is logged rather
+    //         than acted on.
+    let hr = unsafe {
         DwmSetWindowAttribute(
             hwnd,
             38,
-            &backdrop_type as *const _ as *const _,
+            &backdrop_type as *const u32 as *const ::core::ffi::c_void,
             std::mem::size_of::<u32>() as u32,
+        )
+    };
+    if hr != 0 {
+        tracing::debug!(
+            "DwmSetWindowAttribute(DWMWA_SYSTEMBACKDROP_TYPE, {backdrop_type}) returned \
+             0x{hr:08x}; expected on Windows 10 and on Windows 11 before build 22621"
         );
     }
 }
@@ -122,5 +207,42 @@ pub(crate) fn open_releases_url() {
             .args(["/c", "start", url])
             .creation_flags(CREATE_NO_WINDOW)
             .spawn();
+    }
+}
+
+#[cfg(test)]
+mod backdrop_tests {
+    use super::*;
+    use nexterm_config::{BackdropTarget, ResolvedBackdrop, WindowBackdrop};
+
+    /// Pinned against the documented `DWM_SYSTEMBACKDROP_TYPE` enum:
+    /// `DWMSBT_AUTO = 0`, `DWMSBT_NONE = 1`, `DWMSBT_MAINWINDOW = 2` (Mica),
+    /// `DWMSBT_TRANSIENTWINDOW = 3` (Acrylic), `DWMSBT_TABBEDWINDOW = 4`
+    /// (Mica Alt).
+    #[test]
+    fn dwm_values_match_the_documented_enum() {
+        assert_eq!(dwm_backdrop_value(ResolvedBackdrop::None), Some(1));
+        assert_eq!(dwm_backdrop_value(ResolvedBackdrop::Mica), Some(2));
+        assert_eq!(dwm_backdrop_value(ResolvedBackdrop::Acrylic), Some(3));
+        assert_eq!(dwm_backdrop_value(ResolvedBackdrop::MicaAlt), Some(4));
+    }
+
+    /// Vibrancy is a macOS material. Returning `None` rather than a fallback
+    /// number keeps "there is no DWM value for this" in the type instead of in
+    /// a comment.
+    #[test]
+    fn vibrancy_has_no_dwm_value() {
+        assert_eq!(dwm_backdrop_value(ResolvedBackdrop::Vibrancy), None);
+    }
+
+    /// The pre-P2c client hard-coded the literal `4` under the name
+    /// `apply_acrylic_blur`, and the doc comment, the crate CLAUDE.md and
+    /// CHANGELOG.md:2898 all called it "Acrylic". It is Mica Alt. This pins
+    /// the default end-to-end so the correction cannot drift back.
+    #[test]
+    fn the_default_windows_backdrop_is_mica_alt() {
+        let resolved = WindowBackdrop::Auto.resolve(BackdropTarget::Windows);
+        assert_eq!(resolved, ResolvedBackdrop::MicaAlt);
+        assert_eq!(dwm_backdrop_value(resolved), Some(4));
     }
 }
