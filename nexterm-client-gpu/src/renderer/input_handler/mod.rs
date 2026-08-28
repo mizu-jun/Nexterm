@@ -95,7 +95,10 @@ impl EventHandler {
         // block. Silently consumes the chord when nothing is selected (no
         // surprise "L" reaching the shell, mirrors the Ctrl+Shift+R path).
         if ctrl && shift && code == WKeyCode::KeyL {
-            let _ = self.app.state.open_block_name_modal();
+            let _ = self
+                .app
+                .state
+                .open_block_name_modal(std::time::Instant::now(), &self.app.config.animations);
             return true;
         }
 
@@ -164,13 +167,19 @@ impl EventHandler {
 
         // Ctrl+Shift+U: open the SFTP upload dialog
         if ctrl && shift && code == WKeyCode::KeyU {
-            self.app.state.file_transfer.open_upload();
+            self.app
+                .state
+                .file_transfer
+                .open_upload(std::time::Instant::now(), &self.app.config.animations);
             return true;
         }
 
         // Ctrl+Shift+D: open the SFTP download dialog
         if ctrl && shift && code == WKeyCode::KeyD {
-            self.app.state.file_transfer.open_download();
+            self.app
+                .state
+                .file_transfer
+                .open_download(std::time::Instant::now(), &self.app.config.animations);
             return true;
         }
 
@@ -267,7 +276,11 @@ impl EventHandler {
         // Key handling while the file-transfer dialog is open (consumes every key)
         if self.app.state.file_transfer.is_open {
             match code {
-                WKeyCode::Escape => self.app.state.file_transfer.close(),
+                WKeyCode::Escape => self
+                    .app
+                    .state
+                    .file_transfer
+                    .close(std::time::Instant::now(), &self.app.config.animations),
                 WKeyCode::Tab | WKeyCode::ArrowDown => self.app.state.file_transfer.next_field(),
                 WKeyCode::ArrowUp => self.app.state.file_transfer.prev_field(),
                 WKeyCode::Backspace => {
@@ -295,7 +308,10 @@ impl EventHandler {
                         if let Some(conn) = &self.connection {
                             let _ = conn.send_tx.try_send(msg);
                         }
-                        self.app.state.file_transfer.close();
+                        self.app
+                            .state
+                            .file_transfer
+                            .close(std::time::Instant::now(), &self.app.config.animations);
                     }
                 }
                 _ => {
@@ -440,7 +456,10 @@ impl EventHandler {
                     .close(std::time::Instant::now(), &self.app.config.animations);
                 return true;
             } else if self.app.state.file_transfer.is_open {
-                self.app.state.file_transfer.close();
+                self.app
+                    .state
+                    .file_transfer
+                    .close(std::time::Instant::now(), &self.app.config.animations);
                 return true;
             } else if self.app.state.search.is_active {
                 self.app.state.end_search();
@@ -1333,10 +1352,16 @@ impl EventHandler {
     pub(super) fn handle_block_name_modal_key(&mut self, code: WKeyCode) -> bool {
         match code {
             WKeyCode::Enter => {
-                let _ = self.app.state.commit_block_name_modal();
+                let _ = self.app.state.commit_block_name_modal(
+                    std::time::Instant::now(),
+                    &self.app.config.animations,
+                );
             }
             WKeyCode::Escape => {
-                self.app.state.block_name_modal.close();
+                self.app
+                    .state
+                    .block_name_modal
+                    .close(std::time::Instant::now(), &self.app.config.animations);
             }
             WKeyCode::Backspace => {
                 self.app.state.block_name_modal.pop_char();

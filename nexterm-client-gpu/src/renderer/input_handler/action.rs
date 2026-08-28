@@ -168,10 +168,16 @@ impl EventHandler {
                     .open(std::time::Instant::now(), &self.app.config.animations);
             }
             "SftpUploadDialog" => {
-                self.app.state.file_transfer.open_upload();
+                self.app
+                    .state
+                    .file_transfer
+                    .open_upload(std::time::Instant::now(), &self.app.config.animations);
             }
             "SftpDownloadDialog" => {
-                self.app.state.file_transfer.open_download();
+                self.app
+                    .state
+                    .file_transfer
+                    .open_download(std::time::Instant::now(), &self.app.config.animations);
             }
             "ConnectSerialPrompt" => {
                 // Connect using the first serial-port entry in the config.
@@ -451,7 +457,11 @@ impl EventHandler {
                 let _ = self.app.state.toggle_block_collapse_by_id(*block_id);
             }
             ContextMenuAction::SetBlockName { block_id } => {
-                let _ = self.app.state.open_block_name_modal_for(*block_id);
+                let _ = self.app.state.open_block_name_modal_for(
+                    *block_id,
+                    std::time::Instant::now(),
+                    &self.app.config.animations,
+                );
             }
             ContextMenuAction::RemoveBlockName { block_id } => {
                 let _ = self.app.state.remove_block_name_by_id(*block_id);

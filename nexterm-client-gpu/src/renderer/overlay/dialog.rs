@@ -736,7 +736,8 @@ impl WgpuState {
     /// Mirrors `build_password_modal_verts` but stripped of secret-handling
     /// and "remember" toggles: the modal only carries a plain text buffer
     /// for naming a command block. The frame is centred on the canvas.
-    /// Drawing is gated by `state.block_name_modal.is_open`.
+    /// Drawing is gated by `state.block_name_modal.motion.is_visible()` so the
+    /// exit animation still gets a frame after `is_open` flips to `false`.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::renderer) fn build_block_name_modal_verts(
         &self,
@@ -754,7 +755,7 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
-        if !state.block_name_modal.is_open {
+        if !state.block_name_modal.motion.is_visible() {
             return;
         }
 

@@ -970,8 +970,9 @@ impl WgpuState {
         let panel_acrylic_mix =
             super::acrylic::panel_acrylic_mix(in_app_blur_enabled, in_app_blur_strength);
 
-        // ---- SFTP file transfer dialog (when open) ----
-        if state.file_transfer.is_open {
+        // ---- SFTP file transfer dialog (while visible) ----
+        if state.file_transfer.motion.is_visible() {
+            let (bg_start, text_start) = (bg_verts.len(), text_verts.len());
             self.build_file_transfer_verts(
                 state,
                 &tokens,
@@ -986,6 +987,11 @@ impl WgpuState {
                 &mut bg_idx,
                 &mut text_verts,
                 &mut text_idx,
+            );
+            super::overlay::fade::apply_surface_fade(
+                &mut bg_verts[bg_start..],
+                &mut text_verts[text_start..],
+                state.file_transfer.motion.progress(frame_now),
             );
         }
 
@@ -1055,8 +1061,9 @@ impl WgpuState {
                 &mut text_idx,
             );
         }
-        // Phase 2c-4: block-name input modal.
-        if state.block_name_modal.is_open {
+        // Phase 2c-4: block-name input modal (while visible).
+        if state.block_name_modal.motion.is_visible() {
+            let (bg_start, text_start) = (bg_verts.len(), text_verts.len());
             self.build_block_name_modal_verts(
                 state,
                 &tokens,
@@ -1071,6 +1078,11 @@ impl WgpuState {
                 &mut bg_idx,
                 &mut text_verts,
                 &mut text_idx,
+            );
+            super::overlay::fade::apply_surface_fade(
+                &mut bg_verts[bg_start..],
+                &mut text_verts[text_start..],
+                state.block_name_modal.motion.progress(frame_now),
             );
         }
 

@@ -651,6 +651,9 @@ impl ClientState {
         {
             return true;
         }
+        if self.block_name_modal.motion.is_active(now) || self.file_transfer.motion.is_active(now) {
+            return true;
+        }
         false
     }
 
@@ -1109,6 +1112,39 @@ mod animation_frame_tests {
         assert!(state.has_active_animation(opened, 200));
         let done = opened + Duration::from_millis(150);
         state.host_manager.motion.retire(done);
+        assert!(!state.has_active_animation(done, 200));
+    }
+
+    #[test]
+    fn a_closing_block_name_modal_stays_visible_and_wants_frames() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+        state.block_name_modal.open_for(1, Some("build"), t0, &anim);
+        let opened = t0 + Duration::from_millis(300);
+        state.block_name_modal.close(opened, &anim);
+        assert!(!state.block_name_modal.is_open);
+        assert!(state.block_name_modal.motion.is_visible());
+        assert!(state.has_active_animation(opened, 200));
+        let done = opened + Duration::from_millis(150);
+        state.block_name_modal.motion.retire(done);
+        assert!(!state.has_active_animation(done, 200));
+    }
+
+    #[test]
+    fn a_closing_file_transfer_dialog_stays_visible_and_wants_frames() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+        state.file_transfer.open(t0, &anim);
+        assert!(state.file_transfer.is_open);
+        let opened = t0 + Duration::from_millis(300);
+        state.file_transfer.close(opened, &anim);
+        assert!(!state.file_transfer.is_open);
+        assert!(state.file_transfer.motion.is_visible());
+        assert!(state.has_active_animation(opened, 200));
+        let done = opened + Duration::from_millis(150);
+        state.file_transfer.motion.retire(done);
         assert!(!state.has_active_animation(done, 200));
     }
 }
