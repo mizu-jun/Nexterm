@@ -23,12 +23,16 @@
 
 mod curve;
 mod easing;
+mod surface;
 mod timed;
 
 // `Curve` and `duration` are re-exported for `Timed`'s callers; the
 // settings panel (Task 6 of UI/UX v3 P3a) is the first consumer.
 pub use curve::{Curve, duration};
 pub use easing::{compute_progress, ease_out_cubic};
+// Consumed by the surfaces migrated in the following tasks.
+#[allow(unused_imports)]
+pub use surface::SurfaceMotion;
 pub use timed::Timed;
 
 use std::collections::HashMap;
