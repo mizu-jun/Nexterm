@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use nexterm_proto::{ClientToServer, ServerToClient};
-use tracing::{info, warn};
+use tracing::{info, trace, warn};
 use winit::{
     dpi::PhysicalSize,
     event::StartCause,
@@ -685,6 +685,19 @@ impl EventHandler {
         // calling this every frame is safe. When no SR is connected,
         // `update_if_active` is a no-op, so the overhead is essentially zero.
         self.update_accesskit_tree_if_needed();
+
+        // UI/UX v3 P3a: report the pane-vertex-cache miss rate. Idle should
+        // read 0; anything above that on a still screen is the cursor-blink
+        // invalidation debt (audit-round3 P3) showing itself.
+        let since_report = self.last_cache_miss_report.elapsed();
+        if since_report >= Duration::from_secs(1) {
+            self.last_cache_miss_report = Instant::now();
+            let misses = crate::renderer::render_frame::take_pane_cache_misses();
+            trace!(
+                "pane vertex cache: {misses} misses in {:.2}s",
+                since_report.as_secs_f32()
+            );
+        }
     }
 
     /// Process Quake-mode toggle requests at most once per frame.
