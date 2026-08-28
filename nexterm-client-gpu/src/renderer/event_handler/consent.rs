@@ -31,13 +31,15 @@ impl EventHandler {
             (ConsentPolicy::Deny, _) => false,
             (ConsentPolicy::Prompt, _) => {
                 // Show the dialog. The user's choice is processed in input_handler.
-                self.app.state.pending_consent = Some(crate::state::ConsentDialog::new(
-                    crate::state::ConsentKind::Notification {
+                self.app.state.show_consent_dialog(
+                    crate::state::ConsentDialog::new(crate::state::ConsentKind::Notification {
                         source_pane: pane_id,
                         title,
                         body,
-                    },
-                ));
+                    }),
+                    std::time::Instant::now(),
+                    &self.app.config.animations,
+                );
                 return;
             }
         };
@@ -78,12 +80,14 @@ impl EventHandler {
             (ConsentPolicy::Allow, _) => true,
             (ConsentPolicy::Deny, _) => false,
             (ConsentPolicy::Prompt, _) => {
-                self.app.state.pending_consent = Some(crate::state::ConsentDialog::new(
-                    crate::state::ConsentKind::ClipboardWrite {
+                self.app.state.show_consent_dialog(
+                    crate::state::ConsentDialog::new(crate::state::ConsentKind::ClipboardWrite {
                         source_pane: Some(pane_id),
                         text,
-                    },
-                ));
+                    }),
+                    std::time::Instant::now(),
+                    &self.app.config.animations,
+                );
                 return;
             }
         };
@@ -120,9 +124,11 @@ impl EventHandler {
             (ConsentPolicy::Allow, _) => true,
             (ConsentPolicy::Deny, _) => false,
             (ConsentPolicy::Prompt, _) => {
-                self.app.state.pending_consent = Some(crate::state::ConsentDialog::new(
-                    crate::state::ConsentKind::OpenUrl(url),
-                ));
+                self.app.state.show_consent_dialog(
+                    crate::state::ConsentDialog::new(crate::state::ConsentKind::OpenUrl(url)),
+                    std::time::Instant::now(),
+                    &self.app.config.animations,
+                );
                 return;
             }
         };
@@ -149,9 +155,17 @@ impl EventHandler {
         decision: Option<bool>,
         always: bool,
     ) {
-        let Some(dialog) = self.app.state.pending_consent.take() else {
+        // Snapshot the dialog's data for the decision logic below, then
+        // route the actual dismissal through `dismiss_consent_dialog` so
+        // `pending_consent` goes `None` immediately (the security-relevant
+        // property under test) while a ghost clone fades out for the
+        // renderer (UI/UX v3 P3b).
+        let Some(dialog) = self.app.state.pending_consent.clone() else {
             return;
         };
+        self.app
+            .state
+            .dismiss_consent_dialog(std::time::Instant::now(), &self.app.config.animations);
         let allow = decision.unwrap_or(false);
 
         if always {

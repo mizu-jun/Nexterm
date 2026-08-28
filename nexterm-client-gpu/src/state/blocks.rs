@@ -49,11 +49,23 @@ pub struct BlockNameModal {
     input: String,
     /// Latest validation error (set on commit attempt with an empty name etc.).
     pub error: Option<String>,
+    /// Open/close animation (UI/UX v3 P3b); render-only, see `is_open`.
+    pub motion: crate::animations::SurfaceMotion,
 }
 
 impl BlockNameModal {
     /// Open the modal for `block_id`, pre-filling the buffer with `current_name`.
-    pub fn open_for(&mut self, block_id: BlockId, current_name: Option<&str>) {
+    pub fn open_for(
+        &mut self,
+        block_id: BlockId,
+        current_name: Option<&str>,
+        now: std::time::Instant,
+        anim: &nexterm_config::AnimationsConfig,
+    ) {
+        use crate::animations::{Curve, duration};
+
+        self.motion
+            .open(now, anim, duration::SLOW, Curve::DecelerateMax);
         self.is_open = true;
         self.target_block = Some(block_id);
         self.input.clear();
@@ -69,7 +81,11 @@ impl BlockNameModal {
     }
 
     /// Close the modal and discard any in-flight text.
-    pub fn close(&mut self) {
+    pub fn close(&mut self, now: std::time::Instant, anim: &nexterm_config::AnimationsConfig) {
+        use crate::animations::{Curve, duration};
+
+        self.motion
+            .close(now, anim, duration::FAST, Curve::AccelerateMax);
         self.is_open = false;
         self.target_block = None;
         self.input.clear();
@@ -404,7 +420,12 @@ impl ClientState {
     /// Phase 2c follow-up: open the block-name modal for an explicit block
     /// ID (used by the right-click context menu). Returns `true` when the
     /// modal opened; fails when the id is not found on the focused pane.
-    pub fn open_block_name_modal_for(&mut self, id: BlockId) -> bool {
+    pub fn open_block_name_modal_for(
+        &mut self,
+        id: BlockId,
+        now: std::time::Instant,
+        anim: &nexterm_config::AnimationsConfig,
+    ) -> bool {
         let Some(pane) = self.focused_pane() else {
             return false;
         };
@@ -412,7 +433,8 @@ impl ClientState {
             return false;
         }
         let current = self.named_blocks.get(id).map(|s| s.to_string());
-        self.block_name_modal.open_for(id, current.as_deref());
+        self.block_name_modal
+            .open_for(id, current.as_deref(), now, anim);
         true
     }
 
@@ -431,12 +453,17 @@ impl ClientState {
     /// Returns `true` when the modal was actually opened. Fails (returns
     /// `false`) when nothing is selected or when the focused pane has no
     /// matching block.
-    pub fn open_block_name_modal(&mut self) -> bool {
+    pub fn open_block_name_modal(
+        &mut self,
+        now: std::time::Instant,
+        anim: &nexterm_config::AnimationsConfig,
+    ) -> bool {
         let Some(block) = self.selected_command_block().map(|b| b.id) else {
             return false;
         };
         let current = self.named_blocks.get(block).map(|s| s.to_string());
-        self.block_name_modal.open_for(block, current.as_deref());
+        self.block_name_modal
+            .open_for(block, current.as_deref(), now, anim);
         true
     }
 
@@ -446,9 +473,13 @@ impl ClientState {
     /// (consistent with [`NamedBlockStore::set`]). The modal closes whether or
     /// not the store changed; the boolean return value reflects only the
     /// underlying state change.
-    pub fn commit_block_name_modal(&mut self) -> bool {
+    pub fn commit_block_name_modal(
+        &mut self,
+        now: std::time::Instant,
+        anim: &nexterm_config::AnimationsConfig,
+    ) -> bool {
         let Some(id) = self.block_name_modal.target_block else {
-            self.block_name_modal.close();
+            self.block_name_modal.close(now, anim);
             return false;
         };
         let name = self.block_name_modal.take_input();
@@ -456,7 +487,7 @@ impl ClientState {
         if changed {
             self.named_blocks.save();
         }
-        self.block_name_modal.close();
+        self.block_name_modal.close(now, anim);
         changed
     }
 
@@ -794,7 +825,8 @@ mod tests {
     #[test]
     fn modal_open_for_prefills_current_name() {
         let mut modal = BlockNameModal::default();
-        modal.open_for(7, Some("deploy"));
+        let anim = nexterm_config::AnimationsConfig::default();
+        modal.open_for(7, Some("deploy"), std::time::Instant::now(), &anim);
         assert!(modal.is_open);
         assert_eq!(modal.target_block, Some(7));
         assert_eq!(modal.input(), "deploy");
@@ -804,14 +836,16 @@ mod tests {
     fn modal_open_for_truncates_oversized_prefill() {
         let mut modal = BlockNameModal::default();
         let long = "x".repeat(MAX_BLOCK_NAME_LEN + 50);
-        modal.open_for(1, Some(&long));
+        let anim = nexterm_config::AnimationsConfig::default();
+        modal.open_for(1, Some(&long), std::time::Instant::now(), &anim);
         assert_eq!(modal.input().chars().count(), MAX_BLOCK_NAME_LEN);
     }
 
     #[test]
     fn modal_push_char_respects_cap() {
         let mut modal = BlockNameModal::default();
-        modal.open_for(1, None);
+        let anim = nexterm_config::AnimationsConfig::default();
+        modal.open_for(1, None, std::time::Instant::now(), &anim);
         for _ in 0..MAX_BLOCK_NAME_LEN {
             assert!(modal.push_char('a'));
         }
@@ -822,7 +856,8 @@ mod tests {
     #[test]
     fn modal_push_char_drops_controls() {
         let mut modal = BlockNameModal::default();
-        modal.open_for(1, None);
+        let anim = nexterm_config::AnimationsConfig::default();
+        modal.open_for(1, None, std::time::Instant::now(), &anim);
         assert!(!modal.push_char('\x1b'));
         assert!(!modal.push_char('\u{7f}'));
         assert!(!modal.push_char('\n'));
@@ -832,7 +867,8 @@ mod tests {
     #[test]
     fn modal_pop_char_removes_last() {
         let mut modal = BlockNameModal::default();
-        modal.open_for(1, Some("abc"));
+        let anim = nexterm_config::AnimationsConfig::default();
+        modal.open_for(1, Some("abc"), std::time::Instant::now(), &anim);
         assert!(modal.pop_char());
         assert_eq!(modal.input(), "ab");
     }
@@ -840,8 +876,10 @@ mod tests {
     #[test]
     fn modal_close_resets_state() {
         let mut modal = BlockNameModal::default();
-        modal.open_for(1, Some("temp"));
-        modal.close();
+        let anim = nexterm_config::AnimationsConfig::default();
+        let now = std::time::Instant::now();
+        modal.open_for(1, Some("temp"), now, &anim);
+        modal.close(now, &anim);
         assert!(!modal.is_open);
         assert!(modal.target_block.is_none());
         assert!(modal.input().is_empty());
@@ -851,12 +889,14 @@ mod tests {
     fn open_block_name_modal_succeeds_only_with_selection() {
         let _g = StoreEnvGuard::new("open-modal-no-selection");
         let mut state = pane_with_rows(&["$ ls", "x"], 1, 0, 1);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let now = std::time::Instant::now();
         state.selected_block = None;
-        assert!(!state.open_block_name_modal());
+        assert!(!state.open_block_name_modal(now, &anim));
         assert!(!state.block_name_modal.is_open);
 
         state.selected_block = Some(1);
-        assert!(state.open_block_name_modal());
+        assert!(state.open_block_name_modal(now, &anim));
         assert!(state.block_name_modal.is_open);
         assert_eq!(state.block_name_modal.target_block, Some(1));
     }
@@ -865,8 +905,9 @@ mod tests {
     fn open_block_name_modal_prefills_existing_name() {
         let _g = StoreEnvGuard::new("open-modal-prefill");
         let mut state = pane_with_rows(&["$ ls", "x"], 1, 0, 1);
+        let anim = nexterm_config::AnimationsConfig::default();
         state.named_blocks.set(1, "deploy");
-        assert!(state.open_block_name_modal());
+        assert!(state.open_block_name_modal(std::time::Instant::now(), &anim));
         assert_eq!(state.block_name_modal.input(), "deploy");
     }
 
@@ -874,11 +915,13 @@ mod tests {
     fn commit_block_name_modal_persists_and_closes() {
         let _g = StoreEnvGuard::new("commit-modal");
         let mut state = pane_with_rows(&["$ ls", "x"], 1, 0, 1);
-        assert!(state.open_block_name_modal());
+        let anim = nexterm_config::AnimationsConfig::default();
+        let now = std::time::Instant::now();
+        assert!(state.open_block_name_modal(now, &anim));
         for ch in "build".chars() {
             state.block_name_modal.push_char(ch);
         }
-        assert!(state.commit_block_name_modal());
+        assert!(state.commit_block_name_modal(now, &anim));
         assert!(!state.block_name_modal.is_open);
         assert_eq!(state.named_blocks.get(1), Some("build"));
     }
@@ -887,11 +930,13 @@ mod tests {
     fn commit_with_empty_input_removes_name() {
         let _g = StoreEnvGuard::new("commit-empty");
         let mut state = pane_with_rows(&["$ ls", "x"], 1, 0, 1);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let now = std::time::Instant::now();
         state.named_blocks.set(1, "existing");
-        assert!(state.open_block_name_modal());
+        assert!(state.open_block_name_modal(now, &anim));
         // Clear the input
         while state.block_name_modal.pop_char() {}
-        assert!(state.commit_block_name_modal());
+        assert!(state.commit_block_name_modal(now, &anim));
         assert!(!state.block_name_modal.is_open);
         assert!(state.named_blocks.get(1).is_none());
     }

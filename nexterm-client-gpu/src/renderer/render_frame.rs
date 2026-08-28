@@ -970,8 +970,9 @@ impl WgpuState {
         let panel_acrylic_mix =
             super::acrylic::panel_acrylic_mix(in_app_blur_enabled, in_app_blur_strength);
 
-        // ---- SFTP file transfer dialog (when open) ----
-        if state.file_transfer.is_open {
+        // ---- SFTP file transfer dialog (while visible) ----
+        if state.file_transfer.motion.is_visible() {
+            let (bg_start, text_start) = (bg_verts.len(), text_verts.len());
             self.build_file_transfer_verts(
                 state,
                 &tokens,
@@ -987,10 +988,16 @@ impl WgpuState {
                 &mut text_verts,
                 &mut text_idx,
             );
+            super::overlay::fade::apply_surface_fade(
+                &mut bg_verts[bg_start..],
+                &mut text_verts[text_start..],
+                state.file_transfer.motion.progress(frame_now),
+            );
         }
 
-        // ---- Lua macro picker (when open) ----
-        if state.macro_picker.is_open {
+        // ---- Lua macro picker (while visible) ----
+        if state.macro_picker.motion.is_visible() {
+            let (bg_start, text_start) = (bg_verts.len(), text_verts.len());
             self.build_macro_picker_verts(
                 state,
                 &tokens,
@@ -1006,10 +1013,16 @@ impl WgpuState {
                 &mut text_verts,
                 &mut text_idx,
             );
+            super::overlay::fade::apply_surface_fade(
+                &mut bg_verts[bg_start..],
+                &mut text_verts[text_start..],
+                state.macro_picker.motion.progress(frame_now),
+            );
         }
 
-        // ---- Host manager (when open) ----
-        if state.host_manager.is_open {
+        // ---- Host manager (while visible) ----
+        if state.host_manager.motion.is_visible() {
+            let (bg_start, text_start) = (bg_verts.len(), text_verts.len());
             self.build_host_manager_verts(
                 state,
                 &tokens,
@@ -1025,10 +1038,16 @@ impl WgpuState {
                 &mut text_verts,
                 &mut text_idx,
             );
+            super::overlay::fade::apply_surface_fade(
+                &mut bg_verts[bg_start..],
+                &mut text_verts[text_start..],
+                state.host_manager.motion.progress(frame_now),
+            );
         }
-        if state.host_manager.password_modal.is_some() {
+        if let Some(view) = state.host_manager.password_modal_view() {
+            let (bg_start, text_start) = (bg_verts.len(), text_verts.len());
             self.build_password_modal_verts(
-                state,
+                &view,
                 &tokens,
                 sw,
                 sh,
@@ -1042,9 +1061,15 @@ impl WgpuState {
                 &mut text_verts,
                 &mut text_idx,
             );
+            super::overlay::fade::apply_surface_fade(
+                &mut bg_verts[bg_start..],
+                &mut text_verts[text_start..],
+                state.host_manager.password_modal_progress(frame_now),
+            );
         }
-        // Phase 2c-4: block-name input modal.
-        if state.block_name_modal.is_open {
+        // Phase 2c-4: block-name input modal (while visible).
+        if state.block_name_modal.motion.is_visible() {
+            let (bg_start, text_start) = (bg_verts.len(), text_verts.len());
             self.build_block_name_modal_verts(
                 state,
                 &tokens,
@@ -1060,10 +1085,16 @@ impl WgpuState {
                 &mut text_verts,
                 &mut text_idx,
             );
+            super::overlay::fade::apply_surface_fade(
+                &mut bg_verts[bg_start..],
+                &mut text_verts[text_start..],
+                state.block_name_modal.motion.progress(frame_now),
+            );
         }
 
-        // ---- Command palette (when open) ----
-        if state.palette.is_open {
+        // ---- Command palette (while visible) ----
+        if state.palette.motion.is_visible() {
+            let (bg_start, text_start) = (bg_verts.len(), text_verts.len());
             self.build_palette_verts(
                 state,
                 &tokens,
@@ -1078,6 +1109,11 @@ impl WgpuState {
                 &mut bg_idx,
                 &mut text_verts,
                 &mut text_idx,
+            );
+            super::overlay::fade::apply_surface_fade(
+                &mut bg_verts[bg_start..],
+                &mut text_verts[text_start..],
+                state.palette.motion.progress(frame_now),
             );
         }
 
@@ -1114,8 +1150,19 @@ impl WgpuState {
             }
         }
 
-        // ---- Context menu (on right-click) ----
-        if let Some(ref menu) = state.context_menu {
+        // ---- Context menu (on right-click; ghost while it fades) ----
+        let menu_to_draw = state
+            .context_menu
+            .as_ref()
+            .or(state.context_menu_closing.as_ref().map(|(m, _)| m));
+        if let Some(menu) = menu_to_draw {
+            let progress = ClientState::option_surface_progress(
+                state.context_menu.is_some(),
+                state.context_menu_opening,
+                state.context_menu_closing.as_ref().map(|(_, t)| t),
+                frame_now,
+            );
+            let (bg_start, text_start) = (bg_verts.len(), text_verts.len());
             self.build_context_menu_verts(
                 menu,
                 &tokens,
@@ -1130,6 +1177,11 @@ impl WgpuState {
                 &mut bg_idx,
                 &mut text_verts,
                 &mut text_idx,
+            );
+            super::overlay::fade::apply_surface_fade(
+                &mut bg_verts[bg_start..],
+                &mut text_verts[text_start..],
+                progress,
             );
         }
 
@@ -1193,10 +1245,25 @@ impl WgpuState {
         }
 
         // ---- Consent dialog (Sprint 4-1: sensitive-operation confirmation modal) ----
-        // Appended last so it is rendered on top
-        if state.pending_consent.is_some() {
+        // Appended last so it is rendered on top. Ghost while it fades
+        // (UI/UX v3 P3b), same shape as the context menu / close-window
+        // dialog — `pending_consent` itself already went `None` at dismiss
+        // time (see `dismiss_consent_dialog`), so only the ghost clone is
+        // read here.
+        let consent_to_draw = state
+            .pending_consent
+            .as_ref()
+            .or(state.pending_consent_closing.as_ref().map(|(d, _)| d));
+        if let Some(dialog) = consent_to_draw {
+            let progress = ClientState::option_surface_progress(
+                state.pending_consent.is_some(),
+                state.pending_consent_opening,
+                state.pending_consent_closing.as_ref().map(|(_, t)| t),
+                frame_now,
+            );
+            let (bg_start, text_start) = (bg_verts.len(), text_verts.len());
             self.build_consent_dialog_verts(
-                state,
+                dialog,
                 &tokens,
                 sw,
                 sh,
@@ -1210,14 +1277,31 @@ impl WgpuState {
                 &mut text_verts,
                 &mut text_idx,
             );
+            super::overlay::fade::apply_surface_fade(
+                &mut bg_verts[bg_start..],
+                &mut text_verts[text_start..],
+                progress,
+            );
         }
 
         // ---- Window-close confirmation dialog (Sprint 5-9 Phase 4-6) ----
         // Shown when `close_action = "prompt"` detects a foreground process.
         // Like the sensitive-operation consent dialog, it is layered on top.
-        if state.close_window_dialog.is_some() {
+        // Ghost while it fades (UI/UX v3 P3b), same shape as the context menu.
+        let close_dialog_to_draw = state
+            .close_window_dialog
+            .as_ref()
+            .or(state.close_window_dialog_closing.as_ref().map(|(d, _)| d));
+        if let Some(dialog) = close_dialog_to_draw {
+            let progress = ClientState::option_surface_progress(
+                state.close_window_dialog.is_some(),
+                state.close_window_dialog_opening,
+                state.close_window_dialog_closing.as_ref().map(|(_, t)| t),
+                frame_now,
+            );
+            let (bg_start, text_start) = (bg_verts.len(), text_verts.len());
             self.build_close_window_dialog_verts(
-                state,
+                dialog,
                 &tokens,
                 sw,
                 sh,
@@ -1230,6 +1314,11 @@ impl WgpuState {
                 &mut bg_idx,
                 &mut text_verts,
                 &mut text_idx,
+            );
+            super::overlay::fade::apply_surface_fade(
+                &mut bg_verts[bg_start..],
+                &mut text_verts[text_start..],
+                progress,
             );
         }
 

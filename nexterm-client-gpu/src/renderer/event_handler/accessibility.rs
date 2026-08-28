@@ -245,7 +245,10 @@ impl EventHandler {
                         idx, action
                     );
                     // Close the menu before running the action (same order as the existing mouse-click path).
-                    self.app.state.context_menu = None;
+                    self.app.state.dismiss_context_menu(
+                        std::time::Instant::now(),
+                        &self.app.config.animations,
+                    );
                     self.execute_context_menu_action(&action);
                     self.request_redraw_if_window();
                 } else {
@@ -276,7 +279,10 @@ impl EventHandler {
                 if let Some(action_id) = action_id {
                     info!("AccessKit: executing Palette item {}: {}", idx, action_id);
                     // Same order as the existing Enter-key path: close → record history → execute.
-                    self.app.state.palette.close();
+                    self.app
+                        .state
+                        .palette
+                        .close(std::time::Instant::now(), &self.app.config.animations);
                     self.app.state.palette.record_use(&action_id);
                     self.execute_action(&action_id, event_loop);
                     self.request_redraw_if_window();
@@ -349,10 +355,16 @@ impl EventHandler {
                     .map(|h| (*h).clone());
                 if let Some(host) = host {
                     info!("AccessKit: confirmed Host item {}: {}", idx, host.name);
-                    self.app.state.host_manager.close();
+                    self.app
+                        .state
+                        .host_manager
+                        .close(std::time::Instant::now(), &self.app.config.animations);
                     if host.auth_type == "password" {
-                        self.app.state.host_manager.password_modal =
-                            Some(crate::host_manager::PasswordModal::new(host));
+                        self.app.state.host_manager.show_password_modal(
+                            crate::host_manager::PasswordModal::new(host),
+                            std::time::Instant::now(),
+                            &self.app.config.animations,
+                        );
                     } else {
                         self.app.state.host_manager.record_connection(&host);
                         self.connect_ssh_host_new_tab(&host);
@@ -391,7 +403,10 @@ impl EventHandler {
                     .map(|m| (m.lua_fn.clone(), m.name.clone()));
                 if let Some((fn_name, display_name)) = mac {
                     info!("AccessKit: executing Macro item {}: {}", idx, display_name);
-                    self.app.state.macro_picker.close();
+                    self.app
+                        .state
+                        .macro_picker
+                        .close(std::time::Instant::now(), &self.app.config.animations);
                     if let Some(conn) = &self.connection {
                         let _ = conn.send_tx.try_send(ClientToServer::RunMacro {
                             macro_fn: fn_name,

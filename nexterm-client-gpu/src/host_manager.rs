@@ -412,6 +412,81 @@ impl PasswordModal {
 
         zeroize::Zeroizing::new(taken)
     }
+
+    /// Borrow the fields the renderer may see.
+    pub fn view(&self) -> PasswordModalView<'_> {
+        PasswordModalView {
+            username: &self.host.username,
+            host: &self.host.host,
+            port: self.host.port,
+            input_len: self.input_len(),
+            error: self.error.as_deref(),
+            remember: self.remember,
+            prefilled: self.prefilled,
+        }
+    }
+
+    /// Snapshot the modal for its exit animation, leaving the secret behind.
+    fn to_ghost(&self) -> PasswordModalGhost {
+        PasswordModalGhost {
+            username: self.host.username.clone(),
+            host: self.host.host.clone(),
+            port: self.host.port,
+            input_len: self.input_len(),
+            error: self.error.clone(),
+            remember: self.remember,
+            prefilled: self.prefilled,
+        }
+    }
+}
+
+/// Everything the password modal's renderer is allowed to see.
+///
+/// `build_password_modal_verts` used to read the modal's public fields
+/// directly under a comment explaining that it must touch `input` only via
+/// `input_len()` (HIGH H-6). Routing it through this view makes that
+/// boundary structural instead of advisory: there is no field here the
+/// secret could reach, so the mask is drawn from a count in both the live
+/// and the fading case.
+pub struct PasswordModalView<'a> {
+    pub username: &'a str,
+    pub host: &'a str,
+    pub port: u16,
+    pub input_len: usize,
+    pub error: Option<&'a str>,
+    pub remember: bool,
+    pub prefilled: bool,
+}
+
+/// What the password modal's exit animation needs to draw, and nothing more.
+///
+/// Deliberately **not** a clone of [`PasswordModal`]: its `input` is a
+/// private `Zeroizing<String>` whose whole point is to minimise how long
+/// the secret exists in memory. Keeping a second copy alive for the length
+/// of a fade-out would pay a security cost for a cosmetic effect.
+pub struct PasswordModalGhost {
+    username: String,
+    host: String,
+    port: u16,
+    input_len: usize,
+    error: Option<String>,
+    remember: bool,
+    prefilled: bool,
+}
+
+impl PasswordModalGhost {
+    /// Borrow the same view the live modal exposes.
+    pub fn view(&self) -> PasswordModalView<'_> {
+        PasswordModalView {
+            username: &self.username,
+            host: &self.host,
+            port: self.port,
+            input_len: self.input_len,
+            error: self.error.as_deref(),
+            remember: self.remember,
+            prefilled: self.prefilled,
+        }
+    }
 }
 
 /// Display / interaction state of the host manager.
@@ -422,6 +497,9 @@ pub struct HostManager {
     pub query: String,
     /// Whether the panel is open.
     pub is_open: bool,
+    /// Open/close animation (UI/UX v3 P3b). `is_open` above stays the truth
+    /// for input routing and the AccessKit tree; this is render-only.
+    pub motion: crate::animations::SurfaceMotion,
     /// Selected index (within the filtered list).
     pub selected: usize,
     /// Active tag filter (None = no filter).
@@ -434,6 +512,15 @@ pub struct HostManager {
     matcher: SkimMatcherV2,
     /// Password modal (opened when an `auth_type == "password"` host is selected).
     pub password_modal: Option<PasswordModal>,
+    /// Password modal entrance animation (UI/UX v3 P3b).
+    pub password_modal_opening: Option<crate::animations::Timed>,
+    /// Password modal exit animation, paired with a redacted ghost.
+    ///
+    /// Deliberately not a `(PasswordModal, Timed)` pair like the other
+    /// `Option`-shaped ghosts in this phase: `PasswordModal::input` is a
+    /// `Zeroizing<String>` that must not be cloned, so the fading value here
+    /// is [`PasswordModalGhost`], which cannot hold the secret at all.
+    pub password_modal_closing: Option<(PasswordModalGhost, crate::animations::Timed)>,
 }
 
 impl HostManager {
@@ -456,24 +543,108 @@ impl HostManager {
             hosts: merged,
             query: String::new(),
             is_open: false,
+            motion: crate::animations::SurfaceMotion::default(),
             selected: 0,
             tag_filter: None,
             group_filter: None,
             history: load_history(),
             matcher: SkimMatcherV2::default(),
             password_modal: None,
+            password_modal_opening: None,
+            password_modal_closing: None,
         }
     }
 
+    /// Show `modal`, starting its entrance (UI/UX v3 P3b).
+    pub fn show_password_modal(
+        &mut self,
+        modal: PasswordModal,
+        now: std::time::Instant,
+        anim: &nexterm_config::AnimationsConfig,
+    ) {
+        use crate::animations::{Curve, Timed, duration};
+
+        let ms = anim.scaled_duration_ms(duration::SLOW);
+        self.password_modal_closing = None;
+        self.password_modal_opening = Some(Timed::new(now, ms, Curve::DecelerateMax));
+        self.password_modal = Some(modal);
+    }
+
+    /// Dismiss the modal, dropping the secret and leaving a redacted ghost.
+    pub fn dismiss_password_modal(
+        &mut self,
+        now: std::time::Instant,
+        anim: &nexterm_config::AnimationsConfig,
+    ) {
+        use crate::animations::{Curve, Timed, duration};
+
+        if let Some(modal) = self.password_modal.take() {
+            let ms = anim.scaled_duration_ms(duration::FAST);
+            let ghost = modal.to_ghost();
+            // `modal` is dropped here, zeroing `input`.
+            self.password_modal_closing = Some((ghost, Timed::new(now, ms, Curve::AccelerateMax)));
+        }
+    }
+
+    /// Drop a finished exit animation.
+    pub fn retire_password_modal(&mut self, now: std::time::Instant) {
+        if self
+            .password_modal_closing
+            .as_ref()
+            .is_some_and(|(_, t)| t.is_done(now))
+        {
+            self.password_modal_closing = None;
+        }
+    }
+
+    /// Visibility in `[0, 1]` of the password modal (UI/UX v3 P3b).
+    pub fn password_modal_progress(&self, now: std::time::Instant) -> f32 {
+        if self.password_modal.is_some() {
+            return self.password_modal_opening.map_or(1.0, |t| t.progress(now));
+        }
+        self.password_modal_closing
+            .as_ref()
+            .map_or(0.0, |(_, t)| 1.0 - t.progress(now))
+    }
+
+    /// What the renderer should draw: the live modal, else the ghost.
+    pub fn password_modal_view(&self) -> Option<PasswordModalView<'_>> {
+        if let Some(modal) = &self.password_modal {
+            return Some(modal.view());
+        }
+        self.password_modal_closing.as_ref().map(|(g, _)| g.view())
+    }
+
+    /// Whether the password modal needs another frame.
+    pub fn password_modal_is_active(&self, now: std::time::Instant) -> bool {
+        if self
+            .password_modal_closing
+            .as_ref()
+            .is_some_and(|(_, t)| !t.is_done(now))
+        {
+            return true;
+        }
+        self.password_modal.is_some()
+            && self.password_modal_opening.is_some_and(|t| !t.is_done(now))
+    }
+
     /// Open the panel and reset the query / selection.
-    pub fn open(&mut self) {
+    pub fn open(&mut self, now: std::time::Instant, anim: &nexterm_config::AnimationsConfig) {
+        use crate::animations::{Curve, duration};
+
+        self.motion
+            .open(now, anim, duration::SLOW, Curve::DecelerateMax);
         self.query.clear();
         self.selected = 0;
         self.is_open = true;
     }
 
     /// Close the panel.
-    pub fn close(&mut self) {
+    pub fn close(&mut self, now: std::time::Instant, anim: &nexterm_config::AnimationsConfig) {
+        use crate::animations::{Curve, duration};
+
+        self.motion
+            .close(now, anim, duration::FAST, Curve::AccelerateMax);
         self.is_open = false;
         self.query.clear();
     }
@@ -996,5 +1167,94 @@ Host myhost
         let pw = modal.take_password();
         assert_eq!(&*pw, "pw");
         assert_eq!(modal.input_len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod password_ghost_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    fn host() -> HostConfig {
+        HostConfig {
+            name: "prod".to_string(),
+            username: "deploy".to_string(),
+            host: "example.invalid".to_string(),
+            port: 22,
+            ..Default::default()
+        }
+    }
+
+    /// The security property, stated as a test so a future "just clone the
+    /// modal" refactor fails CI instead of passing review. `PasswordModal`
+    /// keeps `input` private precisely so it cannot be copied; the ghost
+    /// must not carry it in any form, and `size_of` is the coarse but
+    /// unambiguous witness: adding a `String`/`Zeroizing<String>` field
+    /// would grow the struct.
+    #[test]
+    fn the_ghost_carries_no_string_the_secret_could_live_in() {
+        use std::mem::size_of;
+        // username + host + error are the only owned strings the ghost may
+        // hold, plus a usize, a u16 and two bools.
+        let max = 3 * size_of::<String>() + size_of::<usize>() + 8;
+        assert!(
+            size_of::<PasswordModalGhost>() <= max,
+            "PasswordModalGhost grew to {} bytes (max {max}); did a secret \
+             field get added?",
+            size_of::<PasswordModalGhost>()
+        );
+    }
+
+    /// What the renderer sees must be identical before and after the
+    /// modal becomes a ghost — except that it is derived from a count, so
+    /// the mask keeps its length and the characters are never available.
+    #[test]
+    fn the_ghost_view_matches_the_live_view() {
+        let mut hm = HostManager::new(vec![]);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+        let mut modal = PasswordModal::new(host());
+        modal.push_char('a');
+        modal.push_char('b');
+        let live_len = modal.input_len();
+
+        hm.show_password_modal(modal, t0, &anim);
+        let live = hm
+            .password_modal
+            .as_ref()
+            .expect("modal must be live after show")
+            .view();
+        let (live_user, live_host, live_port) =
+            (live.username.to_string(), live.host.to_string(), live.port);
+
+        hm.dismiss_password_modal(t0, &anim);
+        assert!(
+            hm.password_modal.is_none(),
+            "the secret must be dropped now"
+        );
+        let (ghost, _) = hm
+            .password_modal_closing
+            .as_ref()
+            .expect("a ghost must remain");
+        let g = ghost.view();
+        assert_eq!(g.input_len, live_len, "the mask must keep its length");
+        assert_eq!(g.username, live_user);
+        assert_eq!(g.host, live_host);
+        assert_eq!(g.port, live_port);
+    }
+
+    #[test]
+    fn a_dismissed_password_modal_retires_after_its_exit() {
+        let mut hm = HostManager::new(vec![]);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+        hm.show_password_modal(PasswordModal::new(host()), t0, &anim);
+        hm.dismiss_password_modal(t0, &anim);
+        let mid = t0 + Duration::from_millis(50);
+        hm.retire_password_modal(mid);
+        assert!(hm.password_modal_closing.is_some());
+        let done = t0 + Duration::from_millis(150);
+        hm.retire_password_modal(done);
+        assert!(hm.password_modal_closing.is_none());
     }
 }

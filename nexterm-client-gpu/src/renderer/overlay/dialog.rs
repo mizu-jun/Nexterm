@@ -4,7 +4,8 @@
 
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
-use crate::state::{ClientState, ContextMenu};
+use crate::host_manager::PasswordModalView;
+use crate::state::{ClientState, CloseWindowDialog, ConsentDialog, ContextMenu};
 use crate::vertex_util::{add_px_rect, add_string_verts, visual_width};
 
 use super::super::WgpuState;
@@ -18,7 +19,7 @@ impl WgpuState {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::renderer) fn build_password_modal_verts(
         &self,
-        state: &ClientState,
+        view: &PasswordModalView<'_>,
         tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
@@ -32,10 +33,6 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
-        let Some(modal) = &state.host_manager.password_modal else {
-            return;
-        };
-
         let pw = 44.0 * cell_w;
         let ph = 6.0 * cell_h;
         let px = (sw - pw) / 2.0;
@@ -62,10 +59,7 @@ impl WgpuState {
         add_px_rect(px, py, pw, 2.0, ap, sw, sh, bg_verts, bg_idx);
 
         // Title
-        let title = format!(
-            "Password: {}@{}:{}",
-            modal.host.username, modal.host.host, modal.host.port
-        );
+        let title = format!("Password: {}@{}:{}", view.username, view.host, view.port);
         add_string_verts(
             &title,
             px + cell_w,
@@ -83,8 +77,10 @@ impl WgpuState {
         );
 
         // Password input field (masked display)
-        // HIGH H-6: `input` is a private Zeroizing<String>, so only retrieve the char count via input_len()
-        let masked = "*".repeat(modal.input_len());
+        // HIGH H-6, made structural in UI/UX v3 P3b: this builder is handed a
+        // `PasswordModalView`, which has no field the password could be in.
+        // The mask is drawn from `input_len`, never from the characters.
+        let masked = "*".repeat(view.input_len);
         let prompt = format!("> {}_", masked);
         add_string_verts(
             &prompt,
@@ -103,7 +99,7 @@ impl WgpuState {
         );
 
         // Error message
-        if let Some(err) = &modal.error {
+        if let Some(err) = view.error {
             add_string_verts(
                 err,
                 px + cell_w,
@@ -122,12 +118,12 @@ impl WgpuState {
         }
 
         // remember state (toggle for storing in the OS keychain)
-        let remember_label = if modal.remember {
+        let remember_label = if view.remember {
             "[X] Save to OS keychain (Tab to toggle)"
         } else {
             "[ ] Save to OS keychain (Tab to toggle)"
         };
-        let remember_color = if modal.remember {
+        let remember_color = if view.remember {
             tokens.semantic_success
         } else {
             tokens.text_muted
@@ -147,7 +143,7 @@ impl WgpuState {
             text_verts,
             text_idx,
         );
-        if modal.prefilled {
+        if view.prefilled {
             add_string_verts(
                 "(prefilled from the keychain)",
                 px + cell_w,
@@ -350,7 +346,7 @@ impl WgpuState {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::renderer) fn build_consent_dialog_verts(
         &self,
-        state: &ClientState,
+        dialog: &ConsentDialog,
         tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
@@ -365,10 +361,6 @@ impl WgpuState {
         text_idx: &mut Vec<u16>,
     ) {
         use crate::state::ConsentKind;
-
-        let Some(dialog) = &state.pending_consent else {
-            return;
-        };
 
         // Semi-transparent backdrop overlay (full screen)
         add_px_rect(
@@ -565,7 +557,7 @@ impl WgpuState {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::renderer) fn build_close_window_dialog_verts(
         &self,
-        state: &ClientState,
+        dialog: &CloseWindowDialog,
         tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
@@ -579,10 +571,6 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
-        let Some(dialog) = &state.close_window_dialog else {
-            return;
-        };
-
         // Semi-transparent overlay (full screen; visual shield that prevents accidental clicks)
         add_px_rect(
             0.0,
@@ -736,7 +724,8 @@ impl WgpuState {
     /// Mirrors `build_password_modal_verts` but stripped of secret-handling
     /// and "remember" toggles: the modal only carries a plain text buffer
     /// for naming a command block. The frame is centred on the canvas.
-    /// Drawing is gated by `state.block_name_modal.is_open`.
+    /// Drawing is gated by `state.block_name_modal.motion.is_visible()` so the
+    /// exit animation still gets a frame after `is_open` flips to `false`.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::renderer) fn build_block_name_modal_verts(
         &self,
@@ -754,7 +743,7 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
-        if !state.block_name_modal.is_open {
+        if !state.block_name_modal.motion.is_visible() {
             return;
         }
 

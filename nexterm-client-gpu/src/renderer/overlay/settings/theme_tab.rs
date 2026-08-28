@@ -100,13 +100,19 @@ pub(in crate::renderer) fn draw_theme_tab(
     }
 }
 
-/// Draw the tooltip for whichever Theme widget the pointer has been resting
-/// on, if the dwell has elapsed.
+/// Draw the tooltip for whichever Theme widget last had the pointer resting
+/// on it, if `fade` says it should still be on screen.
 ///
 /// Called after the scrollable content has been merged into the outer vertex
 /// buffers, so the tooltip is never clipped by the content scissor. Pass
 /// `content_top` already shifted by the scroll offset so the anchor follows
 /// the row on screen.
+///
+/// The anchor and text come from `sp.tooltip_snapshot`, not from a fresh
+/// `hover_widget` lookup: while the tooltip fades out (UI/UX v3 P3b),
+/// `hover_widget` may already be `None`, and the snapshot is what lets the
+/// exit still be drawn. `fade` (from `sp.tooltip_motion.progress`) is the
+/// sole authority on whether to draw at all.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::renderer) fn draw_theme_tooltip(
     sp: &SettingsPanel,
@@ -120,6 +126,8 @@ pub(in crate::renderer) fn draw_theme_tooltip(
     cell_w: f32,
     cell_h: f32,
     acrylic_mix: f32,
+    _now: std::time::Instant,
+    fade: f32,
     font: &mut FontManager,
     atlas: &mut GlyphAtlas,
     queue: &wgpu::Queue,
@@ -128,10 +136,13 @@ pub(in crate::renderer) fn draw_theme_tooltip(
     text_verts: &mut Vec<TextVertex>,
     text_idx: &mut Vec<u16>,
 ) {
-    let Some(dwell) = sp.hover_widget else {
+    if fade <= 0.0 {
+        return;
+    }
+    let Some((category, index)) = sp.tooltip_snapshot else {
         return;
     };
-    if dwell.category != THEME_CATEGORY || !dwell.is_ready(std::time::Instant::now()) {
+    if category != THEME_CATEGORY {
         return;
     }
 
@@ -143,7 +154,7 @@ pub(in crate::renderer) fn draw_theme_tooltip(
         cell_h,
     };
     let specs = build_theme_widgets(sp, &geometry);
-    let Some(spec) = specs.iter().find(|s| s.id().index == dwell.index) else {
+    let Some(spec) = specs.iter().find(|s| s.id().index == index) else {
         return;
     };
     let Some(text) = spec.desc.tooltip.as_deref() else {
@@ -159,6 +170,8 @@ pub(in crate::renderer) fn draw_theme_tooltip(
         cell_w,
         cell_h,
     };
+    let bg_start = bg_verts.len();
+    let text_start = text_verts.len();
     let mut sink = WidgetSink {
         bg_verts,
         bg_idx,
@@ -174,5 +187,10 @@ pub(in crate::renderer) fn draw_theme_tooltip(
         atlas,
         queue,
         &mut sink,
+    );
+    super::super::fade::apply_surface_fade(
+        &mut bg_verts[bg_start..],
+        &mut text_verts[text_start..],
+        fade,
     );
 }

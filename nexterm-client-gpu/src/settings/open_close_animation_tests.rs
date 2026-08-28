@@ -64,7 +64,12 @@ fn the_close_animation_fades_to_0_and_then_stops_being_visible() {
     assert!(sp.eased_progress(opened) > 0.9);
     let done = opened + Duration::from_millis(150);
     assert!(sp.eased_progress(done).abs() < 1e-3);
-    assert!(sp.closing.is_some_and(|c| c.is_done(done)));
+    assert!(
+        sp.is_visible(),
+        "still drawn until the frame loop retires it"
+    );
+    sp.motion.retire(done);
+    assert!(!sp.is_visible());
 }
 
 /// Reopening mid-fade must pick up the value already on screen, not
@@ -80,10 +85,24 @@ fn reopening_during_the_fade_out_is_continuous() {
     let before = sp.eased_progress(mid);
     sp.open(mid, &on());
     let after = sp.eased_progress(mid);
-    assert!(sp.closing.is_none(), "reopening must cancel the fade-out");
     assert!(
         (after - before).abs() < 5e-2,
         "value jumped on reopen: {before} -> {after}"
+    );
+    // The two samples above are both taken at `mid`, so they cannot tell an
+    // entrance from an un-cancelled exit that merely happened to match the
+    // value at that instant. Sample later instead: only a resumed entrance
+    // rises toward 1.0, while a still-running exit would keep falling
+    // toward 0.
+    let later = mid + Duration::from_millis(50);
+    assert!(
+        sp.motion.is_active(mid),
+        "the resumed entrance needs frames"
+    );
+    assert!(
+        sp.eased_progress(later) > after,
+        "reopening must resume the entrance, not continue the fade-out: {after} -> {}",
+        sp.eased_progress(later)
     );
 }
 
@@ -98,5 +117,59 @@ fn disabled_animations_open_and_close_instantly() {
     assert!((sp.eased_progress(t0) - 1.0).abs() < 1e-4);
     sp.close(t0, &off());
     assert!(sp.eased_progress(t0).abs() < 1e-4);
-    assert!(sp.closing.is_some_and(|c| c.is_done(t0)));
+    sp.motion.retire(t0);
+    assert!(!sp.is_visible());
+}
+
+/// The tooltip has no open flag: `tick_tooltip` turns the dwell predicate
+/// into an entrance and an exit.
+#[test]
+fn the_tooltip_opens_once_the_dwell_is_ready_and_closes_when_it_clears() {
+    use super::hover::{HoverDwell, TOOLTIP_DELAY_MS};
+
+    let mut sp = SettingsPanel::default();
+    let t0 = Instant::now();
+    sp.hover_widget = Some(HoverDwell::enter(None, 2, 0, t0));
+
+    sp.tick_tooltip(t0, &on());
+    assert!(!sp.tooltip_motion.is_visible(), "not yet — still dwelling");
+
+    let ready = t0 + Duration::from_millis(TOOLTIP_DELAY_MS as u64);
+    sp.tick_tooltip(ready, &on());
+    assert!(sp.tooltip_motion.is_visible());
+    assert!(sp.tooltip_motion.progress(ready).abs() < 1e-3);
+    let shown = ready + Duration::from_millis(150);
+    assert!((sp.tooltip_motion.progress(shown) - 1.0).abs() < 1e-3);
+
+    // The pointer leaves the panel.
+    sp.hover_widget = None;
+    sp.tick_tooltip(shown, &on());
+    assert!(sp.tooltip_motion.is_visible(), "it must fade, not vanish");
+    let gone = shown + Duration::from_millis(100);
+    assert!(sp.tooltip_motion.progress(gone).abs() < 1e-3);
+    sp.tooltip_motion.retire(gone);
+    assert!(!sp.tooltip_motion.is_visible());
+}
+
+/// Moving to another control restarts the dwell, so the tooltip that was
+/// showing must close.
+#[test]
+fn moving_to_another_control_closes_the_tooltip() {
+    use super::hover::{HoverDwell, TOOLTIP_DELAY_MS};
+
+    let mut sp = SettingsPanel::default();
+    let t0 = Instant::now();
+    sp.hover_widget = Some(HoverDwell::enter(None, 2, 0, t0));
+    let ready = t0 + Duration::from_millis(TOOLTIP_DELAY_MS as u64);
+    sp.tick_tooltip(ready, &on());
+    assert!(sp.tooltip_motion.is_visible());
+
+    sp.hover_widget = Some(HoverDwell::enter(sp.hover_widget, 2, 1, ready));
+    sp.tick_tooltip(ready, &on());
+    assert!(
+        sp.tooltip_motion
+            .progress(ready + Duration::from_millis(100))
+            .abs()
+            < 1e-3
+    );
 }

@@ -359,6 +359,8 @@ pub struct FileTransferDialog {
     pub host_name: String,
     pub local_path: String,
     pub remote_path: String,
+    /// Open/close animation (UI/UX v3 P3b); render-only, see `is_open`.
+    pub motion: crate::animations::SurfaceMotion,
 }
 
 impl FileTransferDialog {
@@ -370,28 +372,51 @@ impl FileTransferDialog {
             host_name: String::new(),
             local_path: String::new(),
             remote_path: String::new(),
+            motion: crate::animations::SurfaceMotion::default(),
         }
     }
 
-    pub fn open_upload(&mut self) {
+    /// Open the dialog and start its entrance (UI/UX v3 P3b).
+    pub fn open(&mut self, now: std::time::Instant, anim: &nexterm_config::AnimationsConfig) {
+        use crate::animations::{Curve, duration};
+
+        self.motion
+            .open(now, anim, duration::SLOW, Curve::DecelerateMax);
+        self.is_open = true;
+    }
+
+    pub fn open_upload(
+        &mut self,
+        now: std::time::Instant,
+        anim: &nexterm_config::AnimationsConfig,
+    ) {
         self.mode = "upload".to_string();
         self.field = 0;
         self.host_name.clear();
         self.local_path.clear();
         self.remote_path.clear();
-        self.is_open = true;
+        self.open(now, anim);
     }
 
-    pub fn open_download(&mut self) {
+    pub fn open_download(
+        &mut self,
+        now: std::time::Instant,
+        anim: &nexterm_config::AnimationsConfig,
+    ) {
         self.mode = "download".to_string();
         self.field = 0;
         self.host_name.clear();
         self.local_path.clear();
         self.remote_path.clear();
-        self.is_open = true;
+        self.open(now, anim);
     }
 
-    pub fn close(&mut self) {
+    /// Close the dialog and start its exit (UI/UX v3 P3b).
+    pub fn close(&mut self, now: std::time::Instant, anim: &nexterm_config::AnimationsConfig) {
+        use crate::animations::{Curve, duration};
+
+        self.motion
+            .close(now, anim, duration::FAST, Curve::AccelerateMax);
         self.is_open = false;
     }
 

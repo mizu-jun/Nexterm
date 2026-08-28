@@ -14,6 +14,7 @@
 //! (`renderer/mod.rs`) keep using `self.build_*_verts(...)` as before.
 
 mod dialog;
+pub(in crate::renderer) mod fade;
 mod key_hint;
 mod picker;
 mod settings;
