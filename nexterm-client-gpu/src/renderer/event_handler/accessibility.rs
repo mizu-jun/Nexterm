@@ -245,7 +245,10 @@ impl EventHandler {
                         idx, action
                     );
                     // Close the menu before running the action (same order as the existing mouse-click path).
-                    self.app.state.context_menu = None;
+                    self.app.state.dismiss_context_menu(
+                        std::time::Instant::now(),
+                        &self.app.config.animations,
+                    );
                     self.execute_context_menu_action(&action);
                     self.request_redraw_if_window();
                 } else {

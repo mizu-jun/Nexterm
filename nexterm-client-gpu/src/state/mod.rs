@@ -139,6 +139,15 @@ pub struct ClientState {
     pub display_panes_mode: bool,
     /// Context menu opened via right click (None = hidden)
     pub context_menu: Option<ContextMenu>,
+    /// Entrance animation for the context menu (UI/UX v3 P3b).
+    pub context_menu_opening: Option<crate::animations::Timed>,
+    /// Exit animation for the context menu (UI/UX v3 P3b) — **render-only**.
+    ///
+    /// The `Option` above *is* the menu's openness, so dismissing it
+    /// destroys the content the exit animation still needs to draw. The
+    /// ghost owns a clone; `context_menu` goes `None` at once, so nothing
+    /// can be hovered or clicked while it fades.
+    pub context_menu_closing: Option<(ContextMenu, crate::animations::Timed)>,
     /// Whether pane zoom is enabled
     pub is_zoomed: bool,
     /// Quick Select mode
@@ -306,6 +315,11 @@ pub struct ClientState {
     /// While `Some`, the renderer paints a modal dialog. `Enter` confirms,
     /// `Esc` cancels. On Wayland, the `[↗]` path reuses the same dialog.
     pub close_window_dialog: Option<CloseWindowDialog>,
+    /// Entrance animation for the close-window dialog (UI/UX v3 P3b).
+    pub close_window_dialog_opening: Option<crate::animations::Timed>,
+    /// Exit animation for the close-window dialog (UI/UX v3 P3b) —
+    /// **render-only**. See `context_menu_closing` for the rationale.
+    pub close_window_dialog_closing: Option<(CloseWindowDialog, crate::animations::Timed)>,
     /// SR-facing alert queue (Sprint 5-11-5).
     ///
     /// FIFO that exposes Bell / OSC 9 / OSC 777 as `Role::Alert` nodes. Capped
@@ -654,7 +668,111 @@ impl ClientState {
         if self.block_name_modal.motion.is_active(now) || self.file_transfer.motion.is_active(now) {
             return true;
         }
+        if self
+            .context_menu_closing
+            .as_ref()
+            .is_some_and(|(_, t)| !t.is_done(now))
+            || self
+                .close_window_dialog_closing
+                .as_ref()
+                .is_some_and(|(_, t)| !t.is_done(now))
+            || self
+                .context_menu_opening
+                .is_some_and(|t| self.context_menu.is_some() && !t.is_done(now))
+            || self
+                .close_window_dialog_opening
+                .is_some_and(|t| self.close_window_dialog.is_some() && !t.is_done(now))
+        {
+            return true;
+        }
         false
+    }
+
+    /// Show `menu`, starting its entrance (UI/UX v3 P3b).
+    pub fn show_context_menu(
+        &mut self,
+        menu: ContextMenu,
+        now: Instant,
+        anim: &nexterm_config::AnimationsConfig,
+    ) {
+        use crate::animations::{Curve, Timed, duration};
+
+        let ms = anim.scaled_duration_ms(duration::FAST);
+        self.context_menu_closing = None;
+        self.context_menu_opening = Some(Timed::new(now, ms, Curve::DecelerateMax));
+        self.context_menu = Some(menu);
+    }
+
+    /// Dismiss the context menu, leaving a ghost to fade out (UI/UX v3 P3b).
+    pub fn dismiss_context_menu(&mut self, now: Instant, anim: &nexterm_config::AnimationsConfig) {
+        use crate::animations::{Curve, Timed, duration};
+
+        if let Some(menu) = self.context_menu.take() {
+            let ms = anim.scaled_duration_ms(duration::FASTER);
+            self.context_menu_closing = Some((menu, Timed::new(now, ms, Curve::AccelerateMax)));
+        }
+    }
+
+    /// Show `dialog`, starting its entrance (UI/UX v3 P3b).
+    pub fn show_close_window_dialog(
+        &mut self,
+        dialog: CloseWindowDialog,
+        now: Instant,
+        anim: &nexterm_config::AnimationsConfig,
+    ) {
+        use crate::animations::{Curve, Timed, duration};
+
+        let ms = anim.scaled_duration_ms(duration::SLOW);
+        self.close_window_dialog_closing = None;
+        self.close_window_dialog_opening = Some(Timed::new(now, ms, Curve::DecelerateMax));
+        self.close_window_dialog = Some(dialog);
+    }
+
+    /// Dismiss the close-window dialog, leaving a ghost (UI/UX v3 P3b).
+    pub fn dismiss_close_window_dialog(
+        &mut self,
+        now: Instant,
+        anim: &nexterm_config::AnimationsConfig,
+    ) {
+        use crate::animations::{Curve, Timed, duration};
+
+        if let Some(dialog) = self.close_window_dialog.take() {
+            let ms = anim.scaled_duration_ms(duration::FAST);
+            self.close_window_dialog_closing =
+                Some((dialog, Timed::new(now, ms, Curve::AccelerateMax)));
+        }
+    }
+
+    /// Drop every finished ghost (UI/UX v3 P3b). Called once per frame.
+    pub fn retire_ghosts(&mut self, now: Instant) {
+        if self
+            .context_menu_closing
+            .as_ref()
+            .is_some_and(|(_, t)| t.is_done(now))
+        {
+            self.context_menu_closing = None;
+        }
+        if self
+            .close_window_dialog_closing
+            .as_ref()
+            .is_some_and(|(_, t)| t.is_done(now))
+        {
+            self.close_window_dialog_closing = None;
+        }
+    }
+
+    /// Visibility in `[0, 1]` of an `Option`-shaped surface (UI/UX v3 P3b):
+    /// the entrance while it is live, the inverted exit while it is a ghost.
+    pub(crate) fn option_surface_progress(
+        live: bool,
+        opening: Option<crate::animations::Timed>,
+        ghost: Option<&crate::animations::Timed>,
+        now: Instant,
+    ) -> f32 {
+        if live {
+            return opening.map_or(1.0, |t| t.progress(now));
+        }
+        ghost.map_or(0.0, |t| 1.0 - t.progress(now))
     }
 
     pub fn new(cols: u16, rows: u16, scrollback_capacity: usize) -> Self {
@@ -677,6 +795,8 @@ impl ClientState {
             broadcast_mode: false,
             display_panes_mode: false,
             context_menu: None,
+            context_menu_opening: None,
+            context_menu_closing: None,
             is_zoomed: false,
             quick_select: QuickSelectState::new(),
             host_manager: HostManager::new(vec![]),
@@ -719,6 +839,8 @@ impl ClientState {
             foreground_process_status: None,
             pending_close_request: None,
             close_window_dialog: None,
+            close_window_dialog_opening: None,
+            close_window_dialog_closing: None,
             // Sprint 5-11-5: AccessKit Role::Alert notification queue
             alerts: std::collections::VecDeque::new(),
             next_alert_seq: 0,
@@ -1146,5 +1268,64 @@ mod animation_frame_tests {
         let done = opened + Duration::from_millis(150);
         state.file_transfer.motion.retire(done);
         assert!(!state.has_active_animation(done, 200));
+    }
+
+    /// An `Option`-shaped surface must leave the live field `None` the
+    /// instant it is dismissed — nothing can be clicked during the fade —
+    /// while the ghost keeps the renderer supplied with content.
+    #[test]
+    fn a_dismissed_context_menu_leaves_a_ghost_and_wants_frames() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+        state.context_menu = Some(ContextMenu::new_default(10.0, 10.0, &[]));
+
+        state.dismiss_context_menu(t0, &anim);
+        assert!(state.context_menu.is_none(), "input must see it as gone");
+        assert!(
+            state.context_menu_closing.is_some(),
+            "renderer keeps drawing"
+        );
+        assert!(state.has_active_animation(t0, 200));
+
+        let done = t0 + Duration::from_millis(100);
+        state.retire_ghosts(done);
+        assert!(state.context_menu_closing.is_none());
+        assert!(!state.has_active_animation(done, 200));
+    }
+
+    #[test]
+    fn a_dismissed_close_window_dialog_leaves_a_ghost_and_wants_frames() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+        state.close_window_dialog = Some(CloseWindowDialog {
+            server_window_id: 1,
+            message: "close?".to_string(),
+            kill_label: "Close".to_string(),
+            cancel_label: "Cancel".to_string(),
+            selected_button: 0,
+        });
+
+        state.dismiss_close_window_dialog(t0, &anim);
+        assert!(state.close_window_dialog.is_none());
+        assert!(state.close_window_dialog_closing.is_some());
+        assert!(state.has_active_animation(t0, 200));
+
+        let done = t0 + Duration::from_millis(150);
+        state.retire_ghosts(done);
+        assert!(state.close_window_dialog_closing.is_none());
+        assert!(!state.has_active_animation(done, 200));
+    }
+
+    /// Dismissing twice in a row must not resurrect the first ghost.
+    #[test]
+    fn dismissing_an_absent_context_menu_is_a_no_op() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+        state.dismiss_context_menu(t0, &anim);
+        assert!(state.context_menu_closing.is_none());
+        assert!(!state.has_active_animation(t0, 200));
     }
 }

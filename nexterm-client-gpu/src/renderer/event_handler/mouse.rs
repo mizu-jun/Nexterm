@@ -642,8 +642,11 @@ impl EventHandler {
         };
         let menu_x = anchor_x.min(win_w - menu_w_px).max(0.0) as f32;
         let menu_y = tab_bar_h.min(win_h - menu_h_px).max(0.0) as f32;
-        self.app.state.context_menu =
-            Some(ContextMenu::new_tab_dropdown(menu_x, menu_y, &profile_list));
+        self.app.state.show_context_menu(
+            ContextMenu::new_tab_dropdown(menu_x, menu_y, &profile_list),
+            std::time::Instant::now(),
+            &self.app.config.animations,
+        );
         if let Some(w) = &self.window {
             w.request_redraw();
         }
@@ -745,7 +748,11 @@ impl EventHandler {
             let menu_x = (px).min(win_w - menu_w_px).max(0.0) as f32;
             let menu_y = (py).min(win_h - menu_h_px).max(0.0) as f32;
 
-            self.app.state.context_menu = Some(build(menu_x, menu_y));
+            self.app.state.show_context_menu(
+                build(menu_x, menu_y),
+                std::time::Instant::now(),
+                &self.app.config.animations,
+            );
             if let Some(w) = &self.window {
                 w.request_redraw();
             }
@@ -1642,7 +1649,7 @@ impl EventHandler {
 
         // If a context menu is open, handle the click on it.
         if let Some((px, py)) = self.cursor_position
-            && let Some(menu) = self.app.state.context_menu.take()
+            && self.app.state.context_menu.is_some()
         {
             let cell_w = self.app.font.cell_width();
             let cell_h = self.app.font.cell_height();
@@ -1651,14 +1658,27 @@ impl EventHandler {
             let menu_w = 18.0 * cell_w;
             let fx = px as f32;
             let fy = py as f32;
-            if fx >= menu.x && fx <= menu.x + menu_w {
+            let mut hit_action = None;
+            if let Some(menu) = &self.app.state.context_menu
+                && fx >= menu.x
+                && fx <= menu.x + menu_w
+            {
                 for (i, item) in menu.items.iter().enumerate() {
                     let item_y = menu.y + i as f32 * cell_h;
                     if fy >= item_y && fy < item_y + cell_h {
-                        self.execute_context_menu_action(&item.action);
+                        hit_action = Some(item.action.clone());
                         break;
                     }
                 }
+            }
+            // Any click while the menu is open dismisses it (UI/UX v3 P3b:
+            // through the helper, so the exit animation always runs), then
+            // the hit action — if any — is executed on a menu-less state.
+            self.app
+                .state
+                .dismiss_context_menu(std::time::Instant::now(), &self.app.config.animations);
+            if let Some(action) = hit_action {
+                self.execute_context_menu_action(&action);
             }
             if let Some(w) = &self.window {
                 w.request_redraw();

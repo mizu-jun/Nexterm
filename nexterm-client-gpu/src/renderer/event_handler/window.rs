@@ -164,7 +164,10 @@ impl EventHandler {
             None
         };
         if let Some(kill) = dialog_decision {
-            self.app.state.close_window_dialog = None;
+            self.app.state.dismiss_close_window_dialog(
+                std::time::Instant::now(),
+                &self.app.config.animations,
+            );
             self.app.state.pending_close_request = None;
             if kill {
                 if let Some(conn) = &self.connection {
@@ -207,13 +210,17 @@ impl EventHandler {
             let message = nexterm_i18n::fl!("close_window_confirm_foreground");
             let kill_label = nexterm_i18n::fl!("close_window_button_kill");
             let cancel_label = nexterm_i18n::fl!("close_window_button_cancel");
-            self.app.state.close_window_dialog = Some(crate::state::CloseWindowDialog {
-                server_window_id: req.server_window_id,
-                message,
-                kill_label,
-                cancel_label,
-                selected_button: 1, // Default focus to Cancel (the safer side).
-            });
+            self.app.state.show_close_window_dialog(
+                crate::state::CloseWindowDialog {
+                    server_window_id: req.server_window_id,
+                    message,
+                    kill_label,
+                    cancel_label,
+                    selected_button: 1, // Default focus to Cancel (the safer side).
+                },
+                std::time::Instant::now(),
+                &self.app.config.animations,
+            );
             if let Some(w) = &self.window {
                 w.request_redraw();
             }

@@ -4,7 +4,7 @@
 
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
-use crate::state::{ClientState, ContextMenu};
+use crate::state::{ClientState, CloseWindowDialog, ContextMenu};
 use crate::vertex_util::{add_px_rect, add_string_verts, visual_width};
 
 use super::super::WgpuState;
@@ -565,7 +565,7 @@ impl WgpuState {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::renderer) fn build_close_window_dialog_verts(
         &self,
-        state: &ClientState,
+        dialog: &CloseWindowDialog,
         tokens: &nexterm_config::DesignTokens,
         sw: f32,
         sh: f32,
@@ -579,10 +579,6 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
-        let Some(dialog) = &state.close_window_dialog else {
-            return;
-        };
-
         // Semi-transparent overlay (full screen; visual shield that prevents accidental clicks)
         add_px_rect(
             0.0,

@@ -1144,8 +1144,19 @@ impl WgpuState {
             }
         }
 
-        // ---- Context menu (on right-click) ----
-        if let Some(ref menu) = state.context_menu {
+        // ---- Context menu (on right-click; ghost while it fades) ----
+        let menu_to_draw = state
+            .context_menu
+            .as_ref()
+            .or(state.context_menu_closing.as_ref().map(|(m, _)| m));
+        if let Some(menu) = menu_to_draw {
+            let progress = ClientState::option_surface_progress(
+                state.context_menu.is_some(),
+                state.context_menu_opening,
+                state.context_menu_closing.as_ref().map(|(_, t)| t),
+                frame_now,
+            );
+            let (bg_start, text_start) = (bg_verts.len(), text_verts.len());
             self.build_context_menu_verts(
                 menu,
                 &tokens,
@@ -1160,6 +1171,11 @@ impl WgpuState {
                 &mut bg_idx,
                 &mut text_verts,
                 &mut text_idx,
+            );
+            super::overlay::fade::apply_surface_fade(
+                &mut bg_verts[bg_start..],
+                &mut text_verts[text_start..],
+                progress,
             );
         }
 
@@ -1245,9 +1261,21 @@ impl WgpuState {
         // ---- Window-close confirmation dialog (Sprint 5-9 Phase 4-6) ----
         // Shown when `close_action = "prompt"` detects a foreground process.
         // Like the sensitive-operation consent dialog, it is layered on top.
-        if state.close_window_dialog.is_some() {
+        // Ghost while it fades (UI/UX v3 P3b), same shape as the context menu.
+        let close_dialog_to_draw = state
+            .close_window_dialog
+            .as_ref()
+            .or(state.close_window_dialog_closing.as_ref().map(|(d, _)| d));
+        if let Some(dialog) = close_dialog_to_draw {
+            let progress = ClientState::option_surface_progress(
+                state.close_window_dialog.is_some(),
+                state.close_window_dialog_opening,
+                state.close_window_dialog_closing.as_ref().map(|(_, t)| t),
+                frame_now,
+            );
+            let (bg_start, text_start) = (bg_verts.len(), text_verts.len());
             self.build_close_window_dialog_verts(
-                state,
+                dialog,
                 &tokens,
                 sw,
                 sh,
@@ -1260,6 +1288,11 @@ impl WgpuState {
                 &mut bg_idx,
                 &mut text_verts,
                 &mut text_idx,
+            );
+            super::overlay::fade::apply_surface_fade(
+                &mut bg_verts[bg_start..],
+                &mut text_verts[text_start..],
+                progress,
             );
         }
 
