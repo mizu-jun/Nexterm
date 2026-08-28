@@ -85,10 +85,24 @@ fn reopening_during_the_fade_out_is_continuous() {
     let before = sp.eased_progress(mid);
     sp.open(mid, &on());
     let after = sp.eased_progress(mid);
-    assert!(sp.is_open, "reopening must cancel the fade-out");
     assert!(
         (after - before).abs() < 5e-2,
         "value jumped on reopen: {before} -> {after}"
+    );
+    // The two samples above are both taken at `mid`, so they cannot tell an
+    // entrance from an un-cancelled exit that merely happened to match the
+    // value at that instant. Sample later instead: only a resumed entrance
+    // rises toward 1.0, while a still-running exit would keep falling
+    // toward 0.
+    let later = mid + Duration::from_millis(50);
+    assert!(
+        sp.motion.is_active(mid),
+        "the resumed entrance needs frames"
+    );
+    assert!(
+        sp.eased_progress(later) > after,
+        "reopening must resume the entrance, not continue the fade-out: {after} -> {}",
+        sp.eased_progress(later)
     );
 }
 
