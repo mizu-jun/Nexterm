@@ -102,7 +102,7 @@ impl EventHandler {
         let panel_w = (sw * 0.72).min(sw - cell_w * 4.0);
         let panel_h = (sh * 0.75).min(sh - cell_h * 4.0);
         let base_x = (sw - panel_w) / 2.0;
-        let eased = sp.eased_progress();
+        let eased = sp.eased_progress(std::time::Instant::now());
         let slide_offset = (1.0 - eased) * 16.0;
         let base_y = (sh - panel_h) / 2.0 + slide_offset;
         // Phase 3 (UI 4-tasks, 2026-06-12): mirror the drag offset + clamp

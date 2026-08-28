@@ -1089,7 +1089,7 @@ impl WgpuState {
         // here — where `state` is `&mut` — we feed it back and stash the
         // scissor rect + index ranges for the main render pass below.
         let mut settings_scroll_clip: Option<SettingsPanelScrollMetrics> = None;
-        if state.settings_panel.is_open {
+        if state.settings_panel.is_visible() {
             let metrics = self.build_settings_panel_verts(
                 state,
                 &tokens,
@@ -1097,6 +1097,7 @@ impl WgpuState {
                 sh,
                 cell_w,
                 cell_h,
+                frame_now,
                 panel_acrylic_mix,
                 font,
                 atlas,

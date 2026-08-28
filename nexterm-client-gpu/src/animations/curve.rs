@@ -60,10 +60,6 @@ pub enum Curve {
     EasyEase,
 }
 
-// `dead_code` is allowed for the same reason as on the `Curve` and `duration`
-// declarations above: `eval`/`invert`/`control_points` are consumed starting
-// with Task 3 of UI/UX v3 P3a, not this task.
-#[allow(dead_code)]
 impl Curve {
     /// The `(x1, y1, x2, y2)` control points, matching the CSS
     /// `cubic-bezier()` argument order.
@@ -116,17 +112,12 @@ impl Curve {
 }
 
 /// One axis of a cubic bezier with the endpoints pinned to 0 and 1.
-///
-/// `dead_code` allowed: only reachable through `Curve::eval`/`invert`, which
-/// are themselves unconsumed until Task 3.
-#[allow(dead_code)]
 fn axis(p1: f32, p2: f32, s: f32) -> f32 {
     let u = 1.0 - s;
     3.0 * u * u * s * p1 + 3.0 * u * s * s * p2 + s * s * s
 }
 
 /// Derivative of [`axis`] with respect to `s`.
-#[allow(dead_code)]
 fn axis_derivative(p1: f32, p2: f32, s: f32) -> f32 {
     let u = 1.0 - s;
     3.0 * u * u * p1 + 6.0 * u * s * (p2 - p1) + 3.0 * s * s * (1.0 - p2)
@@ -140,7 +131,6 @@ fn axis_derivative(p1: f32, p2: f32, s: f32) -> f32 {
 /// `[0, 1]`; bisection then finishes the job. X is monotone in `s` for every
 /// curve in the table (all control points lie in `[0, 1]`), so bisection
 /// always converges.
-#[allow(dead_code)]
 fn solve_for_x(x1: f32, x2: f32, t: f32) -> f32 {
     const EPSILON: f32 = 1e-6;
 

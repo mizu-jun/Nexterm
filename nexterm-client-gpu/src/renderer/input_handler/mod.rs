@@ -198,10 +198,17 @@ impl EventHandler {
 
         // Ctrl+,: toggle the settings panel
         if ctrl && code == WKeyCode::Comma {
+            let now = std::time::Instant::now();
             if self.app.state.settings_panel.is_open {
-                self.app.state.settings_panel.close();
+                self.app
+                    .state
+                    .settings_panel
+                    .close(now, &self.app.config.animations);
             } else {
-                self.app.state.settings_panel.open();
+                self.app
+                    .state
+                    .settings_panel
+                    .open(now, &self.app.config.animations);
             }
             return true;
         }
@@ -380,7 +387,11 @@ impl EventHandler {
         // Escape: close search / palette / host manager
         if code == WKeyCode::Escape {
             if self.app.state.settings_panel.is_open {
-                self.app.state.settings_panel.close();
+                let now = std::time::Instant::now();
+                self.app
+                    .state
+                    .settings_panel
+                    .close(now, &self.app.config.animations);
                 return true;
             } else if self.app.state.palette.is_open {
                 self.app.state.palette.close();
@@ -548,7 +559,11 @@ impl EventHandler {
                         // a second Esc (no query, no focus) closes the panel.
                         self.app.state.settings_panel.clear_search();
                     } else {
-                        self.app.state.settings_panel.close();
+                        let now = std::time::Instant::now();
+                        self.app
+                            .state
+                            .settings_panel
+                            .close(now, &self.app.config.animations);
                     }
                 }
                 WKeyCode::Backspace if self.app.state.settings_panel.search_focused && !editing => {
@@ -652,7 +667,7 @@ impl EventHandler {
                             sp.begin_leader_key_edit();
                         } else {
                             let _ = sp.save_to_toml();
-                            sp.close();
+                            sp.close(std::time::Instant::now(), &self.app.config.animations);
                         }
                     }
                 }

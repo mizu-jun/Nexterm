@@ -82,6 +82,7 @@ impl WgpuState {
         sh: f32,
         cell_w: f32,
         cell_h: f32,
+        now: std::time::Instant,
         acrylic_mix: f32,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
@@ -93,12 +94,13 @@ impl WgpuState {
         use crate::settings_panel::SettingsCategory;
 
         let sp = &state.settings_panel;
-        if !sp.is_open {
+        if !sp.is_visible() {
             return None;
         }
 
-        // Open/close animation: smoothly via ease-out cubic
-        let eased = sp.eased_progress();
+        // Open/close animation (UI/UX v3 P3a): Fluent Direct Entrance in,
+        // Gentle Exit out. 0 = hidden, 1 = fully shown.
+        let eased = sp.eased_progress(now);
 
         // Note: the historical straight-alpha vs `PreMultiplied`-surface
         // mismatch (issue #35, "Phase B3 known issue") was fixed in UI/UX v3

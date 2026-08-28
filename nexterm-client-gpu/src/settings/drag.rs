@@ -40,10 +40,15 @@ impl SettingsPanel {
         self.drag_anchor.is_some()
     }
 
-    /// Ease-out cubic: smooth deceleration via `1 - (1-t)^3`.
-    pub fn eased_progress(&self) -> f32 {
-        let t = self.open_progress.clamp(0.0, 1.0);
-        1.0 - (1.0 - t).powi(3)
+    /// Panel visibility in `[0, 1]`: 0 fully hidden, 1 fully shown.
+    ///
+    /// The curve now comes from the `Timed` (UI/UX v3 P3a) rather than the
+    /// hand-rolled ease-out this used to apply.
+    pub fn eased_progress(&self, now: std::time::Instant) -> f32 {
+        if let Some(closing) = self.closing {
+            return 1.0 - closing.progress(now);
+        }
+        self.open_anim.map_or(0.0, |a| a.progress(now))
     }
 }
 
@@ -202,7 +207,10 @@ mod panel_drag_tests {
         let mut panel = SettingsPanel::new(&config);
         panel.start_drag(0.0, 0.0);
         panel.update_drag(123.0, 45.0);
-        panel.close();
+        panel.close(
+            std::time::Instant::now(),
+            &nexterm_config::AnimationsConfig::default(),
+        );
         assert_eq!(panel.drag_offset, (0.0, 0.0));
         assert!(!panel.is_dragging());
     }

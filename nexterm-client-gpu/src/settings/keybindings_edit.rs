@@ -271,7 +271,10 @@ mod tests {
     fn close_panel_resets_key_editing() {
         let mut panel = panel_with_one_binding();
         panel.begin_key_record();
-        panel.close();
+        panel.close(
+            std::time::Instant::now(),
+            &nexterm_config::AnimationsConfig::default(),
+        );
         assert!(panel.key_editing.is_none());
     }
 

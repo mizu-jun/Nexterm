@@ -75,9 +75,14 @@ pub struct SliderDrag {
 /// Settings-panel state.
 pub struct SettingsPanel {
     pub is_open: bool,
-    /// Open/close animation progress (0.0 = fully closed, 1.0 = fully open).
-    /// Incremented every frame by the renderer.
-    pub open_progress: f32,
+    /// Entrance animation. `Some` from the moment the panel opens; its
+    /// progress is the panel's visibility while `is_open`.
+    pub open_anim: Option<crate::animations::Timed>,
+    /// Exit animation — **render-only**. `is_open` goes false the instant
+    /// the user dismisses the panel, so input routing and the AccessKit
+    /// tree see it as closed immediately; this field is the renderer's
+    /// permission to keep drawing it for another few frames while it fades.
+    pub closing: Option<crate::animations::Timed>,
     /// Slider currently being dragged with the mouse (`None` when no drag).
     pub drag_slider: Option<SliderDrag>,
     /// Currently selected category.
@@ -355,7 +360,8 @@ impl SettingsPanel {
             .unwrap_or(0);
         Self {
             is_open: false,
-            open_progress: 0.0,
+            open_anim: None,
+            closing: None,
             drag_slider: None,
             category: SettingsCategory::Font,
             font_size: config.font.size,
@@ -433,15 +439,47 @@ impl SettingsPanel {
         }
     }
 
-    pub fn open(&mut self) {
+    /// Open the panel and start its entrance animation.
+    ///
+    /// Fluent calls this a Direct Entrance: arrive quickly, settle gently.
+    /// Reopening while the exit animation is still running resumes from the
+    /// value already on screen rather than replaying from 0.
+    pub fn open(&mut self, now: std::time::Instant, anim: &nexterm_config::AnimationsConfig) {
+        use crate::animations::{Curve, Timed, duration};
+
+        let ms = anim.scaled_duration_ms(duration::NORMAL);
+        // Read the value on screen *before* touching either field —
+        // `eased_progress` derives it from them.
+        let resume_from = self.closing.is_some().then(|| self.eased_progress(now));
+        self.closing = None;
+        self.open_anim = Some(match resume_from {
+            Some(v) => Timed::resuming_at(now, v, ms, Curve::DecelerateMax),
+            None => Timed::new(now, ms, Curve::DecelerateMax),
+        });
         self.is_open = true;
-        // Start the animation from 0 to replay the open transition.
-        self.open_progress = 0.0;
     }
 
-    pub fn close(&mut self) {
+    /// Close the panel and start its exit animation.
+    ///
+    /// Fluent calls this a Gentle Exit: linger, then leave quickly. `is_open`
+    /// goes false here, not when the animation ends — pressing Esc means the
+    /// panel is closed, whatever is still on screen.
+    pub fn close(&mut self, now: std::time::Instant, anim: &nexterm_config::AnimationsConfig) {
+        use crate::animations::{Curve, Timed, duration};
+
+        let ms = anim.scaled_duration_ms(duration::FAST);
+        // As in `open`: read the on-screen value first. `closing` counts up
+        // while visibility counts down, hence the inversion.
+        let visibility = self.eased_progress(now);
+        self.open_anim = None;
+        self.closing = Some(Timed::resuming_at(
+            now,
+            1.0 - visibility,
+            ms,
+            Curve::AccelerateMax,
+        ));
         self.is_open = false;
-        self.open_progress = 0.0;
+
         self.drag_slider = None;
         self.dirty = false;
         self.font_family_editing = false;
@@ -468,6 +506,13 @@ impl SettingsPanel {
         self.scroll.reset();
         // Phase B4: also leave shell-field edit mode.
         self.shell_field_editing = None;
+    }
+
+    /// Whether the renderer should draw the panel at all.
+    ///
+    /// True while open, and while an exit animation is still running.
+    pub fn is_visible(&self) -> bool {
+        self.is_open || self.closing.is_some()
     }
 
     /// Switch to `cat`, resetting the state that only made sense in the
@@ -670,9 +715,113 @@ mod tests {
     fn close_resets_scroll_offset() {
         let config = Config::default();
         let mut panel = SettingsPanel::new(&config);
-        panel.open();
+        let now = std::time::Instant::now();
+        let anim = nexterm_config::AnimationsConfig::default();
+        panel.open(now, &anim);
         panel.scroll.offset_px = 80.0;
-        panel.close();
+        panel.close(now, &anim);
         assert_eq!(panel.scroll.offset_px, 0.0);
+    }
+}
+
+#[cfg(test)]
+mod open_close_animation_tests {
+    use super::*;
+    use nexterm_config::AnimationsConfig;
+    use std::time::{Duration, Instant};
+
+    fn on() -> AnimationsConfig {
+        AnimationsConfig::default()
+    }
+
+    fn off() -> AnimationsConfig {
+        AnimationsConfig {
+            enabled: false,
+            ..AnimationsConfig::default()
+        }
+    }
+
+    #[test]
+    fn a_fresh_panel_is_closed_and_invisible() {
+        let sp = SettingsPanel::default();
+        assert!(!sp.is_open);
+        assert!(!sp.is_visible());
+        assert!(sp.eased_progress(Instant::now()).abs() < 1e-4);
+    }
+
+    #[test]
+    fn open_runs_from_0_to_1_over_the_entrance_duration() {
+        let mut sp = SettingsPanel::default();
+        let t0 = Instant::now();
+        sp.open(t0, &on());
+        assert!(sp.is_open);
+        assert!(sp.is_visible());
+        assert!(sp.eased_progress(t0).abs() < 1e-3);
+        assert!((sp.eased_progress(t0 + Duration::from_millis(200)) - 1.0).abs() < 1e-3);
+    }
+
+    /// `is_open` is the truth for input routing and the AccessKit tree, so
+    /// dismissing the panel must close it at once. Only the renderer knows
+    /// about the fade-out.
+    #[test]
+    fn close_closes_logically_but_keeps_the_panel_visible() {
+        let mut sp = SettingsPanel::default();
+        let t0 = Instant::now();
+        sp.open(t0, &on());
+        let t1 = t0 + Duration::from_millis(200);
+        sp.close(t1, &on());
+        assert!(!sp.is_open);
+        assert!(sp.is_visible());
+        assert!(sp.eased_progress(t1) > 0.9);
+    }
+
+    #[test]
+    fn the_close_animation_fades_to_0_and_then_stops_being_visible() {
+        let mut sp = SettingsPanel::default();
+        let t0 = Instant::now();
+        sp.open(t0, &on());
+        // Let the entrance finish first: closing a panel that is still at 0
+        // produces an exit animation that is born finished, which would make
+        // this test pass without exercising the fade at all.
+        let opened = t0 + Duration::from_millis(200);
+        sp.close(opened, &on());
+        assert!(sp.eased_progress(opened) > 0.9);
+        let done = opened + Duration::from_millis(150);
+        assert!(sp.eased_progress(done).abs() < 1e-3);
+        assert!(sp.closing.is_some_and(|c| c.is_done(done)));
+    }
+
+    /// Reopening mid-fade must pick up the value already on screen, not
+    /// snap to 0 and replay the entrance.
+    #[test]
+    fn reopening_during_the_fade_out_is_continuous() {
+        let mut sp = SettingsPanel::default();
+        let t0 = Instant::now();
+        sp.open(t0, &on());
+        let opened = t0 + Duration::from_millis(200);
+        sp.close(opened, &on());
+        let mid = opened + Duration::from_millis(75);
+        let before = sp.eased_progress(mid);
+        sp.open(mid, &on());
+        let after = sp.eased_progress(mid);
+        assert!(sp.closing.is_none(), "reopening must cancel the fade-out");
+        assert!(
+            (after - before).abs() < 5e-2,
+            "value jumped on reopen: {before} -> {after}"
+        );
+    }
+
+    /// The reduced-motion path. `scaled_duration_ms` returns 0 when
+    /// animations are disabled, so both transitions are finished the moment
+    /// they start.
+    #[test]
+    fn disabled_animations_open_and_close_instantly() {
+        let mut sp = SettingsPanel::default();
+        let t0 = Instant::now();
+        sp.open(t0, &off());
+        assert!((sp.eased_progress(t0) - 1.0).abs() < 1e-4);
+        sp.close(t0, &off());
+        assert!(sp.eased_progress(t0).abs() < 1e-4);
+        assert!(sp.closing.is_some_and(|c| c.is_done(t0)));
     }
 }

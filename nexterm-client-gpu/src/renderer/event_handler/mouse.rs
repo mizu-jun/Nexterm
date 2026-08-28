@@ -868,7 +868,11 @@ impl EventHandler {
                 match hit {
                     SettingsPanelHit::Outside => {
                         // Click outside the panel → close the panel.
-                        self.app.state.settings_panel.close();
+                        let now = std::time::Instant::now();
+                        self.app
+                            .state
+                            .settings_panel
+                            .close(now, &self.app.config.animations);
                     }
                     SettingsPanelHit::OpenConfigFile => {
                         // P4 (WT-like UX): open config.toml with the OS

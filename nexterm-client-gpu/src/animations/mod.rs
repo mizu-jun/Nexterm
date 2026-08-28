@@ -25,14 +25,10 @@ mod curve;
 mod easing;
 mod timed;
 
-// `unused_imports` is allowed here for the same reason as the `dead_code`
-// allows inside `curve.rs`: `Curve` and `duration` are re-exported now but
-// not consumed by any caller until Task 3 (Curve::invert) and Tasks 5/6
-// (duration) of UI/UX v3 P3a.
-#[allow(unused_imports)]
+// `Curve` and `duration` are re-exported for `Timed`'s callers; the
+// settings panel (Task 6 of UI/UX v3 P3a) is the first consumer.
 pub use curve::{Curve, duration};
 pub use easing::{compute_progress, ease_out_cubic};
-#[allow(unused_imports)]
 pub use timed::Timed;
 
 use std::collections::HashMap;

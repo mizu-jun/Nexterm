@@ -25,11 +25,6 @@ use std::time::{Duration, Instant};
 use super::curve::Curve;
 
 /// One time-based animation.
-///
-/// `dead_code` is allowed here for the same reason as on `Curve` in
-/// `curve.rs`: `Timed` is re-exported now but has no caller until Task 6 of
-/// UI/UX v3 P3a wires it into the renderer.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub struct Timed {
     start: Instant,
@@ -37,9 +32,6 @@ pub struct Timed {
     curve: Curve,
 }
 
-// `dead_code` is allowed for the same reason as on the `Timed` declaration
-// above: these methods are unconsumed until Task 6.
-#[allow(dead_code)]
 impl Timed {
     /// Start an animation at `start`.
     ///

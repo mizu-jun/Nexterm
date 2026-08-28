@@ -664,14 +664,13 @@ impl EventHandler {
             w.request_redraw();
         }
 
-        // Advance the settings-panel open/close animation
-        // (assumes 60 fps: about 8 frames = 0.13 s).
+        // UI/UX v3 P3a: drop a finished exit animation so the renderer stops
+        // drawing the panel. The entrance animation is left in place; it is
+        // the panel's visibility while it is open.
+        let now = Instant::now();
         let sp = &mut self.app.state.settings_panel;
-        if sp.is_open && sp.open_progress < 1.0 {
-            sp.open_progress = (sp.open_progress + 0.15).min(1.0);
-            if let Some(w) = &self.window {
-                w.request_redraw();
-            }
+        if sp.closing.is_some_and(|c| c.is_done(now)) {
+            sp.closing = None;
         }
 
         // Sprint 5-7 / Phase 2-2: Quake-mode handling.

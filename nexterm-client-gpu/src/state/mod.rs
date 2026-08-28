@@ -639,7 +639,14 @@ impl ClientState {
     /// migrated. Adding a surface means adding a clause; there is no
     /// registry to keep in sync.
     pub fn has_active_animation(&self, now: Instant, fade_duration_ms: u32) -> bool {
-        self.animations.has_active_animation(now, fade_duration_ms)
+        if self.animations.has_active_animation(now, fade_duration_ms) {
+            return true;
+        }
+        let sp = &self.settings_panel;
+        if sp.closing.is_some_and(|c| !c.is_done(now)) {
+            return true;
+        }
+        sp.is_open && sp.open_anim.is_some_and(|a| !a.is_done(now))
     }
 
     pub fn new(cols: u16, rows: u16, scrollback_capacity: usize) -> Self {
@@ -1014,5 +1021,32 @@ mod animation_frame_tests {
         let now = std::time::Instant::now();
         state.animations.record_pane_added(1, now);
         assert!(!state.has_active_animation(now, 0));
+    }
+
+    #[test]
+    fn an_opening_settings_panel_wants_animation_frames() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let now = std::time::Instant::now();
+        state
+            .settings_panel
+            .open(now, &nexterm_config::AnimationsConfig::default());
+        assert!(state.has_active_animation(now, 250));
+        let done = now + std::time::Duration::from_millis(200);
+        assert!(!state.has_active_animation(done, 250));
+    }
+
+    #[test]
+    fn a_closing_settings_panel_wants_animation_frames() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let t0 = std::time::Instant::now();
+        let anim = nexterm_config::AnimationsConfig::default();
+        state.settings_panel.open(t0, &anim);
+        // Close only after the entrance has finished — closing at 0
+        // visibility yields an exit that is born done and proves nothing.
+        let opened = t0 + std::time::Duration::from_millis(200);
+        state.settings_panel.close(opened, &anim);
+        assert!(state.has_active_animation(opened, 250));
+        let done = opened + std::time::Duration::from_millis(150);
+        assert!(!state.has_active_animation(done, 250));
     }
 }
