@@ -281,6 +281,38 @@ pub(crate) fn composite_over(fg: [f32; 4], bg: [f32; 3]) -> [f32; 3] {
     ]
 }
 
+/// Linearly interpolate two RGBA colours, `t` clamped to `[0, 1]`.
+///
+/// Used by the hover cross-fade (UI/UX v3 P3b2), where the hovered
+/// appearance is a *different colour* rather than an extra layer — a
+/// brightened tab background, an accent-tinted menu row — so alpha scaling
+/// cannot express the transition and the colour itself has to move.
+///
+/// Interpolation is in whatever space the tokens already are (linear-ish
+/// sRGB floats, as everywhere else in this renderer); no gamma correction is
+/// applied, matching how the palette's existing blends behave.
+///
+/// `t <= 0.0` and `t >= 1.0` return `a` / `b` directly rather than going
+/// through the arithmetic below: floating-point subtraction and
+/// multiplication do not round-trip exactly (e.g. `0.1 + (0.9 - 0.1) * 1.0`
+/// is not bit-identical to `0.9`), and these are also the overwhelmingly
+/// common weights — most frames have no transition running at all.
+#[allow(dead_code)] // First consumer lands in Task 4.
+pub(crate) fn lerp_rgba(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+    if t <= 0.0 {
+        return a;
+    }
+    if t >= 1.0 {
+        return b;
+    }
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+        a[3] + (b[3] - a[3]) * t,
+    ]
+}
+
 /// Return `color` with its alpha channel replaced by `alpha`.
 ///
 /// Design tokens carry their own alpha (usually 1.0); overlay elements such
@@ -328,6 +360,34 @@ pub(crate) fn on_surface_text(fill: [f32; 4]) -> [f32; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lerp_rgba_hits_both_endpoints_exactly() {
+        let a = [0.1, 0.2, 0.3, 1.0];
+        let b = [0.9, 0.8, 0.7, 0.5];
+        assert_eq!(lerp_rgba(a, b, 0.0), a);
+        assert_eq!(lerp_rgba(a, b, 1.0), b);
+    }
+
+    #[test]
+    fn lerp_rgba_is_linear_at_the_midpoint() {
+        let m = lerp_rgba([0.0, 0.0, 0.0, 0.0], [1.0, 0.5, 0.25, 1.0], 0.5);
+        assert!((m[0] - 0.5).abs() < 1e-6);
+        assert!((m[1] - 0.25).abs() < 1e-6);
+        assert!((m[2] - 0.125).abs() < 1e-6);
+        assert!((m[3] - 0.5).abs() < 1e-6);
+    }
+
+    /// A weight arrives from an eased curve and is already clamped, but a
+    /// colour helper that trusts its caller is a colour helper that produces
+    /// out-of-range channels the first time someone doesn't.
+    #[test]
+    fn lerp_rgba_clamps_t() {
+        let a = [0.0, 0.0, 0.0, 0.0];
+        let b = [1.0, 1.0, 1.0, 1.0];
+        assert_eq!(lerp_rgba(a, b, -0.5), a);
+        assert_eq!(lerp_rgba(a, b, 1.5), b);
+    }
 
     #[test]
     fn with_alpha_replaces_only_the_alpha_channel() {
