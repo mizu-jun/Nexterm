@@ -376,9 +376,8 @@ mod tests {
         let focused = focused(spec_at(WidgetKind::Toggle { on: false }));
         assert_eq!(bg_quads(|t, s| draw_row_background(&focused, t, s)), 1);
 
-        // UI/UX v3 P3b2: hover is now weight-driven rather than the
-        // `spec.hovered` bool, so a fully-settled hover transition stands in
-        // for the old `.hovered(true)`.
+        // UI/UX v3 P3b2: hover is weight-driven, so a fully-settled hover
+        // transition is what marks this spec as hovered.
         let spec = spec_at(WidgetKind::Toggle { on: false });
         let mut hover: HoverTransition<WidgetId> = Default::default();
         let now = Instant::now();

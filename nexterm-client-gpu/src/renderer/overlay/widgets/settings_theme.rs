@@ -146,11 +146,6 @@ pub(crate) fn theme_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
 /// Lay the Theme tab out for this frame.
 pub(crate) fn build_theme_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<WidgetSpec> {
     let layout = super::super::settings::layout::compute_row_layout(g.content_w, g.cell_w);
-    // The pointer is over at most one widget of this category.
-    let hovered = sp
-        .hover_widget
-        .filter(|h| h.category == THEME_CATEGORY)
-        .map(|h| h.index);
 
     let row = |text_y: f32| {
         let rect = row_rect(g, text_y);
@@ -181,7 +176,7 @@ pub(crate) fn build_theme_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<Wi
             } else {
                 row(scheme_row_y(g))
             };
-            desc.place(rect, control).hovered(hovered == Some(index))
+            desc.place(rect, control)
         })
         .collect()
 }

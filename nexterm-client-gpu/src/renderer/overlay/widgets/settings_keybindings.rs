@@ -213,10 +213,6 @@ pub(crate) fn keybindings_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
 /// for `hit_test` and `draw_widget`, still described for the AccessKit tree.
 pub(crate) fn build_keybindings_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<WidgetSpec> {
     let layout = super::super::settings::layout::compute_row_layout(g.content_w, g.cell_w);
-    let hovered = sp
-        .hover_widget
-        .filter(|h| h.category == KEYBINDINGS_CATEGORY)
-        .map(|h| h.index);
     let w = key_list_window(sp);
     let fields_top = key_fields_top(sp, g.content_top, g.cell_h);
     let btn_y = buttons_y(sp, g.content_top, g.cell_h);
@@ -267,7 +263,7 @@ pub(crate) fn build_keybindings_widgets(sp: &SettingsPanel, g: &TabGeometry) -> 
                 let fi = (index - row::FIELD_KEY) as f32;
                 field_rect(fields_top + g.cell_h * (FIELD_FIRST + fi * FIELD_PITCH))
             };
-            desc.place(rect, control).hovered(hovered == Some(index))
+            desc.place(rect, control)
         })
         .collect()
 }

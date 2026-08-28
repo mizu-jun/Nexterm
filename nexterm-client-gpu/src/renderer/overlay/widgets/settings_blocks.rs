@@ -73,10 +73,6 @@ pub(crate) fn blocks_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
 pub(crate) fn build_blocks_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<WidgetSpec> {
     let layout = super::super::settings::layout::compute_row_layout(g.content_w, g.cell_w);
     let visible = sp.visible_blocks_rows();
-    let hovered = sp
-        .hover_widget
-        .filter(|h| h.category == BLOCKS_CATEGORY)
-        .map(|h| h.index);
 
     blocks_widget_descs(sp)
         .into_iter()
@@ -85,9 +81,7 @@ pub(crate) fn build_blocks_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<W
             let desc = desc.search_match(matched);
             let index = desc.id.index;
             let Some(slot) = crate::settings_panel::slot_of(&visible, index as usize) else {
-                return desc
-                    .place(WidgetRect::default(), WidgetRect::default())
-                    .hovered(false);
+                return desc.place(WidgetRect::default(), WidgetRect::default());
             };
             let y = g.content_top + g.cell_h * (ROWS_TOP + slot as f32 * ROW_PITCH);
             let rect = WidgetRect::new(
@@ -102,7 +96,7 @@ pub(crate) fn build_blocks_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<W
                 layout.control_w,
                 rect.h,
             );
-            desc.place(rect, control).hovered(hovered == Some(index))
+            desc.place(rect, control)
         })
         .collect()
 }

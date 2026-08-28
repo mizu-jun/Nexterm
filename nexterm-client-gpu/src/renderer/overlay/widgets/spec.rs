@@ -332,7 +332,6 @@ impl WidgetDesc {
             desc: self,
             rect,
             control_rect,
-            hovered: false,
         }
     }
 }
@@ -346,13 +345,6 @@ pub(crate) struct WidgetSpec {
     pub rect: WidgetRect,
     /// The interactive control itself, inside `rect`.
     pub control_rect: WidgetRect,
-    /// Whether the pointer is over this widget.
-    ///
-    /// Dead as of UI/UX v3 P3b2a: `draw_row_background` now reads the hover
-    /// *weight* instead. Removed, with the nine `.hovered(...)` call sites,
-    /// in the follow-up task.
-    #[allow(dead_code)]
-    pub hovered: bool,
 }
 
 impl WidgetSpec {
@@ -374,12 +366,6 @@ impl WidgetSpec {
     /// Whether the widget accepts input right now.
     pub fn enabled(&self) -> bool {
         self.desc.enabled
-    }
-
-    /// Mark the widget hovered.
-    pub fn hovered(mut self, hovered: bool) -> Self {
-        self.hovered = hovered;
-        self
     }
 }
 
@@ -536,22 +522,5 @@ mod tests {
         let specs = vec![toggle(0, 0.0), swatch];
         assert_eq!(hit_test(&specs, 25.0, 10.0), Some(WidgetId::new(1, 9)));
         assert_eq!(hit_test(&specs, 60.0, 10.0), Some(WidgetId::new(1, 0)));
-    }
-
-    #[test]
-    fn builder_methods_set_the_interaction_flags() {
-        let desc = WidgetDesc::new(
-            WidgetId::new(1, 0),
-            WidgetKind::Toggle { on: false },
-            "row 0",
-        )
-        .focused(true)
-        .tooltip("hint");
-        let w = desc
-            .place(WidgetRect::default(), WidgetRect::default())
-            .hovered(true);
-        assert!(w.focused());
-        assert!(w.hovered);
-        assert_eq!(w.desc.tooltip.as_deref(), Some("hint"));
     }
 }

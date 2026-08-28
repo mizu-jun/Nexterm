@@ -99,10 +99,6 @@ pub(crate) fn font_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
 /// Lay the Font tab out for this frame.
 pub(crate) fn build_font_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<WidgetSpec> {
     let layout = super::super::settings::layout::compute_row_layout(g.content_w, g.cell_w);
-    let hovered = sp
-        .hover_widget
-        .filter(|h| h.category == FONT_CATEGORY)
-        .map(|h| h.index);
 
     font_widget_descs(sp)
         .into_iter()
@@ -123,7 +119,7 @@ pub(crate) fn build_font_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<Wid
                 layout.control_w,
                 rect.h,
             );
-            desc.place(rect, control).hovered(hovered == Some(index))
+            desc.place(rect, control)
         })
         .collect()
 }
