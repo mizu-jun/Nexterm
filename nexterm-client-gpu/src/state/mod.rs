@@ -706,6 +706,9 @@ impl ClientState {
         if self.host_manager.password_modal_is_active(now) {
             return true;
         }
+        if self.settings_panel.tooltip_motion.is_active(now) {
+            return true;
+        }
         false
     }
 
@@ -1186,6 +1189,17 @@ mod animation_frame_tests {
     fn an_idle_state_wants_no_animation_frames() {
         let state = ClientState::new(80, 24, 1000);
         assert!(!state.has_active_animation(std::time::Instant::now(), 250));
+    }
+
+    /// P3b's acceptance criterion: a state with nothing animating must not
+    /// ask for frames. Eleven surfaces now have a clause in the aggregate,
+    /// and each is a way for this to regress.
+    #[test]
+    fn a_fully_idle_state_wants_no_animation_frames() {
+        let state = ClientState::new(80, 24, 1000);
+        let now = std::time::Instant::now();
+        assert!(!state.has_active_animation(now, 200));
+        assert!(!state.has_active_animation(now, 0));
     }
 
     #[test]

@@ -668,6 +668,9 @@ impl EventHandler {
         // stops drawing those surfaces. Finished entrances are left in
         // place; they are a surface's visibility while it is open.
         let now = Instant::now();
+        let anim = self.app.config.animations.clone();
+        self.app.state.settings_panel.tick_tooltip(now, &anim);
+        self.app.state.settings_panel.tooltip_motion.retire(now);
         self.app.state.settings_panel.motion.retire(now);
         self.app.state.palette.motion.retire(now);
         self.app.state.macro_picker.motion.retire(now);

@@ -99,6 +99,17 @@ pub struct SettingsPanel {
     /// start time. Drives tooltips; `None` when the pointer is not over a
     /// widget of a migrated category.
     pub hover_widget: Option<HoverDwell>,
+    /// Tooltip entrance/exit (UI/UX v3 P3b). The tooltip has no stored
+    /// openness — it is a predicate over `hover_widget`'s dwell timer — so
+    /// `tick_tooltip` translates that predicate into motion once per frame.
+    pub tooltip_motion: crate::animations::SurfaceMotion,
+    /// What `tick_tooltip` last decided; the edge detector that keeps a
+    /// per-frame call idempotent while the dwell predicate's answer does
+    /// not change.
+    pub tooltip_shown: bool,
+    /// The tooltip's anchor and text, captured when it opened, so the exit
+    /// animation can draw it after `hover_widget` has already cleared.
+    pub tooltip_snapshot: Option<(u8, u16)>,
     /// Window opacity.
     pub opacity: f32,
     /// Whether the panel has unsaved changes.
@@ -364,6 +375,9 @@ impl SettingsPanel {
             scheme_index,
             theme_hover_preview: None,
             hover_widget: None,
+            tooltip_motion: crate::animations::SurfaceMotion::default(),
+            tooltip_shown: false,
+            tooltip_snapshot: None,
             opacity: config.window.background_opacity,
             dirty: false,
             font_family: config.font.family.clone(),
@@ -496,6 +510,36 @@ impl SettingsPanel {
     /// True while open, and while an exit animation is still running.
     pub fn is_visible(&self) -> bool {
         self.is_open || self.motion.is_visible()
+    }
+
+    /// Open or close the tooltip motion from the dwell predicate.
+    ///
+    /// Called once per frame. Idempotent while the answer does not change:
+    /// `SurfaceMotion::open` on an already-open motion would restart the
+    /// entrance, so the current state is checked first.
+    pub fn tick_tooltip(
+        &mut self,
+        now: std::time::Instant,
+        anim: &nexterm_config::AnimationsConfig,
+    ) {
+        use crate::animations::{Curve, duration};
+
+        let dwell = self.hover_widget.filter(|d| d.is_ready(now));
+        let ready = dwell.is_some();
+        if ready == self.tooltip_shown {
+            return;
+        }
+        self.tooltip_shown = ready;
+        if let Some(d) = dwell {
+            // Capture the anchor now: the exit animation still needs it
+            // after `hover_widget` has cleared.
+            self.tooltip_snapshot = Some((d.category, d.index));
+            self.tooltip_motion
+                .open(now, anim, duration::FAST, Curve::DecelerateMax);
+        } else {
+            self.tooltip_motion
+                .close(now, anim, duration::FASTER, Curve::AccelerateMax);
+        }
     }
 
     /// Switch to `cat`, resetting the state that only made sense in the

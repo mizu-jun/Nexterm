@@ -120,3 +120,56 @@ fn disabled_animations_open_and_close_instantly() {
     sp.motion.retire(t0);
     assert!(!sp.is_visible());
 }
+
+/// The tooltip has no open flag: `tick_tooltip` turns the dwell predicate
+/// into an entrance and an exit.
+#[test]
+fn the_tooltip_opens_once_the_dwell_is_ready_and_closes_when_it_clears() {
+    use super::hover::{HoverDwell, TOOLTIP_DELAY_MS};
+
+    let mut sp = SettingsPanel::default();
+    let t0 = Instant::now();
+    sp.hover_widget = Some(HoverDwell::enter(None, 2, 0, t0));
+
+    sp.tick_tooltip(t0, &on());
+    assert!(!sp.tooltip_motion.is_visible(), "not yet — still dwelling");
+
+    let ready = t0 + Duration::from_millis(TOOLTIP_DELAY_MS as u64);
+    sp.tick_tooltip(ready, &on());
+    assert!(sp.tooltip_motion.is_visible());
+    assert!(sp.tooltip_motion.progress(ready).abs() < 1e-3);
+    let shown = ready + Duration::from_millis(150);
+    assert!((sp.tooltip_motion.progress(shown) - 1.0).abs() < 1e-3);
+
+    // The pointer leaves the panel.
+    sp.hover_widget = None;
+    sp.tick_tooltip(shown, &on());
+    assert!(sp.tooltip_motion.is_visible(), "it must fade, not vanish");
+    let gone = shown + Duration::from_millis(100);
+    assert!(sp.tooltip_motion.progress(gone).abs() < 1e-3);
+    sp.tooltip_motion.retire(gone);
+    assert!(!sp.tooltip_motion.is_visible());
+}
+
+/// Moving to another control restarts the dwell, so the tooltip that was
+/// showing must close.
+#[test]
+fn moving_to_another_control_closes_the_tooltip() {
+    use super::hover::{HoverDwell, TOOLTIP_DELAY_MS};
+
+    let mut sp = SettingsPanel::default();
+    let t0 = Instant::now();
+    sp.hover_widget = Some(HoverDwell::enter(None, 2, 0, t0));
+    let ready = t0 + Duration::from_millis(TOOLTIP_DELAY_MS as u64);
+    sp.tick_tooltip(ready, &on());
+    assert!(sp.tooltip_motion.is_visible());
+
+    sp.hover_widget = Some(HoverDwell::enter(sp.hover_widget, 2, 1, ready));
+    sp.tick_tooltip(ready, &on());
+    assert!(
+        sp.tooltip_motion
+            .progress(ready + Duration::from_millis(100))
+            .abs()
+            < 1e-3
+    );
+}

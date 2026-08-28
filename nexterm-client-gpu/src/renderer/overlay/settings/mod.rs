@@ -562,6 +562,8 @@ impl WgpuState {
             cell_w,
             cell_h,
             acrylic_mix,
+            now,
+            sp.tooltip_motion.progress(now),
             font,
             atlas,
             &self.queue,
