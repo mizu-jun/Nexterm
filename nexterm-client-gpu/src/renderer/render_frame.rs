@@ -1177,6 +1177,7 @@ impl WgpuState {
                 &mut bg_idx,
                 &mut text_verts,
                 &mut text_idx,
+                frame_now,
             );
             super::overlay::fade::apply_surface_fade(
                 &mut bg_verts[bg_start..],

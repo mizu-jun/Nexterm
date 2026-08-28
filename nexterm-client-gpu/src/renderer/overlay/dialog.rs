@@ -196,6 +196,7 @@ impl WgpuState {
         bg_idx: &mut Vec<u16>,
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
+        now: std::time::Instant,
     ) {
         // Compute the menu width dynamically from the max visual width of labels and hints
         let max_label_w = menu
@@ -263,15 +264,19 @@ impl WgpuState {
                 continue;
             }
 
-            // Hover highlight background (non-separator items)
-            if menu.hovered == Some(i) {
+            // UI/UX v3 P3b2: hover cross-fades rather than snapping. Three
+            // properties move together — the row fill, the accent line and
+            // the label — so the weight lerps each of them instead of an
+            // extra layer being faded in.
+            let w = menu.hover_transition.weight(i, now);
+            if w > 0.0 {
                 let hab = tokens.tab_active_bg;
                 add_px_rect(
                     mx + 2.0,
                     item_y + 1.0,
                     menu_w - 4.0,
                     cell_h - 2.0,
-                    [hab[0], hab[1], hab[2], 0.90],
+                    [hab[0], hab[1], hab[2], 0.90 * w],
                     sw,
                     sh,
                     bg_verts,
@@ -283,7 +288,7 @@ impl WgpuState {
                     item_y + 1.0,
                     3.0,
                     cell_h - 2.0,
-                    [ap[0], ap[1], ap[2], 0.90],
+                    [ap[0], ap[1], ap[2], 0.90 * w],
                     sw,
                     sh,
                     bg_verts,
@@ -292,11 +297,8 @@ impl WgpuState {
             }
 
             // Label text (left padding 0.9 cells)
-            let text_color = if menu.hovered == Some(i) {
-                tokens.text_primary
-            } else {
-                tokens.text_secondary
-            };
+            let text_color =
+                crate::color_util::lerp_rgba(tokens.text_secondary, tokens.text_primary, w);
             add_string_verts(
                 &item.label,
                 mx + cell_w * 0.9,

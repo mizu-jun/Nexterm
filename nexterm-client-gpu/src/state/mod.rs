@@ -712,6 +712,17 @@ impl ClientState {
         if self.settings_panel.hover_transition.is_active(now) {
             return true;
         }
+        if self
+            .context_menu
+            .as_ref()
+            .is_some_and(|m| m.hover_transition.is_active(now))
+            || self
+                .context_menu_closing
+                .as_ref()
+                .is_some_and(|(m, _)| m.hover_transition.is_active(now))
+        {
+            return true;
+        }
         false
     }
 
@@ -1217,6 +1228,31 @@ mod animation_frame_tests {
 
         let done = t0 + Duration::from_millis(100);
         assert!((state.settings_panel.hover_transition.weight(id, done) - 1.0).abs() < 1e-3);
+        assert!(!state.has_active_animation(done, 200));
+    }
+
+    /// The menu's hover cross-fade is independent of the widget layer's:
+    /// moving the pointer from a settings row into a context menu runs both
+    /// at once, which is why each model owns its own transition.
+    #[test]
+    fn a_hovered_context_menu_item_wants_animation_frames_until_it_settles() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+        state.context_menu = Some(ContextMenu::new_default(10.0, 10.0, &[]));
+
+        let menu = state
+            .context_menu
+            .as_mut()
+            .expect("the menu was just assigned");
+        menu.hovered = Some(1);
+        menu.hover_transition.retarget(Some(1), t0, &anim);
+        assert!(state.has_active_animation(t0, 200));
+
+        let done = t0 + Duration::from_millis(100);
+        let menu = state.context_menu.as_ref().expect("still open");
+        assert!((menu.hover_transition.weight(1, done) - 1.0).abs() < 1e-3);
+        assert!(menu.hover_transition.weight(0, done).abs() < 1e-4);
         assert!(!state.has_active_animation(done, 200));
     }
 

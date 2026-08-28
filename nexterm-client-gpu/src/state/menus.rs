@@ -115,6 +115,13 @@ pub struct ContextMenu {
     pub items: Vec<ContextMenuItem>,
     /// Currently hovered item index
     pub hovered: Option<usize>,
+    /// Hover cross-fade over `items` (UI/UX v3 P3b2).
+    ///
+    /// `hovered` above stays the truth for click dispatch and the AccessKit
+    /// focus node. This is render-only, and it is deliberately carried into
+    /// the exit ghost P3b1 clones on dismiss: the item the pointer left
+    /// should keep fading rather than snap back as the menu leaves.
+    pub hover_transition: crate::animations::HoverTransition<usize>,
 }
 
 impl ContextMenu {
@@ -186,6 +193,7 @@ impl ContextMenu {
             y,
             items,
             hovered: None,
+            hover_transition: Default::default(),
         }
     }
 
@@ -279,6 +287,7 @@ impl ContextMenu {
             y,
             items,
             hovered: None,
+            hover_transition: Default::default(),
         }
     }
 
@@ -312,6 +321,7 @@ impl ContextMenu {
             y,
             items,
             hovered: None,
+            hover_transition: Default::default(),
         }
     }
 }

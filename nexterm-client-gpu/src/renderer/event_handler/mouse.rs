@@ -592,6 +592,12 @@ impl EventHandler {
             }
             if menu.hovered != new_hovered {
                 menu.hovered = new_hovered;
+                // UI/UX v3 P3b2: same value, same frame.
+                menu.hover_transition.retarget(
+                    new_hovered,
+                    std::time::Instant::now(),
+                    &self.app.config.animations,
+                );
                 if let Some(w) = &self.window {
                     w.request_redraw();
                 }

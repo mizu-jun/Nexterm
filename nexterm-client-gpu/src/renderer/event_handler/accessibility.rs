@@ -259,10 +259,14 @@ impl EventHandler {
                 }
             }
             (Action::Focus, NodeIdKind::ContextItem { idx }) => {
+                let anim = self.app.config.animations.clone();
                 if let Some(menu) = self.app.state.context_menu.as_mut()
                     && idx < menu.items.len()
                 {
                     menu.hovered = Some(idx);
+                    // UI/UX v3 P3b2: same value, same frame.
+                    menu.hover_transition
+                        .retarget(Some(idx), std::time::Instant::now(), &anim);
                     self.request_redraw_if_window();
                 }
             }

@@ -297,7 +297,6 @@ pub(crate) fn composite_over(fg: [f32; 4], bg: [f32; 3]) -> [f32; 3] {
 /// multiplication do not round-trip exactly (e.g. `0.1 + (0.9 - 0.1) * 1.0`
 /// is not bit-identical to `0.9`), and these are also the overwhelmingly
 /// common weights — most frames have no transition running at all.
-#[allow(dead_code)] // First consumer lands in Task 4.
 pub(crate) fn lerp_rgba(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
     if t <= 0.0 {
         return a;
