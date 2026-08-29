@@ -272,6 +272,21 @@ contextual UI; InfoBar = non-blocking status.
   prompt out of a modal.
 - New strings ×8 locales.
 
+> **Design spec (2026-08-29):**
+> `plans/2026-08-29-p6-notification-surfaces.md`. It corrects two of the three
+> bullets above. There is no single "update-banner slot" to reuse: Nexterm
+> already ships **three** top-of-screen banners (update / offline / error) with
+> three state fields, three builders totalling 232 lines, and hand-written
+> stacking arithmetic in each — so P6 is a **consolidation, not an addition**.
+> The measurement also found an accessibility defect: `error_banner` appears
+> **zero times** in `accessibility.rs`, so shell-launch and config-load failures
+> are never announced. The consent-reclassification bullet is **recommended
+> dropped** — all three consent kinds are pre-action authorisations, and moving
+> one to a non-blocking surface changes security posture rather than
+> presentation; `ConsentPolicy = "allow"` is the existing opt-out. That
+> recommendation needs the maintainer's sign-off (spec §4). "New strings ×8"
+> turns out to be one string. Four PRs P6a–P6d.
+
 ### P7 — Full custom title bar (spike S, then XL)
 
 Principle: Familiar (WT-style tabs-in-titlebar silhouette). High risk —
