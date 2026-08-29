@@ -9,12 +9,13 @@
 //!
 //! Everything here is pure — no GPU handles, no font state, no clock of its
 //! own — so the ordering, the cap and the count suffix are unit-testable
-//! without a device. The drawing and the call sites arrive in P6b; the
-//! AccessKit nodes in P6c; the motion and the auto-dismissal in P6d.
+//! without a device. P6b removed the three `Option` fields and the three
+//! builders and made this the only stack; the AccessKit nodes arrive in P6c,
+//! the motion and the auto-dismissal in P6d.
 //!
 //! The structural gate for the phase (G-single) is that [`bar_rects`] stays
 //! the only function that computes a bar's `y`.
-#![allow(dead_code)] // P6a lands the model; P6b wires the first call site.
+#![allow(dead_code)] // The auto-dismissal and exit paths are wired in P6d.
 
 use std::time::{Duration, Instant};
 
@@ -54,6 +55,24 @@ pub enum Severity {
     Error,
 }
 
+/// Which single-slot surface a kind occupies.
+///
+/// Each of the three migrated banners was a single `Option` field: a second
+/// update notice replaced the first rather than stacking, and the error slot
+/// was explicitly documented as "overwritten by the latest error (never
+/// stacks)". The stack keeps that, so the slot is the identity a call site
+/// queues, replaces and clears by — and, being fieldless, it is also what the
+/// accessibility tree hashes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InfoBarSlot {
+    /// A newer release is available.
+    Update,
+    /// The client has not yet reached the server.
+    Offline,
+    /// The last error the server reported.
+    ServerError,
+}
+
 /// What a bar is about.
 ///
 /// Adding a message type costs one arm here rather than a fourth builder,
@@ -78,6 +97,15 @@ pub enum InfoBarKind {
 }
 
 impl InfoBarKind {
+    /// The single slot this kind occupies.
+    pub fn slot(&self) -> InfoBarSlot {
+        match self {
+            InfoBarKind::UpdateAvailable { .. } => InfoBarSlot::Update,
+            InfoBarKind::Offline { .. } => InfoBarSlot::Offline,
+            InfoBarKind::ServerError { .. } => InfoBarSlot::ServerError,
+        }
+    }
+
     /// How loud this kind is.
     pub fn severity(&self) -> Severity {
         match self {
@@ -105,6 +133,36 @@ impl InfoBarKind {
     /// Whether `Enter` does anything while this kind is the top bar (D4).
     pub fn has_activation(&self) -> bool {
         matches!(self, InfoBarKind::UpdateAvailable { .. })
+    }
+
+    /// Whether `Esc` can dismiss this kind.
+    ///
+    /// The offline bar is the exception and always has been: its whole content
+    /// is "still not connected", so dismissing it would only hide a condition
+    /// that is still true. It clears when the connection succeeds.
+    pub fn is_dismissible(&self) -> bool {
+        !matches!(self, InfoBarKind::Offline { .. })
+    }
+
+    /// The localised one-line message this kind shows.
+    ///
+    /// `now` is passed rather than read so the offline bar's elapsed count
+    /// stays a function of its arguments. The label lives with the kind rather
+    /// than with the builder because P6c's AccessKit node needs the same text.
+    pub fn label(&self, now: Instant) -> String {
+        match self {
+            InfoBarKind::UpdateAvailable { version } => {
+                nexterm_i18n::fl!("update-available").replace("{version}", version)
+            }
+            InfoBarKind::Offline { since } => {
+                let elapsed = now.saturating_duration_since(*since).as_secs();
+                nexterm_i18n::fl!("offline-banner-connecting")
+                    .replace("{seconds}", &elapsed.to_string())
+            }
+            InfoBarKind::ServerError { message } => {
+                format!("{} {}", nexterm_i18n::fl!("error-banner-prefix"), message)
+            }
+        }
     }
 
     /// How long this kind lives before dismissing itself, if at all (D3).
@@ -193,6 +251,27 @@ impl StackLayout {
     }
 }
 
+/// The stack's order, loudest first: indices into `bars`, top-down.
+///
+/// By severity, then by age, so an error never sits below an update notice and
+/// two bars of the same severity keep the order they were queued in. Split out
+/// of [`bar_rects`] because the keyboard path has to know which bar is on top
+/// (D4) and has no surface size to lay anything out with — recomputing the
+/// order there is exactly the second expression this module exists to prevent.
+pub fn stack_order(bars: &[InfoBar]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..bars.len()).collect();
+    // `sort_by` is stable, so bars queued in the same instant keep their
+    // insertion order.
+    order.sort_by(|&a, &b| {
+        bars[b]
+            .kind
+            .severity()
+            .cmp(&bars[a].kind.severity())
+            .then(bars[a].created_at.cmp(&bars[b].created_at))
+    });
+    order
+}
+
 /// Lay the stack out: the rect of each visible bar, top-down, below the tab bar.
 ///
 /// The only function in the crate that computes a bar's `y` (G-single).
@@ -215,17 +294,7 @@ pub fn bar_rects(bars: &[InfoBar], tab_bar_h: f32, cell_h: f32, width: f32) -> S
         };
     }
 
-    let mut order: Vec<usize> = (0..bars.len()).collect();
-    // Severity descending, then oldest first. `sort_by` is stable, so bars
-    // queued in the same instant keep their insertion order.
-    order.sort_by(|&a, &b| {
-        bars[b]
-            .kind
-            .severity()
-            .cmp(&bars[a].kind.severity())
-            .then(bars[a].created_at.cmp(&bars[b].created_at))
-    });
-
+    let order = stack_order(bars);
     let bar_h = cell_h * BAR_HEIGHT_FACTOR;
     let hidden = bars.len().saturating_sub(MAX_VISIBLE_BARS);
     let visible = order
@@ -418,6 +487,95 @@ mod tests {
         );
         assert!(animated.is_animating(now));
         assert!(!animated.is_animating(now + Duration::from_millis(200)));
+    }
+
+    /// `Esc` walks the same order the stack is drawn in, so the error bar
+    /// clears before the update bar exactly as the two open-coded handlers did.
+    #[test]
+    fn the_stack_order_matches_the_drawn_order() {
+        let now = Instant::now();
+        let bars = [update(now), offline(now), error(now)];
+        let order = stack_order(&bars);
+        assert_eq!(order, vec![2, 1, 0]);
+
+        let layout = bar_rects(&bars, TAB_BAR_H, CELL_H, WIDTH);
+        let drawn: Vec<usize> = layout.visible.iter().map(|&(index, _)| index).collect();
+        assert_eq!(drawn, order[..MAX_VISIBLE_BARS]);
+    }
+
+    /// The offline bar reports a condition rather than an event, so `Esc`
+    /// skips it and lands on the dismissible bar underneath.
+    #[test]
+    fn only_the_offline_bar_resists_dismissal() {
+        let now = Instant::now();
+        assert!(update(now).kind.is_dismissible());
+        assert!(error(now).kind.is_dismissible());
+        assert!(!offline(now).kind.is_dismissible());
+
+        let bars = [update(now), offline(now)];
+        let top_dismissible = stack_order(&bars)
+            .into_iter()
+            .find(|&index| bars[index].kind.is_dismissible());
+        assert_eq!(top_dismissible, Some(0));
+    }
+
+    #[test]
+    fn each_kind_occupies_its_own_slot() {
+        let now = Instant::now();
+        assert_eq!(update(now).kind.slot(), InfoBarSlot::Update);
+        assert_eq!(offline(now).kind.slot(), InfoBarSlot::Offline);
+        assert_eq!(error(now).kind.slot(), InfoBarSlot::ServerError);
+    }
+
+    /// The label is what the migrated builders used to format inline; the
+    /// substitution is the part worth pinning, not the translated text.
+    #[test]
+    fn each_kind_substitutes_its_own_runtime_value() {
+        let now = Instant::now();
+        let version = update(now).kind.label(now);
+        assert!(version.contains("1.9.0"), "got {version}");
+        assert!(!version.contains("{version}"));
+
+        let elapsed = offline(now).kind.label(now + Duration::from_secs(7));
+        assert!(elapsed.contains('7'), "got {elapsed}");
+        assert!(!elapsed.contains("{seconds}"));
+
+        let failure = error(now).kind.label(now);
+        assert!(failure.ends_with("pty launch failed"), "got {failure}");
+    }
+
+    /// A bar laid out before its `since` — a clock that went backwards, or a
+    /// bar drawn in the same frame it was queued — must not panic.
+    #[test]
+    fn the_offline_label_saturates_rather_than_underflowing() {
+        let now = Instant::now() + Duration::from_secs(60);
+        let label = offline(now).kind.label(now - Duration::from_secs(30));
+        assert!(label.contains('0'), "got {label}");
+    }
+
+    /// G-single, as the spec words it: a gate over `ui_verts.rs` that finds no
+    /// second stacking expression. The three builders each carried a `bar_y`
+    /// and re-derived it from the other two; if one comes back, the stack has
+    /// two disagreeing sources of truth again and this fails.
+    #[test]
+    fn no_second_stacking_expression_survives_in_the_vertex_builders() {
+        // The tab bar legitimately has a `bar_y` of its own, so the gate is on
+        // the shape the banners used — an offset accumulated across surfaces —
+        // rather than on the name.
+        let src = include_str!("../ui_verts.rs");
+        assert!(
+            !src.contains("+= bar_h"),
+            "ui_verts.rs accumulates a bar offset again; bar_rects owns that"
+        );
+        assert!(
+            !src.contains("cell_h * 1.4"),
+            "ui_verts.rs re-derives the bar height; BAR_HEIGHT_FACTOR owns that"
+        );
+        assert_eq!(
+            src.matches("bar_rects(").count(),
+            1,
+            "the stack is laid out in exactly one place in ui_verts.rs"
+        );
     }
 
     #[test]

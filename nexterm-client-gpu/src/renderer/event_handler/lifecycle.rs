@@ -22,6 +22,7 @@ use crate::animations::duration::GENTLE;
 use crate::connection::{Connection, ConnectionExt};
 use crate::glyph_atlas::{GlyphAtlas, GlyphKey};
 use crate::renderer::WgpuState;
+use crate::renderer::overlay::infobar::{InfoBarKind, InfoBarSlot};
 
 impl EventHandler {
     /// `ApplicationHandler::new_events` implementation.
@@ -309,8 +310,8 @@ impl EventHandler {
                 }
                 self.connect_failure_count = 0;
                 self.connect_failure_started_at = None;
-                // P2-1: clear the offline banner if it was visible.
-                self.app.state.offline_banner_since = None;
+                // P2-1: clear the offline bar if it was visible.
+                self.app.state.remove_info_bar(InfoBarSlot::Offline);
                 true
             }
             Err(e) => {
@@ -340,13 +341,15 @@ impl EventHandler {
                 }
 
                 // P2-1: once the offline streak has lasted past the threshold,
-                // raise the visible "Connecting…" banner. The renderer reads
-                // `offline_banner_since` and formats the elapsed seconds.
-                if self.app.state.offline_banner_since.is_none()
+                // raise the visible "Connecting…" bar. The bar carries `since`
+                // and the renderer formats the elapsed seconds from it.
+                if !self.app.state.has_info_bar(InfoBarSlot::Offline)
                     && let Some(started) = self.connect_failure_started_at
                     && started.elapsed() >= Self::OFFLINE_BANNER_THRESHOLD
                 {
-                    self.app.state.offline_banner_since = Some(started);
+                    self.app
+                        .state
+                        .push_info_bar(InfoBarKind::Offline { since: started }, Instant::now());
                     if let Some(w) = &self.window {
                         w.request_redraw();
                     }
@@ -660,12 +663,14 @@ impl EventHandler {
             self.app.state.prefix_pending_until = None;
         }
 
-        // Poll for notifications from the update checker and show the banner.
+        // Poll for notifications from the update checker and raise the bar.
         if self.update_rx.has_changed().unwrap_or(false)
-            && let Some(ver) = self.update_rx.borrow_and_update().clone()
-            && self.app.state.update_banner.is_none()
+            && let Some(version) = self.update_rx.borrow_and_update().clone()
+            && !self.app.state.has_info_bar(InfoBarSlot::Update)
         {
-            self.app.state.update_banner = Some(ver);
+            self.app
+                .state
+                .push_info_bar(InfoBarKind::UpdateAvailable { version }, Instant::now());
             had_messages = true;
         }
 

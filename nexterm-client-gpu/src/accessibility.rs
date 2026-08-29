@@ -29,6 +29,7 @@ use accesskit::{
 use crate::host_manager::HostManager;
 use crate::macro_picker::MacroPicker;
 use crate::palette::CommandPalette;
+use crate::renderer::overlay::infobar::InfoBarKind;
 use crate::settings_panel::SettingsPanel;
 use crate::state::{
     AlertEntry, AlertKind, ClientState, CloseWindowDialog, ContextMenu, QuickSelectState,
@@ -849,8 +850,13 @@ pub fn build_tree_from_state(state: &ClientState) -> TreeUpdate {
         focus = overlay_focus;
     }
 
-    // ===== Non-modal: update banner =====
-    if let Some(version) = &state.update_banner {
+    // ===== Non-modal: update bar (UI/UX v3 P6) =====
+    // Still only the update kind: giving every `InfoBarKind` a node — which is
+    // what finally makes the server error announceable — is P6c.
+    if let Some(version) = state.info_bars.iter().find_map(|bar| match &bar.kind {
+        InfoBarKind::UpdateAvailable { version } => Some(version),
+        _ => None,
+    }) {
         nodes.push(build_update_banner_node(version));
         root_children.push(UPDATE_BANNER_ID);
     }
@@ -2270,14 +2276,20 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
         }
     }
 
-    // === update_banner (non-modal) ===
-    state.update_banner.hash(&mut h);
-
-    // === offline_banner (non-modal, Sprint 5-14 / v1.7.8 — P2-1) ===
-    // We only care whether the banner is visible (the elapsed-seconds count
-    // updates every frame and would otherwise force a tree rebuild every
-    // throttle tick — accessibility consumers do not need that granularity).
-    state.offline_banner_since.is_some().hash(&mut h);
+    // === InfoBar stack (non-modal, UI/UX v3 P6) ===
+    // Slot plus message, so adding, removing or rewording a bar rebuilds the
+    // tree. The offline bar contributes only its presence: its elapsed-seconds
+    // count updates every frame and would otherwise force a rebuild every
+    // throttle tick — accessibility consumers do not need that granularity.
+    state.info_bars.len().hash(&mut h);
+    for bar in &state.info_bars {
+        bar.kind.slot().hash(&mut h);
+        match &bar.kind {
+            InfoBarKind::UpdateAvailable { version } => version.hash(&mut h),
+            InfoBarKind::ServerError { message } => message.hash(&mut h),
+            InfoBarKind::Offline { .. } => {}
+        }
+    }
 
     // === SR alerts (Sprint 5-11-5) ===
     // Reflect length + each seq + kind. `kind` becomes hashable via `as u8`.
@@ -2878,7 +2890,12 @@ mod tests {
     fn update_banner_coexists_with_palette() {
         let mut state = ClientState::new(80, 24, 1000);
         state.palette.is_open = true;
-        state.update_banner = Some("v1.6.0".to_string());
+        state.push_info_bar(
+            InfoBarKind::UpdateAvailable {
+                version: "v1.6.0".to_string(),
+            },
+            std::time::Instant::now(),
+        );
 
         let update = build_tree_from_state(&state);
 
@@ -3030,7 +3047,12 @@ mod tests {
         let h_none = compute_tree_state_hash(&state_none);
 
         let mut state_banner = ClientState::new(80, 24, 1000);
-        state_banner.update_banner = Some("v1.6.0".to_string());
+        state_banner.push_info_bar(
+            InfoBarKind::UpdateAvailable {
+                version: "v1.6.0".to_string(),
+            },
+            std::time::Instant::now(),
+        );
         let h_banner = compute_tree_state_hash(&state_banner);
 
         assert_ne!(

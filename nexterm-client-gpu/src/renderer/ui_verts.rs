@@ -11,6 +11,7 @@ use crate::vertex_util::{
 };
 
 use super::WgpuState;
+use super::overlay::infobar;
 use nexterm_config::SurfaceLevel;
 
 /// Shared chrome for the one-line notification banners (update / offline / error).
@@ -1263,97 +1264,19 @@ impl WgpuState {
         );
     }
 
-    /// Build the update-notification banner vertices (one-line bar at the top of the screen).
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn build_update_banner_verts(
-        &self,
-        state: &ClientState,
-        tokens: &nexterm_config::DesignTokens,
-        sw: f32,
-        sh: f32,
-        cell_w: f32,
-        cell_h: f32,
-        font: &mut FontManager,
-        atlas: &mut GlyphAtlas,
-        bg_verts: &mut Vec<BgVertex>,
-        bg_idx: &mut Vec<u16>,
-        text_verts: &mut Vec<TextVertex>,
-        text_idx: &mut Vec<u16>,
-    ) {
-        let Some(ref version) = state.update_banner else {
-            return;
-        };
-
-        let bar_h = cell_h * 1.4;
-        let bar_y = 0.0;
-
-        let banner_bg = draw_banner_bg(
-            0.0,
-            bar_y,
-            sw,
-            bar_h,
-            tokens.semantic_success,
-            tokens,
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
-
-        let raw = nexterm_i18n::fl!("update-available");
-        let msg = raw.replace("{version}", version);
-        add_string_verts(
-            &msg,
-            cell_w * 1.2,
-            bar_y + (bar_h - cell_h) * 0.5,
-            nexterm_config::contrast_correct(
-                tokens.text_on(SurfaceLevel::S2).primary,
-                banner_bg,
-                nexterm_config::MIN_TEXT_CONTRAST,
-            ),
-            false,
-            sw,
-            sh,
-            cell_w,
-            font,
-            atlas,
-            &self.queue,
-            text_verts,
-            text_idx,
-        );
-
-        let hint = "  [Esc]";
-        let hint_x = sw - hint.len() as f32 * cell_w - cell_w;
-        add_string_verts(
-            hint,
-            hint_x,
-            bar_y + (bar_h - cell_h) * 0.5,
-            nexterm_config::contrast_correct(
-                tokens.text_on(SurfaceLevel::S2).muted,
-                banner_bg,
-                nexterm_config::MIN_TEXT_CONTRAST,
-            ),
-            false,
-            sw,
-            sh,
-            cell_w,
-            font,
-            atlas,
-            &self.queue,
-            text_verts,
-            text_idx,
-        );
-    }
-
-    /// Build the offline-mode banner vertices (one-line amber bar at the top of the screen).
+    /// Build the InfoBar stack vertices (UI/UX v3 P6b).
     ///
-    /// Sprint 5-14 / v1.7.8 — P2-1. Shown while the client is repeatedly failing
-    /// to connect to the embedded server. Surfaces what was previously a silent
-    /// blank window during cold start, especially on Windows where the
-    /// `\\.\pipe\nexterm-<user>` named pipe may take >1 s to come up.
-    /// Auto-clears as soon as the connection succeeds (no key dismissal).
+    /// One builder for what used to be three — update, offline and server
+    /// error — each of which picked its own colour, re-derived its own `y` by
+    /// testing the others, and emitted its own string. The colour now comes
+    /// from the kind's severity, the message from `InfoBarKind::label`, and the
+    /// geometry from `infobar::bar_rects`, which is the only place a bar's `y`
+    /// is decided (G-single).
+    ///
+    /// `now` is passed rather than read so the offline bar's elapsed count is
+    /// consistent with the rest of the frame.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn build_offline_banner_verts(
+    pub(super) fn build_info_bar_verts(
         &self,
         state: &ClientState,
         tokens: &nexterm_config::DesignTokens,
@@ -1361,6 +1284,8 @@ impl WgpuState {
         sh: f32,
         cell_w: f32,
         cell_h: f32,
+        tab_bar_h: f32,
+        now: std::time::Instant,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         bg_verts: &mut Vec<BgVertex>,
@@ -1368,151 +1293,95 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
-        let Some(started) = state.offline_banner_since else {
-            return;
-        };
-
-        // Stack below `update_banner` if present.
-        let bar_h = cell_h * 1.4;
-        let bar_y = if state.update_banner.is_some() {
-            bar_h
+        // The layout takes a slice. The stack is contiguous in practice — it
+        // holds at most one bar per slot — so the join is a cold path kept for
+        // correctness rather than a per-frame allocation.
+        let (front, back) = state.info_bars.as_slices();
+        let joined: Vec<_>;
+        let bars: &[_] = if back.is_empty() {
+            front
         } else {
-            0.0
+            joined = front.iter().chain(back).cloned().collect();
+            &joined
         };
+        let layout = infobar::bar_rects(bars, tab_bar_h, cell_h, sw);
 
-        let banner_bg = draw_banner_bg(
-            0.0,
-            bar_y,
-            sw,
-            bar_h,
-            tokens.semantic_warning,
-            tokens,
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
+        for (index, rect) in layout.visible {
+            let bar = &bars[index];
+            let banner_bg = draw_banner_bg(
+                rect.x,
+                rect.y,
+                rect.w,
+                rect.h,
+                bar.kind.accent(tokens),
+                tokens,
+                sw,
+                sh,
+                bg_verts,
+                bg_idx,
+            );
+            let baseline_y = rect.y + (rect.h - cell_h) * 0.5;
 
-        let elapsed_secs = started.elapsed().as_secs();
-        let raw = nexterm_i18n::fl!("offline-banner-connecting");
-        let msg = raw.replace("{seconds}", &elapsed_secs.to_string());
-        add_string_verts(
-            &msg,
-            cell_w * 1.2,
-            bar_y + (bar_h - cell_h) * 0.5,
-            nexterm_config::contrast_correct(
-                tokens.text_on(SurfaceLevel::S2).primary,
-                banner_bg,
-                nexterm_config::MIN_TEXT_CONTRAST,
-            ),
-            false,
-            sw,
-            sh,
-            cell_w,
-            font,
-            atlas,
-            &self.queue,
-            text_verts,
-            text_idx,
-        );
-    }
+            // The hint is drawn only for a bar `Esc` can actually dismiss, so
+            // the offline bar no longer offers a key that does nothing.
+            let hint = if bar.kind.is_dismissible() {
+                "  [Esc]"
+            } else {
+                ""
+            };
+            // Truncate to the room left by the hint. The error banner already
+            // did this; the other two inherit it because a long message is a
+            // property of the text, not of the kind.
+            let max_chars = ((sw / cell_w) as usize)
+                .saturating_sub(hint.chars().count() + 4)
+                .max(8);
+            let label: String = bar.kind.label(now).chars().take(max_chars).collect();
+            add_string_verts(
+                &label,
+                cell_w * 1.2,
+                baseline_y,
+                nexterm_config::contrast_correct(
+                    tokens.text_on(SurfaceLevel::S2).primary,
+                    banner_bg,
+                    nexterm_config::MIN_TEXT_CONTRAST,
+                ),
+                false,
+                sw,
+                sh,
+                cell_w,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
+            );
 
-    /// Build the server error banner vertices (one-line bar at the top of the screen, just
-    /// below `update_banner`).
-    ///
-    /// Sprint 5-12 Phase 1: surfaces `ServerToClient::Error` events such as PTY launch
-    /// failures (e.g. PowerShell not found), config load errors, and pane split failures so
-    /// the user notices them immediately, via a red bar. Dismissed with `Esc`.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn build_error_banner_verts(
-        &self,
-        state: &ClientState,
-        tokens: &nexterm_config::DesignTokens,
-        sw: f32,
-        sh: f32,
-        cell_w: f32,
-        cell_h: f32,
-        font: &mut FontManager,
-        atlas: &mut GlyphAtlas,
-        bg_verts: &mut Vec<BgVertex>,
-        bg_idx: &mut Vec<u16>,
-        text_verts: &mut Vec<TextVertex>,
-        text_idx: &mut Vec<u16>,
-    ) {
-        let Some(ref message) = state.error_banner else {
-            return;
-        };
-
-        // Stack below `update_banner` and `offline_banner` when either is present.
-        let bar_h = cell_h * 1.4;
-        let mut bar_y = 0.0_f32;
-        if state.update_banner.is_some() {
-            bar_y += bar_h;
+            if !hint.is_empty() {
+                let hint_x = sw - hint.len() as f32 * cell_w - cell_w;
+                add_string_verts(
+                    hint,
+                    hint_x,
+                    baseline_y,
+                    nexterm_config::contrast_correct(
+                        tokens.text_on(SurfaceLevel::S2).muted,
+                        banner_bg,
+                        nexterm_config::MIN_TEXT_CONTRAST,
+                    ),
+                    false,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
+                );
+            }
         }
-        if state.offline_banner_since.is_some() {
-            bar_y += bar_h;
-        }
 
-        let banner_bg = draw_banner_bg(
-            0.0,
-            bar_y,
-            sw,
-            bar_h,
-            tokens.semantic_error,
-            tokens,
-            sw,
-            sh,
-            bg_verts,
-            bg_idx,
-        );
-
-        let prefix = nexterm_i18n::fl!("error-banner-prefix");
-        let full = format!("{} {}", prefix, message);
-        let hint = "  [Esc]";
-        let max_chars = ((sw / cell_w) as usize)
-            .saturating_sub(hint.chars().count() + 4)
-            .max(8);
-        let msg_display: String = full.chars().take(max_chars).collect();
-        add_string_verts(
-            &msg_display,
-            cell_w * 1.2,
-            bar_y + (bar_h - cell_h) * 0.5,
-            nexterm_config::contrast_correct(
-                tokens.text_on(SurfaceLevel::S2).primary,
-                banner_bg,
-                nexterm_config::MIN_TEXT_CONTRAST,
-            ),
-            false,
-            sw,
-            sh,
-            cell_w,
-            font,
-            atlas,
-            &self.queue,
-            text_verts,
-            text_idx,
-        );
-
-        let hint_x = sw - hint.len() as f32 * cell_w - cell_w;
-        add_string_verts(
-            hint,
-            hint_x,
-            bar_y + (bar_h - cell_h) * 0.5,
-            nexterm_config::contrast_correct(
-                tokens.text_on(SurfaceLevel::S2).muted,
-                banner_bg,
-                nexterm_config::MIN_TEXT_CONTRAST,
-            ),
-            false,
-            sw,
-            sh,
-            cell_w,
-            font,
-            atlas,
-            &self.queue,
-            text_verts,
-            text_idx,
-        );
+        // `layout.hidden` is deliberately not drawn yet: the `+{count} more`
+        // suffix needs a new string in all 8 locales, which is P6c's scope.
     }
 
     /// Build the Quick Select overlay vertices.

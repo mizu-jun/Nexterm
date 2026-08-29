@@ -708,7 +708,14 @@ gated behind a spike.
       buttons and the footer's `↗` / `↺` links move too; see the design spec's
       §8
 - [x] P5 contrast everywhere + high-contrast scheme (P5a–P5d, 2026-08-29)
-- [ ] P6 InfoBar + consent reclassification
+- [ ] P6 InfoBar consolidation (consent reclassification dropped, spec §4)
+  - [x] P6a InfoBar model + pure layout — shipped via #92 (2026-08-29)
+  - [x] P6b migrate the three banners onto the stack — the three `Option`
+    fields and the three builders are gone; the stack draws below the tab bar,
+    capped at two bars, and `Enter` acts on the top bar only (2026-08-29)
+  - [ ] P6c AccessKit nodes ×kind + tree hash + `infobar-more-count` ×8 locales
+    — the phase's most valuable change: the error bar is still unannounced
+  - [ ] P6d entrance/exit motion + auto-dismissal for the info severity
 - [x] P7 base `notitle` custom title bar — shipped early via #46 (2026-07-30)
 - [x] P7 spike: Windows 11 snap layouts — answered in production via #49 (2026-07-31)
 - [x] P7 default-on decision — `notitle` default on Windows/Linux via #50 (2026-07-31)
