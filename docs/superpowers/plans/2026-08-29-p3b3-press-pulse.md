@@ -19,7 +19,7 @@
 - `cargo test -p nexterm-client-gpu` must stay green (1013 tests at the base commit).
 - Do not touch `nexterm-i18n` (no new user-facing strings), `accessibility.rs` (press is render-only, exactly as P3b1's `closing` field was), or `settings_panel_hit.rs` geometry.
 - `duration::FASTER = 100` and `Curve::EasyEase` are the fixed timing for every pulse.
-- Two shared constants, both in `color_util.rs`: `PRESS_DIM = 0.85`, `PRESS_ALPHA_BOOST = 1.7`.
+- Two shared constants, both in `color_util.rs`: `PRESS_DIM = 0.85`, `PRESS_ALPHA_BOOST = 2.3` (raised from 1.7 by measurement: at 1.7 the pulse was imperceptible on eight of the nine builtin schemes).
 
 ---
 

@@ -138,7 +138,8 @@ alpha while the pulse is live:
 let a = base_alpha * (1.0 + press_weight * (PRESS_ALPHA_BOOST - 1.0));
 ```
 
-`PRESS_ALPHA_BOOST` is one shared constant, provisionally 1.7, and the result
+`PRESS_ALPHA_BOOST` is one shared constant — provisionally 1.7, measured up
+to 2.3 during implementation — and the result
 is clamped to 1.0. The tab needs no boost: its hover is an opaque lerp with
 no alpha to raise, and the dim moves it directly.
 
@@ -217,15 +218,23 @@ Unit tests on `PressPulse` (`animations/press.rs`):
 
 Composition tests in `color_util.rs`, both across all nine builtin schemes:
 the pressed fill differs perceptibly from the merely hovered one (the
-measurement behind the open question above), and it does not cut the text
-contrast over it by more than 5%.
+measurement behind the open question above), and the text over it either
+stays above the WCAG AA 4.5:1 floor or — for a scheme already below it — is
+not made meaningfully worse.
 
-That second one is deliberately relative rather than a flat ≥ 4.5:1
-assertion. Solarized and OneDark already carry contrast defects in their
-resting chrome — known since P2b and tracked for P5 — so an absolute
-assertion here would fail on those pre-existing defects instead of on
-anything P3b3 does. Press must not make legibility worse; fixing what it
-inherits is P5's job.
+That second one is deliberately not a flat ≥ 4.5:1 assertion. Solarized and
+OneDark already carry contrast defects in their resting chrome — known since
+P2b and tracked for P5 — so an absolute assertion would fail on those
+pre-existing defects instead of on anything P3b3 does. Nor is it purely
+relative: on a dark scheme the hover layer *lightens* the row, so
+strengthening it moves the fill toward the light text and the ratio falls
+from a very high base (measured: Dark, 11.06 → 10.13) with no legibility
+consequence at all. Press must not make legibility worse where legibility is
+actually at stake; fixing what it inherits is P5's job.
+
+Measured during implementation: `PRESS_ALPHA_BOOST` had to rise from the
+provisional 1.7 to **2.3** — at 1.7 the pulse was imperceptible on eight of
+the nine schemes.
 
 Not covered by tests, and not claimed: whether the pulse *looks* right. GPU
 output is not CI-verifiable; this lands on the existing on-device verification
