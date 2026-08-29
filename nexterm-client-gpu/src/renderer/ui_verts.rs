@@ -1293,20 +1293,11 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
-        // The layout takes a slice. The stack is contiguous in practice — it
-        // holds at most one bar per slot — so the join is a cold path kept for
-        // correctness rather than a per-frame allocation.
-        let (front, back) = state.info_bars.as_slices();
-        let joined: Vec<_>;
-        let bars: &[_] = if back.is_empty() {
-            front
-        } else {
-            joined = front.iter().chain(back).cloned().collect();
-            &joined
-        };
-        let layout = infobar::bar_rects(bars, tab_bar_h, cell_h, sw);
+        let bars = infobar::contiguous(&state.info_bars);
+        let layout = infobar::bar_rects(&bars, tab_bar_h, cell_h, sw);
+        let last_visible = layout.visible.len().saturating_sub(1);
 
-        for (index, rect) in layout.visible {
+        for (slot, (index, rect)) in layout.visible.iter().copied().enumerate() {
             let bar = &bars[index];
             let banner_bg = draw_banner_bg(
                 rect.x,
@@ -1329,13 +1320,32 @@ impl WgpuState {
             } else {
                 ""
             };
+            // Bars past the cap are counted rather than drawn (G-cap), and the
+            // bottom bar is where the count goes — it is the edge of the stack,
+            // so "there is more below this" reads in the right place.
+            let more = if slot == last_visible {
+                layout
+                    .more_label()
+                    .map(|label| format!("  {label}"))
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
             // Truncate to the room left by the hint. The error banner already
             // did this; the other two inherit it because a long message is a
-            // property of the text, not of the kind.
+            // property of the text, not of the kind. The count is part of the
+            // budget rather than appended after it, so a long message cannot
+            // push it off the edge.
             let max_chars = ((sw / cell_w) as usize)
-                .saturating_sub(hint.chars().count() + 4)
+                .saturating_sub(hint.chars().count() + more.chars().count() + 4)
                 .max(8);
-            let label: String = bar.kind.label(now).chars().take(max_chars).collect();
+            let label: String = bar
+                .kind
+                .label(now)
+                .chars()
+                .take(max_chars)
+                .chain(more.chars())
+                .collect();
             add_string_verts(
                 &label,
                 cell_w * 1.2,
@@ -1379,9 +1389,6 @@ impl WgpuState {
                 );
             }
         }
-
-        // `layout.hidden` is deliberately not drawn yet: the `+{count} more`
-        // suffix needs a new string in all 8 locales, which is P6c's scope.
     }
 
     /// Build the Quick Select overlay vertices.

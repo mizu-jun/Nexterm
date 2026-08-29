@@ -62,6 +62,7 @@
   "update-dismiss": "关闭更新通知",
   "update-open-releases": "打开发行说明",
   "error-banner-prefix": "错误:",
+  "infobar-more-count": "另有 {count} 条",
   "consent-title-open-url": "打开外部 URL？",
   "consent-title-clipboard-write": "写入剪贴板？",
   "consent-title-notification": "显示桌面通知？",
