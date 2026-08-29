@@ -220,53 +220,86 @@ pub(crate) fn open_releases_url() {
 /// worth pinning, and CI cannot set an OS accessibility preference — so all
 /// of the decision logic lives above it in `AnimationsConfig`, where it is
 /// unit-tested.
+///
+/// Defined once per platform (rather than as `#[cfg]` blocks inside a single
+/// body) so each definition's tail expression is the function's only
+/// `return`-shaped value: with multiple `#[cfg]` blocks in one body, only one
+/// survives compilation per target, and on Windows/macOS that leaves a
+/// platform's own `return` as the final statement, which clippy's
+/// `needless_return` flags. Linux's own build never saw the Windows/macOS
+/// blocks, which is why this passed locally but failed on the Windows and
+/// macOS CI runners.
+#[cfg(windows)]
 pub(crate) fn reduced_motion() -> Option<bool> {
-    #[cfg(windows)]
-    {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            SPI_GETCLIENTAREAANIMATION, SystemParametersInfoW,
-        };
-        let mut enabled: i32 = 0;
-        // SAFETY: `SPI_GETCLIENTAREAANIMATION` writes one BOOL through
-        // `pvParam`; `enabled` is a live, correctly sized local.
-        let ok = unsafe {
-            SystemParametersInfoW(
-                SPI_GETCLIENTAREAANIMATION,
-                0,
-                (&mut enabled as *mut i32).cast(),
-                0,
-            )
-        };
-        if ok == 0 {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SPI_GETCLIENTAREAANIMATION, SystemParametersInfoW,
+    };
+    let mut enabled: i32 = 0;
+    // SAFETY: `SPI_GETCLIENTAREAANIMATION` writes one BOOL through
+    // `pvParam`; `enabled` is a live, correctly sized local.
+    let ok = unsafe {
+        SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION,
+            0,
+            (&mut enabled as *mut i32).cast(),
+            0,
+        )
+    };
+    if ok == 0 {
+        return None;
+    }
+    // The flag reports whether client-area animations are ENABLED, so
+    // reduced motion is its negation.
+    Some(enabled == 0)
+}
+
+/// Whether the OS asks for reduced motion (UI/UX v3 P3c).
+///
+/// `None` means "cannot tell": an unsupported platform, or a failed call.
+/// Callers treat `None` as "not reduced", so a detection failure can only
+/// ever leave motion as the user configured it.
+///
+/// Deliberately thin. It is one FFI call per platform with no branching
+/// worth pinning, and CI cannot set an OS accessibility preference — so all
+/// of the decision logic lives above it in `AnimationsConfig`, where it is
+/// unit-tested.
+///
+/// See the Windows definition above for why this is a separate,
+/// `#[cfg]`-gated function rather than a `#[cfg]` block inside one shared
+/// body.
+#[cfg(target_os = "macos")]
+pub(crate) fn reduced_motion() -> Option<bool> {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    // SAFETY: `sharedWorkspace` returns a singleton owned by AppKit, and
+    // `accessibilityDisplayShouldReduceMotion` is a documented BOOL
+    // property on it. Both selectors take no arguments.
+    let reduced: bool = unsafe {
+        let workspace: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
+        if workspace.is_null() {
             return None;
         }
-        // The flag reports whether client-area animations are ENABLED, so
-        // reduced motion is its negation.
-        return Some(enabled == 0);
-    }
-    #[cfg(target_os = "macos")]
-    {
-        use objc2::runtime::AnyObject;
-        use objc2::{class, msg_send};
-        // SAFETY: `sharedWorkspace` returns a singleton owned by AppKit, and
-        // `accessibilityDisplayShouldReduceMotion` is a documented BOOL
-        // property on it. Both selectors take no arguments.
-        let reduced: bool = unsafe {
-            let workspace: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
-            if workspace.is_null() {
-                return None;
-            }
-            msg_send![workspace, accessibilityDisplayShouldReduceMotion]
-        };
-        return Some(reduced);
-    }
-    #[cfg(not(any(windows, target_os = "macos")))]
-    {
-        // Linux: out of scope for P3c. GNOME's `enable-animations` and the
-        // XDG settings portal are both plausible later, but the manual
-        // `animations.enabled` setting is the documented fallback for now.
-        None
-    }
+        msg_send![workspace, accessibilityDisplayShouldReduceMotion]
+    };
+    Some(reduced)
+}
+
+/// Whether the OS asks for reduced motion (UI/UX v3 P3c).
+///
+/// `None` means "cannot tell": an unsupported platform, or a failed call.
+/// Callers treat `None` as "not reduced", so a detection failure can only
+/// ever leave motion as the user configured it.
+///
+/// Linux: out of scope for P3c. GNOME's `enable-animations` and the XDG
+/// settings portal are both plausible later, but the manual
+/// `animations.enabled` setting is the documented fallback for now.
+///
+/// See the Windows definition above for why this is a separate,
+/// `#[cfg]`-gated function rather than a `#[cfg]` block inside one shared
+/// body.
+#[cfg(not(any(windows, target_os = "macos")))]
+pub(crate) fn reduced_motion() -> Option<bool> {
+    None
 }
 
 #[cfg(test)]
