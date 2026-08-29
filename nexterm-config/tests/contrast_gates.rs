@@ -15,7 +15,8 @@
 
 use nexterm_config::{
     AAA_TEXT_CONTRAST, BuiltinScheme, ContrastTarget, DesignTokens, MIN_TEXT_CONTRAST,
-    SchemePalette, SurfaceLevel, TextTokens, composite_over, wcag_contrast,
+    NEUTRAL_LUMINANCE, SchemePalette, SurfaceLevel, TextTokens, composite_over, wcag_contrast,
+    wcag_luminance,
 };
 
 /// The ground each level is drawn on, as an opaque RGB triple.
@@ -252,6 +253,21 @@ fn a_mid_tone_ground_still_clears_the_floor() {
     assert!(bad.is_empty(), "mid-tone ground: {bad:?}");
 }
 
+/// Every `(label, ratio)` where the S3-corrected text set fails on a shallower
+/// surface — the property P5b's call-site migration leans on.
+fn cross_level_failures(tokens: &DesignTokens) -> Vec<(String, f32)> {
+    let mut out = Vec::new();
+    for (name, color) in text_fields(tokens.text_on(SurfaceLevel::S3)) {
+        for level in [SurfaceLevel::S0, SurfaceLevel::S1, SurfaceLevel::S2] {
+            let r = ratio_on(tokens, level, color);
+            if r < MIN_TEXT_CONTRAST {
+                out.push((format!("S3/{name} on {level:?}"), r));
+            }
+        }
+    }
+    out
+}
+
 /// The property P5b's call-site migration leans on.
 ///
 /// Several surfaces change ground with state — a settings row is the panel's
@@ -259,24 +275,14 @@ fn a_mid_tone_ground_still_clears_the_floor() {
 /// row two text colours would mean animating the colour on hover. Those sites
 /// take the level of the *worst* ground they can appear over instead. That is
 /// only sound if a colour corrected for the bottom of the ramp still reads
-/// everywhere above it, which holds because the surfaces are a monotone
-/// luminance sequence and the correction pushes text the other way. This
-/// pins it rather than leaving it as an argument.
+/// everywhere above it.
 #[test]
 fn text_corrected_for_the_deepest_surface_reads_on_every_shallower_one() {
     let mut report = Vec::new();
     for scheme in BuiltinScheme::all() {
         let tokens = DesignTokens::from_palette(&scheme.palette());
-        for (name, color) in text_fields(tokens.text_on(SurfaceLevel::S3)) {
-            for level in [SurfaceLevel::S0, SurfaceLevel::S1, SurfaceLevel::S2] {
-                let r = ratio_on(&tokens, level, color);
-                if r < MIN_TEXT_CONTRAST {
-                    report.push(format!(
-                        "  {} S3/{name} on {level:?} = {r:.2}",
-                        scheme.display_name()
-                    ));
-                }
-            }
+        for (label, ratio) in cross_level_failures(&tokens) {
+            report.push(format!("  {} {label} = {ratio:.2}", scheme.display_name()));
         }
     }
     assert!(
@@ -284,4 +290,100 @@ fn text_corrected_for_the_deepest_surface_reads_on_every_shallower_one() {
         "S3-corrected text fails on a shallower surface:\n{}",
         report.join("\n")
     );
+}
+
+/// **G-cross.** The same property over generated palettes (UI/UX v3 P5e).
+///
+/// P5d shipped with this untested, and the argument given for it — "the
+/// surfaces are a monotone luminance sequence and the correction pushes text
+/// the other way" — turned out to hold on the built-ins by luck rather than by
+/// construction. Measured then, **919 of 2000** generated palettes had at least
+/// one S3 token below the floor on a shallower surface, worst **2.39:1**.
+///
+/// The cause was two different questions being asked about the same
+/// background: the surface ramp climbed or fell according to
+/// `luminance(raw) < 0.35`, while the text correction picked its direction
+/// from `wcag_luminance < NEUTRAL_LUMINANCE`. Where those disagree the ramp
+/// runs *away* from the text, so `S0` rather than `S3` is the worst case and a
+/// colour corrected for `S3` is too weak everywhere else. P5e made the ramp ask
+/// the same question and capped it at the watershed, which is what this test
+/// now holds it to.
+#[test]
+fn custom_palettes_keep_the_cross_level_property() {
+    let mut state: u32 = 0x5eed_1337;
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        state
+    };
+    let mut byte = || (next() & 0xff) as u8;
+
+    let mut report = Vec::new();
+    for case in 0..512 {
+        let palette = SchemePalette {
+            fg: [byte(), byte(), byte()],
+            bg: [byte(), byte(), byte()],
+            ansi: std::array::from_fn(|_| [byte(), byte(), byte()]),
+            contrast: ContrastTarget::Aa,
+        };
+        let tokens = DesignTokens::from_palette(&palette);
+        for (label, ratio) in cross_level_failures(&tokens) {
+            report.push(format!(
+                "  case {case} fg={:?} bg={:?} {label} = {ratio:.2}",
+                palette.fg, palette.bg
+            ));
+        }
+    }
+    assert!(
+        report.is_empty(),
+        "generated palettes lose the cross-level property:\n{}",
+        report.join("\n")
+    );
+}
+
+/// P5e changed how the ramp picks its direction and added a cap. Neither may
+/// move a built-in scheme: all ten sit far from both the old threshold and the
+/// new one, and the cap only binds near the watershed. This recomputes the
+/// pre-P5e ramp — old predicate, no cap — and demands the exact same surfaces.
+#[test]
+fn builtin_surfaces_are_unchanged_by_p5e() {
+    /// The pre-P5e predicate: BT.709 on undecoded sRGB channels, against 0.35.
+    fn old_is_dark(bg: [u8; 3]) -> bool {
+        let [r, g, b] = bg.map(|v| v as f32 / 255.0);
+        0.2126 * r + 0.7152 * g + 0.0722 * b < 0.35
+    }
+
+    for scheme in BuiltinScheme::all() {
+        let palette = scheme.palette();
+        let dark = old_is_dark(palette.bg);
+        let tokens = DesignTokens::from_palette(&palette);
+        let name = scheme.display_name();
+
+        assert_eq!(
+            dark,
+            wcag_luminance(palette.bg.map(|v| v as f32 / 255.0)) < NEUTRAL_LUMINANCE,
+            "{name}: the two ramp predicates disagree, so P5e moved this scheme"
+        );
+
+        for (step, surface) in [
+            (0.045_f32, tokens.surface_1),
+            (0.10, tokens.surface_2),
+            (0.16, tokens.surface_3),
+            (0.22, tokens.border_default),
+        ] {
+            for (c, base) in surface.iter().zip(palette.bg.iter()) {
+                let base = *base as f32 / 255.0;
+                let want = if dark {
+                    (base + step).min(1.0)
+                } else {
+                    (base - step).max(0.0)
+                };
+                assert!(
+                    (c - want).abs() < 1e-6,
+                    "{name}: step {step} gave {c}, want {want} — the ramp cap bound a built-in"
+                );
+            }
+        }
+    }
 }

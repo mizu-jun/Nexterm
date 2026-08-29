@@ -1,6 +1,6 @@
 # P5 — Contrast everywhere & a high-contrast scheme (design spec)
 
-Status: **shipped — P5a / P5b / P5c / P5d all landed 2026-08-29**
+Status: **shipped — P5a / P5b / P5c / P5d / P5e all landed 2026-08-29**
 Date: 2026-08-29
 Parent plan: [`ui-ux-modernization-v3.md`](./ui-ux-modernization-v3.md) § P5
 Addresses: G10 (principle: Complete + Coherent)
@@ -331,6 +331,7 @@ holds, that arm is deleted and the test asserts a flat 4.5:1.
 | **P5b** | Remove the flat text fields; migrate all call sites to `text_on(level)`. Largest PR, entirely compiler-driven. | `cargo clippy -- -D warnings`, full suite |
 | **P5c** | `BuiltinScheme::HighContrast` + `ContrastTarget` on `SchemePalette` + config/docs touch list + G-hc. **Shipped 2026-08-29.** | G-hc green |
 | **P5d** | Retire `settings/row.rs::ensure_readable` in favour of `contrast_correct`; keep one shared helper for *composited* grounds (hover fills over a surface) where the effective background is not a token. Delete the P3b3 escape hatch. **Shipped 2026-08-29.** | full suite |
+| **P5e** | Make the cross-level property true by construction: one predicate for the ramp direction and the correction direction, and a cap that stops the ramp crossing the watershed. Added after P5d measured it false for user palettes (§8). **Shipped 2026-08-29.** | G-cross green |
 
 P5b is the risk concentration: it is wide but mechanical, and the only PR that
 can change a colour by accident rather than by design.
@@ -351,7 +352,7 @@ can change a colour by accident rather than by design.
 
 ## 8. Open questions
 
-### Found during P5d: the cross-level property does not generalise
+### Found during P5d, fixed in P5e: the cross-level property did not generalise
 
 `text_corrected_for_the_deepest_surface_reads_on_every_shallower_one` (§5) is
 what licenses P5b's rule — where a ground moves with state, take the deepest
@@ -369,14 +370,46 @@ mid-band ceiling §3.2 dismissed — each level still clears its own ground, whi
 is why G-text and G-custom both pass. It is only the cross-level reuse that
 breaks.
 
-This is a **derivation** question, not a call-site one, so P5d did not patch
-around it: the D1 decision is that legibility is a property of `DesignTokens`.
-Nothing ships broken today — no built-in is affected, and the sites that rely on
-the rule are chrome, not terminal content. Options for whoever picks it up:
-extend the G-text gate to assert the cross-level property over generated
-palettes and constrain the ramp so a straddle cannot happen, or drop the
-"deepest level" rule in favour of correcting against the actual composited
-ground at those few sites (which `readable_on` already makes cheap).
+**The diagnosis above was incomplete**, and P5e corrected it before writing any
+code. Straddling the watershed is one way to break the property, but not the
+common one. The real fault was that *two different questions* were being asked
+about the same background:
+
+| Decision | Predicate |
+|---|---|
+| Which way the surface ramp moves | `luminance(raw) < 0.35` — BT.709 on **undecoded** sRGB channels |
+| Which way a text colour is corrected | `wcag_luminance < NEUTRAL_LUMINANCE` — WCAG, on **decoded** channels |
+
+`wcag_luminance(c) ≤ luminance(c)` always, so the two disagree over a band of
+backgrounds — `#FF3100`, a saturated red-orange, is "dark" to the first and
+"light" to the second. Where they disagree the ramp runs *away* from the text
+instead of toward it, so `S0` rather than `S3` becomes the worst case and a
+colour corrected for `S3` is too weak everywhere else. That is a direction
+error, not a margin error, which is why the measured failures reached 2.39:1.
+
+**The fix (P5e), in two parts.** The ramp now asks the same question the
+correction asks. And the ramp is capped so no surface crosses the watershed:
+`ramp_scale` bisects the largest fraction of the nominal 0.045 / 0.10 / 0.16 /
+0.22 steps that stays on the background's own side, and all four steps scale by
+it. With both, the property holds by construction — the ramp is monotone toward
+the text and every level wants the same correction direction — and **G-cross**
+(`custom_palettes_keep_the_cross_level_property`) holds it there.
+
+Measured after: 0 failures in 40 000 generated palettes, worst ratio exactly
+4.500, and no own-level regression. Both halves were verified by reverting them
+one at a time; note that reverting only the predicate leaves G-cross *green*,
+because the cap then collapses the disagreeing palettes' ramps to nothing and
+the property holds vacuously. The predicate's value is measured separately:
+full ramp collapse drops from **2543/20 000 (12.7 %)** to **597/20 000 (3.0 %)**.
+
+**Cost, accepted.** A background near the watershed gets a compressed ramp and,
+at the watershed exactly, no ramp at all — chrome surfaces stop reading as
+layered. That is charged only to backgrounds between roughly `#3E3E3E` and
+`#AEAEAE`, where §3.1 caps contrast at ≈ 4.58:1 regardless: such a palette
+cannot have both a wide ramp and legible text, and this spends the room on the
+text. No built-in is in that band, pinned by
+`builtin_surfaces_are_unchanged_by_p5e`, which recomputes the pre-P5e ramp and
+demands identical surfaces.
 
 Otherwise: none blocking. D1 and D2 are settled, and §3.3's field removal is a consequence
 of them rather than an independent choice. §3.2 records a proposal that
