@@ -151,16 +151,16 @@ impl ConfigLoader {
 }
 
 /// Parses a color-scheme string (kept `pub` for backward compatibility).
+///
+/// This is the Lua path — `cfg.colors = "gruvbox"` in `nexterm.lua`. It used to
+/// carry its own list of five names, so the five schemes added since then were
+/// silently downgraded to Dark from Lua while working from TOML. Delegating to
+/// `BuiltinScheme::from_toml_name` means a new scheme is reachable from both
+/// paths the moment it is added to the enum (UI/UX v3 P5c). Unknown names still
+/// fall back to Dark rather than erroring.
 pub fn parse_color_scheme(s: &str) -> ColorScheme {
     use crate::schema::BuiltinScheme;
-    match s.to_lowercase().as_str() {
-        "dark" => ColorScheme::Builtin(BuiltinScheme::Dark),
-        "light" => ColorScheme::Builtin(BuiltinScheme::Light),
-        "tokyonight" => ColorScheme::Builtin(BuiltinScheme::TokyoNight),
-        "solarized" => ColorScheme::Builtin(BuiltinScheme::Solarized),
-        "gruvbox" => ColorScheme::Builtin(BuiltinScheme::Gruvbox),
-        _other => ColorScheme::Builtin(BuiltinScheme::Dark),
-    }
+    ColorScheme::Builtin(BuiltinScheme::from_toml_name(s).unwrap_or(BuiltinScheme::Dark))
 }
 
 /// Converts a `Config` into a Lua table (lifetime annotations are not needed
@@ -379,7 +379,8 @@ size = 14.0
 ligatures = true
 # font_fallbacks = ["Noto Color Emoji"]
 
-# Built-in color schemes: "dark", "light", "tokyonight", "solarized", "gruvbox"
+# Built-in color schemes: "dark", "light", "tokyonight", "solarized", "gruvbox",
+# "catppuccin", "dracula", "nord", "onedark", "highcontrast"
 # Either pass the name as a string or use the [colors] scheme = "..." table form.
 colors = "tokyonight"
 

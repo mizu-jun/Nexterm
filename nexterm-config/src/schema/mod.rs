@@ -37,8 +37,9 @@ pub use scrolling::ScrollingConfig;
 pub use security::{ConsentPolicy, SecurityConfig};
 pub use shell::{KeyBinding, MacroConfig, SerialPortConfig, ShellConfig};
 pub use tokens::{
-    DesignTokens, MIN_TEXT_CONTRAST, NEUTRAL_LUMINANCE, SurfaceLevel, TextTokens, composite_over,
-    contrast_correct, parse_hex_color, resolve as resolve_color, wcag_contrast, wcag_luminance,
+    AAA_TEXT_CONTRAST, ContrastTarget, DesignTokens, MIN_TEXT_CONTRAST, NEUTRAL_LUMINANCE,
+    SurfaceLevel, TextTokens, composite_over, contrast_correct, parse_hex_color,
+    resolve as resolve_color, wcag_contrast, wcag_luminance,
 };
 pub use ui::UiConfig;
 pub use web::{AccessLogConfig, OAuthConfig, TlsConfig, WebAuthConfig, WebConfig};

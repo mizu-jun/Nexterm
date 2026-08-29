@@ -14,8 +14,8 @@
 //! is the PR that touches those sites.
 
 use nexterm_config::{
-    BuiltinScheme, DesignTokens, MIN_TEXT_CONTRAST, SchemePalette, SurfaceLevel, TextTokens,
-    composite_over, wcag_contrast,
+    AAA_TEXT_CONTRAST, BuiltinScheme, ContrastTarget, DesignTokens, MIN_TEXT_CONTRAST,
+    SchemePalette, SurfaceLevel, TextTokens, composite_over, wcag_contrast,
 };
 
 /// The ground each level is drawn on, as an opaque RGB triple.
@@ -58,18 +58,23 @@ fn ratio_on(tokens: &DesignTokens, level: SurfaceLevel, color: [f32; 4]) -> f32 
     wcag_contrast(composite_over(color, bg), bg)
 }
 
-/// Collect every `(label, ratio)` below the floor for one token set.
-fn failures(tokens: &DesignTokens) -> Vec<(String, f32)> {
+/// Collect every `(label, ratio)` below `floor` for one token set.
+fn failures_below(tokens: &DesignTokens, floor: f32) -> Vec<(String, f32)> {
     let mut out = Vec::new();
     for level in SurfaceLevel::ALL {
         for (name, color) in text_fields(tokens.text_on(level)) {
             let r = ratio_on(tokens, level, color);
-            if r < MIN_TEXT_CONTRAST {
+            if r < floor {
                 out.push((format!("{level:?}/{name}"), r));
             }
         }
     }
     out
+}
+
+/// Collect every `(label, ratio)` below the AA floor for one token set.
+fn failures(tokens: &DesignTokens) -> Vec<(String, f32)> {
+    failures_below(tokens, MIN_TEXT_CONTRAST)
 }
 
 /// **G-text.** Every built-in scheme × every surface level × every text-role
@@ -143,6 +148,52 @@ fn solarized_body_text_is_lightened_without_losing_its_hue() {
     }
 }
 
+/// **G-hc.** The High Contrast scheme is the one built-in that promises WCAG
+/// AAA, and this is where that promise is kept or broken (UI/UX v3 P5c).
+///
+/// It is a *scheme-level* promise rather than a global one because AAA is not
+/// reachable everywhere: against a ground near `NEUTRAL_LUMINANCE` the ceiling
+/// is ≈ 4.58:1. High Contrast can make it because its surfaces stay near black.
+#[test]
+fn the_high_contrast_scheme_meets_the_aaa_floor_on_every_surface() {
+    let palette = BuiltinScheme::HighContrast.palette();
+    assert_eq!(
+        palette.contrast,
+        ContrastTarget::Aaa,
+        "High Contrast must opt into the AAA target, or the derivation only \
+         corrects it to AA and this gate passes for the wrong reason"
+    );
+
+    let tokens = DesignTokens::from_palette(&palette);
+    let report: Vec<_> = failures_below(&tokens, AAA_TEXT_CONTRAST)
+        .into_iter()
+        .map(|(label, ratio)| format!("  {label} = {ratio:.2}"))
+        .collect();
+    assert!(
+        report.is_empty(),
+        "High Contrast text tokens below {AAA_TEXT_CONTRAST}:1:\n{}",
+        report.join("\n")
+    );
+}
+
+/// The AAA target must stay opt-in. If it ever leaked into the default, every
+/// other scheme's muted text would silently change alpha — the derivation would
+/// be correcting colours their authors deliberately chose.
+#[test]
+fn every_other_builtin_scheme_stays_on_the_aa_target() {
+    for scheme in BuiltinScheme::all() {
+        if *scheme == BuiltinScheme::HighContrast {
+            continue;
+        }
+        assert_eq!(
+            scheme.palette().contrast,
+            ContrastTarget::Aa,
+            "{} must stay on the AA target",
+            scheme.display_name()
+        );
+    }
+}
+
 /// **G-custom.** The built-ins are nine fixed points; a user's `CustomPalette`
 /// is the general case, and it is the one no reviewer will ever eyeball. A
 /// deterministic sweep stands in for a property test without adding a
@@ -166,6 +217,7 @@ fn custom_palettes_meet_the_text_floor() {
             fg: [byte(), byte(), byte()],
             bg: [byte(), byte(), byte()],
             ansi: std::array::from_fn(|_| [byte(), byte(), byte()]),
+            contrast: ContrastTarget::Aa,
         };
         let tokens = DesignTokens::from_palette(&palette);
         for (label, ratio) in failures(&tokens) {
@@ -193,6 +245,7 @@ fn a_mid_tone_ground_still_clears_the_floor() {
         fg: [0x78, 0x78, 0x78],
         bg: [0x77, 0x77, 0x77],
         ansi: std::array::from_fn(|_| [0x77, 0x77, 0x77]),
+        contrast: ContrastTarget::Aa,
     };
     let tokens = DesignTokens::from_palette(&palette);
     let bad = failures(&tokens);

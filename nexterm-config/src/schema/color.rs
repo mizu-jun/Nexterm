@@ -1,5 +1,6 @@
 //! Color schemes (built-in palettes plus custom palettes).
 
+use crate::schema::tokens::ContrastTarget;
 use serde::{Deserialize, Serialize};
 
 /// A color-scheme palette (foreground, background, and the ANSI 16-color set).
@@ -14,6 +15,12 @@ pub struct SchemePalette {
     pub bg: [u8; 3],
     /// ANSI 16-color palette (0 = black … 15 = bright white).
     pub ansi: [[u8; 3]; 16],
+    /// Contrast ratio the derived text tokens are corrected toward.
+    ///
+    /// Part of the palette rather than a caller's argument so that a scheme
+    /// carries its own promise: nothing between here and the renderer has to
+    /// know which scheme is active to honour it (UI/UX v3 P5c).
+    pub contrast: ContrastTarget,
 }
 
 /// Built-in color scheme.
@@ -39,6 +46,9 @@ pub enum BuiltinScheme {
     #[serde(rename = "onedark")]
     /// One Dark theme.
     OneDark,
+    /// High Contrast theme — the only scheme that targets WCAG AAA
+    /// (UI/UX v3 P5c).
+    HighContrast,
 }
 
 impl BuiltinScheme {
@@ -54,6 +64,7 @@ impl BuiltinScheme {
             Self::Dracula => "Dracula",
             Self::Nord => "Nord",
             Self::OneDark => "One Dark",
+            Self::HighContrast => "High Contrast",
         }
     }
 
@@ -69,6 +80,7 @@ impl BuiltinScheme {
             Self::Dracula => "dracula",
             Self::Nord => "nord",
             Self::OneDark => "onedark",
+            Self::HighContrast => "highcontrast",
         }
     }
 
@@ -84,6 +96,7 @@ impl BuiltinScheme {
             Self::Dracula,
             Self::Nord,
             Self::OneDark,
+            Self::HighContrast,
         ]
     }
 
@@ -103,6 +116,7 @@ impl BuiltinScheme {
             "dracula" => Some(Self::Dracula),
             "nord" => Some(Self::Nord),
             "onedark" => Some(Self::OneDark),
+            "highcontrast" => Some(Self::HighContrast),
             _ => None,
         }
     }
@@ -131,6 +145,7 @@ impl BuiltinScheme {
                     [0x00, 0xFF, 0xFF],
                     [0xFF, 0xFF, 0xFF],
                 ],
+                contrast: ContrastTarget::Aa,
             },
             Self::Light => SchemePalette {
                 fg: [0x2C, 0x2C, 0x2C],
@@ -153,6 +168,7 @@ impl BuiltinScheme {
                     [0x00, 0xC0, 0xC0],
                     [0xFF, 0xFF, 0xFF],
                 ],
+                contrast: ContrastTarget::Aa,
             },
             Self::TokyoNight => SchemePalette {
                 fg: [0xC0, 0xCA, 0xF5],
@@ -175,6 +191,7 @@ impl BuiltinScheme {
                     [0x7D, 0xCF, 0xFF],
                     [0xC0, 0xCA, 0xF5],
                 ],
+                contrast: ContrastTarget::Aa,
             },
             Self::Solarized => SchemePalette {
                 fg: [0x83, 0x94, 0x96],
@@ -197,6 +214,7 @@ impl BuiltinScheme {
                     [0x93, 0xA1, 0xA1],
                     [0xFD, 0xF6, 0xE3],
                 ],
+                contrast: ContrastTarget::Aa,
             },
             Self::Gruvbox => SchemePalette {
                 fg: [0xEB, 0xDB, 0xB2],
@@ -219,6 +237,7 @@ impl BuiltinScheme {
                     [0x8E, 0xC0, 0x7C],
                     [0xEB, 0xDB, 0xB2],
                 ],
+                contrast: ContrastTarget::Aa,
             },
             Self::Catppuccin => SchemePalette {
                 // Catppuccin Mocha
@@ -242,6 +261,7 @@ impl BuiltinScheme {
                     [0x94, 0xE2, 0xD5],
                     [0xA6, 0xAD, 0xC8],
                 ],
+                contrast: ContrastTarget::Aa,
             },
             Self::Dracula => SchemePalette {
                 fg: [0xF8, 0xF8, 0xF2],
@@ -264,6 +284,7 @@ impl BuiltinScheme {
                     [0xA4, 0xFF, 0xFF],
                     [0xFF, 0xFF, 0xFF],
                 ],
+                contrast: ContrastTarget::Aa,
             },
             Self::Nord => SchemePalette {
                 fg: [0xD8, 0xDE, 0xE9],
@@ -286,6 +307,7 @@ impl BuiltinScheme {
                     [0x8F, 0xBD, 0xBB],
                     [0xEC, 0xEF, 0xF4],
                 ],
+                contrast: ContrastTarget::Aa,
             },
             Self::OneDark => SchemePalette {
                 fg: [0xAB, 0xB2, 0xBF],
@@ -308,6 +330,38 @@ impl BuiltinScheme {
                     [0x56, 0xB6, 0xC2],
                     [0xFF, 0xFF, 0xFF],
                 ],
+                contrast: ContrastTarget::Aa,
+            },
+            // Modelled on Windows High Contrast Black: a pure black ground and
+            // a pure white foreground, with every ANSI entry lifted until it
+            // clears 7:1 against `surface_3` — the shallowest chrome surface
+            // and therefore the worst case (relative luminance ≈ 0.022, so a
+            // colour needs Y ≥ 0.454 to reach AAA there). That floor is what
+            // rules out the usual saturated primaries: pure red is Y = 0.213
+            // and pure blue Y = 0.072, so both are tinted toward white until
+            // they clear it while staying recognisably their own hue.
+            Self::HighContrast => SchemePalette {
+                fg: [0xFF, 0xFF, 0xFF],
+                bg: [0x00, 0x00, 0x00],
+                ansi: [
+                    [0x00, 0x00, 0x00],
+                    [0xFF, 0x66, 0x66],
+                    [0x40, 0xE0, 0x40],
+                    [0xE0, 0xE0, 0x00],
+                    [0x80, 0xB0, 0xE0],
+                    [0xE0, 0x80, 0xE0],
+                    [0x40, 0xE0, 0xE0],
+                    [0xE0, 0xE0, 0xE0],
+                    [0xBE, 0xBE, 0xBE],
+                    [0xFF, 0xAA, 0xAA],
+                    [0x55, 0xFF, 0x55],
+                    [0xFF, 0xFF, 0x55],
+                    [0xAA, 0xCC, 0xFF],
+                    [0xFF, 0xAA, 0xFF],
+                    [0x55, 0xFF, 0xFF],
+                    [0xFF, 0xFF, 0xFF],
+                ],
+                contrast: ContrastTarget::Aaa,
             },
         }
     }

@@ -3707,7 +3707,11 @@ mod tests {
         let descs = crate::renderer::overlay::widgets::settings_theme::theme_widget_descs(
             &state.settings_panel,
         );
-        assert_eq!(descs.len(), 11, "2 rows + 9 swatches");
+        assert_eq!(
+            descs.len(),
+            nexterm_config::BuiltinScheme::all().len() + 2,
+            "2 rows + one swatch per built-in scheme"
+        );
         for desc in &descs {
             assert!(
                 ids.contains(&settings_widget_id(desc.id).0),

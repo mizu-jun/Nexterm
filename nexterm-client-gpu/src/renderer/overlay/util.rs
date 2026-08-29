@@ -329,17 +329,7 @@ mod tests {
         // Mirrors `row::MIN_TEXT_CONTRAST`, which is scoped to the settings
         // panel's module tree.
         const FLOOR: f32 = 4.5;
-        for scheme in [
-            nexterm_config::BuiltinScheme::Dark,
-            nexterm_config::BuiltinScheme::Light,
-            nexterm_config::BuiltinScheme::Gruvbox,
-            nexterm_config::BuiltinScheme::Solarized,
-            nexterm_config::BuiltinScheme::Catppuccin,
-            nexterm_config::BuiltinScheme::Dracula,
-            nexterm_config::BuiltinScheme::Nord,
-            nexterm_config::BuiltinScheme::OneDark,
-            nexterm_config::BuiltinScheme::TokyoNight,
-        ] {
+        for scheme in nexterm_config::BuiltinScheme::all().iter().copied() {
             let tokens = tokens_for(scheme);
             let fills = [
                 ("kill resting", danger_fill(&tokens, 0.55)),
@@ -495,17 +485,7 @@ mod tests {
     /// to do.
     #[test]
     fn panel_body_text_clears_contrast_floor_across_acrylic_strengths() {
-        for scheme in [
-            nexterm_config::BuiltinScheme::Dark,
-            nexterm_config::BuiltinScheme::Light,
-            nexterm_config::BuiltinScheme::Gruvbox,
-            nexterm_config::BuiltinScheme::Solarized,
-            nexterm_config::BuiltinScheme::Catppuccin,
-            nexterm_config::BuiltinScheme::Dracula,
-            nexterm_config::BuiltinScheme::Nord,
-            nexterm_config::BuiltinScheme::OneDark,
-            nexterm_config::BuiltinScheme::TokyoNight,
-        ] {
+        for scheme in nexterm_config::BuiltinScheme::all().iter().copied() {
             let tokens = tokens_for(scheme);
             for backdrop in [tokens.surface_0, tokens.surface_1] {
                 for m in [0.0_f32, 0.25, 0.5, 0.75, 1.0] {

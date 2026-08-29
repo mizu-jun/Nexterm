@@ -8,13 +8,13 @@ use super::SettingsPanel;
 
 impl SettingsPanel {
     pub fn next_scheme(&mut self) {
-        self.scheme_index = (self.scheme_index + 1) % 9;
+        self.scheme_index = (self.scheme_index + 1) % scheme_count();
         self.dirty = true;
     }
 
     pub fn prev_scheme(&mut self) {
         self.scheme_index = if self.scheme_index == 0 {
-            8
+            scheme_count() - 1
         } else {
             self.scheme_index - 1
         };
@@ -23,18 +23,7 @@ impl SettingsPanel {
 
     /// Return the scheme name for the current `scheme_index`.
     pub fn scheme_name(&self) -> &str {
-        const SCHEMES: [&str; 9] = [
-            "dark",
-            "light",
-            "tokyonight",
-            "solarized",
-            "gruvbox",
-            "catppuccin",
-            "dracula",
-            "nord",
-            "onedark",
-        ];
-        SCHEMES[self.scheme_index % 9]
+        nexterm_config::BuiltinScheme::all()[self.scheme_index % scheme_count()].toml_name()
     }
 
     /// Toggle `colors_follow_system`.
@@ -44,45 +33,35 @@ impl SettingsPanel {
     }
 }
 
+/// Number of selectable built-in schemes — the cycler, the swatch strip and
+/// the index helpers all wrap on it. Read from `BuiltinScheme::all()` so adding
+/// a scheme cannot leave one of them a slot behind (UI/UX v3 P5c).
+pub(crate) fn scheme_count() -> usize {
+    nexterm_config::BuiltinScheme::all().len()
+}
+
 /// Convert a color scheme into its index.
 pub(crate) fn scheme_name_to_index(colors: &nexterm_config::ColorScheme) -> usize {
-    use nexterm_config::{BuiltinScheme, ColorScheme};
+    use nexterm_config::ColorScheme;
     match colors {
-        ColorScheme::Builtin(b) => match b {
-            BuiltinScheme::Dark => 0,
-            BuiltinScheme::Light => 1,
-            BuiltinScheme::TokyoNight => 2,
-            BuiltinScheme::Solarized => 3,
-            BuiltinScheme::Gruvbox => 4,
-            BuiltinScheme::Catppuccin => 5,
-            BuiltinScheme::Dracula => 6,
-            BuiltinScheme::Nord => 7,
-            BuiltinScheme::OneDark => 8,
-        },
+        ColorScheme::Builtin(b) => nexterm_config::BuiltinScheme::all()
+            .iter()
+            .position(|s| s == b)
+            .unwrap_or(0),
         ColorScheme::Custom(_) => 0,
     }
 }
 
-/// Inverse of `scheme_name_to_index`: map a 0..=8 slot to a
-/// `BuiltinScheme`. Used by Phase 3b live theme preview to derive a
-/// `ColorScheme` value from a hovered dot index. Pure helper so it
-/// can be unit-tested without instantiating a renderer.
+/// Inverse of `scheme_name_to_index`: map a slot to a `BuiltinScheme`. Used by
+/// Phase 3b live theme preview to derive a `ColorScheme` value from a hovered
+/// dot index. Pure helper so it can be unit-tested without instantiating a
+/// renderer.
 ///
-/// Out-of-range inputs wrap modulo 9 so the caller doesn't need to
-/// clamp ahead of time.
+/// Out-of-range inputs wrap modulo the scheme count so the caller doesn't need
+/// to clamp ahead of time.
 pub fn index_to_builtin_scheme(idx: usize) -> nexterm_config::BuiltinScheme {
-    use nexterm_config::BuiltinScheme;
-    match idx % 9 {
-        0 => BuiltinScheme::Dark,
-        1 => BuiltinScheme::Light,
-        2 => BuiltinScheme::TokyoNight,
-        3 => BuiltinScheme::Solarized,
-        4 => BuiltinScheme::Gruvbox,
-        5 => BuiltinScheme::Catppuccin,
-        6 => BuiltinScheme::Dracula,
-        7 => BuiltinScheme::Nord,
-        _ => BuiltinScheme::OneDark,
-    }
+    let all = nexterm_config::BuiltinScheme::all();
+    all[idx % all.len()]
 }
 
 #[cfg(test)]
@@ -94,13 +73,20 @@ mod tests {
     fn scheme_wraps() {
         let config = Config::default();
         let mut panel = SettingsPanel::new(&config);
-        panel.scheme_index = 8;
+        let last = scheme_count() - 1;
+        panel.scheme_index = last;
         panel.next_scheme();
-        assert_eq!(panel.scheme_index, 0, "the slot after index 8 wraps to 0");
+        assert_eq!(
+            panel.scheme_index, 0,
+            "the slot after the last one wraps to 0"
+        );
 
         panel.scheme_index = 0;
         panel.prev_scheme();
-        assert_eq!(panel.scheme_index, 8, "the slot before index 0 wraps to 8");
+        assert_eq!(
+            panel.scheme_index, last,
+            "the slot before index 0 wraps to the last one"
+        );
     }
 
     #[test]
@@ -121,27 +107,31 @@ mod theme_preview_tests {
     use nexterm_config::BuiltinScheme;
 
     /// `index_to_builtin_scheme` must round-trip with the existing
-    /// `scheme_name_to_index` inverse for every slot 0..=8 so the live
-    /// preview cannot select a scheme that the commit path then drops.
+    /// `scheme_name_to_index` inverse for every slot so the live preview
+    /// cannot select a scheme that the commit path then drops.
     #[test]
     fn index_to_scheme_round_trips_with_name_to_index() {
-        for idx in 0..9 {
+        for idx in 0..scheme_count() {
             let scheme = index_to_builtin_scheme(idx);
             let back = scheme_name_to_index(&nexterm_config::ColorScheme::Builtin(scheme));
             assert_eq!(back, idx, "round-trip mismatch at idx={}", idx);
         }
     }
 
-    /// Out-of-range inputs must wrap modulo 9 rather than panic — the
-    /// renderer passes the field value verbatim and we don't want
-    /// stray hover state to crash the frame.
+    /// Out-of-range inputs must wrap modulo the scheme count rather than
+    /// panic — the renderer passes the field value verbatim and we don't
+    /// want stray hover state to crash the frame.
     #[test]
     fn index_to_scheme_wraps_out_of_range() {
-        assert_eq!(index_to_builtin_scheme(9), BuiltinScheme::Dark);
-        assert_eq!(index_to_builtin_scheme(17), BuiltinScheme::OneDark);
+        let n = scheme_count();
+        assert_eq!(index_to_builtin_scheme(n), BuiltinScheme::Dark);
+        assert_eq!(
+            index_to_builtin_scheme(2 * n - 1),
+            index_to_builtin_scheme(n - 1)
+        );
         assert_eq!(
             index_to_builtin_scheme(usize::MAX),
-            index_to_builtin_scheme(usize::MAX % 9)
+            index_to_builtin_scheme(usize::MAX % n)
         );
     }
 

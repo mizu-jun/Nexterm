@@ -21,17 +21,17 @@ pub mod wsl;
 pub use loader::{ConfigLoader, lua_path, toml_path};
 pub use lua_hooks::{HookEvent, LuaHookRunner};
 pub use schema::{
-    AccessLogConfig, AnimationIntensity, AnimationsConfig, AnimationsEnabled, BackdropTarget,
-    BackgroundFit, BackgroundImageConfig, BlocksConfig, BuiltinScheme, CloseAction, ColorScheme,
-    Config, ConsentPolicy, CubicBezier, CursorConfig, CursorStyle, CustomPalette, DesignTokens,
-    ElevationScale, FontConfig, GpuConfig, GradientConfig, HooksConfig, HostConfig,
-    InactivePaneHsbConfig, KeyBinding, LogConfig, MIN_TEXT_CONTRAST, MacroConfig, MetricTokens,
-    MotionTokens, NEUTRAL_LUMINANCE, OAuthConfig, PresentModeConfig, Profile, QuakeEdge,
-    QuakeModeConfig, RadiusTokens, ResolvedBackdrop, SchemePalette, SecurityConfig,
-    SerialPortConfig, ShellConfig, SpacingRamp, StatusBarConfig, SurfaceLevel, TabBarConfig,
-    TextTokens, TlsConfig, TypeRamp, TypeStyle, UiConfig, WebAuthConfig, WebConfig, WindowBackdrop,
-    WindowConfig, WindowDecorations, composite_over, contrast_correct, parse_hex_color,
-    resolve_color, wcag_contrast, wcag_luminance,
+    AAA_TEXT_CONTRAST, AccessLogConfig, AnimationIntensity, AnimationsConfig, AnimationsEnabled,
+    BackdropTarget, BackgroundFit, BackgroundImageConfig, BlocksConfig, BuiltinScheme, CloseAction,
+    ColorScheme, Config, ConsentPolicy, ContrastTarget, CubicBezier, CursorConfig, CursorStyle,
+    CustomPalette, DesignTokens, ElevationScale, FontConfig, GpuConfig, GradientConfig,
+    HooksConfig, HostConfig, InactivePaneHsbConfig, KeyBinding, LogConfig, MIN_TEXT_CONTRAST,
+    MacroConfig, MetricTokens, MotionTokens, NEUTRAL_LUMINANCE, OAuthConfig, PresentModeConfig,
+    Profile, QuakeEdge, QuakeModeConfig, RadiusTokens, ResolvedBackdrop, SchemePalette,
+    SecurityConfig, SerialPortConfig, ShellConfig, SpacingRamp, StatusBarConfig, SurfaceLevel,
+    TabBarConfig, TextTokens, TlsConfig, TypeRamp, TypeStyle, UiConfig, WebAuthConfig, WebConfig,
+    WindowBackdrop, WindowConfig, WindowDecorations, composite_over, contrast_correct,
+    parse_hex_color, resolve_color, wcag_contrast, wcag_luminance,
 };
 pub use status_bar::{StatusBarEvaluator, WidgetContext, evaluate_builtin};
 pub use watcher::{ConfigRx, watch_config};

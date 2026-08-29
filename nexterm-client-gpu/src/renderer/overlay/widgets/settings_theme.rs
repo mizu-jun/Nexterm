@@ -22,8 +22,9 @@ pub(crate) const THEME_CATEGORY: u8 = 2;
 pub(crate) const THEME_SCHEME: u16 = 0;
 /// Widget index of the "follow system theme" toggle.
 pub(crate) const THEME_FOLLOW_SYSTEM: u16 = 1;
-/// First widget index of the nine color-scheme swatches. The gap above the
-/// row indices leaves room for future rows without renumbering the swatches.
+/// First widget index of the color-scheme swatches (one per built-in scheme).
+/// The gap above the row indices leaves room for future rows without
+/// renumbering the swatches.
 pub(crate) const THEME_SWATCH_BASE: u16 = 10;
 
 /// The built-in schemes previewed as swatches, with the representative
@@ -248,14 +249,14 @@ mod tests {
     }
 
     #[test]
-    fn builds_two_rows_and_nine_swatches() {
+    fn builds_two_rows_and_one_swatch_per_scheme() {
         let specs = build_theme_widgets(&panel(), &geometry());
-        assert_eq!(specs.len(), 11);
+        assert_eq!(specs.len(), SWATCHES.len() + 2);
         let swatches = specs
             .iter()
             .filter(|s| matches!(s.kind(), WidgetKind::Swatch { .. }))
             .count();
-        assert_eq!(swatches, 9);
+        assert_eq!(swatches, SWATCHES.len());
     }
 
     #[test]
@@ -306,8 +307,8 @@ mod tests {
         // computing these numbers on its own.
         let g = geometry();
         let specs = build_theme_widgets(&panel(), &g);
-        let gap = (g.content_w - g.cell_w * 2.0) / 9.0;
-        for i in 0..9usize {
+        let gap = (g.content_w - g.cell_w * 2.0) / SWATCHES.len() as f32;
+        for i in 0..SWATCHES.len() {
             let s = specs
                 .iter()
                 .find(|s| swatch_index_of(s.id()) == Some(i))
@@ -344,7 +345,10 @@ mod tests {
         assert_eq!(swatch_index_of(WidgetId::new(THEME_CATEGORY, 0)), None);
         assert_eq!(swatch_index_of(WidgetId::new(0, THEME_SWATCH_BASE)), None);
         assert_eq!(
-            swatch_index_of(WidgetId::new(THEME_CATEGORY, THEME_SWATCH_BASE + 9)),
+            swatch_index_of(WidgetId::new(
+                THEME_CATEGORY,
+                THEME_SWATCH_BASE + SWATCHES.len() as u16
+            )),
             None
         );
     }

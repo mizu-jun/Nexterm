@@ -8,12 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- New built-in **High Contrast** colour scheme (`colors = "highcontrast"`), the
+  first scheme to target WCAG **AAA**: a pure black ground, pure white text, and
+  ANSI entries lifted until every one clears 7:1 against the chrome surfaces.
+  Measured, every text role lands between 7.00:1 and 21:1 on all four surface
+  levels. Selectable from the settings panel's theme gallery and `nexterm-ctl
+  theme` like any other scheme (UI/UX v3 P5c).
+- `SchemePalette::contrast` (`ContrastTarget::Aa` | `Aaa`) lets a palette state
+  the contrast ratio its text tokens are corrected toward. AAA cannot be a
+  global floor — `text_muted` is the foreground at alpha 0.48, which tops out
+  near 4.55:1 over the surface ramp whatever foreground a palette states — so a
+  scheme opts in and pays for it with a raised alpha instead.
 - `window.backdrop` (`auto` | `mica` | `mica-alt` | `acrylic` | `none`) selects the
   OS-native window backdrop material. Windows maps it to
   `DWMWA_SYSTEMBACKDROP_TYPE` (Windows 11 build 22621+), macOS to
   `NSVisualEffectView` vibrancy via `window-vibrancy`, and Linux to nothing —
   `in_app_blur_enabled` is the in-app substitute there. Secondary OS windows now
   receive the backdrop too; before this they received none.
+
+### Fixed
+- Setting a colour scheme from `nexterm.lua` (`cfg.colors = "..."`) recognised
+  only five of the nine built-in names; `catppuccin`, `dracula`, `nord` and
+  `onedark` were silently downgraded to `dark`. The Lua path now shares the same
+  name table as TOML, so a scheme is reachable from both the moment it exists.
 
 ### Changed
 - Requesting a backdrop now creates the window transparent on its own. Previously
