@@ -242,43 +242,19 @@ pub(crate) fn apply_hsb_animated_rgba(
     apply_hsb_multiplier(rgba, h, s, b)
 }
 
-/// WCAG 2.x relative luminance of a linear-ish sRGB color (components in [0, 1]).
-///
-/// Uses the standard sRGB transfer function per
-/// <https://www.w3.org/TR/WCAG21/#dfn-relative-luminance>.
-pub(crate) fn relative_luminance(rgb: [f32; 3]) -> f32 {
-    let lin = |c: f32| {
-        let c = c.clamp(0.0, 1.0);
-        if c <= 0.04045 {
-            c / 12.92
-        } else {
-            ((c + 0.055) / 1.055).powf(2.4)
-        }
-    };
-    0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2])
-}
-
 /// WCAG 2.x contrast ratio between two opaque colors, in [1, 21].
 ///
 /// Overlay text must reach at least 4.5:1 against its effective background
 /// (project accessibility guideline).
 pub(crate) fn contrast_ratio(fg: [f32; 3], bg: [f32; 3]) -> f32 {
-    let l1 = relative_luminance(fg);
-    let l2 = relative_luminance(bg);
-    let (hi, lo) = if l1 >= l2 { (l1, l2) } else { (l2, l1) };
-    (hi + 0.05) / (lo + 0.05)
+    nexterm_config::wcag_contrast(fg, bg)
 }
 
 /// Composite a straight-alpha RGBA color over an opaque background, returning
 /// the effective opaque color. Used to evaluate the contrast of semi-transparent
 /// overlay decorations against panel surfaces.
 pub(crate) fn composite_over(fg: [f32; 4], bg: [f32; 3]) -> [f32; 3] {
-    let a = fg[3].clamp(0.0, 1.0);
-    [
-        fg[0] * a + bg[0] * (1.0 - a),
-        fg[1] * a + bg[1] * (1.0 - a),
-        fg[2] * a + bg[2] * (1.0 - a),
-    ]
+    nexterm_config::composite_over(fg, bg)
 }
 
 /// Brightness multiplier applied to a control's fill at full press weight
@@ -784,7 +760,8 @@ mod tests {
         let c = [0.4, 0.5, 0.6, 0.35];
         let out = press_fill(c, 1.0);
         assert!(
-            relative_luminance([out[0], out[1], out[2]]) < relative_luminance([c[0], c[1], c[2]]),
+            nexterm_config::wcag_luminance([out[0], out[1], out[2]])
+                < nexterm_config::wcag_luminance([c[0], c[1], c[2]]),
             "pressed fill must be darker"
         );
         assert!(out[3] > c[3], "pressed fill must be stronger");
@@ -826,8 +803,9 @@ mod tests {
             ];
             let s = tokens.surface_3;
             let hovered = [s[0], s[1], s[2], s[3] * 0.35];
-            let rest = relative_luminance(composite_over(hovered, bg));
-            let pressed = relative_luminance(composite_over(press_fill(hovered, 1.0), bg));
+            let rest = nexterm_config::wcag_luminance(composite_over(hovered, bg));
+            let pressed =
+                nexterm_config::wcag_luminance(composite_over(press_fill(hovered, 1.0), bg));
             assert!(
                 (rest - pressed).abs() > 0.004,
                 "{scheme:?}: pressed is indistinguishable from hovered (Δ luminance {})",

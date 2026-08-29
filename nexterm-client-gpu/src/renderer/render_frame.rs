@@ -159,6 +159,28 @@ mod overlay_count_tests {
 }
 
 impl WgpuState {
+    /// Design tokens for `palette`, re-deriving only when the palette changed.
+    ///
+    /// Returns an owned clone rather than a borrow so the caller keeps `self`
+    /// free for the rest of the frame; a few hundred bytes of memcpy is orders
+    /// of magnitude below the derivation this exists to skip.
+    fn design_tokens_for(
+        &mut self,
+        palette: Option<&nexterm_config::SchemePalette>,
+    ) -> nexterm_config::DesignTokens {
+        let Some(palette) = palette else {
+            return nexterm_config::DesignTokens::default();
+        };
+        if let Some((cached_palette, cached_tokens)) = &self.design_tokens
+            && cached_palette == palette
+        {
+            return cached_tokens.clone();
+        }
+        let tokens = nexterm_config::DesignTokens::from_palette(palette);
+        self.design_tokens = Some((palette.clone(), tokens.clone()));
+        tokens
+    }
+
     /// Render a single frame.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn render(
@@ -216,12 +238,9 @@ impl WgpuState {
         let scheme_palette: Option<nexterm_config::SchemePalette> =
             Some(crate::color_util::scheme_palette(color_scheme));
         let palette_ref = scheme_palette.as_ref();
-        // Compute design tokens from the active palette (cheap; runs every frame).
-        let tokens = if let Some(p) = scheme_palette.as_ref() {
-            nexterm_config::DesignTokens::from_palette(p)
-        } else {
-            nexterm_config::DesignTokens::default()
-        };
+        // Design tokens for the active palette, memoised — see the
+        // `design_tokens` field for why this is no longer derived every frame.
+        let tokens = self.design_tokens_for(scheme_palette.as_ref());
         let output = match self.surface.get_current_texture() {
             Ok(t) => t,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
