@@ -656,8 +656,28 @@ gated behind a spike.
       font" — is verified only as far as a CPU test can go** (every bundled
       icon rasterises to non-empty ink through the real path); how any of it
       *looks* is unverified and joins the backlog below
-- [ ] P4b chrome type ramp — the larger half; see
-      `plans/2026-08-29-p4-iconography-and-chrome-typography.md` §5
+- [x] P4b chrome type ramp — `TypeRamp` finally has readers. The chrome gained
+      a text-run primitive (`measure_run` / `truncate_run_to_width` /
+      `add_run_verts`) that advances by each glyph's measured width at a ramp
+      size instead of by `cell_w` at the cell size, and six surfaces adopted
+      it: the settings panel title (Title), section headers (Subtitle), every
+      text-bearing control in the widget layer (Body / Body Strong), the
+      sidebar labels, the tooltip (Caption) and the dialog titles and body
+      text. Measurement and drawing share one per-glyph number by
+      construction, so a truncation cannot disagree with what is drawn.
+      Weight follows D-2 — SemiBold maps to the existing bold flag, because
+      the chrome draws in the *user's* terminal font where a real weight-600
+      request resolves differently on every machine. Two claims in the plan
+      were corrected while building it: this is not really a "proportional"
+      path (a monospace terminal font makes Latin advances equal — what the
+      ramp buys is *size*, not proportionality), and the tooltip's placement
+      function had to change signature rather than just its draw call. Dialog
+      button labels and the footer links stay on the cell path because their
+      text widths reach click targets. **Every text size in the settings panel
+      changed and none of it has been looked at** — see the backlog below
+      - [ ] P4 follow-up — the hit-region work that would let the dialog
+      buttons and the footer's `↗` / `↺` links move too; see the design spec's
+      §8
 - [ ] P5 contrast everywhere + high-contrast scheme
 - [ ] P6 InfoBar + consent reclassification
 - [x] P7 base `notitle` custom title bar — shipped early via #46 (2026-07-30)
@@ -802,6 +822,24 @@ gated behind a spike.
     a glyph baseline would have; and how any of it looks on a HiDPI display,
     where `icon_px` multiplies the step by the scale factor — a path with no
     test because `scale_factor` only becomes real in `on_resumed`.
+  - P4b — **every text size in the settings panel changed, and nobody has seen
+    any of it.** This is the largest unverified appearance change in the whole
+    phase: the ramp's Body is 14 epx where the chrome previously drew at the
+    terminal font size (≈18.7 px at the 14 pt default), so all panel text gets
+    *smaller*, while section headers get *larger* (Subtitle 20) and the panel
+    title larger still (Title 28). Whether that reads as a hierarchy or as a
+    mismatch is exactly the question a screenshot would answer. Also not
+    measured: whether Body Strong is distinguishable from Body when both are
+    14 px and the only difference is the bold flag (D-2's accepted cost, and
+    the place it is most likely to disappoint); whether rows still look
+    vertically centred now that the line box is the ramp's line height rather
+    than the cell; whether the smaller text still clears the 4.5:1 contrast
+    floor *perceptually* at 14 px, since the contrast tests measure colour
+    pairs and say nothing about size; whether the tooltip box still hugs its
+    caption text; whether the consent dialog looks coherent with a Title-sized
+    heading, Body text and cell-sized *buttons*, which is the one deliberate
+    size mismatch this phase leaves behind; and all of it at HiDPI, where the
+    ramp is multiplied by the scale factor on a path with no test.
   - The cross-cutting rule above still asks for hand-run screenshots under
     `docs/img/uiux-v3/`. That directory does not exist yet. P3a makes the gap
     wider than "nobody took a screenshot": a screenshot cannot show a

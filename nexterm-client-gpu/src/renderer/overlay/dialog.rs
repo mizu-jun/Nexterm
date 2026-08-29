@@ -6,7 +6,7 @@ use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::host_manager::PasswordModalView;
 use crate::state::{ClientState, CloseWindowDialog, ConsentDialog, ContextMenu};
-use crate::vertex_util::{add_px_rect, add_string_verts, visual_width};
+use crate::vertex_util::{add_px_rect, add_run_verts, add_string_verts, visual_width};
 
 use super::super::WgpuState;
 use super::util::{
@@ -33,6 +33,9 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
+        // UI/UX v3 P4b: the chrome type ramp. Deliberately not `scaled()` —
+        // `FontManager::chrome_metrics` owns the DPI conversion.
+        let metrics = nexterm_config::MetricTokens::default();
         let pw = 44.0 * cell_w;
         let ph = 6.0 * cell_h;
         let px = (sw - pw) / 2.0;
@@ -60,15 +63,14 @@ impl WgpuState {
 
         // Title
         let title = format!("Password: {}@{}:{}", view.username, view.host, view.port);
-        add_string_verts(
+        add_run_verts(
             &title,
+            &metrics.type_ramp.body,
             px + cell_w,
             py + cell_h * 0.15,
             tokens.accent_primary,
-            true,
             sw,
             sh,
-            cell_w,
             font,
             atlas,
             &self.queue,
@@ -82,15 +84,14 @@ impl WgpuState {
         // The mask is drawn from `input_len`, never from the characters.
         let masked = "*".repeat(view.input_len);
         let prompt = format!("> {}_", masked);
-        add_string_verts(
+        add_run_verts(
             &prompt,
+            &metrics.type_ramp.body,
             px + cell_w,
             py + cell_h * 1.3,
             tokens.text_primary,
-            false,
             sw,
             sh,
-            cell_w,
             font,
             atlas,
             &self.queue,
@@ -100,15 +101,14 @@ impl WgpuState {
 
         // Error message
         if let Some(err) = view.error {
-            add_string_verts(
+            add_run_verts(
                 err,
+                &metrics.type_ramp.body,
                 px + cell_w,
                 py + cell_h * 2.5,
                 tokens.semantic_error,
-                false,
                 sw,
                 sh,
-                cell_w,
                 font,
                 atlas,
                 &self.queue,
@@ -128,15 +128,14 @@ impl WgpuState {
         } else {
             tokens.text_muted
         };
-        add_string_verts(
+        add_run_verts(
             remember_label,
+            &metrics.type_ramp.body,
             px + cell_w,
             py + cell_h * 3.2,
             remember_color,
-            false,
             sw,
             sh,
-            cell_w,
             font,
             atlas,
             &self.queue,
@@ -144,15 +143,14 @@ impl WgpuState {
             text_idx,
         );
         if view.prefilled {
-            add_string_verts(
+            add_run_verts(
                 "(prefilled from the keychain)",
+                &metrics.type_ramp.body,
                 px + cell_w,
                 py + cell_h * 2.0,
                 tokens.semantic_info,
-                false,
                 sw,
                 sh,
-                cell_w,
                 font,
                 atlas,
                 &self.queue,
@@ -162,15 +160,14 @@ impl WgpuState {
         }
 
         // Hint
-        add_string_verts(
+        add_run_verts(
             "Enter=connect  Tab=toggle save  Esc=cancel",
+            &metrics.type_ramp.body,
             px + cell_w,
             py + cell_h * 4.1,
             tokens.text_secondary,
-            false,
             sw,
             sh,
-            cell_w,
             font,
             atlas,
             &self.queue,
@@ -370,6 +367,9 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
+        // UI/UX v3 P4b: the chrome type ramp. Deliberately not `scaled()` —
+        // `FontManager::chrome_metrics` owns the DPI conversion.
+        let metrics = nexterm_config::MetricTokens::default();
         use crate::state::ConsentKind;
 
         // Semi-transparent backdrop overlay (full screen)
@@ -418,15 +418,14 @@ impl WgpuState {
             ConsentKind::Notification { .. } => "consent-title-notification",
         };
         let title = nexterm_i18n::t(title_key);
-        add_string_verts(
+        add_run_verts(
             &title,
+            &metrics.type_ramp.title,
             px + cell_w,
             py + cell_h * 0.4,
             warn_color,
-            true,
             sw,
             sh,
-            cell_w,
             font,
             atlas,
             &self.queue,
@@ -438,15 +437,14 @@ impl WgpuState {
         let mut content_y = py + cell_h * 1.8;
         if let Some(pane_id) = pane_id_for(&dialog.kind) {
             let label = nexterm_i18n::fl!("consent-source-pane", pane_id = pane_id);
-            add_string_verts(
+            add_run_verts(
                 &label,
+                &metrics.type_ramp.body,
                 px + cell_w,
                 content_y,
                 tokens.text_secondary,
-                false,
                 sw,
                 sh,
-                cell_w,
                 font,
                 atlas,
                 &self.queue,
@@ -459,15 +457,14 @@ impl WgpuState {
         // Payload preview (up to 2 lines, 56 chars each)
         let preview = preview_text(&dialog.kind);
         for (i, line) in wrap_text(&preview, 56).iter().take(2).enumerate() {
-            add_string_verts(
+            add_run_verts(
                 line,
+                &metrics.type_ramp.body,
                 px + cell_w,
                 content_y + i as f32 * cell_h,
                 tokens.text_primary,
-                false,
                 sw,
                 sh,
-                cell_w,
                 font,
                 atlas,
                 &self.queue,
@@ -533,15 +530,14 @@ impl WgpuState {
 
         // Operation hint (last row)
         let hint = nexterm_i18n::t("consent-hint");
-        add_string_verts(
+        add_run_verts(
             &hint,
+            &metrics.type_ramp.caption,
             px + cell_w,
             py + ph - cell_h * 1.0,
             tokens.text_secondary,
-            false,
             sw,
             sh,
-            cell_w,
             font,
             atlas,
             &self.queue,
@@ -581,6 +577,9 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
+        // UI/UX v3 P4b: the chrome type ramp. Deliberately not `scaled()` —
+        // `FontManager::chrome_metrics` owns the DPI conversion.
+        let metrics = nexterm_config::MetricTokens::default();
         // Semi-transparent overlay (full screen; visual shield that prevents accidental clicks)
         add_px_rect(
             0.0,
@@ -629,15 +628,14 @@ impl WgpuState {
             .take(3)
             .enumerate()
         {
-            add_string_verts(
+            add_run_verts(
                 line,
+                &metrics.type_ramp.body,
                 px + cell_w,
                 content_y + i as f32 * cell_h * 1.1,
                 tokens.text_primary,
-                false,
                 sw,
                 sh,
-                cell_w,
                 font,
                 atlas,
                 &self.queue,
@@ -712,15 +710,14 @@ impl WgpuState {
         // Operation hint (last row). Uses concise English + symbols rather than reusing
         // an i18n key (symbol-heavy phrasing reads the same across locales).
         let hint = "Enter / Y: confirm  •  Esc / N: cancel  •  ← →: switch";
-        add_string_verts(
+        add_run_verts(
             hint,
+            &metrics.type_ramp.body,
             px + cell_w,
             py + ph - cell_h * 1.0,
             tokens.text_secondary,
-            false,
             sw,
             sh,
-            cell_w,
             font,
             atlas,
             &self.queue,
@@ -753,6 +750,9 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) {
+        // UI/UX v3 P4b: the chrome type ramp. Deliberately not `scaled()` —
+        // `FontManager::chrome_metrics` owns the DPI conversion.
+        let metrics = nexterm_config::MetricTokens::default();
         if !state.block_name_modal.motion.is_visible() {
             return;
         }
@@ -793,15 +793,14 @@ impl WgpuState {
 
         // Title.
         let title = nexterm_i18n::t("block-modal-title");
-        add_string_verts(
+        add_run_verts(
             &title,
+            &metrics.type_ramp.title,
             px + cell_w,
             py + cell_h * 0.15,
             tokens.accent_primary,
-            true,
             sw,
             sh,
-            cell_w,
             font,
             atlas,
             &self.queue,
@@ -811,15 +810,14 @@ impl WgpuState {
 
         // Input field with a trailing underscore caret.
         let prompt = format!("> {}_", state.block_name_modal.input());
-        add_string_verts(
+        add_run_verts(
             &prompt,
+            &metrics.type_ramp.body,
             px + cell_w,
             py + cell_h * 1.3,
             tokens.text_primary,
-            false,
             sw,
             sh,
-            cell_w,
             font,
             atlas,
             &self.queue,
@@ -829,15 +827,14 @@ impl WgpuState {
 
         // Help line.
         let help = nexterm_i18n::t("block-modal-help");
-        add_string_verts(
+        add_run_verts(
             &help,
+            &metrics.type_ramp.body,
             px + cell_w,
             py + cell_h * 2.8,
             tokens.text_muted,
-            false,
             sw,
             sh,
-            cell_w,
             font,
             atlas,
             &self.queue,
@@ -847,15 +844,14 @@ impl WgpuState {
 
         // Error message (if any).
         if let Some(err) = &state.block_name_modal.error {
-            add_string_verts(
+            add_run_verts(
                 err,
+                &metrics.type_ramp.body,
                 px + cell_w,
                 py + cell_h * 3.6,
                 tokens.semantic_error,
-                false,
                 sw,
                 sh,
-                cell_w,
                 font,
                 atlas,
                 &self.queue,

@@ -2,11 +2,11 @@
 
 use crate::font::FontManager;
 use crate::glyph_atlas::GlyphAtlas;
-use crate::vertex_util::{add_px_rounded_rect_sdf, add_string_verts, truncate_to_width};
+use crate::vertex_util::add_px_rounded_rect_sdf;
 
 use super::super::super::settings::row::{MIN_TEXT_CONTRAST, ensure_readable};
 use super::super::spec::WidgetSpec;
-use super::{WidgetSink, WidgetTheme, text_baseline};
+use super::{WidgetSink, WidgetTheme, draw_row_run, row_style};
 
 /// Glyph used for the insertion point.
 const CARET: char = '│';
@@ -145,21 +145,19 @@ fn draw_field_text(
         MIN_TEXT_CONTRAST,
     );
     let inner = (spec.control_rect.w - theme.cell_w).max(0.0);
-    let text = truncate_to_width(shown, inner, theme.cell_w);
-    add_string_verts(
-        &text,
+    let style = row_style(theme, emphasised);
+    draw_row_run(
+        shown,
+        &style,
         spec.control_rect.x + theme.cell_w * 0.5,
-        text_baseline(spec.rect, theme),
+        inner,
+        spec.rect,
         color,
-        emphasised,
-        theme.sw,
-        theme.sh,
-        theme.cell_w,
+        theme,
         font,
         atlas,
         queue,
-        sink.text_verts,
-        sink.text_idx,
+        sink,
     );
 }
 

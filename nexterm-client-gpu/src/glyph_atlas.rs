@@ -91,9 +91,6 @@ pub(crate) enum FontRole {
     /// the cell (UI/UX v3 P4b). Same face as [`Self::Terminal`], different
     /// size — which is exactly why it needs its own discriminant: `A` at the
     /// cell size and `A` at Caption 12 are different bitmaps.
-    // P4b-1 ships the primitive; P4b-2 adopts it at the six surfaces in the
-    // design spec's §5.2 and this allowance goes with it.
-    #[allow(dead_code)]
     Chrome,
 }
 
@@ -149,9 +146,6 @@ impl GlyphKey {
     /// `wide` is absent by design: chrome runs advance by the glyph's measured
     /// width, not by cell columns, so the full-width flag that the grid needs
     /// has nothing to key here.
-    // P4b-1 ships the primitive; P4b-2 adopts it at the six surfaces in the
-    // design spec's §5.2 and this allowance goes with it.
-    #[allow(dead_code)]
     pub fn chrome(ch: char, size_px: u16, bold: bool) -> Self {
         Self {
             ch,

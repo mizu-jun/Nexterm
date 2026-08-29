@@ -33,9 +33,6 @@ pub struct FontManager {
     /// factor — which cannot stale an entry, because the key is the
     /// *physical* size the advance was measured at. A machine that changes
     /// scale keeps both scales' entries, which is a handful of floats.
-    // P4b-1 ships the primitive; P4b-2 adopts it at the six surfaces in the
-    // design spec's §5.2 and this allowance goes with it.
-    #[allow(dead_code)]
     chrome_advance_cache: std::collections::HashMap<(char, u16, bool), f32>,
     /// Display scale factor from winit. Kept so chrome icons can be sized in
     /// logical pixels (the 16/20/24 steps) and converted to physical ones
@@ -266,9 +263,6 @@ impl FontManager {
     ///   Mapping to `bold` reproduces exactly what the chrome renders today,
     ///   so P4b changes size predictably and leaves weight alone. Revisit if
     ///   the chrome ever gains its own font family.
-    // P4b-1 ships the primitive; P4b-2 adopts it at the six surfaces in the
-    // design spec's §5.2 and this allowance goes with it.
-    #[allow(dead_code)]
     pub fn chrome_metrics(&self, style: &nexterm_config::TypeStyle) -> (f32, f32, bool) {
         (
             (style.size * self.scale_factor).max(1.0),
@@ -293,9 +287,6 @@ impl FontManager {
     /// (Arabic, Indic) would measure wrong; none of the eight shipped locales
     /// need them, and the terminal grid — which has the same property — is
     /// unaffected.
-    // P4b-1 ships the primitive; P4b-2 adopts it at the six surfaces in the
-    // design spec's §5.2 and this allowance goes with it.
-    #[allow(dead_code)]
     pub fn chrome_advance(&mut self, ch: char, size_px: f32, bold: bool) -> f32 {
         let key = (ch, size_px.round().clamp(0.0, u16::MAX as f32) as u16, bold);
         if let Some(&w) = self.chrome_advance_cache.get(&key) {
@@ -338,9 +329,6 @@ impl FontManager {
     /// bounds — unlike [`Self::rasterize_icon`], which crops. Text needs a
     /// consistent baseline across the run, and a per-glyph crop would give
     /// every glyph its own vertical origin.
-    // P4b-1 ships the primitive; P4b-2 adopts it at the six surfaces in the
-    // design spec's §5.2 and this allowance goes with it.
-    #[allow(dead_code)]
     pub fn rasterize_chrome_char(
         &mut self,
         ch: char,
@@ -402,9 +390,6 @@ impl FontManager {
     /// returned `Attrs` does not borrow `self` — every caller needs `&mut
     /// self.font_system` at the same time. Callers clone the family into a
     /// local first, the same shape `rasterize_char` already uses.
-    // P4b-1 ships the primitive; P4b-2 adopts it at the six surfaces in the
-    // design spec's §5.2 and this allowance goes with it.
-    #[allow(dead_code)]
     fn chrome_attrs(family: &str, bold: bool) -> Attrs<'_> {
         let base = if family.eq_ignore_ascii_case("monospace") || family.is_empty() {
             Attrs::new().family(Family::Monospace)

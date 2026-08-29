@@ -24,7 +24,7 @@
 
 use crate::font::FontManager;
 use crate::glyph_atlas::{GlyphAtlas, TextVertex};
-use crate::vertex_util::{add_string_verts, truncate_to_width};
+use crate::vertex_util::{add_run_verts, add_string_verts, truncate_run_to_width};
 
 use super::super::util::{danger_fill, wrap_text};
 
@@ -90,8 +90,13 @@ pub(in crate::renderer) fn danger_button_colors(
     }
 }
 
-/// Draw a section header line (bold, no control column, not truncated to a
-/// control width since it spans the full content width).
+/// Draw a section header line (no control column, not truncated to a control
+/// width since it spans the full content width).
+///
+/// UI/UX v3 P4b: drawn at the ramp's Subtitle step — `metrics.rs` names that
+/// step "section headers inside a panel", which is exactly this. It used to be
+/// the terminal cell size with the bold flag set, so the headings had the same
+/// size as the rows beneath them and were distinguished by weight alone.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::renderer) fn draw_section_header(
     text: &str,
@@ -101,16 +106,17 @@ pub(in crate::renderer) fn draw_section_header(
     color: [f32; 4],
     sw: f32,
     sh: f32,
-    cell_w: f32,
+    metrics: &nexterm_config::MetricTokens,
     font: &mut FontManager,
     atlas: &mut GlyphAtlas,
     queue: &wgpu::Queue,
     text_verts: &mut Vec<TextVertex>,
     text_idx: &mut Vec<u16>,
 ) {
-    let truncated = truncate_to_width(text, content_w, cell_w);
-    add_string_verts(
-        &truncated, x, y, color, true, sw, sh, cell_w, font, atlas, queue, text_verts, text_idx,
+    let style = metrics.type_ramp.subtitle;
+    let truncated = truncate_run_to_width(text, &style, content_w, font);
+    add_run_verts(
+        &truncated, &style, x, y, color, sw, sh, font, atlas, queue, text_verts, text_idx,
     );
 }
 

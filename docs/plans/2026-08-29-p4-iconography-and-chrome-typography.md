@@ -270,6 +270,27 @@ Adopted in P4b:
 | Tooltip text | `caption` | The tooltip *sizes itself* from its text, so it stays self-consistent as long as sizing and drawing use the same measurement. |
 | Dialog title and body | `title` / `body` | Dialog box geometry is fixed; button rects keep their current cell-derived sizes in this phase. `title` here follows the ramp's own stated intent — `metrics.rs` documents Title 28/36 as "dialog titles" and Subtitle 20/28 as "section headers inside a panel". |
 
+**As built (P4b-2).** All six landed, with three things worth recording:
+
+- *Row text went further than "labels and values".* Adopting only the label
+  would have left one row mixing a 14 px label with cell-sized field text, so
+  every text-bearing control in the widget layer moved together — label, cycler
+  value, slider readout, text field, key capture, list entry, button label —
+  through two shared helpers (`draw_row_run`, `draw_row_run_centred`). That is
+  also what keeps a future control from silently reintroducing the cell path.
+- *The tooltip needed a signature change, not just a draw change.* §5.2 called
+  it safe because it "sizes itself from its text" — true, but the sizing lives
+  in `place_tooltip`, a **pure, unit-tested** function with no `FontManager`.
+  Sharing one measurement therefore meant passing the width in rather than
+  deriving it inside: `place_tooltip` now takes `text_w` and `line_h`, and
+  `measure_tooltip` is the one place callers get them.
+- *Dialog **button** labels stayed on the cell path.* The titles and body text
+  moved (they are drawn at a fixed `px + cell_w`, so nothing geometric depends
+  on their width), but a consent dialog's buttons are laid out from their label
+  widths and those widths feed click targets. Moving them is the same
+  hit-region change the footer links need, and belongs with them in §8 rather
+  than smuggled into a typography PR.
+
 Not adopted (with reason):
 
 - Tab-bar labels — N-3.
@@ -349,6 +370,7 @@ Four PRs, each independently revertible:
 | P4b-1 | `add_run_verts` / `measure_run` / `truncate_run_to_width`, `FontRole::Chrome`, weight-as-`bold` mapping (D-2), measurement memoisation. No adoption. | §5.4 tests. |
 | | **Shipped**, with two corrections to §5.1 below. | |
 | P4b-2 | Adopt the ramp at the six §5.2 surfaces. | Per-site width tests. |
+| | **Shipped**, with the scope notes in §5.2 below. | |
 
 Splitting P4a-1 from P4a-2 matters: the first is pure infrastructure with no
 visual change, so if something regresses visually the bisect lands on the
@@ -362,6 +384,11 @@ second.
   computation off measured text (N-3).
 - A configurable chrome font family, distinct from the terminal font (N-5).
 - Filled-variant icons for selected/active states; P4 ships Regular only.
+- Dialog **button** labels, and the bespoke text in the hand-written parts of
+  `ssh_tab.rs` / `keybindings_tab.rs`, the command palette, the context menu
+  and the status bar. The dialog buttons are the notable one: they are sized
+  from their label widths and those widths reach click targets, so they need
+  the same hit-region work as the footer links below.
 - The settings footer's `↗ Open config.toml` and `↺ Reset category` links.
   Their hit regions are computed from the label's `visual_width` in
   `settings_panel_hit.rs`, mirrored in `overlay/settings/mod.rs`, so moving the

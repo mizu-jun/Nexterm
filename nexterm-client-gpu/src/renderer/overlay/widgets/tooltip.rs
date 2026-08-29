@@ -15,7 +15,7 @@ use crate::font::FontManager;
 use crate::glyph_atlas::GlyphAtlas;
 use crate::vertex_util::{
     add_px_rounded_rect_sdf, add_px_rounded_rect_sdf_with_acrylic, add_px_soft_shadow_sdf,
-    add_string_verts, visual_width,
+    add_run_verts, measure_run,
 };
 
 use super::super::util::shadow_params;
@@ -34,17 +34,24 @@ const PAD_Y_CELLS: f32 = 0.25;
 /// bottom edge, and clamps horizontally so it never leaves the surface. When
 /// the tooltip cannot fit in either direction the below-placement is kept and
 /// clamped, which is still better than drawing off-screen.
+///
+/// UI/UX v3 P4b: the text width arrives **pre-measured** rather than being
+/// derived from a cell count here. The tooltip sizes itself from its text, so
+/// the box and the glyphs have to come from one measurement — and that
+/// measurement now needs a `FontManager`, which this function deliberately
+/// does not take so it can stay pure and unit-testable. `line_h` is the ramp
+/// step's line height, for the same reason.
 pub(crate) fn place_tooltip(
     anchor: WidgetRect,
-    text: &str,
+    text_w: f32,
+    line_h: f32,
     cell_w: f32,
     cell_h: f32,
     surface_w: f32,
     surface_h: f32,
 ) -> WidgetRect {
-    let text_w = visual_width(text) as f32 * cell_w;
     let w = text_w + PAD_X_CELLS * 2.0 * cell_w;
-    let h = cell_h + PAD_Y_CELLS * 2.0 * cell_h;
+    let h = line_h + PAD_Y_CELLS * 2.0 * cell_h;
     let gap = ANCHOR_GAP_CELLS * cell_h;
 
     let below_y = anchor.y + anchor.h + gap;
@@ -126,21 +133,37 @@ pub(crate) fn draw_tooltip(
         sink.bg_idx,
     );
 
-    add_string_verts(
+    // Caption: a tooltip is secondary metadata about the control it hangs off,
+    // which is exactly what the ramp's smallest step is for.
+    let style = theme.metrics.type_ramp.caption;
+    add_run_verts(
         text,
+        &style,
         rect.x + PAD_X_CELLS * theme.cell_w,
         rect.y + PAD_Y_CELLS * theme.cell_h,
         theme.tokens.text_primary,
-        false,
         theme.sw,
         theme.sh,
-        theme.cell_w,
         font,
         atlas,
         queue,
         sink.text_verts,
         sink.text_idx,
     );
+}
+
+/// Measure a tooltip's text at the step [`draw_tooltip`] draws it in.
+///
+/// The one place callers should get `text_w` / `line_h` for [`place_tooltip`];
+/// going through here is what keeps the box and the glyphs agreeing.
+pub(crate) fn measure_tooltip(
+    text: &str,
+    metrics: &nexterm_config::MetricTokens,
+    font: &mut FontManager,
+) -> (f32, f32) {
+    let style = metrics.type_ramp.caption;
+    let (_size, line_h, _bold) = font.chrome_metrics(&style);
+    (measure_run(text, &style, font), line_h)
 }
 
 #[cfg(test)]
@@ -152,8 +175,13 @@ mod tests {
     const SURFACE_W: f32 = 800.0;
     const SURFACE_H: f32 = 600.0;
 
+    /// Stand-in for the measured text width. The tests care about placement,
+    /// not about typography, so they feed the width a `FontManager` would
+    /// have measured — one cell per column, which is what the pre-P4b
+    /// implementation computed internally.
     fn place(anchor: WidgetRect, text: &str) -> WidgetRect {
-        place_tooltip(anchor, text, CELL_W, CELL_H, SURFACE_W, SURFACE_H)
+        let text_w = crate::vertex_util::visual_width(text) as f32 * CELL_W;
+        place_tooltip(anchor, text_w, CELL_H, CELL_W, CELL_H, SURFACE_W, SURFACE_H)
     }
 
     #[test]
@@ -211,7 +239,8 @@ mod tests {
         let tiny_surface_h = 10.0;
         let t = place_tooltip(
             WidgetRect::new(100.0, 0.0, 100.0, 8.0),
-            "hint",
+            4.0 * CELL_W,
+            CELL_H,
             CELL_W,
             CELL_H,
             SURFACE_W,
