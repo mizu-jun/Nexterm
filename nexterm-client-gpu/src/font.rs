@@ -25,6 +25,16 @@ pub struct FontManager {
     cell_w: f32,
     /// Configured font family name (passed to `Attrs`).
     family: String,
+    /// Face id of the bundled icon font.
+    ///
+    /// Kept so [`Self::rasterize_icon`] can check that a glyph really came out
+    /// of the subset. Asking for `Family::Name(ICON_FAMILY)` selects that face
+    /// *preferentially*, but cosmic-text still falls back to other installed
+    /// faces for a codepoint the requested family lacks — so without this
+    /// check, an icon we do not ship would silently render whatever some
+    /// system font happens to map at that Private Use Area codepoint. CI found
+    /// exactly that: `U+F8FF` draws ink on all three runner OSes.
+    icon_face_id: Option<cosmic_text::fontdb::ID>,
     /// Memoised chrome advances, keyed by `(char, physical size, bold)`
     /// (UI/UX v3 P4b).
     ///
@@ -58,7 +68,7 @@ impl FontManager {
     ) -> Self {
         // `FontSystem::new()` scans every system font and consumes ~30–50 MB.
         // We use a curated loader instead to keep memory usage down.
-        let mut font_system = Self::build_font_system(family, fallbacks);
+        let (mut font_system, icon_face_id) = Self::build_font_system(family, fallbacks);
 
         // Register the primary font under the generic `monospace` name.
         // `Attrs::new().family(Family::Monospace)` references it.
@@ -101,6 +111,7 @@ impl FontManager {
             metrics,
             cell_w,
             family: family.to_string(),
+            icon_face_id,
             chrome_advance_cache: std::collections::HashMap::new(),
             scale_factor,
             ligatures,
@@ -143,7 +154,10 @@ impl FontManager {
     /// `FontSystem::new()` scans every system font and consumes ~30–50 MB.
     /// This helper only loads the OS-specific main font directories to keep
     /// memory usage down, while still covering CJK and emoji fallback fonts.
-    fn build_font_system(_primary_family: &str, _fallbacks: &[String]) -> FontSystem {
+    fn build_font_system(
+        _primary_family: &str,
+        _fallbacks: &[String],
+    ) -> (FontSystem, Option<cosmic_text::fontdb::ID>) {
         use cosmic_text::fontdb;
 
         let locale = sys_locale::get_locale().unwrap_or_else(|| "ja-JP".to_string());
@@ -188,10 +202,16 @@ impl FontManager {
         // baked into the subset's name table) so it can only ever be selected
         // deliberately — never as a fallback for terminal content.
         db.load_font_data(icons::ICON_FONT.to_vec());
+        // `load_font_data` does not hand back an id, but it appends, so the
+        // face it just added is the last one.
+        let icon_face_id = db.faces().last().map(|f| f.id);
+        if icon_face_id.is_none() {
+            tracing::warn!("bundled icon font failed to load; chrome icons will not draw");
+        }
 
         tracing::debug!("font DB loaded {} faces", db.len());
 
-        FontSystem::new_with_locale_and_db(locale, db)
+        (FontSystem::new_with_locale_and_db(locale, db), icon_face_id)
     }
 
     /// Measure the advance width of the ASCII reference character '0'.
@@ -541,6 +561,26 @@ impl FontManager {
         );
         buffer.shape_until_scroll(&mut self.font_system, false);
 
+        // Refuse anything that did not come out of the bundled subset. See
+        // `icon_face_id`: asking for the icon family is a preference, not a
+        // restriction, so a codepoint we do not ship would otherwise render
+        // whatever a system font maps at that Private Use Area codepoint —
+        // tofu wearing a different hat. CI caught this on all three runner
+        // OSes, where `U+F8FF` draws ink out of some installed face.
+        let from_icon_face = self.icon_face_id.is_some_and(|want| {
+            let mut saw_glyph = false;
+            let all_ours = buffer.layout_runs().all(|run| {
+                run.glyphs.iter().all(|g| {
+                    saw_glyph = true;
+                    g.font_id == want
+                })
+            });
+            saw_glyph && all_ours
+        });
+        if !from_icon_face {
+            return (0, 0, Vec::new());
+        }
+
         let mut scratch = vec![0u8; (box_side * box_side * 4) as usize];
         let color = Color::rgba(fg[0], fg[1], fg[2], fg[3]);
         let (mut min_x, mut min_y) = (box_side, box_side);
@@ -876,9 +916,27 @@ mod tests {
     fn an_icon_missing_from_the_subset_draws_nothing() {
         // Tofu is worse than absence for chrome: a call site that asks for an
         // icon we do not ship must render nothing at all.
+        //
+        // `'A'` rather than a Private Use Area codepoint, deliberately. The
+        // first version of this test used `U+F8FF` on the assumption that a
+        // PUA codepoint is unmapped everywhere; CI disagreed on all three
+        // runner OSes, where some installed face maps it and drew ink. That
+        // exposed the real defect — `Family::Name` is a *preference*, and
+        // cosmic-text falls back for a codepoint the requested family lacks —
+        // which `icon_face_id` now closes. `'A'` reproduces it on any machine
+        // with a Latin font, including a bare container, because 'A' is
+        // certainly absent from the icon subset and certainly present
+        // elsewhere.
         let mut fm = FontManager::new("monospace", 14.0, &[], 1.0, true);
-        let (w, h, pixels) = fm.rasterize_icon('\u{f8ff}', 16.0, [255, 255, 255, 255]);
-        assert_eq!((w, h, pixels.len()), (0, 0, 0));
+        for missing in ['A', '\u{f8ff}', '@'] {
+            let (w, h, pixels) = fm.rasterize_icon(missing, 16.0, [255, 255, 255, 255]);
+            assert_eq!(
+                (w, h, pixels.len()),
+                (0, 0, 0),
+                "U+{:04X} is not in the subset and must not fall back to a system face",
+                missing as u32
+            );
+        }
     }
 
     #[test]

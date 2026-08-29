@@ -128,6 +128,19 @@ Nerd Font PUA range (`U+E000`–`U+F8FF`) that `tab_icons.rs` uses. The two must
 never resolve through the same font. The atlas key change in §4.2 is what makes
 that a structural guarantee rather than a convention.
 
+**Font-selection note (found by CI, after P4a-2 merged into this branch).**
+Requesting `Family::Name(ICON_FAMILY)` is a *preference*, not a restriction:
+cosmic-text still falls back to other installed faces for a codepoint the
+requested family lacks. So an icon the subset does not ship did not render
+nothing — it rendered whatever some system font mapped at that codepoint. The
+first version of the "missing icon draws nothing" test asserted this using
+`U+F8FF` and passed in a bare container while failing on all three CI runners,
+which is what surfaced it. `FontManager` now records the subset's face id and
+`rasterize_icon` discards any glyph that did not come from it. The test uses
+`'A'` instead: certainly absent from the subset, certainly present in any Latin
+font, so it reproduces the fallback anywhere rather than depending on the
+runner's font set.
+
 ### 4.2 Font role: the atlas key and the rasteriser
 
 `GlyphKey` (`glyph_atlas.rs:58`) is `{ ch, bold, italic, wide }`. With a second
