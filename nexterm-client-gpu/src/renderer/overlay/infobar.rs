@@ -10,13 +10,16 @@
 //! Everything here is pure — no GPU handles, no font state, no clock of its
 //! own — so the ordering, the cap and the count suffix are unit-testable
 //! without a device. P6b removed the three `Option` fields and the three
-//! builders and made this the only stack; the AccessKit nodes arrive in P6c,
-//! the motion and the auto-dismissal in P6d.
+//! builders and made this the only stack; P6c gave every kind an AccessKit
+//! node (`accessibility::build_info_bar_nodes`) and the cap its `+{count}
+//! more` suffix; the motion and the auto-dismissal arrive in P6d.
 //!
 //! The structural gate for the phase (G-single) is that [`bar_rects`] stays
 //! the only function that computes a bar's `y`.
 #![allow(dead_code)] // The auto-dismissal and exit paths are wired in P6d.
 
+use std::borrow::Cow;
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crate::animations::Timed;
@@ -248,6 +251,33 @@ impl StackLayout {
     /// Index of the top bar, which is the only one `Enter` can act on (D4).
     pub fn top(&self) -> Option<usize> {
         self.visible.first().map(|&(index, _)| index)
+    }
+
+    /// The localised `+{count} more` suffix, or `None` while the stack fits.
+    ///
+    /// Lives with the layout that produced the count rather than with the
+    /// builder that draws it, so the cap and the way the cap is reported
+    /// cannot disagree.
+    pub fn more_label(&self) -> Option<String> {
+        (self.hidden > 0).then(|| {
+            nexterm_i18n::fl!("infobar-more-count").replace("{count}", &self.hidden.to_string())
+        })
+    }
+}
+
+/// Borrow the stack as one contiguous slice, for the functions below.
+///
+/// `ClientState` holds the stack in a `VecDeque`, which is two slices in the
+/// general case; every consumer of [`stack_order`] and [`bar_rects`] needs one.
+/// It is contiguous in practice — the stack holds at most one bar per slot and
+/// never wraps in a run that short — so the copy is a cold path kept for
+/// correctness rather than a per-frame allocation.
+pub fn contiguous(bars: &VecDeque<InfoBar>) -> Cow<'_, [InfoBar]> {
+    let (front, back) = bars.as_slices();
+    if back.is_empty() {
+        Cow::Borrowed(front)
+    } else {
+        Cow::Owned(front.iter().chain(back).cloned().collect())
     }
 }
 
@@ -575,6 +605,47 @@ mod tests {
             src.matches("bar_rects(").count(),
             1,
             "the stack is laid out in exactly one place in ui_verts.rs"
+        );
+    }
+
+    /// G-cap's other half: the bars past the cap have to be *reported*, and
+    /// the count is what the bottom bar draws (G-i18n's one new string).
+    #[test]
+    fn the_count_suffix_reports_the_bars_the_cap_dropped() {
+        let now = Instant::now();
+        let bars = [error(now), offline(now), update(now)];
+        let label = bar_rects(&bars, TAB_BAR_H, CELL_H, WIDTH)
+            .more_label()
+            .expect("a stack over the cap reports a count");
+        assert!(label.contains('1'), "got {label}");
+        assert!(!label.contains("{count}"), "got {label}");
+
+        let fits = bar_rects(&bars[..2], TAB_BAR_H, CELL_H, WIDTH);
+        assert_eq!(fits.more_label(), None);
+    }
+
+    /// The stack is a `VecDeque` on `ClientState`, and both consumers — the
+    /// vertex builder and the AccessKit tree — need it as one slice.
+    #[test]
+    fn a_wrapped_stack_is_flattened_without_reordering() {
+        let now = Instant::now();
+        let mut deque: VecDeque<InfoBar> = VecDeque::new();
+        // Force a wrap: pushing to the front moves the head behind the tail,
+        // so the ring is stored as two slices.
+        deque.push_back(error(now));
+        deque.push_back(update(now));
+        deque.push_front(offline(now));
+        assert!(!deque.as_slices().1.is_empty(), "the deque did not wrap");
+
+        let flat = contiguous(&deque);
+        let slots: Vec<InfoBarSlot> = flat.iter().map(|bar| bar.kind.slot()).collect();
+        assert_eq!(
+            slots,
+            vec![
+                InfoBarSlot::Offline,
+                InfoBarSlot::ServerError,
+                InfoBarSlot::Update
+            ]
         );
     }
 

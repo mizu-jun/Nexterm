@@ -62,6 +62,7 @@
   "update-dismiss": "Update-Benachrichtigung schließen",
   "update-open-releases": "Versionshinweise öffnen",
   "error-banner-prefix": "Fehler:",
+  "infobar-more-count": "+{count} weitere",
   "consent-title-open-url": "Externe URL öffnen?",
   "consent-title-clipboard-write": "In die Zwischenablage schreiben?",
   "consent-title-notification": "Desktop-Benachrichtigung anzeigen?",

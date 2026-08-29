@@ -62,6 +62,7 @@
   "update-dismiss": "Dismiss update notification",
   "update-open-releases": "Open release notes",
   "error-banner-prefix": "Error:",
+  "infobar-more-count": "+{count} more",
   "consent-title-open-url": "Open external URL?",
   "consent-title-clipboard-write": "Write to clipboard?",
   "consent-title-notification": "Show desktop notification?",

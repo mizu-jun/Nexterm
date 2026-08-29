@@ -22,6 +22,9 @@
 //! - Phase 5-11-4: OSC 133-linked review mode
 //! - Phase 5-11-5: settings UI + i18n + documentation
 
+use std::collections::VecDeque;
+use std::time::Instant;
+
 use accesskit::{
     Action, Live, Node, NodeId, Role, TextPosition, TextSelection, Tree, TreeId, TreeUpdate,
 };
@@ -29,7 +32,7 @@ use accesskit::{
 use crate::host_manager::HostManager;
 use crate::macro_picker::MacroPicker;
 use crate::palette::CommandPalette;
-use crate::renderer::overlay::infobar::InfoBarKind;
+use crate::renderer::overlay::infobar::{self, InfoBar, InfoBarKind, InfoBarSlot, Severity};
 use crate::settings_panel::SettingsPanel;
 use crate::state::{
     AlertEntry, AlertKind, ClientState, CloseWindowDialog, ContextMenu, QuickSelectState,
@@ -69,8 +72,10 @@ pub const CONTEXT_MENU_ID: NodeId = NodeId(8);
 /// "Close window?" confirmation dialog.
 pub const CLOSE_DIALOG_ID: NodeId = NodeId(9);
 
-/// Update notification banner.
-pub const UPDATE_BANNER_ID: NodeId = NodeId(10);
+// NodeId(10) used to be the update-notification banner, the only one of the
+// three banners that ever had a node. UI/UX v3 P6c replaced it with one node
+// per InfoBar slot (`info_bar_node_id`), so the id is retired. Node ids are
+// never persisted, so the value is free for reuse.
 
 /// Root of the Quick Select overlay (Step 2-2-h).
 pub const QUICK_SELECT_ID: NodeId = NodeId(11);
@@ -126,7 +131,23 @@ pub const ALERT_REGION_ID: NodeId = NodeId(26);
 /// - Multi-line input containing `\n` is forwarded to the PTY verbatim.
 pub const PANE_INPUT_BUFFER_ID: NodeId = NodeId(27);
 
-// 28..29 reserved for future containers (sidebars, etc.).
+/// Node id of the InfoBar occupying `slot` (UI/UX v3 P6c).
+///
+/// One stable id per slot rather than one per queued bar: a slot holds at most
+/// one bar (`InfoBarSlot`), so the id of "the error bar" does not move when the
+/// update bar above it is dismissed — which is what a platform adapter caches.
+///
+/// The match is exhaustive over the enum on purpose (G-a11y): a fourth
+/// `InfoBarSlot` cannot be added without giving it a node id here.
+pub fn info_bar_node_id(slot: InfoBarSlot) -> NodeId {
+    match slot {
+        InfoBarSlot::Update => NodeId(28),
+        InfoBarSlot::Offline => NodeId(29),
+        InfoBarSlot::ServerError => NodeId(30),
+    }
+}
+
+// 31..46 reserved for future containers (sidebars, etc.).
 
 // 30..=39 were hand-written settings-field nodes (font family/size, theme
 // colour scheme, window opacity, startup language/auto-update, cursor style,
@@ -516,8 +537,11 @@ pub enum NodeIdKind {
     ContextMenu,
     /// Root of the close confirmation dialog.
     CloseDialog,
-    /// Update notification banner.
-    UpdateBanner,
+    /// An InfoBar of the stack, identified by the slot it occupies (P6c).
+    InfoBar {
+        /// Which single-slot message the bar carries.
+        slot: InfoBarSlot,
+    },
     /// Root of the Quick Select overlay.
     QuickSelect,
     /// Palette search input field.
@@ -638,7 +662,6 @@ pub fn decode_node_id(id: NodeId) -> NodeIdKind {
         7 => NodeIdKind::MacroPicker,
         8 => NodeIdKind::ContextMenu,
         9 => NodeIdKind::CloseDialog,
-        10 => NodeIdKind::UpdateBanner,
         11 => NodeIdKind::QuickSelect,
         12 => NodeIdKind::PaletteSearch,
         13 => NodeIdKind::PaletteList,
@@ -653,6 +676,16 @@ pub fn decode_node_id(id: NodeId) -> NodeIdKind {
         26 => NodeIdKind::AlertRegion,
         // Phase 5-11-7: terminal input buffer
         27 => NodeIdKind::PaneInputBuffer,
+        // UI/UX v3 P6c: one id per InfoBar slot (`info_bar_node_id`).
+        28 => NodeIdKind::InfoBar {
+            slot: InfoBarSlot::Update,
+        },
+        29 => NodeIdKind::InfoBar {
+            slot: InfoBarSlot::Offline,
+        },
+        30 => NodeIdKind::InfoBar {
+            slot: InfoBarSlot::ServerError,
+        },
         700_000_000..=799_999_999 => {
             match crate::renderer::overlay::widgets::spec::WidgetId::from_u32(
                 (raw - SETTINGS_WIDGET_BASE) as u32,
@@ -789,8 +822,8 @@ fn decode_dynamic(raw: u64) -> NodeIdKind {
 /// 6. `SettingsPanel` (Dialog; detailed expansion happens in Step 2-2-e)
 ///
 /// **Non-modal**:
-/// - `update_banner`: `Role::Alert`. Does not take focus, but is added as a child
-///   of ROOT so it can be announced.
+/// - the InfoBar stack: one `Role::Alert` per queued bar, loudest first. None
+///   takes focus; each is added as a child of ROOT so it can be announced.
 ///
 /// ## Focus
 ///
@@ -850,15 +883,13 @@ pub fn build_tree_from_state(state: &ClientState) -> TreeUpdate {
         focus = overlay_focus;
     }
 
-    // ===== Non-modal: update bar (UI/UX v3 P6) =====
-    // Still only the update kind: giving every `InfoBarKind` a node — which is
-    // what finally makes the server error announceable — is P6c.
-    if let Some(version) = state.info_bars.iter().find_map(|bar| match &bar.kind {
-        InfoBarKind::UpdateAvailable { version } => Some(version),
-        _ => None,
-    }) {
-        nodes.push(build_update_banner_node(version));
-        root_children.push(UPDATE_BANNER_ID);
+    // ===== Non-modal: the InfoBar stack (UI/UX v3 P6c) =====
+    // Every bar, loudest first — including bars past the drawn cap, because a
+    // bar the sighted user only sees as "+1 more" is still a message a screen
+    // reader should get in full.
+    for (id, node) in build_info_bar_nodes(&state.info_bars, Instant::now()) {
+        nodes.push((id, node));
+        root_children.push(id);
     }
 
     // ===== Non-modal: SR alert region (Sprint 5-11-5) =====
@@ -1986,11 +2017,42 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
     (nodes, focus)
 }
 
-/// Build the update notification banner node (Step 2-2-g).
-fn build_update_banner_node(version: &str) -> (NodeId, Node) {
-    let mut alert = Node::new(Role::Alert);
-    alert.set_label(format!("A new version is available: {}", version));
-    (UPDATE_BANNER_ID, alert)
+/// Build one `Role::Alert` node per queued InfoBar, loudest first (UI/UX v3 P6c).
+///
+/// Before P6c only the update banner had a node: the offline bar had none (it
+/// was hashed, so it forced a rebuild that added nothing) and the server error
+/// — the surface that reports *"your shell could not be launched"* — appeared
+/// nowhere in this file at all. One builder driven by `InfoBarKind` closes
+/// that, and keeps it closed: a new kind gets a node for free, and a new
+/// *slot* cannot compile without one (`info_bar_node_id`).
+///
+/// The label is the same text the bar draws, so the two cannot drift. `now` is
+/// passed rather than read here for the offline bar's elapsed count — that
+/// count is deliberately absent from `compute_tree_state_hash`, so the tree is
+/// not rebuilt once a second just to advance it and the announced seconds are
+/// those of the last rebuild.
+///
+/// Bars past the drawn cap are included: `+{count} more` is a drawing
+/// compromise for a surface with two bars' worth of room, and a screen reader
+/// has no such constraint.
+fn build_info_bar_nodes(bars: &VecDeque<InfoBar>, now: Instant) -> Vec<(NodeId, Node)> {
+    let bars = infobar::contiguous(bars);
+    infobar::stack_order(&bars)
+        .into_iter()
+        .map(|index| {
+            let bar = &bars[index];
+            let mut alert = Node::new(Role::Alert);
+            alert.set_label(bar.kind.label(now));
+            // An error interrupts; a notice waits for a pause in speech. The
+            // offline bar is a condition rather than an event, so it takes the
+            // polite path with the update notice.
+            alert.set_live(match bar.kind.severity() {
+                Severity::Error => Live::Assertive,
+                Severity::Warning | Severity::Info => Live::Polite,
+            });
+            (info_bar_node_id(bar.kind.slot()), alert)
+        })
+        .collect()
 }
 
 /// Build the SR alert region nodes (Sprint 5-11-5).
@@ -2885,9 +2947,9 @@ mod tests {
         );
     }
 
-    /// The update banner is non-modal and coexists with other overlays.
+    /// An InfoBar is non-modal and coexists with other overlays.
     #[test]
-    fn update_banner_coexists_with_palette() {
+    fn info_bar_coexists_with_palette() {
         let mut state = ClientState::new(80, 24, 1000);
         state.palette.is_open = true;
         state.push_info_bar(
@@ -2901,7 +2963,152 @@ mod tests {
 
         let ids: Vec<u64> = update.nodes.iter().map(|(id, _)| id.0).collect();
         assert!(ids.contains(&PALETTE_ID.0));
-        assert!(ids.contains(&UPDATE_BANNER_ID.0));
+        assert!(ids.contains(&info_bar_node_id(InfoBarSlot::Update).0));
+    }
+
+    /// G-a11y: every kind produces a `Role::Alert` node, exhaustively over the
+    /// enum — the shape the three-field design had no way of failing, and the
+    /// reason the server error was never announced before P6c.
+    #[test]
+    fn every_info_bar_kind_is_announced() {
+        let now = std::time::Instant::now();
+        let kinds = [
+            InfoBarKind::UpdateAvailable {
+                version: "1.9.0".to_string(),
+            },
+            InfoBarKind::Offline { since: now },
+            InfoBarKind::ServerError {
+                message: "pty launch failed".to_string(),
+            },
+        ];
+        // Fails to compile if a variant is added without a case above, which
+        // is what makes this gate exhaustive rather than a spot check.
+        for kind in &kinds {
+            match kind {
+                InfoBarKind::UpdateAvailable { .. }
+                | InfoBarKind::Offline { .. }
+                | InfoBarKind::ServerError { .. } => {}
+            }
+        }
+
+        for kind in kinds {
+            let slot = kind.slot();
+            let mut state = ClientState::new(80, 24, 1000);
+            state.push_info_bar(kind, now);
+
+            let update = build_tree_from_state(&state);
+            let (_, node) = update
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == info_bar_node_id(slot))
+                .unwrap_or_else(|| panic!("{slot:?} has no AccessKit node"));
+
+            assert_eq!(node.role(), Role::Alert, "{slot:?}");
+            assert!(
+                node.label().is_some_and(|label| !label.is_empty()),
+                "{slot:?} is announced with no text"
+            );
+        }
+    }
+
+    /// The error bar is the one §1.2 measured as invisible to a screen reader,
+    /// and it is the one that must interrupt rather than queue behind speech.
+    #[test]
+    fn the_error_bar_is_announced_assertively() {
+        let now = std::time::Instant::now();
+        let mut state = ClientState::new(80, 24, 1000);
+        state.push_info_bar(
+            InfoBarKind::ServerError {
+                message: "config load failed".to_string(),
+            },
+            now,
+        );
+        state.push_info_bar(
+            InfoBarKind::UpdateAvailable {
+                version: "1.9.0".to_string(),
+            },
+            now,
+        );
+
+        let update = build_tree_from_state(&state);
+        let node_for = |slot| {
+            update
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == info_bar_node_id(slot))
+                .map(|(_, node)| node.clone())
+                .expect("queued bar has a node")
+        };
+
+        assert_eq!(
+            node_for(InfoBarSlot::ServerError).live(),
+            Some(Live::Assertive)
+        );
+        assert_eq!(node_for(InfoBarSlot::Update).live(), Some(Live::Polite));
+    }
+
+    /// A bar past the drawn cap is still announced: `+{count} more` is a
+    /// constraint of the two-bar stack, not of a screen reader.
+    #[test]
+    fn a_bar_past_the_drawn_cap_is_still_announced() {
+        let now = std::time::Instant::now();
+        let mut state = ClientState::new(80, 24, 1000);
+        state.push_info_bar(
+            InfoBarKind::ServerError {
+                message: "boom".to_string(),
+            },
+            now,
+        );
+        state.push_info_bar(InfoBarKind::Offline { since: now }, now);
+        state.push_info_bar(
+            InfoBarKind::UpdateAvailable {
+                version: "1.9.0".to_string(),
+            },
+            now,
+        );
+
+        let update = build_tree_from_state(&state);
+        let ids: Vec<u64> = update.nodes.iter().map(|(id, _)| id.0).collect();
+        for slot in [
+            InfoBarSlot::ServerError,
+            InfoBarSlot::Offline,
+            InfoBarSlot::Update,
+        ] {
+            assert!(
+                ids.contains(&info_bar_node_id(slot).0),
+                "{slot:?} was dropped from the tree"
+            );
+        }
+    }
+
+    /// The nodes are ordered the way the stack is drawn, so a screen reader
+    /// walking ROOT's children meets the error before the update notice.
+    #[test]
+    fn info_bar_nodes_follow_the_stack_order() {
+        let now = std::time::Instant::now();
+        let mut state = ClientState::new(80, 24, 1000);
+        state.push_info_bar(
+            InfoBarKind::UpdateAvailable {
+                version: "1.9.0".to_string(),
+            },
+            now,
+        );
+        state.push_info_bar(
+            InfoBarKind::ServerError {
+                message: "boom".to_string(),
+            },
+            now,
+        );
+
+        let nodes = build_info_bar_nodes(&state.info_bars, now);
+        let ids: Vec<NodeId> = nodes.iter().map(|(id, _)| *id).collect();
+        assert_eq!(
+            ids,
+            vec![
+                info_bar_node_id(InfoBarSlot::ServerError),
+                info_bar_node_id(InfoBarSlot::Update),
+            ]
+        );
     }
 
     // ===== Step 2-5: live-update state hash tests =====
@@ -3040,24 +3247,69 @@ mod tests {
         assert_ne!(h1, h2, "hash did not change after typed_label change");
     }
 
-    /// Adding or removing the update banner must alter the hash.
+    /// G-hash: adding, removing or rewording a bar must rebuild the tree.
     #[test]
-    fn tree_state_hash_detects_update_banner() {
-        let state_none = ClientState::new(80, 24, 1000);
-        let h_none = compute_tree_state_hash(&state_none);
+    fn tree_state_hash_detects_a_bar_appearing_and_changing() {
+        let now = std::time::Instant::now();
+        let empty = ClientState::new(80, 24, 1000);
+        let h_none = compute_tree_state_hash(&empty);
 
-        let mut state_banner = ClientState::new(80, 24, 1000);
-        state_banner.push_info_bar(
-            InfoBarKind::UpdateAvailable {
-                version: "v1.6.0".to_string(),
+        let mut state = ClientState::new(80, 24, 1000);
+        state.push_info_bar(
+            InfoBarKind::ServerError {
+                message: "pty launch failed".to_string(),
             },
-            std::time::Instant::now(),
+            now,
         );
-        let h_banner = compute_tree_state_hash(&state_banner);
+        let h_one = compute_tree_state_hash(&state);
+        assert_ne!(h_none, h_one, "hash did not change after adding a bar");
 
+        // Same slot, new message — the case the update-only hash used to miss.
+        let mut reworded = ClientState::new(80, 24, 1000);
+        reworded.push_info_bar(
+            InfoBarKind::ServerError {
+                message: "config load failed".to_string(),
+            },
+            now,
+        );
         assert_ne!(
-            h_none, h_banner,
-            "hash did not change after adding the banner"
+            h_one,
+            compute_tree_state_hash(&reworded),
+            "hash did not change after rewording a bar"
+        );
+
+        state.push_info_bar(InfoBarKind::Offline { since: now }, now);
+        let h_two = compute_tree_state_hash(&state);
+        assert_ne!(h_one, h_two, "hash did not change after a second bar");
+
+        state.remove_info_bar(InfoBarSlot::Offline);
+        assert_eq!(
+            h_one,
+            compute_tree_state_hash(&state),
+            "hash did not return after removing the second bar"
+        );
+    }
+
+    /// G-hash, the other half: the offline bar's elapsed count advances every
+    /// frame, and rebuilding the tree for it buys a screen reader nothing.
+    #[test]
+    fn tree_state_hash_ignores_the_offline_elapsed_count() {
+        let now = std::time::Instant::now();
+        let mut early = ClientState::new(80, 24, 1000);
+        early.push_info_bar(InfoBarKind::Offline { since: now }, now);
+
+        let mut late = ClientState::new(80, 24, 1000);
+        late.push_info_bar(
+            InfoBarKind::Offline {
+                since: now - std::time::Duration::from_secs(90),
+            },
+            now,
+        );
+
+        assert_eq!(
+            compute_tree_state_hash(&early),
+            compute_tree_state_hash(&late),
+            "the elapsed seconds forced a tree rebuild"
         );
     }
 
@@ -3075,7 +3327,16 @@ mod tests {
         assert_eq!(decode_node_id(MACRO_PICKER_ID), NodeIdKind::MacroPicker);
         assert_eq!(decode_node_id(CONTEXT_MENU_ID), NodeIdKind::ContextMenu);
         assert_eq!(decode_node_id(CLOSE_DIALOG_ID), NodeIdKind::CloseDialog);
-        assert_eq!(decode_node_id(UPDATE_BANNER_ID), NodeIdKind::UpdateBanner);
+        for slot in [
+            InfoBarSlot::Update,
+            InfoBarSlot::Offline,
+            InfoBarSlot::ServerError,
+        ] {
+            assert_eq!(
+                decode_node_id(info_bar_node_id(slot)),
+                NodeIdKind::InfoBar { slot }
+            );
+        }
         assert_eq!(decode_node_id(QUICK_SELECT_ID), NodeIdKind::QuickSelect);
         assert_eq!(decode_node_id(PALETTE_SEARCH_ID), NodeIdKind::PaletteSearch);
         assert_eq!(decode_node_id(PALETTE_LIST_ID), NodeIdKind::PaletteList);
@@ -3175,18 +3436,20 @@ mod tests {
         assert_eq!(decode_node_id(NodeId(0)), NodeIdKind::Unknown);
         // 17 is SettingsTabList, 25 is SettingsContent,
         // 26 is AlertRegion (assigned in Sprint 5-11-5), 27 is PaneInputBuffer (Phase 5-11-7),
-        // 30..=35 are settings fields (Step 2-2-e'), 36..=39 are Phase 5-11-6 #6 settings fields,
+        // 28..=30 are the InfoBar slots, 36..=39 are Phase 5-11-6 #6 settings fields,
         // 40..=44 are Phase 5-11-8 Step 8-2 SSH host fields,
         // 45..=49 are Phase 5-11-8 Step 8-3 Sub-phase D Add/Delete + delete confirmation dialog.
         // 50..=56 are Phase 5-11-9 Sub-phase E Keybindings fields + Add/Delete + dialog.
         // 60..=99 are SettingsTab (Phase 2c-G moved the base from 18 to 60 to make
         // room for an 8th category without colliding with SETTINGS_CONTENT_ID = 25).
         // 57..=59 are the custom title bar window buttons.
-        // 18..=24, 28..=29 are now unused / reserved for future use.
+        // 28..=30 are the InfoBar slots (UI/UX v3 P6c); the settings fields
+        // that used to occupy 30..=35 were retired in P1c.
+        // 18..=24, 31..=35 are now unused / reserved for future use.
         assert_eq!(decode_node_id(NodeId(18)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(24)), NodeIdKind::Unknown);
-        assert_eq!(decode_node_id(NodeId(28)), NodeIdKind::Unknown);
-        assert_eq!(decode_node_id(NodeId(29)), NodeIdKind::Unknown);
+        assert_eq!(decode_node_id(NodeId(31)), NodeIdKind::Unknown);
+        assert_eq!(decode_node_id(NodeId(35)), NodeIdKind::Unknown);
         // 700M..800M was reserved for dynamic SettingsField expansion and is
         // now `SettingsWidget` (UI/UX v3 P1b), so it no longer decodes to
         // Unknown — except for values carrying bits outside the packed

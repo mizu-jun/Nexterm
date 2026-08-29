@@ -62,6 +62,7 @@
   "update-dismiss": "Cerrar notificación de actualización",
   "update-open-releases": "Abrir notas de versión",
   "error-banner-prefix": "Error:",
+  "infobar-more-count": "+{count} más",
   "consent-title-open-url": "¿Abrir URL externa?",
   "consent-title-clipboard-write": "¿Escribir en el portapapeles?",
   "consent-title-notification": "¿Mostrar notificación de escritorio?",

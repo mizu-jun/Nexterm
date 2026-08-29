@@ -713,8 +713,11 @@ gated behind a spike.
   - [x] P6b migrate the three banners onto the stack — the three `Option`
     fields and the three builders are gone; the stack draws below the tab bar,
     capped at two bars, and `Enter` acts on the top bar only (2026-08-29)
-  - [ ] P6c AccessKit nodes ×kind + tree hash + `infobar-more-count` ×8 locales
-    — the phase's most valuable change: the error bar is still unannounced
+  - [x] P6c AccessKit nodes ×kind + tree hash + `infobar-more-count` ×8 locales
+    — every kind now has a `Role::Alert` node keyed by its slot, so the server
+    error is announceable for the first time (assertive; the other two polite),
+    bars past the drawn cap are announced in full, and the cap reports the rest
+    as `+{count} more` (2026-08-29)
   - [ ] P6d entrance/exit motion + auto-dismissal for the info severity
 - [x] P7 base `notitle` custom title bar — shipped early via #46 (2026-07-30)
 - [x] P7 spike: Windows 11 snap layouts — answered in production via #49 (2026-07-31)
