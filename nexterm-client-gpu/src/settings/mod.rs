@@ -271,6 +271,17 @@ pub struct SettingsPanel {
     pub animations_enabled: nexterm_config::AnimationsEnabled,
     /// `[animations].intensity` mirror.
     pub animations_intensity: nexterm_config::AnimationIntensity,
+    /// Mirror of `AnimationsConfig::os_reduced_motion()` (UI/UX v3 P3c).
+    ///
+    /// `AnimationsConfig` on `Config::animations` stays the authority; every
+    /// call site that samples the OS accessibility preference (startup,
+    /// focus-gain refresh, hot-reload carry-over — see
+    /// `set_os_reduced_motion` call sites) must also stamp this field, so the
+    /// shared widget descriptor path (`window_widget_descs`, consumed by both
+    /// the renderer and the AccessKit tree / keyboard navigation) can show
+    /// which way the `auto` row currently resolves without needing `Config`
+    /// threaded into `SettingsPanel`.
+    pub animations_os_reduced: bool,
 
     // ===== Phase B4-P2: additional Window-category fields =====
     /// `[window].decorations` mirror. Cycled via ←/→ at Window `focused_widget_index == 11`.
@@ -445,6 +456,7 @@ impl SettingsPanel {
             tab_show_new_tab_button: config.tab_bar.show_new_tab_button,
             animations_enabled: config.animations.enabled,
             animations_intensity: config.animations.intensity.clone(),
+            animations_os_reduced: config.animations.os_reduced_motion(),
             window_decorations: config.window.decorations.clone(),
             window_backdrop: config.window.backdrop,
             window_close_action: config.window.close_action,

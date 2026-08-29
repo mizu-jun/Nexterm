@@ -1142,7 +1142,6 @@ impl WgpuState {
                 &mut bg_idx,
                 &mut text_verts,
                 &mut text_idx,
-                config.animations.os_reduced_motion(),
             );
             if let Some(m) = metrics {
                 state.settings_panel.scroll.content_h_px = m.content_h_px;

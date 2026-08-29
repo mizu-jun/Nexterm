@@ -279,7 +279,7 @@ impl EventHandler {
                 // hit-test never reads), so the OS signal is irrelevant here.
                 let specs =
                     crate::renderer::overlay::widgets::settings_window::build_window_widgets(
-                        sp, &geometry, false,
+                        sp, &geometry,
                     );
                 if let Some(id) = crate::renderer::overlay::widgets::spec::hit_test(&specs, cx, cy)
                 {

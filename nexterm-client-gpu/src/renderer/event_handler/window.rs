@@ -346,6 +346,10 @@ impl EventHandler {
             return false;
         }
         self.app.config.animations.set_os_reduced_motion(now);
+        // Keep the settings panel's mirror in sync so the shared widget
+        // descriptor path (AccessKit, keyboard navigation, and the renderer)
+        // all see the same value without `Config` being threaded into it.
+        self.app.state.settings_panel.animations_os_reduced = now;
         true
     }
 

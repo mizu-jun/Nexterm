@@ -37,9 +37,6 @@ pub(in crate::renderer) fn draw_window_tab(
     bg_idx: &mut Vec<u16>,
     text_verts: &mut Vec<TextVertex>,
     text_idx: &mut Vec<u16>,
-    // UI/UX v3 P3c: what the OS last reported, so the animations-enabled
-    // row's `auto` state can say which way it currently resolves.
-    animations_os_reduced: bool,
 ) {
     add_string_verts(
         &nexterm_i18n::fl!("settings-window-hint-nav"),
@@ -81,7 +78,7 @@ pub(in crate::renderer) fn draw_window_tab(
         text_verts,
         text_idx,
     };
-    for spec in &build_window_widgets(sp, &geometry, animations_os_reduced) {
+    for spec in &build_window_widgets(sp, &geometry) {
         draw_widget(spec, &theme, font, atlas, queue, &mut sink);
     }
 }

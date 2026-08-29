@@ -144,14 +144,14 @@ fn kind(sp: &SettingsPanel, index: u16) -> WidgetKind {
         row::SHOW_NEW_TAB_BUTTON => WidgetKind::Toggle {
             on: sp.tab_show_new_tab_button,
         },
-        // The `auto` row's label depends on the live OS signal
-        // (`AnimationsConfig::os_reduced_motion`), which this descriptor list
-        // does not have access to (it is shared with AccessKit and the
-        // keyboard-navigation walk, neither of which measures the OS state
-        // per frame). It resolves as "normal" here; `build_window_widgets`
-        // overwrites this row with the frame's real value before drawing.
+        // The `auto` row's label depends on the OS accessibility signal.
+        // `sp.animations_os_reduced` mirrors `AnimationsConfig::os_reduced_motion()`
+        // (see `SettingsPanel::animations_os_reduced`'s doc comment for the
+        // stamping sites), so this descriptor is correct wherever it is read
+        // from: the renderer, AccessKit, and keyboard navigation all go
+        // through this same `kind` function.
         row::ANIMATIONS_ENABLED => WidgetKind::Cycle {
-            value: sp.animations_enabled_label(false),
+            value: sp.animations_enabled_label(sp.animations_os_reduced),
         },
         row::ANIMATION_INTENSITY => WidgetKind::Cycle {
             value: sp.animations_intensity_label().to_string(),
@@ -215,28 +215,14 @@ const ROW_BLEED: f32 = 0.3;
 /// Rows hidden by the sidebar search get a zero-sized rect rather than being
 /// dropped, so widget indices stay aligned with `focused_widget_index` and the
 /// AccessKit tree.
-///
-/// `animations_os_reduced` is the OS-reduced-motion signal this frame
-/// measured (`config.animations.os_reduced_motion()`); it overrides the
-/// `auto` row's descriptor, which otherwise defaults to the normal-motion
-/// wording (see the comment on that arm in `kind`).
-pub(crate) fn build_window_widgets(
-    sp: &SettingsPanel,
-    g: &TabGeometry,
-    animations_os_reduced: bool,
-) -> Vec<WidgetSpec> {
+pub(crate) fn build_window_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<WidgetSpec> {
     let layout = super::super::settings::layout::compute_row_layout(g.content_w, g.cell_w);
     let visible = sp.visible_window_rows();
     let rows_top = g.content_top + g.cell_h * ROWS_TOP;
 
     window_widget_descs(sp)
         .into_iter()
-        .map(|mut desc| {
-            if desc.id.index == row::ANIMATIONS_ENABLED {
-                desc.kind = WidgetKind::Cycle {
-                    value: sp.animations_enabled_label(animations_os_reduced),
-                };
-            }
+        .map(|desc| {
             let matched = sp.label_matches_search(&desc.label);
             let desc = desc.search_match(matched);
             let index = desc.id.index;
@@ -450,9 +436,35 @@ mod tests {
     }
 
     #[test]
+    fn animations_row_label_reflects_the_panels_os_reduced_field() {
+        // Regression test for the bug where `window_widget_descs` (the
+        // descriptor path AccessKit and keyboard navigation both read
+        // directly, without going through `build_window_widgets`) hardcoded
+        // "normal" regardless of what the OS actually reported. A screen
+        // reader must never announce "Auto (normal)" while the OS is asking
+        // for reduced motion.
+        let mut sp = panel();
+        sp.animations_os_reduced = true;
+        assert_eq!(
+            window_widget_descs(&sp)[row::ANIMATIONS_ENABLED as usize].value_text(),
+            Some(sp.animations_enabled_label(true)),
+            "the shared descriptor path must report the reduced spelling \
+             when the panel's OS-reduced field says so"
+        );
+
+        sp.animations_os_reduced = false;
+        assert_eq!(
+            window_widget_descs(&sp)[row::ANIMATIONS_ENABLED as usize].value_text(),
+            Some(sp.animations_enabled_label(false)),
+            "the shared descriptor path must report the normal spelling \
+             when the panel's OS-reduced field says so"
+        );
+    }
+
+    #[test]
     fn rows_stack_without_overlapping() {
         let g = geometry();
-        let specs = build_window_widgets(&panel(), &g, false);
+        let specs = build_window_widgets(&panel(), &g);
         for pair in specs.windows(2) {
             let (a, b) = (&pair[0], &pair[1]);
             assert!(
@@ -475,7 +487,7 @@ mod tests {
         let visible = sp.visible_window_rows();
         assert!(visible.len() < WINDOW_ROW_COUNT, "the query must filter");
 
-        let specs = build_window_widgets(&sp, &geometry(), false);
+        let specs = build_window_widgets(&sp, &geometry());
         for spec in &specs {
             let shown = visible.contains(&(spec.id().index as usize));
             assert_eq!(
@@ -496,7 +508,7 @@ mod tests {
             .collect();
         let visible = sp.visible_window_rows();
         let g = geometry();
-        let specs = build_window_widgets(&sp, &g, false);
+        let specs = build_window_widgets(&sp, &g);
 
         // Every hit anywhere in the tab must land on a row the filter kept.
         for y in 0..600 {
@@ -517,7 +529,7 @@ mod tests {
         // layer; losing it in the migration would be a silent regression.
         let mut sp = panel();
         assert!(
-            build_window_widgets(&sp, &geometry(), false)
+            build_window_widgets(&sp, &geometry())
                 .iter()
                 .all(|s| !s.desc.search_match),
             "an idle search must not highlight anything"
@@ -527,7 +539,7 @@ mod tests {
             .chars()
             .take(4)
             .collect();
-        let specs = build_window_widgets(&sp, &geometry(), false);
+        let specs = build_window_widgets(&sp, &geometry());
         assert!(
             specs[row::OPACITY as usize].desc.search_match,
             "the matched row must be flagged"
@@ -544,14 +556,14 @@ mod tests {
         // than leaving the user an empty page.
         let mut sp = panel();
         sp.search_query = "zzzzzzzz".to_string();
-        let specs = build_window_widgets(&sp, &geometry(), false);
+        let specs = build_window_widgets(&sp, &geometry());
         assert!(specs.iter().all(|s| s.rect.w > 0.0 && s.rect.h > 0.0));
     }
 
     #[test]
     fn hit_testing_a_visible_row_returns_it() {
         let g = geometry();
-        let specs = build_window_widgets(&panel(), &g, false);
+        let specs = build_window_widgets(&panel(), &g);
         let target = &specs[row::CURSOR_STYLE as usize];
         let (cx, cy) = target.rect.center();
         assert_eq!(

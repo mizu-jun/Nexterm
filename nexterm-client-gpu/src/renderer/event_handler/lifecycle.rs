@@ -558,6 +558,13 @@ impl EventHandler {
                 .animations
                 .set_os_reduced_motion(self.app.config.animations.os_reduced_motion());
             self.app.config = new_config;
+            // Keep the settings panel's mirror carried over too, for the same
+            // reason as `Config::animations` above: a hot-reloaded config
+            // must not silently make the shared widget descriptor path
+            // (AccessKit, keyboard navigation, the renderer) forget what the
+            // OS last reported.
+            self.app.state.settings_panel.animations_os_reduced =
+                self.app.config.animations.os_reduced_motion();
             if font_changed {
                 self.app.font = crate::font::FontManager::new(
                     &self.app.config.font.family,
