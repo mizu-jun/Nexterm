@@ -3,7 +3,9 @@
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::settings_panel::SettingsPanel;
-use crate::vertex_util::{add_px_rect, add_string_verts, truncate_to_width};
+use crate::vertex_util::{
+    add_icon_verts, add_px_rect, add_string_verts, icon_size_for_slot, truncate_to_width,
+};
 
 /// Draw the sidebar background, separator, category-search input, and the
 /// (possibly filtered) category list.
@@ -184,32 +186,46 @@ pub(in crate::renderer) fn draw_sidebar(
         let label = if sp.is_search_filtering() {
             let n = sp.field_hit_count(cat);
             if n > 0 {
-                format!("  {} {} ({})", cat.icon(), cat.label(), n)
+                format!("{} ({})", cat.label(), n)
             } else {
-                format!("  {} {}", cat.icon(), cat.label())
+                cat.label()
             }
         } else {
-            format!("  {} {}", cat.icon(), cat.label())
+            cat.label()
         };
-        let label = truncate_to_width(&label, label_max_w, cell_w);
         let fg = if is_active {
             tokens.text_primary
         } else {
             tokens.text_secondary
         };
-        add_string_verts(
-            &label,
-            px + cell_w * 0.5,
+        // UI/UX v3 P4a: the icon is drawn from the bundled icon font into a
+        // fixed leading column rather than concatenated into the label. The
+        // column is sized off the row, not off the glyph, so no icon can push
+        // the label sideways — the old string form gave `Aa` two cells and
+        // every other icon one, which is why the labels never quite lined up.
+        let icon_slot_x = px + cell_w * 0.5;
+        let icon_slot_w = cell_w * 2.0;
+        let icon_size = icon_size_for_slot(font.icon_px(16.0), icon_slot_w, cell_h, 0.15);
+        add_icon_verts(
+            cat.icon(),
+            icon_slot_x,
             item_y,
+            icon_slot_w,
+            cell_h,
+            icon_size,
             fg,
-            is_active,
             sw,
             sh,
-            cell_w,
             font,
             atlas,
             queue,
             text_verts,
+            text_idx,
+        );
+        let text_x = icon_slot_x + icon_slot_w + cell_w * 0.5;
+        let label = truncate_to_width(&label, label_max_w - (text_x - px), cell_w);
+        add_string_verts(
+            &label, text_x, item_y, fg, is_active, sw, sh, cell_w, font, atlas, queue, text_verts,
             text_idx,
         );
     }

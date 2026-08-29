@@ -77,9 +77,6 @@ pub const WINDOW_RESTORE: char = '\u{eb95}';
 /// `ic_fluent_dismiss_16_regular`
 pub const WINDOW_CLOSE: char = '\u{f368}';
 
-/// `ic_fluent_window_console_20_regular`
-pub const PROFILE_ENTRY: char = '\u{ee6f}';
-
 /// Every codepoint this module exposes, for coverage tests.
 ///
 /// Order matches `assets/fonts/icon-set.txt`. Entries may repeat a
@@ -104,5 +101,4 @@ pub const ALL_ICONS: &[char] = &[
     WINDOW_MAXIMIZE,
     WINDOW_RESTORE,
     WINDOW_CLOSE,
-    PROFILE_ENTRY,
 ];

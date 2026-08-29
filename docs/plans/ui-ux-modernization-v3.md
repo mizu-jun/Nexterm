@@ -641,7 +641,23 @@ gated behind a spike.
         not the typed `objc2-app-kit` subtree, matching the precedent P2b/P2c
         set of pulling in the smallest crate that answers the question at
         hand
-- [ ] P4 icon font + chrome type ramp
+- [x] P4a icon font — the bundled `fluentui-system-icons` subset
+      (`assets/fonts/`, 3.4 KB from a 2.8 MB upstream face), its rasterisation
+      path, and the eighteen chrome sites now drawing from it. Two structural
+      changes carried it: `GlyphKey` gained a `FontRole` and a size, because
+      Fluent's PUA codepoints sit inside the Nerd Font range and would
+      otherwise share a cache slot with terminal-content icons; and
+      `lru_cap_from_cell` stopped assuming every atlas entry is one cell.
+      Icon sizes come from the 16/20/24 steps scaled by DPI, never from the
+      terminal cell, so icon weight no longer drifts with the user's font
+      size — with a clamp so a one-cell slot under a small font shrinks the
+      icon instead of letting it bleed. Hit regions are untouched throughout.
+      **The acceptance criterion — "renders without any user-installed
+      font" — is verified only as far as a CPU test can go** (every bundled
+      icon rasterises to non-empty ink through the real path); how any of it
+      *looks* is unverified and joins the backlog below
+- [ ] P4b chrome type ramp — the larger half; see
+      `plans/2026-08-29-p4-iconography-and-chrome-typography.md` §5
 - [ ] P5 contrast everywhere + high-contrast scheme
 - [ ] P6 InfoBar + consent reclassification
 - [x] P7 base `notitle` custom title bar — shipped early via #46 (2026-07-30)
@@ -771,6 +787,21 @@ gated behind a spike.
     inspection only, not by test — covering it needs an `EventHandler` test
     harness the crate does not have, which is out of scope for P3b2 and
     deserves its own decision.
+  - P4a — every chrome icon in the window changed shape, and nobody has looked
+    at one. The CPU test proves each of the eighteen icons rasterises to
+    non-empty ink out of the bundled subset, which is a coverage claim, not an
+    appearance one. Not measured: whether the caption buttons read as the
+    Windows 11 caption set beside a real Windows shell — the stroke weight and
+    optical size are the residual risk decision D-1 accepted rather than
+    resolved; whether a 16 px step at scale 1.0 is the right weight next to the
+    tab labels, or whether the sidebar wants 20 px; whether the slot-fitting
+    clamp ever actually fires in practice, and if it does, whether a shrunken
+    icon looks deliberate or broken; whether the icons sit optically centred in
+    their slots, since `icon_placement` centres the *ink bounds*, and an icon
+    whose artwork is asymmetric inside its em box will centre differently than
+    a glyph baseline would have; and how any of it looks on a HiDPI display,
+    where `icon_px` multiplies the step by the scale factor — a path with no
+    test because `scale_factor` only becomes real in `on_resumed`.
   - The cross-cutting rule above still asks for hand-run screenshots under
     `docs/img/uiux-v3/`. That directory does not exist yet. P3a makes the gap
     wider than "nobody took a screenshot": a screenshot cannot show a

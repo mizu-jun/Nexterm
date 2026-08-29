@@ -86,9 +86,6 @@ pub(crate) enum FontRole {
     /// The user-configured terminal font, rasterised at the cell size.
     Terminal,
     /// The bundled chrome icon font, rasterised at an explicit pixel size.
-    // P4a-1 ships the plumbing; P4a-2 moves the call sites onto it and this
-    // allowance goes with it.
-    #[allow(dead_code)]
     Icon,
 }
 
@@ -128,8 +125,6 @@ impl GlyphKey {
     ///
     /// `size_px` is quantised to whole pixels by the caller's cast so that a
     /// window resize does not generate an unbounded key space.
-    // P4a-1 ships the plumbing; P4a-2 moves the call sites onto it.
-    #[allow(dead_code)]
     pub fn icon(ch: char, size_px: u16) -> Self {
         Self {
             ch,

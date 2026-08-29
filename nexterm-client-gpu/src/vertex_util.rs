@@ -566,7 +566,18 @@ pub(crate) fn add_char_verts(
 /// Pure so the placement rule is testable without a GPU: the icon is centred
 /// in the slot and rounded to whole pixels, because a half-pixel offset on a
 /// 16 px glyph is visible as a blur.
-#[allow(dead_code)] // P4a-1 ships the plumbing; P4a-2 moves the call sites onto it.
+/// Shrink an icon step so it fits the slot the caller reserved.
+///
+/// Icon sizing is otherwise independent of the terminal font, but a slot built
+/// from cell multiples can be smaller than the step when the user picks a tiny
+/// font — a tab close button is one cell wide. Clamping keeps the icon inside
+/// its own hit region instead of bleeding into the label beside it. `margin`
+/// is the fraction of the slot left as breathing room.
+pub(crate) fn icon_size_for_slot(step_px: f32, slot_w: f32, slot_h: f32, margin: f32) -> f32 {
+    let budget = slot_w.min(slot_h) * (1.0 - margin.clamp(0.0, 0.9));
+    step_px.min(budget).max(1.0)
+}
+
 pub(crate) fn icon_placement(
     slot_x: f32,
     slot_y: f32,
@@ -593,7 +604,6 @@ pub(crate) fn icon_placement(
 /// Draws nothing when the codepoint is missing from the bundled subset, rather
 /// than emitting tofu.
 #[allow(clippy::too_many_arguments)]
-#[allow(dead_code)] // P4a-1 ships the plumbing; P4a-2 moves the call sites onto it.
 pub(crate) fn add_icon_verts(
     icon: char,
     slot_x: f32,
@@ -738,6 +748,42 @@ mod tests {
     }
 
     // ---- icon_placement (UI/UX v3 P4a) ----
+
+    #[test]
+    fn an_icon_step_is_used_as_is_when_the_slot_has_room() {
+        // The point of the steps: with room to spare, the icon size does not
+        // depend on the slot (and therefore not on the terminal font).
+        assert_eq!(icon_size_for_slot(16.0, 40.0, 40.0, 0.2), 16.0);
+    }
+
+    #[test]
+    fn an_icon_shrinks_to_fit_a_small_slot() {
+        // A one-cell close button under a small font: 12 px slot, 20% margin
+        // leaves 9.6 px, so the 16 px step must come down rather than bleed
+        // into the label beside it.
+        let size = icon_size_for_slot(16.0, 12.0, 30.0, 0.2);
+        assert!((size - 9.6).abs() < 1e-4, "{size}");
+    }
+
+    #[test]
+    fn icon_fitting_uses_the_shorter_side_of_the_slot() {
+        // Caption buttons are wide and short; the height is what constrains.
+        assert!(icon_size_for_slot(24.0, 46.0, 20.0, 0.0) == 20.0);
+    }
+
+    #[test]
+    fn icon_fitting_never_returns_a_degenerate_size() {
+        // A collapsed slot (a tab squeezed to nothing mid-animation) must not
+        // ask the rasteriser for a zero- or negative-sized glyph.
+        assert!(icon_size_for_slot(16.0, 0.0, 0.0, 0.2) >= 1.0);
+        assert!(icon_size_for_slot(16.0, -5.0, 10.0, 0.2) >= 1.0);
+    }
+
+    #[test]
+    fn an_absurd_margin_is_clamped_rather_than_inverting_the_budget() {
+        // A margin >= 1.0 would otherwise produce a zero or negative budget.
+        assert!(icon_size_for_slot(16.0, 40.0, 40.0, 2.0) >= 1.0);
+    }
 
     #[test]
     fn an_icon_centres_in_its_slot() {

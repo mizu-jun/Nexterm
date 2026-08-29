@@ -3,7 +3,8 @@
 use crate::font::FontManager;
 use crate::glyph_atlas::GlyphAtlas;
 use crate::vertex_util::{
-    add_px_rounded_rect_sdf, add_string_verts, truncate_to_width, visual_width,
+    add_icon_verts, add_px_rounded_rect_sdf, add_string_verts, icon_size_for_slot,
+    truncate_to_width, visual_width,
 };
 
 use super::super::super::settings::row::{MIN_TEXT_CONTRAST, ensure_readable};
@@ -141,19 +142,40 @@ pub(super) fn draw_cycle(
         );
     };
 
-    put(
-        "‹",
-        spec.control_rect.x,
-        chevron_color,
-        spec.focused(),
-        sink,
-    );
+    // UI/UX v3 P4a: the two chevrons come from the bundled icon font, each
+    // centred in the one-cell slot the `‹` / `›` glyphs occupied. The slots
+    // themselves are unchanged, so `hit_test` still resolves the same columns.
+    //
     // The value sits between the two chevrons, each one cell wide plus a gap.
+    // It is drawn first so `put` — which borrows `font` and `atlas` — is done
+    // with them before the icons need the same borrows.
     let value_x = spec.control_rect.x + theme.cell_w * 2.0;
     let value_w = (right_x - value_x - theme.cell_w).max(0.0);
     let text = truncate_to_width(value, value_w, theme.cell_w);
     put(&text, value_x, value_color, spec.focused(), sink);
-    put("›", right_x, chevron_color, spec.focused(), sink);
+
+    let chevron_size = icon_size_for_slot(font.icon_px(16.0), theme.cell_w, theme.cell_h, 0.1);
+    for (icon, x) in [
+        (crate::icons::CHEVRON_LEFT, spec.control_rect.x),
+        (crate::icons::CHEVRON_RIGHT, right_x),
+    ] {
+        add_icon_verts(
+            icon,
+            x,
+            y,
+            theme.cell_w,
+            theme.cell_h,
+            chevron_size,
+            chevron_color,
+            theme.sw,
+            theme.sh,
+            font,
+            atlas,
+            queue,
+            sink.text_verts,
+            sink.text_idx,
+        );
+    }
 }
 
 /// A colour chip, ringed in the accent colour when it is the active choice

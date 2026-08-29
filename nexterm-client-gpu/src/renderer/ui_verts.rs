@@ -6,7 +6,9 @@ use crate::color_util::with_alpha;
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::state::ClientState;
-use crate::vertex_util::{add_px_rect, add_px_rounded_rect_sdf, add_string_verts};
+use crate::vertex_util::{
+    add_icon_verts, add_px_rect, add_px_rounded_rect_sdf, add_string_verts, icon_size_for_slot,
+};
 
 use super::WgpuState;
 
@@ -481,41 +483,46 @@ impl WgpuState {
             // Button area: a square (about cell_w x cell_w) inset from the tab's right edge
             // by `padding`. A click fires the `DetachToNewWindow` path (hit-detected in
             // `mouse.rs`).
-            // Phase 2 (UI/UX modernization): require room for both `↗` (tear-out) and
-            // `×` (close) buttons. Minimum tab width raised from 4 to 6 cells.
+            // Phase 2 (UI/UX modernization): require room for both the
+            // tear-out and the close button. Minimum tab width raised from 4 to
+            // 6 cells.
             let hover_btn_min_width = cell_w * 6.0;
             if is_hovered && state.tab_drag.is_none() && label_w >= hover_btn_min_width {
                 let btn_size = cell_w; // a 1-cell-wide square
                 let btn_y = bar_y + (bar_h - cell_h) / 2.0;
-                // `×` close button at the far right, `↗` tear-out one slot to its left.
+                // Close button at the far right, tear-out one slot to its left.
                 let close_x = x_offset + label_w - padding - btn_size;
                 let tearout_x = close_x - btn_size;
-                // Tear-out arrow (U+2197 NORTH EAST ARROW)
-                add_string_verts(
-                    "↗",
+                // UI/UX v3 P4a: both buttons draw from the bundled icon font.
+                // The slots are unchanged — `mouse.rs` hit-tests the same
+                // squares it did when these were `↗` and `×` glyphs.
+                let btn_icon_size = icon_size_for_slot(font.icon_px(16.0), btn_size, cell_h, 0.2);
+                add_icon_verts(
+                    crate::icons::TAB_TEAR_OUT,
                     tearout_x,
                     btn_y,
+                    btn_size,
+                    cell_h,
+                    btn_icon_size,
                     fg,
-                    false,
                     sw,
                     sh,
-                    cell_w,
                     font,
                     atlas,
                     &self.queue,
                     text_verts,
                     text_idx,
                 );
-                // Close button (U+00D7 MULTIPLICATION SIGN, more reliable than "×")
-                add_string_verts(
-                    "×",
+                add_icon_verts(
+                    crate::icons::TAB_CLOSE,
                     close_x,
                     btn_y,
+                    btn_size,
+                    cell_h,
+                    btn_icon_size,
                     fg,
-                    false,
                     sw,
                     sh,
-                    cell_w,
                     font,
                     atlas,
                     &self.queue,
@@ -682,7 +689,7 @@ impl WgpuState {
             );
             state.new_tab_hit_rect = Some((new_tab_x, new_tab_x + new_tab_w));
 
-            // P1 (WT-like UX): `▾` profile-dropdown pill right of `+`.
+            // P1 (WT-like UX): the profile-dropdown pill right of `+`.
             // Clicking it opens `ContextMenu::new_tab_dropdown` (profiles +
             // WSL distros); the hit rect is consumed by `mouse.rs`.
             let dropdown_x = sw - window_buttons_w - settings_w - dropdown_w;
@@ -698,18 +705,18 @@ impl WgpuState {
                 bg_verts,
                 bg_idx,
             );
-            let chevron_label = "▾";
-            let chevron_text_x = dropdown_x
-                + (dropdown_w - chevron_label.chars().count() as f32 * cell_w).max(0.0) * 0.5;
-            add_string_verts(
-                chevron_label,
-                chevron_text_x,
+            // UI/UX v3 P4a: the chevron comes from the bundled icon font and
+            // centres in the pill it already occupied.
+            add_icon_verts(
+                crate::icons::CHEVRON_DOWN,
+                dropdown_x,
                 text_y,
+                dropdown_w,
+                cell_h,
+                icon_size_for_slot(font.icon_px(16.0), dropdown_w, cell_h, 0.2),
                 tokens.text_secondary,
-                true,
                 sw,
                 sh,
-                cell_w,
                 font,
                 atlas,
                 &self.queue,
@@ -781,10 +788,22 @@ impl WgpuState {
         if custom_titlebar {
             use crate::state::WindowButton;
             let radius = ui_cfg.chrome_radius().min(bar_h * 0.5);
+            // UI/UX v3 P4a: caption glyphs come from the bundled icon font.
+            // These were the most visible place the chrome borrowed the user's
+            // terminal font, so they move with everything else (decision D-1 in
+            // the phase's design spec); the shapes match the Windows 11 caption
+            // set — a rule, a square, overlapping squares, a cross.
             let buttons = [
-                (WindowButton::Minimize, "─"),
-                (WindowButton::Maximize, if is_maximized { "❐" } else { "□" }),
-                (WindowButton::Close, "×"),
+                (WindowButton::Minimize, crate::icons::WINDOW_MINIMIZE),
+                (
+                    WindowButton::Maximize,
+                    if is_maximized {
+                        crate::icons::WINDOW_RESTORE
+                    } else {
+                        crate::icons::WINDOW_MAXIMIZE
+                    },
+                ),
+                (WindowButton::Close, crate::icons::WINDOW_CLOSE),
             ];
             for (i, &(button, glyph)) in buttons.iter().enumerate() {
                 let bx = sw - (3 - i) as f32 * window_button_w;
@@ -825,17 +844,16 @@ impl WgpuState {
                 // `window_button_glyph_color`'s own doc comment for why.
                 let fg =
                     window_button_glyph_color(hover, tokens.text_secondary, tokens.text_primary);
-                let glyph_x =
-                    bx + (window_button_w - glyph.chars().count() as f32 * cell_w).max(0.0) * 0.5;
-                add_string_verts(
+                add_icon_verts(
                     glyph,
-                    glyph_x,
+                    bx,
                     text_y,
+                    window_button_w,
+                    cell_h,
+                    icon_size_for_slot(font.icon_px(16.0), window_button_w, cell_h, 0.2),
                     fg,
-                    true,
                     sw,
                     sh,
-                    cell_w,
                     font,
                     atlas,
                     &self.queue,

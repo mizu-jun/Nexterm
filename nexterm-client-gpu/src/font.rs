@@ -25,6 +25,10 @@ pub struct FontManager {
     cell_w: f32,
     /// Configured font family name (passed to `Attrs`).
     family: String,
+    /// Display scale factor from winit. Kept so chrome icons can be sized in
+    /// logical pixels (the 16/20/24 steps) and converted to physical ones
+    /// without every call site having to plumb the scale itself.
+    scale_factor: f32,
     /// Whether to enable ligatures.
     pub ligatures: bool,
 }
@@ -88,6 +92,7 @@ impl FontManager {
             metrics,
             cell_w,
             family: family.to_string(),
+            scale_factor,
             ligatures,
         }
     }
@@ -102,6 +107,7 @@ impl FontManager {
     /// the existing `font_system` / `swash_cache` and only recomputes `metrics`
     /// and `cell_w`, which is effectively free.
     pub fn set_scale_factor(&mut self, size_pt: f32, scale_factor: f32) {
+        self.scale_factor = scale_factor;
         // size_pt × (96 dpi / 72 dpi) × scale_factor = physical font size in pixels.
         let font_size_px = size_pt * (96.0 / 72.0) * scale_factor;
         let line_height = font_size_px * 1.2;
@@ -335,8 +341,16 @@ impl FontManager {
     ///
     /// Returns `(width, height, rgba_pixels)`, premultiplied to match every
     /// other producer feeding the glyph atlas.
-    // P4a-1 ships the plumbing; P4a-2 moves the call sites onto it.
-    #[allow(dead_code)]
+    /// Convert one of the 16/20/24 px icon steps into physical pixels.
+    ///
+    /// The steps are *logical* sizes, so they still have to follow the display
+    /// scale — a 16 px icon next to 2x-scaled chrome would read as half-sized.
+    /// What they deliberately do not follow is the terminal font size, which is
+    /// the whole point of moving the chrome off cell-sized glyphs.
+    pub fn icon_px(&self, step: f32) -> f32 {
+        step * self.scale_factor
+    }
+
     pub fn rasterize_icon(&mut self, ch: char, size_px: f32, fg: [u8; 4]) -> (u32, u32, Vec<u8>) {
         let size = size_px.max(1.0);
         let metrics = Metrics::new(size, size);

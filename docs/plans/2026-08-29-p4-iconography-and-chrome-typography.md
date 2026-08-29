@@ -318,6 +318,7 @@ Four PRs, each independently revertible:
 |---|---|---|
 | P4a-1 | Subset script, committed subset, `THIRD-PARTY-NOTICES.md`, font registration, `FontRole` + `GlyphKey` extension, atlas capacity fix, `add_icon_verts`. No call site changes. | Tests green; atlas tests extended. |
 | P4a-2 | Replace all call sites in the §3 table, caption buttons included (D-1). Hit regions unchanged. | Icon table totality tests. |
+| | **Shipped.** One correction to §3: the profile entry marker is *not* chrome. `Profile.icon` in `nexterm-config` is a user-supplied string ("emoji or ASCII"), so replacing it would override the user's own choice; it was dropped from the icon set, leaving 18 icons over 17 codepoints. Two further sites stay on Unicode deliberately: the footer's `↗ Open config.toml` and `↺ Reset category` links, whose **`visual_width` drives their hit region** in `settings_panel_hit.rs` — converting them would move a click target, which is exactly what this PR promised not to do. They need the label/icon split the sidebar received, and are listed in §8. | |
 | P4b-1 | `add_run_verts` / `measure_run` / `truncate_run_to_width`, `FontRole::Chrome`, weight-as-`bold` mapping (D-2), measurement memoisation. No adoption. | §5.4 tests. |
 | P4b-2 | Adopt the ramp at the six §5.2 surfaces. | Per-site width tests. |
 
@@ -333,6 +334,11 @@ second.
   computation off measured text (N-3).
 - A configurable chrome font family, distinct from the terminal font (N-5).
 - Filled-variant icons for selected/active states; P4 ships Regular only.
+- The settings footer's `↗ Open config.toml` and `↺ Reset category` links.
+  Their hit regions are computed from the label's `visual_width` in
+  `settings_panel_hit.rs`, mirrored in `overlay/settings/mod.rs`, so moving the
+  glyph into an icon run means changing the hit computation in both files in
+  lockstep.
 
 ## 9. Decisions
 
