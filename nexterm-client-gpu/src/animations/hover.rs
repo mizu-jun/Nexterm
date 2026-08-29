@@ -140,10 +140,9 @@ mod tests {
     }
 
     fn off() -> AnimationsConfig {
-        AnimationsConfig {
-            enabled: false,
-            ..AnimationsConfig::default()
-        }
+        let mut cfg = AnimationsConfig::default();
+        cfg.enabled = nexterm_config::AnimationsEnabled::No;
+        cfg
     }
 
     /// 100 ms is `duration::FASTER`, the constant both P3b2 models use.

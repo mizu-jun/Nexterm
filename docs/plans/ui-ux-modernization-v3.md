@@ -596,7 +596,43 @@ gated behind a spike.
           and any change to a foreground colour — press changes background
           fills only, confirmed at each site by keeping the label/glyph
           colour reading the hover weight alone, never the amended one
-  - [ ] P3c OS reduced-motion detection
+  - [x] P3c OS reduced-motion detection — `animations.enabled` is now a
+        tri-state (`AnimationsEnabled::Auto` / `Yes` / `No`) instead of a
+        bool, with a custom `Deserialize` that keeps parsing pre-P3c
+        `enabled = true` / `enabled = false` configs unchanged and adds
+        `"auto"` as the new spelling. `Auto` is the default: it defers to the
+        OS accessibility preference rather than to the client's own opinion,
+        so a user who has already told their OS "no motion" does not have to
+        tell Nexterm separately. Detection reads Windows'
+        `SPI_GETCLIENTAREAANIMATION` and macOS'
+        `NSWorkspace.accessibilityDisplayShouldReduceMotion`; Linux has no
+        portal or desktop API wired up, so `auto` animates there and the
+        manual `true`/`false` setting is the documented fallback. The OS
+        value lives in `AnimationsConfig::os_reduced_motion`, a
+        `#[serde(skip)]` field the client's platform layer writes via
+        `set_os_reduced_motion` — a structural boundary, not just a
+        convention, that keeps a machine's transient OS state out of
+        `config.toml`. That boundary has a corollary: hot-reloading
+        `config.toml` builds a fresh `Config` whose `os_reduced_motion`
+        starts unset, so the client explicitly re-carries the last-sampled
+        value across a reload — without it, saving the file would have
+        silently re-enabled animation the OS had asked to stop. There is no
+        native change-notification for the OS preference, so it is sampled
+        at startup and again whenever the window regains focus rather than
+        pushed on change; a toggle made while the window is already focused
+        is not picked up until focus is lost and regained. The settings
+        panel's animations row became a three-state cycler, and its `auto`
+        entry shows which way it currently resolves ("Auto (normal)" /
+        "Auto (reduced)"), reading `os_reduced_motion()` rather than
+        guessing. One correction to this plan's own P3 framing: the entry
+        above said macOS detection would "share the objc2 dependency
+        decision with P2" — that was stale by the time P3c landed, since P2c
+        added `window-vibrancy` for the backdrop material, not `objc2`, and
+        `window-vibrancy` does not expose the accessibility preference. P3c
+        made its own dependency call instead: `objc2` core only, deliberately
+        not the typed `objc2-app-kit` subtree, matching the precedent P2b/P2c
+        set of pulling in the smallest crate that answers the question at
+        hand
 - [ ] P4 icon font + chrome type ramp
 - [ ] P5 contrast everywhere + high-contrast scheme
 - [ ] P6 InfoBar + consent reclassification

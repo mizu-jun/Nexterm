@@ -23,7 +23,7 @@ impl SettingsPanel {
             6 => self.increase_scrollback_lines(),
             7 => self.toggle_show_tab_number(),
             8 => self.toggle_show_new_tab_button(),
-            9 => self.toggle_animations_enabled(),
+            9 => self.next_animations_enabled(),
             10 => self.next_animations_intensity(),
             11 => self.next_window_decorations(),
             12 => self.next_window_close_action(),
@@ -47,7 +47,7 @@ impl SettingsPanel {
             6 => self.decrease_scrollback_lines(),
             7 => self.toggle_show_tab_number(),
             8 => self.toggle_show_new_tab_button(),
-            9 => self.toggle_animations_enabled(),
+            9 => self.prev_animations_enabled(),
             10 => self.prev_animations_intensity(),
             11 => self.prev_window_decorations(),
             12 => self.prev_window_close_action(),
@@ -110,10 +110,49 @@ impl SettingsPanel {
         self.dirty = true;
     }
 
-    /// Toggle `[animations].enabled`.
-    pub fn toggle_animations_enabled(&mut self) {
-        self.animations_enabled = !self.animations_enabled;
+    /// Cycle `[animations].enabled` forward: auto → on → off → auto.
+    pub fn next_animations_enabled(&mut self) {
+        use nexterm_config::AnimationsEnabled::*;
+        self.animations_enabled = match self.animations_enabled {
+            Auto => Yes,
+            Yes => No,
+            No => Auto,
+        };
         self.dirty = true;
+    }
+
+    /// Cycle `[animations].enabled` backward.
+    pub fn prev_animations_enabled(&mut self) {
+        use nexterm_config::AnimationsEnabled::*;
+        self.animations_enabled = match self.animations_enabled {
+            Auto => No,
+            No => Yes,
+            Yes => Auto,
+        };
+        self.dirty = true;
+    }
+
+    /// Row value text. `os_reduced` is what the OS last reported, so the
+    /// `auto` row can say which way it resolves right now.
+    pub fn animations_enabled_label(&self, os_reduced: bool) -> String {
+        use nexterm_config::AnimationsEnabled::*;
+        match self.animations_enabled {
+            Auto if os_reduced => fl!("settings-value-animations-auto-reduced"),
+            Auto => fl!("settings-value-animations-auto-normal"),
+            Yes => fl!("settings-value-animations-on"),
+            No => fl!("settings-value-animations-off"),
+        }
+    }
+
+    /// Write-back value: `"auto"` as a string, the other two as booleans, so
+    /// a config that predates P3c keeps the spelling its author used.
+    pub fn animations_enabled_toml_value(&self) -> toml_edit::Value {
+        use nexterm_config::AnimationsEnabled::*;
+        match self.animations_enabled {
+            Auto => toml_edit::Value::from("auto"),
+            Yes => toml_edit::Value::from(true),
+            No => toml_edit::Value::from(false),
+        }
     }
 
     /// Cycle `[animations].intensity` forward: off -> subtle -> normal -> energetic -> off.
@@ -230,13 +269,48 @@ mod tests {
     }
 
     #[test]
-    fn animations_enabled_toggle() {
-        let config = Config::default();
-        let mut panel = SettingsPanel::new(&config);
-        let initial = panel.animations_enabled;
-        panel.toggle_animations_enabled();
-        assert_eq!(panel.animations_enabled, !initial);
-        assert!(panel.dirty);
+    fn the_animations_enabled_row_cycles_through_all_three_states() {
+        use nexterm_config::AnimationsEnabled::*;
+        let mut sp = SettingsPanel::default();
+        sp.next_animations_enabled();
+        assert_eq!(sp.animations_enabled, Yes);
+        sp.next_animations_enabled();
+        assert_eq!(sp.animations_enabled, No);
+        sp.next_animations_enabled();
+        assert_eq!(sp.animations_enabled, Auto, "wraps");
+        sp.prev_animations_enabled();
+        assert_eq!(sp.animations_enabled, No, "and goes back the other way");
+        assert!(sp.dirty, "cycling marks the panel dirty");
+    }
+
+    /// `auto` on its own is a lie on a machine whose OS asks for reduced
+    /// motion: the row would read "auto" while every animation is off. The
+    /// label has to say which way it currently resolves.
+    #[test]
+    fn the_auto_label_reports_how_it_currently_resolves() {
+        use nexterm_config::AnimationsEnabled::*;
+        let mut sp = SettingsPanel::default();
+        let reduced = sp.animations_enabled_label(true);
+        let normal = sp.animations_enabled_label(false);
+        assert_ne!(reduced, normal, "auto must distinguish the two resolutions");
+
+        // The explicit states say the same thing whatever the OS reports.
+        sp.animations_enabled = Yes;
+        assert_eq!(
+            sp.animations_enabled_label(true),
+            sp.animations_enabled_label(false)
+        );
+    }
+
+    #[test]
+    fn each_state_writes_back_its_own_toml_spelling() {
+        use nexterm_config::AnimationsEnabled::*;
+        let mut sp = SettingsPanel::default();
+        assert_eq!(sp.animations_enabled_toml_value().as_str(), Some("auto"));
+        sp.animations_enabled = Yes;
+        assert_eq!(sp.animations_enabled_toml_value().as_bool(), Some(true));
+        sp.animations_enabled = No;
+        assert_eq!(sp.animations_enabled_toml_value().as_bool(), Some(false));
     }
 
     #[test]
@@ -290,9 +364,10 @@ mod tests {
         assert_eq!(panel.tab_show_new_tab_button, !before);
 
         panel.focused_widget_index = 9;
-        let before = panel.animations_enabled;
+        use nexterm_config::AnimationsEnabled;
+        panel.animations_enabled = AnimationsEnabled::Auto;
         panel.window_field_increase();
-        assert_eq!(panel.animations_enabled, !before);
+        assert_eq!(panel.animations_enabled, AnimationsEnabled::Yes);
 
         panel.focused_widget_index = 10;
         use nexterm_config::AnimationIntensity::Normal;
@@ -369,10 +444,10 @@ mod tests {
 
     #[test]
     fn save_writes_animations_enabled_and_intensity() {
-        use nexterm_config::AnimationIntensity;
+        use nexterm_config::{AnimationIntensity, AnimationsEnabled};
         let config = Config::default();
         let mut panel = SettingsPanel::new(&config);
-        panel.animations_enabled = false;
+        panel.animations_enabled = AnimationsEnabled::No;
         panel.animations_intensity = AnimationIntensity::Subtle;
         let toml_str = panel.apply_to_toml_string("");
         assert!(toml_str.contains("enabled = false"));

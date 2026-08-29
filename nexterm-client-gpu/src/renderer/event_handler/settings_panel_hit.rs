@@ -274,6 +274,9 @@ impl EventHandler {
                 use crate::renderer::overlay::widgets::draw::slider_track_rect;
                 use crate::renderer::overlay::widgets::settings_window::drag_slider_of;
 
+                // The animations-enabled row's rect does not depend on which
+                // way `auto` resolves, only its label text does (which this
+                // hit-test never reads), so the OS signal is irrelevant here.
                 let specs =
                     crate::renderer::overlay::widgets::settings_window::build_window_widgets(
                         sp, &geometry,

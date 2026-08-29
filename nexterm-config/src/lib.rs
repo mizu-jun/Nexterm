@@ -21,9 +21,9 @@ pub mod wsl;
 pub use loader::{ConfigLoader, lua_path, toml_path};
 pub use lua_hooks::{HookEvent, LuaHookRunner};
 pub use schema::{
-    AccessLogConfig, AnimationIntensity, AnimationsConfig, BackdropTarget, BackgroundFit,
-    BackgroundImageConfig, BlocksConfig, BuiltinScheme, CloseAction, ColorScheme, Config,
-    ConsentPolicy, CubicBezier, CursorConfig, CursorStyle, CustomPalette, DesignTokens,
+    AccessLogConfig, AnimationIntensity, AnimationsConfig, AnimationsEnabled, BackdropTarget,
+    BackgroundFit, BackgroundImageConfig, BlocksConfig, BuiltinScheme, CloseAction, ColorScheme,
+    Config, ConsentPolicy, CubicBezier, CursorConfig, CursorStyle, CustomPalette, DesignTokens,
     ElevationScale, FontConfig, GpuConfig, GradientConfig, HooksConfig, HostConfig,
     InactivePaneHsbConfig, KeyBinding, LogConfig, MacroConfig, MetricTokens, MotionTokens,
     OAuthConfig, PresentModeConfig, Profile, QuakeEdge, QuakeModeConfig, RadiusTokens,

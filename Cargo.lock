@@ -3800,6 +3800,7 @@ dependencies = [
  "nexterm-server",
  "notify",
  "notify-rust",
+ "objc2 0.6.4",
  "postcard",
  "proptest",
  "regex",

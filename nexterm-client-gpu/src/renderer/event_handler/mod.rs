@@ -617,6 +617,16 @@ impl ApplicationHandler<UserEvent> for EventHandler {
                 // built-in scheme when `colors_follow_system` is on.
                 self.on_theme_changed(theme);
             }
+            WindowEvent::Focused(true) => {
+                // UI/UX v3 P3c: re-sample the OS reduced-motion preference on
+                // focus gain (see `refresh_reduced_motion` for why focus,
+                // rather than a native change notification).
+                if self.refresh_reduced_motion()
+                    && let Some(w) = &self.window
+                {
+                    w.request_redraw();
+                }
+            }
             _ => {}
         }
 

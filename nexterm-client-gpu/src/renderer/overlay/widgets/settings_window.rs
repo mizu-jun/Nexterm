@@ -40,7 +40,7 @@ pub(crate) mod row {
     pub const SHOW_TAB_NUMBER: u16 = 7;
     /// Show new-tab button (toggle).
     pub const SHOW_NEW_TAB_BUTTON: u16 = 8;
-    /// Animations enabled (toggle).
+    /// Animations enabled (cycler: auto / on / off).
     pub const ANIMATIONS_ENABLED: u16 = 9;
     /// Animation intensity (cycler).
     pub const ANIMATION_INTENSITY: u16 = 10;
@@ -144,8 +144,14 @@ fn kind(sp: &SettingsPanel, index: u16) -> WidgetKind {
         row::SHOW_NEW_TAB_BUTTON => WidgetKind::Toggle {
             on: sp.tab_show_new_tab_button,
         },
-        row::ANIMATIONS_ENABLED => WidgetKind::Toggle {
-            on: sp.animations_enabled,
+        // The `auto` row's label depends on the OS accessibility signal.
+        // `sp.animations_os_reduced` mirrors `AnimationsConfig::os_reduced_motion()`
+        // (see `SettingsPanel::animations_os_reduced`'s doc comment for the
+        // stamping sites), so this descriptor is correct wherever it is read
+        // from: the renderer, AccessKit, and keyboard navigation all go
+        // through this same `kind` function.
+        row::ANIMATIONS_ENABLED => WidgetKind::Cycle {
+            value: sp.animations_enabled_label(sp.animations_os_reduced),
         },
         row::ANIMATION_INTENSITY => WidgetKind::Cycle {
             value: sp.animations_intensity_label().to_string(),
@@ -299,7 +305,7 @@ pub(crate) fn apply_window_action(
             row::CURSOR_BLINK => sp.toggle_cursor_blink(),
             row::SHOW_TAB_NUMBER => sp.toggle_show_tab_number(),
             row::SHOW_NEW_TAB_BUTTON => sp.toggle_show_new_tab_button(),
-            row::ANIMATIONS_ENABLED => sp.toggle_animations_enabled(),
+            row::ANIMATIONS_ENABLED => sp.next_animations_enabled(),
             row::ANIMATION_INTENSITY => sp.next_animations_intensity(),
             row::DECORATIONS => sp.next_window_decorations(),
             row::CLOSE_ACTION => sp.next_window_close_action(),
@@ -367,8 +373,8 @@ mod tests {
         let descs = window_widget_descs(&panel());
         let count = |f: fn(&WidgetKind) -> bool| descs.iter().filter(|d| f(&d.kind)).count();
         assert_eq!(count(|k| matches!(k, WidgetKind::Slider { .. })), 6);
-        assert_eq!(count(|k| matches!(k, WidgetKind::Toggle { .. })), 5);
-        assert_eq!(count(|k| matches!(k, WidgetKind::Cycle { .. })), 6);
+        assert_eq!(count(|k| matches!(k, WidgetKind::Toggle { .. })), 4);
+        assert_eq!(count(|k| matches!(k, WidgetKind::Cycle { .. })), 7);
     }
 
     #[test]
@@ -427,6 +433,32 @@ mod tests {
             .collect();
         assert_eq!(focused.len(), 1);
         assert_eq!(focused[0].id.index, row::SCROLLBACK);
+    }
+
+    #[test]
+    fn animations_row_label_reflects_the_panels_os_reduced_field() {
+        // Regression test for the bug where `window_widget_descs` (the
+        // descriptor path AccessKit and keyboard navigation both read
+        // directly, without going through `build_window_widgets`) hardcoded
+        // "normal" regardless of what the OS actually reported. A screen
+        // reader must never announce "Auto (normal)" while the OS is asking
+        // for reduced motion.
+        let mut sp = panel();
+        sp.animations_os_reduced = true;
+        assert_eq!(
+            window_widget_descs(&sp)[row::ANIMATIONS_ENABLED as usize].value_text(),
+            Some(sp.animations_enabled_label(true)),
+            "the shared descriptor path must report the reduced spelling \
+             when the panel's OS-reduced field says so"
+        );
+
+        sp.animations_os_reduced = false;
+        assert_eq!(
+            window_widget_descs(&sp)[row::ANIMATIONS_ENABLED as usize].value_text(),
+            Some(sp.animations_enabled_label(false)),
+            "the shared descriptor path must report the normal spelling \
+             when the panel's OS-reduced field says so"
+        );
     }
 
     #[test]

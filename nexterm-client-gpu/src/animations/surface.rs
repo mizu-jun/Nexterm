@@ -94,10 +94,9 @@ mod tests {
     }
 
     fn off() -> AnimationsConfig {
-        AnimationsConfig {
-            enabled: false,
-            ..AnimationsConfig::default()
-        }
+        let mut cfg = AnimationsConfig::default();
+        cfg.enabled = nexterm_config::AnimationsEnabled::No;
+        cfg
     }
 
     fn open_it(m: &mut SurfaceMotion, now: Instant, anim: &AnimationsConfig) {

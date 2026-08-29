@@ -77,6 +77,12 @@ libc = "0.2"
 # DwmSetWindowAttribute call on Windows instead.
 # Licensed Apache-2.0 OR MIT, matching this workspace.
 window-vibrancy = "0.8"
+# UI/UX v3 P3c: reads NSWorkspace.accessibilityDisplayShouldReduceMotion.
+# objc2 core only — the typed `objc2-app-kit` subtree is not worth pulling in
+# for one BOOL, and the class is already registered because winit and
+# window-vibrancy link AppKit.
+# Licensed Apache-2.0 OR MIT, matching this workspace.
+objc2 = "0.6"
 
 [target.'cfg(windows)'.dependencies]
 dirs = "5"

@@ -550,7 +550,21 @@ impl EventHandler {
                 self.app.config.gpu.present_mode != new_config.gpu.present_mode;
             let scrollback_changed =
                 self.app.config.scrollback_lines != new_config.scrollback_lines;
+            // UI/UX v3 P3c: a reloaded config is freshly deserialized and
+            // starts un-stamped. Without this line, editing `config.toml`
+            // would silently restore animations the OS asked us to stop.
+            let mut new_config = new_config;
+            new_config
+                .animations
+                .set_os_reduced_motion(self.app.config.animations.os_reduced_motion());
             self.app.config = new_config;
+            // Keep the settings panel's mirror carried over too, for the same
+            // reason as `Config::animations` above: a hot-reloaded config
+            // must not silently make the shared widget descriptor path
+            // (AccessKit, keyboard navigation, the renderer) forget what the
+            // OS last reported.
+            self.app.state.settings_panel.animations_os_reduced =
+                self.app.config.animations.os_reduced_motion();
             if font_changed {
                 self.app.font = crate::font::FontManager::new(
                     &self.app.config.font.family,

@@ -272,15 +272,29 @@ corner_radius_overlay = 10.0
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | bool | `true` | Master switch. When `false`, every animation applies instantly regardless of `intensity` |
+| `enabled` | `"auto"` \| bool | `"auto"` | Master switch. `"auto"` follows the OS accessibility preference; `true` always animates; `false` never animates |
 | `intensity` | String | `"normal"` | `off`, `subtle` (×0.5), `normal` (×1.0), `energetic` (×1.5) |
 
-For a reduced-motion preference, set `enabled = false` or `intensity = "off"` —
-both make every duration 0 ms.
+`enabled = "auto"` reads Windows' "Show animations in Windows" setting
+(`SPI_GETCLIENTAREAANIMATION`) and macOS' "Reduce motion" toggle
+(`NSWorkspace.accessibilityDisplayShouldReduceMotion`), and animates wherever
+there is no such preference to read — today, that means Linux. Detection can
+only ever *disable* motion: there is no OS signal that turns animation on, so
+`auto` never animates more than `true` would. The OS value is read at startup
+and again whenever the window regains focus (there is no native
+change-notification to listen for), and it is never written back into this
+file — `config.toml` always keeps whatever you set for `enabled`, `"auto"`
+included.
+
+`true` animates even when the OS asks for reduced motion; pre-P3c configs
+with `enabled = true` / `enabled = false` keep parsing the same as before.
+
+For a reduced-motion preference regardless of platform, set `enabled = false`
+or `intensity = "off"` — both make every duration 0 ms.
 
 ```toml
 [animations]
-enabled = true
+enabled = "auto"
 intensity = "subtle"
 ```
 
@@ -1028,7 +1042,7 @@ corner_radius_chrome = 10.0
 corner_radius_overlay = 10.0
 
 [animations]
-enabled = true
+enabled = "auto"
 intensity = "normal"
 
 [scrolling]
