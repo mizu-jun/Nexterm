@@ -49,6 +49,8 @@ pub(crate) struct WidgetTheme<'a> {
     pub cell_h: f32,
     /// Hover cross-fade for the panel's rows (UI/UX v3 P3b2).
     pub hover: &'a crate::animations::HoverTransition<super::spec::WidgetId>,
+    /// Press pulse for the panel's rows (UI/UX v3 P3b3).
+    pub press: &'a crate::animations::PressPulse<super::spec::WidgetId>,
     /// Frame time, for the hover weight.
     pub now: std::time::Instant,
 }
@@ -155,10 +157,13 @@ fn draw_row_background(spec: &WidgetSpec, theme: &WidgetTheme<'_>, sink: &mut Wi
     // outright — it paints an opaque `surface_2`, so a hover fade underneath
     // it would be invisible, and one over it would change a shipped
     // appearance for reasons unrelated to motion.
+    let press = theme.press.weight(spec.id(), theme.now);
     let fill = if spec.focused() {
         Some(theme.tokens.surface_2)
     } else if spec.enabled() && spec.kind().is_interactive() {
-        let w = theme.hover.weight(spec.id(), theme.now);
+        // UI/UX v3 P3b3: press raises the weight so a click on a row the
+        // pointer has not finished hovering still paints something to dim.
+        let w = theme.hover.weight(spec.id(), theme.now).max(press);
         (w > 0.0).then(|| {
             let s = theme.tokens.surface_3;
             [s[0], s[1], s[2], s[3] * HOVER_ALPHA * w]
@@ -166,6 +171,9 @@ fn draw_row_background(spec: &WidgetSpec, theme: &WidgetTheme<'_>, sink: &mut Wi
     } else {
         None
     };
+    // Applied to both branches: pressing an already-focused row must still
+    // give feedback, and focus paints an opaque fill with room to dim.
+    let fill = fill.map(|c| crate::color_util::press_fill(c, press));
     if let Some(color) = fill {
         add_px_rounded_rect_sdf(
             spec.rect.x,
@@ -313,21 +321,24 @@ pub(super) mod test_support {
     /// Collect the background vertices a drawing closure emits, for the tests
     /// that assert on the SDF metadata rather than on the quad count alone.
     ///
-    /// Uses a fresh, never-retargeted `HoverTransition` (UI/UX v3 P3b2), so
-    /// every id weighs 0 here — tests that need a non-zero hover weight use
-    /// [`bg_vertices_with_hover`] instead.
+    /// Uses a fresh, never-retargeted `HoverTransition` (UI/UX v3 P3b2) and an
+    /// idle `PressPulse` (UI/UX v3 P3b3), so every id weighs 0 here — tests
+    /// that need a non-zero hover or press weight use
+    /// [`bg_vertices_with_states`] instead.
     pub(in crate::renderer::overlay::widgets::draw) fn bg_vertices(
         f: impl FnOnce(&WidgetTheme<'_>, &mut WidgetSink<'_>),
     ) -> Vec<BgVertex> {
         let hover = crate::animations::HoverTransition::default();
-        bg_vertices_with_hover(&hover, std::time::Instant::now(), f)
+        let press = crate::animations::PressPulse::default();
+        bg_vertices_with_states(&hover, &press, std::time::Instant::now(), f)
     }
 
-    /// Like [`bg_vertices`], but with a caller-supplied hover transition and
-    /// frame time — for the tests that need a specific hover weight rather
-    /// than the always-zero default.
-    pub(in crate::renderer::overlay::widgets::draw) fn bg_vertices_with_hover(
+    /// Like [`bg_vertices`], but with a caller-supplied hover transition,
+    /// press pulse and frame time — for the tests that need a specific hover
+    /// or press weight rather than the always-zero default.
+    pub(in crate::renderer::overlay::widgets::draw) fn bg_vertices_with_states(
         hover: &crate::animations::HoverTransition<WidgetId>,
+        press: &crate::animations::PressPulse<WidgetId>,
         now: std::time::Instant,
         f: impl FnOnce(&WidgetTheme<'_>, &mut WidgetSink<'_>),
     ) -> Vec<BgVertex> {
@@ -341,6 +352,7 @@ pub(super) mod test_support {
             cell_w: 10.0,
             cell_h: 20.0,
             hover,
+            press,
             now,
         };
         let (mut bv, mut bi, mut tv, mut ti) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
@@ -387,8 +399,10 @@ mod tests {
             &nexterm_config::AnimationsConfig::default(),
         );
         let settled = now + Duration::from_millis(100);
-        let verts =
-            bg_vertices_with_hover(&hover, settled, |t, s| draw_row_background(&spec, t, s));
+        let press = crate::animations::PressPulse::default();
+        let verts = bg_vertices_with_states(&hover, &press, settled, |t, s| {
+            draw_row_background(&spec, t, s)
+        });
         assert_eq!(verts.len() / 4, 1);
     }
 
@@ -404,8 +418,10 @@ mod tests {
             &nexterm_config::AnimationsConfig::default(),
         );
         let settled = now + Duration::from_millis(100);
-        let verts =
-            bg_vertices_with_hover(&hover, settled, |t, s| draw_row_background(&spec, t, s));
+        let press = crate::animations::PressPulse::default();
+        let verts = bg_vertices_with_states(&hover, &press, settled, |t, s| {
+            draw_row_background(&spec, t, s)
+        });
         assert_eq!(verts.len() / 4, 0);
     }
 
@@ -429,7 +445,8 @@ mod tests {
         // focus colour rather than a hover-tinted `surface_3`.
         let focused_spec = focused(spec);
         let tokens = nexterm_config::DesignTokens::default();
-        let verts = bg_vertices_with_hover(&hover, settled, |t, s| {
+        let press = crate::animations::PressPulse::default();
+        let verts = bg_vertices_with_states(&hover, &press, settled, |t, s| {
             draw_row_background(&focused_spec, t, s)
         });
         assert_eq!(verts.len() / 4, 1);
@@ -482,6 +499,7 @@ mod tests {
         let tokens = nexterm_config::DesignTokens::default();
         let metrics = nexterm_config::MetricTokens::default();
         let hover = HoverTransition::default();
+        let press = crate::animations::PressPulse::default();
         let theme = WidgetTheme {
             tokens: &tokens,
             metrics: &metrics,
@@ -490,10 +508,56 @@ mod tests {
             cell_w: 10.0,
             cell_h: 20.0,
             hover: &hover,
+            press: &press,
             now: Instant::now(),
         };
         // A 24 px row with a 20 px cell leaves 2 px above and below.
         let y = text_baseline(WidgetRect::new(0.0, 100.0, 400.0, 24.0), &theme);
         assert_eq!(y, 102.0);
+    }
+
+    /// A press with no hover at all must still paint. The hover fill is an
+    /// additive layer gated on `w > 0.0`, so without press raising the weight
+    /// a click landing inside the hover fade's first frames would emit no
+    /// vertices and show nothing.
+    #[test]
+    fn a_pressed_row_paints_even_with_no_hover() {
+        let spec = spec_at(WidgetKind::Toggle { on: false });
+        let hover: HoverTransition<WidgetId> = Default::default();
+        let mut press: crate::animations::PressPulse<WidgetId> = Default::default();
+        let now = Instant::now();
+        press.press(spec.id(), now, &nexterm_config::AnimationsConfig::default());
+        let verts =
+            bg_vertices_with_states(&hover, &press, now, |t, s| draw_row_background(&spec, t, s));
+        assert_eq!(verts.len() / 4, 1);
+    }
+
+    /// And a press on an already-hovered row must look different from hover
+    /// alone, or the feedback is invisible in the common case.
+    #[test]
+    fn a_pressed_row_differs_from_a_merely_hovered_one() {
+        let spec = spec_at(WidgetKind::Toggle { on: false });
+        let mut hover: HoverTransition<WidgetId> = Default::default();
+        let cfg = nexterm_config::AnimationsConfig::default();
+        let now = Instant::now();
+        hover.retarget(Some(spec.id()), now, &cfg);
+        let settled = now + Duration::from_millis(100);
+
+        let idle: crate::animations::PressPulse<WidgetId> = Default::default();
+        let hovered = bg_vertices_with_states(&hover, &idle, settled, |t, s| {
+            draw_row_background(&spec, t, s)
+        });
+
+        let mut press: crate::animations::PressPulse<WidgetId> = Default::default();
+        press.press(spec.id(), settled, &cfg);
+        let pressed = bg_vertices_with_states(&hover, &press, settled, |t, s| {
+            draw_row_background(&spec, t, s)
+        });
+
+        assert_eq!(hovered.len(), pressed.len());
+        assert!(
+            hovered[0].color != pressed[0].color,
+            "pressed fill must differ from the hovered fill"
+        );
     }
 }

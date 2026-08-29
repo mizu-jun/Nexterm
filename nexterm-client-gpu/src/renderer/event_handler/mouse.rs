@@ -365,40 +365,19 @@ impl EventHandler {
             // UI/UX v3 P1b: dwell tracking for tooltips. Only migrated
             // categories report a widget; everything else clears the dwell so
             // no stale tooltip lingers.
-            use crate::renderer::overlay::widgets::settings_blocks::BLOCKS_CATEGORY;
-            use crate::renderer::overlay::widgets::settings_font::FONT_CATEGORY;
-            use crate::renderer::overlay::widgets::settings_keybindings::KEYBINDINGS_CATEGORY;
-            use crate::renderer::overlay::widgets::settings_profiles::PROFILES_CATEGORY;
-            use crate::renderer::overlay::widgets::settings_security::SECURITY_CATEGORY;
-            use crate::renderer::overlay::widgets::settings_ssh::SSH_CATEGORY;
-            use crate::renderer::overlay::widgets::settings_startup::STARTUP_CATEGORY;
-            use crate::renderer::overlay::widgets::settings_theme::{
-                THEME_CATEGORY, THEME_SWATCH_BASE,
-            };
-            use crate::renderer::overlay::widgets::settings_window::WINDOW_CATEGORY;
-            let hovered = match hit {
-                SettingsPanelHit::ThemeColor(i) => {
-                    Some((THEME_CATEGORY, THEME_SWATCH_BASE + i as u16))
-                }
-                SettingsPanelHit::ThemeRow(index) => Some((THEME_CATEGORY, index)),
-                SettingsPanelHit::WindowRow(index) => Some((WINDOW_CATEGORY, index)),
-                SettingsPanelHit::FontRow(index) => Some((FONT_CATEGORY, index)),
-                SettingsPanelHit::StartupRow(index) => Some((STARTUP_CATEGORY, index)),
-                SettingsPanelHit::BlocksRow(index) => Some((BLOCKS_CATEGORY, index)),
-                SettingsPanelHit::SecurityRow(index) => Some((SECURITY_CATEGORY, index)),
-                SettingsPanelHit::ProfilesRow(index) => Some((PROFILES_CATEGORY, index)),
-                SettingsPanelHit::SshRow(index) => Some((SSH_CATEGORY, index)),
-                SettingsPanelHit::KeybindingsRow(index) => Some((KEYBINDINGS_CATEGORY, index)),
-                _ => None,
-            };
+            //
+            // UI/UX v3 P3b3: the hit → widget mapping now lives in
+            // `settings_panel_hit::widget_id_of`, shared with the press
+            // handler, so the two cannot drift apart.
+            let hovered_id = super::settings_panel_hit::widget_id_of(&hit);
             // Read before `sp` borrows `self.app.state` mutably below.
             let anim = self.app.config.animations.clone();
             let sp = &mut self.app.state.settings_panel;
-            sp.hover_widget = hovered.map(|(category, index)| {
+            sp.hover_widget = hovered_id.map(|id| {
                 crate::settings_panel::HoverDwell::enter(
                     sp.hover_widget,
-                    category,
-                    index,
+                    id.category,
+                    id.index,
                     std::time::Instant::now(),
                 )
             });
@@ -406,13 +385,7 @@ impl EventHandler {
             // is idempotent while the hovered row is unchanged, so a slow
             // drag across one row does not restart the fade.
             let now = std::time::Instant::now();
-            sp.hover_transition.retarget(
-                hovered.map(|(category, index)| {
-                    crate::renderer::overlay::widgets::spec::WidgetId::new(category, index)
-                }),
-                now,
-                &anim,
-            );
+            sp.hover_transition.retarget(hovered_id, now, &anim);
         } else if self.app.state.settings_panel.theme_hover_preview.is_some()
             || self.app.state.settings_panel.hover_widget.is_some()
         {
@@ -902,6 +875,18 @@ impl EventHandler {
 
     pub(super) fn on_mouse_left_pressed(&mut self) {
         if let Some((px, py)) = self.cursor_position {
+            // UI/UX v3 P3b3: pulse the menu item under the pointer. The menu
+            // commits on release, so this is purely additive — it does not
+            // consume the press, and every branch below runs exactly as
+            // before. `hovered` is already maintained by `on_cursor_moved`,
+            // so no second hit test is needed here.
+            let menu_anim = self.app.config.animations.clone();
+            if let Some(menu) = &mut self.app.state.context_menu
+                && let Some(i) = menu.hovered
+            {
+                menu.press_pulse
+                    .press(i, std::time::Instant::now(), &menu_anim);
+            }
             // Custom title bar: a press on the window outline starts an
             // OS-driven resize. Checked before every other hit test — the
             // grab band overlaps the tab bar's top edge and the settings
@@ -917,6 +902,18 @@ impl EventHandler {
             // When the settings panel is open, run the hit test first.
             if self.app.state.settings_panel.is_open {
                 let hit = self.hit_test_settings_panel(px as f32, py as f32);
+                // UI/UX v3 P3b3: pulse the row before the match below acts on
+                // it. `Outside`, `TitleBar`, `Category` and `Slider` map to no
+                // widget id and are skipped.
+                if let Some(id) = super::settings_panel_hit::widget_id_of(&hit) {
+                    let now = std::time::Instant::now();
+                    let anim = self.app.config.animations.clone();
+                    self.app
+                        .state
+                        .settings_panel
+                        .press_pulse
+                        .press(id, now, &anim);
+                }
                 use crate::settings_panel::SliderType;
                 match hit {
                     SettingsPanelHit::Outside => {
@@ -1244,6 +1241,24 @@ impl EventHandler {
                     .settings_tab_rect
                     .map(|(x0, x1)| px_f32 >= x0 && px_f32 < x1)
                     .unwrap_or(false);
+                // UI/UX v3 P3b3: one pulse for whichever button was hit.
+                let pressed_button = if hit_minimize {
+                    Some(crate::state::WindowButton::Minimize)
+                } else if hit_maximize {
+                    Some(crate::state::WindowButton::Maximize)
+                } else if hit_close {
+                    Some(crate::state::WindowButton::Close)
+                } else {
+                    None
+                };
+                if let Some(button) = pressed_button {
+                    let now = std::time::Instant::now();
+                    self.app.state.window_button_press.press(
+                        button,
+                        now,
+                        &self.app.config.animations,
+                    );
+                }
                 if hit_minimize {
                     if let Some(w) = &self.window {
                         w.set_minimized(true);
@@ -1384,6 +1399,13 @@ impl EventHandler {
                         .map(|(&id, _)| id);
                     if let Some(pane_id) = hit_pane {
                         let now = Instant::now();
+                        // UI/UX v3 P3b3: pulse before the branch below decides
+                        // between focus-switch and rename — both are presses
+                        // and both deserve the feedback.
+                        self.app
+                            .state
+                            .tab_press
+                            .press(pane_id, now, &self.app.config.animations);
                         // Double-click detection (same pane re-clicked within 300 ms).
                         let is_double_click = self
                             .last_tab_click

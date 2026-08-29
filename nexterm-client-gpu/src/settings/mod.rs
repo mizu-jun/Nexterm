@@ -106,6 +106,10 @@ pub struct SettingsPanel {
     /// by exactly one fade so the row the pointer left can still dim out.
     pub hover_transition:
         crate::animations::HoverTransition<crate::renderer::overlay::widgets::spec::WidgetId>,
+    /// Press pulse for this panel's widget rows (UI/UX v3 P3b3). A row's
+    /// action commits on mouse-down, so the pulse decays on its own.
+    pub press_pulse:
+        crate::animations::PressPulse<crate::renderer::overlay::widgets::spec::WidgetId>,
     /// Tooltip entrance/exit (UI/UX v3 P3b). The tooltip has no stored
     /// openness — it is a predicate over `hover_widget`'s dwell timer — so
     /// `tick_tooltip` translates that predicate into motion once per frame.
@@ -383,6 +387,7 @@ impl SettingsPanel {
             theme_hover_preview: None,
             hover_widget: None,
             hover_transition: Default::default(),
+            press_pulse: Default::default(),
             tooltip_motion: crate::animations::SurfaceMotion::default(),
             tooltip_shown: false,
             tooltip_snapshot: None,

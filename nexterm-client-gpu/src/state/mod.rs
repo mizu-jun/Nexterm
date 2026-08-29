@@ -209,6 +209,12 @@ pub struct ClientState {
     /// (UI/UX v3 P3b2b). `hovered_window_button` above stays the truth for
     /// hit-testing; this is render-only.
     pub window_button_hover: crate::animations::HoverTransition<WindowButton>,
+    /// Press pulse for the custom title bar's window buttons (UI/UX v3 P3b3).
+    ///
+    /// Wired for all three even though Minimize and Close tear the window
+    /// down before the pulse can be seen: excluding them would leave an
+    /// untestable exception in the press chain for no visible gain.
+    pub window_button_press: crate::animations::PressPulse<WindowButton>,
     /// WSL distros detected at startup (`nexterm_config::wsl::detect_distros`),
     /// shown in the new-tab dropdown after the configured profiles. Cached
     /// once because detection shells out to `wsl.exe` on Windows.
@@ -224,6 +230,10 @@ pub struct ClientState {
     /// and outlives it by one fade so the tab the pointer left can dim back
     /// down.
     pub tab_hover: crate::animations::HoverTransition<u32>,
+    /// Press pulse for the tab bar (UI/UX v3 P3b3). A tab click commits on
+    /// mouse-down, so this decays on its own rather than waiting for the
+    /// button to come up.
+    pub tab_press: crate::animations::PressPulse<u32>,
     /// OS-reported light/dark preference (Sprint 5-15 / Phase 3).
     /// `Some(true)` = dark, `Some(false)` = light, `None` = unknown.
     /// Updated by `WindowEvent::ThemeChanged` and at window creation.
@@ -723,6 +733,9 @@ impl ClientState {
         if self.settings_panel.hover_transition.is_active(now) {
             return true;
         }
+        if self.settings_panel.press_pulse.is_active(now) {
+            return true;
+        }
         if self
             .context_menu
             .as_ref()
@@ -734,10 +747,23 @@ impl ClientState {
         {
             return true;
         }
+        if self
+            .context_menu
+            .as_ref()
+            .is_some_and(|m| m.press_pulse.is_active(now))
+        {
+            return true;
+        }
         if self.tab_hover.is_active(now) {
             return true;
         }
+        if self.tab_press.is_active(now) {
+            return true;
+        }
         if self.window_button_hover.is_active(now) {
+            return true;
+        }
+        if self.window_button_press.is_active(now) {
             return true;
         }
         false
@@ -911,9 +937,11 @@ impl ClientState {
             window_close_hit_rect: None,
             hovered_window_button: None,
             window_button_hover: Default::default(),
+            window_button_press: Default::default(),
             wsl_profiles: Vec::new(),
             hovered_tab_id: None,
             tab_hover: Default::default(),
+            tab_press: Default::default(),
             os_dark_mode: None,
             key_hint_visible_until: None,
             prefix_pending_until: None,
@@ -1250,6 +1278,26 @@ mod animation_frame_tests {
         assert!(!state.has_active_animation(done, 200));
     }
 
+    /// The wiring's own contract: a decaying pulse must keep the frame loop
+    /// awake, or a settings row would freeze mid-press until some other
+    /// event happened to request a redraw. The pulse's own timing is covered
+    /// by `animations::press`; this pins that `ClientState` consults it.
+    #[test]
+    fn a_settings_row_press_keeps_the_frame_loop_awake() {
+        use crate::renderer::overlay::widgets::spec::WidgetId;
+
+        let mut state = ClientState::new(80, 24, 1000);
+        let t0 = Instant::now();
+        let id = WidgetId::new(2, 0);
+        state.settings_panel.press_pulse.press(
+            id,
+            t0,
+            &nexterm_config::AnimationsConfig::default(),
+        );
+        assert!(state.has_active_animation(t0, 200));
+        assert!(!state.has_active_animation(t0 + Duration::from_millis(100), 200));
+    }
+
     /// Dismissing the settings panel (e.g. Esc) while a row is hovered must
     /// retarget the cross-fade to `None`, not just clear `hover_widget`.
     /// Otherwise the fade-out that should start immediately would instead
@@ -1319,6 +1367,28 @@ mod animation_frame_tests {
         assert!(!state.has_active_animation(done, 200));
     }
 
+    /// The context menu is the one model whose click commits on release, so its
+    /// pulse is what the user sees for as long as the button is held. It lives
+    /// inside `ContextMenu` and dies with it — P3b1's closing ghost is a
+    /// separate clone and deliberately does not carry it.
+    #[test]
+    fn a_context_menu_press_keeps_the_frame_loop_awake() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let t0 = Instant::now();
+        // Assigned directly rather than through `show_context_menu`, which would
+        // also start the open animation and make the assertion below pass for
+        // the wrong reason. This is how the hover test beside it builds a menu.
+        state.context_menu = Some(ContextMenu::new_default(10.0, 10.0, &[]));
+        let menu = state
+            .context_menu
+            .as_mut()
+            .expect("the menu was just assigned");
+        menu.press_pulse
+            .press(1, t0, &nexterm_config::AnimationsConfig::default());
+        assert!(state.has_active_animation(t0, 200));
+        assert!(!state.has_active_animation(t0 + Duration::from_millis(100), 200));
+    }
+
     /// Hovering a tab must ask for frames until the cross-fade finishes, and
     /// stop afterwards.
     #[test]
@@ -1336,6 +1406,23 @@ mod animation_frame_tests {
 
         let done = t0 + Duration::from_millis(100);
         assert!((state.tab_hover.weight(7, done) - 1.0).abs() < 1e-3);
+        assert!(!state.has_active_animation(done, 200));
+    }
+
+    /// The wiring's own contract: a decaying pulse must keep the frame loop
+    /// awake, or the tab would freeze mid-press until some other event
+    /// happened to request a redraw. The pulse's own timing is covered by
+    /// `animations::press`; this pins that `ClientState` consults it.
+    #[test]
+    fn a_tab_press_keeps_the_frame_loop_awake() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let t0 = Instant::now();
+        assert!(!state.has_active_animation(t0, 200));
+        state
+            .tab_press
+            .press(7, t0, &nexterm_config::AnimationsConfig::default());
+        assert!(state.has_active_animation(t0, 200));
+        let done = t0 + Duration::from_millis(100);
         assert!(!state.has_active_animation(done, 200));
     }
 
@@ -1386,6 +1473,22 @@ mod animation_frame_tests {
         let done = t0 + Duration::from_millis(100);
         assert!((state.window_button_hover.weight(close, done) - 1.0).abs() < 1e-3);
         assert!(!state.has_active_animation(done, 200));
+    }
+
+    /// Maximize is the only one of the three whose pulse is ever seen —
+    /// Minimize and Close remove the window first — but all three are wired,
+    /// so all three must keep the frame loop awake while they decay.
+    #[test]
+    fn a_window_button_press_keeps_the_frame_loop_awake() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let t0 = Instant::now();
+        state.window_button_press.press(
+            crate::state::WindowButton::Maximize,
+            t0,
+            &nexterm_config::AnimationsConfig::default(),
+        );
+        assert!(state.has_active_animation(t0, 200));
+        assert!(!state.has_active_animation(t0 + Duration::from_millis(100), 200));
     }
 
     /// Moving between two buttons cross-fades them rather than snapping.
