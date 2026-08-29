@@ -715,6 +715,13 @@ gated behind a spike.
         reset a category. Both are now `Role::Button` nodes labelled from the
         same module the renderer draws from, the reset node appearing only
         while the category is resettable (spec §8.2, 2026-08-29)
+      - [x] P4e — the three list pickers (palette / host manager / macro
+        picker) adopt the ramp, truncate to the panel, and align their two
+        columns by measurement instead of `{:<20}` character padding, which
+        only ever lined up in a monospace font. None of the three is
+        mouse-hit-tested, so again no hit-region work. Their hard-coded row
+        colours are left as G11 residue for a separate change (spec §8.3,
+        2026-08-29)
 - [x] P5 contrast everywhere + high-contrast scheme (P5a–P5d, 2026-08-29)
 - [x] P6 InfoBar consolidation (P6a–P6d, 2026-08-29; consent reclassification
   dropped, spec §4). Appearance stays on the on-device backlog below — the

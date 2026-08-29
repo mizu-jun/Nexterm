@@ -468,6 +468,46 @@ Still deferred: the command palette, host manager, macro picker, the
 hand-written parts of `ssh_tab.rs` / `keybindings_tab.rs`, the context menu and
 the status bar; tab-bar labels (N-3); a chrome font family (N-5).
 
+### 8.3 P4e — the three list pickers (2026-08-29)
+
+§5.2 deferred the palette, host manager and macro picker as "safe in
+principle". Measuring them first found one thing that was not:
+
+- **Both list pickers aligned their columns with `{:<20}` / `{:<22}`.** That is
+  a count of *characters*, and it lines up only because the chrome borrows the
+  terminal's monospace font — the assumption the ramp exists to remove. It was
+  already broken for any name past the pad width and for CJK names, whose
+  cells are twice as wide. The name column is now `name_column_width`: the
+  widest *measured* name plus a gap, clamped so the detail column keeps a
+  floor. A long name shortens nothing but its own column.
+- **None of the three truncated.** A long palette action or host name simply
+  drew past the panel edge. Every row now goes through `draw_picker_run`,
+  which truncates and draws from one measurement — the pickers' equivalent of
+  the widget layer's `draw_row_run`.
+- **The selection marker moved out of the label.** `"> "` and `"  "` are the
+  same width only in a monospace font, so a prefixed marker would have shifted
+  every selected row's text sideways once the rows drew proportionally. It is
+  its own run now, and both states start their label at the same x.
+- **No hit-region work**, again: none of the three pickers is mouse-hit-tested
+  at all (`mouse.rs` does not mention `palette`, `host_manager` or
+  `macro_picker`). They are keyboard- and AccessKit-driven.
+
+Panel sizes and row pitch stay in cells, so nothing moves.
+
+Observed and **not** fixed: the host manager and macro picker draw their row
+fills and every text colour from hard-coded literals (`[0.35, 0.15, 0.50, 1.0]`
+and friends) — G11 residue that the token migration missed, and which means
+those rows do not answer to the scheme and were never contrast-corrected in P5.
+Left alone deliberately: changing hue and type size in one PR would make a
+visual regression impossible to attribute. It wants its own change, sized as a
+G11/P5 follow-up rather than a typography one.
+
+Still deferred after P4e: the status bar (cell-aligned by design — the Lua
+status format is column-oriented), tab-bar labels (N-3), the SFTP file-transfer
+dialog (its field boxes are cell-derived geometry), the context menu, the
+hand-written parts of `ssh_tab.rs` / `keybindings_tab.rs`, and a chrome font
+family (N-5).
+
 ## 9. Decisions
 
 All three questions this spec opened are decided; no PR below is gated on
