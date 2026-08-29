@@ -1,6 +1,7 @@
 # P6 — Notification surfaces (design spec)
 
-Status: **approved 2026-08-29** — §4 signed off by the maintainer; ready to implement
+Status: **delivered 2026-08-29** — §4 signed off by the maintainer; P6a–P6d all
+shipped (see §6). Appearance remains on the on-device backlog (§7).
 Date: 2026-08-29
 Parent plan: [`ui-ux-modernization-v3.md`](./ui-ux-modernization-v3.md) § P6
 Addresses: principles Calm + Personal
@@ -305,6 +306,17 @@ could have failed.
 | **P6b** | Migrate the three banners onto the stack; remove the three `Option` fields and the three builders. Compiler-driven. | full suite; visual parity is the risk |
 | **P6c** | AccessKit nodes + tree hash + the `infobar-more-count` string ×8. | G-a11y, G-hash, G-i18n |
 | **P6d** | Motion and auto-dismissal for the info severity. | G-idle |
+
+All four shipped on 2026-08-29 (#92, #93, #94, P6d). Two things P6d settled that
+this spec left implicit:
+
+- **Dismissal is not deletion.** `Esc`, `Enter` and a successful connect all
+  start an exit; the bar stays in the stack until it has finished drawing out.
+  Everything except the renderer treats it as gone from that moment, which is
+  what lets the same message be raised again while the old one fades.
+- **Slot replacement stays abrupt.** A second error overwrites the first with no
+  fade: the replacing bar is drawn in the same place on the same frame, and
+  cross-fading would only smear the two messages together.
 
 P6b is the risk concentration, as P5b was: wide, mechanical, and the only PR that
 can change what the user sees by accident rather than by design.

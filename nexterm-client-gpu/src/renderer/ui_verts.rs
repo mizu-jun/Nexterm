@@ -1299,6 +1299,10 @@ impl WgpuState {
 
         for (slot, (index, rect)) in layout.visible.iter().copied().enumerate() {
             let bar = &bars[index];
+            // UI/UX v3 P6d: each bar fades independently, so the recorded
+            // range is per bar rather than around the whole builder — one bar
+            // can be leaving while the one under it is still arriving.
+            let (bg_start, text_start) = (bg_verts.len(), text_verts.len());
             let banner_bg = draw_banner_bg(
                 rect.x,
                 rect.y,
@@ -1388,6 +1392,12 @@ impl WgpuState {
                     text_idx,
                 );
             }
+
+            crate::renderer::overlay::fade::apply_surface_fade(
+                &mut bg_verts[bg_start..],
+                &mut text_verts[text_start..],
+                bar.visibility(now),
+            );
         }
     }
 

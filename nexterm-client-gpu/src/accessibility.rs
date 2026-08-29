@@ -2039,6 +2039,10 @@ fn build_info_bar_nodes(bars: &VecDeque<InfoBar>, now: Instant) -> Vec<(NodeId, 
     let bars = infobar::contiguous(bars);
     infobar::stack_order(&bars)
         .into_iter()
+        // A dismissed bar is still drawn while it fades (UI/UX v3 P6d), but
+        // it leaves the tree at once: announcing a bar the user just closed
+        // is worse than announcing nothing.
+        .filter(|&index| !bars[index].is_dismissed())
         .map(|index| {
             let bar = &bars[index];
             let mut alert = Node::new(Role::Alert);
@@ -2343,8 +2347,11 @@ pub fn compute_tree_state_hash(state: &ClientState) -> u64 {
     // tree. The offline bar contributes only its presence: its elapsed-seconds
     // count updates every frame and would otherwise force a rebuild every
     // throttle tick — accessibility consumers do not need that granularity.
-    state.info_bars.len().hash(&mut h);
-    for bar in &state.info_bars {
+    // Dismissed bars are excluded on both sides, so the tree rebuilds when a
+    // bar is dismissed rather than when its exit animation finishes (P6d).
+    let live = state.info_bars.iter().filter(|bar| !bar.is_dismissed());
+    live.clone().count().hash(&mut h);
+    for bar in live {
         bar.kind.slot().hash(&mut h);
         match &bar.kind {
             InfoBarKind::UpdateAvailable { version } => version.hash(&mut h),
@@ -2957,6 +2964,7 @@ mod tests {
                 version: "v1.6.0".to_string(),
             },
             std::time::Instant::now(),
+            &nexterm_config::AnimationsConfig::default(),
         );
 
         let update = build_tree_from_state(&state);
@@ -2994,7 +3002,7 @@ mod tests {
         for kind in kinds {
             let slot = kind.slot();
             let mut state = ClientState::new(80, 24, 1000);
-            state.push_info_bar(kind, now);
+            state.push_info_bar(kind, now, &nexterm_config::AnimationsConfig::default());
 
             let update = build_tree_from_state(&state);
             let (_, node) = update
@@ -3022,12 +3030,14 @@ mod tests {
                 message: "config load failed".to_string(),
             },
             now,
+            &nexterm_config::AnimationsConfig::default(),
         );
         state.push_info_bar(
             InfoBarKind::UpdateAvailable {
                 version: "1.9.0".to_string(),
             },
             now,
+            &nexterm_config::AnimationsConfig::default(),
         );
 
         let update = build_tree_from_state(&state);
@@ -3058,13 +3068,19 @@ mod tests {
                 message: "boom".to_string(),
             },
             now,
+            &nexterm_config::AnimationsConfig::default(),
         );
-        state.push_info_bar(InfoBarKind::Offline { since: now }, now);
+        state.push_info_bar(
+            InfoBarKind::Offline { since: now },
+            now,
+            &nexterm_config::AnimationsConfig::default(),
+        );
         state.push_info_bar(
             InfoBarKind::UpdateAvailable {
                 version: "1.9.0".to_string(),
             },
             now,
+            &nexterm_config::AnimationsConfig::default(),
         );
 
         let update = build_tree_from_state(&state);
@@ -3092,12 +3108,14 @@ mod tests {
                 version: "1.9.0".to_string(),
             },
             now,
+            &nexterm_config::AnimationsConfig::default(),
         );
         state.push_info_bar(
             InfoBarKind::ServerError {
                 message: "boom".to_string(),
             },
             now,
+            &nexterm_config::AnimationsConfig::default(),
         );
 
         let nodes = build_info_bar_nodes(&state.info_bars, now);
@@ -3260,6 +3278,7 @@ mod tests {
                 message: "pty launch failed".to_string(),
             },
             now,
+            &nexterm_config::AnimationsConfig::default(),
         );
         let h_one = compute_tree_state_hash(&state);
         assert_ne!(h_none, h_one, "hash did not change after adding a bar");
@@ -3271,6 +3290,7 @@ mod tests {
                 message: "config load failed".to_string(),
             },
             now,
+            &nexterm_config::AnimationsConfig::default(),
         );
         assert_ne!(
             h_one,
@@ -3278,7 +3298,11 @@ mod tests {
             "hash did not change after rewording a bar"
         );
 
-        state.push_info_bar(InfoBarKind::Offline { since: now }, now);
+        state.push_info_bar(
+            InfoBarKind::Offline { since: now },
+            now,
+            &nexterm_config::AnimationsConfig::default(),
+        );
         let h_two = compute_tree_state_hash(&state);
         assert_ne!(h_one, h_two, "hash did not change after a second bar");
 
@@ -3290,13 +3314,52 @@ mod tests {
         );
     }
 
+    /// P6d: a dismissed bar is still on screen for a few frames, but it must
+    /// leave the tree the moment the user dismisses it — both the hash and
+    /// the nodes, or a screen reader would keep an alert for a bar that is
+    /// already going away.
+    #[test]
+    fn a_dismissed_bar_leaves_the_tree_before_its_exit_finishes() {
+        let now = std::time::Instant::now();
+        let anim = nexterm_config::AnimationsConfig::default();
+        let mut state = ClientState::new(80, 24, 1000);
+        let empty = compute_tree_state_hash(&ClientState::new(80, 24, 1000));
+
+        state.push_info_bar(
+            InfoBarKind::ServerError {
+                message: "pty launch failed".to_string(),
+            },
+            now,
+            &anim,
+        );
+        assert_eq!(build_info_bar_nodes(&state.info_bars, now).len(), 1);
+
+        let shown = now + std::time::Duration::from_secs(1);
+        state.dismiss_info_bar(InfoBarSlot::ServerError, shown, &anim);
+
+        assert!(
+            !state.info_bars.is_empty(),
+            "the bar is still drawn while it fades"
+        );
+        assert!(build_info_bar_nodes(&state.info_bars, shown).is_empty());
+        assert_eq!(
+            empty,
+            compute_tree_state_hash(&state),
+            "hash did not return once the bar was dismissed"
+        );
+    }
+
     /// G-hash, the other half: the offline bar's elapsed count advances every
     /// frame, and rebuilding the tree for it buys a screen reader nothing.
     #[test]
     fn tree_state_hash_ignores_the_offline_elapsed_count() {
         let now = std::time::Instant::now();
         let mut early = ClientState::new(80, 24, 1000);
-        early.push_info_bar(InfoBarKind::Offline { since: now }, now);
+        early.push_info_bar(
+            InfoBarKind::Offline { since: now },
+            now,
+            &nexterm_config::AnimationsConfig::default(),
+        );
 
         let mut late = ClientState::new(80, 24, 1000);
         late.push_info_bar(
@@ -3304,6 +3367,7 @@ mod tests {
                 since: now - std::time::Duration::from_secs(90),
             },
             now,
+            &nexterm_config::AnimationsConfig::default(),
         );
 
         assert_eq!(

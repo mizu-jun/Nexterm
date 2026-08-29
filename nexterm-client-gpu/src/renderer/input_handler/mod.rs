@@ -1076,25 +1076,33 @@ impl EventHandler {
         // having to know the other exists. The offline bar is skipped rather
         // than dismissed: it reports a condition that is still true.
         if !self.app.state.info_bars.is_empty() {
-            let order = infobar::stack_order(self.app.state.info_bars.make_contiguous());
+            let bars = self.app.state.info_bars.make_contiguous();
+            // A bar already fading out (UI/UX v3 P6d) is skipped by both keys:
+            // it is only still in the stack so the renderer can draw it
+            // leaving, and it must not swallow the key of the bar underneath.
             match code {
                 WKeyCode::Escape => {
-                    if let Some(&index) = order
-                        .iter()
-                        .find(|&&index| self.app.state.info_bars[index].kind.is_dismissible())
-                    {
-                        self.app.state.info_bars.remove(index);
+                    if let Some(index) = infobar::top_dismissible(bars) {
+                        let slot = bars[index].kind.slot();
+                        let anim = self.app.config.animations.clone();
+                        self.app
+                            .state
+                            .dismiss_info_bar(slot, std::time::Instant::now(), &anim);
                         return true;
                     }
                 }
                 // D4: only the top bar carries an activation, so `Enter` does
                 // nothing while an error sits above the update notice.
                 WKeyCode::Enter => {
-                    if let Some(&top) = order.first()
-                        && self.app.state.info_bars[top].kind.has_activation()
+                    if let Some(top) = infobar::top_live(bars)
+                        && bars[top].kind.has_activation()
                     {
                         crate::platform::open_releases_url();
-                        self.app.state.info_bars.remove(top);
+                        let slot = bars[top].kind.slot();
+                        let anim = self.app.config.animations.clone();
+                        self.app
+                            .state
+                            .dismiss_info_bar(slot, std::time::Instant::now(), &anim);
                         return true;
                     }
                 }
