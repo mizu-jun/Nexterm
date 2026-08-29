@@ -95,6 +95,11 @@ font_fallbacks = ["Noto Sans CJK JP", "Noto Color Emoji", "Symbols Nerd Font"]
 | `"tokyonight"` | Tokyo Night |
 | `"solarized"` | Solarized Dark |
 | `"gruvbox"` | Gruvbox Dark |
+| `"catppuccin"` | Catppuccin Mocha |
+| `"dracula"` | Dracula |
+| `"nord"` | Nord |
+| `"onedark"` | One Dark |
+| `"highcontrast"` | High Contrast — pure black ground, pure white text, every text role at WCAG AAA (7:1) |
 
 ```toml
 [colors]

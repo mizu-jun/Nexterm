@@ -196,6 +196,7 @@ mod contrast_tests {
                 [0x42, 0x7B, 0x58],
                 [0x3C, 0x38, 0x36],
             ],
+            contrast: nexterm_config::ContrastTarget::Aa,
         };
         nexterm_config::DesignTokens::from_palette(&palette)
     }

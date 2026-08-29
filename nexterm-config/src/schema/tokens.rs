@@ -165,6 +165,39 @@ pub fn resolve(user: Option<&str>, fallback: [f32; 4]) -> [f32; 4] {
 /// WCAG 2.x contrast floor for text.
 pub const MIN_TEXT_CONTRAST: f32 = 4.5;
 
+/// WCAG 2.x enhanced (AAA) contrast floor for text.
+///
+/// Not reachable against every background — see [`NEUTRAL_LUMINANCE`] — so it
+/// is a target a palette opts into rather than a global floor.
+pub const AAA_TEXT_CONTRAST: f32 = 7.0;
+
+/// How hard [`DesignTokens::from_palette`] pushes a palette's text tokens.
+///
+/// The floor cannot be global. A token like `text_muted` is the foreground at
+/// `alpha = 0.48`, and over the surface ramp that composite tops out around
+/// 4.55:1 no matter which foreground the palette states — so demanding AAA
+/// everywhere would either fail or force every scheme's muted text to a
+/// different alpha than its author chose. A scheme whose whole purpose is
+/// legibility says so instead, and pays that cost deliberately (UI/UX v3 P5c).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ContrastTarget {
+    /// WCAG AA — [`MIN_TEXT_CONTRAST`]. Every built-in scheme but High Contrast.
+    #[default]
+    Aa,
+    /// WCAG AAA — [`AAA_TEXT_CONTRAST`]. Opted into by the High Contrast scheme.
+    Aaa,
+}
+
+impl ContrastTarget {
+    /// The contrast ratio text tokens are corrected toward.
+    pub const fn min_ratio(self) -> f32 {
+        match self {
+            Self::Aa => MIN_TEXT_CONTRAST,
+            Self::Aaa => AAA_TEXT_CONTRAST,
+        }
+    }
+}
+
 /// The background luminance at which black and white are equally legible.
 ///
 /// The best ratio obtainable against a background of relative luminance `Y` is
@@ -368,9 +401,10 @@ impl SurfaceLevel {
 
 /// Text-role colours corrected for one surface level.
 ///
-/// Every field clears [`MIN_TEXT_CONTRAST`] against that surface — pinned by
-/// the gates in `tests/contrast_gates.rs` for the built-in schemes and for
-/// generated custom palettes alike.
+/// Every field clears the palette's [`ContrastTarget`] against that surface —
+/// [`MIN_TEXT_CONTRAST`] for every scheme but High Contrast, which opts into
+/// [`AAA_TEXT_CONTRAST`]. Pinned by the gates in `tests/contrast_gates.rs` for
+/// the built-in schemes and for generated custom palettes alike.
 ///
 /// These are the *text* role only. The fill-role tokens on [`DesignTokens`]
 /// (`semantic_*`, `accent_primary`, the surfaces and borders) keep their raw
@@ -512,7 +546,7 @@ impl DesignTokens {
         // floor, which on a well-behaved scheme is most of them.
         let on_surface = [surface_0, surface_1, surface_2, surface_3].map(|s| {
             let bg = [s[0], s[1], s[2]];
-            let fix = |c: [f32; 4]| contrast_correct(c, bg, MIN_TEXT_CONTRAST);
+            let fix = |c: [f32; 4]| contrast_correct(c, bg, palette.contrast.min_ratio());
             TextTokens {
                 primary: fix(text_primary),
                 secondary: fix(text_secondary),
@@ -582,6 +616,7 @@ impl Default for DesignTokens {
                 [0xB4, 0xF9, 0xF8],
                 [0xD5, 0xD6, 0xDB],
             ],
+            contrast: ContrastTarget::Aa,
         };
         Self::from_palette(&palette)
     }
@@ -617,6 +652,7 @@ mod tests {
                 [0xB4, 0xF9, 0xF8],
                 [0xD5, 0xD6, 0xDB],
             ],
+            contrast: ContrastTarget::Aa,
         }
     }
 
@@ -643,6 +679,7 @@ mod tests {
                 [0x42, 0x7B, 0x58],
                 [0x3C, 0x38, 0x36],
             ],
+            contrast: ContrastTarget::Aa,
         }
     }
 

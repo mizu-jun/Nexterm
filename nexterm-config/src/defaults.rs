@@ -16,7 +16,8 @@ ligatures = true
 # font_fallbacks = ["Noto Sans Mono CJK JP", "Noto Color Emoji"]
 
 [colors]
-# Built-in schemes: "dark" | "light" | "tokyonight" | "solarized" | "gruvbox".
+# Built-in schemes: "dark" | "light" | "tokyonight" | "solarized" | "gruvbox"
+# | "catppuccin" | "dracula" | "nord" | "onedark" | "highcontrast".
 # Custom schemes can be defined in `nexterm.lua`.
 scheme = "tokyonight"
 

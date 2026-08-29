@@ -1,6 +1,6 @@
 # P5 — Contrast everywhere & a high-contrast scheme (design spec)
 
-Status: **draft, awaiting sign-off**
+Status: **P5a / P5b / P5c shipped; P5d outstanding**
 Date: 2026-08-29
 Parent plan: [`ui-ux-modernization-v3.md`](./ui-ux-modernization-v3.md) § P5
 Addresses: G10 (principle: Complete + Coherent)
@@ -266,7 +266,33 @@ black ground, pure white foreground, and ANSI entries chosen so every one clears
 **7:1** against the ground. Because the surfaces stay near-black, the 7:1 target
 is reachable here even though §3.1 shows it is not reachable in general.
 
-Touch list (all mechanical, all covered by existing tests or the compiler):
+> **Corrected 2026-08-29, during P5c.** "Mechanical" was wrong: the touch list
+> below is necessary but not sufficient. `from_palette` corrects text toward
+> `MIN_TEXT_CONTRAST`, and `text_muted` is the foreground at `alpha = 0.48` —
+> over `surface_3` (relative luminance ≈ 0.022) that composite reaches **4.55:1**
+> for a *pure white* foreground, so no choice of palette colours can make G-hc
+> pass. The target has to be per-palette, and raising it globally is not an
+> option: it would change every other scheme's muted alpha, and the P5a gate
+> `correction_is_a_no_op_where_the_scheme_already_reads` exists to forbid exactly
+> that. P5c therefore adds `SchemePalette::contrast: ContrastTarget { Aa, Aaa }`,
+> read by `from_palette`. High Contrast is the only `Aaa` palette; a user
+> `CustomPalette` gets `Aa` and has no TOML surface for the choice yet.
+>
+> Measured after the change (ratios against each level's own surface):
+>
+> ```
+>   s0: primary=21.00 secondary=12.41 muted=7.00 accent=12.79 success=15.82 warning=19.69 error=11.58
+>   s1: primary=19.63 secondary=11.90 muted=7.00 accent=11.95 success=14.79 warning=18.40 error=10.82
+>   s2: primary=17.49 secondary=10.95 muted=7.00 accent=10.65 success=13.18 warning=16.40 error=9.65
+>   s3: primary=14.59 secondary=9.45  muted=7.00 accent=8.88  success=10.99 warning=13.68 error=8.05
+> ```
+>
+> `muted` sits exactly on the target at every level because it is the one token
+> the correction has to move: stage 1 lifts its alpha 0.48 → 0.648 on `s3`.
+> Every ANSI entry 1–15 clears 7.34:1 against `surface_0`, so terminal output is
+> AAA too, not just the chrome.
+
+Touch list (necessary but, per the correction above, not sufficient):
 `schema/color.rs` (enum, `display_name`, `toml_name`, `all`, `from_toml_name`,
 `palette`), `loader.rs:160` and its doc comment at `:382`, `defaults.rs:19`,
 `docs/CONFIGURATION.md`, and the theme-gallery cycler in `settings_theme.rs`
@@ -303,7 +329,7 @@ holds, that arm is deleted and the test asserts a flat 4.5:1.
 |---|---|---|
 | **P5a** | `contrast_correct` + `SurfaceLevel` / `TextTokens` + G-text/G-fill/G-custom tests. Flat text fields still present, populated from `S0`, so the tree still builds. | new tests green |
 | **P5b** | Remove the flat text fields; migrate all call sites to `text_on(level)`. Largest PR, entirely compiler-driven. | `cargo clippy -- -D warnings`, full suite |
-| **P5c** | `BuiltinScheme::HighContrast` + config/docs touch list + G-hc. | G-hc green |
+| **P5c** | `BuiltinScheme::HighContrast` + `ContrastTarget` on `SchemePalette` + config/docs touch list + G-hc. **Shipped 2026-08-29.** | G-hc green |
 | **P5d** | Retire `settings/row.rs::ensure_readable` in favour of `contrast_correct`; keep one shared helper for *composited* grounds (hover fills over a surface) where the effective background is not a token. Delete the P3b3 escape hatch. | full suite |
 
 P5b is the risk concentration: it is wide but mechanical, and the only PR that

@@ -65,6 +65,10 @@ pub(crate) fn scheme_palette(
                 fg: parse_hex(&p.foreground),
                 bg: parse_hex(&p.background),
                 ansi,
+                // A user palette states colours, not a contrast promise, so it
+                // gets the AA floor every other scheme does. AAA is opt-in and
+                // has no TOML surface yet (UI/UX v3 P5c).
+                contrast: nexterm_config::ContrastTarget::Aa,
             }
         }
     }
@@ -784,18 +788,7 @@ mod tests {
     #[test]
     fn press_is_perceptible_on_every_builtin_scheme() {
         use nexterm_config::BuiltinScheme;
-        const SCHEMES: [BuiltinScheme; 9] = [
-            BuiltinScheme::Dark,
-            BuiltinScheme::Light,
-            BuiltinScheme::TokyoNight,
-            BuiltinScheme::Solarized,
-            BuiltinScheme::Gruvbox,
-            BuiltinScheme::Catppuccin,
-            BuiltinScheme::Dracula,
-            BuiltinScheme::Nord,
-            BuiltinScheme::OneDark,
-        ];
-        for scheme in SCHEMES {
+        for scheme in BuiltinScheme::all() {
             let tokens = nexterm_config::DesignTokens::from_palette(&scheme.palette());
             let bg = [
                 tokens.surface_1[0],
@@ -830,18 +823,7 @@ mod tests {
     #[test]
     fn press_never_worsens_text_contrast_on_any_builtin_scheme() {
         use nexterm_config::BuiltinScheme;
-        const SCHEMES: [BuiltinScheme; 9] = [
-            BuiltinScheme::Dark,
-            BuiltinScheme::Light,
-            BuiltinScheme::TokyoNight,
-            BuiltinScheme::Solarized,
-            BuiltinScheme::Gruvbox,
-            BuiltinScheme::Catppuccin,
-            BuiltinScheme::Dracula,
-            BuiltinScheme::Nord,
-            BuiltinScheme::OneDark,
-        ];
-        for scheme in SCHEMES {
+        for scheme in BuiltinScheme::all() {
             let tokens = nexterm_config::DesignTokens::from_palette(&scheme.palette());
             let bg = [
                 tokens.surface_1[0],
