@@ -599,15 +599,13 @@ mod tests {
     fn durations_compose_with_the_animation_intensity() {
         // Reduced motion must still be able to zero out the token durations.
         let m = MotionTokens::default();
-        let off = AnimationsConfig {
-            enabled: false,
-            intensity: AnimationIntensity::Normal,
-        };
+        let mut off = AnimationsConfig::default();
+        off.enabled = crate::AnimationsEnabled::No;
+        off.intensity = AnimationIntensity::Normal;
         assert_eq!(off.scaled_duration_ms(m.normal_ms), 0);
-        let subtle = AnimationsConfig {
-            enabled: true,
-            intensity: AnimationIntensity::Subtle,
-        };
+        let mut subtle = AnimationsConfig::default();
+        subtle.enabled = crate::AnimationsEnabled::Yes;
+        subtle.intensity = AnimationIntensity::Subtle;
         assert_eq!(subtle.scaled_duration_ms(m.normal_ms), 125);
     }
 }

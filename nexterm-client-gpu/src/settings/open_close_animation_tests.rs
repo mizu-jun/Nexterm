@@ -3,7 +3,7 @@
 //! reopening mid-fade, and the reduced-motion (disabled animations) path.
 
 use super::*;
-use nexterm_config::AnimationsConfig;
+use nexterm_config::{AnimationsConfig, AnimationsEnabled};
 use std::time::{Duration, Instant};
 
 fn on() -> AnimationsConfig {
@@ -11,10 +11,9 @@ fn on() -> AnimationsConfig {
 }
 
 fn off() -> AnimationsConfig {
-    AnimationsConfig {
-        enabled: false,
-        ..AnimationsConfig::default()
-    }
+    let mut cfg = AnimationsConfig::default();
+    cfg.enabled = AnimationsEnabled::No;
+    cfg
 }
 
 #[test]

@@ -21,7 +21,7 @@ pub mod ui;
 pub mod web;
 pub mod window;
 
-pub use animations::{AnimationIntensity, AnimationsConfig};
+pub use animations::{AnimationIntensity, AnimationsConfig, AnimationsEnabled};
 pub use blocks::BlocksConfig;
 pub use color::{BuiltinScheme, ColorScheme, CustomPalette, InactivePaneHsbConfig, SchemePalette};
 pub use font::FontConfig;
