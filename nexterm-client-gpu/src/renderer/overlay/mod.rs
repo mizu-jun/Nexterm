@@ -21,7 +21,10 @@ pub(in crate::renderer) mod fade;
 pub(crate) mod infobar;
 mod key_hint;
 mod picker;
-mod settings;
+// `pub(crate)` for the same reason `widgets` is: `event_handler` hit-tests the
+// footer links against the rects the renderer drew them at (UI/UX v3 P4c),
+// instead of recomputing a formula that has to agree.
+pub(crate) mod settings;
 mod util;
 // `pub(crate)` so `event_handler` can hit-test against the same widget specs
 // the renderer draws, and `accessibility` can build its tree from the same

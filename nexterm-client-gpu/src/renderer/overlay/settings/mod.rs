@@ -24,7 +24,10 @@ use super::super::WgpuState;
 use nexterm_config::SurfaceLevel;
 
 mod blocks_tab;
+// `pub(in crate::renderer)`: the hit-test in `event_handler` tests against the
+// same rects this draws, which is the point of the module (UI/UX v3 P4c).
 mod font_tab;
+pub(in crate::renderer) mod footer;
 mod keybindings_tab;
 // `pub(super)`: the sibling `widgets` module lays its controls out on the
 // same label/control column split.
@@ -701,46 +704,37 @@ impl WgpuState {
             text_idx,
         );
 
-        // P4 (WT-like UX): right-aligned "Open config.toml" link (WT's
-        // "Open JSON file" equivalent). The hit-test in
-        // `settings_panel_hit.rs` mirrors this exact geometry.
-        let open_label = format!("↗ {}", nexterm_i18n::fl!("settings-open-config-file"));
-        let open_label_w = crate::vertex_util::visual_width(&open_label) as f32 * cell_w;
-        // The bar behind this link is `surface_0` (drawn just above), which is
-        // also where the footer hint takes its colour from.
-        let link_color = tokens.text_on(SurfaceLevel::S0).accent;
-        add_string_verts(
-            &open_label,
-            px + panel_w - open_label_w - cell_w,
-            bottom_y + cell_h * 0.3,
-            link_color,
-            false,
-            sw,
-            sh,
-            cell_w,
-            font,
-            atlas,
-            &self.queue,
-            text_verts,
-            text_idx,
-        );
-
-        // P2-A (WT-like UX): "reset category to defaults" link, left of the
-        // open-config link. Hidden for the list-based categories (SSH /
+        // P4 (WT-like UX): the right-aligned "Open config.toml" link (WT's
+        // "Open JSON file" equivalent) and, left of it, the "reset category to
+        // defaults" link — hidden for the list-based categories (SSH /
         // Keybindings / Profiles) where a reset would delete user data.
-        // The hit-test mirrors this geometry too.
-        if sp.category_resettable() {
-            let reset_label = format!("↺ {}", nexterm_i18n::fl!("settings-reset-category"));
-            let reset_label_w = crate::vertex_util::visual_width(&reset_label) as f32 * cell_w;
-            add_string_verts(
-                &reset_label,
-                px + panel_w - open_label_w - cell_w * 3.0 - reset_label_w,
-                bottom_y + cell_h * 0.3,
+        //
+        // UI/UX v3 P4c: both come from `footer::footer_links`, which the
+        // hit-test calls too. Nothing here recomputes a label, a width or an
+        // x — that duplication is what kept these two links on the cell path.
+        let links = footer::footer_links(
+            px,
+            panel_w,
+            bottom_y,
+            cell_h * 1.5,
+            cell_w,
+            sp.category_resettable(),
+            font,
+        );
+        // The bar behind these links is `surface_0` (drawn just above), which
+        // is also where the footer hint takes its colour from.
+        let link_color = tokens.text_on(SurfaceLevel::S0).accent;
+        let link_style = footer::link_style();
+        let (_size, link_line_h, _bold) = font.chrome_metrics(&link_style);
+        for link in std::iter::once(&links.open).chain(links.reset.as_ref()) {
+            add_run_verts(
+                &link.label,
+                &link_style,
+                link.rect.x,
+                link.rect.y + (link.rect.h - link_line_h) * 0.5,
                 link_color,
-                false,
                 sw,
                 sh,
-                cell_w,
                 font,
                 atlas,
                 &self.queue,
