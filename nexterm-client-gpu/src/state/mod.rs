@@ -224,6 +224,10 @@ pub struct ClientState {
     /// and outlives it by one fade so the tab the pointer left can dim back
     /// down.
     pub tab_hover: crate::animations::HoverTransition<u32>,
+    /// Press pulse for the tab bar (UI/UX v3 P3b3). A tab click commits on
+    /// mouse-down, so this decays on its own rather than waiting for the
+    /// button to come up.
+    pub tab_press: crate::animations::PressPulse<u32>,
     /// OS-reported light/dark preference (Sprint 5-15 / Phase 3).
     /// `Some(true)` = dark, `Some(false)` = light, `None` = unknown.
     /// Updated by `WindowEvent::ThemeChanged` and at window creation.
@@ -737,6 +741,9 @@ impl ClientState {
         if self.tab_hover.is_active(now) {
             return true;
         }
+        if self.tab_press.is_active(now) {
+            return true;
+        }
         if self.window_button_hover.is_active(now) {
             return true;
         }
@@ -914,6 +921,7 @@ impl ClientState {
             wsl_profiles: Vec::new(),
             hovered_tab_id: None,
             tab_hover: Default::default(),
+            tab_press: Default::default(),
             os_dark_mode: None,
             key_hint_visible_until: None,
             prefix_pending_until: None,
@@ -1336,6 +1344,23 @@ mod animation_frame_tests {
 
         let done = t0 + Duration::from_millis(100);
         assert!((state.tab_hover.weight(7, done) - 1.0).abs() < 1e-3);
+        assert!(!state.has_active_animation(done, 200));
+    }
+
+    /// The wiring's own contract: a decaying pulse must keep the frame loop
+    /// awake, or the tab would freeze mid-press until some other event
+    /// happened to request a redraw. The pulse's own timing is covered by
+    /// `animations::press`; this pins that `ClientState` consults it.
+    #[test]
+    fn a_tab_press_keeps_the_frame_loop_awake() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let t0 = Instant::now();
+        assert!(!state.has_active_animation(t0, 200));
+        state
+            .tab_press
+            .press(7, t0, &nexterm_config::AnimationsConfig::default());
+        assert!(state.has_active_animation(t0, 200));
+        let done = t0 + Duration::from_millis(100);
         assert!(!state.has_active_animation(done, 200));
     }
 

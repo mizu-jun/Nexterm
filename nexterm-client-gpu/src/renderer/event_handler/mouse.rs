@@ -1384,6 +1384,13 @@ impl EventHandler {
                         .map(|(&id, _)| id);
                     if let Some(pane_id) = hit_pane {
                         let now = Instant::now();
+                        // UI/UX v3 P3b3: pulse before the branch below decides
+                        // between focus-switch and rename — both are presses
+                        // and both deserve the feedback.
+                        self.app
+                            .state
+                            .tab_press
+                            .press(pane_id, now, &self.app.config.animations);
                         // Double-click detection (same pane re-clicked within 300 ms).
                         let is_double_click = self
                             .last_tab_click

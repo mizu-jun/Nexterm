@@ -371,10 +371,14 @@ impl WgpuState {
                     (inactive_bg[2] + 0.08).min(1.0),
                     inactive_bg[3],
                 ];
-                crate::color_util::lerp_rgba(
-                    inactive_bg,
-                    hovered_bg,
-                    state.tab_hover.weight(pane_id, now),
+                // UI/UX v3 P3b3: press raises the weight before dimming it —
+                // a click that lands inside the hover fade's first 100 ms
+                // would otherwise have almost no fill to dim.
+                let press = state.tab_press.weight(pane_id, now);
+                let w = state.tab_hover.weight(pane_id, now).max(press);
+                crate::color_util::press_fill(
+                    crate::color_util::lerp_rgba(inactive_bg, hovered_bg, w),
+                    press,
                 )
             } else {
                 inactive_bg
