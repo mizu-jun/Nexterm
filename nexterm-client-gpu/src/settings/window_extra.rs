@@ -272,7 +272,6 @@ mod tests {
     fn the_animations_enabled_row_cycles_through_all_three_states() {
         use nexterm_config::AnimationsEnabled::*;
         let mut sp = SettingsPanel::default();
-        sp.animations_enabled = Auto;
         sp.next_animations_enabled();
         assert_eq!(sp.animations_enabled, Yes);
         sp.next_animations_enabled();
@@ -291,7 +290,6 @@ mod tests {
     fn the_auto_label_reports_how_it_currently_resolves() {
         use nexterm_config::AnimationsEnabled::*;
         let mut sp = SettingsPanel::default();
-        sp.animations_enabled = Auto;
         let reduced = sp.animations_enabled_label(true);
         let normal = sp.animations_enabled_label(false);
         assert_ne!(reduced, normal, "auto must distinguish the two resolutions");
@@ -308,7 +306,6 @@ mod tests {
     fn each_state_writes_back_its_own_toml_spelling() {
         use nexterm_config::AnimationsEnabled::*;
         let mut sp = SettingsPanel::default();
-        sp.animations_enabled = Auto;
         assert_eq!(sp.animations_enabled_toml_value().as_str(), Some("auto"));
         sp.animations_enabled = Yes;
         assert_eq!(sp.animations_enabled_toml_value().as_bool(), Some(true));
