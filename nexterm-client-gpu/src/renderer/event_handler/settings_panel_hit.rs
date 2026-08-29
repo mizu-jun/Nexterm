@@ -80,7 +80,7 @@ pub(super) enum SettingsPanelHit {
 
 impl EventHandler {
     /// Run a mouse hit-test against the settings panel.
-    pub(super) fn hit_test_settings_panel(&self, cx: f32, cy: f32) -> SettingsPanelHit {
+    pub(super) fn hit_test_settings_panel(&mut self, cx: f32, cy: f32) -> SettingsPanelHit {
         use crate::renderer::overlay::widgets::geometry::TabGeometry;
         use crate::settings_panel::{SettingsCategory, SliderType};
 
@@ -136,27 +136,35 @@ impl EventHandler {
             return SettingsPanelHit::TitleBar;
         }
 
-        // Footer bar — mirrors the `bottom_y` formula in
-        // `overlay/settings/mod.rs`. The right-aligned "Open config.toml"
-        // link is the only clickable region; the rest is a no-op. Checked
-        // before the sidebar branch because the footer spans the full panel
-        // width below the sidebar.
-        let footer_y = py + panel_h - cell_h * 1.5;
+        // Footer bar — the `bottom_y` formula from `overlay/settings/mod.rs`.
+        // The two links are the only clickable regions; the rest is a no-op.
+        // Checked before the sidebar branch because the footer spans the full
+        // panel width below the sidebar.
+        //
+        // UI/UX v3 P4c: the rects come from `footer::footer_links`, the same
+        // call the builder draws from, so a proportional label cannot leave
+        // the click target behind. Measuring here costs one shaped run per
+        // mouse event over an open panel, all of it cached in `FontManager`.
+        let footer_h = cell_h * 1.5;
+        let footer_y = py + panel_h - footer_h;
         if cy >= footer_y {
-            let label = format!("↗ {}", nexterm_i18n::fl!("settings-open-config-file"));
-            let label_w = crate::vertex_util::visual_width(&label) as f32 * cell_w;
-            if cx >= px + panel_w - label_w - cell_w {
+            let resettable = sp.category_resettable();
+            let links = crate::renderer::overlay::settings::footer::footer_links(
+                px,
+                panel_w,
+                footer_y,
+                footer_h,
+                cell_w,
+                resettable,
+                &mut self.app.font,
+            );
+            if links.open.rect.contains(cx, cy) {
                 return SettingsPanelHit::OpenConfigFile;
             }
-            // P2-A: "reset category to defaults" link, left of the
-            // open-config link (mirrors `overlay/settings/mod.rs`).
-            if sp.category_resettable() {
-                let reset_label = format!("↺ {}", nexterm_i18n::fl!("settings-reset-category"));
-                let reset_w = crate::vertex_util::visual_width(&reset_label) as f32 * cell_w;
-                let reset_x = px + panel_w - label_w - cell_w * 3.0 - reset_w;
-                if cx >= reset_x && cx < reset_x + reset_w + cell_w {
-                    return SettingsPanelHit::ResetCategory;
-                }
+            if let Some(reset) = &links.reset
+                && reset.rect.contains(cx, cy)
+            {
+                return SettingsPanelHit::ResetCategory;
             }
             return SettingsPanelHit::PanelBackground;
         }

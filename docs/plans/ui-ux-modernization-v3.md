@@ -704,9 +704,13 @@ gated behind a spike.
       button labels and the footer links stay on the cell path because their
       text widths reach click targets. **Every text size in the settings panel
       changed and none of it has been looked at** — see the backlog below
-      - [ ] P4 follow-up — the hit-region work that would let the dialog
-      buttons and the footer's `↗` / `↺` links move too; see the design spec's
-      §8
+      - [x] P4c follow-up — the footer's `↗` / `↺` links and the dialog button
+      labels (2026-08-29). Measuring corrected the spec: the dialog buttons
+      reach **no** click target (both dialogs are keyboard + AccessKit only),
+      so they were plain typography; the footer links were the real hit-region
+      work and now come from one `footer::footer_links` call that the builder
+      draws and the hit-test tests against. See the design spec's §8.1. Noted
+      but not fixed: the footer links have no AccessKit node at all
 - [x] P5 contrast everywhere + high-contrast scheme (P5a–P5d, 2026-08-29)
 - [x] P6 InfoBar consolidation (P6a–P6d, 2026-08-29; consent reclassification
   dropped, spec §4). Appearance stays on the on-device backlog below — the

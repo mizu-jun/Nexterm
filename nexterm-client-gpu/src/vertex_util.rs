@@ -571,9 +571,6 @@ pub(crate) fn add_char_verts(
 /// This is *the* width function for chrome runs: [`truncate_run_to_width`] and
 /// [`add_run_verts`] both go through it, so a truncation cannot disagree with
 /// what is drawn. Do not add a second width formula anywhere in this path.
-// P4b-1 ships the primitive; P4b-2 adopts it at the six surfaces in the design
-// spec's §5.2 and this allowance goes with it.
-#[allow(dead_code)]
 pub(crate) fn measure_run(
     text: &str,
     style: &nexterm_config::TypeStyle,
@@ -591,9 +588,6 @@ pub(crate) fn measure_run(
 /// The ellipsis is measured too, so the result genuinely fits — the cell-based
 /// [`truncate_to_width`] can only approximate this because it assumes every
 /// character is one or two cells wide.
-// P4b-1 ships the primitive; P4b-2 adopts it at the six surfaces in the design
-// spec's §5.2 and this allowance goes with it.
-#[allow(dead_code)]
 pub(crate) fn truncate_run_to_width(
     text: &str,
     style: &nexterm_config::TypeStyle,
@@ -639,9 +633,6 @@ pub(crate) fn truncate_run_to_width(
 /// (see [`FontManager::chrome_advance`] for why that trade is the right one
 /// for chrome labels).
 #[allow(clippy::too_many_arguments)]
-// P4b-1 ships the primitive; P4b-2 adopts it at the six surfaces in the design
-// spec's §5.2 and this allowance goes with it.
-#[allow(dead_code)]
 pub(crate) fn add_run_verts(
     text: &str,
     style: &nexterm_config::TypeStyle,

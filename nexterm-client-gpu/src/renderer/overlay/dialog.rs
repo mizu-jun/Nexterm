@@ -6,7 +6,7 @@ use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::host_manager::PasswordModalView;
 use crate::state::{ClientState, CloseWindowDialog, ConsentDialog, ContextMenu};
-use crate::vertex_util::{add_px_rect, add_run_verts, add_string_verts, visual_width};
+use crate::vertex_util::{add_px_rect, add_run_verts, add_string_verts, measure_run, visual_width};
 
 use super::super::WgpuState;
 use super::util::{
@@ -485,13 +485,25 @@ impl WgpuState {
             nexterm_i18n::t("consent-always-deny"),
         ];
         let btn_y = py + ph - cell_h * 2.6;
-        let total_w: f32 = buttons
+        // UI/UX v3 P4c: the labels moved to the ramp's Body step, so the box
+        // widths come from `measure_run` rather than from `visual_width *
+        // cell_w`. The padding (1.5 cells) and the gap (0.5) are unchanged —
+        // this is a text-metric change, not a spacing one — except that the
+        // row now reserves `n - 1` gaps instead of `n`, which used to leave it
+        // half a gap off centre. Nothing here reaches a click target: consent
+        // dialogs are keyboard- and AccessKit-driven, which is what let this
+        // move without the hit-region work the footer links needed.
+        let btn_style = metrics.type_ramp.body;
+        let (_size, btn_line_h, _bold) = font.chrome_metrics(&btn_style);
+        let btn_widths: Vec<f32> = buttons
             .iter()
-            .map(|b| visual_width(b) as f32 * cell_w + cell_w * 2.0)
-            .sum();
+            .map(|b| measure_run(b, &btn_style, font) + cell_w * 1.5)
+            .collect();
+        let total_w: f32 =
+            btn_widths.iter().sum::<f32>() + cell_w * 0.5 * (buttons.len() - 1) as f32;
         let mut bx = px + (pw - total_w) / 2.0;
         for (i, btn) in buttons.iter().enumerate() {
-            let bw = visual_width(btn) as f32 * cell_w + cell_w * 1.5;
+            let bw = btn_widths[i];
             let is_selected = dialog.selected == i;
             // UI/UX v3 (G11): the selected fill is the warning hue blended into
             // the panel surface, not the raw token. Used raw it sits at a
@@ -514,15 +526,18 @@ impl WgpuState {
             } else {
                 tokens.text_on(SurfaceLevel::S3).primary
             };
-            add_string_verts(
+            // Centred from the measured run, so a label that the ramp made
+            // wider or narrower than its cell estimate still sits in the
+            // middle of its box rather than drifting against the padding.
+            let label_w = measure_run(btn, &btn_style, font);
+            add_run_verts(
                 btn,
-                bx + cell_w * 0.75,
-                btn_y + cell_h * 0.2,
+                &btn_style,
+                bx + (bw - label_w) * 0.5,
+                btn_y + (cell_h * 1.4 - btn_line_h) * 0.5,
                 fg,
-                false,
                 sw,
                 sh,
-                cell_w,
                 font,
                 atlas,
                 &self.queue,
@@ -662,11 +677,16 @@ impl WgpuState {
             (&dialog.cancel_label, tokens.surface_3),
         ];
         let btn_y = py + ph - cell_h * 2.6;
+        // UI/UX v3 P4c: as in the consent dialog above — box widths measured
+        // at the ramp's Body step, padding (3 cells) and gap (0.8) unchanged.
+        let btn_style = metrics.type_ramp.body;
+        let (_size, btn_line_h, _bold) = font.chrome_metrics(&btn_style);
         let btn_widths: Vec<f32> = buttons
             .iter()
-            .map(|(label, _)| visual_width(label) as f32 * cell_w + cell_w * 3.0)
+            .map(|(label, _)| measure_run(label, &btn_style, font) + cell_w * 3.0)
             .collect();
-        let total_w: f32 = btn_widths.iter().sum::<f32>() + cell_w * 0.8;
+        let total_w: f32 =
+            btn_widths.iter().sum::<f32>() + cell_w * 0.8 * (buttons.len() - 1) as f32;
         let mut bx = px + (pw - total_w) / 2.0;
         for (i, (label, base_bg)) in buttons.iter().enumerate() {
             let is_selected = dialog.selected_button as usize == i;
@@ -690,18 +710,16 @@ impl WgpuState {
             } else {
                 tokens.text_on(SurfaceLevel::S3).primary
             };
-            // Center the label
-            let label_w = visual_width(label) as f32 * cell_w;
-            let label_x = bx + (bw - label_w) / 2.0;
-            add_string_verts(
+            // Center the label, measured the same way the box was sized.
+            let label_w = measure_run(label, &btn_style, font);
+            add_run_verts(
                 label,
-                label_x,
-                btn_y + cell_h * 0.2,
+                &btn_style,
+                bx + (bw - label_w) * 0.5,
+                btn_y + (cell_h * 1.4 - btn_line_h) * 0.5,
                 fg,
-                false,
                 sw,
                 sh,
-                cell_w,
                 font,
                 atlas,
                 &self.queue,

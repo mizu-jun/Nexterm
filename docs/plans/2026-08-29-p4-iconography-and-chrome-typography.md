@@ -408,6 +408,44 @@ second.
   glyph into an icon run means changing the hit computation in both files in
   lockstep.
 
+### 8.1 P4c — as built (2026-08-29), and one correction
+
+Both deferred items above shipped together. Measuring them first corrected one
+of the two:
+
+- **The dialog buttons never reached a click target.** The claim above is
+  wrong, and it was never checked: `mouse.rs` does not reference
+  `pending_consent` or `close_window_dialog` at all. Both dialogs are driven by
+  the keyboard (`input_handler/mod.rs`) and by AccessKit
+  (`accessibility.rs` — `Click`/`Focus` write `selected` / `selected_button`).
+  A button label's width reaches its own box and nothing else, so moving the
+  labels to the ramp was plain typography with no hit-region work: box widths
+  now come from `measure_run`, padding and gaps unchanged. The row also
+  reserves `n - 1` gaps rather than `n`, which had left it half a gap off
+  centre.
+- **The footer links were the real thing.** The geometry existed twice — the
+  builder's `visual_width * cell_w` and the hit-test's copy of it, label
+  formatting included — and a proportional width is not a multiple of `cell_w`,
+  so the two would have drifted silently. `overlay/settings/footer.rs` now owns
+  the labels, the ramp step, the measurement and the rects; the builder and the
+  hit-test each make one `footer_links` call. The hit-test became `&mut self`
+  so it can measure through the same `FontManager` (one cached run per mouse
+  event over an open panel).
+
+Gate: a structural test asserts neither file reconstructs a label or calls
+`footer_links` more than once, and that no dialog button is sized from
+`visual_width` again.
+
+Observed while measuring, **not** fixed: the footer links have no AccessKit
+node at all — `accessibility.rs` never mentions them, so a screen-reader user
+cannot reach "Open config.toml" or "Reset category". That is a P6c-shaped
+accessibility gap rather than a P4 typography one, and it belongs in its own
+change.
+
+Still deferred: the command palette, host manager, macro picker, the
+hand-written parts of `ssh_tab.rs` / `keybindings_tab.rs`, the context menu and
+the status bar; tab-bar labels (N-3); a chrome font family (N-5).
+
 ## 9. Decisions
 
 All three questions this spec opened are decided; no PR below is gated on
