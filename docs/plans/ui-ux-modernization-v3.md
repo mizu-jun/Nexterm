@@ -266,10 +266,12 @@ contextual UI; InfoBar = non-blocking status.
 
 - New `overlay/infobar.rs`: non-blocking, auto-dismissing banner (reuses the
   update-banner slot pattern in `ClientState`).
-- Reclassify `ConsentDialog` kinds: keep genuinely destructive/security
-  confirmations modal; move low-risk notices to InfoBar. Consent-surface
-  changes are security-sensitive — review scope carefully before moving any
-  prompt out of a modal.
+- ~~Reclassify `ConsentDialog` kinds: keep genuinely destructive/security
+  confirmations modal; move low-risk notices to InfoBar.~~ **Dropped
+  2026-08-29** — see the design spec §4. All three consent kinds are pre-action
+  authorisations carrying pane-controlled content; moving one to a non-blocking
+  surface changes security posture rather than presentation, and
+  `ConsentPolicy = "allow"` is already the per-category opt-out.
 - New strings ×8 locales.
 
 > **Design spec (2026-08-29):**
@@ -283,9 +285,9 @@ contextual UI; InfoBar = non-blocking status.
 > are never announced. The consent-reclassification bullet is **recommended
 > dropped** — all three consent kinds are pre-action authorisations, and moving
 > one to a non-blocking surface changes security posture rather than
-> presentation; `ConsentPolicy = "allow"` is the existing opt-out. That
-> recommendation needs the maintainer's sign-off (spec §4). "New strings ×8"
-> turns out to be one string. Four PRs P6a–P6d.
+> presentation; `ConsentPolicy = "allow"` is the existing opt-out. **Signed off
+> 2026-08-29**, so P6 touches no security-relevant code. "New strings ×8" turns
+> out to be one string. Four PRs P6a–P6d.
 
 ### P7 — Full custom title bar (spike S, then XL)
 

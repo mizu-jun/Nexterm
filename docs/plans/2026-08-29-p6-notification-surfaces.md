@@ -1,6 +1,6 @@
 # P6 — Notification surfaces (design spec)
 
-Status: **draft, awaiting sign-off** — §4 needs an explicit security decision
+Status: **approved 2026-08-29** — §4 signed off by the maintainer; ready to implement
 Date: 2026-08-29
 Parent plan: [`ui-ux-modernization-v3.md`](./ui-ux-modernization-v3.md) § P6
 Addresses: principles Calm + Personal
@@ -12,6 +12,7 @@ Addresses: principles Calm + Personal
 The parent roadmap describes P6 as three bullets. Measuring first — as the P4
 and P5 specs did — shows the first is built on a wrong premise, the second is a
 security change that should not be made, and only the third survives intact.
+Both corrections are settled: the scope below is what P6 implements.
 
 1. **"New `overlay/infobar.rs` … reuses the update-banner slot pattern in
    `ClientState`."** There is no *the* slot to reuse. Nexterm already ships
@@ -23,9 +24,9 @@ security change that should not be made, and only the third survives intact.
    All three consent kinds are *pre-action authorisations* — the action does not
    happen unless the user says yes. An InfoBar is by definition non-blocking, so
    moving one there means performing the action and reporting it afterwards.
-   That is a change in security posture, not in presentation. §4 recommends
-   dropping this bullet and names the mechanism that already exists for users who
-   find a prompt noisy.
+   That is a change in security posture, not in presentation. **Dropped**
+   (§4, signed off 2026-08-29); the mechanism for a user who finds a prompt
+   noisy already exists and is config, not UI.
 
 3. **"New strings ×8 locales."** Stands, and the count is in §3.5.
 
@@ -138,6 +139,17 @@ navigates, and hiding it while an error is up is exactly when they need it.
 "Auto-dismissing" from the roadmap therefore applies to exactly one of the three
 today. That is worth stating rather than building a timer every kind ignores.
 
+### D4 — Only the top bar carries an activation
+
+Today `Enter` opens the release page whenever `update_banner.is_some()`. With a
+stack, "the bar `Enter` acts on" has to be defined rather than inherited. It is
+the **top** bar, and only if its kind has an activation at all — so `Enter` does
+nothing while an error bar sits above the update bar.
+
+This is a behaviour change hiding inside a refactor, which is why it is a
+decision here and not something to discover during P6b. It is cheap to revisit
+in P6a if the ordering in §3.2 turns out to bury the update bar too often.
+
 ---
 
 ## 3. Design
@@ -221,11 +233,13 @@ impossible to attribute.
 
 ---
 
-## 4. The consent reclassification — recommended **dropped**
+## 4. The consent reclassification — **dropped** (signed off 2026-08-29)
 
-> **This section is a security-scope judgement and needs the maintainer's
-> explicit sign-off before any code is written.** The roadmap's own bullet says
-> consent-surface changes are security-sensitive and to review scope carefully.
+> **Decision taken.** The maintainer accepted the recommendation below on
+> 2026-08-29: the roadmap's consent-reclassification bullet is dropped, and P6's
+> scope is the three banners only. No consent prompt moves out of a modal in
+> this phase, and no `ConsentKind` is touched. The reasoning is kept in full
+> because a future phase proposing the same change should have to answer it.
 
 The three `ConsentKind` variants are `OpenUrl`, `ClipboardWrite` and
 `Notification`. Each is asked *before* the action, and each is gated by a
@@ -256,9 +270,12 @@ Nor is there a currently-modal surface that *should* move: the other modals are
 `PasswordModal` (credential entry) and `FileTransferDialog` (progress + input).
 None is a passive notice.
 
-**Recommendation: drop the bullet.** If the maintainer wants it kept, the scope
-should be reopened as its own spec with a threat-model section, not folded into a
-presentation phase.
+**Dropped.** If this is ever revisited it should be reopened as its own spec
+with a threat-model section, not folded into a presentation phase.
+
+Consequence for the phase: **P6 touches no security-relevant code.** The consent
+flow, `ConsentPolicy`, `ConsentKind`, `pending_consent` and its modal are all
+out of scope, and a P6 PR that edits any of them is out of scope by definition.
 
 ---
 
@@ -313,11 +330,13 @@ reviewable without the migration diff around it.
 
 ## 8. Open questions
 
-1. **§4 needs a decision.** The recommendation is to drop the consent
-   reclassification. Until that is confirmed, P6's scope is the three banners
-   only.
-2. **Does the update bar's `Enter` survive the stack?** Today `Enter` is bound
-   while `update_banner.is_some()`. With two bars visible, "the bar that `Enter`
-   acts on" needs defining. Proposed: only the top bar carries an activation, and
-   only if its kind has one. Small, but it is a behaviour change hiding in a
-   refactor, so it should be decided in P6a rather than discovered in P6b.
+None blocking. Both questions this spec opened were closed before implementation:
+
+- The consent reclassification was a genuine fork and is now settled — dropped,
+  §4, signed off 2026-08-29. P6's scope is the three banners.
+- The `Enter` binding under a stack became D4 rather than staying a question:
+  the top bar carries the activation, and only if its kind has one.
+
+What remains is not a question but a **known limit**: P6 changes what the top of
+the screen occludes, and no headless test can judge that (§7). It joins the P4
+and P5 on-device backlog rather than blocking the phase.
