@@ -25,11 +25,13 @@ pub use schema::{
     BackgroundFit, BackgroundImageConfig, BlocksConfig, BuiltinScheme, CloseAction, ColorScheme,
     Config, ConsentPolicy, CubicBezier, CursorConfig, CursorStyle, CustomPalette, DesignTokens,
     ElevationScale, FontConfig, GpuConfig, GradientConfig, HooksConfig, HostConfig,
-    InactivePaneHsbConfig, KeyBinding, LogConfig, MacroConfig, MetricTokens, MotionTokens,
-    OAuthConfig, PresentModeConfig, Profile, QuakeEdge, QuakeModeConfig, RadiusTokens,
-    ResolvedBackdrop, SchemePalette, SecurityConfig, SerialPortConfig, ShellConfig, SpacingRamp,
-    StatusBarConfig, TabBarConfig, TlsConfig, TypeRamp, TypeStyle, UiConfig, WebAuthConfig,
-    WebConfig, WindowBackdrop, WindowConfig, WindowDecorations, parse_hex_color, resolve_color,
+    InactivePaneHsbConfig, KeyBinding, LogConfig, MIN_TEXT_CONTRAST, MacroConfig, MetricTokens,
+    MotionTokens, NEUTRAL_LUMINANCE, OAuthConfig, PresentModeConfig, Profile, QuakeEdge,
+    QuakeModeConfig, RadiusTokens, ResolvedBackdrop, SchemePalette, SecurityConfig,
+    SerialPortConfig, ShellConfig, SpacingRamp, StatusBarConfig, SurfaceLevel, TabBarConfig,
+    TextTokens, TlsConfig, TypeRamp, TypeStyle, UiConfig, WebAuthConfig, WebConfig, WindowBackdrop,
+    WindowConfig, WindowDecorations, composite_over, contrast_correct, parse_hex_color,
+    resolve_color, wcag_contrast, wcag_luminance,
 };
 pub use status_bar::{StatusBarEvaluator, WidgetContext, evaluate_builtin};
 pub use watcher::{ConfigRx, watch_config};

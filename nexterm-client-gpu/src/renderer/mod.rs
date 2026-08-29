@@ -287,6 +287,17 @@ pub(super) struct WgpuState {
     /// Keyed by `pane_id`; entries are lazily created on first sight of a
     /// pane and updated each frame from the server-reported cursor cell.
     pub(super) cursor_motion: HashMap<u32, crate::cursor_motion::CursorMotionState>,
+    /// Memoised design tokens, keyed by the palette they were derived from
+    /// (UI/UX v3 P5a).
+    ///
+    /// `DesignTokens::from_palette` used to be pure arithmetic — 0.03 µs, which
+    /// is why the call site called it cheap and ran it unconditionally. The
+    /// per-surface contrast correction takes it to 6–21 µs depending on how
+    /// much of the scheme needs fixing (release build; Solarized is the worst
+    /// case because most of its pairings fail). That is still only ~0.25 % of a
+    /// 120 fps frame, but it is spent re-deriving a value that changes only
+    /// when the scheme does.
+    design_tokens: Option<(nexterm_config::SchemePalette, nexterm_config::DesignTokens)>,
 }
 
 // ---- Multi OS-window skeleton (Sprint 5-8 Phase 4-1 Step 1.2) ----

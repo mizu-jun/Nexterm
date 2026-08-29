@@ -430,6 +430,7 @@ impl WgpuState {
             cursor_blink_start: Instant::now(),
             pane_cache: HashMap::new(),
             cursor_motion: HashMap::new(),
+            design_tokens: None,
         })
     }
 

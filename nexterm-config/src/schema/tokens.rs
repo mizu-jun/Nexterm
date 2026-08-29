@@ -78,6 +78,11 @@ pub struct DesignTokens {
     pub tab_inactive_bg: [f32; 4],
     /// Activity-tab background (= accent_activity).
     pub tab_activity_bg: [f32; 4],
+
+    // ── Per-surface text (UI/UX v3 P5a) ──────────────────────────────────────
+    /// Text-role colours corrected per surface level. Read via
+    /// [`DesignTokens::text_on`]; the array order is [`SurfaceLevel::ALL`].
+    on_surface: [TextTokens; 4],
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -147,6 +152,252 @@ pub fn resolve(user: Option<&str>, fallback: [f32; 4]) -> [f32; 4] {
         Some(hex) => parse_hex_color(hex).unwrap_or(fallback),
         None => fallback,
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WCAG contrast (UI/UX v3 P5a)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Note the deliberate split from `luminance` above. That one is a plain BT.709
+// dot product on the raw channels and decides *dark vs light* for the surface
+// ramp; changing it would move every scheme's chrome. The functions here apply
+// the sRGB transfer function first, which is what WCAG 2.x specifies and what
+// the ratios in this module's tests are quoted against.
+
+/// WCAG 2.x contrast floor for text.
+pub const MIN_TEXT_CONTRAST: f32 = 4.5;
+
+/// The background luminance at which black and white are equally legible.
+///
+/// The best ratio obtainable against a background of relative luminance `Y` is
+/// `max(1.05 / (Y + 0.05), (Y + 0.05) / 0.05)`. The two arms meet here, at a
+/// ceiling of ≈ 4.58:1 — so 4.5:1 is reachable against *any* background, and
+/// 7:1 is not. [`contrast_correct`] uses this to pick a direction.
+pub const NEUTRAL_LUMINANCE: f32 = 0.179_13;
+
+/// Bisection steps used by [`contrast_correct`]. Twelve halvings resolve the
+/// search parameter to ~1/4096, well below one 8-bit channel step.
+const BISECT_STEPS: u32 = 12;
+
+/// WCAG 2.x relative luminance of an sRGB color (components in `[0, 1]`).
+///
+/// <https://www.w3.org/TR/WCAG21/#dfn-relative-luminance>
+pub fn wcag_luminance(rgb: [f32; 3]) -> f32 {
+    let lin = |c: f32| {
+        let c = c.clamp(0.0, 1.0);
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2])
+}
+
+/// WCAG 2.x contrast ratio between two opaque colors, in `[1, 21]`.
+pub fn wcag_contrast(fg: [f32; 3], bg: [f32; 3]) -> f32 {
+    let l1 = wcag_luminance(fg);
+    let l2 = wcag_luminance(bg);
+    let (hi, lo) = if l1 >= l2 { (l1, l2) } else { (l2, l1) };
+    (hi + 0.05) / (lo + 0.05)
+}
+
+/// Composite a straight-alpha RGBA color over an opaque background.
+pub fn composite_over(fg: [f32; 4], bg: [f32; 3]) -> [f32; 3] {
+    let a = fg[3].clamp(0.0, 1.0);
+    [
+        fg[0] * a + bg[0] * (1.0 - a),
+        fg[1] * a + bg[1] * (1.0 - a),
+        fg[2] * a + bg[2] * (1.0 - a),
+    ]
+}
+
+/// Smallest `t` in `[lo, hi]` for which `pred` holds.
+///
+/// Every caller below feeds a predicate whose true-set is an upper interval:
+/// each search path moves luminance monotonically, so contrast against a fixed
+/// background may dip once (where the path crosses the background's own
+/// luminance) and then rises without turning back. `pred(lo)` is always false
+/// by construction — the caller has already rejected that point — so returning
+/// `hi` is correct whether or not `pred(hi)` holds, and an unreachable
+/// `min_ratio` degrades to "the most extreme point on this path".
+fn bisect(mut lo: f32, mut hi: f32, pred: impl Fn(f32) -> bool) -> f32 {
+    for _ in 0..BISECT_STEPS {
+        let mid = 0.5 * (lo + hi);
+        if pred(mid) {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    hi
+}
+
+/// Scale every channel by `k`, clamped to the unit cube. Uniform scaling is an
+/// HSV `v` ramp: hue and saturation are untouched.
+#[inline]
+fn scale(rgb: [f32; 3], k: f32) -> [f32; 3] {
+    [
+        (rgb[0] * k).clamp(0.0, 1.0),
+        (rgb[1] * k).clamp(0.0, 1.0),
+        (rgb[2] * k).clamp(0.0, 1.0),
+    ]
+}
+
+#[inline]
+fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+    ]
+}
+
+/// Darken until the floor is met. Black is always reachable at `k = 0`, so
+/// this arm never needs to touch saturation.
+fn darken_to(rgb: [f32; 3], bg: [f32; 3], min_ratio: f32) -> [f32; 3] {
+    let t = bisect(0.0, 1.0, |t| {
+        wcag_contrast(scale(rgb, 1.0 - t), bg) >= min_ratio
+    });
+    scale(rgb, 1.0 - t)
+}
+
+/// Lighten until the floor is met, in two stages.
+fn lighten_to(rgb: [f32; 3], bg: [f32; 3], min_ratio: f32) -> [f32; 3] {
+    let white = [1.0, 1.0, 1.0];
+    let max_c = rgb[0].max(rgb[1]).max(rgb[2]);
+
+    // Stage 2 — raise `v` until the largest channel saturates. Pure black has
+    // no `v` to ramp (scaling leaves it black), so it skips straight to the tint.
+    if max_c > 1e-4 {
+        let headroom = 1.0 / max_c;
+        let peak = scale(rgb, headroom);
+        if wcag_contrast(peak, bg) >= min_ratio {
+            let k = bisect(1.0, headroom, |k| {
+                wcag_contrast(scale(rgb, k), bg) >= min_ratio
+            });
+            return scale(rgb, k);
+        }
+        // Stage 3 — the hue is as bright as this hue gets (a saturated blue
+        // peaks at Y = 0.0722), so the only way up costs saturation.
+        let t = bisect(0.0, 1.0, |t| {
+            wcag_contrast(lerp3(peak, white, t), bg) >= min_ratio
+        });
+        return lerp3(peak, white, t);
+    }
+
+    let t = bisect(0.0, 1.0, |t| {
+        wcag_contrast(lerp3(rgb, white, t), bg) >= min_ratio
+    });
+    lerp3(rgb, white, t)
+}
+
+/// Adjust `color` until it reaches `min_ratio` WCAG contrast against the opaque
+/// background `bg`, in three stages, stopping at the first that succeeds.
+///
+/// 1. **Alpha.** A token like `text_muted` carries a fixed alpha tuned against
+///    an opaque UI in general; over one specific surface the composited result
+///    can land under the floor. Raising alpha fixes that without touching hue.
+/// 2. **Value.** If the opaque color still falls short the problem is the hue's
+///    own luminance, so ramp HSV `v` toward whichever extreme has more room
+///    against `bg` (see [`NEUTRAL_LUMINANCE`]). Hue and saturation survive.
+/// 3. **Saturation.** Only on the lighten path, and only once `v` has
+///    saturated: tint toward white.
+///
+/// Returns `color` untouched when it already clears the bar. When `min_ratio`
+/// is unreachable against `bg` — 7:1 against a mid-tone ground, say — the
+/// result is the best achievable color rather than an error; callers that need
+/// a guarantee assert it against the derived token set instead.
+pub fn contrast_correct(color: [f32; 4], bg: [f32; 3], min_ratio: f32) -> [f32; 4] {
+    if wcag_contrast(composite_over(color, bg), bg) >= min_ratio {
+        return color;
+    }
+
+    // Stage 1. Compositing walks a straight line from `bg` (alpha 0) to the
+    // opaque color (alpha 1), so contrast is monotone in alpha here — no dip.
+    let rgb = [color[0], color[1], color[2]];
+    if wcag_contrast(rgb, bg) >= min_ratio {
+        let a = bisect(color[3], 1.0, |a| {
+            wcag_contrast(composite_over([rgb[0], rgb[1], rgb[2], a], bg), bg) >= min_ratio
+        });
+        return [rgb[0], rgb[1], rgb[2], a];
+    }
+
+    // Stages 2/3.
+    let out = if wcag_luminance(bg) > NEUTRAL_LUMINANCE {
+        darken_to(rgb, bg, min_ratio)
+    } else {
+        lighten_to(rgb, bg, min_ratio)
+    };
+    [out[0], out[1], out[2], 1.0]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-surface text tokens (UI/UX v3 P5a)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Which layered chrome surface a run of text is drawn on.
+///
+/// Contrast decays monotonically as the ramp lifts the ground toward the
+/// foreground, so a text colour is only meaningful together with its ground.
+/// Naming the level is how a call site says which ground that is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SurfaceLevel {
+    /// Terminal background — `surface_0`.
+    S0,
+    /// Tab bar / status bar — `surface_1`.
+    S1,
+    /// Overlay / active tab — `surface_2`.
+    S2,
+    /// Hover / selected item — `surface_3`.
+    S3,
+}
+
+impl SurfaceLevel {
+    /// Every level, for exhaustive iteration in the contrast gates.
+    pub const ALL: [Self; 4] = [Self::S0, Self::S1, Self::S2, Self::S3];
+
+    #[inline]
+    const fn index(self) -> usize {
+        match self {
+            Self::S0 => 0,
+            Self::S1 => 1,
+            Self::S2 => 2,
+            Self::S3 => 3,
+        }
+    }
+}
+
+/// Text-role colours corrected for one surface level.
+///
+/// Every field clears [`MIN_TEXT_CONTRAST`] against that surface — pinned by
+/// the gates in `tests/contrast_gates.rs` for the built-in schemes and for
+/// generated custom palettes alike.
+///
+/// These are the *text* role only. The fill-role tokens on [`DesignTokens`]
+/// (`semantic_*`, `accent_primary`, the surfaces and borders) keep their raw
+/// hue: measured across the client, `semantic_*` serves roughly four times as
+/// many fills — banner backgrounds, the SFTP accent stripe, danger fills,
+/// error borders — as it does text runs, and darkening the raw token to satisfy
+/// a text floor would wreck the dominant use.
+#[derive(Debug, Clone)]
+pub struct TextTokens {
+    /// Body text.
+    pub primary: [f32; 4],
+    /// Secondary text.
+    pub secondary: [f32; 4],
+    /// Muted / placeholder text.
+    pub muted: [f32; 4],
+    /// Accent-coloured text (links, emphasis) — *not* the accent fill.
+    pub accent: [f32; 4],
+    /// Success text.
+    pub success: [f32; 4],
+    /// Warning text.
+    pub warning: [f32; 4],
+    /// Error text.
+    pub error: [f32; 4],
+    /// Info text.
+    pub info: [f32; 4],
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -257,6 +508,25 @@ impl DesignTokens {
         };
         let semantic_info = accent_primary;
 
+        // ── Per-surface text (UI/UX v3 P5a) ──────────────────────────────────
+        // Derived last, because every entry needs the surface it will be drawn
+        // on. The correction is a no-op for the pairs that already clear the
+        // floor, which on a well-behaved scheme is most of them.
+        let on_surface = [surface_0, surface_1, surface_2, surface_3].map(|s| {
+            let bg = [s[0], s[1], s[2]];
+            let fix = |c: [f32; 4]| contrast_correct(c, bg, MIN_TEXT_CONTRAST);
+            TextTokens {
+                primary: fix(text_primary),
+                secondary: fix(text_secondary),
+                muted: fix(text_muted),
+                accent: fix(accent_primary),
+                success: fix(semantic_success),
+                warning: fix(semantic_warning),
+                error: fix(semantic_error),
+                info: fix(semantic_info),
+            }
+        });
+
         Self {
             surface_0,
             surface_1,
@@ -279,7 +549,17 @@ impl DesignTokens {
             tab_active_bg: surface_2,
             tab_inactive_bg: surface_1,
             tab_activity_bg: accent_activity,
+            on_surface,
         }
+    }
+
+    /// Text colours guaranteed legible on `level`.
+    ///
+    /// The flat `text_*` / `semantic_*` fields are the *uncorrected* palette
+    /// values and are being retired in P5b; new text call sites go through
+    /// here, naming the surface they draw on.
+    pub fn text_on(&self, level: SurfaceLevel) -> &TextTokens {
+        &self.on_surface[level.index()]
     }
 }
 
@@ -466,5 +746,144 @@ mod tests {
         // Smoke test: default() must not panic and produce non-zero surfaces.
         let t = DesignTokens::default();
         assert!(t.surface_0[0] > 0.0 || t.surface_0[1] > 0.0 || t.surface_0[2] > 0.0);
+    }
+
+    // ── contrast_correct (UI/UX v3 P5a) ──────────────────────────────────────
+
+    const DARK_GROUND: [f32; 3] = [0.1, 0.1, 0.12];
+    const LIGHT_GROUND: [f32; 3] = [0.95, 0.95, 0.93];
+
+    fn ratio(color: [f32; 4], bg: [f32; 3]) -> f32 {
+        wcag_contrast(composite_over(color, bg), bg)
+    }
+
+    /// The constant that decides the correction direction is not a taste
+    /// value: it is where the two ceilings cross. If someone "rounds" it, this
+    /// test says why they should not.
+    #[test]
+    fn neutral_luminance_is_where_black_and_white_tie() {
+        let y = NEUTRAL_LUMINANCE;
+        let via_white = 1.05 / (y + 0.05);
+        let via_black = (y + 0.05) / 0.05;
+        assert!(
+            (via_white - via_black).abs() < 0.001,
+            "ceilings disagree: white {via_white}, black {via_black}"
+        );
+        assert!(
+            via_white > MIN_TEXT_CONTRAST && via_white < 4.6,
+            "the worst-case ceiling should sit just above the floor, got {via_white}"
+        );
+    }
+
+    #[test]
+    fn a_colour_that_already_reads_is_returned_untouched() {
+        let white = [1.0, 1.0, 1.0, 1.0];
+        assert_eq!(
+            contrast_correct(white, DARK_GROUND, MIN_TEXT_CONTRAST),
+            white
+        );
+    }
+
+    /// Stage 1 exists so a translucency problem is not "solved" by mangling the
+    /// hue. A fully opaque white clears the floor here, so only alpha may move.
+    #[test]
+    fn a_translucent_colour_is_fixed_by_alpha_alone() {
+        let faint = [1.0, 1.0, 1.0, 0.2];
+        let fixed = contrast_correct(faint, DARK_GROUND, MIN_TEXT_CONTRAST);
+        assert_eq!([fixed[0], fixed[1], fixed[2]], [1.0, 1.0, 1.0]);
+        assert!(fixed[3] > faint[3] && fixed[3] <= 1.0, "alpha {}", fixed[3]);
+        assert!(ratio(fixed, DARK_GROUND) >= MIN_TEXT_CONTRAST);
+    }
+
+    /// …and it must stop as soon as the floor is met rather than slamming to
+    /// opaque, or every muted token would silently become body text.
+    #[test]
+    fn alpha_stops_at_the_floor_instead_of_going_opaque() {
+        let faint = [1.0, 1.0, 1.0, 0.2];
+        let fixed = contrast_correct(faint, DARK_GROUND, MIN_TEXT_CONTRAST);
+        assert!(
+            fixed[3] < 0.95,
+            "white on a dark ground needs far less than full alpha, got {}",
+            fixed[3]
+        );
+    }
+
+    /// Stage 2 on the dark-ground side: a uniform `v` ramp, so the channel
+    /// ratios that define the hue survive exactly.
+    #[test]
+    fn a_dark_hue_on_a_dark_ground_is_lightened_along_its_own_hue() {
+        // A slate with enough headroom that stage 2 alone clears the floor —
+        // this is the Solarized shape, and the case the ramp is for. A more
+        // saturated hue (`[0.05, 0.08, 0.20]`, say) peaks at Y = 0.178 even at
+        // v = 1 and has to fall through to the tint; that is
+        // `a_saturated_hue_that_cannot_brighten_enough_is_tinted` below.
+        let slate = [0.10, 0.12, 0.18, 1.0];
+        let fixed = contrast_correct(slate, DARK_GROUND, MIN_TEXT_CONTRAST);
+        assert!(ratio(fixed, DARK_GROUND) >= MIN_TEXT_CONTRAST);
+        let k = fixed[2] / slate[2];
+        assert!(k > 1.0, "expected a lift, got {k}");
+        assert!((fixed[0] / slate[0] - k).abs() < 0.01, "{fixed:?}");
+        assert!((fixed[1] / slate[1] - k).abs() < 0.01, "{fixed:?}");
+    }
+
+    /// The mirror case: against a light ground the direction flips, and
+    /// darkening never needs stage 3 because black is always reachable.
+    #[test]
+    fn a_light_hue_on_a_light_ground_is_darkened_along_its_own_hue() {
+        let cream = [1.0, 0.95, 0.75, 1.0];
+        let fixed = contrast_correct(cream, LIGHT_GROUND, MIN_TEXT_CONTRAST);
+        assert!(ratio(fixed, LIGHT_GROUND) >= MIN_TEXT_CONTRAST);
+        let k = fixed[1] / cream[1];
+        assert!(k < 1.0, "expected a drop, got {k}");
+        assert!((fixed[2] / cream[2] - k).abs() < 0.01);
+    }
+
+    /// Stage 3's reason to exist: a saturated blue is dark even at `v = 1`
+    /// (`Y = 0.0722`), so on a light ground… it darkens. On a *dark* ground
+    /// with a high floor it must tint, losing saturation, because the hue
+    /// alone cannot get bright enough.
+    #[test]
+    fn a_saturated_hue_that_cannot_brighten_enough_is_tinted() {
+        let blue = [0.0, 0.0, 1.0, 1.0];
+        let ground = [0.35, 0.35, 0.35];
+        let fixed = contrast_correct(blue, ground, MIN_TEXT_CONTRAST);
+        assert!(ratio(fixed, ground) >= MIN_TEXT_CONTRAST);
+        assert!(
+            fixed[0] > 0.05 && fixed[1] > 0.05,
+            "a tint must raise the other channels: {fixed:?}"
+        );
+    }
+
+    /// An unreachable ratio is not an error. 7:1 against a mid-tone ground is
+    /// impossible (§ [`NEUTRAL_LUMINANCE`]); the contract is "best effort", and
+    /// best effort here is an extreme that still clears the 4.5:1 floor.
+    #[test]
+    fn an_unreachable_ratio_degrades_to_the_best_available_colour() {
+        let ground = [0.46, 0.46, 0.46]; // Y ≈ 0.179
+        let grey = [0.5, 0.5, 0.5, 1.0];
+        let fixed = contrast_correct(grey, ground, 7.0);
+        let got = ratio(fixed, ground);
+        assert!(
+            got < 7.0,
+            "the test's premise is that 7:1 is unreachable here, got {got}"
+        );
+        assert!(
+            got >= MIN_TEXT_CONTRAST,
+            "best effort must still clear the text floor, got {got}"
+        );
+    }
+
+    /// `text_on` must not hand out a colour derived against a different ground.
+    #[test]
+    fn text_on_returns_a_distinct_set_per_surface() {
+        let tokens = DesignTokens::from_palette(&tokyo_night_palette());
+        let muted: Vec<[f32; 4]> = SurfaceLevel::ALL
+            .iter()
+            .map(|l| tokens.text_on(*l).muted)
+            .collect();
+        assert!(
+            muted.windows(2).any(|w| w[0] != w[1]),
+            "contrast decays across the ramp, so the corrections cannot all be equal: {muted:?}"
+        );
     }
 }

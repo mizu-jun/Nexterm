@@ -3,7 +3,10 @@
 use serde::{Deserialize, Serialize};
 
 /// A color-scheme palette (foreground, background, and the ANSI 16-color set).
-#[derive(Debug, Clone)]
+///
+/// `PartialEq` is what lets the renderer memoise `DesignTokens::from_palette`
+/// (UI/UX v3 P5a): the derived tokens change exactly when the palette does.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchemePalette {
     /// Default foreground color, as `[R, G, B]`.
     pub fg: [u8; 3],
