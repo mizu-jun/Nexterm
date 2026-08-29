@@ -92,11 +92,22 @@ Assembled at :328–:360 as one `String` from up to four parts — the optional
 (`tab_icons::glyph_for_process`), the title, and an activity dot for an
 inactive tab with output. Only the composed string is ever measured or drawn.
 
-The Nerd Font glyph is the part that does not survive a naive port: it resolves
-through the *terminal* font's fallback chain, and `measure_run` asks
-`FontManager::chrome_advance`, which answers for the chrome face. A glyph
-present in one and absent in the other measures wrong in exactly the direction
-that overflows.
+The Nerd Font glyph looked like the part that would not survive a naive port —
+until it was checked. `FontManager::chrome_attrs` (`font.rs:413`) builds its
+attributes from **`self.family`**, the same family `rasterize_char` uses
+(`font.rs:445`), out of the same `FontSystem`. Chrome and terminal share one
+fallback chain and differ only in size and weight (P4b §5.3 says as much). So a
+glyph resolves identically on both paths, and — more decisively — `measure_run`
+and `add_run_verts` consult the same `chrome_advance`, so whatever the font
+answers is used for *both* the measurement and the draw. A run cannot overflow
+its own measurement no matter how odd the advance is.
+
+What is left is narrower and real: `rasterize_chrome_char` sizes a glyph's box
+to `(ceil(advance), ceil(line_height))` and does **not** crop to ink
+(`font.rs:346`), so a glyph whose ink overhangs its advance — which Nerd Font
+icons routinely do — is clipped on the chrome path where the terminal path gave
+it a whole cell. That is a *clipping* risk, not a width risk, and §2's D3 is
+scoped to it.
 
 ### 1.4 Truncation is by characters too
 
@@ -134,16 +145,23 @@ The budget is the room left in the tab area, and truncation goes through
 `truncate_run_to_width`, so the drawn label provably fits the pill it is
 measured into. This is what closes §1.2 for long titles as well as CJK ones.
 
-### D3 — The process icon is its own run
+### D3 — The process icon is its own run, for clipping, not for width
 
 The Nerd Font glyph leaves the label string and is drawn as a separate run at a
-measured offset, with its width contributed by the glyph path rather than by
-`chrome_advance`. Keeping it inside a chrome run would put a font-fallback
-question in the middle of the width formula — the one place §1.2 shows we
-cannot afford a guess.
+measured offset. **The reason is clipping, not measurement** (§1.3): the chrome
+rasteriser boxes a glyph to its advance without cropping to ink, and a Nerd Font
+icon commonly overhangs. Drawing it through the icon path, which crops, keeps it
+whole.
 
-The `[N]` prefix and the activity dot stay inside the label: both are ASCII, and
-both measure correctly in the chrome face.
+Width is *not* a reason: chrome and terminal share a family and a fallback
+chain, and measurement and drawing share `chrome_advance`, so an icon left in
+the label would be measured exactly as wide as it is drawn — merely, perhaps,
+clipped.
+
+The `[N]` prefix and the activity dot stay inside the label. The dot carries the
+same non-risk: a missing glyph measures **zero** (`font.rs:339` keeps it at zero
+deliberately), which costs the dot its space rather than overflowing the tab.
+§7 asks what to do in that case.
 
 ### D4 — Tabs stay content-sized
 
@@ -202,7 +220,7 @@ except that the edge they inset from is now correct.
 
 | Gate | Assertion |
 |---|---|
-| **G-width** | a CJK label's tab is at least as wide as its drawn text — the §1.2 defect, expressed as a test |
+| **G-width** | the width a tab is *sized* by is the width its label is *drawn* at — one function feeding both, asserted without reference to any particular glyph's metrics. Deliberately not phrased as "a CJK tab is wide enough": CI's font stack has no real CJK face (§6), so a test that needs double-width metrics would pass for the wrong reason |
 | **G-fit** | `fit_tab_width` never returns more than the room left, and a tab that cannot fit its minimum is not drawn |
 | **G-hit** | the recorded `tab_hit_rects` entry equals the drawn pill for every tab in a mixed ASCII/CJK strip |
 | **G-single** | the tab bar computes a tab's width in exactly one place; a grep gate over `ui_verts.rs` finds no second `chars().count() * cell_w` |
@@ -234,6 +252,13 @@ like and where every tab click lands.
   device is a strip mixing ASCII and Japanese titles at a small window width,
   which is where §1.2 is visible today and where the fix has to be visible
   tomorrow.
+- **Not measurable in CI**: real font metrics. Probing `chrome_advance` in the
+  devcontainer returns the *same* advance (8.43 px at 14 px) for `A`, `あ`, `●`,
+  `↗` and two Nerd Font private-use codepoints alike — a single substituting
+  face answering for everything, including characters it does not have. Any gate
+  that assumes double-width CJK or a missing-glyph zero would therefore pass
+  vacuously here. This is why `G-width` is phrased as an equality between two
+  code paths rather than as a claim about a glyph.
 - **Worth checking by hand once**: clicking the right-hand third of a Japanese
   tab label before and after. Before: it activates the neighbouring tab.
 
@@ -249,10 +274,12 @@ Two, both for the maintainer:
    padding". The second is self-describing; the first is easier to reason about
    on a HiDPI display. Recommendation: the ellipsis rule, since it is the same
    rule `truncate_run_to_width` already applies inside a budget.
-2. **Does the activity dot stay in the label?** It is `●` (U+25CF), whose
-   advance in the chrome face is a fallback question of exactly the kind D3
-   moves the process icon out of the string to avoid. It is a much more common
-   glyph than a Nerd Font private-use codepoint, so it probably measures, but
-   "probably measures" is what §1.2 is made of. Recommendation: measure it once
-   on a real font stack before deciding, and if in doubt move it out with the
-   icon in N-3c.
+2. **What should a zero-advance glyph do?** Now that §1.3 has been checked, the
+   activity dot cannot overflow — measurement and drawing agree by
+   construction. The remaining case is a font with no `●`: `chrome_advance`
+   returns 0 deliberately, so the dot would occupy no space and draw on top of
+   the character beside it. The choice is between leaving that (the dot is a
+   hint, and its absence is survivable) and substituting a minimum advance when
+   a glyph measures zero. Recommendation: leave it, and revisit if a real font
+   stack is ever seen to drop it — a substituted width would put a guessed
+   number back into the one formula this phase exists to make honest.
