@@ -226,6 +226,14 @@ Addresses G8 (principles: Familiar, Personal).
   `FontManager`; the terminal grid keeps the single user-configured font.
 - Acceptance: all chrome icons render without any user-installed font.
 
+> **Design spec (2026-08-29):**
+> `plans/2026-08-29-p4-iconography-and-chrome-typography.md`. It splits the
+> phase into P4a (icon font) and P4b (type ramp) over four PRs, and corrects
+> this entry's **M** sizing: the ramp above has never had a reader, and the
+> chrome has no variable-size text path at all — every chrome string advances
+> by `cell_w`. P4b therefore adds a proportional run primitive and adopts it at
+> a bounded list of six surfaces, rather than "applying the ramp".
+
 ### P5 — Accessibility & high contrast (M)
 
 Addresses G10 (principle: Complete + Coherent).
@@ -633,7 +641,43 @@ gated behind a spike.
         not the typed `objc2-app-kit` subtree, matching the precedent P2b/P2c
         set of pulling in the smallest crate that answers the question at
         hand
-- [ ] P4 icon font + chrome type ramp
+- [x] P4a icon font — the bundled `fluentui-system-icons` subset
+      (`assets/fonts/`, 3.4 KB from a 2.8 MB upstream face), its rasterisation
+      path, and the eighteen chrome sites now drawing from it. Two structural
+      changes carried it: `GlyphKey` gained a `FontRole` and a size, because
+      Fluent's PUA codepoints sit inside the Nerd Font range and would
+      otherwise share a cache slot with terminal-content icons; and
+      `lru_cap_from_cell` stopped assuming every atlas entry is one cell.
+      Icon sizes come from the 16/20/24 steps scaled by DPI, never from the
+      terminal cell, so icon weight no longer drifts with the user's font
+      size — with a clamp so a one-cell slot under a small font shrinks the
+      icon instead of letting it bleed. Hit regions are untouched throughout.
+      **The acceptance criterion — "renders without any user-installed
+      font" — is verified only as far as a CPU test can go** (every bundled
+      icon rasterises to non-empty ink through the real path); how any of it
+      *looks* is unverified and joins the backlog below
+- [x] P4b chrome type ramp — `TypeRamp` finally has readers. The chrome gained
+      a text-run primitive (`measure_run` / `truncate_run_to_width` /
+      `add_run_verts`) that advances by each glyph's measured width at a ramp
+      size instead of by `cell_w` at the cell size, and six surfaces adopted
+      it: the settings panel title (Title), section headers (Subtitle), every
+      text-bearing control in the widget layer (Body / Body Strong), the
+      sidebar labels, the tooltip (Caption) and the dialog titles and body
+      text. Measurement and drawing share one per-glyph number by
+      construction, so a truncation cannot disagree with what is drawn.
+      Weight follows D-2 — SemiBold maps to the existing bold flag, because
+      the chrome draws in the *user's* terminal font where a real weight-600
+      request resolves differently on every machine. Two claims in the plan
+      were corrected while building it: this is not really a "proportional"
+      path (a monospace terminal font makes Latin advances equal — what the
+      ramp buys is *size*, not proportionality), and the tooltip's placement
+      function had to change signature rather than just its draw call. Dialog
+      button labels and the footer links stay on the cell path because their
+      text widths reach click targets. **Every text size in the settings panel
+      changed and none of it has been looked at** — see the backlog below
+      - [ ] P4 follow-up — the hit-region work that would let the dialog
+      buttons and the footer's `↗` / `↺` links move too; see the design spec's
+      §8
 - [ ] P5 contrast everywhere + high-contrast scheme
 - [ ] P6 InfoBar + consent reclassification
 - [x] P7 base `notitle` custom title bar — shipped early via #46 (2026-07-30)
@@ -763,6 +807,39 @@ gated behind a spike.
     inspection only, not by test — covering it needs an `EventHandler` test
     harness the crate does not have, which is out of scope for P3b2 and
     deserves its own decision.
+  - P4a — every chrome icon in the window changed shape, and nobody has looked
+    at one. The CPU test proves each of the eighteen icons rasterises to
+    non-empty ink out of the bundled subset, which is a coverage claim, not an
+    appearance one. Not measured: whether the caption buttons read as the
+    Windows 11 caption set beside a real Windows shell — the stroke weight and
+    optical size are the residual risk decision D-1 accepted rather than
+    resolved; whether a 16 px step at scale 1.0 is the right weight next to the
+    tab labels, or whether the sidebar wants 20 px; whether the slot-fitting
+    clamp ever actually fires in practice, and if it does, whether a shrunken
+    icon looks deliberate or broken; whether the icons sit optically centred in
+    their slots, since `icon_placement` centres the *ink bounds*, and an icon
+    whose artwork is asymmetric inside its em box will centre differently than
+    a glyph baseline would have; and how any of it looks on a HiDPI display,
+    where `icon_px` multiplies the step by the scale factor — a path with no
+    test because `scale_factor` only becomes real in `on_resumed`.
+  - P4b — **every text size in the settings panel changed, and nobody has seen
+    any of it.** This is the largest unverified appearance change in the whole
+    phase: the ramp's Body is 14 epx where the chrome previously drew at the
+    terminal font size (≈18.7 px at the 14 pt default), so all panel text gets
+    *smaller*, while section headers get *larger* (Subtitle 20) and the panel
+    title larger still (Title 28). Whether that reads as a hierarchy or as a
+    mismatch is exactly the question a screenshot would answer. Also not
+    measured: whether Body Strong is distinguishable from Body when both are
+    14 px and the only difference is the bold flag (D-2's accepted cost, and
+    the place it is most likely to disappoint); whether rows still look
+    vertically centred now that the line box is the ramp's line height rather
+    than the cell; whether the smaller text still clears the 4.5:1 contrast
+    floor *perceptually* at 14 px, since the contrast tests measure colour
+    pairs and say nothing about size; whether the tooltip box still hugs its
+    caption text; whether the consent dialog looks coherent with a Title-sized
+    heading, Body text and cell-sized *buttons*, which is the one deliberate
+    size mismatch this phase leaves behind; and all of it at HiDPI, where the
+    ramp is multiplied by the scale factor on a path with no test.
   - The cross-cutting rule above still asks for hand-run screenshots under
     `docs/img/uiux-v3/`. That directory does not exist yet. P3a makes the gap
     wider than "nobody took a screenshot": a screenshot cannot show a

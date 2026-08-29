@@ -18,7 +18,7 @@ use super::util::{draw_overlay_panel, scrim_color};
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::state::ClientState;
-use crate::vertex_util::{add_px_rect, add_px_rounded_rect_sdf, add_string_verts};
+use crate::vertex_util::{add_px_rect, add_px_rounded_rect_sdf, add_run_verts, add_string_verts};
 
 use super::super::WgpuState;
 
@@ -219,6 +219,14 @@ impl WgpuState {
         // Title. `text_secondary` (fg at 0.78 alpha) drawn over `surface_3`
         // falls short of the 4.5:1 contrast floor for some themes (Phase B3
         // contrast audit) — nudge it up via `ensure_readable` rather than
+        // Metric tokens for the widget layer and, since P4b, for the chrome
+        // type ramp. The panel does not have `UiConfig` plumbed through yet,
+        // and the values read here (`radius.control`, `type_ramp`) are the
+        // config-independent Fluent ones — so the defaults are exact.
+        // Deliberately *not* `scaled()`: `FontManager::chrome_metrics` owns
+        // the DPI conversion for the ramp, and pre-scaling would double it.
+        let metrics = nexterm_config::MetricTokens::default();
+
         // hard-coding `text_primary`, so it still tracks the scheme's own
         // secondary-text tone wherever that already clears the bar.
         let title_color = row::ensure_readable(
@@ -226,15 +234,18 @@ impl WgpuState {
             tokens.surface_3,
             row::MIN_TEXT_CONTRAST,
         );
-        add_string_verts(
+        // UI/UX v3 P4b: Title — `metrics.rs` names that step "dialog titles",
+        // and the panel's own heading is the same kind of thing. Note the
+        // ramp must arrive unscaled: `chrome_metrics` owns the DPI conversion.
+        let title_style = metrics.type_ramp.title;
+        add_run_verts(
             &nexterm_i18n::fl!("settings-panel-title"),
+            &title_style,
             px + cell_w * 0.5,
             py + cell_h * 0.2,
             title_color,
-            false,
             sw,
             sh,
-            cell_w,
             font,
             atlas,
             &self.queue,
@@ -266,6 +277,7 @@ impl WgpuState {
         sidebar::draw_sidebar(
             sp,
             tokens,
+            &metrics,
             px,
             sidebar_top,
             sidebar_w,
@@ -282,13 +294,6 @@ impl WgpuState {
             text_verts,
             text_idx,
         );
-
-        // Metric tokens for the widget layer. The panel does not have
-        // `UiConfig` plumbed through yet, and the migrated widgets only read
-        // `radius.control`, which is the config-independent Fluent value — so
-        // the defaults are exact here. Plumbing follows when the panel's own
-        // surfaces move onto `radius.surface`.
-        let metrics = nexterm_config::MetricTokens::default();
 
         // Content area
         let content_top = py + title_h + cell_h * 0.5;

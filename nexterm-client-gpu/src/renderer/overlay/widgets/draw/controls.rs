@@ -2,13 +2,14 @@
 
 use crate::font::FontManager;
 use crate::glyph_atlas::GlyphAtlas;
-use crate::vertex_util::{
-    add_px_rounded_rect_sdf, add_string_verts, truncate_to_width, visual_width,
-};
+use crate::vertex_util::{add_icon_verts, add_px_rounded_rect_sdf, icon_size_for_slot};
 
 use super::super::super::settings::row::{MIN_TEXT_CONTRAST, ensure_readable};
 use super::super::spec::WidgetSpec;
-use super::{FOCUS_RING_PX, WidgetSink, WidgetTheme, draw_focus_ring, text_baseline};
+use super::{
+    FOCUS_RING_PX, WidgetSink, WidgetTheme, draw_focus_ring, draw_row_run, draw_row_run_centred,
+    row_style, text_baseline,
+};
 
 /// Toggle track height as a fraction of the cell height.
 const TOGGLE_TRACK_H: f32 = 0.95;
@@ -123,37 +124,52 @@ pub(super) fn draw_cycle(
     let y = text_baseline(spec.rect, theme);
     let right_x = spec.control_rect.x + spec.control_rect.w - theme.cell_w;
 
-    let mut put = |s: &str, x: f32, color: [f32; 4], bold: bool, sink: &mut WidgetSink<'_>| {
-        add_string_verts(
-            s,
+    // UI/UX v3 P4a: the two chevrons come from the bundled icon font, each
+    // centred in the one-cell slot the `‹` / `›` glyphs occupied. The slots
+    // themselves are unchanged, so `hit_test` still resolves the same columns.
+    //
+    // The value sits between the two chevrons, each one cell wide plus a gap.
+    // It is drawn first so `put` — which borrows `font` and `atlas` — is done
+    // with them before the icons need the same borrows.
+    let value_x = spec.control_rect.x + theme.cell_w * 2.0;
+    let value_w = (right_x - value_x - theme.cell_w).max(0.0);
+    let style = row_style(theme, spec.focused());
+    draw_row_run(
+        value,
+        &style,
+        value_x,
+        value_w,
+        spec.rect,
+        value_color,
+        theme,
+        font,
+        atlas,
+        queue,
+        sink,
+    );
+
+    let chevron_size = icon_size_for_slot(font.icon_px(16.0), theme.cell_w, theme.cell_h, 0.1);
+    for (icon, x) in [
+        (crate::icons::CHEVRON_LEFT, spec.control_rect.x),
+        (crate::icons::CHEVRON_RIGHT, right_x),
+    ] {
+        add_icon_verts(
+            icon,
             x,
             y,
-            color,
-            bold,
+            theme.cell_w,
+            theme.cell_h,
+            chevron_size,
+            chevron_color,
             theme.sw,
             theme.sh,
-            theme.cell_w,
             font,
             atlas,
             queue,
             sink.text_verts,
             sink.text_idx,
         );
-    };
-
-    put(
-        "‹",
-        spec.control_rect.x,
-        chevron_color,
-        spec.focused(),
-        sink,
-    );
-    // The value sits between the two chevrons, each one cell wide plus a gap.
-    let value_x = spec.control_rect.x + theme.cell_w * 2.0;
-    let value_w = (right_x - value_x - theme.cell_w).max(0.0);
-    let text = truncate_to_width(value, value_w, theme.cell_w);
-    put(&text, value_x, value_color, spec.focused(), sink);
-    put("›", right_x, chevron_color, spec.focused(), sink);
+    }
 }
 
 /// A colour chip, ringed in the accent colour when it is the active choice
@@ -227,23 +243,17 @@ pub(super) fn draw_button(
         theme.tokens.surface_3,
         MIN_TEXT_CONTRAST,
     );
-    let inner = (spec.control_rect.w - theme.cell_w).max(0.0);
-    let text = truncate_to_width(&spec.desc.label, inner, theme.cell_w);
-    let text_w = visual_width(&text) as f32 * theme.cell_w;
-    add_string_verts(
-        &text,
-        spec.control_rect.x + (spec.control_rect.w - text_w).max(0.0) * 0.5,
-        text_baseline(spec.control_rect, theme),
+    let style = row_style(theme, spec.focused());
+    draw_row_run_centred(
+        &spec.desc.label,
+        &style,
+        spec.control_rect,
         color,
-        spec.focused(),
-        theme.sw,
-        theme.sh,
-        theme.cell_w,
+        theme,
         font,
         atlas,
         queue,
-        sink.text_verts,
-        sink.text_idx,
+        sink,
     );
 }
 

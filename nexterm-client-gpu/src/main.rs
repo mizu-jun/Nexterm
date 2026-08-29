@@ -20,6 +20,7 @@ mod drop_target;
 mod font;
 mod glyph_atlas;
 mod host_manager;
+mod icons;
 mod key_map;
 mod macro_picker;
 mod named_blocks;

@@ -46,7 +46,7 @@ pub(in crate::renderer) fn draw_profiles_tab(
         tokens.text_secondary,
         sw,
         sh,
-        cell_w,
+        metrics,
         font,
         atlas,
         queue,

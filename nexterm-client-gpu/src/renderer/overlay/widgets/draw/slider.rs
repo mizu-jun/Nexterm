@@ -2,11 +2,11 @@
 
 use crate::font::FontManager;
 use crate::glyph_atlas::GlyphAtlas;
-use crate::vertex_util::{add_px_rounded_rect_sdf, add_string_verts, truncate_to_width};
+use crate::vertex_util::add_px_rounded_rect_sdf;
 
 use super::super::super::settings::row::{MIN_TEXT_CONTRAST, ensure_readable};
 use super::super::spec::{WidgetRect, WidgetSpec};
-use super::{WidgetSink, WidgetTheme, text_baseline};
+use super::{WidgetSink, WidgetTheme, draw_row_run, row_style};
 
 /// Slider track height as a fraction of the cell height.
 const SLIDER_TRACK_H: f32 = 0.3;
@@ -35,21 +35,19 @@ pub(super) fn draw_slider(
         theme.tokens.surface_2,
         MIN_TEXT_CONTRAST,
     );
-    let text = truncate_to_width(display, readout_w, theme.cell_w);
-    add_string_verts(
-        &text,
+    let style = row_style(theme, spec.focused());
+    draw_row_run(
+        display,
+        &style,
         spec.control_rect.x + track_w + theme.cell_w,
-        text_baseline(spec.rect, theme),
+        readout_w,
+        spec.rect,
         color,
-        spec.focused(),
-        theme.sw,
-        theme.sh,
-        theme.cell_w,
+        theme,
         font,
         atlas,
         queue,
-        sink.text_verts,
-        sink.text_idx,
+        sink,
     );
 }
 

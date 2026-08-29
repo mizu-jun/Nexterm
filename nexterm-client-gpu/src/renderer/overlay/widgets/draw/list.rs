@@ -2,11 +2,11 @@
 
 use crate::font::FontManager;
 use crate::glyph_atlas::GlyphAtlas;
-use crate::vertex_util::{add_px_rounded_rect_sdf, add_string_verts, truncate_to_width};
+use crate::vertex_util::add_px_rounded_rect_sdf;
 
 use super::super::super::settings::row::{MIN_TEXT_CONTRAST, ensure_readable};
 use super::super::spec::{WidgetRect, WidgetSpec};
-use super::{FOCUS_RING_PX, WidgetSink, WidgetTheme, draw_focus_ring, text_baseline};
+use super::{FOCUS_RING_PX, WidgetSink, WidgetTheme, draw_focus_ring, draw_row_run, row_style};
 
 /// Width of the selection bar, in cells.
 const SELECTION_BAR_W: f32 = 0.25;
@@ -50,21 +50,19 @@ pub(super) fn draw_list_item(
 
     let inset = theme.cell_w * LABEL_INSET;
     let label_w = (spec.rect.w - inset).max(0.0);
-    let text = truncate_to_width(&spec.desc.label, label_w, theme.cell_w);
-    add_string_verts(
-        &text,
+    let style = row_style(theme, selected);
+    draw_row_run(
+        &spec.desc.label,
+        &style,
         spec.rect.x + inset,
-        text_baseline(spec.rect, theme),
+        label_w,
+        spec.rect,
         color,
-        selected,
-        theme.sw,
-        theme.sh,
-        theme.cell_w,
+        theme,
         font,
         atlas,
         queue,
-        sink.text_verts,
-        sink.text_idx,
+        sink,
     );
 }
 

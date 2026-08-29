@@ -519,12 +519,7 @@ pub(crate) fn add_char_verts(
         return;
     }
     // Set the wide-character flag correctly so the glyph atlas cache key matches.
-    let key = GlyphKey {
-        ch,
-        bold,
-        italic: false,
-        wide: is_wide,
-    };
+    let key = GlyphKey::terminal(ch, bold, false, is_wide);
     let fg_u8 = [
         (fg[0] * 255.0) as u8,
         (fg[1] * 255.0) as u8,
@@ -536,6 +531,257 @@ pub(crate) fn add_char_verts(
         return;
     }
     let rect = atlas.get_or_insert(key, &pixels, gw, gh, queue);
+    let tx0 = px / sw * 2.0 - 1.0;
+    let ty0 = 1.0 - py / sh * 2.0;
+    let tx1 = (px + gw as f32) / sw * 2.0 - 1.0;
+    let ty1 = 1.0 - (py + gh as f32) / sh * 2.0;
+    let base = text_verts.len() as u16;
+    text_verts.extend_from_slice(&[
+        TextVertex {
+            position: [tx0, ty0],
+            uv: rect.uv_min,
+            color: fg,
+        },
+        TextVertex {
+            position: [tx1, ty0],
+            uv: [rect.uv_max[0], rect.uv_min[1]],
+            color: fg,
+        },
+        TextVertex {
+            position: [tx1, ty1],
+            uv: rect.uv_max,
+            color: fg,
+        },
+        TextVertex {
+            position: [tx0, ty1],
+            uv: [rect.uv_min[0], rect.uv_max[1]],
+            color: fg,
+        },
+    ]);
+    text_idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+}
+
+/// Compute where an icon bitmap sits inside the slot a caller reserved.
+///
+/// Pure so the placement rule is testable without a GPU: the icon is centred
+/// in the slot and rounded to whole pixels, because a half-pixel offset on a
+/// 16 px glyph is visible as a blur.
+/// Measure a chrome run at a type-ramp step, in physical pixels (UI/UX v3 P4b).
+///
+/// This is *the* width function for chrome runs: [`truncate_run_to_width`] and
+/// [`add_run_verts`] both go through it, so a truncation cannot disagree with
+/// what is drawn. Do not add a second width formula anywhere in this path.
+// P4b-1 ships the primitive; P4b-2 adopts it at the six surfaces in the design
+// spec's §5.2 and this allowance goes with it.
+#[allow(dead_code)]
+pub(crate) fn measure_run(
+    text: &str,
+    style: &nexterm_config::TypeStyle,
+    font: &mut FontManager,
+) -> f32 {
+    let (size_px, _line_h, bold) = font.chrome_metrics(style);
+    text.chars()
+        .map(|ch| font.chrome_advance(ch, size_px, bold))
+        .sum()
+}
+
+/// Truncate a chrome run to `max_width_px`, appending `…` when anything was
+/// cut off.
+///
+/// The ellipsis is measured too, so the result genuinely fits — the cell-based
+/// [`truncate_to_width`] can only approximate this because it assumes every
+/// character is one or two cells wide.
+// P4b-1 ships the primitive; P4b-2 adopts it at the six surfaces in the design
+// spec's §5.2 and this allowance goes with it.
+#[allow(dead_code)]
+pub(crate) fn truncate_run_to_width(
+    text: &str,
+    style: &nexterm_config::TypeStyle,
+    max_width_px: f32,
+    font: &mut FontManager,
+) -> String {
+    if max_width_px <= 0.0 {
+        return String::new();
+    }
+    if measure_run(text, style, font) <= max_width_px {
+        return text.to_string();
+    }
+    let (size_px, _line_h, bold) = font.chrome_metrics(style);
+    let ellipsis_w = font.chrome_advance('…', size_px, bold);
+    // No room for even the ellipsis: an empty string is more honest than a
+    // lone `…` overflowing the slot it was supposed to fit.
+    if ellipsis_w > max_width_px {
+        return String::new();
+    }
+    let budget = max_width_px - ellipsis_w;
+    let mut out = String::new();
+    let mut used = 0.0f32;
+    for ch in text.chars() {
+        let w = font.chrome_advance(ch, size_px, bold);
+        if used + w > budget {
+            break;
+        }
+        out.push(ch);
+        used += w;
+    }
+    out.push('…');
+    out
+}
+
+/// Append a chrome run at a type-ramp step, returning the width it consumed.
+///
+/// Glyphs advance by their own measured width rather than by `cell_w`, which
+/// is what makes this a *proportional* path and the reason the ramp can carry
+/// a size at all. `py` is the top of the run's line box.
+///
+/// Deliberately not shaped as one run: each glyph is measured, cached and
+/// placed individually, so kerning pairs and intra-run ligatures are given up
+/// (see [`FontManager::chrome_advance`] for why that trade is the right one
+/// for chrome labels).
+#[allow(clippy::too_many_arguments)]
+// P4b-1 ships the primitive; P4b-2 adopts it at the six surfaces in the design
+// spec's §5.2 and this allowance goes with it.
+#[allow(dead_code)]
+pub(crate) fn add_run_verts(
+    text: &str,
+    style: &nexterm_config::TypeStyle,
+    px: f32,
+    py: f32,
+    fg: [f32; 4],
+    sw: f32,
+    sh: f32,
+    font: &mut FontManager,
+    atlas: &mut GlyphAtlas,
+    queue: &wgpu::Queue,
+    text_verts: &mut Vec<TextVertex>,
+    text_idx: &mut Vec<u16>,
+) -> f32 {
+    let (size_px, line_h, bold) = font.chrome_metrics(style);
+    let size_key = size_px.round().clamp(0.0, u16::MAX as f32) as u16;
+    let fg_u8 = [
+        (fg[0] * 255.0) as u8,
+        (fg[1] * 255.0) as u8,
+        (fg[2] * 255.0) as u8,
+        255u8,
+    ];
+    let mut x = 0.0f32;
+    for ch in text.chars() {
+        let advance = font.chrome_advance(ch, size_px, bold);
+        if ch == ' ' {
+            x += advance;
+            continue;
+        }
+        let (gw, gh, pixels) = font.rasterize_chrome_char(ch, size_px, line_h, bold, fg_u8);
+        if gw == 0 || gh == 0 || pixels.is_empty() {
+            x += advance;
+            continue;
+        }
+        let rect =
+            atlas.get_or_insert(GlyphKey::chrome(ch, size_key, bold), &pixels, gw, gh, queue);
+        let gx = px + x;
+        let tx0 = gx / sw * 2.0 - 1.0;
+        let ty0 = 1.0 - py / sh * 2.0;
+        let tx1 = (gx + gw as f32) / sw * 2.0 - 1.0;
+        let ty1 = 1.0 - (py + gh as f32) / sh * 2.0;
+        let base = text_verts.len() as u16;
+        text_verts.extend_from_slice(&[
+            TextVertex {
+                position: [tx0, ty0],
+                uv: rect.uv_min,
+                color: fg,
+            },
+            TextVertex {
+                position: [tx1, ty0],
+                uv: [rect.uv_max[0], rect.uv_min[1]],
+                color: fg,
+            },
+            TextVertex {
+                position: [tx1, ty1],
+                uv: rect.uv_max,
+                color: fg,
+            },
+            TextVertex {
+                position: [tx0, ty1],
+                uv: [rect.uv_min[0], rect.uv_max[1]],
+                color: fg,
+            },
+        ]);
+        text_idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        x += advance;
+    }
+    x
+}
+
+/// Shrink an icon step so it fits the slot the caller reserved.
+///
+/// Icon sizing is otherwise independent of the terminal font, but a slot built
+/// from cell multiples can be smaller than the step when the user picks a tiny
+/// font — a tab close button is one cell wide. Clamping keeps the icon inside
+/// its own hit region instead of bleeding into the label beside it. `margin`
+/// is the fraction of the slot left as breathing room.
+pub(crate) fn icon_size_for_slot(step_px: f32, slot_w: f32, slot_h: f32, margin: f32) -> f32 {
+    let budget = slot_w.min(slot_h) * (1.0 - margin.clamp(0.0, 0.9));
+    step_px.min(budget).max(1.0)
+}
+
+pub(crate) fn icon_placement(
+    slot_x: f32,
+    slot_y: f32,
+    slot_w: f32,
+    slot_h: f32,
+    icon_w: f32,
+    icon_h: f32,
+) -> (f32, f32) {
+    (
+        (slot_x + (slot_w - icon_w) * 0.5).round(),
+        (slot_y + (slot_h - icon_h) * 0.5).round(),
+    )
+}
+
+/// Append a chrome icon to the text vertex buffer, centred in the given slot.
+///
+/// The icon is drawn from the bundled icon font at `size_px` — one of the
+/// 16/20/24 px steps — rather than at the terminal cell size, so it does not
+/// change weight when the user changes their font size. `slot_*` is the region
+/// the call site already reserved (a tab button square, a sidebar leading
+/// column); this function only decides where inside it the artwork lands, and
+/// never moves the slot, so adopting it cannot move a hit region.
+///
+/// Draws nothing when the codepoint is missing from the bundled subset, rather
+/// than emitting tofu.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn add_icon_verts(
+    icon: char,
+    slot_x: f32,
+    slot_y: f32,
+    slot_w: f32,
+    slot_h: f32,
+    size_px: f32,
+    fg: [f32; 4],
+    sw: f32,
+    sh: f32,
+    font: &mut FontManager,
+    atlas: &mut GlyphAtlas,
+    queue: &wgpu::Queue,
+    text_verts: &mut Vec<TextVertex>,
+    text_idx: &mut Vec<u16>,
+) {
+    let fg_u8 = [
+        (fg[0] * 255.0) as u8,
+        (fg[1] * 255.0) as u8,
+        (fg[2] * 255.0) as u8,
+        255u8,
+    ];
+    let (gw, gh, pixels) = font.rasterize_icon(icon, size_px, fg_u8);
+    if gw == 0 || gh == 0 || pixels.is_empty() {
+        return;
+    }
+    // Quantised to whole pixels: the cache key must not gain a new entry for
+    // every fractional size a DPI change can produce.
+    let key = GlyphKey::icon(icon, size_px.round().clamp(0.0, u16::MAX as f32) as u16);
+    let rect = atlas.get_or_insert(key, &pixels, gw, gh, queue);
+
+    let (px, py) = icon_placement(slot_x, slot_y, slot_w, slot_h, gw as f32, gh as f32);
     let tx0 = px / sw * 2.0 - 1.0;
     let ty0 = 1.0 - py / sh * 2.0;
     let tx1 = (px + gw as f32) / sw * 2.0 - 1.0;
@@ -645,6 +891,282 @@ mod tests {
 
     fn approx(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-3
+    }
+
+    // ---- chrome runs (UI/UX v3 P4b) ----
+
+    mod chrome_runs {
+        use super::super::{measure_run, truncate_run_to_width};
+        use crate::font::FontManager;
+        use nexterm_config::{MetricTokens, TypeStyle};
+
+        fn fm() -> FontManager {
+            FontManager::new("monospace", 14.0, &[], 1.0, true)
+        }
+
+        fn ramp() -> MetricTokens {
+            MetricTokens::default()
+        }
+
+        #[test]
+        fn a_run_is_the_sum_of_its_glyph_advances() {
+            // The invariant behind §5.4 of the design spec: measurement and
+            // placement must come from one number. `add_run_verts` positions
+            // each glyph at the running sum of `chrome_advance`, so if
+            // `measure_run` were anything other than that same sum, a
+            // truncation could disagree with what is drawn.
+            let mut f = fm();
+            let style = ramp().type_ramp.body;
+            let (size, _lh, bold) = f.chrome_metrics(&style);
+            let expected: f32 = "Hello"
+                .chars()
+                .map(|c| f.chrome_advance(c, size, bold))
+                .sum();
+            assert!((measure_run("Hello", &style, &mut f) - expected).abs() < 1e-3);
+        }
+
+        #[test]
+        fn an_empty_run_measures_zero() {
+            let mut f = fm();
+            assert_eq!(measure_run("", &ramp().type_ramp.body, &mut f), 0.0);
+        }
+
+        #[test]
+        fn a_larger_ramp_step_measures_wider() {
+            // The point of the whole phase: the ramp's size actually reaches
+            // the rendered width.
+            let mut f = fm();
+            let r = ramp().type_ramp;
+            let caption = measure_run("Settings", &r.caption, &mut f);
+            let title = measure_run("Settings", &r.title, &mut f);
+            assert!(title > caption, "caption={caption} title={title}");
+        }
+
+        #[test]
+        fn cjk_is_measured_per_glyph_rather_than_assumed() {
+            // Chrome labels are translated into eight locales, so CJK width has
+            // to come from the font rather than from a column count.
+            //
+            // What this deliberately does *not* assert is `cjk > latin`. That
+            // holds on a machine with a CJK face installed, but a bare CI
+            // container has none — this devcontainer resolves `fc-list
+            // :lang=ja` to zero faces — and both strings then fall back to the
+            // same face, measuring identically. Pinning the strict inequality
+            // would make the suite depend on the runner's installed fonts. The
+            // property that holds everywhere is that the run is the sum of its
+            // measured glyphs and that no glyph silently measures zero.
+            let mut f = fm();
+            let style = ramp().type_ramp.body;
+            let (size, _lh, bold) = f.chrome_metrics(&style);
+            let one = f.chrome_advance('あ', size, bold);
+            assert!(one > 0.0, "a CJK glyph must not measure zero");
+            assert!((measure_run("ああ", &style, &mut f) - one * 2.0).abs() < 1e-3);
+        }
+
+        #[test]
+        fn a_monospace_family_measures_every_latin_glyph_the_same() {
+            // Worth pinning because it is easy to over-read what this path
+            // buys: with a monospace terminal font — which is every realistic
+            // configuration — Latin glyph advances are equal, so the run path
+            // is not "more proportional" than the cell path for Latin text.
+            // What it buys is that the advance is measured *at the ramp's
+            // size* rather than assumed to be the cell.
+            let mut f = fm();
+            let (size, _lh, bold) = f.chrome_metrics(&ramp().type_ramp.body);
+            let i = f.chrome_advance('i', size, bold);
+            let w = f.chrome_advance('W', size, bold);
+            assert!((i - w).abs() < 1e-3, "i={i} W={w}");
+        }
+
+        #[test]
+        fn truncation_output_fits_the_budget_it_was_given() {
+            // Measured against the same function that drives drawing, for an
+            // ASCII label, a CJK label and a mixed one.
+            let mut f = fm();
+            let style = ramp().type_ramp.body;
+            for text in [
+                "Restore previous session",
+                "前のセッションを復元",
+                "SSH ホスト",
+            ] {
+                let full = measure_run(text, &style, &mut f);
+                for frac in [0.25f32, 0.5, 0.75] {
+                    let budget = full * frac;
+                    let out = truncate_run_to_width(text, &style, budget, &mut f);
+                    let got = measure_run(&out, &style, &mut f);
+                    assert!(
+                        got <= budget + 1e-3,
+                        "{text:?} at {frac}: {got} > {budget} ({out:?})"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn text_that_already_fits_is_returned_untouched() {
+            let mut f = fm();
+            let style = ramp().type_ramp.body;
+            let w = measure_run("Theme", &style, &mut f);
+            assert_eq!(
+                truncate_run_to_width("Theme", &style, w + 1.0, &mut f),
+                "Theme"
+            );
+        }
+
+        #[test]
+        fn truncation_marks_that_something_was_cut() {
+            let mut f = fm();
+            let style = ramp().type_ramp.body;
+            let full = measure_run("Restore previous session", &style, &mut f);
+            let out = truncate_run_to_width("Restore previous session", &style, full * 0.5, &mut f);
+            assert!(out.ends_with('…'), "{out:?}");
+            assert_ne!(out, "Restore previous session");
+        }
+
+        #[test]
+        fn a_budget_too_small_for_the_ellipsis_yields_nothing() {
+            // A lone `…` overflowing the slot it was meant to fit is worse
+            // than drawing nothing there.
+            let mut f = fm();
+            let style = ramp().type_ramp.body;
+            assert_eq!(truncate_run_to_width("Theme", &style, 0.5, &mut f), "");
+            assert_eq!(truncate_run_to_width("Theme", &style, 0.0, &mut f), "");
+            assert_eq!(truncate_run_to_width("Theme", &style, -3.0, &mut f), "");
+        }
+
+        #[test]
+        fn semibold_steps_resolve_to_bold_not_to_weight_600() {
+            // Decision D-2: the chrome draws in the user's terminal font, where
+            // a real weight-600 request resolves differently on every machine.
+            let f = fm();
+            let r = ramp().type_ramp;
+            assert!(!f.chrome_metrics(&r.body).2, "Body is Regular");
+            assert!(
+                f.chrome_metrics(&r.body_strong).2,
+                "Body Strong is SemiBold"
+            );
+            assert!(f.chrome_metrics(&r.title).2, "Title is SemiBold");
+        }
+
+        #[test]
+        fn ramp_sizes_follow_the_display_scale() {
+            // The ramp is in logical pixels; a 2x display must double it.
+            let mut f = fm();
+            let style = TypeStyle {
+                size: 14.0,
+                line_height: 20.0,
+                weight: 400,
+            };
+            assert_eq!(f.chrome_metrics(&style).0, 14.0);
+            f.set_scale_factor(14.0, 2.0);
+            assert_eq!(f.chrome_metrics(&style).0, 28.0);
+            assert_eq!(f.chrome_metrics(&style).1, 40.0);
+        }
+
+        #[test]
+        fn a_degenerate_style_still_produces_a_usable_size() {
+            let f = fm();
+            let style = TypeStyle {
+                size: 0.0,
+                line_height: 0.0,
+                weight: 400,
+            };
+            let (size, line_h, _) = f.chrome_metrics(&style);
+            assert!(size >= 1.0 && line_h >= 1.0);
+        }
+
+        #[test]
+        fn the_advance_cache_returns_the_same_number_it_measured() {
+            // A memoised width that differs from the measured one would break
+            // the single-source-of-truth guarantee the moment the cache warms.
+            let mut f = fm();
+            let first = f.chrome_advance('W', 14.0, false);
+            let second = f.chrome_advance('W', 14.0, false);
+            assert_eq!(first, second);
+        }
+
+        #[test]
+        fn chrome_glyphs_rasterise_to_their_own_advance() {
+            // Unlike icons, chrome glyphs are not cropped: the box is the
+            // advance by the line height, so every glyph in a run shares one
+            // baseline.
+            let mut f = fm();
+            let (size, line_h, bold) = f.chrome_metrics(&ramp().type_ramp.body);
+            let advance = f.chrome_advance('M', size, bold);
+            let (w, h, pixels) = f.rasterize_chrome_char('M', size, line_h, bold, [255; 4]);
+            assert_eq!(w, advance.ceil() as u32);
+            assert_eq!(h, line_h.ceil() as u32);
+            assert_eq!(pixels.len(), (w * h * 4) as usize);
+        }
+    }
+
+    // ---- icon_placement (UI/UX v3 P4a) ----
+
+    #[test]
+    fn an_icon_step_is_used_as_is_when_the_slot_has_room() {
+        // The point of the steps: with room to spare, the icon size does not
+        // depend on the slot (and therefore not on the terminal font).
+        assert_eq!(icon_size_for_slot(16.0, 40.0, 40.0, 0.2), 16.0);
+    }
+
+    #[test]
+    fn an_icon_shrinks_to_fit_a_small_slot() {
+        // A one-cell close button under a small font: 12 px slot, 20% margin
+        // leaves 9.6 px, so the 16 px step must come down rather than bleed
+        // into the label beside it.
+        let size = icon_size_for_slot(16.0, 12.0, 30.0, 0.2);
+        assert!((size - 9.6).abs() < 1e-4, "{size}");
+    }
+
+    #[test]
+    fn icon_fitting_uses_the_shorter_side_of_the_slot() {
+        // Caption buttons are wide and short; the height is what constrains.
+        assert!(icon_size_for_slot(24.0, 46.0, 20.0, 0.0) == 20.0);
+    }
+
+    #[test]
+    fn icon_fitting_never_returns_a_degenerate_size() {
+        // A collapsed slot (a tab squeezed to nothing mid-animation) must not
+        // ask the rasteriser for a zero- or negative-sized glyph.
+        assert!(icon_size_for_slot(16.0, 0.0, 0.0, 0.2) >= 1.0);
+        assert!(icon_size_for_slot(16.0, -5.0, 10.0, 0.2) >= 1.0);
+    }
+
+    #[test]
+    fn an_absurd_margin_is_clamped_rather_than_inverting_the_budget() {
+        // A margin >= 1.0 would otherwise produce a zero or negative budget.
+        assert!(icon_size_for_slot(16.0, 40.0, 40.0, 2.0) >= 1.0);
+    }
+
+    #[test]
+    fn an_icon_centres_in_its_slot() {
+        let (x, y) = icon_placement(100.0, 50.0, 20.0, 20.0, 16.0, 16.0);
+        assert_eq!((x, y), (102.0, 52.0));
+    }
+
+    #[test]
+    fn icon_placement_rounds_to_whole_pixels() {
+        // A 15 px glyph in a 20 px slot centres at +2.5; leaving that
+        // fractional would blur the artwork across two pixel columns.
+        let (x, y) = icon_placement(0.0, 0.0, 20.0, 20.0, 15.0, 15.0);
+        assert_eq!((x, y), (3.0, 3.0));
+        assert!(x.fract() == 0.0 && y.fract() == 0.0);
+    }
+
+    #[test]
+    fn an_icon_larger_than_its_slot_stays_centred() {
+        // Overflow is the call site's problem to size out of, but it must
+        // overflow symmetrically rather than hang off one edge.
+        let (x, y) = icon_placement(10.0, 10.0, 16.0, 16.0, 24.0, 24.0);
+        assert_eq!((x, y), (6.0, 6.0));
+    }
+
+    #[test]
+    fn icon_placement_is_independent_per_axis() {
+        // Slots are not always square (a caption button is wider than it is
+        // tall), so the two axes must not share a computation.
+        let (x, y) = icon_placement(0.0, 0.0, 46.0, 32.0, 16.0, 16.0);
+        assert_eq!((x, y), (15.0, 8.0));
     }
 
     // ---- draw_cursor_with_visibility ----

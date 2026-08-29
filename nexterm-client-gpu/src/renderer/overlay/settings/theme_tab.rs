@@ -15,7 +15,7 @@ use super::super::widgets::geometry::TabGeometry;
 use super::super::widgets::settings_theme::{
     THEME_CATEGORY, build_theme_widgets, swatch_gap, swatch_index_of, swatch_names, swatch_y,
 };
-use super::super::widgets::tooltip::{draw_tooltip, place_tooltip};
+use super::super::widgets::tooltip::{draw_tooltip, measure_tooltip, place_tooltip};
 use super::row::{MIN_TEXT_CONTRAST, ensure_readable};
 
 #[allow(clippy::too_many_arguments)]
@@ -165,7 +165,10 @@ pub(in crate::renderer) fn draw_theme_tooltip(
         return;
     };
 
-    let rect = place_tooltip(spec.rect, text, cell_w, cell_h, sw, sh);
+    // Measured at the step the tooltip draws in, so the box fits the glyphs
+    // (UI/UX v3 P4b).
+    let (text_w, line_h) = measure_tooltip(text, metrics, font);
+    let rect = place_tooltip(spec.rect, text_w, line_h, cell_w, cell_h, sw, sh);
     let theme = WidgetTheme {
         tokens,
         metrics,

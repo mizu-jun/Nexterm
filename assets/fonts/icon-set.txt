@@ -1,0 +1,47 @@
+# Nexterm chrome icon set (UI/UX v3 P4a).
+#
+# The single source of truth for both `assets/fonts/NextermIcons-Regular.ttf`
+# and the generated `nexterm-client-gpu/src/icons.rs`. Edit this file, then run
+# `scripts/subset-icon-font.sh` to regenerate both; never hand-edit either
+# output.
+#
+# Format: <RUST_CONST_NAME> <upstream-fluent-icon-name>
+# Lines starting with `#` and blank lines are ignored.
+#
+# Icons come from microsoft/fluentui-system-icons (MIT). See
+# THIRD-PARTY-NOTICES.md for the pinned upstream revision and licence text.
+#
+# Every glyph is drawn at one of the 16/20/24 px steps by the call site; the
+# `_20_` / `_16_` in an upstream name is the *design* size the artwork was
+# drawn for, not the size we render it at. Prefer the 20 px artwork for panel
+# chrome and the 16 px artwork for dense controls (tab and caption buttons).
+
+# ── Settings sidebar: one per SettingsCategory ────────────────────────────────
+SETTINGS_STARTUP        ic_fluent_play_20_regular
+SETTINGS_FONT           ic_fluent_text_font_20_regular
+SETTINGS_THEME          ic_fluent_dark_theme_20_regular
+SETTINGS_WINDOW         ic_fluent_window_20_regular
+SETTINGS_SSH            ic_fluent_server_20_regular
+SETTINGS_KEYBINDINGS    ic_fluent_keyboard_20_regular
+SETTINGS_PROFILES       ic_fluent_person_20_regular
+SETTINGS_BLOCKS         ic_fluent_text_bullet_list_square_20_regular
+SETTINGS_SECURITY       ic_fluent_shield_20_regular
+
+# ── Tab bar ───────────────────────────────────────────────────────────────────
+TAB_TEAR_OUT            ic_fluent_arrow_export_16_regular
+TAB_CLOSE               ic_fluent_dismiss_16_regular
+
+# ── Chevrons: the new-tab dropdown and the settings cycler controls ───────────
+CHEVRON_DOWN            ic_fluent_chevron_down_16_regular
+CHEVRON_LEFT            ic_fluent_chevron_left_16_regular
+CHEVRON_RIGHT           ic_fluent_chevron_right_16_regular
+
+# ── Window caption buttons ────────────────────────────────────────────────────
+WINDOW_MINIMIZE         ic_fluent_subtract_16_regular
+WINDOW_MAXIMIZE         ic_fluent_maximize_16_regular
+WINDOW_RESTORE          ic_fluent_square_multiple_16_regular
+WINDOW_CLOSE            ic_fluent_dismiss_16_regular
+
+# Deliberately absent: the profile entry marker. `Profile.icon` in
+# nexterm-config is a user-supplied string ("emoji or ASCII"), not chrome —
+# replacing it would override the user's own choice.

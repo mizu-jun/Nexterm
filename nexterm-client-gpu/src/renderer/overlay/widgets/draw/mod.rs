@@ -27,7 +27,7 @@ pub(crate) use slider::slider_track_rect;
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::vertex_util::{
-    add_px_rounded_rect_sdf, add_px_stroke_sdf, add_string_verts, truncate_to_width,
+    add_px_rounded_rect_sdf, add_px_stroke_sdf, add_run_verts, measure_run, truncate_run_to_width,
 };
 
 use super::super::settings::row::{MIN_TEXT_CONTRAST, ensure_readable};
@@ -216,21 +216,19 @@ fn draw_label(
     };
     let color = ensure_readable(base, theme.tokens.surface_2, MIN_TEXT_CONTRAST);
     let label_w = (spec.control_rect.x - spec.rect.x).max(0.0);
-    let text = truncate_to_width(&spec.desc.label, label_w, theme.cell_w);
-    add_string_verts(
-        &text,
+    let style = row_style(theme, spec.focused());
+    draw_row_run(
+        &spec.desc.label,
+        &style,
         spec.rect.x,
-        text_baseline(spec.rect, theme),
+        label_w,
+        spec.rect,
         color,
-        spec.focused(),
-        theme.sw,
-        theme.sh,
-        theme.cell_w,
+        theme,
         font,
         atlas,
         queue,
-        sink.text_verts,
-        sink.text_idx,
+        sink,
     );
 }
 
@@ -285,6 +283,102 @@ pub(super) fn draw_focus_ring(
 /// Y position that vertically centres one line of text inside `rect`.
 pub(super) fn text_baseline(rect: WidgetRect, theme: &WidgetTheme<'_>) -> f32 {
     rect.y + (rect.h - theme.cell_h) * 0.5
+}
+
+/// Draw one line of chrome text at a type-ramp step, truncated to `max_w` and
+/// vertically centred in `rect` (UI/UX v3 P4b).
+///
+/// Every text-bearing control in this module goes through here, which is what
+/// keeps one row from mixing ramp sizes with cell-sized text. Geometry is the
+/// caller's: `x` and `max_w` come from the same `WidgetSpec` rectangles as
+/// before, so adopting this moves no control and no hit region — only the size
+/// the glyphs are rasterised at.
+///
+/// **The ramp handed in must be in logical pixels.** `FontManager::chrome_metrics`
+/// owns the DPI conversion, so passing a `MetricTokens` that has already been
+/// through `scaled()` would double-scale the text. Nothing in the client calls
+/// `scaled()` today; `WidgetTheme::metrics`' doc comment claims otherwise and is
+/// aspirational rather than accurate.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn draw_row_run(
+    text: &str,
+    style: &nexterm_config::TypeStyle,
+    x: f32,
+    max_w: f32,
+    rect: WidgetRect,
+    color: [f32; 4],
+    theme: &WidgetTheme<'_>,
+    font: &mut FontManager,
+    atlas: &mut GlyphAtlas,
+    queue: &wgpu::Queue,
+    sink: &mut WidgetSink<'_>,
+) {
+    let (_size, line_h, _bold) = font.chrome_metrics(style);
+    let shown = truncate_run_to_width(text, style, max_w, font);
+    add_run_verts(
+        &shown,
+        style,
+        x,
+        rect.y + (rect.h - line_h) * 0.5,
+        color,
+        theme.sw,
+        theme.sh,
+        font,
+        atlas,
+        queue,
+        sink.text_verts,
+        sink.text_idx,
+    );
+}
+
+/// [`draw_row_run`], horizontally centred inside `area`.
+///
+/// Centring measures the *truncated* run, so a label that had to be cut still
+/// sits centred rather than drifting left by the width it lost.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn draw_row_run_centred(
+    text: &str,
+    style: &nexterm_config::TypeStyle,
+    area: WidgetRect,
+    color: [f32; 4],
+    theme: &WidgetTheme<'_>,
+    font: &mut FontManager,
+    atlas: &mut GlyphAtlas,
+    queue: &wgpu::Queue,
+    sink: &mut WidgetSink<'_>,
+) {
+    let max_w = (area.w - theme.cell_w).max(0.0);
+    let shown = truncate_run_to_width(text, style, max_w, font);
+    let text_w = measure_run(&shown, style, font);
+    let (_size, line_h, _bold) = font.chrome_metrics(style);
+    add_run_verts(
+        &shown,
+        style,
+        area.x + (area.w - text_w).max(0.0) * 0.5,
+        area.y + (area.h - line_h) * 0.5,
+        color,
+        theme.sw,
+        theme.sh,
+        font,
+        atlas,
+        queue,
+        sink.text_verts,
+        sink.text_idx,
+    );
+}
+
+/// The ramp step for a row's text: Body Strong when the row is emphasised
+/// (focused, recording, selected), Body otherwise.
+///
+/// This is the same distinction the cell path drew with its `bold` flag, so
+/// the emphasis reads as it did before; what changes is that the size now
+/// comes from the ramp instead of from the terminal cell.
+pub(super) fn row_style(theme: &WidgetTheme<'_>, emphasised: bool) -> nexterm_config::TypeStyle {
+    if emphasised {
+        theme.metrics.type_ramp.body_strong
+    } else {
+        theme.metrics.type_ramp.body
+    }
 }
 
 /// Fixtures shared by this module's tests and those of every submodule.

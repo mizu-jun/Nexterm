@@ -52,17 +52,23 @@ impl SettingsCategory {
         }
     }
 
-    pub fn icon(&self) -> &str {
+    /// The sidebar icon for this category, as a codepoint in the bundled icon
+    /// font (UI/UX v3 P4a).
+    ///
+    /// It is deliberately *not* part of [`Self::label`]: the label is what
+    /// AccessKit reads out, and a Private Use Area codepoint means nothing to a
+    /// screen reader. The sidebar draws the two separately.
+    pub fn icon(&self) -> char {
         match self {
-            SettingsCategory::Startup => "▶",
-            SettingsCategory::Font => "Aa",
-            SettingsCategory::Theme => "◐",
-            SettingsCategory::Window => "▢",
-            SettingsCategory::Ssh => "⊞",
-            SettingsCategory::Keybindings => "⌨",
-            SettingsCategory::Profiles => "◉",
-            SettingsCategory::Blocks => "▤",
-            SettingsCategory::Security => "⚿",
+            SettingsCategory::Startup => crate::icons::SETTINGS_STARTUP,
+            SettingsCategory::Font => crate::icons::SETTINGS_FONT,
+            SettingsCategory::Theme => crate::icons::SETTINGS_THEME,
+            SettingsCategory::Window => crate::icons::SETTINGS_WINDOW,
+            SettingsCategory::Ssh => crate::icons::SETTINGS_SSH,
+            SettingsCategory::Keybindings => crate::icons::SETTINGS_KEYBINDINGS,
+            SettingsCategory::Profiles => crate::icons::SETTINGS_PROFILES,
+            SettingsCategory::Blocks => crate::icons::SETTINGS_BLOCKS,
+            SettingsCategory::Security => crate::icons::SETTINGS_SECURITY,
         }
     }
 }
@@ -650,5 +656,57 @@ mod label_match_tests {
         assert!(!sp.label_matches_search("Opacity"));
         sp.search_query = "opa".to_string();
         assert!(sp.label_matches_search("Opacity"));
+    }
+}
+
+#[cfg(test)]
+mod icon_tests {
+    //! UI/UX v3 P4a: the sidebar category icons.
+    use super::*;
+
+    #[test]
+    fn every_category_maps_to_a_bundled_icon() {
+        // Totality plus coverage in one pass: an icon that is not in
+        // `ALL_ICONS` is not in the committed subset either, so it would
+        // silently draw nothing.
+        for cat in SettingsCategory::ALL {
+            let icon = cat.icon();
+            assert!(
+                crate::icons::ALL_ICONS.contains(&icon),
+                "{cat:?} maps to U+{:04X}, which is not in the bundled subset",
+                icon as u32
+            );
+        }
+    }
+
+    #[test]
+    fn categories_do_not_share_an_icon() {
+        // Nine identical-looking sidebar rows would be worse than the Unicode
+        // glyphs these replaced.
+        let mut seen = Vec::new();
+        for cat in SettingsCategory::ALL {
+            let icon = cat.icon();
+            assert!(
+                !seen.contains(&icon),
+                "{cat:?} reuses U+{:04X}",
+                icon as u32
+            );
+            seen.push(icon);
+        }
+    }
+
+    #[test]
+    fn labels_carry_no_icon_codepoint() {
+        // The label is what AccessKit reads out. A Private Use Area codepoint
+        // in it would be announced as garbage or silence, which is why the
+        // sidebar draws the icon as a separate run.
+        for cat in SettingsCategory::ALL {
+            for ch in cat.label().chars() {
+                assert!(
+                    !('\u{e000}'..='\u{f8ff}').contains(&ch),
+                    "{cat:?}'s label contains a PUA codepoint"
+                );
+            }
+        }
     }
 }

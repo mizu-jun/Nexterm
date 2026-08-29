@@ -5,6 +5,26 @@ use std::num::NonZeroUsize;
 use bytemuck::{Pod, Zeroable};
 use lru::LruCache;
 
+use crate::icons;
+
+/// Largest pixel size a chrome icon is drawn at (the 16/20/24 px steps).
+const MAX_ICON_PX: u64 = 24;
+/// How many of those steps one icon can occupy in the cache at once.
+const ICON_SIZE_STEPS: u64 = 3;
+/// Atlas area reserved for chrome icons, excluded from the cell-based LRU
+/// capacity. Roughly 3% of a 1024² atlas — small enough not to matter to
+/// terminal glyph caching, honest enough that the capacity is not a fiction.
+const ICON_RESERVED_AREA: u64 =
+    icons::ALL_ICONS.len() as u64 * ICON_SIZE_STEPS * MAX_ICON_PX * MAX_ICON_PX;
+
+// The reservation is only defensible while it stays negligible. If the icon set
+// ever grows enough to claim a meaningful share of a 1024² atlas, "reserve and
+// ignore" needs revisiting rather than silently shrinking the glyph cache.
+const _: () = assert!(
+    ICON_RESERVED_AREA * 20 < 1024 * 1024,
+    "the chrome icon set now claims over 5% of a 1024x1024 atlas"
+);
+
 // ---- Vertex types ----
 
 /// Background-quad vertex (position + color + optional SDF rounded-rect data).
@@ -53,13 +73,89 @@ pub(crate) struct TextVertex {
 
 // ---- Glyph atlas ----
 
+/// Which font a cached glyph was rasterised from.
+///
+/// This is part of [`GlyphKey`] rather than an implementation detail because
+/// the bundled icon font (UI/UX v3 P4a) occupies the Private Use Area from
+/// `U+F101` upward, which sits *inside* the `U+E000`–`U+F8FF` Nerd Font range
+/// `tab_icons.rs` draws terminal-content icons from. Without this
+/// discriminant, `U+F101` from the icon font and `U+F101` from a user's Nerd
+/// Font would share one cache slot and whichever rasterised first would win.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum FontRole {
+    /// The user-configured terminal font, rasterised at the cell size.
+    Terminal,
+    /// The bundled chrome icon font, rasterised at an explicit pixel size.
+    Icon,
+    /// The terminal font, rasterised at a chrome type-ramp size rather than at
+    /// the cell (UI/UX v3 P4b). Same face as [`Self::Terminal`], different
+    /// size — which is exactly why it needs its own discriminant: `A` at the
+    /// cell size and `A` at Caption 12 are different bitmaps.
+    Chrome,
+}
+
 /// Cache key for a single-character glyph.
+///
+/// The fields are private: construct through [`GlyphKey::terminal`] or
+/// [`GlyphKey::icon`] so that a new call site cannot forget to say which font
+/// it means.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct GlyphKey {
-    pub ch: char,
-    pub bold: bool,
-    pub italic: bool,
-    pub wide: bool,
+    ch: char,
+    bold: bool,
+    italic: bool,
+    wide: bool,
+    role: FontRole,
+    /// Rasterised size in whole pixels. Always 0 for [`FontRole::Terminal`],
+    /// whose size is the cell and therefore already implied by the atlas
+    /// invalidation that follows any font or DPI change. Icons carry their
+    /// size so that the same glyph at 16 px and at 20 px can coexist.
+    size_px: u16,
+}
+
+impl GlyphKey {
+    /// A glyph from the terminal font, at the current cell size.
+    pub fn terminal(ch: char, bold: bool, italic: bool, wide: bool) -> Self {
+        Self {
+            ch,
+            bold,
+            italic,
+            wide,
+            role: FontRole::Terminal,
+            size_px: 0,
+        }
+    }
+
+    /// A chrome icon from the bundled icon font, at an explicit pixel size.
+    ///
+    /// `size_px` is quantised to whole pixels by the caller's cast so that a
+    /// window resize does not generate an unbounded key space.
+    pub fn icon(ch: char, size_px: u16) -> Self {
+        Self {
+            ch,
+            bold: false,
+            italic: false,
+            wide: false,
+            role: FontRole::Icon,
+            size_px,
+        }
+    }
+
+    /// A glyph from the terminal font at a chrome type-ramp size.
+    ///
+    /// `wide` is absent by design: chrome runs advance by the glyph's measured
+    /// width, not by cell columns, so the full-width flag that the grid needs
+    /// has nothing to key here.
+    pub fn chrome(ch: char, size_px: u16, bold: bool) -> Self {
+        Self {
+            ch,
+            bold,
+            italic: false,
+            wide: false,
+            role: FontRole::Chrome,
+            size_px,
+        }
+    }
 }
 
 /// Cache key for a ligature glyph (per-row shaping).
@@ -222,7 +318,15 @@ impl GlyphAtlas {
         // and cell_w * cell_h (atlas_size is user-configurable via gpu.atlas_size).
         let atlas_sq = (atlas_size as u64).saturating_mul(atlas_size as u64);
         let cell_area = (cell_w as u64).saturating_mul(cell_h as u64).max(1);
-        let cap = (atlas_sq / cell_area).max(256).min(usize::MAX as u64) as usize;
+        // UI/UX v3 P4a: the cache is no longer all cell-sized entries — chrome
+        // icons are rasterised at 16/20/24 px regardless of the cell. Rather
+        // than pessimise the formula to the largest possible entry (which would
+        // cut the capacity ~8x for a small terminal font and evict terminal
+        // glyphs that fit fine), reserve the area the *bounded* icon set can
+        // occupy and divide what is left by the cell. The icon set is a
+        // compile-time list, so this reservation cannot drift from reality.
+        let usable = atlas_sq.saturating_sub(ICON_RESERVED_AREA);
+        let cap = (usable / cell_area).max(256).min(usize::MAX as u64) as usize;
         NonZeroUsize::new(cap).unwrap_or(NonZeroUsize::MIN)
     }
 
@@ -398,13 +502,18 @@ impl GlyphAtlas {
 
 #[cfg(test)]
 mod tests {
-    use super::GlyphAtlas;
+    use super::{FontRole, GlyphAtlas, GlyphKey, ICON_RESERVED_AREA};
 
     #[test]
-    fn lru_cap_default_formula_unchanged() {
-        // 8×8 glyph → same result as the old formula `(size*size)/64`
+    fn lru_cap_default_formula_less_the_icon_reservation() {
+        // 8×8 glyph. UI/UX v3 P4a subtracts the bounded icon-set area from the
+        // usable atlas before dividing, so this is the old `(size*size)/64`
+        // minus that reservation — not the old number.
         let cap = GlyphAtlas::lru_cap_from_cell(1024, 8, 8);
-        assert_eq!(cap.get(), (1024 * 1024) / 64);
+        assert_eq!(
+            cap.get(),
+            ((1024 * 1024 - ICON_RESERVED_AREA) / 64) as usize
+        );
     }
 
     #[test]
@@ -414,7 +523,7 @@ mod tests {
         // For an 11×22 cell the area-based capacity is far above the 256 floor,
         // so no clamp is needed here; the floor itself is covered by
         // `lru_cap_floor_at_256`.
-        let expected = ((1024u64 * 1024) / (11u64 * 22)) as usize;
+        let expected = ((1024u64 * 1024 - ICON_RESERVED_AREA) / (11u64 * 22)) as usize;
         assert_eq!(cap.get(), expected);
         // Must be much smaller than the default 8×8 capacity
         let default_cap = GlyphAtlas::lru_cap_from_cell(1024, 8, 8).get();
@@ -429,11 +538,17 @@ mod tests {
     }
 
     #[test]
-    fn lru_cap_doubles_with_atlas_size() {
-        // Capacity should scale quadratically with atlas size
+    fn lru_cap_grows_quadratically_with_atlas_size() {
+        // Capacity scales with atlas *area*, so doubling the side roughly
+        // quadruples it. "Roughly" is deliberate: P4a subtracts a constant
+        // icon reservation before dividing, so the relationship is no longer
+        // exactly 4x — a bigger atlas amortises the fixed reservation and
+        // lands slightly above it. This assertion was `== cap1 * 4` and is
+        // updated on purpose, not relaxed to hide a regression.
         let cap1 = GlyphAtlas::lru_cap_from_cell(1024, 16, 32).get();
         let cap2 = GlyphAtlas::lru_cap_from_cell(2048, 16, 32).get();
-        assert_eq!(cap2, cap1 * 4);
+        assert!(cap2 > cap1 * 4, "{cap2} should exceed 4x {cap1}");
+        assert!(cap2 < cap1 * 41 / 10, "{cap2} should stay near 4x {cap1}");
     }
 
     #[test]
@@ -444,8 +559,48 @@ mod tests {
         let cap = GlyphAtlas::lru_cap_from_cell(100_000, 8, 8);
         assert!(cap.get() >= 256);
         // 100_000^2 / 64 must be computed in u64, not a wrapped u32.
-        let expected = ((100_000u64 * 100_000) / 64) as usize;
+        let expected = ((100_000u64 * 100_000 - ICON_RESERVED_AREA) / 64) as usize;
         assert_eq!(cap.get(), expected);
+    }
+
+    #[test]
+    fn lru_cap_survives_an_atlas_smaller_than_the_icon_reservation() {
+        // A tiny atlas_size makes the reservation exceed the whole atlas. The
+        // saturating subtraction must floor at zero rather than wrap, leaving
+        // the 256 floor to answer.
+        let cap = GlyphAtlas::lru_cap_from_cell(16, 8, 8);
+        assert_eq!(cap.get(), 256);
+    }
+
+    #[test]
+    fn terminal_and_icon_glyphs_do_not_share_a_cache_slot() {
+        // The regression this guards: Fluent's PUA codepoints sit inside the
+        // Nerd Font range, so the same char can legitimately arrive from both
+        // fonts. They must be distinct cache entries.
+        let ch = '\u{f101}';
+        assert_ne!(
+            GlyphKey::terminal(ch, false, false, false),
+            GlyphKey::icon(ch, 16)
+        );
+    }
+
+    #[test]
+    fn icon_glyphs_are_keyed_by_size() {
+        let ch = '\u{f101}';
+        assert_ne!(GlyphKey::icon(ch, 16), GlyphKey::icon(ch, 20));
+        assert_eq!(GlyphKey::icon(ch, 16), GlyphKey::icon(ch, 16));
+    }
+
+    #[test]
+    fn terminal_keys_ignore_size_and_keep_their_style_flags() {
+        // Terminal glyphs are always at the cell size, so size must not enter
+        // the key; the style flags still must.
+        let a = GlyphKey::terminal('A', false, false, false);
+        assert_eq!(a.size_px, 0);
+        assert_eq!(a.role, FontRole::Terminal);
+        assert_ne!(a, GlyphKey::terminal('A', true, false, false));
+        assert_ne!(a, GlyphKey::terminal('A', false, true, false));
+        assert_ne!(a, GlyphKey::terminal('A', false, false, true));
     }
 
     #[test]

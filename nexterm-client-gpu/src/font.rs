@@ -2,6 +2,8 @@
 
 use cosmic_text::{Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, SwashCache};
 
+use crate::icons;
+
 /// A rasterized glyph produced by ligature-aware rendering (per-row output).
 pub struct RenderedGlyph {
     /// Grid column index (0-origin).
@@ -23,6 +25,29 @@ pub struct FontManager {
     cell_w: f32,
     /// Configured font family name (passed to `Attrs`).
     family: String,
+    /// Face id of the bundled icon font.
+    ///
+    /// Kept so [`Self::rasterize_icon`] can check that a glyph really came out
+    /// of the subset. Asking for `Family::Name(ICON_FAMILY)` selects that face
+    /// *preferentially*, but cosmic-text still falls back to other installed
+    /// faces for a codepoint the requested family lacks — so without this
+    /// check, an icon we do not ship would silently render whatever some
+    /// system font happens to map at that Private Use Area codepoint. CI found
+    /// exactly that: `U+F8FF` draws ink on all three runner OSes.
+    icon_face_id: Option<cosmic_text::fontdb::ID>,
+    /// Memoised chrome advances, keyed by `(char, physical size, bold)`
+    /// (UI/UX v3 P4b).
+    ///
+    /// No invalidation hook is needed. A font family or size change rebuilds
+    /// the whole `FontManager`, and a DPI change only mutates the scale
+    /// factor — which cannot stale an entry, because the key is the
+    /// *physical* size the advance was measured at. A machine that changes
+    /// scale keeps both scales' entries, which is a handful of floats.
+    chrome_advance_cache: std::collections::HashMap<(char, u16, bool), f32>,
+    /// Display scale factor from winit. Kept so chrome icons can be sized in
+    /// logical pixels (the 16/20/24 steps) and converted to physical ones
+    /// without every call site having to plumb the scale itself.
+    scale_factor: f32,
     /// Whether to enable ligatures.
     pub ligatures: bool,
 }
@@ -43,7 +68,7 @@ impl FontManager {
     ) -> Self {
         // `FontSystem::new()` scans every system font and consumes ~30–50 MB.
         // We use a curated loader instead to keep memory usage down.
-        let mut font_system = Self::build_font_system(family, fallbacks);
+        let (mut font_system, icon_face_id) = Self::build_font_system(family, fallbacks);
 
         // Register the primary font under the generic `monospace` name.
         // `Attrs::new().family(Family::Monospace)` references it.
@@ -86,6 +111,9 @@ impl FontManager {
             metrics,
             cell_w,
             family: family.to_string(),
+            icon_face_id,
+            chrome_advance_cache: std::collections::HashMap::new(),
+            scale_factor,
             ligatures,
         }
     }
@@ -100,6 +128,7 @@ impl FontManager {
     /// the existing `font_system` / `swash_cache` and only recomputes `metrics`
     /// and `cell_w`, which is effectively free.
     pub fn set_scale_factor(&mut self, size_pt: f32, scale_factor: f32) {
+        self.scale_factor = scale_factor;
         // size_pt × (96 dpi / 72 dpi) × scale_factor = physical font size in pixels.
         let font_size_px = size_pt * (96.0 / 72.0) * scale_factor;
         let line_height = font_size_px * 1.2;
@@ -125,7 +154,10 @@ impl FontManager {
     /// `FontSystem::new()` scans every system font and consumes ~30–50 MB.
     /// This helper only loads the OS-specific main font directories to keep
     /// memory usage down, while still covering CJK and emoji fallback fonts.
-    fn build_font_system(_primary_family: &str, _fallbacks: &[String]) -> FontSystem {
+    fn build_font_system(
+        _primary_family: &str,
+        _fallbacks: &[String],
+    ) -> (FontSystem, Option<cosmic_text::fontdb::ID>) {
         use cosmic_text::fontdb;
 
         let locale = sys_locale::get_locale().unwrap_or_else(|| "ja-JP".to_string());
@@ -163,9 +195,23 @@ impl FontManager {
             db.load_system_fonts();
         }
 
+        // UI/UX v3 P4a: the bundled chrome icon font. Loaded from memory rather
+        // than from a font directory so chrome icons render identically on a
+        // machine with no user-installed fonts, which is the phase's acceptance
+        // criterion. It is registered under its own family name (`ICON_FAMILY`,
+        // baked into the subset's name table) so it can only ever be selected
+        // deliberately — never as a fallback for terminal content.
+        db.load_font_data(icons::ICON_FONT.to_vec());
+        // `load_font_data` does not hand back an id, but it appends, so the
+        // face it just added is the last one.
+        let icon_face_id = db.faces().last().map(|f| f.id);
+        if icon_face_id.is_none() {
+            tracing::warn!("bundled icon font failed to load; chrome icons will not draw");
+        }
+
         tracing::debug!("font DB loaded {} faces", db.len());
 
-        FontSystem::new_with_locale_and_db(locale, db)
+        (FontSystem::new_with_locale_and_db(locale, db), icon_face_id)
     }
 
     /// Measure the advance width of the ASCII reference character '0'.
@@ -219,6 +265,162 @@ impl FontManager {
         } else {
             metrics.line_height * 0.5
         }
+    }
+
+    /// Resolve a chrome type-ramp step into physical metrics (UI/UX v3 P4b).
+    ///
+    /// Returns `(size_px, line_height_px, bold)`. Two things happen here that
+    /// the ramp itself does not say:
+    ///
+    /// * The ramp is in **logical** pixels, so both sizes are scaled by the
+    ///   display factor, exactly like [`Self::icon_px`].
+    /// * `weight` collapses to the existing `bold` flag rather than being
+    ///   requested as a real OpenType weight (decision D-2 in the P4 design
+    ///   spec). The chrome draws in the *user's terminal font*, and a request
+    ///   for weight 600 resolves differently on every machine — a real
+    ///   SemiBold here, a snap back to 400 there (making `body` and
+    ///   `body_strong` indistinguishable), a synthetic emboldening elsewhere.
+    ///   Mapping to `bold` reproduces exactly what the chrome renders today,
+    ///   so P4b changes size predictably and leaves weight alone. Revisit if
+    ///   the chrome ever gains its own font family.
+    pub fn chrome_metrics(&self, style: &nexterm_config::TypeStyle) -> (f32, f32, bool) {
+        (
+            (style.size * self.scale_factor).max(1.0),
+            (style.line_height * self.scale_factor).max(1.0),
+            style.weight >= 600,
+        )
+    }
+
+    /// Advance width of one character at a chrome size, in physical pixels.
+    ///
+    /// Memoised per `(char, size, bold)` rather than per string: chrome labels
+    /// share characters heavily, and some of the text measured every frame is
+    /// live (a search query, a hit count), so a whole-string cache would miss
+    /// on exactly the text that is measured most.
+    ///
+    /// The per-character key is also what makes measuring and drawing agree by
+    /// construction — [`Self::add_chrome_glyph_advance`]'s callers place each
+    /// glyph at the running sum of these very numbers, so there is no second
+    /// width formula that could drift (P4 design spec §5.4). The cost is
+    /// kerning and intra-run ligatures, deliberately given up for chrome
+    /// labels. It also means complex scripts that reorder or join glyphs
+    /// (Arabic, Indic) would measure wrong; none of the eight shipped locales
+    /// need them, and the terminal grid — which has the same property — is
+    /// unaffected.
+    pub fn chrome_advance(&mut self, ch: char, size_px: f32, bold: bool) -> f32 {
+        let key = (ch, size_px.round().clamp(0.0, u16::MAX as f32) as u16, bold);
+        if let Some(&w) = self.chrome_advance_cache.get(&key) {
+            return w;
+        }
+        let metrics = Metrics::new(size_px.max(1.0), size_px.max(1.0) * 1.2);
+        let family_owned = self.family.clone();
+        let attrs = Self::chrome_attrs(&family_owned, bold);
+        let mut buf = Buffer::new(&mut self.font_system, metrics);
+        buf.set_size(
+            &mut self.font_system,
+            Some(size_px * 8.0),
+            Some(metrics.line_height),
+        );
+        let text = ch.to_string();
+        buf.set_text(
+            &mut self.font_system,
+            &text,
+            &attrs,
+            Shaping::Advanced,
+            None,
+        );
+        buf.shape_until_scroll(&mut self.font_system, false);
+        let advance = buf
+            .layout_runs()
+            .next()
+            .map(|run| run.line_w)
+            .unwrap_or(0.0)
+            .max(0.0);
+        // A control character or an unmapped glyph measures zero; keep it at
+        // zero rather than substituting a width, so a run containing one does
+        // not silently gain space the drawing pass will not fill.
+        self.chrome_advance_cache.insert(key, advance);
+        advance
+    }
+
+    /// Rasterise one character at a chrome size, sized to its own advance.
+    ///
+    /// The box is `(ceil(advance), ceil(line_height))` rather than the ink
+    /// bounds — unlike [`Self::rasterize_icon`], which crops. Text needs a
+    /// consistent baseline across the run, and a per-glyph crop would give
+    /// every glyph its own vertical origin.
+    pub fn rasterize_chrome_char(
+        &mut self,
+        ch: char,
+        size_px: f32,
+        line_height_px: f32,
+        bold: bool,
+        fg: [u8; 4],
+    ) -> (u32, u32, Vec<u8>) {
+        let advance = self.chrome_advance(ch, size_px, bold);
+        let w = advance.ceil() as u32;
+        let h = line_height_px.ceil().max(1.0) as u32;
+        if w == 0 || h == 0 {
+            return (0, 0, Vec::new());
+        }
+
+        let metrics = Metrics::new(size_px.max(1.0), line_height_px.max(1.0));
+        let family_owned = self.family.clone();
+        let attrs = Self::chrome_attrs(&family_owned, bold);
+        let mut buffer = Buffer::new(&mut self.font_system, metrics);
+        buffer.set_size(&mut self.font_system, Some(w as f32), Some(h as f32));
+        let text = ch.to_string();
+        buffer.set_text(
+            &mut self.font_system,
+            &text,
+            &attrs,
+            Shaping::Advanced,
+            None,
+        );
+        buffer.shape_until_scroll(&mut self.font_system, false);
+
+        let mut pixels = vec![0u8; (w * h * 4) as usize];
+        let color = Color::rgba(fg[0], fg[1], fg[2], fg[3]);
+        buffer.draw(
+            &mut self.font_system,
+            &mut self.swash_cache,
+            color,
+            |x, y, _w, _h, c| {
+                if x < 0 || y < 0 {
+                    return;
+                }
+                let (px, py) = (x as u32, y as u32);
+                if px >= w || py >= h {
+                    return;
+                }
+                let idx = ((py * w + px) * 4) as usize;
+                pixels[idx] = (c.r() as u32 * c.a() as u32 / 255) as u8;
+                pixels[idx + 1] = (c.g() as u32 * c.a() as u32 / 255) as u8;
+                pixels[idx + 2] = (c.b() as u32 * c.a() as u32 / 255) as u8;
+                pixels[idx + 3] = c.a();
+            },
+        );
+        (w, h, pixels)
+    }
+
+    /// Attrs for chrome text: the configured terminal family, at the requested
+    /// weight expressed as bold (see [`Self::chrome_metrics`]).
+    ///
+    /// Takes the family by reference rather than reading `self.family` so the
+    /// returned `Attrs` does not borrow `self` — every caller needs `&mut
+    /// self.font_system` at the same time. Callers clone the family into a
+    /// local first, the same shape `rasterize_char` already uses.
+    fn chrome_attrs(family: &str, bold: bool) -> Attrs<'_> {
+        let base = if family.eq_ignore_ascii_case("monospace") || family.is_empty() {
+            Attrs::new().family(Family::Monospace)
+        } else {
+            Attrs::new().family(Family::Name(family))
+        };
+        base.weight(if bold {
+            cosmic_text::Weight::BOLD
+        } else {
+            cosmic_text::Weight::NORMAL
+        })
     }
 
     /// Rasterise a single character and return its RGBA pixels.
@@ -307,6 +509,121 @@ impl FontManager {
         );
 
         (cell_w, cell_h, pixels)
+    }
+
+    /// Rasterise a chrome icon from the bundled icon font at an explicit size.
+    ///
+    /// Unlike [`Self::rasterize_char`], nothing here is tied to the terminal
+    /// cell: the size comes from the caller's 16/20/24 px step, so icon weight
+    /// stays put when the user changes their terminal font size.
+    ///
+    /// The result is **cropped to the glyph's ink bounds** and the caller
+    /// centres it in the slot it reserved. Cropping rather than returning a
+    /// fixed box is what keeps this independent of the icon font's ascent and
+    /// descent, which no call site should have to reason about; it also makes
+    /// "this codepoint is not in the subset" self-reporting, since a glyph that
+    /// draws nothing returns a zero-sized bitmap and the call site skips it
+    /// rather than drawing tofu.
+    ///
+    /// Returns `(width, height, rgba_pixels)`, premultiplied to match every
+    /// other producer feeding the glyph atlas.
+    /// Convert one of the 16/20/24 px icon steps into physical pixels.
+    ///
+    /// The steps are *logical* sizes, so they still have to follow the display
+    /// scale — a 16 px icon next to 2x-scaled chrome would read as half-sized.
+    /// What they deliberately do not follow is the terminal font size, which is
+    /// the whole point of moving the chrome off cell-sized glyphs.
+    pub fn icon_px(&self, step: f32) -> f32 {
+        step * self.scale_factor
+    }
+
+    pub fn rasterize_icon(&mut self, ch: char, size_px: f32, fg: [u8; 4]) -> (u32, u32, Vec<u8>) {
+        let size = size_px.max(1.0);
+        let metrics = Metrics::new(size, size);
+        // A generous box so ascent/descent cannot clip the artwork before the
+        // crop below measures it.
+        let box_side = (size * 2.0).ceil() as u32;
+
+        let attrs = Attrs::new().family(Family::Name(icons::ICON_FAMILY));
+        let mut buffer = Buffer::new(&mut self.font_system, metrics);
+        buffer.set_size(
+            &mut self.font_system,
+            Some(box_side as f32),
+            Some(box_side as f32),
+        );
+        let text = ch.to_string();
+        buffer.set_text(
+            &mut self.font_system,
+            &text,
+            &attrs,
+            Shaping::Advanced,
+            None,
+        );
+        buffer.shape_until_scroll(&mut self.font_system, false);
+
+        // Refuse anything that did not come out of the bundled subset. See
+        // `icon_face_id`: asking for the icon family is a preference, not a
+        // restriction, so a codepoint we do not ship would otherwise render
+        // whatever a system font maps at that Private Use Area codepoint —
+        // tofu wearing a different hat. CI caught this on all three runner
+        // OSes, where `U+F8FF` draws ink out of some installed face.
+        let from_icon_face = self.icon_face_id.is_some_and(|want| {
+            let mut saw_glyph = false;
+            let all_ours = buffer.layout_runs().all(|run| {
+                run.glyphs.iter().all(|g| {
+                    saw_glyph = true;
+                    g.font_id == want
+                })
+            });
+            saw_glyph && all_ours
+        });
+        if !from_icon_face {
+            return (0, 0, Vec::new());
+        }
+
+        let mut scratch = vec![0u8; (box_side * box_side * 4) as usize];
+        let color = Color::rgba(fg[0], fg[1], fg[2], fg[3]);
+        let (mut min_x, mut min_y) = (box_side, box_side);
+        let (mut max_x, mut max_y) = (0u32, 0u32);
+
+        buffer.draw(
+            &mut self.font_system,
+            &mut self.swash_cache,
+            color,
+            |x, y, _w, _h, c| {
+                if x < 0 || y < 0 || c.a() == 0 {
+                    return;
+                }
+                let (px, py) = (x as u32, y as u32);
+                if px >= box_side || py >= box_side {
+                    return;
+                }
+                let idx = ((py * box_side + px) * 4) as usize;
+                scratch[idx] = (c.r() as u32 * c.a() as u32 / 255) as u8;
+                scratch[idx + 1] = (c.g() as u32 * c.a() as u32 / 255) as u8;
+                scratch[idx + 2] = (c.b() as u32 * c.a() as u32 / 255) as u8;
+                scratch[idx + 3] = c.a();
+                min_x = min_x.min(px);
+                min_y = min_y.min(py);
+                max_x = max_x.max(px);
+                max_y = max_y.max(py);
+            },
+        );
+
+        if min_x > max_x || min_y > max_y {
+            // Nothing was drawn: the codepoint is missing from the subset.
+            return (0, 0, Vec::new());
+        }
+
+        let (w, h) = (max_x - min_x + 1, max_y - min_y + 1);
+        let mut cropped = vec![0u8; (w * h * 4) as usize];
+        for row in 0..h {
+            let src = (((min_y + row) * box_side + min_x) * 4) as usize;
+            let dst = ((row * w) * 4) as usize;
+            cropped[dst..dst + (w * 4) as usize]
+                .copy_from_slice(&scratch[src..src + (w * 4) as usize]);
+        }
+        (w, h, cropped)
     }
 
     /// Rasterise multi-character text at a scaled font size (OSC 66 Text Sizing Protocol).
@@ -572,6 +889,78 @@ impl FontManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- bundled chrome icon font (UI/UX v3 P4a) ----
+
+    #[test]
+    fn every_bundled_icon_rasterises() {
+        // The acceptance criterion for P4a is that chrome icons render without
+        // any user-installed font. This is the closest a CPU test can get to
+        // it: the icons resolve out of the embedded subset by family name and
+        // produce ink, on whatever machine CI happens to run on. A codepoint
+        // missing from the subset returns a zero-sized bitmap, so this also
+        // catches `icon-set.txt` and the committed font drifting apart.
+        let mut fm = FontManager::new("monospace", 14.0, &[], 1.0, true);
+        for &icon in icons::ALL_ICONS {
+            let (w, h, pixels) = fm.rasterize_icon(icon, 16.0, [255, 255, 255, 255]);
+            assert!(
+                w > 0 && h > 0 && !pixels.is_empty(),
+                "icon U+{:04X} produced no ink; is it in the committed subset?",
+                icon as u32
+            );
+            assert_eq!(pixels.len(), (w * h * 4) as usize);
+        }
+    }
+
+    #[test]
+    fn an_icon_missing_from_the_subset_draws_nothing() {
+        // Tofu is worse than absence for chrome: a call site that asks for an
+        // icon we do not ship must render nothing at all.
+        //
+        // `'A'` rather than a Private Use Area codepoint, deliberately. The
+        // first version of this test used `U+F8FF` on the assumption that a
+        // PUA codepoint is unmapped everywhere; CI disagreed on all three
+        // runner OSes, where some installed face maps it and drew ink. That
+        // exposed the real defect — `Family::Name` is a *preference*, and
+        // cosmic-text falls back for a codepoint the requested family lacks —
+        // which `icon_face_id` now closes. `'A'` reproduces it on any machine
+        // with a Latin font, including a bare container, because 'A' is
+        // certainly absent from the icon subset and certainly present
+        // elsewhere.
+        let mut fm = FontManager::new("monospace", 14.0, &[], 1.0, true);
+        for missing in ['A', '\u{f8ff}', '@'] {
+            let (w, h, pixels) = fm.rasterize_icon(missing, 16.0, [255, 255, 255, 255]);
+            assert_eq!(
+                (w, h, pixels.len()),
+                (0, 0, 0),
+                "U+{:04X} is not in the subset and must not fall back to a system face",
+                missing as u32
+            );
+        }
+    }
+
+    #[test]
+    fn icon_size_is_independent_of_the_terminal_cell() {
+        // The point of the 16/20/24 steps: two managers with very different
+        // cell sizes must rasterise the same icon at the same scale.
+        let mut small = FontManager::new("monospace", 9.0, &[], 1.0, true);
+        let mut large = FontManager::new("monospace", 24.0, &[], 1.0, true);
+        assert!(large.cell_width() > small.cell_width());
+
+        let icon = icons::ALL_ICONS[0];
+        let (sw, sh, _) = small.rasterize_icon(icon, 20.0, [255, 255, 255, 255]);
+        let (lw, lh, _) = large.rasterize_icon(icon, 20.0, [255, 255, 255, 255]);
+        assert_eq!((sw, sh), (lw, lh));
+    }
+
+    #[test]
+    fn a_larger_icon_step_rasterises_larger() {
+        let mut fm = FontManager::new("monospace", 14.0, &[], 1.0, true);
+        let icon = icons::ALL_ICONS[0];
+        let (w16, h16, _) = fm.rasterize_icon(icon, 16.0, [255, 255, 255, 255]);
+        let (w24, h24, _) = fm.rasterize_icon(icon, 24.0, [255, 255, 255, 255]);
+        assert!(w24 > w16 && h24 > h16, "{w16}x{h16} vs {w24}x{h24}");
+    }
 
     #[test]
     fn font_manager_constructs() {
