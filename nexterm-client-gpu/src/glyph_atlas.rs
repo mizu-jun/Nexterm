@@ -87,6 +87,14 @@ pub(crate) enum FontRole {
     Terminal,
     /// The bundled chrome icon font, rasterised at an explicit pixel size.
     Icon,
+    /// The terminal font, rasterised at a chrome type-ramp size rather than at
+    /// the cell (UI/UX v3 P4b). Same face as [`Self::Terminal`], different
+    /// size — which is exactly why it needs its own discriminant: `A` at the
+    /// cell size and `A` at Caption 12 are different bitmaps.
+    // P4b-1 ships the primitive; P4b-2 adopts it at the six surfaces in the
+    // design spec's §5.2 and this allowance goes with it.
+    #[allow(dead_code)]
+    Chrome,
 }
 
 /// Cache key for a single-character glyph.
@@ -132,6 +140,25 @@ impl GlyphKey {
             italic: false,
             wide: false,
             role: FontRole::Icon,
+            size_px,
+        }
+    }
+
+    /// A glyph from the terminal font at a chrome type-ramp size.
+    ///
+    /// `wide` is absent by design: chrome runs advance by the glyph's measured
+    /// width, not by cell columns, so the full-width flag that the grid needs
+    /// has nothing to key here.
+    // P4b-1 ships the primitive; P4b-2 adopts it at the six surfaces in the
+    // design spec's §5.2 and this allowance goes with it.
+    #[allow(dead_code)]
+    pub fn chrome(ch: char, size_px: u16, bold: bool) -> Self {
+        Self {
+            ch,
+            bold,
+            italic: false,
+            wide: false,
+            role: FontRole::Chrome,
             size_px,
         }
     }

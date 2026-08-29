@@ -226,9 +226,36 @@ with worse hit rates for text that changes every frame (search queries, hit
 counts). Record this in the module doc so it is not "fixed" by accident.
 
 `measure_run` must be cheap enough to call during layout. Chrome labels are
-short and mostly static, so a small memoisation keyed by `(text, style)` sits in
-`FontManager`; it is invalidated on font or scale-factor change, alongside the
-existing atlas invalidation.
+short and mostly static, so a small memoisation sits in `FontManager`.
+
+**Correction 1 (P4b-1, as built): the memo is keyed per `(char, size, bold)`,
+not per `(text, style)`.** Two reasons the per-string form was wrong. Chrome
+labels share characters heavily, and some of the text measured every frame is
+*live* — a search query, a `(N)` hit count — so a whole-string cache would miss
+on exactly the text measured most. More importantly, the per-character key is
+what makes measuring and drawing agree *by construction*: `add_run_verts` places
+each glyph at the running sum of the very numbers `measure_run` adds up, so
+§5.4's "no second width formula" is a structural property rather than a
+convention to maintain. No invalidation hook is needed either: a font family or
+size change rebuilds the whole `FontManager`, and a DPI change cannot stale an
+entry because the key is the *physical* size the advance was measured at.
+
+**Correction 2: calling this "a proportional text path" oversells it.** With a
+monospace terminal font — which is every realistic configuration, and the only
+thing `FontManager` resolves — every Latin advance is equal, so for Latin text
+the run path lands in the same places the cell path did. What it actually buys
+is that the advance is *measured at the ramp's size* instead of assumed to be
+the cell, plus correct widths for CJK and for any proportional fallback face
+that steps in. That is enough for the ramp to work, and it is a narrower claim
+than §5.1 originally made. A test pins the monospace-equality property so this
+is not re-read as a defect later.
+
+One thing the test suite cannot pin: CJK measuring wider than Latin. It does on
+a machine with a CJK face installed, but this devcontainer resolves `fc-list
+:lang=ja` to zero faces, so both fall back to the same face and measure
+identically. Asserting the strict inequality would make the suite depend on the
+runner's installed fonts; the tests assert the font-independent property (a run
+is the sum of its measured glyphs, and no glyph measures zero) instead.
 
 ### 5.2 Adoption sites (the bounded list)
 
@@ -320,6 +347,7 @@ Four PRs, each independently revertible:
 | P4a-2 | Replace all call sites in the §3 table, caption buttons included (D-1). Hit regions unchanged. | Icon table totality tests. |
 | | **Shipped.** One correction to §3: the profile entry marker is *not* chrome. `Profile.icon` in `nexterm-config` is a user-supplied string ("emoji or ASCII"), so replacing it would override the user's own choice; it was dropped from the icon set, leaving 18 icons over 17 codepoints. Two further sites stay on Unicode deliberately: the footer's `↗ Open config.toml` and `↺ Reset category` links, whose **`visual_width` drives their hit region** in `settings_panel_hit.rs` — converting them would move a click target, which is exactly what this PR promised not to do. They need the label/icon split the sidebar received, and are listed in §8. | |
 | P4b-1 | `add_run_verts` / `measure_run` / `truncate_run_to_width`, `FontRole::Chrome`, weight-as-`bold` mapping (D-2), measurement memoisation. No adoption. | §5.4 tests. |
+| | **Shipped**, with two corrections to §5.1 below. | |
 | P4b-2 | Adopt the ramp at the six §5.2 surfaces. | Per-site width tests. |
 
 Splitting P4a-1 from P4a-2 matters: the first is pure infrastructure with no

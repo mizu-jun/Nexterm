@@ -25,6 +25,18 @@ pub struct FontManager {
     cell_w: f32,
     /// Configured font family name (passed to `Attrs`).
     family: String,
+    /// Memoised chrome advances, keyed by `(char, physical size, bold)`
+    /// (UI/UX v3 P4b).
+    ///
+    /// No invalidation hook is needed. A font family or size change rebuilds
+    /// the whole `FontManager`, and a DPI change only mutates the scale
+    /// factor — which cannot stale an entry, because the key is the
+    /// *physical* size the advance was measured at. A machine that changes
+    /// scale keeps both scales' entries, which is a handful of floats.
+    // P4b-1 ships the primitive; P4b-2 adopts it at the six surfaces in the
+    // design spec's §5.2 and this allowance goes with it.
+    #[allow(dead_code)]
+    chrome_advance_cache: std::collections::HashMap<(char, u16, bool), f32>,
     /// Display scale factor from winit. Kept so chrome icons can be sized in
     /// logical pixels (the 16/20/24 steps) and converted to physical ones
     /// without every call site having to plumb the scale itself.
@@ -92,6 +104,7 @@ impl FontManager {
             metrics,
             cell_w,
             family: family.to_string(),
+            chrome_advance_cache: std::collections::HashMap::new(),
             scale_factor,
             ligatures,
         }
@@ -235,6 +248,174 @@ impl FontManager {
         } else {
             metrics.line_height * 0.5
         }
+    }
+
+    /// Resolve a chrome type-ramp step into physical metrics (UI/UX v3 P4b).
+    ///
+    /// Returns `(size_px, line_height_px, bold)`. Two things happen here that
+    /// the ramp itself does not say:
+    ///
+    /// * The ramp is in **logical** pixels, so both sizes are scaled by the
+    ///   display factor, exactly like [`Self::icon_px`].
+    /// * `weight` collapses to the existing `bold` flag rather than being
+    ///   requested as a real OpenType weight (decision D-2 in the P4 design
+    ///   spec). The chrome draws in the *user's terminal font*, and a request
+    ///   for weight 600 resolves differently on every machine — a real
+    ///   SemiBold here, a snap back to 400 there (making `body` and
+    ///   `body_strong` indistinguishable), a synthetic emboldening elsewhere.
+    ///   Mapping to `bold` reproduces exactly what the chrome renders today,
+    ///   so P4b changes size predictably and leaves weight alone. Revisit if
+    ///   the chrome ever gains its own font family.
+    // P4b-1 ships the primitive; P4b-2 adopts it at the six surfaces in the
+    // design spec's §5.2 and this allowance goes with it.
+    #[allow(dead_code)]
+    pub fn chrome_metrics(&self, style: &nexterm_config::TypeStyle) -> (f32, f32, bool) {
+        (
+            (style.size * self.scale_factor).max(1.0),
+            (style.line_height * self.scale_factor).max(1.0),
+            style.weight >= 600,
+        )
+    }
+
+    /// Advance width of one character at a chrome size, in physical pixels.
+    ///
+    /// Memoised per `(char, size, bold)` rather than per string: chrome labels
+    /// share characters heavily, and some of the text measured every frame is
+    /// live (a search query, a hit count), so a whole-string cache would miss
+    /// on exactly the text that is measured most.
+    ///
+    /// The per-character key is also what makes measuring and drawing agree by
+    /// construction — [`Self::add_chrome_glyph_advance`]'s callers place each
+    /// glyph at the running sum of these very numbers, so there is no second
+    /// width formula that could drift (P4 design spec §5.4). The cost is
+    /// kerning and intra-run ligatures, deliberately given up for chrome
+    /// labels. It also means complex scripts that reorder or join glyphs
+    /// (Arabic, Indic) would measure wrong; none of the eight shipped locales
+    /// need them, and the terminal grid — which has the same property — is
+    /// unaffected.
+    // P4b-1 ships the primitive; P4b-2 adopts it at the six surfaces in the
+    // design spec's §5.2 and this allowance goes with it.
+    #[allow(dead_code)]
+    pub fn chrome_advance(&mut self, ch: char, size_px: f32, bold: bool) -> f32 {
+        let key = (ch, size_px.round().clamp(0.0, u16::MAX as f32) as u16, bold);
+        if let Some(&w) = self.chrome_advance_cache.get(&key) {
+            return w;
+        }
+        let metrics = Metrics::new(size_px.max(1.0), size_px.max(1.0) * 1.2);
+        let family_owned = self.family.clone();
+        let attrs = Self::chrome_attrs(&family_owned, bold);
+        let mut buf = Buffer::new(&mut self.font_system, metrics);
+        buf.set_size(
+            &mut self.font_system,
+            Some(size_px * 8.0),
+            Some(metrics.line_height),
+        );
+        let text = ch.to_string();
+        buf.set_text(
+            &mut self.font_system,
+            &text,
+            &attrs,
+            Shaping::Advanced,
+            None,
+        );
+        buf.shape_until_scroll(&mut self.font_system, false);
+        let advance = buf
+            .layout_runs()
+            .next()
+            .map(|run| run.line_w)
+            .unwrap_or(0.0)
+            .max(0.0);
+        // A control character or an unmapped glyph measures zero; keep it at
+        // zero rather than substituting a width, so a run containing one does
+        // not silently gain space the drawing pass will not fill.
+        self.chrome_advance_cache.insert(key, advance);
+        advance
+    }
+
+    /// Rasterise one character at a chrome size, sized to its own advance.
+    ///
+    /// The box is `(ceil(advance), ceil(line_height))` rather than the ink
+    /// bounds — unlike [`Self::rasterize_icon`], which crops. Text needs a
+    /// consistent baseline across the run, and a per-glyph crop would give
+    /// every glyph its own vertical origin.
+    // P4b-1 ships the primitive; P4b-2 adopts it at the six surfaces in the
+    // design spec's §5.2 and this allowance goes with it.
+    #[allow(dead_code)]
+    pub fn rasterize_chrome_char(
+        &mut self,
+        ch: char,
+        size_px: f32,
+        line_height_px: f32,
+        bold: bool,
+        fg: [u8; 4],
+    ) -> (u32, u32, Vec<u8>) {
+        let advance = self.chrome_advance(ch, size_px, bold);
+        let w = advance.ceil() as u32;
+        let h = line_height_px.ceil().max(1.0) as u32;
+        if w == 0 || h == 0 {
+            return (0, 0, Vec::new());
+        }
+
+        let metrics = Metrics::new(size_px.max(1.0), line_height_px.max(1.0));
+        let family_owned = self.family.clone();
+        let attrs = Self::chrome_attrs(&family_owned, bold);
+        let mut buffer = Buffer::new(&mut self.font_system, metrics);
+        buffer.set_size(&mut self.font_system, Some(w as f32), Some(h as f32));
+        let text = ch.to_string();
+        buffer.set_text(
+            &mut self.font_system,
+            &text,
+            &attrs,
+            Shaping::Advanced,
+            None,
+        );
+        buffer.shape_until_scroll(&mut self.font_system, false);
+
+        let mut pixels = vec![0u8; (w * h * 4) as usize];
+        let color = Color::rgba(fg[0], fg[1], fg[2], fg[3]);
+        buffer.draw(
+            &mut self.font_system,
+            &mut self.swash_cache,
+            color,
+            |x, y, _w, _h, c| {
+                if x < 0 || y < 0 {
+                    return;
+                }
+                let (px, py) = (x as u32, y as u32);
+                if px >= w || py >= h {
+                    return;
+                }
+                let idx = ((py * w + px) * 4) as usize;
+                pixels[idx] = (c.r() as u32 * c.a() as u32 / 255) as u8;
+                pixels[idx + 1] = (c.g() as u32 * c.a() as u32 / 255) as u8;
+                pixels[idx + 2] = (c.b() as u32 * c.a() as u32 / 255) as u8;
+                pixels[idx + 3] = c.a();
+            },
+        );
+        (w, h, pixels)
+    }
+
+    /// Attrs for chrome text: the configured terminal family, at the requested
+    /// weight expressed as bold (see [`Self::chrome_metrics`]).
+    ///
+    /// Takes the family by reference rather than reading `self.family` so the
+    /// returned `Attrs` does not borrow `self` — every caller needs `&mut
+    /// self.font_system` at the same time. Callers clone the family into a
+    /// local first, the same shape `rasterize_char` already uses.
+    // P4b-1 ships the primitive; P4b-2 adopts it at the six surfaces in the
+    // design spec's §5.2 and this allowance goes with it.
+    #[allow(dead_code)]
+    fn chrome_attrs(family: &str, bold: bool) -> Attrs<'_> {
+        let base = if family.eq_ignore_ascii_case("monospace") || family.is_empty() {
+            Attrs::new().family(Family::Monospace)
+        } else {
+            Attrs::new().family(Family::Name(family))
+        };
+        base.weight(if bold {
+            cosmic_text::Weight::BOLD
+        } else {
+            cosmic_text::Weight::NORMAL
+        })
     }
 
     /// Rasterise a single character and return its RGBA pixels.
