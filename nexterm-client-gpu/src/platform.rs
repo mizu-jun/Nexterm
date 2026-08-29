@@ -220,10 +220,6 @@ pub(crate) fn open_releases_url() {
 /// worth pinning, and CI cannot set an OS accessibility preference — so all
 /// of the decision logic lives above it in `AnimationsConfig`, where it is
 /// unit-tested.
-///
-/// Task 3 (not yet landed) is the only caller, so this is unreachable on its
-/// own and would otherwise be flagged as dead code.
-#[allow(dead_code)]
 pub(crate) fn reduced_motion() -> Option<bool> {
     #[cfg(windows)]
     {

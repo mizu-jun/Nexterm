@@ -334,6 +334,21 @@ impl EventHandler {
         }
     }
 
+    /// Re-sample the OS reduced-motion preference. Returns whether it moved.
+    ///
+    /// Called on focus gain rather than through a native change
+    /// notification: it matches what the user actually does — open System
+    /// Settings, change the preference, come back — and costs one cheap
+    /// syscall instead of two separate observer mechanisms.
+    pub(super) fn refresh_reduced_motion(&mut self) -> bool {
+        let now = crate::platform::reduced_motion().unwrap_or(false);
+        if self.app.config.animations.os_reduced_motion() == now {
+            return false;
+        }
+        self.app.config.animations.set_os_reduced_motion(now);
+        true
+    }
+
     /// `WindowEvent::Ime` — handle IME input for Japanese, Chinese, and others.
     pub(super) fn on_ime(&mut self, ime_event: Ime) {
         // Phase 5-11-8 Step 8-3 (Sub-phase B): while editing an SSH field in the
@@ -793,5 +808,24 @@ mod tests {
     fn sends_query_for_a_different_window() {
         // A close request for a different window is independent and proceeds.
         assert!(should_send_close_query(&pending(0), 1));
+    }
+
+    /// A config hot-reload builds a fresh `Config`, and a fresh
+    /// `AnimationsConfig` has `os_reduced_motion = false`. Whatever applies a
+    /// reloaded config must re-stamp the OS state, or editing `config.toml`
+    /// silently restores animations the OS asked us to stop.
+    #[test]
+    fn a_reloaded_config_keeps_the_os_reduced_motion_state() {
+        let mut old = nexterm_config::AnimationsConfig::default();
+        old.set_os_reduced_motion(true);
+        assert_eq!(old.effective_multiplier(), 0.0);
+
+        let mut reloaded = nexterm_config::AnimationsConfig::default();
+        assert!(
+            reloaded.effective_multiplier() > 0.0,
+            "a fresh config starts un-stamped — this is the trap"
+        );
+        reloaded.set_os_reduced_motion(old.os_reduced_motion());
+        assert_eq!(reloaded.effective_multiplier(), 0.0);
     }
 }

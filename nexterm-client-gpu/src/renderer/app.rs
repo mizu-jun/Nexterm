@@ -35,6 +35,12 @@ impl NextermApp {
             1.0,
             config.font.ligatures,
         );
+        // UI/UX v3 P3c: sample the OS accessibility preference once at
+        // startup. `None` (Linux, or a failed call) means "not reduced".
+        let mut config = config;
+        config
+            .animations
+            .set_os_reduced_motion(crate::platform::reduced_motion().unwrap_or(false));
         let mut state = ClientState::new(80, 24, config.scrollback_lines);
         // Hand the host list from the config file to the host manager
         state.host_manager = crate::host_manager::HostManager::new(config.hosts.clone());
