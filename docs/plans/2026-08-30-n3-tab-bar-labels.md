@@ -145,23 +145,37 @@ The budget is the room left in the tab area, and truncation goes through
 `truncate_run_to_width`, so the drawn label provably fits the pill it is
 measured into. This is what closes §1.2 for long titles as well as CJK ones.
 
-### D3 — The process icon is its own run, for clipping, not for width
+### D3 — The process icon leaves the label and stays on the *cell* path
 
-The Nerd Font glyph leaves the label string and is drawn as a separate run at a
-measured offset. **The reason is clipping, not measurement** (§1.3): the chrome
-rasteriser boxes a glyph to its advance without cropping to ink, and a Nerd Font
-icon commonly overhangs. Drawing it through the icon path, which crops, keeps it
-whole.
+The Nerd Font glyph is drawn beside the label, in a cell-wide slot reserved
+before it, rather than prepended to the label string.
 
-Width is *not* a reason: chrome and terminal share a family and a fallback
-chain, and measurement and drawing share `chrome_advance`, so an icon left in
-the label would be measured exactly as wide as it is drawn — merely, perhaps,
-clipped.
+**The reason is clipping, not measurement** (§1.3): the chrome rasteriser boxes
+a glyph to its advance without cropping to ink, and a Nerd Font icon commonly
+overhangs. Width is *not* a reason — chrome and terminal share a family and a
+fallback chain, and measurement and drawing share `chrome_advance`, so an icon
+left in the label would be measured exactly as wide as it is drawn, merely
+perhaps clipped.
+
+**And it must not go through the chrome icon path.** An earlier draft of this
+decision said to draw it "through the icon path, which crops". That would be a
+worse bug than the one it fixes: `icons.rs` states that the bundled Fluent
+subset's codepoints "live in the Private Use Area, which overlaps the Nerd Font
+range `tab_icons.rs` uses", and that they are only safe to draw through
+`FontRole::Icon` precisely so the two sets cannot resolve against each other.
+Asking the icon path for a process glyph would silently return a *Fluent* icon
+at that codepoint.
+
+The cell path is where the glyph has always come from, it resolves against the
+user's terminal font, and it boxes a glyph to a whole cell instead of to its
+advance — which is the clipping fix. The tab reserves
+`visual_width(glyph) * cell_w` for it through `tab_width`'s `icon_w` parameter,
+so the label cannot be drawn over it.
 
 The `[N]` prefix and the activity dot stay inside the label. The dot carries the
 same non-risk: a missing glyph measures **zero** (`font.rs:339` keeps it at zero
 deliberately), which costs the dot its space rather than overflowing the tab.
-§7 asks what to do in that case.
+§7 records what was decided about that.
 
 ### D4 — Tabs stay content-sized
 
@@ -238,7 +252,7 @@ though it looks tautological: today it fails.
 |---|---|---|
 | **N-3a** | `fit_tab_width` + the measured `tab_width`, with the pure tests. No call sites; the tab bar still counts characters. **Shipped 2026-08-30** as `renderer/tab_layout.rs`. | G-fit |
 | **N-3b** | Adopt both in `build_tab_bar_verts`: measured width, width-budget truncation, ramp step, `line_h` centring. The seven consumers follow the corrected number. **Shipped 2026-08-30.** | G-width, G-hit, G-single, G-truncate |
-| **N-3c** | The process icon becomes its own run (D3). | G-icon |
+| **N-3c** | The process icon becomes its own run (D3). **Shipped 2026-08-30**, on the cell path rather than the icon path — see D3. | G-icon |
 
 N-3b is the risk concentration: it is the PR that changes what every tab looks
 like and where every tab click lands.

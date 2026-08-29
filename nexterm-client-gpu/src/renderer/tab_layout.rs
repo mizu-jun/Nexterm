@@ -227,8 +227,29 @@ mod tests {
         );
     }
 
-    /// A process icon widens the tab it sits in — the icon is drawn beside the
-    /// label (spec D3), so its width has to be in the tab's.
+    /// N-3c: the process glyph is a Nerd Font codepoint from the *user's*
+    /// terminal font, and `icons.rs` documents that the bundled chrome-icon
+    /// subset occupies the same Private Use Area. Drawing it through the icon
+    /// path would therefore resolve a Fluent icon in its place — a silently
+    /// wrong glyph rather than a missing one.
+    #[test]
+    fn the_process_icon_is_not_drawn_through_the_chrome_icon_path() {
+        let src = include_str!("ui_verts.rs");
+        let region = tab_region(src);
+        assert!(
+            region.contains("glyph_for_process"),
+            "the tab bar still draws a process icon"
+        );
+        assert!(
+            !region.contains("add_icon_verts(\n                    glyph"),
+            "the process glyph is drawn through the chrome icon path, which \
+             resolves the bundled Fluent subset over the same PUA range"
+        );
+    }
+
+    /// A process icon widens the tab it sits in — since N-3c it is drawn
+    /// beside the label in a cell-wide slot rather than prepended to it, so
+    /// its width has to be in the tab's or the label would be drawn over it.
     #[test]
     fn a_process_icon_widens_its_tab() {
         let mut font = FontManager::new("monospace", 14.0, &[], 1.0, true);

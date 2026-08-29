@@ -342,24 +342,34 @@ impl WgpuState {
             } else {
                 raw_title.clone()
             };
-            // Phase 2c: prepend the Nerd Font glyph when (a) the user
-            // opted in via `tab_bar.show_process_icon` and (b) the
-            // glyph map has an entry for the current foreground
-            // process. Unknown processes render the label as before
-            // (no fallback glyph — the absence is signal).
-            let iconified = if cfg.show_process_icon
-                && let Some(name) = process_name.as_deref()
-                && let Some(glyph) = crate::tab_icons::glyph_for_process(name)
-            {
-                format!("{} {}", glyph, base_label)
+            // Phase 2c: the Nerd Font glyph for the foreground process, when
+            // (a) the user opted in via `tab_bar.show_process_icon` and (b) the
+            // glyph map has an entry for it. Unknown processes get nothing —
+            // no fallback glyph, because the absence is signal.
+            //
+            // N-3c: it is drawn beside the label rather than prepended to it,
+            // and on the *cell* path. It is a Nerd Font codepoint from the
+            // user's terminal font, and `icons.rs` warns that the bundled
+            // chrome-icon subset occupies the same Private Use Area — so
+            // drawing it through the icon path would resolve a Fluent icon in
+            // its place. The cell path is where it has always come from, and it
+            // boxes a glyph to a whole cell instead of to its advance, which is
+            // what keeps an overhanging icon from being clipped.
+            let process_glyph = if cfg.show_process_icon {
+                process_name
+                    .as_deref()
+                    .and_then(crate::tab_icons::glyph_for_process)
             } else {
-                base_label
+                None
             };
+            let icon_w = process_glyph
+                .map(|glyph| crate::vertex_util::visual_width(glyph) as f32 * cell_w)
+                .unwrap_or(0.0);
             // Tab number prefix (Windows Terminal style): prepends `[N]` when the option is on
             let numbered = if cfg.show_tab_number {
-                format!("[{}] {}", i + 1, iconified)
+                format!("[{}] {}", i + 1, base_label)
             } else {
-                iconified
+                base_label
             };
             // The cell path wrapped every label in spaces because `padding`
             // alone did not read as padding at cell precision. It does now, and
@@ -385,11 +395,11 @@ impl WgpuState {
             let label = crate::vertex_util::truncate_run_to_width(
                 &label,
                 &tab_style,
-                (room_left - padding * 2.0).max(0.0),
+                (room_left - padding * 2.0 - icon_w).max(0.0),
                 font,
             );
             let Some(label_w) = crate::renderer::tab_layout::tab_width(
-                &label, &tab_style, 0.0, padding, room_left, font,
+                &label, &tab_style, icon_w, padding, room_left, font,
             ) else {
                 break; // no more room to draw additional tabs
             };
@@ -491,12 +501,30 @@ impl WgpuState {
                 );
             }
 
-            // Tab label (vertically centred on the run's own line box).
+            // Tab label (vertically centred on the run's own line box), with
+            // the process icon in the cell-wide slot reserved before it.
             let fg = if is_active { text_fg } else { inactive_fg };
+            if let Some(glyph) = process_glyph {
+                add_string_verts(
+                    glyph,
+                    x_offset + padding,
+                    text_y,
+                    fg,
+                    false,
+                    sw,
+                    sh,
+                    cell_w,
+                    font,
+                    atlas,
+                    &self.queue,
+                    text_verts,
+                    text_idx,
+                );
+            }
             add_run_verts(
                 &label,
                 &tab_style,
-                x_offset + padding,
+                x_offset + padding + icon_w,
                 tab_text_y,
                 fg,
                 sw,
