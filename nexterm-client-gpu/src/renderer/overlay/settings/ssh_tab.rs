@@ -174,6 +174,7 @@ pub(in crate::renderer) fn draw_ssh_tab(
         cell_w,
         cell_h,
         hover: &sp.hover_transition,
+        press: &sp.press_pulse,
         now,
     };
     let mut sink = WidgetSink {

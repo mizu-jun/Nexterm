@@ -359,3 +359,36 @@ impl EventHandler {
         SettingsPanelHit::PanelBackground
     }
 }
+
+/// Map a panel hit to the widget it addresses (UI/UX v3 P3b3).
+///
+/// Extracted from `on_cursor_moved`, which needs the same mapping for the
+/// hover cross-fade. Two copies would drift the moment a category is added.
+pub(super) fn widget_id_of(
+    hit: &SettingsPanelHit,
+) -> Option<crate::renderer::overlay::widgets::spec::WidgetId> {
+    use crate::renderer::overlay::widgets::settings_blocks::BLOCKS_CATEGORY;
+    use crate::renderer::overlay::widgets::settings_font::FONT_CATEGORY;
+    use crate::renderer::overlay::widgets::settings_keybindings::KEYBINDINGS_CATEGORY;
+    use crate::renderer::overlay::widgets::settings_profiles::PROFILES_CATEGORY;
+    use crate::renderer::overlay::widgets::settings_security::SECURITY_CATEGORY;
+    use crate::renderer::overlay::widgets::settings_ssh::SSH_CATEGORY;
+    use crate::renderer::overlay::widgets::settings_startup::STARTUP_CATEGORY;
+    use crate::renderer::overlay::widgets::settings_theme::{THEME_CATEGORY, THEME_SWATCH_BASE};
+    use crate::renderer::overlay::widgets::settings_window::WINDOW_CATEGORY;
+    use crate::renderer::overlay::widgets::spec::WidgetId;
+    let (category, index) = match hit {
+        SettingsPanelHit::ThemeColor(i) => (THEME_CATEGORY, THEME_SWATCH_BASE + *i as u16),
+        SettingsPanelHit::ThemeRow(index) => (THEME_CATEGORY, *index),
+        SettingsPanelHit::WindowRow(index) => (WINDOW_CATEGORY, *index),
+        SettingsPanelHit::FontRow(index) => (FONT_CATEGORY, *index),
+        SettingsPanelHit::StartupRow(index) => (STARTUP_CATEGORY, *index),
+        SettingsPanelHit::BlocksRow(index) => (BLOCKS_CATEGORY, *index),
+        SettingsPanelHit::SecurityRow(index) => (SECURITY_CATEGORY, *index),
+        SettingsPanelHit::ProfilesRow(index) => (PROFILES_CATEGORY, *index),
+        SettingsPanelHit::SshRow(index) => (SSH_CATEGORY, *index),
+        SettingsPanelHit::KeybindingsRow(index) => (KEYBINDINGS_CATEGORY, *index),
+        _ => return None,
+    };
+    Some(WidgetId::new(category, index))
+}

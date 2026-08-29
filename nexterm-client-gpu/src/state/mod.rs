@@ -733,6 +733,9 @@ impl ClientState {
         if self.settings_panel.hover_transition.is_active(now) {
             return true;
         }
+        if self.settings_panel.press_pulse.is_active(now) {
+            return true;
+        }
         if self
             .context_menu
             .as_ref()

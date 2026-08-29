@@ -365,40 +365,19 @@ impl EventHandler {
             // UI/UX v3 P1b: dwell tracking for tooltips. Only migrated
             // categories report a widget; everything else clears the dwell so
             // no stale tooltip lingers.
-            use crate::renderer::overlay::widgets::settings_blocks::BLOCKS_CATEGORY;
-            use crate::renderer::overlay::widgets::settings_font::FONT_CATEGORY;
-            use crate::renderer::overlay::widgets::settings_keybindings::KEYBINDINGS_CATEGORY;
-            use crate::renderer::overlay::widgets::settings_profiles::PROFILES_CATEGORY;
-            use crate::renderer::overlay::widgets::settings_security::SECURITY_CATEGORY;
-            use crate::renderer::overlay::widgets::settings_ssh::SSH_CATEGORY;
-            use crate::renderer::overlay::widgets::settings_startup::STARTUP_CATEGORY;
-            use crate::renderer::overlay::widgets::settings_theme::{
-                THEME_CATEGORY, THEME_SWATCH_BASE,
-            };
-            use crate::renderer::overlay::widgets::settings_window::WINDOW_CATEGORY;
-            let hovered = match hit {
-                SettingsPanelHit::ThemeColor(i) => {
-                    Some((THEME_CATEGORY, THEME_SWATCH_BASE + i as u16))
-                }
-                SettingsPanelHit::ThemeRow(index) => Some((THEME_CATEGORY, index)),
-                SettingsPanelHit::WindowRow(index) => Some((WINDOW_CATEGORY, index)),
-                SettingsPanelHit::FontRow(index) => Some((FONT_CATEGORY, index)),
-                SettingsPanelHit::StartupRow(index) => Some((STARTUP_CATEGORY, index)),
-                SettingsPanelHit::BlocksRow(index) => Some((BLOCKS_CATEGORY, index)),
-                SettingsPanelHit::SecurityRow(index) => Some((SECURITY_CATEGORY, index)),
-                SettingsPanelHit::ProfilesRow(index) => Some((PROFILES_CATEGORY, index)),
-                SettingsPanelHit::SshRow(index) => Some((SSH_CATEGORY, index)),
-                SettingsPanelHit::KeybindingsRow(index) => Some((KEYBINDINGS_CATEGORY, index)),
-                _ => None,
-            };
+            //
+            // UI/UX v3 P3b3: the hit → widget mapping now lives in
+            // `settings_panel_hit::widget_id_of`, shared with the press
+            // handler, so the two cannot drift apart.
+            let hovered_id = super::settings_panel_hit::widget_id_of(&hit);
             // Read before `sp` borrows `self.app.state` mutably below.
             let anim = self.app.config.animations.clone();
             let sp = &mut self.app.state.settings_panel;
-            sp.hover_widget = hovered.map(|(category, index)| {
+            sp.hover_widget = hovered_id.map(|id| {
                 crate::settings_panel::HoverDwell::enter(
                     sp.hover_widget,
-                    category,
-                    index,
+                    id.category,
+                    id.index,
                     std::time::Instant::now(),
                 )
             });
@@ -406,13 +385,7 @@ impl EventHandler {
             // is idempotent while the hovered row is unchanged, so a slow
             // drag across one row does not restart the fade.
             let now = std::time::Instant::now();
-            sp.hover_transition.retarget(
-                hovered.map(|(category, index)| {
-                    crate::renderer::overlay::widgets::spec::WidgetId::new(category, index)
-                }),
-                now,
-                &anim,
-            );
+            sp.hover_transition.retarget(hovered_id, now, &anim);
         } else if self.app.state.settings_panel.theme_hover_preview.is_some()
             || self.app.state.settings_panel.hover_widget.is_some()
         {
@@ -917,6 +890,18 @@ impl EventHandler {
             // When the settings panel is open, run the hit test first.
             if self.app.state.settings_panel.is_open {
                 let hit = self.hit_test_settings_panel(px as f32, py as f32);
+                // UI/UX v3 P3b3: pulse the row before the match below acts on
+                // it. `Outside`, `TitleBar`, `Category` and `Slider` map to no
+                // widget id and are skipped.
+                if let Some(id) = super::settings_panel_hit::widget_id_of(&hit) {
+                    let now = std::time::Instant::now();
+                    let anim = self.app.config.animations.clone();
+                    self.app
+                        .state
+                        .settings_panel
+                        .press_pulse
+                        .press(id, now, &anim);
+                }
                 use crate::settings_panel::SliderType;
                 match hit {
                     SettingsPanelHit::Outside => {

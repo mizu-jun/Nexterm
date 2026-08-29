@@ -56,6 +56,7 @@ pub(in crate::renderer) fn draw_theme_tab(
         cell_w,
         cell_h,
         hover: &sp.hover_transition,
+        press: &sp.press_pulse,
         now,
     };
     let mut sink = WidgetSink {
@@ -173,6 +174,7 @@ pub(in crate::renderer) fn draw_theme_tooltip(
         cell_w,
         cell_h,
         hover: &sp.hover_transition,
+        press: &sp.press_pulse,
         now,
     };
     let bg_start = bg_verts.len();
