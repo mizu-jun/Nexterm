@@ -157,10 +157,11 @@ pub fn contrast_correct(color: [f32; 4], bg: [f32; 3], min_ratio: f32) -> [f32; 
 - **Stage 2 — value.** If opaque still falls short, ramp HSV `v` toward the
   extreme that contrasts with `bg` (down for a light ground, up for a dark
   one), preserving hue.
-- **Stage 3 — saturation.** `v` alone cannot save a saturated hue against its
-  own end of the range — pure yellow on white stays yellow at `v = 1.0` and
-  bottoms out around 1.1:1. When stage 2 saturates, desaturate toward the
-  achromatic extreme.
+- **Stage 3 — saturation.** Needed on the *lighten* path only. Scaling RGB down
+  always reaches black, so darkening never runs out of room; scaling up stops
+  the moment the largest channel hits 1.0, and a saturated hue pinned at
+  `v = 1` can still be dark (pure blue is `Y = 0.0722`). Past that point the
+  only way up is to tint toward white, which costs saturation.
 
 Contrast is monotone in the stage parameter, so each stage is a **12-iteration
 binary search**, not a linear crawl. `from_palette` runs every frame
@@ -178,18 +179,45 @@ best achievable ratio is `max(1.05/(Y+0.05), (Y+0.05)/0.05)`. These meet at
 arbitrary `min_ratio`; the guarantee lives in the gate (§5), which asserts what
 the derivation actually achieves.
 
-### 3.2 Keeping surfaces out of the mid-tone band
+### 3.2 The surface ramp is left alone
 
-Solarized fails body text at `surface_3` (2.64:1) because *both* ends drift to
-mid-grey: its `fg` is a grey and the ramp lifts `bg` toward it. Correcting only
-the text would drive Solarized's foreground to near-white and destroy the
-scheme's identity — a legible Solarized that no longer looks like Solarized.
+> **Corrected 2026-08-29, before implementation.** An earlier draft of this
+> section proposed pushing surfaces out of the `Y ∈ [0.13, 0.24]` band, on the
+> reasoning that Solarized fails body text because *both* ends drift to
+> mid-grey. Measuring the surfaces says otherwise, so the guard is dropped.
 
-So the surface ramp gets a guard: after the existing `0.045 / 0.10 / 0.16 /
-0.22` steps, each surface is pushed **away** from the `Y ∈ [0.13, 0.24]` band,
-in the direction the scheme already leans (dark schemes darker, light schemes
-lighter). Schemes whose surfaces never enter the band — seven of the nine — are
-untouched, so this is not a global restyle.
+Relative luminance of every built-in scheme's four surfaces:
+
+```
+        Dark: s0=0.0040 s1=0.0094 s2=0.0198 s3=0.0366   fgY=0.6867
+       Light: s0=0.8879 s1=0.7954 s2=0.6903 s3=0.5854   fgY=0.0252
+ Tokyo Night: s0=0.0114 s1=0.0204 s2=0.0358 s3=0.0586   fgY=0.6004
+   Solarized: s0=0.0199 s1=0.0314 s2=0.0498 s3=0.0760   fgY=0.2821
+     Gruvbox: s0=0.0212 s1=0.0337 s2=0.0537 s3=0.0819   fgY=0.7154
+  Catppuccin: s0=0.0140 s1=0.0240 s2=0.0407 s3=0.0650   fgY=0.6760
+     Dracula: s0=0.0237 s1=0.0369 s2=0.0579 s3=0.0872   fgY=0.9350
+        Nord: s0=0.0341 s1=0.0501 s2=0.0747 s3=0.1083   fgY=0.7272
+    One Dark: s0=0.0250 s1=0.0386 s2=0.0600 s3=0.0899   fgY=0.4426
+```
+
+**No surface of any built-in scheme enters the band** — the darkest schemes top
+out at Nord's 0.108 and Light bottoms out at 0.585. Solarized's defect is not a
+mid-tone *ground*; it is a mid-tone **foreground** (`fgY = 0.2821`) over a dark
+ground. The correction direction there is therefore *lighten*, and stage 2
+alone covers it with hue and saturation intact — Solarized's text gets brighter,
+not white.
+
+Two further reasons not to add the guard:
+
+- `surface_0` is the user's own terminal background, passed through unchanged.
+  A guard could not touch it without changing what the user configured.
+- On a dark scheme the ramp climbs away from `surface_0`. Pushing a banded
+  surface "in the direction the scheme leans" would push it back *down*, toward
+  or past `surface_0`, inverting the ramp that
+  `dark_scheme_surfaces_lighten` pins.
+
+A user custom palette *can* place a surface in the band. It needs no guard
+either: the §3.1 ceiling there is 4.58:1, still above the 4.5:1 gate.
 
 ### 3.3 Token struct shape
 
@@ -273,7 +301,7 @@ holds, that arm is deleted and the test asserts a flat 4.5:1.
 
 | PR | Scope | Gate |
 |---|---|---|
-| **P5a** | `contrast_correct` + `SurfaceLevel` / `TextTokens` + surface mid-band guard + G-text/G-fill/G-custom tests. Flat text fields still present, populated from `S0`, so the tree still builds. | new tests green |
+| **P5a** | `contrast_correct` + `SurfaceLevel` / `TextTokens` + G-text/G-fill/G-custom tests. Flat text fields still present, populated from `S0`, so the tree still builds. | new tests green |
 | **P5b** | Remove the flat text fields; migrate all call sites to `text_on(level)`. Largest PR, entirely compiler-driven. | `cargo clippy -- -D warnings`, full suite |
 | **P5c** | `BuiltinScheme::HighContrast` + config/docs touch list + G-hc. | G-hc green |
 | **P5d** | Retire `settings/row.rs::ensure_readable` in favour of `contrast_correct`; keep one shared helper for *composited* grounds (hover fills over a surface) where the effective background is not a token. Delete the P3b3 escape hatch. | full suite |
@@ -297,5 +325,6 @@ can change a colour by accident rather than by design.
 
 ## 8. Open questions
 
-None blocking. D1 and D2 are settled; §3.2's mid-band guard and §3.3's field
-removal are consequences of them rather than independent choices.
+None blocking. D1 and D2 are settled, and §3.3's field removal is a consequence
+of them rather than an independent choice. §3.2 records a proposal that
+measurement retired before any code was written.
