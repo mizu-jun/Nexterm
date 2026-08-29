@@ -24,6 +24,7 @@
 mod curve;
 mod easing;
 mod hover;
+mod press;
 mod surface;
 mod timed;
 
@@ -33,6 +34,7 @@ pub use curve::{Curve, duration};
 pub use easing::{compute_progress, ease_out_cubic};
 // Consumed by the two overlay models in Tasks 3 and 4.
 pub use hover::HoverTransition;
+pub use press::PressPulse;
 pub use surface::SurfaceMotion;
 pub use timed::Timed;
 
