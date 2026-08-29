@@ -39,6 +39,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   name table as TOML, so a scheme is reachable from both the moment it exists.
 
 ### Changed
+- The chrome surface ramp now picks its direction with the same predicate the
+  text correction uses (WCAG relative luminance against the readability
+  watershed) instead of BT.709 on undecoded sRGB channels, and is capped so no
+  surface crosses that watershed. The two predicates disagreed for a band of
+  backgrounds — a saturated `#FF3100` was "dark" to one and "light" to the
+  other — and where they disagreed the ramp climbed away from the text, leaving
+  chrome text that reused one colour across the ramp as low as 2.39:1 on custom
+  palettes. No built-in scheme is in either affected band, so none of them
+  changes; a background near the watershed now gets a compressed ramp, which is
+  the accepted cost (UI/UX v3 P5e).
 - The settings panel's `ensure_readable` contrast helper is retired in favour of
   `contrast_correct`, exposed as `color_util::readable_on`. The old helper
   raised alpha and nothing else, so a colour that clashed with its ground in hue

@@ -121,6 +121,55 @@ fn shift(v: f32, amount: f32, is_dark: bool) -> f32 {
     }
 }
 
+/// Largest fraction of the nominal surface ramp that keeps every surface on the
+/// same side of [`NEUTRAL_LUMINANCE`] as the terminal background (UI/UX v3
+/// P5e). `1.0` means the full ramp fits, which is the case for every built-in
+/// scheme.
+///
+/// The ramp exists so chrome surfaces read as layered above the terminal, and
+/// it climbs *toward* the foreground — which is why contrast decays `s0 → s3`
+/// and why `s3` is the worst case a text colour has to clear. That reasoning
+/// only holds while all four surfaces want their text corrected the same way.
+/// A ramp that crosses the watershed has `s0` asking for light text and `s3`
+/// for dark: no single colour reads on both, so a call site cannot pick one
+/// colour for a ground that moves between them, and
+/// `text_corrected_for_the_deepest_surface_reads_on_every_shallower_one` fails.
+///
+/// Compressing the ramp is the cost, and it is charged only to palettes whose
+/// background sits near the watershed — where, by §3.1 of the P5 spec, the best
+/// contrast obtainable is ≈ 4.58:1 anyway. Such a palette has no room for a
+/// wide ramp *and* legible text; this spends what room there is on the text.
+fn ramp_scale(bg: [f32; 3], is_dark: bool) -> f32 {
+    // Shifting every channel by `k * MAX_STEP` moves luminance monotonically,
+    // so "has crossed" is an upper interval in `k` and bisect applies. `k = 0`
+    // never crosses (it is the background itself), which is the precondition
+    // `bisect` documents.
+    const MAX_STEP: f32 = 0.22;
+    let crosses = |k: f32| {
+        let shifted = bg.map(|c| shift(c, MAX_STEP * k, is_dark));
+        let y = wcag_luminance(shifted);
+        if is_dark {
+            y > NEUTRAL_LUMINANCE
+        } else {
+            y < NEUTRAL_LUMINANCE
+        }
+    };
+    if !crosses(1.0) {
+        return 1.0;
+    }
+    // Not `bisect`: that returns the smallest `k` for which the predicate
+    // *holds*, which here is the first `k` that crosses. We need the last one
+    // that does not, so keep `lo`. The difference is one resolution step in
+    // general and the whole answer for a background sitting on the watershed,
+    // where every positive shift crosses and the ramp must collapse to zero.
+    let (mut lo, mut hi) = (0.0_f32, 1.0_f32);
+    for _ in 0..BISECT_STEPS {
+        let mid = 0.5 * (lo + hi);
+        if crosses(mid) { hi = mid } else { lo = mid }
+    }
+    lo
+}
+
 /// Build an opaque `[f32; 4]` from three `f32` channels.
 #[inline]
 fn rgba(r: f32, g: f32, b: f32, a: f32) -> [f32; 4] {
@@ -446,13 +495,26 @@ impl DesignTokens {
         let [br, bg_g, bb] = palette.bg.map(u8_to_f32);
         let [fr, fg_g, fb] = palette.fg.map(u8_to_f32);
 
-        let is_dark = luminance(br, bg_g, bb) < 0.35;
+        // UI/UX v3 P5e: the ramp direction and the text-correction direction
+        // must come from the *same* predicate. They did not: the ramp asked
+        // `luminance(raw) < 0.35` (BT.709 on undecoded channels) while
+        // `contrast_correct` asks `wcag_luminance < NEUTRAL_LUMINANCE`. The two
+        // disagree for backgrounds around sRGB 0.36-0.46, and where they
+        // disagree the ramp climbs *away* from the text — which inverts which
+        // surface is the worst case and breaks the property P5b's call sites
+        // rely on. Every built-in sits far from both thresholds, so this
+        // changes no built-in scheme; `builtin_surfaces_are_unchanged_by_p5e`
+        // pins that.
+        let bg_rgb = [br, bg_g, bb];
+        let is_dark = wcag_luminance(bg_rgb) < NEUTRAL_LUMINANCE;
 
-        // Surface steps: 0.045 / 0.10 / 0.16 / 0.22
-        let s1 = 0.045_f32;
-        let s2 = 0.10_f32;
-        let s3 = 0.16_f32;
-        let s4 = 0.22_f32;
+        // Surface steps: 0.045 / 0.10 / 0.16 / 0.22, scaled so the ramp cannot
+        // cross the watershed (see `ramp_scale`).
+        let ramp = ramp_scale(bg_rgb, is_dark);
+        let s1 = 0.045_f32 * ramp;
+        let s2 = 0.10_f32 * ramp;
+        let s3 = 0.16_f32 * ramp;
+        let s4 = 0.22_f32 * ramp;
 
         let surface_0 = rgba(br, bg_g, bb, 1.0);
         let surface_1 = rgba(
