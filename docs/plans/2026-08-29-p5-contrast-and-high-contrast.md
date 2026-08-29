@@ -1,6 +1,6 @@
 # P5 — Contrast everywhere & a high-contrast scheme (design spec)
 
-Status: **P5a / P5b / P5c shipped; P5d outstanding**
+Status: **shipped — P5a / P5b / P5c / P5d all landed 2026-08-29**
 Date: 2026-08-29
 Parent plan: [`ui-ux-modernization-v3.md`](./ui-ux-modernization-v3.md) § P5
 Addresses: G10 (principle: Complete + Coherent)
@@ -330,7 +330,7 @@ holds, that arm is deleted and the test asserts a flat 4.5:1.
 | **P5a** | `contrast_correct` + `SurfaceLevel` / `TextTokens` + G-text/G-fill/G-custom tests. Flat text fields still present, populated from `S0`, so the tree still builds. | new tests green |
 | **P5b** | Remove the flat text fields; migrate all call sites to `text_on(level)`. Largest PR, entirely compiler-driven. | `cargo clippy -- -D warnings`, full suite |
 | **P5c** | `BuiltinScheme::HighContrast` + `ContrastTarget` on `SchemePalette` + config/docs touch list + G-hc. **Shipped 2026-08-29.** | G-hc green |
-| **P5d** | Retire `settings/row.rs::ensure_readable` in favour of `contrast_correct`; keep one shared helper for *composited* grounds (hover fills over a surface) where the effective background is not a token. Delete the P3b3 escape hatch. | full suite |
+| **P5d** | Retire `settings/row.rs::ensure_readable` in favour of `contrast_correct`; keep one shared helper for *composited* grounds (hover fills over a surface) where the effective background is not a token. Delete the P3b3 escape hatch. **Shipped 2026-08-29.** | full suite |
 
 P5b is the risk concentration: it is wide but mechanical, and the only PR that
 can change a colour by accident rather than by design.
@@ -351,6 +351,33 @@ can change a colour by accident rather than by design.
 
 ## 8. Open questions
 
-None blocking. D1 and D2 are settled, and §3.3's field removal is a consequence
+### Found during P5d: the cross-level property does not generalise
+
+`text_corrected_for_the_deepest_surface_reads_on_every_shallower_one` (§5) is
+what licenses P5b's rule — where a ground moves with state, take the deepest
+level it can reach — and it passes on all ten built-ins. It does **not** hold in
+general. Sweeping 2000 generated palettes, **919 (46 %)** have at least one
+`text_on(S3)` token that falls below 4.5:1 on `surface_0`, `surface_1` or
+`surface_2`; the worst cell measured **2.39:1**.
+
+The cause is that the correction picks its direction per level, from
+`wcag_luminance(surface) > NEUTRAL_LUMINANCE`. On every built-in the four
+surfaces sit on one side of that line, so all four corrections push the same
+way and the deepest is the worst case. A palette whose ramp *straddles* the line
+gets a colour darkened for `S3` and then drawn on a darker `S0`. It is not the
+mid-band ceiling §3.2 dismissed — each level still clears its own ground, which
+is why G-text and G-custom both pass. It is only the cross-level reuse that
+breaks.
+
+This is a **derivation** question, not a call-site one, so P5d did not patch
+around it: the D1 decision is that legibility is a property of `DesignTokens`.
+Nothing ships broken today — no built-in is affected, and the sites that rely on
+the rule are chrome, not terminal content. Options for whoever picks it up:
+extend the G-text gate to assert the cross-level property over generated
+palettes and constrain the ramp so a straddle cannot happen, or drop the
+"deepest level" rule in favour of correcting against the actual composited
+ground at those few sites (which `readable_on` already makes cheap).
+
+Otherwise: none blocking. D1 and D2 are settled, and §3.3's field removal is a consequence
 of them rather than an independent choice. §3.2 records a proposal that
 measurement retired before any code was written.

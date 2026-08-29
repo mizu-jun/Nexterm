@@ -13,14 +13,13 @@
 //! [`truncate_to_width`] / [`wrap_text`] so long labels/values/descriptions
 //! can no longer overflow the content area.
 //!
-//! [`ensure_readable`] additionally covers the settings-panel contrast audit
-//! (Phase B3): tokens like `text_muted` carry a fixed alpha tuned for
-//! readability against an opaque UI in general, but once alpha-blended
-//! into a specific panel surface (e.g. `surface_2` for body content,
-//! `surface_3` for the title bar) the effective on-screen color can land
-//! under the project's 4.5:1 contrast floor. Callers pass the exact
-//! background the text is drawn over so the check reflects reality rather
-//! than a generic assumption.
+//! UI/UX v3 P5d retired `ensure_readable` from here. It raised alpha and
+//! nothing else, so it could only fix translucency — and P5's measurement
+//! showed most failures were hue/luminance clashes it returned unchanged.
+//! Text now takes an already-corrected colour from
+//! `DesignTokens::text_on(level)`, and the few grounds that are not a surface
+//! token (this module's danger-button fill among them) go through
+//! [`crate::color_util::readable_on`], which is `contrast_correct`.
 
 use crate::font::FontManager;
 use crate::glyph_atlas::{GlyphAtlas, TextVertex};
@@ -28,33 +27,6 @@ use crate::vertex_util::{add_run_verts, add_string_verts, truncate_run_to_width}
 
 use super::super::util::{danger_fill, wrap_text};
 use nexterm_config::SurfaceLevel;
-
-/// WCAG 2.x contrast floor used throughout the settings panel (project
-/// accessibility guideline: see `CLAUDE.md` "UI/UX Guidelines").
-pub(in crate::renderer) const MIN_TEXT_CONTRAST: f32 = 4.5;
-
-/// Bump `color`'s alpha (hue/RGB unchanged) until it reaches at least
-/// `min_ratio` WCAG contrast against `bg`, an opaque panel surface color.
-/// Returns `color` unchanged when it already clears the bar. Alpha is
-/// capped at 1.0 (fully opaque); if even that fails to reach `min_ratio`
-/// (a hue/luminance clash rather than a translucency problem), the fully
-/// opaque color is returned as the best achievable result.
-pub(in crate::renderer) fn ensure_readable(
-    color: [f32; 4],
-    bg: [f32; 4],
-    min_ratio: f32,
-) -> [f32; 4] {
-    let bg_rgb = [bg[0], bg[1], bg[2]];
-    let mut alpha = color[3];
-    loop {
-        let candidate = [color[0], color[1], color[2], alpha];
-        let effective = crate::color_util::composite_over(candidate, bg_rgb);
-        if crate::color_util::contrast_ratio(effective, bg_rgb) >= min_ratio || alpha >= 1.0 {
-            return candidate;
-        }
-        alpha = (alpha + 0.02).min(1.0);
-    }
-}
 
 /// Fill / label pair for a destructive-confirmation button.
 ///
@@ -86,11 +58,7 @@ pub(in crate::renderer) fn danger_button_colors(
         let bg = danger_fill(tokens, 0.18);
         (
             bg,
-            ensure_readable(
-                tokens.text_on(SurfaceLevel::S2).primary,
-                bg,
-                MIN_TEXT_CONTRAST,
-            ),
+            crate::color_util::readable_on(tokens.text_on(SurfaceLevel::S2).primary, bg),
         )
     }
 }
@@ -207,16 +175,15 @@ mod contrast_tests {
         crate::color_util::contrast_ratio(effective, bg_rgb)
     }
 
-    // UI/UX v3 P5b removed two tests from here. `raw_text_muted_fails_
-    // contrast_on_content_surface` asserted that the *uncorrected* muted
-    // token fails 4.5:1 on `surface_2` — the bug `ensure_readable` existed to
-    // paper over. That colour is no longer reachable: the token layer corrects
-    // per surface and the flat field is gone.
-    // `settings_panel_text_pairs_meet_contrast_after_ensure_readable` walked
-    // four (token, surface) pairs by hand; `nexterm-config`'s
-    // `every_builtin_scheme_meets_the_text_floor_on_every_surface` now covers
-    // all nine schemes × four surfaces × eight tokens, so keeping a hand-listed
-    // subset here would only be a second place to forget to update.
+    // UI/UX v3 P5b removed two tests from here, and P5d a third. The first two
+    // asserted things about `ensure_readable` and about the uncorrected muted
+    // token; neither colour is reachable any more, and `nexterm-config`'s
+    // `every_builtin_scheme_meets_the_text_floor_on_every_surface` covers every
+    // scheme × surface × token, so a hand-listed subset here would only be a
+    // second place to forget to update. The third,
+    // `ensure_readable_is_a_no_op_when_already_readable`, moved with the helper
+    // it tested: `contrast_correct`'s own early return is pinned in
+    // `nexterm-config`.
 
     /// UI/UX v3 (G11 follow-up): the Ssh and Keybindings delete dialogs used
     /// to hand-mix their own reds. Whatever the scheme, the confirmation
@@ -227,15 +194,29 @@ mod contrast_tests {
     /// Light, dark label) focused; 6.55 at rest in both.
     #[test]
     fn danger_button_labels_clear_the_contrast_floor() {
-        for (name, tokens) in [
-            ("tokyo_night", tokyo_night_tokens()),
-            ("gruvbox_light", gruvbox_light_tokens()),
-        ] {
+        // UI/UX v3 P5d: the resting label is the one live caller of
+        // `color_util::readable_on`, because its ground is a blended
+        // `danger_fill` rather than a surface token — the case the token layer
+        // cannot pre-correct. So sweep every built-in scheme here, plus the
+        // out-of-tree Gruvbox Light palette for a light ground.
+        let mut cases: Vec<(String, nexterm_config::DesignTokens)> =
+            nexterm_config::BuiltinScheme::all()
+                .iter()
+                .map(|s| {
+                    (
+                        s.display_name().to_string(),
+                        nexterm_config::DesignTokens::from_palette(&s.palette()),
+                    )
+                })
+                .collect();
+        cases.push(("gruvbox_light".to_string(), gruvbox_light_tokens()));
+
+        for (name, tokens) in cases {
             for focused in [true, false] {
                 let (bg, fg) = danger_button_colors(&tokens, focused);
                 let cr = contrast_of(fg, bg);
                 assert!(
-                    cr >= MIN_TEXT_CONTRAST,
+                    cr >= nexterm_config::MIN_TEXT_CONTRAST,
                     "{name} focused={focused}: label only reached {cr}"
                 );
             }
@@ -257,15 +238,5 @@ mod contrast_tests {
                 "focused {focused_bg:?} is not redder than resting {resting_bg:?}"
             );
         }
-    }
-
-    /// A color that already clears the bar must be returned unchanged (no
-    /// unnecessary alpha bump / no visual drift for already-readable text).
-    #[test]
-    fn ensure_readable_is_a_no_op_when_already_readable() {
-        let tokens = tokyo_night_tokens();
-        let already_fine = tokens.text_on(SurfaceLevel::S2).primary;
-        let adjusted = ensure_readable(already_fine, tokens.surface_2, MIN_TEXT_CONTRAST);
-        assert_eq!(adjusted, already_fine);
     }
 }

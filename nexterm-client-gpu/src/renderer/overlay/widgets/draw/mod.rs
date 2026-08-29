@@ -30,7 +30,6 @@ use crate::vertex_util::{
     add_px_rounded_rect_sdf, add_px_stroke_sdf, add_run_verts, measure_run, truncate_run_to_width,
 };
 
-use super::super::settings::row::{MIN_TEXT_CONTRAST, ensure_readable};
 use super::spec::{WidgetKind, WidgetRect, WidgetSpec};
 use nexterm_config::SurfaceLevel;
 
@@ -205,17 +204,17 @@ fn draw_label(
     } else if spec.desc.invalid {
         // A failed validation outranks the search accent: the row has to read
         // as broken even while a filter is highlighting it.
-        theme.tokens.semantic_error
+        theme.tokens.text_on(SurfaceLevel::S3).error
     } else if spec.desc.search_match {
         // While a search is active, matching rows pop out in the accent
         // colour so the eye lands on them first.
-        theme.tokens.accent_primary
+        theme.tokens.text_on(SurfaceLevel::S3).accent
     } else if spec.focused() {
         theme.tokens.text_on(SurfaceLevel::S3).primary
     } else {
         theme.tokens.text_on(SurfaceLevel::S3).secondary
     };
-    let color = ensure_readable(base, theme.tokens.surface_2, MIN_TEXT_CONTRAST);
+    let color = base;
     let label_w = (spec.control_rect.x - spec.rect.x).max(0.0);
     let style = row_style(theme, spec.focused());
     draw_row_run(
