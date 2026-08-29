@@ -90,6 +90,10 @@ impl WgpuState {
         bg_idx: &mut Vec<u16>,
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
+        // UI/UX v3 P3c: `config.animations.os_reduced_motion()`, threaded in
+        // by the caller so the Window tab's animations-enabled row can show
+        // which way `auto` currently resolves.
+        animations_os_reduced: bool,
     ) -> Option<SettingsPanelScrollMetrics> {
         use crate::settings_panel::SettingsCategory;
 
@@ -376,6 +380,7 @@ impl WgpuState {
                     bg_idx,
                     text_verts,
                     text_idx,
+                    animations_os_reduced,
                 ),
                 SettingsCategory::Profiles => profiles_tab::draw_profiles_tab(
                     sp,

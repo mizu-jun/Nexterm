@@ -84,7 +84,7 @@ impl SettingsPanel {
         doc["tab_bar"]["show_new_tab_button"] = toml_edit::value(self.tab_show_new_tab_button);
 
         // [animations].enabled / intensity (Phase B4).
-        doc["animations"]["enabled"] = toml_edit::value(self.animations_enabled);
+        doc["animations"]["enabled"] = toml_edit::value(self.animations_enabled_toml_value());
         doc["animations"]["intensity"] = toml_edit::value(self.animations_intensity_toml_key());
 
         // [window].decorations / close_action, [gpu].fps_limit (Phase B4-P2).

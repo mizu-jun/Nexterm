@@ -267,8 +267,8 @@ pub struct SettingsPanel {
     pub tab_show_tab_number: bool,
     /// `[tab_bar].show_new_tab_button` mirror.
     pub tab_show_new_tab_button: bool,
-    /// `[animations].enabled` mirror.
-    pub animations_enabled: bool,
+    /// `[animations].enabled` mirror (UI/UX v3 P3c: tri-state).
+    pub animations_enabled: nexterm_config::AnimationsEnabled,
     /// `[animations].intensity` mirror.
     pub animations_intensity: nexterm_config::AnimationIntensity,
 
@@ -443,8 +443,7 @@ impl SettingsPanel {
             scrollback_lines: config.scrollback_lines,
             tab_show_tab_number: config.tab_bar.show_tab_number,
             tab_show_new_tab_button: config.tab_bar.show_new_tab_button,
-            // UI/UX v3 P3c: Task 4 replaces this bool mirror with the tri-state.
-            animations_enabled: config.animations.enabled != nexterm_config::AnimationsEnabled::No,
+            animations_enabled: config.animations.enabled,
             animations_intensity: config.animations.intensity.clone(),
             window_decorations: config.window.decorations.clone(),
             window_backdrop: config.window.backdrop,

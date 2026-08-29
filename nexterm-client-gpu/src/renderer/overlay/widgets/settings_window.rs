@@ -40,7 +40,7 @@ pub(crate) mod row {
     pub const SHOW_TAB_NUMBER: u16 = 7;
     /// Show new-tab button (toggle).
     pub const SHOW_NEW_TAB_BUTTON: u16 = 8;
-    /// Animations enabled (toggle).
+    /// Animations enabled (cycler: auto / on / off).
     pub const ANIMATIONS_ENABLED: u16 = 9;
     /// Animation intensity (cycler).
     pub const ANIMATION_INTENSITY: u16 = 10;
@@ -144,8 +144,14 @@ fn kind(sp: &SettingsPanel, index: u16) -> WidgetKind {
         row::SHOW_NEW_TAB_BUTTON => WidgetKind::Toggle {
             on: sp.tab_show_new_tab_button,
         },
-        row::ANIMATIONS_ENABLED => WidgetKind::Toggle {
-            on: sp.animations_enabled,
+        // The `auto` row's label depends on the live OS signal
+        // (`AnimationsConfig::os_reduced_motion`), which this descriptor list
+        // does not have access to (it is shared with AccessKit and the
+        // keyboard-navigation walk, neither of which measures the OS state
+        // per frame). It resolves as "normal" here; `build_window_widgets`
+        // overwrites this row with the frame's real value before drawing.
+        row::ANIMATIONS_ENABLED => WidgetKind::Cycle {
+            value: sp.animations_enabled_label(false),
         },
         row::ANIMATION_INTENSITY => WidgetKind::Cycle {
             value: sp.animations_intensity_label().to_string(),
@@ -209,14 +215,28 @@ const ROW_BLEED: f32 = 0.3;
 /// Rows hidden by the sidebar search get a zero-sized rect rather than being
 /// dropped, so widget indices stay aligned with `focused_widget_index` and the
 /// AccessKit tree.
-pub(crate) fn build_window_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<WidgetSpec> {
+///
+/// `animations_os_reduced` is the OS-reduced-motion signal this frame
+/// measured (`config.animations.os_reduced_motion()`); it overrides the
+/// `auto` row's descriptor, which otherwise defaults to the normal-motion
+/// wording (see the comment on that arm in `kind`).
+pub(crate) fn build_window_widgets(
+    sp: &SettingsPanel,
+    g: &TabGeometry,
+    animations_os_reduced: bool,
+) -> Vec<WidgetSpec> {
     let layout = super::super::settings::layout::compute_row_layout(g.content_w, g.cell_w);
     let visible = sp.visible_window_rows();
     let rows_top = g.content_top + g.cell_h * ROWS_TOP;
 
     window_widget_descs(sp)
         .into_iter()
-        .map(|desc| {
+        .map(|mut desc| {
+            if desc.id.index == row::ANIMATIONS_ENABLED {
+                desc.kind = WidgetKind::Cycle {
+                    value: sp.animations_enabled_label(animations_os_reduced),
+                };
+            }
             let matched = sp.label_matches_search(&desc.label);
             let desc = desc.search_match(matched);
             let index = desc.id.index;
@@ -299,7 +319,7 @@ pub(crate) fn apply_window_action(
             row::CURSOR_BLINK => sp.toggle_cursor_blink(),
             row::SHOW_TAB_NUMBER => sp.toggle_show_tab_number(),
             row::SHOW_NEW_TAB_BUTTON => sp.toggle_show_new_tab_button(),
-            row::ANIMATIONS_ENABLED => sp.toggle_animations_enabled(),
+            row::ANIMATIONS_ENABLED => sp.next_animations_enabled(),
             row::ANIMATION_INTENSITY => sp.next_animations_intensity(),
             row::DECORATIONS => sp.next_window_decorations(),
             row::CLOSE_ACTION => sp.next_window_close_action(),
@@ -367,8 +387,8 @@ mod tests {
         let descs = window_widget_descs(&panel());
         let count = |f: fn(&WidgetKind) -> bool| descs.iter().filter(|d| f(&d.kind)).count();
         assert_eq!(count(|k| matches!(k, WidgetKind::Slider { .. })), 6);
-        assert_eq!(count(|k| matches!(k, WidgetKind::Toggle { .. })), 5);
-        assert_eq!(count(|k| matches!(k, WidgetKind::Cycle { .. })), 6);
+        assert_eq!(count(|k| matches!(k, WidgetKind::Toggle { .. })), 4);
+        assert_eq!(count(|k| matches!(k, WidgetKind::Cycle { .. })), 7);
     }
 
     #[test]
@@ -432,7 +452,7 @@ mod tests {
     #[test]
     fn rows_stack_without_overlapping() {
         let g = geometry();
-        let specs = build_window_widgets(&panel(), &g);
+        let specs = build_window_widgets(&panel(), &g, false);
         for pair in specs.windows(2) {
             let (a, b) = (&pair[0], &pair[1]);
             assert!(
@@ -455,7 +475,7 @@ mod tests {
         let visible = sp.visible_window_rows();
         assert!(visible.len() < WINDOW_ROW_COUNT, "the query must filter");
 
-        let specs = build_window_widgets(&sp, &geometry());
+        let specs = build_window_widgets(&sp, &geometry(), false);
         for spec in &specs {
             let shown = visible.contains(&(spec.id().index as usize));
             assert_eq!(
@@ -476,7 +496,7 @@ mod tests {
             .collect();
         let visible = sp.visible_window_rows();
         let g = geometry();
-        let specs = build_window_widgets(&sp, &g);
+        let specs = build_window_widgets(&sp, &g, false);
 
         // Every hit anywhere in the tab must land on a row the filter kept.
         for y in 0..600 {
@@ -497,7 +517,7 @@ mod tests {
         // layer; losing it in the migration would be a silent regression.
         let mut sp = panel();
         assert!(
-            build_window_widgets(&sp, &geometry())
+            build_window_widgets(&sp, &geometry(), false)
                 .iter()
                 .all(|s| !s.desc.search_match),
             "an idle search must not highlight anything"
@@ -507,7 +527,7 @@ mod tests {
             .chars()
             .take(4)
             .collect();
-        let specs = build_window_widgets(&sp, &geometry());
+        let specs = build_window_widgets(&sp, &geometry(), false);
         assert!(
             specs[row::OPACITY as usize].desc.search_match,
             "the matched row must be flagged"
@@ -524,14 +544,14 @@ mod tests {
         // than leaving the user an empty page.
         let mut sp = panel();
         sp.search_query = "zzzzzzzz".to_string();
-        let specs = build_window_widgets(&sp, &geometry());
+        let specs = build_window_widgets(&sp, &geometry(), false);
         assert!(specs.iter().all(|s| s.rect.w > 0.0 && s.rect.h > 0.0));
     }
 
     #[test]
     fn hit_testing_a_visible_row_returns_it() {
         let g = geometry();
-        let specs = build_window_widgets(&panel(), &g);
+        let specs = build_window_widgets(&panel(), &g, false);
         let target = &specs[row::CURSOR_STYLE as usize];
         let (cx, cy) = target.rect.center();
         assert_eq!(
