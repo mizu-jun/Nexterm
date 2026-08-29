@@ -30,8 +30,9 @@ mod keybindings_tab;
 // same label/control column split.
 pub(super) mod layout;
 mod profiles_tab;
-// `pub(super)` so the sibling `widgets` module can reuse the contrast helper
-// (`ensure_readable`) instead of duplicating the WCAG correction.
+// `pub(super)` so the sibling `widgets` module can reuse the row builders. The
+// contrast helper that used to live here moved to `color_util::readable_on`
+// with UI/UX v3 P5d.
 pub(super) mod row;
 mod security_tab;
 mod sidebar;
@@ -217,9 +218,6 @@ impl WgpuState {
             bg_idx,
         );
 
-        // Title. `text_secondary` (fg at 0.78 alpha) drawn over `surface_3`
-        // falls short of the 4.5:1 contrast floor for some themes (Phase B3
-        // contrast audit) — nudge it up via `ensure_readable` rather than
         // Metric tokens for the widget layer and, since P4b, for the chrome
         // type ramp. The panel does not have `UiConfig` plumbed through yet,
         // and the values read here (`radius.control`, `type_ramp`) are the
@@ -228,8 +226,12 @@ impl WgpuState {
         // the DPI conversion for the ramp, and pre-scaling would double it.
         let metrics = nexterm_config::MetricTokens::default();
 
-        // hard-coding `text_primary`, so it still tracks the scheme's own
-        // secondary-text tone wherever that already clears the bar.
+        // Title. `text_secondary` (fg at 0.78 alpha) over `surface_3` used to
+        // fall short of the 4.5:1 floor on some themes (Phase B3 contrast
+        // audit), which is what the old `ensure_readable` call here was for.
+        // The S3 text set is already corrected against that ground, so naming
+        // the level is the whole fix — and it still tracks the scheme's own
+        // secondary tone wherever that already cleared the bar (P5b/P5d).
         let title_color = tokens.text_on(SurfaceLevel::S3).secondary;
         // UI/UX v3 P4b: Title — `metrics.rs` names that step "dialog titles",
         // and the panel's own heading is the same kind of thing. Note the
@@ -704,11 +706,9 @@ impl WgpuState {
         // `settings_panel_hit.rs` mirrors this exact geometry.
         let open_label = format!("↗ {}", nexterm_i18n::fl!("settings-open-config-file"));
         let open_label_w = crate::vertex_util::visual_width(&open_label) as f32 * cell_w;
-        let link_color = row::ensure_readable(
-            tokens.accent_primary,
-            tokens.surface_0,
-            row::MIN_TEXT_CONTRAST,
-        );
+        // The bar behind this link is `surface_0` (drawn just above), which is
+        // also where the footer hint takes its colour from.
+        let link_color = tokens.text_on(SurfaceLevel::S0).accent;
         add_string_verts(
             &open_label,
             px + panel_w - open_label_w - cell_w,

@@ -690,7 +690,7 @@ gated behind a spike.
       - [ ] P4 follow-up — the hit-region work that would let the dialog
       buttons and the footer's `↗` / `↺` links move too; see the design spec's
       §8
-- [ ] P5 contrast everywhere + high-contrast scheme
+- [x] P5 contrast everywhere + high-contrast scheme (P5a–P5d, 2026-08-29)
 - [ ] P6 InfoBar + consent reclassification
 - [x] P7 base `notitle` custom title bar — shipped early via #46 (2026-07-30)
 - [x] P7 spike: Windows 11 snap layouts — answered in production via #49 (2026-07-31)

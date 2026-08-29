@@ -4,7 +4,6 @@ use crate::font::FontManager;
 use crate::glyph_atlas::GlyphAtlas;
 use crate::vertex_util::{add_icon_verts, add_px_rounded_rect_sdf, icon_size_for_slot};
 
-use super::super::super::settings::row::{MIN_TEXT_CONTRAST, ensure_readable};
 use super::super::spec::WidgetSpec;
 use super::{
     FOCUS_RING_PX, WidgetSink, WidgetTheme, draw_focus_ring, draw_row_run, draw_row_run_centred,
@@ -112,22 +111,17 @@ pub(super) fn draw_cycle(
     let chevron_color = if !spec.enabled() {
         theme.tokens.text_on(SurfaceLevel::S3).muted
     } else if spec.focused() {
-        theme.tokens.accent_primary
+        theme.tokens.text_on(SurfaceLevel::S3).accent
     } else {
         theme.tokens.text_on(SurfaceLevel::S3).muted
     };
-    let chevron_color = ensure_readable(chevron_color, theme.tokens.surface_2, MIN_TEXT_CONTRAST);
-    let value_color = ensure_readable(
-        if !spec.enabled() {
-            theme.tokens.text_on(SurfaceLevel::S3).muted
-        } else if spec.desc.invalid {
-            theme.tokens.semantic_error
-        } else {
-            theme.tokens.text_on(SurfaceLevel::S3).primary
-        },
-        theme.tokens.surface_2,
-        MIN_TEXT_CONTRAST,
-    );
+    let value_color = if !spec.enabled() {
+        theme.tokens.text_on(SurfaceLevel::S3).muted
+    } else if spec.desc.invalid {
+        theme.tokens.text_on(SurfaceLevel::S3).error
+    } else {
+        theme.tokens.text_on(SurfaceLevel::S3).primary
+    };
     let y = text_baseline(spec.rect, theme);
     let right_x = spec.control_rect.x + spec.control_rect.w - theme.cell_w;
 
@@ -239,17 +233,15 @@ pub(super) fn draw_button(
 ) {
     draw_button_face(spec, destructive, theme, sink);
 
-    let color = ensure_readable(
-        if !spec.enabled() {
-            theme.tokens.text_on(SurfaceLevel::S3).muted
-        } else if destructive {
-            theme.tokens.semantic_error
-        } else {
-            theme.tokens.text_on(SurfaceLevel::S3).primary
-        },
-        theme.tokens.surface_3,
-        MIN_TEXT_CONTRAST,
-    );
+    // The button face is `surface_3` verbatim (see `draw_button_face`), so the
+    // S3 text set is already corrected against it.
+    let color = if !spec.enabled() {
+        theme.tokens.text_on(SurfaceLevel::S3).muted
+    } else if destructive {
+        theme.tokens.text_on(SurfaceLevel::S3).error
+    } else {
+        theme.tokens.text_on(SurfaceLevel::S3).primary
+    };
     let style = row_style(theme, spec.focused());
     draw_row_run_centred(
         &spec.desc.label,

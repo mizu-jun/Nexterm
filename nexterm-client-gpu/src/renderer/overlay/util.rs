@@ -1,6 +1,6 @@
 //! Shared helpers used by overlay rendering.
 
-use super::settings::row::MIN_TEXT_CONTRAST;
+use nexterm_config::MIN_TEXT_CONTRAST;
 
 /// Extract the requesting pane ID from a consent-dialog kind
 pub(super) fn pane_id_for(kind: &crate::state::ConsentKind) -> Option<u32> {
@@ -326,9 +326,7 @@ mod tests {
     /// selected), 4.87:1 (Solarized, Cancel selected).
     #[test]
     fn dialog_button_labels_clear_the_contrast_floor() {
-        // Mirrors `row::MIN_TEXT_CONTRAST`, which is scoped to the settings
-        // panel's module tree.
-        const FLOOR: f32 = 4.5;
+        const FLOOR: f32 = MIN_TEXT_CONTRAST;
         for scheme in nexterm_config::BuiltinScheme::all().iter().copied() {
             let tokens = tokens_for(scheme);
             let fills = [

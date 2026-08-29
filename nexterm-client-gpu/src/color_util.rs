@@ -261,6 +261,30 @@ pub(crate) fn composite_over(fg: [f32; 4], bg: [f32; 3]) -> [f32; 3] {
     nexterm_config::composite_over(fg, bg)
 }
 
+/// Correct `color` until it reads against `ground`, an opaque colour the text
+/// is actually drawn over.
+///
+/// This is the one correction that survives P5 (UI/UX v3 P5d). Almost every
+/// text run should take its colour from `DesignTokens::text_on(level)`, which is
+/// already corrected for its surface; this exists for the minority of grounds
+/// that are **not** a surface token — a danger button's blended fill, a badge,
+/// a hover layer composited over a surface — where the effective background is
+/// only known at draw time.
+///
+/// It replaces `settings/row.rs::ensure_readable`, which raised alpha and
+/// nothing else: when a colour still fell short at `alpha = 1.0` it returned
+/// that failing colour as its "best achievable result", so a hue/luminance
+/// clash — the majority of the failures P5 measured — passed straight through.
+/// [`nexterm_config::contrast_correct`] keeps the alpha stage as its first
+/// move and adds the value and saturation stages behind it.
+pub(crate) fn readable_on(color: [f32; 4], ground: [f32; 4]) -> [f32; 4] {
+    nexterm_config::contrast_correct(
+        color,
+        [ground[0], ground[1], ground[2]],
+        nexterm_config::MIN_TEXT_CONTRAST,
+    )
+}
+
 /// Brightness multiplier applied to a control's fill at full press weight
 /// (UI/UX v3 P3b3). Fluent's subtle-button ramp puts pressed below hover;
 /// this is that step, expressed as an HSV `v` multiplier so it follows every
@@ -808,18 +832,66 @@ mod tests {
         }
     }
 
-    /// Press must not cost legibility. Two ways to pass: stay above the WCAG AA
-    /// 4.5:1 floor, or — for a scheme already below it — not make the ratio
-    /// meaningfully worse. Solarized and OneDark carry contrast defects in their
-    /// resting chrome (known since P2b, tracked for P5), so a flat 4.5:1
-    /// assertion would fail on those pre-existing defects rather than on
-    /// anything P3b3 does. Fixing what press inherits is P5's job.
+    /// Press must not cost legibility: the text over a fully pressed control
+    /// stays above the WCAG AA 4.5:1 floor on every built-in scheme.
     ///
-    /// The 10% arm is sized by measurement, not taste: Solarized moves 3.52 →
-    /// 3.34 under a full pulse. That scheme is already a contrast defect at
-    /// rest — 3.52 was never legible — so the pulse deepens a problem P5 owns
-    /// rather than creating one. A tighter arm would block this phase on a fix
-    /// that belongs to another.
+    /// P3b3 could not assert that. It carried a second arm — "or at least do
+    /// not make the ratio more than 10% worse" — because Solarized and OneDark
+    /// were contrast defects at rest (Solarized moved 3.52 → 3.34 under a full
+    /// pulse; 3.52 was never legible), and a flat assertion would have failed
+    /// on a pre-existing defect rather than on anything press did. The comment
+    /// there named P5 as the owner of the fix. P5a/P5b delivered it in the
+    /// token layer, so P5d deletes the escape hatch and this is now the flat
+    /// assertion P3b3 wanted to write.
+    ///
+    /// The foreground moved with it. P3b3 sampled the `S1` text set because
+    /// the row's resting ground is `surface_1`; since P5b the row draws with
+    /// the `S3` set, precisely so a colour does not have to change when the
+    /// hover fill lands. Measuring `S1` here left the test asserting something
+    /// the renderer never draws — and on Solarized that reads 3.88 against the
+    /// hover composite, which is what kept the escape hatch alive. The hover
+    /// composite sits between `surface_1` and `surface_3`, so the `S3` colour
+    /// clears it by construction, and press only dims the fill further away
+    /// from the text.
+    /// The reason `ensure_readable` was retired rather than relocated
+    /// (UI/UX v3 P5d). It raised alpha only, so an opaque colour that clashed
+    /// with its ground came back untouched and still failing. `readable_on`
+    /// carries the value and saturation stages behind that same alpha stage.
+    #[test]
+    fn readable_on_fixes_a_hue_clash_alpha_alone_could_not() {
+        // Opaque mid-blue on near-black: 1.42:1, and already at alpha 1.0, so
+        // there is no translucency left for the old helper to spend.
+        let ground = [0.05, 0.05, 0.05, 1.0];
+        let clash = [0.2, 0.2, 0.9, 1.0];
+        let ground_rgb = [ground[0], ground[1], ground[2]];
+        assert!(
+            contrast_ratio([clash[0], clash[1], clash[2]], ground_rgb)
+                < nexterm_config::MIN_TEXT_CONTRAST,
+            "the fixture has to start out failing"
+        );
+
+        let fixed = readable_on(clash, ground);
+        assert!(
+            contrast_ratio(composite_over(fixed, ground_rgb), ground_rgb)
+                >= nexterm_config::MIN_TEXT_CONTRAST,
+            "readable_on left {fixed:?} below the floor"
+        );
+        assert!(
+            fixed[2] >= fixed[0] && fixed[2] >= fixed[1],
+            "the correction must stay blue, got {fixed:?}"
+        );
+    }
+
+    /// And it must leave an already-readable colour exactly alone — the
+    /// property `ensure_readable_is_a_no_op_when_already_readable` used to pin
+    /// in `settings/row.rs` before the helper moved here.
+    #[test]
+    fn readable_on_is_a_no_op_when_the_colour_already_reads() {
+        let tokens = nexterm_config::DesignTokens::default();
+        let already_fine = tokens.text_on(SurfaceLevel::S2).primary;
+        assert_eq!(readable_on(already_fine, tokens.surface_2), already_fine);
+    }
+
     #[test]
     fn press_never_worsens_text_contrast_on_any_builtin_scheme() {
         use nexterm_config::BuiltinScheme;
@@ -833,14 +905,14 @@ mod tests {
             let s = tokens.surface_3;
             let hovered = [s[0], s[1], s[2], s[3] * 0.35];
             let fg = [
-                tokens.text_on(SurfaceLevel::S1).primary[0],
-                tokens.text_on(SurfaceLevel::S1).primary[1],
-                tokens.text_on(SurfaceLevel::S1).primary[2],
+                tokens.text_on(SurfaceLevel::S3).primary[0],
+                tokens.text_on(SurfaceLevel::S3).primary[1],
+                tokens.text_on(SurfaceLevel::S3).primary[2],
             ];
             let before = contrast_ratio(fg, composite_over(hovered, bg));
             let after = contrast_ratio(fg, composite_over(press_fill(hovered, 1.0), bg));
             assert!(
-                after >= 4.5 || after >= before * 0.90,
+                after >= nexterm_config::MIN_TEXT_CONTRAST,
                 "{scheme:?}: press cut text contrast from {before} to {after}"
             );
         }

@@ -27,12 +27,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   receive the backdrop too; before this they received none.
 
 ### Fixed
+- Accent-coloured and error-coloured text in the settings panel (search-match
+  row labels, list entries, invalid values, destructive button labels, the "Open
+  config.toml" link) took the raw `accent_primary` / `semantic_error` *fill*
+  tokens, which are not corrected for legibility — on the Dark scheme accent
+  text measured 1.41–2.26:1. They now take the corrected text variants
+  (UI/UX v3 P5d).
 - Setting a colour scheme from `nexterm.lua` (`cfg.colors = "..."`) recognised
   only five of the nine built-in names; `catppuccin`, `dracula`, `nord` and
   `onedark` were silently downgraded to `dark`. The Lua path now shares the same
   name table as TOML, so a scheme is reachable from both the moment it exists.
 
 ### Changed
+- The settings panel's `ensure_readable` contrast helper is retired in favour of
+  `contrast_correct`, exposed as `color_util::readable_on`. The old helper
+  raised alpha and nothing else, so a colour that clashed with its ground in hue
+  or luminance came back unchanged and still failing; the replacement keeps that
+  alpha stage and adds value and saturation behind it. Almost every text run now
+  takes an already-corrected colour from `DesignTokens::text_on(level)` instead,
+  leaving the helper for grounds that are not a surface token — a danger
+  button's blended fill, for instance (UI/UX v3 P5d).
 - Requesting a backdrop now creates the window transparent on its own. Previously
   only `background_opacity < 1.0` did, so a backdrop on an opaque-configured
   window could never be visible.

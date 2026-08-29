@@ -4,7 +4,6 @@ use crate::font::FontManager;
 use crate::glyph_atlas::GlyphAtlas;
 use crate::vertex_util::add_px_rounded_rect_sdf;
 
-use super::super::super::settings::row::{MIN_TEXT_CONTRAST, ensure_readable};
 use super::super::spec::{WidgetRect, WidgetSpec};
 use super::{FOCUS_RING_PX, WidgetSink, WidgetTheme, draw_focus_ring, draw_row_run, row_style};
 use nexterm_config::SurfaceLevel;
@@ -41,13 +40,13 @@ pub(super) fn draw_list_item(
     let base = if !spec.enabled() {
         theme.tokens.text_on(SurfaceLevel::S3).muted
     } else if spec.desc.search_match {
-        theme.tokens.accent_primary
+        theme.tokens.text_on(SurfaceLevel::S3).accent
     } else if selected || spec.focused() {
         theme.tokens.text_on(SurfaceLevel::S3).primary
     } else {
         theme.tokens.text_on(SurfaceLevel::S3).secondary
     };
-    let color = ensure_readable(base, theme.tokens.surface_2, MIN_TEXT_CONTRAST);
+    let color = base;
 
     let inset = theme.cell_w * LABEL_INSET;
     let label_w = (spec.rect.w - inset).max(0.0);
