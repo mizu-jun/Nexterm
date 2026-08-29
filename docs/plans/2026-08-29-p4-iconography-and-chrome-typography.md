@@ -436,11 +436,33 @@ Gate: a structural test asserts neither file reconstructs a label or calls
 `footer_links` more than once, and that no dialog button is sized from
 `visual_width` again.
 
-Observed while measuring, **not** fixed: the footer links have no AccessKit
-node at all — `accessibility.rs` never mentions them, so a screen-reader user
-cannot reach "Open config.toml" or "Reset category". That is a P6c-shaped
-accessibility gap rather than a P4 typography one, and it belongs in its own
-change.
+Observed while measuring: the footer links had no AccessKit node at all —
+`accessibility.rs` never mentioned them, so a screen-reader user could not
+reach "Open config.toml" or "Reset category". Kept out of P4c because it is a
+P6c-shaped accessibility gap rather than a typography one, and **fixed
+separately in P4d** (§8.2).
+
+### 8.2 P4d — the footer links become reachable (2026-08-29)
+
+Both links are now `Role::Button` nodes at `SETTINGS_FOOTER_OPEN_ID` (31) and
+`SETTINGS_FOOTER_RESET_ID` (32), children of the panel dialog beside the
+content group — which is where they sit on screen. Three things the fix pins:
+
+- **The label is the link's text without its glyph.** `footer::open_text()` /
+  `reset_text()` are the bare localised strings; `↗` / `↺` are a visual
+  affordance and reading them aloud before every activation is noise. The
+  drawn labels are built from the same two functions, so a reworded link
+  cannot say one thing on screen and another out loud.
+- **The reset node exists only while `category_resettable()`.** Announcing a
+  control the renderer does not draw would be a worse defect than the omission
+  being fixed. The tree hash already covers this: it hashes
+  `category.label()`, and resettability is a function of the category.
+- **`Click` performs the same two actions the mouse arm does**, guarded on the
+  panel being open so a stale activation cannot open an editor or reset a
+  category behind the user's back.
+
+`Button` rather than `Link`: both perform an action rather than navigate, and
+"Open config.toml" hands off to the OS editor.
 
 Still deferred: the command palette, host manager, macro picker, the
 hand-written parts of `ssh_tab.rs` / `keybindings_tab.rs`, the context menu and

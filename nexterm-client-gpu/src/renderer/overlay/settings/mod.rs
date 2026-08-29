@@ -24,10 +24,11 @@ use super::super::WgpuState;
 use nexterm_config::SurfaceLevel;
 
 mod blocks_tab;
-// `pub(in crate::renderer)`: the hit-test in `event_handler` tests against the
-// same rects this draws, which is the point of the module (UI/UX v3 P4c).
 mod font_tab;
-pub(in crate::renderer) mod footer;
+// `pub(crate)`: the hit-test in `event_handler` tests against the same rects
+// this draws (UI/UX v3 P4c), and `accessibility` announces the same labels
+// (P4d) — the point of the module being that none of the three writes its own.
+pub(crate) mod footer;
 mod keybindings_tab;
 // `pub(super)`: the sibling `widgets` module lays its controls out on the
 // same label/control column split.
