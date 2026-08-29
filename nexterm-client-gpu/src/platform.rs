@@ -210,6 +210,69 @@ pub(crate) fn open_releases_url() {
     }
 }
 
+/// Whether the OS asks for reduced motion (UI/UX v3 P3c).
+///
+/// `None` means "cannot tell": an unsupported platform, or a failed call.
+/// Callers treat `None` as "not reduced", so a detection failure can only
+/// ever leave motion as the user configured it.
+///
+/// Deliberately thin. It is one FFI call per platform with no branching
+/// worth pinning, and CI cannot set an OS accessibility preference — so all
+/// of the decision logic lives above it in `AnimationsConfig`, where it is
+/// unit-tested.
+///
+/// Task 3 (not yet landed) is the only caller, so this is unreachable on its
+/// own and would otherwise be flagged as dead code.
+#[allow(dead_code)]
+pub(crate) fn reduced_motion() -> Option<bool> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            SPI_GETCLIENTAREAANIMATION, SystemParametersInfoW,
+        };
+        let mut enabled: i32 = 0;
+        // SAFETY: `SPI_GETCLIENTAREAANIMATION` writes one BOOL through
+        // `pvParam`; `enabled` is a live, correctly sized local.
+        let ok = unsafe {
+            SystemParametersInfoW(
+                SPI_GETCLIENTAREAANIMATION,
+                0,
+                (&mut enabled as *mut i32).cast(),
+                0,
+            )
+        };
+        if ok == 0 {
+            return None;
+        }
+        // The flag reports whether client-area animations are ENABLED, so
+        // reduced motion is its negation.
+        return Some(enabled == 0);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::runtime::AnyObject;
+        use objc2::{class, msg_send};
+        // SAFETY: `sharedWorkspace` returns a singleton owned by AppKit, and
+        // `accessibilityDisplayShouldReduceMotion` is a documented BOOL
+        // property on it. Both selectors take no arguments.
+        let reduced: bool = unsafe {
+            let workspace: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
+            if workspace.is_null() {
+                return None;
+            }
+            msg_send![workspace, accessibilityDisplayShouldReduceMotion]
+        };
+        return Some(reduced);
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        // Linux: out of scope for P3c. GNOME's `enable-animations` and the
+        // XDG settings portal are both plausible later, but the manual
+        // `animations.enabled` setting is the documented fallback for now.
+        None
+    }
+}
+
 #[cfg(test)]
 mod backdrop_tests {
     use super::*;
