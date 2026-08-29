@@ -266,11 +266,28 @@ contextual UI; InfoBar = non-blocking status.
 
 - New `overlay/infobar.rs`: non-blocking, auto-dismissing banner (reuses the
   update-banner slot pattern in `ClientState`).
-- Reclassify `ConsentDialog` kinds: keep genuinely destructive/security
-  confirmations modal; move low-risk notices to InfoBar. Consent-surface
-  changes are security-sensitive — review scope carefully before moving any
-  prompt out of a modal.
+- ~~Reclassify `ConsentDialog` kinds: keep genuinely destructive/security
+  confirmations modal; move low-risk notices to InfoBar.~~ **Dropped
+  2026-08-29** — see the design spec §4. All three consent kinds are pre-action
+  authorisations carrying pane-controlled content; moving one to a non-blocking
+  surface changes security posture rather than presentation, and
+  `ConsentPolicy = "allow"` is already the per-category opt-out.
 - New strings ×8 locales.
+
+> **Design spec (2026-08-29):**
+> `plans/2026-08-29-p6-notification-surfaces.md`. It corrects two of the three
+> bullets above. There is no single "update-banner slot" to reuse: Nexterm
+> already ships **three** top-of-screen banners (update / offline / error) with
+> three state fields, three builders totalling 232 lines, and hand-written
+> stacking arithmetic in each — so P6 is a **consolidation, not an addition**.
+> The measurement also found an accessibility defect: `error_banner` appears
+> **zero times** in `accessibility.rs`, so shell-launch and config-load failures
+> are never announced. The consent-reclassification bullet is **recommended
+> dropped** — all three consent kinds are pre-action authorisations, and moving
+> one to a non-blocking surface changes security posture rather than
+> presentation; `ConsentPolicy = "allow"` is the existing opt-out. **Signed off
+> 2026-08-29**, so P6 touches no security-relevant code. "New strings ×8" turns
+> out to be one string. Four PRs P6a–P6d.
 
 ### P7 — Full custom title bar (spike S, then XL)
 

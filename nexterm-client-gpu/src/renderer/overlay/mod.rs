@@ -15,6 +15,10 @@
 
 mod dialog;
 pub(in crate::renderer) mod fade;
+// `pub(crate)` for the same reason as `widgets`: `state` owns the stack and
+// `accessibility` describes it, and both must read the one layout the
+// renderer draws rather than recomputing it (UI/UX v3 P6).
+pub(crate) mod infobar;
 mod key_hint;
 mod picker;
 mod settings;
