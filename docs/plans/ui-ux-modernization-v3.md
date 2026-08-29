@@ -708,7 +708,9 @@ gated behind a spike.
       buttons and the footer's `↗` / `↺` links move too; see the design spec's
       §8
 - [x] P5 contrast everywhere + high-contrast scheme (P5a–P5d, 2026-08-29)
-- [ ] P6 InfoBar consolidation (consent reclassification dropped, spec §4)
+- [x] P6 InfoBar consolidation (P6a–P6d, 2026-08-29; consent reclassification
+  dropped, spec §4). Appearance stays on the on-device backlog below — the
+  spec's §7 asks specifically for three bars stacked in a small window.
   - [x] P6a InfoBar model + pure layout — shipped via #92 (2026-08-29)
   - [x] P6b migrate the three banners onto the stack — the three `Option`
     fields and the three builders are gone; the stack draws below the tab bar,
@@ -718,7 +720,14 @@ gated behind a spike.
     error is announceable for the first time (assertive; the other two polite),
     bars past the drawn cap are announced in full, and the cap reports the rest
     as `+{count} more` (2026-08-29)
-  - [ ] P6d entrance/exit motion + auto-dismissal for the info severity
+  - [x] P6d entrance/exit motion + auto-dismissal for the info severity — every
+    bar fades in and out on its own `Timed`, so one can be leaving while the one
+    under it arrives; `Esc`, `Enter` and a successful connect all dismiss rather
+    than delete; the update notice retires itself after 20 s while the warning
+    and error severities never do; a dismissed bar leaves the AccessKit tree at
+    once but is still drawn until its exit finishes; `has_active_animation` goes
+    quiet once every bar settles, so a bar counting down its deadline asks for
+    no frames (G-idle) (2026-08-29)
 - [x] P7 base `notitle` custom title bar — shipped early via #46 (2026-07-30)
 - [x] P7 spike: Windows 11 snap layouts — answered in production via #49 (2026-07-31)
 - [x] P7 default-on decision — `notitle` default on Windows/Linux via #50 (2026-07-31)

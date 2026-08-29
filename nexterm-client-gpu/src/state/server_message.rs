@@ -16,7 +16,16 @@ use super::pane::{FloatRect, PaneState, PlacedImage, PlacedTextSize};
 use crate::command_blocks::{SemanticMark, SemanticMarkKind, extract_command_blocks};
 
 impl ClientState {
-    pub fn apply_server_message(&mut self, msg: ServerToClient) {
+    /// Apply one server message.
+    ///
+    /// `anim` is threaded through for the one arm that raises a surface —
+    /// `Error`, which queues an InfoBar and therefore needs the entrance
+    /// duration the user configured (UI/UX v3 P6d).
+    pub fn apply_server_message(
+        &mut self,
+        msg: ServerToClient,
+        anim: &nexterm_config::AnimationsConfig,
+    ) {
         match msg {
             ServerToClient::FullRefresh { pane_id, grid } => {
                 let cursor_col = grid.cursor_col;
@@ -68,6 +77,7 @@ impl ClientState {
                 self.push_info_bar(
                     crate::renderer::overlay::infobar::InfoBarKind::ServerError { message },
                     std::time::Instant::now(),
+                    anim,
                 );
             }
             ServerToClient::SessionList { .. } => {}
@@ -500,10 +510,13 @@ mod tests {
     #[test]
     fn full_refresh_registers_pane() {
         let mut state = ClientState::new(80, 24, 1000);
-        state.apply_server_message(ServerToClient::FullRefresh {
-            pane_id: 1,
-            grid: Grid::new(80, 24),
-        });
+        state.apply_server_message(
+            ServerToClient::FullRefresh {
+                pane_id: 1,
+                grid: Grid::new(80, 24),
+            },
+            &nexterm_config::AnimationsConfig::default(),
+        );
         assert!(state.panes.contains_key(&1));
         assert_eq!(state.focused_pane_id, Some(1));
     }
@@ -513,9 +526,12 @@ mod tests {
     #[test]
     fn server_error_raises_the_error_bar() {
         let mut state = ClientState::new(80, 24, 1000);
-        state.apply_server_message(ServerToClient::Error {
-            message: "failed to spawn pwsh".to_string(),
-        });
+        state.apply_server_message(
+            ServerToClient::Error {
+                message: "failed to spawn pwsh".to_string(),
+            },
+            &nexterm_config::AnimationsConfig::default(),
+        );
 
         assert_eq!(state.info_bars.len(), 1);
         assert_eq!(
@@ -529,18 +545,24 @@ mod tests {
     #[test]
     fn grid_diff_applies_diff() {
         let mut state = ClientState::new(80, 24, 1000);
-        state.apply_server_message(ServerToClient::FullRefresh {
-            pane_id: 1,
-            grid: Grid::new(80, 24),
-        });
+        state.apply_server_message(
+            ServerToClient::FullRefresh {
+                pane_id: 1,
+                grid: Grid::new(80, 24),
+            },
+            &nexterm_config::AnimationsConfig::default(),
+        );
         let mut row = vec![Cell::default(); 80];
         row[0].ch = 'X';
-        state.apply_server_message(ServerToClient::GridDiff {
-            pane_id: 1,
-            dirty_rows: vec![DirtyRow { row: 0, cells: row }],
-            cursor_col: 1,
-            cursor_row: 0,
-        });
+        state.apply_server_message(
+            ServerToClient::GridDiff {
+                pane_id: 1,
+                dirty_rows: vec![DirtyRow { row: 0, cells: row }],
+                cursor_col: 1,
+                cursor_row: 0,
+            },
+            &nexterm_config::AnimationsConfig::default(),
+        );
         let pane = state.focused_pane().unwrap();
         assert_eq!(pane.grid.rows[0][0].ch, 'X');
     }
@@ -550,14 +572,20 @@ mod tests {
         // OSC 22 (PROTOCOL_VERSION 10): the shape lands on the pane and the
         // focused pane's icon accessor maps it onto a winit CursorIcon.
         let mut state = ClientState::new(80, 24, 1000);
-        state.apply_server_message(ServerToClient::FullRefresh {
-            pane_id: 1,
-            grid: Grid::new(80, 24),
-        });
-        state.apply_server_message(ServerToClient::PointerShapeChanged {
-            pane_id: 1,
-            shape: "pointer".to_string(),
-        });
+        state.apply_server_message(
+            ServerToClient::FullRefresh {
+                pane_id: 1,
+                grid: Grid::new(80, 24),
+            },
+            &nexterm_config::AnimationsConfig::default(),
+        );
+        state.apply_server_message(
+            ServerToClient::PointerShapeChanged {
+                pane_id: 1,
+                shape: "pointer".to_string(),
+            },
+            &nexterm_config::AnimationsConfig::default(),
+        );
         assert_eq!(
             state.panes[&1].pointer_shape.as_deref(),
             Some("pointer"),
@@ -569,10 +597,13 @@ mod tests {
         );
 
         // "default" clears the override.
-        state.apply_server_message(ServerToClient::PointerShapeChanged {
-            pane_id: 1,
-            shape: "default".to_string(),
-        });
+        state.apply_server_message(
+            ServerToClient::PointerShapeChanged {
+                pane_id: 1,
+                shape: "default".to_string(),
+            },
+            &nexterm_config::AnimationsConfig::default(),
+        );
         assert_eq!(state.panes[&1].pointer_shape, None);
         assert_eq!(
             state.focused_pane_pointer_icon(),
@@ -580,10 +611,13 @@ mod tests {
         );
 
         // Unknown pane IDs are ignored without panicking.
-        state.apply_server_message(ServerToClient::PointerShapeChanged {
-            pane_id: 99,
-            shape: "text".to_string(),
-        });
+        state.apply_server_message(
+            ServerToClient::PointerShapeChanged {
+                pane_id: 99,
+                shape: "text".to_string(),
+            },
+            &nexterm_config::AnimationsConfig::default(),
+        );
     }
 
     #[test]
@@ -592,21 +626,24 @@ mod tests {
         // switch/create entries in the palette, and a switch notification
         // must update which entry is hidden (the active one).
         let mut state = ClientState::new(80, 24, 1000);
-        state.apply_server_message(ServerToClient::WorkspaceList {
-            current: "default".to_string(),
-            workspaces: vec![
-                nexterm_proto::WorkspaceInfo {
-                    name: "default".to_string(),
-                    session_count: 1,
-                    is_active: true,
-                },
-                nexterm_proto::WorkspaceInfo {
-                    name: "dev".to_string(),
-                    session_count: 0,
-                    is_active: false,
-                },
-            ],
-        });
+        state.apply_server_message(
+            ServerToClient::WorkspaceList {
+                current: "default".to_string(),
+                workspaces: vec![
+                    nexterm_proto::WorkspaceInfo {
+                        name: "default".to_string(),
+                        session_count: 1,
+                        is_active: true,
+                    },
+                    nexterm_proto::WorkspaceInfo {
+                        name: "dev".to_string(),
+                        session_count: 0,
+                        is_active: false,
+                    },
+                ],
+            },
+            &nexterm_config::AnimationsConfig::default(),
+        );
         assert_eq!(state.current_workspace, "default");
         let actions: Vec<String> = state
             .palette
@@ -619,9 +656,12 @@ mod tests {
         assert!(actions.contains(&"WorkspaceCreate".to_string()));
 
         // After switching, the hidden entry flips.
-        state.apply_server_message(ServerToClient::WorkspaceSwitched {
-            name: "dev".to_string(),
-        });
+        state.apply_server_message(
+            ServerToClient::WorkspaceSwitched {
+                name: "dev".to_string(),
+            },
+            &nexterm_config::AnimationsConfig::default(),
+        );
         assert_eq!(state.current_workspace, "dev");
         let actions: Vec<String> = state
             .palette
@@ -636,21 +676,30 @@ mod tests {
     #[test]
     fn progress_changed_updates_the_pane_and_state_zero_clears_it() {
         let mut state = ClientState::new(80, 24, 1000);
-        state.apply_server_message(ServerToClient::FullRefresh {
-            pane_id: 1,
-            grid: Grid::new(80, 24),
-        });
-        state.apply_server_message(ServerToClient::ProgressChanged {
-            pane_id: 1,
-            state: 1,
-            progress: 42,
-        });
+        state.apply_server_message(
+            ServerToClient::FullRefresh {
+                pane_id: 1,
+                grid: Grid::new(80, 24),
+            },
+            &nexterm_config::AnimationsConfig::default(),
+        );
+        state.apply_server_message(
+            ServerToClient::ProgressChanged {
+                pane_id: 1,
+                state: 1,
+                progress: 42,
+            },
+            &nexterm_config::AnimationsConfig::default(),
+        );
         assert_eq!(state.panes[&1].progress, Some((1, 42)));
-        state.apply_server_message(ServerToClient::ProgressChanged {
-            pane_id: 1,
-            state: 0,
-            progress: 0,
-        });
+        state.apply_server_message(
+            ServerToClient::ProgressChanged {
+                pane_id: 1,
+                state: 0,
+                progress: 0,
+            },
+            &nexterm_config::AnimationsConfig::default(),
+        );
         assert_eq!(state.panes[&1].progress, None);
     }
 
@@ -659,18 +708,24 @@ mod tests {
         // Roadmap #10b: the snapshot is a full replacement, and the cached
         // per-pane vertices must be rebuilt (content_dirty).
         let mut state = ClientState::new(80, 24, 1000);
-        state.apply_server_message(ServerToClient::FullRefresh {
-            pane_id: 1,
-            grid: Grid::new(80, 24),
-        });
+        state.apply_server_message(
+            ServerToClient::FullRefresh {
+                pane_id: 1,
+                grid: Grid::new(80, 24),
+            },
+            &nexterm_config::AnimationsConfig::default(),
+        );
         state.panes.get_mut(&1).unwrap().content_dirty = false;
 
-        state.apply_server_message(ServerToClient::PaneColorsChanged {
-            pane_id: 1,
-            fg: Some([255, 136, 0]),
-            bg: None,
-            palette: vec![(1, [0x12, 0x34, 0x56])],
-        });
+        state.apply_server_message(
+            ServerToClient::PaneColorsChanged {
+                pane_id: 1,
+                fg: Some([255, 136, 0]),
+                bg: None,
+                palette: vec![(1, [0x12, 0x34, 0x56])],
+            },
+            &nexterm_config::AnimationsConfig::default(),
+        );
         let pane = &state.panes[&1];
         assert_eq!(pane.color_overrides.fg, Some([255, 136, 0]));
         assert_eq!(pane.color_overrides.bg, None);
@@ -681,12 +736,15 @@ mod tests {
         assert!(pane.content_dirty, "vertex cache must be invalidated");
 
         // A later snapshot replaces (not merges) the previous state.
-        state.apply_server_message(ServerToClient::PaneColorsChanged {
-            pane_id: 1,
-            fg: None,
-            bg: None,
-            palette: vec![],
-        });
+        state.apply_server_message(
+            ServerToClient::PaneColorsChanged {
+                pane_id: 1,
+                fg: None,
+                bg: None,
+                palette: vec![],
+            },
+            &nexterm_config::AnimationsConfig::default(),
+        );
         let pane = &state.panes[&1];
         assert_eq!(pane.color_overrides.fg, None);
         assert!(pane.color_overrides.palette.is_empty());
@@ -695,14 +753,20 @@ mod tests {
     #[test]
     fn unknown_pointer_shapes_fall_back_to_the_default_icon() {
         let mut state = ClientState::new(80, 24, 1000);
-        state.apply_server_message(ServerToClient::FullRefresh {
-            pane_id: 1,
-            grid: Grid::new(80, 24),
-        });
-        state.apply_server_message(ServerToClient::PointerShapeChanged {
-            pane_id: 1,
-            shape: "no-such-shape".to_string(),
-        });
+        state.apply_server_message(
+            ServerToClient::FullRefresh {
+                pane_id: 1,
+                grid: Grid::new(80, 24),
+            },
+            &nexterm_config::AnimationsConfig::default(),
+        );
+        state.apply_server_message(
+            ServerToClient::PointerShapeChanged {
+                pane_id: 1,
+                shape: "no-such-shape".to_string(),
+            },
+            &nexterm_config::AnimationsConfig::default(),
+        );
         assert_eq!(
             state.focused_pane_pointer_icon(),
             winit::window::CursorIcon::Default

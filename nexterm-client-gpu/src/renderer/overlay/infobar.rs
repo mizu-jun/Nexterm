@@ -12,11 +12,11 @@
 //! without a device. P6b removed the three `Option` fields and the three
 //! builders and made this the only stack; P6c gave every kind an AccessKit
 //! node (`accessibility::build_info_bar_nodes`) and the cap its `+{count}
-//! more` suffix; the motion and the auto-dismissal arrive in P6d.
+//! more` suffix; P6d gave every bar an entrance, an exit and — for the info
+//! severity only — a deadline that dismisses it on its own.
 //!
 //! The structural gate for the phase (G-single) is that [`bar_rects`] stays
 //! the only function that computes a bar's `y`.
-#![allow(dead_code)] // The auto-dismissal and exit paths are wired in P6d.
 
 use std::borrow::Cow;
 use std::collections::VecDeque;
@@ -218,13 +218,37 @@ impl InfoBar {
         self.expires_at.is_some_and(|deadline| now >= deadline)
     }
 
+    /// Whether the bar has been dismissed and is only being drawn out.
+    ///
+    /// A dismissed bar is gone as far as everything except the renderer is
+    /// concerned: it does not take an `Esc`, it does not hold its slot
+    /// against a fresh message, and it leaves the AccessKit tree at once
+    /// rather than announcing a bar the user just closed.
+    pub fn is_dismissed(&self) -> bool {
+        self.exit.is_some()
+    }
+
     /// Whether the bar is dismissed and its exit has finished drawing.
     ///
-    /// The retire path in P6d drops bars that answer `true`; a bar that
-    /// animates but never retires keeps the event loop requesting frames
+    /// `ClientState::retire_info_bars` drops bars that answer `true`; a bar
+    /// that animates but never retires keeps the event loop requesting frames
     /// forever (G-idle).
     pub fn is_retired(&self, now: Instant) -> bool {
         self.exit.is_some_and(|exit| exit.is_done(now))
+    }
+
+    /// How opaque the bar is right now, in `[0, 1]`.
+    ///
+    /// The exit counts *down* from whatever the entrance had reached, which
+    /// is why it is one expression rather than two: a bar dismissed while it
+    /// is still fading in must not jump to fully opaque first. With motion
+    /// off both `Timed`s are born finished, so this is 1 while the bar is up
+    /// and 0 the instant it is dismissed — the reduced-motion path.
+    pub fn visibility(&self, now: Instant) -> f32 {
+        match self.exit {
+            Some(exit) => 1.0 - exit.progress(now),
+            None => self.entrance.progress(now),
+        }
     }
 
     /// Whether the bar still needs another frame.
@@ -248,11 +272,6 @@ pub struct StackLayout {
 }
 
 impl StackLayout {
-    /// Index of the top bar, which is the only one `Enter` can act on (D4).
-    pub fn top(&self) -> Option<usize> {
-        self.visible.first().map(|&(index, _)| index)
-    }
-
     /// The localised `+{count} more` suffix, or `None` while the stack fits.
     ///
     /// Lives with the layout that produced the count rather than with the
@@ -300,6 +319,28 @@ pub fn stack_order(bars: &[InfoBar]) -> Vec<usize> {
             .then(bars[a].created_at.cmp(&bars[b].created_at))
     });
     order
+}
+
+/// The bar `Enter` acts on: the loudest one still on screen (D4).
+///
+/// A bar that is fading out is skipped — the user has already dismissed it,
+/// and a key aimed at the bar underneath must not land on a ghost (P6d).
+pub fn top_live(bars: &[InfoBar]) -> Option<usize> {
+    stack_order(bars)
+        .into_iter()
+        .find(|&index| !bars[index].is_dismissed())
+}
+
+/// The bar `Esc` acts on: the loudest one that can be dismissed at all.
+///
+/// This is what keeps the pre-P6 ordering, where the error banner cleared
+/// before the update one, without either handler knowing the other exists.
+/// The offline bar is skipped rather than dismissed: it reports a condition
+/// that is still true.
+pub fn top_dismissible(bars: &[InfoBar]) -> Option<usize> {
+    stack_order(bars)
+        .into_iter()
+        .find(|&index| !bars[index].is_dismissed() && bars[index].kind.is_dismissible())
 }
 
 /// Lay the stack out: the rect of each visible bar, top-down, below the tab bar.
@@ -381,7 +422,7 @@ mod tests {
         let layout = bar_rects(&[], TAB_BAR_H, CELL_H, WIDTH);
         assert!(layout.visible.is_empty());
         assert_eq!(layout.hidden, 0);
-        assert_eq!(layout.top(), None);
+        assert_eq!(top_live(&[]), None);
     }
 
     /// D2: the stack overlays terminal content, but it starts *below* the tab
@@ -411,7 +452,7 @@ mod tests {
         let now = Instant::now();
         let bars = [update(now), error(now + Duration::from_secs(1))];
         let layout = bar_rects(&bars, TAB_BAR_H, CELL_H, WIDTH);
-        assert_eq!(layout.top(), Some(1));
+        assert_eq!(top_live(&bars), Some(1));
         assert_eq!(layout.visible[1].0, 0);
     }
 
@@ -431,8 +472,7 @@ mod tests {
         let older = error(now);
         let newer = error(now + Duration::from_millis(1));
         // Insertion order reversed, so age alone decides.
-        let layout = bar_rects(&[newer, older], TAB_BAR_H, CELL_H, WIDTH);
-        assert_eq!(layout.top(), Some(1));
+        assert_eq!(top_live(&[newer, older]), Some(1));
     }
 
     /// G-cap: §1.5's unbounded stack is the defect this closes.
@@ -470,13 +510,11 @@ mod tests {
     fn only_the_top_bar_carries_an_activation() {
         let now = Instant::now();
         let bars = [update(now), error(now)];
-        let layout = bar_rects(&bars, TAB_BAR_H, CELL_H, WIDTH);
-        let top = &bars[layout.top().expect("a non-empty stack has a top bar")];
+        let top = &bars[top_live(&bars).expect("a non-empty stack has a top bar")];
         assert!(!top.kind.has_activation());
 
         let bars = [update(now)];
-        let layout = bar_rects(&bars, TAB_BAR_H, CELL_H, WIDTH);
-        let top = &bars[layout.top().expect("a non-empty stack has a top bar")];
+        let top = &bars[top_live(&bars).expect("a non-empty stack has a top bar")];
         assert!(top.kind.has_activation());
     }
 
@@ -501,6 +539,42 @@ mod tests {
         bar.exit = Some(Timed::new(now, 200, Curve::AccelerateMax));
         assert!(!bar.is_retired(now));
         assert!(bar.is_retired(now + Duration::from_millis(200)));
+    }
+
+    /// P6d: the bar fades in from nothing and out to nothing, and a bar with
+    /// motion off is simply opaque — the same reduced-motion path every other
+    /// overlay takes.
+    #[test]
+    fn visibility_rises_with_the_entrance_and_falls_with_the_exit() {
+        let now = Instant::now();
+        let mut bar = InfoBar::new(
+            InfoBarKind::ServerError {
+                message: "boom".to_string(),
+            },
+            now,
+            Timed::new(now, 200, Curve::Linear),
+        );
+        assert!(bar.visibility(now) < 1e-3);
+        assert!((bar.visibility(now + Duration::from_millis(200)) - 1.0).abs() < 1e-3);
+
+        let dismissed_at = now + Duration::from_millis(200);
+        bar.exit = Some(Timed::new(dismissed_at, 200, Curve::Linear));
+        assert!((bar.visibility(dismissed_at) - 1.0).abs() < 1e-3);
+        assert!(bar.visibility(dismissed_at + Duration::from_millis(200)) < 1e-3);
+
+        assert!((error(now).visibility(now) - 1.0).abs() < 1e-3);
+    }
+
+    /// A dismissed bar is out of everything but the renderer, from the frame
+    /// it is dismissed rather than from the frame its exit finishes.
+    #[test]
+    fn a_bar_counts_as_dismissed_the_moment_its_exit_starts() {
+        let now = Instant::now();
+        let mut bar = error(now);
+        assert!(!bar.is_dismissed());
+        bar.exit = Some(Timed::new(now, 200, Curve::AccelerateMax));
+        assert!(bar.is_dismissed());
+        assert!(!bar.is_retired(now));
     }
 
     /// G-idle in miniature: with motion off every `Timed` is born finished,
@@ -543,10 +617,7 @@ mod tests {
         assert!(!offline(now).kind.is_dismissible());
 
         let bars = [update(now), offline(now)];
-        let top_dismissible = stack_order(&bars)
-            .into_iter()
-            .find(|&index| bars[index].kind.is_dismissible());
-        assert_eq!(top_dismissible, Some(0));
+        assert_eq!(top_dismissible(&bars), Some(0));
     }
 
     #[test]

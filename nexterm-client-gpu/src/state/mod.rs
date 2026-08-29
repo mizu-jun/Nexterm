@@ -682,6 +682,12 @@ impl ClientState {
         if self.settings_panel.motion.is_active(now) {
             return true;
         }
+        // UI/UX v3 P6d: a bar fading in or out. Bars simply sitting there —
+        // including one counting down to its auto-dismissal — must not answer
+        // true, or the loop would redraw for the whole 20 s (G-idle).
+        if self.info_bars.iter().any(|bar| bar.is_animating(now)) {
+            return true;
+        }
         if self.palette.motion.is_active(now)
             || self.macro_picker.motion.is_active(now)
             || self.host_manager.motion.is_active(now)
@@ -975,28 +981,124 @@ impl ClientState {
     /// fields had: a second server error overwrote the first, and the update
     /// checker only ever raised its banner while none was up. Returns whether
     /// the stack changed, so the caller can decide to redraw.
-    pub fn push_info_bar(&mut self, kind: InfoBarKind, now: Instant) -> bool {
-        if self.info_bars.iter().any(|bar| bar.kind == kind) {
+    pub fn push_info_bar(
+        &mut self,
+        kind: InfoBarKind,
+        now: Instant,
+        anim: &nexterm_config::AnimationsConfig,
+    ) -> bool {
+        use crate::animations::{Curve, Timed, duration};
+
+        // A bar on its way out does not hold its message against a repeat:
+        // the user has already stopped seeing it, so the same error arriving
+        // again is news rather than a duplicate.
+        if self
+            .info_bars
+            .iter()
+            .any(|bar| bar.kind == kind && !bar.is_dismissed())
+        {
             return false;
         }
         self.remove_info_bar(kind.slot());
-        // P6d gives the entrance a real duration; a zero-length `Timed` is
-        // born finished, which is also the reduced-motion path.
-        let entrance = crate::animations::Timed::new(now, 0, crate::animations::Curve::Linear);
+        let ms = anim.scaled_duration_ms(duration::FAST);
+        let entrance = Timed::new(now, ms, Curve::DecelerateMax);
         self.info_bars.push_back(InfoBar::new(kind, now, entrance));
         true
     }
 
-    /// Drop the bar occupying `slot`, if any. Returns whether one was removed.
+    /// Drop the bar occupying `slot` outright, if any (UI/UX v3 P6).
+    ///
+    /// No exit animation: this is slot replacement, where the bar that
+    /// replaces it is drawn in the same place on the same frame, and fading
+    /// one out under the other would only smear the two messages together.
+    /// The user-visible path is [`ClientState::dismiss_info_bar`].
+    /// Returns whether one was removed.
     pub fn remove_info_bar(&mut self, slot: InfoBarSlot) -> bool {
         let before = self.info_bars.len();
         self.info_bars.retain(|bar| bar.kind.slot() != slot);
         self.info_bars.len() != before
     }
 
-    /// Whether a bar is occupying `slot`.
+    /// Start the exit of the bar occupying `slot` (UI/UX v3 P6d).
+    ///
+    /// The bar keeps its place in the stack while it draws out — it is the
+    /// renderer's only record that it was ever there — and
+    /// [`ClientState::retire_info_bars`] drops it once the exit finishes.
+    /// Everything else treats it as gone from this moment (`is_dismissed`).
+    /// Returns whether a bar started its exit.
+    pub fn dismiss_info_bar(
+        &mut self,
+        slot: InfoBarSlot,
+        now: Instant,
+        anim: &nexterm_config::AnimationsConfig,
+    ) -> bool {
+        use crate::animations::{Curve, Timed, duration};
+
+        let ms = anim.scaled_duration_ms(duration::FASTER);
+        let Some(bar) = self
+            .info_bars
+            .iter_mut()
+            .find(|bar| bar.kind.slot() == slot && !bar.is_dismissed())
+        else {
+            return false;
+        };
+        // Resume from what is on screen, so a bar dismissed mid-entrance
+        // fades out from where it got to rather than snapping to opaque.
+        let visibility = bar.visibility(now);
+        bar.exit = Some(Timed::resuming_at(
+            now,
+            1.0 - visibility,
+            ms,
+            Curve::AccelerateMax,
+        ));
+        true
+    }
+
+    /// Dismiss every bar whose auto-dismiss deadline has passed (D3).
+    ///
+    /// Only the info severity has a deadline at all, so in practice this is
+    /// the update notice retiring itself after `INFO_BAR_TTL`. Returns
+    /// whether anything started its exit, so the caller can ask for a frame.
+    pub fn expire_info_bars(
+        &mut self,
+        now: Instant,
+        anim: &nexterm_config::AnimationsConfig,
+    ) -> bool {
+        let expired: Vec<InfoBarSlot> = self
+            .info_bars
+            .iter()
+            .filter(|bar| !bar.is_dismissed() && bar.is_expired(now))
+            .map(|bar| bar.kind.slot())
+            .collect();
+        // A plain loop rather than `any`, which short-circuits: every expired
+        // bar has to be dismissed, not just the first one found.
+        let mut changed = false;
+        for slot in expired {
+            changed |= self.dismiss_info_bar(slot, now, anim);
+        }
+        changed
+    }
+
+    /// Drop the bars whose exit has finished drawing (UI/UX v3 P6d).
+    ///
+    /// The counterpart of the `retire` calls the other overlay surfaces make
+    /// in `lifecycle.rs`, and the reason `has_active_animation` goes quiet
+    /// again once a bar is gone (G-idle).
+    pub fn retire_info_bars(&mut self, now: Instant) -> bool {
+        let before = self.info_bars.len();
+        self.info_bars.retain(|bar| !bar.is_retired(now));
+        self.info_bars.len() != before
+    }
+
+    /// Whether a bar the user can still see-and-act-on occupies `slot`.
+    ///
+    /// A dismissed bar does not count: the callers use this to decide whether
+    /// to raise a bar, and one that is fading out should not suppress the
+    /// next one.
     pub fn has_info_bar(&self, slot: InfoBarSlot) -> bool {
-        self.info_bars.iter().any(|bar| bar.kind.slot() == slot)
+        self.info_bars
+            .iter()
+            .any(|bar| bar.kind.slot() == slot && !bar.is_dismissed())
     }
 
     /// Push an SR-facing alert onto the queue (Sprint 5-11-5).
@@ -1788,6 +1890,13 @@ mod info_bar_tests {
     use super::*;
     use std::time::Duration;
 
+    /// Motion at its configured default, so a bar is born mid-entrance —
+    /// the state the wiring has to survive. Tests that need the
+    /// reduced-motion path build their own `AnimationsConfig`.
+    fn anim() -> nexterm_config::AnimationsConfig {
+        nexterm_config::AnimationsConfig::default()
+    }
+
     fn error(message: &str) -> InfoBarKind {
         InfoBarKind::ServerError {
             message: message.to_string(),
@@ -1799,8 +1908,12 @@ mod info_bar_tests {
         let now = Instant::now();
         let mut state = ClientState::new(80, 24, 1000);
 
-        assert!(state.push_info_bar(error("pty launch failed"), now));
-        assert!(state.push_info_bar(error("config load failed"), now + Duration::from_secs(1)));
+        assert!(state.push_info_bar(error("pty launch failed"), now, &anim(),));
+        assert!(state.push_info_bar(
+            error("config load failed"),
+            now + Duration::from_secs(1),
+            &anim(),
+        ));
 
         assert_eq!(state.info_bars.len(), 1);
         assert_eq!(state.info_bars[0].kind, error("config load failed"));
@@ -1812,9 +1925,9 @@ mod info_bar_tests {
     fn re_pushing_the_same_bar_is_a_no_op() {
         let now = Instant::now();
         let mut state = ClientState::new(80, 24, 1000);
-        assert!(state.push_info_bar(error("boom"), now));
+        assert!(state.push_info_bar(error("boom"), now, &anim(),));
 
-        assert!(!state.push_info_bar(error("boom"), now + Duration::from_secs(5)));
+        assert!(!state.push_info_bar(error("boom"), now + Duration::from_secs(5), &anim(),));
         assert_eq!(state.info_bars.len(), 1);
         assert_eq!(state.info_bars[0].created_at, now);
     }
@@ -1823,13 +1936,14 @@ mod info_bar_tests {
     fn bars_of_different_slots_coexist() {
         let now = Instant::now();
         let mut state = ClientState::new(80, 24, 1000);
-        state.push_info_bar(error("boom"), now);
-        state.push_info_bar(InfoBarKind::Offline { since: now }, now);
+        state.push_info_bar(error("boom"), now, &anim());
+        state.push_info_bar(InfoBarKind::Offline { since: now }, now, &anim());
         state.push_info_bar(
             InfoBarKind::UpdateAvailable {
                 version: "1.9.0".to_string(),
             },
             now,
+            &anim(),
         );
 
         assert_eq!(state.info_bars.len(), 3);
@@ -1844,8 +1958,8 @@ mod info_bar_tests {
     fn removing_one_slot_leaves_the_others_standing() {
         let now = Instant::now();
         let mut state = ClientState::new(80, 24, 1000);
-        state.push_info_bar(InfoBarKind::Offline { since: now }, now);
-        state.push_info_bar(error("boom"), now);
+        state.push_info_bar(InfoBarKind::Offline { since: now }, now, &anim());
+        state.push_info_bar(error("boom"), now, &anim());
 
         assert!(state.remove_info_bar(InfoBarSlot::Offline));
         assert!(!state.remove_info_bar(InfoBarSlot::Offline));
@@ -1858,5 +1972,151 @@ mod info_bar_tests {
         let state = ClientState::new(80, 24, 1000);
         assert!(state.info_bars.is_empty());
         assert!(!state.has_info_bar(InfoBarSlot::Update));
+    }
+
+    /// UI/UX v3 P6d. A dismissed bar stays in the stack so the renderer can
+    /// draw it leaving, but it is out of everything else at once — which is
+    /// what lets the same message be raised again while the old one is still
+    /// fading, instead of being swallowed as a duplicate.
+    #[test]
+    fn a_dismissed_bar_is_drawn_out_but_counts_as_gone() {
+        let now = Instant::now();
+        let shown = now + Duration::from_secs(1);
+        let mut state = ClientState::new(80, 24, 1000);
+        state.push_info_bar(error("boom"), now, &anim());
+
+        assert!(state.dismiss_info_bar(InfoBarSlot::ServerError, shown, &anim()));
+        assert!(!state.dismiss_info_bar(InfoBarSlot::ServerError, shown, &anim()));
+
+        assert_eq!(state.info_bars.len(), 1, "still drawn while it fades");
+        assert!(state.info_bars[0].is_dismissed());
+        assert!(!state.has_info_bar(InfoBarSlot::ServerError));
+
+        // The repeat is news, not a duplicate — and it takes the slot from
+        // the ghost rather than stacking on top of it.
+        assert!(state.push_info_bar(error("boom"), shown, &anim()));
+        assert_eq!(state.info_bars.len(), 1);
+        assert!(!state.info_bars[0].is_dismissed());
+    }
+
+    /// Dismissing a bar that is still fading in has nothing to fade out, so
+    /// it leaves immediately rather than fading from a visibility it never
+    /// reached — the continuity rule `Timed::resuming_at` encodes.
+    #[test]
+    fn a_bar_dismissed_before_it_appears_leaves_at_once() {
+        let now = Instant::now();
+        let mut state = ClientState::new(80, 24, 1000);
+        state.push_info_bar(error("boom"), now, &anim());
+
+        state.dismiss_info_bar(InfoBarSlot::ServerError, now, &anim());
+        assert!(state.retire_info_bars(now));
+        assert!(state.info_bars.is_empty());
+    }
+
+    /// The retire path. A bar that animates but never leaves keeps the event
+    /// loop requesting frames forever, which is the P3b1 failure mode
+    /// (G-idle).
+    #[test]
+    fn a_bar_leaves_the_stack_once_its_exit_has_finished() {
+        let now = Instant::now();
+        let shown = now + Duration::from_secs(1);
+        let mut state = ClientState::new(80, 24, 1000);
+        state.push_info_bar(error("boom"), now, &anim());
+        state.dismiss_info_bar(InfoBarSlot::ServerError, shown, &anim());
+
+        assert!(!state.retire_info_bars(shown));
+        let settled = shown + Duration::from_secs(1);
+        assert!(state.retire_info_bars(settled));
+        assert!(state.info_bars.is_empty());
+        assert!(!state.retire_info_bars(settled));
+    }
+
+    /// G-idle: a bar that is merely sitting there — including one counting
+    /// down its 20 s deadline — must not ask for frames, or the update notice
+    /// alone would keep the GPU awake for the whole timeout.
+    #[test]
+    fn only_a_moving_bar_asks_for_frames() {
+        let now = Instant::now();
+        let mut state = ClientState::new(80, 24, 1000);
+        state.push_info_bar(
+            InfoBarKind::UpdateAvailable {
+                version: "1.9.0".to_string(),
+            },
+            now,
+            &anim(),
+        );
+
+        assert!(state.has_active_animation(now, 200));
+        let settled = now + Duration::from_secs(1);
+        assert!(!state.has_active_animation(settled, 200));
+
+        state.dismiss_info_bar(InfoBarSlot::Update, settled, &anim());
+        assert!(state.has_active_animation(settled, 200));
+        let gone = settled + Duration::from_secs(1);
+        assert!(!state.has_active_animation(gone, 200));
+    }
+
+    /// The reduced-motion path: with animations off every `Timed` is born
+    /// finished, so a bar never asks for a frame and its dismissal retires on
+    /// the same tick.
+    #[test]
+    fn motion_off_makes_a_bar_appear_and_leave_without_a_single_extra_frame() {
+        let now = Instant::now();
+        let mut off = nexterm_config::AnimationsConfig::default();
+        off.enabled = nexterm_config::AnimationsEnabled::No;
+        let mut state = ClientState::new(80, 24, 1000);
+        state.push_info_bar(error("boom"), now, &off);
+
+        assert!(!state.has_active_animation(now, 0));
+        state.dismiss_info_bar(InfoBarSlot::ServerError, now, &off);
+        assert!(!state.has_active_animation(now, 0));
+        assert!(state.retire_info_bars(now));
+        assert!(state.info_bars.is_empty());
+    }
+
+    /// D3: the info severity dismisses itself after `INFO_BAR_TTL`; the
+    /// warning and error severities never do, however long they sit there.
+    #[test]
+    fn only_the_informational_bar_dismisses_itself() {
+        use crate::renderer::overlay::infobar::INFO_BAR_TTL;
+
+        let now = Instant::now();
+        let mut state = ClientState::new(80, 24, 1000);
+        state.push_info_bar(
+            InfoBarKind::UpdateAvailable {
+                version: "1.9.0".to_string(),
+            },
+            now,
+            &anim(),
+        );
+        state.push_info_bar(InfoBarKind::Offline { since: now }, now, &anim());
+        state.push_info_bar(error("boom"), now, &anim());
+
+        assert!(!state.expire_info_bars(now + Duration::from_secs(1), &anim()));
+
+        let after_ttl = now + INFO_BAR_TTL + Duration::from_secs(1);
+        assert!(state.expire_info_bars(after_ttl, &anim()));
+        // A second pass finds nothing new: the bar it dismissed is already on
+        // its way out, and the other two have no deadline at all.
+        assert!(!state.expire_info_bars(after_ttl, &anim()));
+
+        state.retire_info_bars(after_ttl + Duration::from_secs(1));
+        assert!(!state.has_info_bar(InfoBarSlot::Update));
+        assert!(state.has_info_bar(InfoBarSlot::Offline));
+        assert!(state.has_info_bar(InfoBarSlot::ServerError));
+    }
+
+    /// Slot replacement is deliberately abrupt: the replacing bar is drawn in
+    /// the same place on the same frame, so fading the old one out under it
+    /// would only smear the two messages together.
+    #[test]
+    fn replacing_a_slot_drops_the_old_bar_outright() {
+        let now = Instant::now();
+        let mut state = ClientState::new(80, 24, 1000);
+        state.push_info_bar(error("first"), now, &anim());
+        state.push_info_bar(error("second"), now, &anim());
+
+        assert_eq!(state.info_bars.len(), 1);
+        assert!(!state.info_bars[0].is_dismissed());
     }
 }

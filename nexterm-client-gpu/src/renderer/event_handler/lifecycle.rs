@@ -310,8 +310,13 @@ impl EventHandler {
                 }
                 self.connect_failure_count = 0;
                 self.connect_failure_started_at = None;
-                // P2-1: clear the offline bar if it was visible.
-                self.app.state.remove_info_bar(InfoBarSlot::Offline);
+                // P2-1: clear the offline bar if it was visible. It fades out
+                // rather than vanishing (UI/UX v3 P6d) — the connection coming
+                // back is the one moment the bar is worth watching leave.
+                let anim = self.app.config.animations.clone();
+                self.app
+                    .state
+                    .dismiss_info_bar(InfoBarSlot::Offline, Instant::now(), &anim);
                 true
             }
             Err(e) => {
@@ -347,9 +352,12 @@ impl EventHandler {
                     && let Some(started) = self.connect_failure_started_at
                     && started.elapsed() >= Self::OFFLINE_BANNER_THRESHOLD
                 {
-                    self.app
-                        .state
-                        .push_info_bar(InfoBarKind::Offline { since: started }, Instant::now());
+                    let anim = self.app.config.animations.clone();
+                    self.app.state.push_info_bar(
+                        InfoBarKind::Offline { since: started },
+                        Instant::now(),
+                        &anim,
+                    );
                     if let Some(w) = &self.window {
                         w.request_redraw();
                     }
@@ -501,7 +509,8 @@ impl EventHandler {
                     self.handle_clipboard_write_request(pane_id, text);
                 }
                 other => {
-                    self.app.state.apply_server_message(other);
+                    let anim = self.app.config.animations.clone();
+                    self.app.state.apply_server_message(other, &anim);
                 }
             }
         }
@@ -668,9 +677,12 @@ impl EventHandler {
             && let Some(version) = self.update_rx.borrow_and_update().clone()
             && !self.app.state.has_info_bar(InfoBarSlot::Update)
         {
-            self.app
-                .state
-                .push_info_bar(InfoBarKind::UpdateAvailable { version }, Instant::now());
+            let anim = self.app.config.animations.clone();
+            self.app.state.push_info_bar(
+                InfoBarKind::UpdateAvailable { version },
+                Instant::now(),
+                &anim,
+            );
             had_messages = true;
         }
 
@@ -693,6 +705,17 @@ impl EventHandler {
         self.app.state.file_transfer.motion.retire(now);
         self.app.state.retire_ghosts(now);
         self.app.state.host_manager.retire_password_modal(now);
+        // UI/UX v3 P6d: the info severity dismisses itself, and every bar
+        // whose exit has finished leaves the stack. Both are checked here
+        // rather than in the renderer so a stack that goes empty stops being
+        // drawn even if nothing else asks for a frame.
+        let expired = self.app.state.expire_info_bars(now, &anim);
+        let retired = self.app.state.retire_info_bars(now);
+        if (expired || retired)
+            && let Some(w) = &self.window
+        {
+            w.request_redraw();
+        }
 
         // Sprint 5-7 / Phase 2-2: Quake-mode handling.
         // 1) Drain global-hotkey press events. Any press is treated as "toggle".
