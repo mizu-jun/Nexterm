@@ -494,15 +494,44 @@ principle". Measuring them first found one thing that was not:
 
 Panel sizes and row pitch stay in cells, so nothing moves.
 
-Observed and **not** fixed: the host manager and macro picker draw their row
-fills and every text colour from hard-coded literals (`[0.35, 0.15, 0.50, 1.0]`
-and friends) — G11 residue that the token migration missed, and which means
-those rows do not answer to the scheme and were never contrast-corrected in P5.
-Left alone deliberately: changing hue and type size in one PR would make a
-visual regression impossible to attribute. It wants its own change, sized as a
-G11/P5 follow-up rather than a typography one.
+Observed and not fixed *in P4e*: the host manager and macro picker drew their
+row fills and every text colour from hard-coded literals — G11 residue that the
+token migration missed. Held back one PR so a colour change and a type change
+would not land together, then fixed in **P4f** (§8.4).
 
-Still deferred after P4e: the status bar (cell-aligned by design — the Lua
+### 8.4 P4f — the pickers' colours come from the tokens (2026-08-30)
+
+The last of G11 in this file. What the literals cost:
+
+- The macro picker's purple (`[0.7, 0.3, 1.0, 1.0]` stripe, `[0.35, 0.15,
+  0.50, 1.0]` selected fill, two label greys) and the host manager's green
+  (`[0.2, 0.8, 0.5, 1.0]` and friends) **did not answer to the colour scheme**.
+  Nine built-in schemes, one fixed purple.
+- None of them had been through P5. A fixed fill plus a fixed label is a fixed
+  contrast ratio, which no scheme can rescue.
+
+The mapping:
+
+| Was | Now |
+|---|---|
+| macro stripe / title | `accent_primary` / `text_on(S2).accent` |
+| host stripe / title | `semantic_success` / `text_on(S2).success` |
+| selected row fill | `semantic_fill(tokens, hue, 0.85)` — the recipe the dialogs use, which walks the blend back toward the surface until its label clears 4.5:1 |
+| selected row label | `on_surface_text(fill)` — the pair `semantic_fill` guarantees |
+| unselected row label | `text_on(SurfaceLevel::S2).secondary` (the panel background is `surface_2`) |
+| palette / macro query row | `text_on(S2).primary`, not a literal white |
+
+**The purple is gone on purpose.** There is no purple token, and inventing a
+hue per overlay is the G11 defect rather than a casualty of fixing it; the app
+accent is what an overlay's identity stripe is for. The host manager keeps a
+green identity because the scheme *has* a green — `semantic_success` — so the
+old comment calling that stripe "intentional branding, kept as-is" survives in
+substance while losing its literal.
+
+A test asserts no rgba literal returns to `picker.rs`. `semantic_fill` became
+`pub(super)` to be callable here; nothing about it changed.
+
+Still deferred after P4f: the status bar (cell-aligned by design — the Lua
 status format is column-oriented), tab-bar labels (N-3), the SFTP file-transfer
 dialog (its field boxes are cell-derived geometry), the context menu, the
 hand-written parts of `ssh_tab.rs` / `keybindings_tab.rs`, and a chrome font

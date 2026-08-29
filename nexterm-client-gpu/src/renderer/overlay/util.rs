@@ -237,7 +237,11 @@ pub(super) fn caution_fill(tokens: &nexterm_config::DesignTokens, strength: f32)
 /// The consequence is that some schemes get a slightly quieter fill than the
 /// caller asked for. That is the intended trade — an unreadable label on a
 /// destructive button is worse than a less saturated one.
-fn semantic_fill(tokens: &nexterm_config::DesignTokens, hue: [f32; 4], strength: f32) -> [f32; 4] {
+pub(super) fn semantic_fill(
+    tokens: &nexterm_config::DesignTokens,
+    hue: [f32; 4],
+    strength: f32,
+) -> [f32; 4] {
     let base = [
         tokens.surface_1[0],
         tokens.surface_1[1],

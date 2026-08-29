@@ -9,7 +9,7 @@ use crate::state::ClientState;
 use crate::vertex_util::{add_px_rect, add_run_verts, add_string_verts, measure_run};
 
 use super::super::WgpuState;
-use super::util::draw_overlay_panel;
+use super::util::{draw_overlay_panel, semantic_fill};
 use nexterm_config::SurfaceLevel;
 
 /// The selection marker drawn to the left of a picker row.
@@ -149,7 +149,7 @@ impl WgpuState {
             py + cell_h * 0.1,
             cell_h,
             text_max_w,
-            [1.0, 1.0, 1.0, 1.0],
+            tokens.text_on(SurfaceLevel::S2).primary,
             sw,
             sh,
             font,
@@ -415,12 +415,15 @@ impl WgpuState {
             bg_idx,
         );
         // Top accent line — intentional purple branding, kept as-is.
+        // UI/UX v3 P4f: the stripe used to be a hard-coded purple. There is
+        // no purple token, and inventing one per overlay is the G11 defect
+        // itself — the app accent is what an overlay's identity stripe is for.
         add_px_rect(
             px,
             py,
             pw,
             2.0,
-            [0.7, 0.3, 1.0, 1.0],
+            tokens.accent_primary,
             sw,
             sh,
             bg_verts,
@@ -446,7 +449,7 @@ impl WgpuState {
             py + cell_h * 0.1,
             cell_h,
             text_max_w,
-            [0.8, 0.5, 1.0, 1.0],
+            tokens.text_on(SurfaceLevel::S2).accent,
             sw,
             sh,
             font,
@@ -464,7 +467,7 @@ impl WgpuState {
             py + cell_h * 1.1,
             cell_h,
             text_max_w,
-            [1.0, 1.0, 1.0, 1.0],
+            tokens.text_on(SurfaceLevel::S2).primary,
             sw,
             sh,
             font,
@@ -487,13 +490,18 @@ impl WgpuState {
         for (i, mac) in items.iter().enumerate().take(panel_rows as usize - 2) {
             let item_py = py + cell_h * (i as f32 + 2.2);
             let is_selected = i == mp.selected;
+            // The selected fill is the accent blended into the panel surface,
+            // the same recipe the dialogs use — `semantic_fill` walks the
+            // blend back until its label clears 4.5:1, which the hard-coded
+            // purple never guaranteed on any scheme.
+            let selected_fill = semantic_fill(tokens, tokens.accent_primary, 0.85);
             if is_selected {
                 add_px_rect(
                     px + 2.0,
                     item_py,
                     pw - 4.0,
                     cell_h,
-                    [0.35, 0.15, 0.50, 1.0],
+                    selected_fill,
                     sw,
                     sh,
                     bg_verts,
@@ -506,9 +514,12 @@ impl WgpuState {
                 &mac.description
             };
             let fg = if is_selected {
-                [0.95, 0.8, 1.0, 1.0]
+                // Chosen against the blended fill, which is not a surface
+                // token — `semantic_fill` guarantees this pair clears the
+                // contrast floor by construction.
+                crate::color_util::on_surface_text(selected_fill)
             } else {
-                [0.70, 0.60, 0.78, 1.0]
+                tokens.text_on(SurfaceLevel::S2).secondary
             };
             let style = if is_selected { body_strong } else { body };
             if is_selected {
@@ -626,13 +637,15 @@ impl WgpuState {
             bg_verts,
             bg_idx,
         );
-        // Top accent line — intentional green SSH branding, kept as-is.
+        // Top accent line — the SSH green identity, now taken from the
+        // scheme's own success hue rather than a literal, so it follows the
+        // theme (UI/UX v3 P4f).
         add_px_rect(
             px,
             py,
             pw,
             2.0,
-            [0.2, 0.8, 0.5, 1.0],
+            tokens.semantic_success,
             sw,
             sh,
             bg_verts,
@@ -657,7 +670,7 @@ impl WgpuState {
             py + cell_h * 0.1,
             cell_h,
             text_max_w,
-            [0.2, 0.9, 0.6, 1.0],
+            tokens.text_on(SurfaceLevel::S2).success,
             sw,
             sh,
             font,
@@ -675,7 +688,7 @@ impl WgpuState {
             py + cell_h * 1.1,
             cell_h,
             text_max_w,
-            [1.0, 1.0, 1.0, 1.0],
+            tokens.text_on(SurfaceLevel::S2).primary,
             sw,
             sh,
             font,
@@ -696,13 +709,14 @@ impl WgpuState {
         for (i, host) in items.iter().enumerate().take(panel_rows as usize - 2) {
             let item_py = py + cell_h * (i as f32 + 2.2);
             let is_selected = i == hm.selected;
+            let selected_fill = semantic_fill(tokens, tokens.semantic_success, 0.85);
             if is_selected {
                 add_px_rect(
                     px + 2.0,
                     item_py,
                     pw - 4.0,
                     cell_h,
-                    [0.15, 0.45, 0.30, 1.0],
+                    selected_fill,
                     sw,
                     sh,
                     bg_verts,
@@ -713,9 +727,9 @@ impl WgpuState {
             // being two runs rather than one padded string.
             let target = format!("{}@{}:{}", host.username, host.host, host.port);
             let fg = if is_selected {
-                [0.9, 1.0, 0.9, 1.0]
+                crate::color_util::on_surface_text(selected_fill)
             } else {
-                [0.70, 0.75, 0.72, 1.0]
+                tokens.text_on(SurfaceLevel::S2).secondary
             };
             let style = if is_selected { body_strong } else { body };
             if is_selected {
@@ -818,6 +832,32 @@ mod tests {
     fn the_column_is_never_negative() {
         assert_eq!(name_column_width(&[], GAP, PANEL_W, MIN_DETAIL), GAP);
         assert_eq!(name_column_width(&[50.0], GAP, 40.0, MIN_DETAIL), 0.0);
+    }
+
+    /// G11's last residue in this file: the host manager and macro picker
+    /// drew their stripe, title, selected fill and every label from literals,
+    /// so those rows did not answer to the colour scheme and were never
+    /// contrast-corrected in P5. A literal here is how that comes back.
+    #[test]
+    fn no_picker_colour_is_written_as_a_literal() {
+        let src = include_str!("picker.rs");
+        let production = src
+            .split("#[cfg(test)]")
+            .next()
+            .expect("the file has a production half");
+        for (n, line) in production.lines().enumerate() {
+            let code = line.trim_start();
+            if code.starts_with("//") {
+                continue;
+            }
+            // An rgba literal in this file is always four floats in brackets.
+            assert!(
+                !(code.contains("[0.") || code.contains("[1.0")),
+                "picker.rs:{} writes a colour literal again; \
+                 DesignTokens and semantic_fill own the palette: {code}",
+                n + 1
+            );
+        }
     }
 
     /// The three pickers must not go back to aligning columns by character

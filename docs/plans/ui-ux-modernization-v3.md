@@ -722,6 +722,12 @@ gated behind a spike.
         mouse-hit-tested, so again no hit-region work. Their hard-coded row
         colours are left as G11 residue for a separate change (spec §8.3,
         2026-08-29)
+      - [x] P4f — that G11 residue: the two pickers' stripe, title, selected
+        fill and every label now come from `DesignTokens` / `semantic_fill`
+        instead of literals, so the rows follow the scheme and their selected
+        label clears 4.5:1 by construction. The invented purple is dropped for
+        `accent_primary`; the SSH green becomes `semantic_success` (spec §8.4,
+        2026-08-30)
 - [x] P5 contrast everywhere + high-contrast scheme (P5a–P5d, 2026-08-29)
 - [x] P6 InfoBar consolidation (P6a–P6d, 2026-08-29; consent reclassification
   dropped, spec §4). Appearance stays on the on-device backlog below — the
