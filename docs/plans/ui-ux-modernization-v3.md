@@ -728,6 +728,14 @@ gated behind a spike.
         label clears 4.5:1 by construction. The invented purple is dropped for
         `accent_primary`; the SSH green becomes `semantic_success` (spec §8.4,
         2026-08-30)
+      - [ ] N-3 tab-bar labels — spec drafted 2026-08-30
+        (`2026-08-30-n3-tab-bar-labels.md`), awaiting sign-off. Measuring found
+        the roadmap's framing wrong in both directions: the hit computation
+        does **not** need rebuilding (the renderer already publishes
+        `tab_hit_rects` every frame), and there is a live defect underneath —
+        tabs are sized by `chars().count()` but drawn by display width, so a
+        CJK title overflows its own pill and its click region belongs to the
+        next tab. Two open questions for the maintainer in §7
 - [x] P5 contrast everywhere + high-contrast scheme (P5a–P5d, 2026-08-29)
 - [x] P6 InfoBar consolidation (P6a–P6d, 2026-08-29; consent reclassification
   dropped, spec §4). Appearance stays on the on-device backlog below — the
