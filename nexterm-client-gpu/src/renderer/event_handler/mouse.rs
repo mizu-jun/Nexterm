@@ -455,6 +455,17 @@ impl EventHandler {
         };
         if prev_hovered != new_hovered {
             self.app.state.hovered_tab_id = new_hovered;
+            // UI/UX v3 P3b2b: the config gate stays a gate. With
+            // `hover_highlight = false` there is no transition at all, not a
+            // transition toward a zero-weight target, so the key keeps
+            // meaning exactly what it means today.
+            if self.app.config.tab_bar.hover_highlight {
+                let anim = self.app.config.animations.clone();
+                self.app
+                    .state
+                    .tab_hover
+                    .retarget(new_hovered, std::time::Instant::now(), &anim);
+            }
             if let Some(w) = &self.window {
                 w.request_redraw();
             }
@@ -480,6 +491,12 @@ impl EventHandler {
         };
         if prev_button != new_button {
             self.app.state.hovered_window_button = new_button;
+            let anim = self.app.config.animations.clone();
+            self.app.state.window_button_hover.retarget(
+                new_button,
+                std::time::Instant::now(),
+                &anim,
+            );
             if let Some(w) = &self.window {
                 w.request_redraw();
             }

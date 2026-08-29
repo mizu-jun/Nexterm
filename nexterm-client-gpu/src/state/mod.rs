@@ -205,6 +205,10 @@ pub struct ClientState {
     /// Updated on mouse-move; the renderer highlights the hovered button
     /// (the close button gets the semantic error colour, WT-style).
     pub hovered_window_button: Option<WindowButton>,
+    /// Hover cross-fade over the custom title bar's window buttons
+    /// (UI/UX v3 P3b2b). `hovered_window_button` above stays the truth for
+    /// hit-testing; this is render-only.
+    pub window_button_hover: crate::animations::HoverTransition<WindowButton>,
     /// WSL distros detected at startup (`nexterm_config::wsl::detect_distros`),
     /// shown in the new-tab dropdown after the configured profiles. Cached
     /// once because detection shells out to `wsl.exe` on Windows.
@@ -213,6 +217,13 @@ pub struct ClientState {
     /// Updated by `renderer/event_handler/mouse.rs` on mouse-move; the tab-bar
     /// renderer brightens the background for the hovered tab.
     pub hovered_tab_id: Option<u32>,
+    /// Hover cross-fade over the tab bar (UI/UX v3 P3b2b).
+    ///
+    /// `hovered_tab_id` above stays the truth for hit-testing and for
+    /// whether the tear-out and close buttons are drawn; this is render-only
+    /// and outlives it by one fade so the tab the pointer left can dim back
+    /// down.
+    pub tab_hover: crate::animations::HoverTransition<u32>,
     /// OS-reported light/dark preference (Sprint 5-15 / Phase 3).
     /// `Some(true)` = dark, `Some(false)` = light, `None` = unknown.
     /// Updated by `WindowEvent::ThemeChanged` and at window creation.
@@ -723,6 +734,12 @@ impl ClientState {
         {
             return true;
         }
+        if self.tab_hover.is_active(now) {
+            return true;
+        }
+        if self.window_button_hover.is_active(now) {
+            return true;
+        }
         false
     }
 
@@ -893,8 +910,10 @@ impl ClientState {
             window_maximize_hit_rect: None,
             window_close_hit_rect: None,
             hovered_window_button: None,
+            window_button_hover: Default::default(),
             wsl_profiles: Vec::new(),
             hovered_tab_id: None,
+            tab_hover: Default::default(),
             os_dark_mode: None,
             key_hint_visible_until: None,
             prefix_pending_until: None,
@@ -1298,6 +1317,101 @@ mod animation_frame_tests {
         assert!((menu.hover_transition.weight(1, done) - 1.0).abs() < 1e-3);
         assert!(menu.hover_transition.weight(0, done).abs() < 1e-4);
         assert!(!state.has_active_animation(done, 200));
+    }
+
+    /// Hovering a tab must ask for frames until the cross-fade finishes, and
+    /// stop afterwards.
+    #[test]
+    fn a_hovered_tab_wants_animation_frames_until_it_settles() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+
+        state.tab_hover.retarget(Some(7), t0, &anim);
+        assert!(state.has_active_animation(t0, 200));
+        assert!(
+            state.tab_hover.weight(7, t0).abs() < 1e-3,
+            "the fade starts from nothing"
+        );
+
+        let done = t0 + Duration::from_millis(100);
+        assert!((state.tab_hover.weight(7, done) - 1.0).abs() < 1e-3);
+        assert!(!state.has_active_animation(done, 200));
+    }
+
+    /// Leaving the tab bar must fade the last tab out rather than snapping —
+    /// the same property `HoverTransition` guarantees for the other models.
+    #[test]
+    fn leaving_the_tab_bar_fades_the_last_tab_out() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+        state.tab_hover.retarget(Some(7), t0, &anim);
+        let settled = t0 + Duration::from_millis(100);
+
+        state.tab_hover.retarget(None, settled, &anim);
+        let mid = settled + Duration::from_millis(50);
+        let w = state.tab_hover.weight(7, mid);
+        assert!(w > 0.1 && w < 0.9, "must still be tinted while fading: {w}");
+        assert!(state.has_active_animation(mid, 200));
+
+        let done = settled + Duration::from_millis(100);
+        assert!(state.tab_hover.weight(7, done).abs() < 1e-3);
+        assert!(!state.has_active_animation(done, 200));
+    }
+
+    /// The window buttons are the fourth and last hover model. Their fade is
+    /// driven from two places — the pointer-motion handler and the Windows
+    /// snap-layout event — so the state-level property is what the test can
+    /// pin; the two call sites are checked by review.
+    #[test]
+    fn a_hovered_window_button_wants_animation_frames_until_it_settles() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+        let close = crate::state::WindowButton::Close;
+
+        state.window_button_hover.retarget(Some(close), t0, &anim);
+        assert!(state.has_active_animation(t0, 200));
+        assert!(state.window_button_hover.weight(close, t0).abs() < 1e-3);
+        assert!(
+            state
+                .window_button_hover
+                .weight(crate::state::WindowButton::Minimize, t0)
+                .abs()
+                < 1e-4,
+            "an unhovered button weighs nothing"
+        );
+
+        let done = t0 + Duration::from_millis(100);
+        assert!((state.window_button_hover.weight(close, done) - 1.0).abs() < 1e-3);
+        assert!(!state.has_active_animation(done, 200));
+    }
+
+    /// Moving between two buttons cross-fades them rather than snapping.
+    #[test]
+    fn moving_between_window_buttons_cross_fades_them() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+        let (min, max) = (
+            crate::state::WindowButton::Minimize,
+            crate::state::WindowButton::Maximize,
+        );
+
+        state.window_button_hover.retarget(Some(min), t0, &anim);
+        let settled = t0 + Duration::from_millis(100);
+        state
+            .window_button_hover
+            .retarget(Some(max), settled, &anim);
+
+        let mid = settled + Duration::from_millis(50);
+        let (w_min, w_max) = (
+            state.window_button_hover.weight(min, mid),
+            state.window_button_hover.weight(max, mid),
+        );
+        assert!(w_min > 0.1 && w_min < 0.9, "outgoing mid-fade: {w_min}");
+        assert!(w_max > 0.1 && w_max < 0.9, "incoming mid-fade: {w_max}");
     }
 
     /// P3b's acceptance criterion: a state with nothing animating must not

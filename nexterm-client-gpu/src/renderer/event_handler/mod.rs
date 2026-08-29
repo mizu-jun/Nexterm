@@ -509,6 +509,12 @@ impl ApplicationHandler<UserEvent> for EventHandler {
                     let new_hover = hovered.then_some(crate::state::WindowButton::Maximize);
                     if self.app.state.hovered_window_button != new_hover {
                         self.app.state.hovered_window_button = new_hover;
+                        let anim = self.app.config.animations.clone();
+                        self.app.state.window_button_hover.retarget(
+                            new_hover,
+                            std::time::Instant::now(),
+                            &anim,
+                        );
                         w.request_redraw();
                     }
                 }

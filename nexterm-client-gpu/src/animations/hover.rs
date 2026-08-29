@@ -118,10 +118,12 @@ impl<Id: Copy + PartialEq> HoverTransition<Id> {
 
     /// The item currently being hovered, as far as the transition knows.
     ///
-    /// No production caller yet — Task 3 (settings rows) reads `weight`
-    /// directly and Task 4 (context menu) may or may not need this. Exercised
-    /// by this module's own tests, which does not count for a non-test build.
-    #[allow(dead_code)]
+    /// Only available in test builds. All four hover models (settings rows,
+    /// context menu, tab bar, window buttons) read `weight` directly in
+    /// production; this method exists to let tests pin that `retarget`
+    /// actually moved the target, a property the weight assertions alone do
+    /// not cover.
+    #[cfg(test)]
     pub fn target(&self) -> Option<Id> {
         self.to
     }

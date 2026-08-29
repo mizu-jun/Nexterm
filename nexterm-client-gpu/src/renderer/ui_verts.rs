@@ -180,6 +180,7 @@ impl WgpuState {
         sh: f32,
         cell_w: f32,
         cell_h: f32,
+        now: std::time::Instant,
         font: &mut FontManager,
         atlas: &mut GlyphAtlas,
         bg_verts: &mut Vec<BgVertex>,
@@ -354,19 +355,27 @@ impl WgpuState {
             // Decide the tab background color:
             //   1. Active -> active_bg
             //   2. Inactive but has activity -> activity_bg (from config)
-            //   3. Hovered -> brightened inactive_bg
+            //   3. Hovered -> brightened inactive_bg, cross-faded (P3b2b)
             //   4. Normal -> inactive_bg
             let tab_bg = if is_active {
                 active_bg
             } else if has_activity {
                 activity_bg
-            } else if is_hovered && cfg.hover_highlight {
-                [
+            } else if cfg.hover_highlight {
+                // The quad is always drawn, so the *colour* moves — alpha
+                // scaling would fade the tab out of the bar instead of into
+                // its hover tint.
+                let hovered_bg = [
                     (inactive_bg[0] + 0.06).min(1.0),
                     (inactive_bg[1] + 0.06).min(1.0),
                     (inactive_bg[2] + 0.08).min(1.0),
                     inactive_bg[3],
-                ]
+                ];
+                crate::color_util::lerp_rgba(
+                    inactive_bg,
+                    hovered_bg,
+                    state.tab_hover.weight(pane_id, now),
+                )
             } else {
                 inactive_bg
             };
@@ -775,8 +784,10 @@ impl WgpuState {
             ];
             for (i, &(button, glyph)) in buttons.iter().enumerate() {
                 let bx = sw - (3 - i) as f32 * window_button_w;
-                let hovered = state.hovered_window_button == Some(button);
-                if hovered {
+                let w = state.window_button_hover.weight(button, now);
+                // The fill is an additive layer — absent when not hovered —
+                // so its alpha carries the fade and nothing is emitted at 0.
+                if w > 0.0 {
                     let bg = if button == WindowButton::Close {
                         tokens.semantic_error
                     } else {
@@ -793,18 +804,17 @@ impl WgpuState {
                         window_button_w,
                         bar_h,
                         radius,
-                        bg,
+                        [bg[0], bg[1], bg[2], bg[3] * w],
                         sw,
                         sh,
                         bg_verts,
                         bg_idx,
                     );
                 }
-                let fg = if hovered {
-                    tokens.text_primary
-                } else {
-                    tokens.text_secondary
-                };
+                // The glyph is an opaque swap between two tokens, so the
+                // colour itself moves.
+                let fg =
+                    crate::color_util::lerp_rgba(tokens.text_secondary, tokens.text_primary, w);
                 let glyph_x =
                     bx + (window_button_w - glyph.chars().count() as f32 * cell_w).max(0.0) * 0.5;
                 add_string_verts(
