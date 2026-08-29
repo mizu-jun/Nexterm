@@ -43,6 +43,15 @@ fn text_fields(t: &TextTokens) -> [(&'static str, [f32; 4]); 8] {
     ]
 }
 
+/// The scheme's foreground exactly as the palette states it — the input the
+/// correction is judged against. P5b removed the flat `text_primary` field so
+/// no call site can pick a colour without naming its ground; these tests want
+/// the uncorrected value, so they reconstruct it.
+fn raw_foreground(palette: &SchemePalette) -> [f32; 4] {
+    let c = palette.fg.map(|v| v as f32 / 255.0);
+    [c[0], c[1], c[2], 1.0]
+}
+
 /// Ratio of one text token against its own surface, alpha composited.
 fn ratio_on(tokens: &DesignTokens, level: SurfaceLevel, color: [f32; 4]) -> f32 {
     let bg = ground(tokens, level);
@@ -88,11 +97,12 @@ fn every_builtin_scheme_meets_the_text_floor_on_every_surface() {
 /// (10.59 / 9.23 / 7.58 / 5.99), so any change to it would be gratuitous.
 #[test]
 fn correction_is_a_no_op_where_the_scheme_already_reads() {
-    let tokens = DesignTokens::from_palette(&BuiltinScheme::TokyoNight.palette());
+    let palette = BuiltinScheme::TokyoNight.palette();
+    let tokens = DesignTokens::from_palette(&palette);
     for level in SurfaceLevel::ALL {
         assert_eq!(
             tokens.text_on(level).primary,
-            tokens.text_primary,
+            raw_foreground(&palette),
             "{level:?}: Tokyo Night body text already clears the floor and must be left alone"
         );
     }
@@ -105,8 +115,9 @@ fn correction_is_a_no_op_where_the_scheme_already_reads() {
 /// scheme with white.
 #[test]
 fn solarized_body_text_is_lightened_without_losing_its_hue() {
-    let tokens = DesignTokens::from_palette(&BuiltinScheme::Solarized.palette());
-    let raw = tokens.text_primary;
+    let palette = BuiltinScheme::Solarized.palette();
+    let tokens = DesignTokens::from_palette(&palette);
+    let raw = raw_foreground(&palette);
     let fixed = tokens.text_on(SurfaceLevel::S3).primary;
 
     assert!(
@@ -186,4 +197,38 @@ fn a_mid_tone_ground_still_clears_the_floor() {
     let tokens = DesignTokens::from_palette(&palette);
     let bad = failures(&tokens);
     assert!(bad.is_empty(), "mid-tone ground: {bad:?}");
+}
+
+/// The property P5b's call-site migration leans on.
+///
+/// Several surfaces change ground with state — a settings row is the panel's
+/// `surface_2` at rest and a `surface_3` blend when hovered — and giving one
+/// row two text colours would mean animating the colour on hover. Those sites
+/// take the level of the *worst* ground they can appear over instead. That is
+/// only sound if a colour corrected for the bottom of the ramp still reads
+/// everywhere above it, which holds because the surfaces are a monotone
+/// luminance sequence and the correction pushes text the other way. This
+/// pins it rather than leaving it as an argument.
+#[test]
+fn text_corrected_for_the_deepest_surface_reads_on_every_shallower_one() {
+    let mut report = Vec::new();
+    for scheme in BuiltinScheme::all() {
+        let tokens = DesignTokens::from_palette(&scheme.palette());
+        for (name, color) in text_fields(tokens.text_on(SurfaceLevel::S3)) {
+            for level in [SurfaceLevel::S0, SurfaceLevel::S1, SurfaceLevel::S2] {
+                let r = ratio_on(&tokens, level, color);
+                if r < MIN_TEXT_CONTRAST {
+                    report.push(format!(
+                        "  {} S3/{name} on {level:?} = {r:.2}",
+                        scheme.display_name()
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        report.is_empty(),
+        "S3-corrected text fails on a shallower surface:\n{}",
+        report.join("\n")
+    );
 }

@@ -7,6 +7,7 @@ use crate::vertex_util::add_px_rounded_rect_sdf;
 use super::super::super::settings::row::{MIN_TEXT_CONTRAST, ensure_readable};
 use super::super::spec::WidgetSpec;
 use super::{WidgetSink, WidgetTheme, draw_row_run, row_style};
+use nexterm_config::SurfaceLevel;
 
 /// Glyph used for the insertion point.
 const CARET: char = '│';
@@ -137,9 +138,9 @@ fn draw_field_text(
 ) {
     let color = ensure_readable(
         if spec.enabled() {
-            theme.tokens.text_primary
+            theme.tokens.text_on(SurfaceLevel::S3).primary
         } else {
-            theme.tokens.text_muted
+            theme.tokens.text_on(SurfaceLevel::S3).muted
         },
         theme.tokens.surface_1,
         MIN_TEXT_CONTRAST,

@@ -265,6 +265,7 @@ fn semantic_fill(tokens: &nexterm_config::DesignTokens, hue: [f32; 4], strength:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nexterm_config::SurfaceLevel;
 
     #[test]
     fn shadow_params_scale_with_the_elevation_table() {
@@ -463,51 +464,12 @@ mod tests {
         ]
     }
 
-    /// (scheme, label) pairs whose panel-body-text contrast against
-    /// `surface_2` is already under [`MIN_TEXT_CONTRAST`] with **no acrylic
-    /// involved at all** (`m = 0.0`, today's shipped opaque fill). These are
-    /// pre-existing design-token defects, out of P2b's scope to fix in this
-    /// task. Pinned explicitly rather than skipped: the sweep below still
-    /// exercises every one of these pairs and asserts the `m = 0.0` baseline
-    /// stays sub-floor, so if a future token fix ever raises one back above
-    /// the floor, *this* assertion starts failing — a signal to remove that
-    /// pair from the list, not a false alarm.
-    ///
-    /// Measured baselines (`m = 0.0`, ratio against unperturbed
-    /// `surface_2`; see `task-9-report.md` for the full sweep):
-    ///   - Solarized: text_primary 3.33, text_secondary 2.61 — stays
-    ///     sub-floor across the *entire* sweep (worst-to-best: 3.33-3.52 /
-    ///     2.61-2.73).
-    ///   - OneDark:   text_secondary 3.38 — likewise stays sub-floor across
-    ///     the entire sweep (3.38-3.55).
-    ///   - OneDark:   text_primary 4.48 at `m = 0.0` **only**. Once acrylic
-    ///     is engaged (`m >= 0.25`, either backdrop) this specific pair
-    ///     actually clears the floor (4.51-4.75) — moving the fill toward
-    ///     `surface_0`/`surface_1` happens to help this particular
-    ///     already-marginal pair more than it hurts it. The assertion below
-    ///     therefore only pins this pair's `m = 0.0` point, not the whole
-    ///     sweep; `m > 0` for this one pair runs through the ordinary
-    ///     branch and is expected to pass.
-    ///
-    /// Nord's `text_secondary` (baseline 4.52, only 0.02 of headroom) is
-    /// *not* pinned: per ruling 9-H the asserted model excludes
-    /// `acrylic_noise`'s grain term (a zero-mean dither, not a systematic
-    /// bias), and without grain Nord clears the floor at every point in the
-    /// sweep (4.52-4.76) — see `task-9-report.md` for the full table and the
-    /// ruling this was escalated under before being resolved.
-    const PRE_EXISTING_SUBFLOOR_LABELS: &[(nexterm_config::BuiltinScheme, &str)] = &[
-        (nexterm_config::BuiltinScheme::Solarized, "text_primary"),
-        (nexterm_config::BuiltinScheme::Solarized, "text_secondary"),
-        (nexterm_config::BuiltinScheme::OneDark, "text_primary"),
-        (nexterm_config::BuiltinScheme::OneDark, "text_secondary"),
-    ];
-
     /// Panel body text (`text_primary` / `text_secondary`, drawn directly
     /// over the panel fill — e.g. `picker.rs`'s SFTP field labels) must stay
     /// above the contrast floor across the acrylic fill's whole strength
     /// range, against the backdrops the in-app capture can actually produce
-    /// (ruling 9-F), on every built-in scheme except the pinned sub-floor
-    /// list above. Button labels are out of scope: `danger_fill`/
+    /// (ruling 9-F), on every built-in scheme. Button labels are out of
+    /// scope: `danger_fill`/
     /// `caution_fill` quads are drawn with `acrylic_mix = 0.0` and cannot be
     /// perturbed by this feature.
     ///
@@ -523,6 +485,14 @@ mod tests {
     /// extreme-backdrop table (ruling 9-G) — both are real limitations of a
     /// translucent material over arbitrary content, just not ones this
     /// floor check should fail on.
+    ///
+    /// UI/UX v3 P5b deleted this test's `PRE_EXISTING_SUBFLOOR_LABELS`
+    /// allow-list. It held Solarized's and OneDark's body text, pinned as
+    /// "sub-floor across the entire sweep" because P2b could not fix a
+    /// design-token defect from inside an acrylic task. The token layer fixes
+    /// it, so the exception is gone and every scheme now runs through the one
+    /// assertion — which is what the pinning comment asked a future token fix
+    /// to do.
     #[test]
     fn panel_body_text_clears_contrast_floor_across_acrylic_strengths() {
         for scheme in [
@@ -541,46 +511,23 @@ mod tests {
                 for m in [0.0_f32, 0.25, 0.5, 0.75, 1.0] {
                     let bg = acrylic_perturbed_surface(tokens.surface_2, backdrop, m);
                     let labels = [
-                        ("text_primary", tokens.text_primary),
-                        ("text_secondary", tokens.text_secondary),
+                        ("text_primary", tokens.text_on(SurfaceLevel::S2).primary),
+                        ("text_secondary", tokens.text_on(SurfaceLevel::S2).secondary),
                     ];
                     for (label_name, label) in labels {
                         // text_primary is opaque (alpha 1.0); text_secondary
                         // carries alpha 0.78 and is alpha-blended onto
-                        // whatever is beneath it at draw time (see
-                        // `DesignTokens`'s field doc-comments), so composite
-                        // it over `bg` first, matching `ensure_readable`.
+                        // whatever is beneath it at draw time, so composite it
+                        // over `bg` first — the same thing the correction in
+                        // `DesignTokens` did when it chose these values.
                         let effective = crate::color_util::composite_over(label, bg);
                         let ratio = crate::color_util::contrast_ratio(effective, bg);
-                        let pinned_sub_floor =
-                            PRE_EXISTING_SUBFLOOR_LABELS.contains(&(scheme, label_name));
-                        // OneDark's `text_primary` is pinned only for its
-                        // `m = 0.0` baseline — see the doc comment on
-                        // `PRE_EXISTING_SUBFLOOR_LABELS`. It measurably
-                        // clears the floor once acrylic engages, so beyond
-                        // `m = 0.0` it falls through to the ordinary branch
-                        // like any non-pinned pair.
-                        let onedark_text_primary_recovers = scheme
-                            == nexterm_config::BuiltinScheme::OneDark
-                            && label_name == "text_primary";
-                        if pinned_sub_floor && (m == 0.0 || !onedark_text_primary_recovers) {
-                            assert!(
-                                ratio < MIN_TEXT_CONTRAST,
-                                "{scheme:?} {label_name} is pinned in \
-                                 PRE_EXISTING_SUBFLOOR_LABELS as always \
-                                 sub-floor, but backdrop={backdrop:?} m={m} \
-                                 cleared the floor (ratio {ratio:.2}) — \
-                                 remove it from the list and update the doc \
-                                 comment"
-                            );
-                        } else {
-                            assert!(
-                                ratio >= MIN_TEXT_CONTRAST,
-                                "{scheme:?} {label_name}: backdrop={backdrop:?} \
-                                 m={m}: ratio {ratio:.2} < {MIN_TEXT_CONTRAST} \
-                                 (bg={bg:?})"
-                            );
-                        }
+                        assert!(
+                            ratio >= MIN_TEXT_CONTRAST,
+                            "{scheme:?} {label_name}: backdrop={backdrop:?} \
+                             m={m}: ratio {ratio:.2} < {MIN_TEXT_CONTRAST} \
+                             (bg={bg:?})"
+                        );
                     }
                 }
             }

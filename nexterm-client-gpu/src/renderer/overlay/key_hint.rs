@@ -10,6 +10,7 @@ use crate::state::ClientState;
 use crate::vertex_util::{add_px_rect, add_string_verts};
 
 use super::super::WgpuState;
+use nexterm_config::SurfaceLevel;
 
 impl WgpuState {
     /// Build vertices for the key-hint overlay.
@@ -110,7 +111,7 @@ impl WgpuState {
             &header,
             bx + pad,
             by + pad,
-            tokens.text_primary,
+            tokens.text_on(SurfaceLevel::S0).primary,
             true,
             sw,
             sh,
@@ -123,8 +124,8 @@ impl WgpuState {
         );
 
         // Each entry
-        let key_fg = tokens.text_primary;
-        let action_fg = tokens.text_secondary;
+        let key_fg = tokens.text_on(SurfaceLevel::S0).primary;
+        let action_fg = tokens.text_on(SurfaceLevel::S0).secondary;
         for (i, (key, action)) in hints.iter().enumerate() {
             let row_y = by + pad + cell_h + (i as f32 * cell_h);
             let key_x = bx + pad;

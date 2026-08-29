@@ -21,6 +21,7 @@ use super::WgpuState;
 use super::background_pass::build_background_verts;
 use super::image::{ImageEntry, build_image_verts};
 use super::overlay::SettingsPanelScrollMetrics;
+use nexterm_config::SurfaceLevel;
 
 /// Per-pane vertex-cache misses since the last drain (UI/UX v3 P3a).
 ///
@@ -1399,7 +1400,7 @@ impl WgpuState {
                 preedit,
                 px,
                 py,
-                tokens.text_primary,
+                tokens.text_on(SurfaceLevel::S3).primary,
                 false,
                 sw,
                 sh,

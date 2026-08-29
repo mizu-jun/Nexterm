@@ -10,6 +10,7 @@ use super::{
     FOCUS_RING_PX, WidgetSink, WidgetTheme, draw_focus_ring, draw_row_run, draw_row_run_centred,
     row_style, text_baseline,
 };
+use nexterm_config::SurfaceLevel;
 
 /// Toggle track height as a fraction of the cell height.
 const TOGGLE_TRACK_H: f32 = 0.95;
@@ -33,11 +34,17 @@ pub(super) fn draw_toggle(
     let radius = track_h * 0.5;
 
     let (track_color, thumb_color) = if !spec.enabled() {
-        (theme.tokens.surface_3, theme.tokens.text_muted)
+        (
+            theme.tokens.surface_3,
+            theme.tokens.text_on(SurfaceLevel::S3).muted,
+        )
     } else if on {
         (theme.tokens.accent_primary, theme.tokens.text_on_accent)
     } else {
-        (theme.tokens.surface_3, theme.tokens.text_secondary)
+        (
+            theme.tokens.surface_3,
+            theme.tokens.text_on(SurfaceLevel::S3).secondary,
+        )
     };
 
     // Off state gets a visible outline so an empty track never disappears
@@ -103,20 +110,20 @@ pub(super) fn draw_cycle(
     sink: &mut WidgetSink<'_>,
 ) {
     let chevron_color = if !spec.enabled() {
-        theme.tokens.text_muted
+        theme.tokens.text_on(SurfaceLevel::S3).muted
     } else if spec.focused() {
         theme.tokens.accent_primary
     } else {
-        theme.tokens.text_muted
+        theme.tokens.text_on(SurfaceLevel::S3).muted
     };
     let chevron_color = ensure_readable(chevron_color, theme.tokens.surface_2, MIN_TEXT_CONTRAST);
     let value_color = ensure_readable(
         if !spec.enabled() {
-            theme.tokens.text_muted
+            theme.tokens.text_on(SurfaceLevel::S3).muted
         } else if spec.desc.invalid {
             theme.tokens.semantic_error
         } else {
-            theme.tokens.text_primary
+            theme.tokens.text_on(SurfaceLevel::S3).primary
         },
         theme.tokens.surface_2,
         MIN_TEXT_CONTRAST,
@@ -234,11 +241,11 @@ pub(super) fn draw_button(
 
     let color = ensure_readable(
         if !spec.enabled() {
-            theme.tokens.text_muted
+            theme.tokens.text_on(SurfaceLevel::S3).muted
         } else if destructive {
             theme.tokens.semantic_error
         } else {
-            theme.tokens.text_primary
+            theme.tokens.text_on(SurfaceLevel::S3).primary
         },
         theme.tokens.surface_3,
         MIN_TEXT_CONTRAST,

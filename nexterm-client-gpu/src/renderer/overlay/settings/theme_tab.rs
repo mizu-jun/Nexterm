@@ -16,7 +16,8 @@ use super::super::widgets::settings_theme::{
     THEME_CATEGORY, build_theme_widgets, swatch_gap, swatch_index_of, swatch_names, swatch_y,
 };
 use super::super::widgets::tooltip::{draw_tooltip, measure_tooltip, place_tooltip};
-use super::row::{MIN_TEXT_CONTRAST, ensure_readable};
+
+use nexterm_config::SurfaceLevel;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::renderer) fn draw_theme_tab(
@@ -77,9 +78,9 @@ pub(in crate::renderer) fn draw_theme_tab(
     for (i, name) in swatch_names().iter().enumerate() {
         let is_sel = sp.scheme_index == i;
         let color = if is_sel {
-            tokens.text_secondary
+            tokens.text_on(SurfaceLevel::S2).secondary
         } else {
-            ensure_readable(tokens.text_muted, tokens.surface_2, MIN_TEXT_CONTRAST)
+            tokens.text_on(SurfaceLevel::S2).muted
         };
         let x = specs
             .iter()

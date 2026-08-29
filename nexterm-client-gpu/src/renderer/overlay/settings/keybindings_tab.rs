@@ -21,7 +21,8 @@ use super::super::widgets::settings_keybindings::{
     build_keybindings_widgets, key_fields_top, key_leader_y, key_list_window,
 };
 use super::layout::LIST_ROW_PITCH;
-use super::row::{MIN_TEXT_CONTRAST, danger_button_colors, draw_section_header, ensure_readable};
+use super::row::{danger_button_colors, draw_section_header};
+use nexterm_config::SurfaceLevel;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::renderer) fn draw_keybindings_tab(
@@ -53,7 +54,7 @@ pub(in crate::renderer) fn draw_keybindings_tab(
         content_inner_x,
         content_top + cell_h * 0.5,
         content_w,
-        tokens.text_secondary,
+        tokens.text_on(SurfaceLevel::S2).secondary,
         sw,
         sh,
         metrics,
@@ -69,7 +70,7 @@ pub(in crate::renderer) fn draw_keybindings_tab(
             &nexterm_i18n::fl!("settings-keybindings-empty"),
             content_inner_x,
             content_top + cell_h * 1.8,
-            ensure_readable(tokens.text_muted, tokens.surface_2, MIN_TEXT_CONTRAST),
+            tokens.text_on(SurfaceLevel::S2).muted,
             false,
             sw,
             sh,
@@ -94,7 +95,7 @@ pub(in crate::renderer) fn draw_keybindings_tab(
                 ),
                 content_inner_x,
                 indicator_y,
-                ensure_readable(tokens.text_muted, tokens.surface_2, MIN_TEXT_CONTRAST),
+                tokens.text_on(SurfaceLevel::S2).muted,
                 false,
                 sw,
                 sh,
@@ -122,7 +123,7 @@ pub(in crate::renderer) fn draw_keybindings_tab(
             content_inner_x,
             key_fields_top(sp, content_top, cell_h),
             content_w,
-            tokens.text_secondary,
+            tokens.text_on(SurfaceLevel::S2).secondary,
             sw,
             sh,
             metrics,
@@ -164,7 +165,7 @@ pub(in crate::renderer) fn draw_keybindings_tab(
 
     // Hint + warning lines hang off the bottom of the leader-key row.
     let leader_y = key_leader_y(sp, content_top, cell_h);
-    let muted = ensure_readable(tokens.text_muted, tokens.surface_2, MIN_TEXT_CONTRAST);
+    let muted = tokens.text_on(SurfaceLevel::S2).muted;
     let hint = if sp.leader_key_editing.is_some() {
         nexterm_i18n::fl!("settings-hint-confirm-cancel")
     } else {
@@ -200,7 +201,7 @@ pub(in crate::renderer) fn draw_keybindings_tab(
             &warn,
             content_inner_x,
             leader_y + cell_h * 2.5,
-            ensure_readable(tokens.semantic_warning, tokens.surface_2, MIN_TEXT_CONTRAST),
+            tokens.text_on(SurfaceLevel::S2).warning,
             false,
             sw,
             sh,
@@ -307,7 +308,7 @@ fn draw_delete_dialog(
         &nexterm_i18n::fl!("settings-keybindings-delete-title"),
         dialog_x + cell_w,
         dialog_y + cell_h * 0.6,
-        ensure_readable(tokens.semantic_error, tokens.surface_0, MIN_TEXT_CONTRAST),
+        tokens.text_on(SurfaceLevel::S0).error,
         true,
         sw,
         sh,
@@ -323,7 +324,7 @@ fn draw_delete_dialog(
         &msg,
         dialog_x + cell_w,
         dialog_y + cell_h * 2.2,
-        tokens.text_secondary,
+        tokens.text_on(SurfaceLevel::S0).secondary,
         false,
         sw,
         sh,
@@ -352,9 +353,9 @@ fn draw_delete_dialog(
         dlg_btns_x, dlg_btns_y, dlg_btn_w, dlg_btn_h, cancel_bg, sw, sh, bg_verts, bg_idx,
     );
     let cancel_fg = if !confirm_focused {
-        tokens.text_primary
+        tokens.text_on(SurfaceLevel::S3).primary
     } else {
-        tokens.text_secondary
+        tokens.text_on(SurfaceLevel::S3).secondary
     };
     add_string_verts(
         &nexterm_i18n::fl!("settings-dialog-cancel-bracketed"),

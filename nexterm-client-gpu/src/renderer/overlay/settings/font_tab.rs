@@ -13,7 +13,8 @@ use crate::vertex_util::add_string_verts;
 use super::super::widgets::draw::{WidgetSink, WidgetTheme, draw_widget};
 use super::super::widgets::geometry::TabGeometry;
 use super::super::widgets::settings_font::{build_font_widgets, hint_y, row};
-use super::row::{MIN_TEXT_CONTRAST, ensure_readable};
+
+use nexterm_config::SurfaceLevel;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::renderer) fn draw_font_tab(
@@ -64,7 +65,7 @@ pub(in crate::renderer) fn draw_font_tab(
         draw_widget(spec, &theme, font, atlas, queue, &mut sink);
     }
 
-    let muted = ensure_readable(tokens.text_muted, tokens.surface_2, MIN_TEXT_CONTRAST);
+    let muted = tokens.text_on(SurfaceLevel::S2).muted;
     let hints = [
         (
             row::FAMILY,

@@ -15,7 +15,8 @@ use crate::vertex_util::add_string_verts;
 use super::super::widgets::draw::{WidgetSink, WidgetTheme, draw_widget};
 use super::super::widgets::geometry::TabGeometry;
 use super::super::widgets::settings_profiles::build_profiles_widgets;
-use super::row::{MIN_TEXT_CONTRAST, draw_section_header, ensure_readable};
+use super::row::draw_section_header;
+use nexterm_config::SurfaceLevel;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::renderer) fn draw_profiles_tab(
@@ -43,7 +44,7 @@ pub(in crate::renderer) fn draw_profiles_tab(
         content_inner_x,
         content_top + cell_h * 0.5,
         content_w,
-        tokens.text_secondary,
+        tokens.text_on(SurfaceLevel::S2).secondary,
         sw,
         sh,
         metrics,
@@ -59,7 +60,7 @@ pub(in crate::renderer) fn draw_profiles_tab(
             &nexterm_i18n::fl!("settings-profiles-empty"),
             content_inner_x,
             content_top + cell_h * 1.8,
-            ensure_readable(tokens.text_muted, tokens.surface_2, MIN_TEXT_CONTRAST),
+            tokens.text_on(SurfaceLevel::S2).muted,
             false,
             sw,
             sh,
@@ -74,7 +75,7 @@ pub(in crate::renderer) fn draw_profiles_tab(
             &nexterm_i18n::fl!("settings-profiles-empty-hint"),
             content_inner_x,
             content_top + cell_h * 2.7,
-            ensure_readable(tokens.text_muted, tokens.surface_2, MIN_TEXT_CONTRAST),
+            tokens.text_on(SurfaceLevel::S2).muted,
             false,
             sw,
             sh,

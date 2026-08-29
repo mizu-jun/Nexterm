@@ -32,6 +32,7 @@ use crate::vertex_util::{
 
 use super::super::settings::row::{MIN_TEXT_CONTRAST, ensure_readable};
 use super::spec::{WidgetKind, WidgetRect, WidgetSpec};
+use nexterm_config::SurfaceLevel;
 
 /// Colours, metrics and screen geometry needed to paint a widget.
 pub(crate) struct WidgetTheme<'a> {
@@ -200,7 +201,7 @@ fn draw_label(
     sink: &mut WidgetSink<'_>,
 ) {
     let base = if !spec.enabled() {
-        theme.tokens.text_muted
+        theme.tokens.text_on(SurfaceLevel::S3).muted
     } else if spec.desc.invalid {
         // A failed validation outranks the search accent: the row has to read
         // as broken even while a filter is highlighting it.
@@ -210,9 +211,9 @@ fn draw_label(
         // colour so the eye lands on them first.
         theme.tokens.accent_primary
     } else if spec.focused() {
-        theme.tokens.text_primary
+        theme.tokens.text_on(SurfaceLevel::S3).primary
     } else {
-        theme.tokens.text_secondary
+        theme.tokens.text_on(SurfaceLevel::S3).secondary
     };
     let color = ensure_readable(base, theme.tokens.surface_2, MIN_TEXT_CONTRAST);
     let label_w = (spec.control_rect.x - spec.rect.x).max(0.0);

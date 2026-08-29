@@ -7,6 +7,7 @@ use crate::vertex_util::add_px_rounded_rect_sdf;
 use super::super::super::settings::row::{MIN_TEXT_CONTRAST, ensure_readable};
 use super::super::spec::{WidgetRect, WidgetSpec};
 use super::{FOCUS_RING_PX, WidgetSink, WidgetTheme, draw_focus_ring, draw_row_run, row_style};
+use nexterm_config::SurfaceLevel;
 
 /// Width of the selection bar, in cells.
 const SELECTION_BAR_W: f32 = 0.25;
@@ -38,13 +39,13 @@ pub(super) fn draw_list_item(
     }
 
     let base = if !spec.enabled() {
-        theme.tokens.text_muted
+        theme.tokens.text_on(SurfaceLevel::S3).muted
     } else if spec.desc.search_match {
         theme.tokens.accent_primary
     } else if selected || spec.focused() {
-        theme.tokens.text_primary
+        theme.tokens.text_on(SurfaceLevel::S3).primary
     } else {
-        theme.tokens.text_secondary
+        theme.tokens.text_on(SurfaceLevel::S3).secondary
     };
     let color = ensure_readable(base, theme.tokens.surface_2, MIN_TEXT_CONTRAST);
 

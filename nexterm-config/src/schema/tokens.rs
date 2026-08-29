@@ -52,13 +52,11 @@ pub struct DesignTokens {
     pub accent_activity: [f32; 4],
 
     // ── Text ─────────────────────────────────────────────────────────────────
-    /// Full-brightness text (fg at 1.00 alpha).
-    pub text_primary: [f32; 4],
-    /// Secondary text (fg at 0.78 alpha).
-    pub text_secondary: [f32; 4],
-    /// Muted / placeholder text (fg at 0.48 alpha).
-    pub text_muted: [f32; 4],
     /// Text on top of a solid accent surface (black or white for readability).
+    ///
+    /// Unlike the surface-relative text roles this is *fill*-relative — it is
+    /// chosen from `accent_primary`'s own luminance — so it is not part of
+    /// [`TextTokens`] and stays here.
     pub text_on_accent: [f32; 4],
 
     // ── Semantic ─────────────────────────────────────────────────────────────
@@ -538,9 +536,6 @@ impl DesignTokens {
             accent_primary,
             accent_muted,
             accent_activity,
-            text_primary,
-            text_secondary,
-            text_muted,
             text_on_accent,
             semantic_success,
             semantic_warning,

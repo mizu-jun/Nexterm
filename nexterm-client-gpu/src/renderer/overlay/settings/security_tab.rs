@@ -9,7 +9,8 @@ use crate::settings_panel::SettingsPanel;
 use super::super::widgets::draw::{WidgetSink, WidgetTheme, draw_widget};
 use super::super::widgets::geometry::TabGeometry;
 use super::super::widgets::settings_security::{build_security_widgets, note_y};
-use super::row::{MIN_TEXT_CONTRAST, draw_description_rows, ensure_readable};
+use super::row::draw_description_rows;
+use nexterm_config::SurfaceLevel;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::renderer) fn draw_security_tab(
@@ -68,7 +69,7 @@ pub(in crate::renderer) fn draw_security_tab(
         note_y(&geometry),
         cell_h,
         (content_w / cell_w).floor() as usize,
-        ensure_readable(tokens.text_muted, tokens.surface_2, MIN_TEXT_CONTRAST),
+        tokens.text_on(SurfaceLevel::S2).muted,
         sw,
         sh,
         cell_w,
