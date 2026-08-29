@@ -205,6 +205,28 @@ impl EventHandler {
                 }
             }
 
+            // ===== Settings footer links (UI/UX v3 P4d) =====
+            // The same two actions the mouse path performs on
+            // `SettingsPanelHit::OpenConfigFile` / `ResetCategory`. Guarded on
+            // the panel being open: a stale activation must not open an editor
+            // or reset a category behind the user's back.
+            (Action::Click, NodeIdKind::SettingsFooterOpenConfig) => {
+                if self.app.state.settings_panel.is_open {
+                    info!("AccessKit: settings footer — open config file");
+                    crate::platform::open_config_file();
+                }
+            }
+            (Action::Click, NodeIdKind::SettingsFooterResetCategory) => {
+                if self.app.state.settings_panel.is_open {
+                    info!("AccessKit: settings footer — reset category to defaults");
+                    // Reaches disk only via the existing save path, exactly as
+                    // the mouse arm does; Cancel still reverts.
+                    if self.app.state.settings_panel.reset_category_to_defaults() {
+                        self.request_redraw_if_window();
+                    }
+                }
+            }
+
             // ===== Close-confirmation dialog =====
             (Action::Click | Action::Focus, NodeIdKind::CloseDialogKill) => {
                 info!("AccessKit: CloseDialog Kill button confirmed");

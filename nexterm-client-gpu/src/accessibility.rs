@@ -108,6 +108,22 @@ pub const SETTINGS_TABLIST_ID: NodeId = NodeId(17);
 /// Content container (`Group`) for the current settings panel category.
 pub const SETTINGS_CONTENT_ID: NodeId = NodeId(25);
 
+/// Settings footer: the `↗ Open config.toml` link (UI/UX v3 P4d).
+///
+/// P4c gave the two footer links one geometry, and measuring for it turned up
+/// that neither had ever been in the tree: `accessibility.rs` did not mention
+/// them, so a screen-reader user could not reach the panel's two footer
+/// actions at all. Both take an id from the `30..39` block the hand-written
+/// settings-field nodes vacated in P1b/P1c.
+pub const SETTINGS_FOOTER_OPEN_ID: NodeId = NodeId(31);
+
+/// Settings footer: the `↺ Reset category` link (UI/UX v3 P4d).
+///
+/// Present only while the category is resettable — the list-based categories
+/// (SSH / Keybindings / Profiles) do not draw the link, and a node for a
+/// control that is not on screen would be worse than the omission it fixes.
+pub const SETTINGS_FOOTER_RESET_ID: NodeId = NodeId(32);
+
 /// Root of the SR alert region (Sprint 5-11-5).
 ///
 /// Container that exposes Bell / OSC 9 / OSC 777 as `Role::Alert`.
@@ -580,6 +596,10 @@ pub enum NodeIdKind {
     WindowCloseButton,
     /// Settings panel: content container for the current category.
     SettingsContent,
+    /// Settings footer: the `↗ Open config.toml` link (UI/UX v3 P4d).
+    SettingsFooterOpenConfig,
+    /// Settings footer: the `↺ Reset category` link (UI/UX v3 P4d).
+    SettingsFooterResetCategory,
     /// Settings panel: color scheme picker.
     /// A node built from a `WidgetSpec` (UI/UX v3 P1b). `category` is the
     /// `SettingsCategory::ALL` index, `index` the widget's position in it.
@@ -628,8 +648,9 @@ pub enum NodeIdKind {
 /// | 25 | `SettingsContent` |
 /// | 26 | `AlertRegion` (Sprint 5-11-5) |
 /// | 27 | `PaneInputBuffer` (Phase 5-11-7) |
-/// | 28..29 | reserved |
-/// | 30..39 | **free** — every hand-written settings-field node (font family/size, theme scheme, window opacity, startup language/auto-update, cursor style, padding x/y, present mode) was replaced by `SettingsWidget` in UI/UX v3 P1b/P1c |
+/// | 28..30 | `InfoBar { slot }` — Update / Offline / ServerError (UI/UX v3 P6c) |
+/// | 31..32 | `SettingsFooterOpenConfig` / `SettingsFooterResetCategory` (UI/UX v3 P4d) |
+/// | 33..39 | **free** — every hand-written settings-field node (font family/size, theme scheme, window opacity, startup language/auto-update, cursor style, padding x/y, present mode) was replaced by `SettingsWidget` in UI/UX v3 P1b/P1c |
 /// | 40..46 | **free** — carried the Ssh fields and Add/Delete buttons until UI/UX v3 P1c moved them onto the widget layer |
 /// | 47..49 | `SettingsSshDeleteDialog` / `…ConfirmBtn` / `…CancelBtn` (Phase 5-11-8 Step 8-3) — a modal, so it stays hand-written |
 /// | 50..53 | **free** — carried the Keybindings key/action fields and Add/Delete buttons until UI/UX v3 P1c moved them onto the widget layer |
@@ -686,6 +707,9 @@ pub fn decode_node_id(id: NodeId) -> NodeIdKind {
         30 => NodeIdKind::InfoBar {
             slot: InfoBarSlot::ServerError,
         },
+        // UI/UX v3 P4d: the two settings-footer links.
+        31 => NodeIdKind::SettingsFooterOpenConfig,
+        32 => NodeIdKind::SettingsFooterResetCategory,
         700_000_000..=799_999_999 => {
             match crate::renderer::overlay::widgets::spec::WidgetId::from_u32(
                 (raw - SETTINGS_WIDGET_BASE) as u32,
@@ -1682,6 +1706,16 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
     // Phase 5-11-8 Step 8-3 (Sub-phase D): dynamically add the SSH delete confirmation
     // dialog. SR recognizes it as a modal child of SettingsPanel.
     let mut panel_children = vec![SETTINGS_TABLIST_ID, SETTINGS_CONTENT_ID];
+    // UI/UX v3 P4d: the footer's two links. They are panel-level actions
+    // rather than settings of the current category, so they sit beside the
+    // content group rather than inside it — which is also where they are on
+    // screen. The reset link follows the renderer: absent for the list-based
+    // categories, where a reset would delete user data.
+    panel_children.push(SETTINGS_FOOTER_OPEN_ID);
+    let resettable = panel.category_resettable();
+    if resettable {
+        panel_children.push(SETTINGS_FOOTER_RESET_ID);
+    }
     if panel.ssh_delete_dialog_open
         && matches!(panel.category, SettingsCategory::Ssh)
         && !panel.ssh_hosts.is_empty()
@@ -1697,6 +1731,26 @@ fn build_settings_panel_nodes(panel: &SettingsPanel) -> (Vec<(NodeId, Node)>, No
     }
     dialog.set_children(panel_children);
     nodes.push((SETTINGS_PANEL_ID, dialog));
+
+    // ===== Footer links (UI/UX v3 P4d) =====
+    // `Button` rather than `Link`: both perform an action rather than
+    // navigate, and "Open config.toml" hands off to the OS editor. The label
+    // is the link's text without its `↗` / `↺` glyph — the glyph is a visual
+    // affordance, and reading it aloud before every activation is noise.
+    let mut open_config = Node::new(Role::Button);
+    open_config.set_label(crate::renderer::overlay::settings::footer::open_text());
+    open_config.add_action(Action::Click);
+    nodes.push((SETTINGS_FOOTER_OPEN_ID, open_config));
+    if resettable {
+        let mut reset = Node::new(Role::Button);
+        reset.set_label(crate::renderer::overlay::settings::footer::reset_text());
+        // The reset is undoable only by cancelling the panel, so the
+        // description says which category it will act on rather than leaving
+        // "Reset" to stand on its own.
+        reset.set_description(format!("Category: {}", panel.category.label()));
+        reset.add_action(Action::Click);
+        nodes.push((SETTINGS_FOOTER_RESET_ID, reset));
+    }
 
     // ===== TabList (category tabs) =====
     let tab_ids: Vec<NodeId> = (0..SettingsCategory::ALL.len())
@@ -3509,11 +3563,20 @@ mod tests {
         // 57..=59 are the custom title bar window buttons.
         // 28..=30 are the InfoBar slots (UI/UX v3 P6c); the settings fields
         // that used to occupy 30..=35 were retired in P1c.
-        // 18..=24, 31..=35 are now unused / reserved for future use.
+        // 31..=32 are the settings footer links (UI/UX v3 P4d).
+        // 18..=24, 33..=35 are now unused / reserved for future use.
         assert_eq!(decode_node_id(NodeId(18)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(24)), NodeIdKind::Unknown);
-        assert_eq!(decode_node_id(NodeId(31)), NodeIdKind::Unknown);
+        assert_eq!(decode_node_id(NodeId(33)), NodeIdKind::Unknown);
         assert_eq!(decode_node_id(NodeId(35)), NodeIdKind::Unknown);
+        assert_eq!(
+            decode_node_id(SETTINGS_FOOTER_OPEN_ID),
+            NodeIdKind::SettingsFooterOpenConfig
+        );
+        assert_eq!(
+            decode_node_id(SETTINGS_FOOTER_RESET_ID),
+            NodeIdKind::SettingsFooterResetCategory
+        );
         // 700M..800M was reserved for dynamic SettingsField expansion and is
         // now `SettingsWidget` (UI/UX v3 P1b), so it no longer decodes to
         // Unknown — except for values carrying bits outside the packed
@@ -4255,6 +4318,90 @@ mod tests {
                 "row {:?} missing from the tree",
                 desc.id
             );
+        }
+    }
+
+    /// UI/UX v3 P4d. The footer's two links were absent from the tree
+    /// entirely — `accessibility.rs` did not mention them — so the panel's two
+    /// footer actions could not be reached by a screen reader at all. They are
+    /// panel children, next to the content group rather than inside it, which
+    /// is where they are on screen.
+    #[test]
+    fn the_footer_links_are_announced_as_children_of_the_panel() {
+        let mut panel = SettingsPanel::default();
+        panel.category = crate::settings_panel::SettingsCategory::Window;
+        assert!(panel.category_resettable());
+
+        let (nodes, _focus) = build_settings_panel_nodes(&panel);
+        let find = |id: NodeId| nodes.iter().find(|(nid, _)| *nid == id).map(|(_, n)| n);
+
+        let open = find(SETTINGS_FOOTER_OPEN_ID).expect("open-config link is in the tree");
+        let reset = find(SETTINGS_FOOTER_RESET_ID).expect("reset link is in the tree");
+        assert_eq!(open.role(), Role::Button);
+        assert_eq!(reset.role(), Role::Button);
+        assert!(open.supports_action(Action::Click));
+        assert!(reset.supports_action(Action::Click));
+
+        let dialog = find(SETTINGS_PANEL_ID).expect("the panel node");
+        let children = dialog.children();
+        assert!(children.contains(&SETTINGS_FOOTER_OPEN_ID));
+        assert!(children.contains(&SETTINGS_FOOTER_RESET_ID));
+    }
+
+    /// The reset link is not drawn for the list-based categories, where a
+    /// reset would delete user data. A node for a control that is not on
+    /// screen would be a worse defect than the omission P4d fixes.
+    #[test]
+    fn a_non_resettable_category_announces_no_reset_link() {
+        for category in [
+            crate::settings_panel::SettingsCategory::Ssh,
+            crate::settings_panel::SettingsCategory::Keybindings,
+            crate::settings_panel::SettingsCategory::Profiles,
+        ] {
+            let mut panel = SettingsPanel::default();
+            panel.category = category.clone();
+            assert!(!panel.category_resettable());
+
+            let (nodes, _focus) = build_settings_panel_nodes(&panel);
+            assert!(
+                nodes.iter().any(|(id, _)| *id == SETTINGS_FOOTER_OPEN_ID),
+                "{category:?} lost the open-config link"
+            );
+            assert!(
+                !nodes.iter().any(|(id, _)| *id == SETTINGS_FOOTER_RESET_ID),
+                "{category:?} announces a reset link it does not draw"
+            );
+            let dialog = nodes
+                .iter()
+                .find(|(id, _)| *id == SETTINGS_PANEL_ID)
+                .map(|(_, n)| n)
+                .expect("the panel node");
+            assert!(!dialog.children().contains(&SETTINGS_FOOTER_RESET_ID));
+        }
+    }
+
+    /// The announced label is the link's text without its `↗` / `↺` glyph, and
+    /// it comes from the same module the renderer draws from — so a reworded
+    /// link cannot say one thing on screen and another out loud.
+    #[test]
+    fn the_footer_links_announce_their_text_without_the_decorative_glyph() {
+        use crate::renderer::overlay::settings::footer;
+
+        let mut panel = SettingsPanel::default();
+        panel.category = crate::settings_panel::SettingsCategory::Window;
+        let (nodes, _focus) = build_settings_panel_nodes(&panel);
+
+        for (id, expected) in [
+            (SETTINGS_FOOTER_OPEN_ID, footer::open_text()),
+            (SETTINGS_FOOTER_RESET_ID, footer::reset_text()),
+        ] {
+            let node = nodes
+                .iter()
+                .find(|(nid, _)| *nid == id)
+                .map(|(_, n)| n)
+                .expect("footer link node");
+            assert_eq!(node.label(), Some(expected.as_str()));
+            assert!(!expected.contains('↗') && !expected.contains('↺'));
         }
     }
 

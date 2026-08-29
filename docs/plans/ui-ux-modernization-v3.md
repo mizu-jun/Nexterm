@@ -709,8 +709,12 @@ gated behind a spike.
       reach **no** click target (both dialogs are keyboard + AccessKit only),
       so they were plain typography; the footer links were the real hit-region
       work and now come from one `footer::footer_links` call that the builder
-      draws and the hit-test tests against. See the design spec's §8.1. Noted
-      but not fixed: the footer links have no AccessKit node at all
+      draws and the hit-test tests against. See the design spec's §8.1
+      - [x] P4d — the two footer links become reachable at all: neither had an
+        AccessKit node, so a screen-reader user could not open `config.toml` or
+        reset a category. Both are now `Role::Button` nodes labelled from the
+        same module the renderer draws from, the reset node appearing only
+        while the category is resettable (spec §8.2, 2026-08-29)
 - [x] P5 contrast everywhere + high-contrast scheme (P5a–P5d, 2026-08-29)
 - [x] P6 InfoBar consolidation (P6a–P6d, 2026-08-29; consent reclassification
   dropped, spec §4). Appearance stays on the on-device backlog below — the

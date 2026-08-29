@@ -61,14 +61,28 @@ pub(in crate::renderer) fn link_style() -> nexterm_config::TypeStyle {
     nexterm_config::MetricTokens::default().type_ramp.body
 }
 
+/// What the open-config link says, without its glyph.
+///
+/// The AccessKit node announces this rather than [`open_label`]: `↗` is a
+/// visual affordance, and a screen reader reading "north east arrow" before
+/// every activation is noise (UI/UX v3 P4d).
+pub(crate) fn open_text() -> String {
+    nexterm_i18n::fl!("settings-open-config-file")
+}
+
+/// What the reset link says, without its glyph. See [`open_text`].
+pub(crate) fn reset_text() -> String {
+    nexterm_i18n::fl!("settings-reset-category")
+}
+
 /// The `↗ Open config.toml` label.
 pub(in crate::renderer) fn open_label() -> String {
-    format!("↗ {}", nexterm_i18n::fl!("settings-open-config-file"))
+    format!("↗ {}", open_text())
 }
 
 /// The `↺ Reset category` label.
 pub(in crate::renderer) fn reset_label() -> String {
-    format!("↺ {}", nexterm_i18n::fl!("settings-reset-category"))
+    format!("↺ {}", reset_text())
 }
 
 /// Place the two links, right-aligned inside the footer, from their measured
