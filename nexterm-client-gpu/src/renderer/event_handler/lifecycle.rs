@@ -157,12 +157,7 @@ impl EventHandler {
         // from startup.
         for ch in ' '..='~' {
             for bold in [false, true] {
-                let key = GlyphKey {
-                    ch,
-                    bold,
-                    italic: false,
-                    wide: false,
-                };
+                let key = GlyphKey::terminal(ch, bold, false, false);
                 let (w, h, pixels) =
                     self.app
                         .font

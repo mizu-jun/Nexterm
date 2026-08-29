@@ -519,12 +519,7 @@ pub(crate) fn add_char_verts(
         return;
     }
     // Set the wide-character flag correctly so the glyph atlas cache key matches.
-    let key = GlyphKey {
-        ch,
-        bold,
-        italic: false,
-        wide: is_wide,
-    };
+    let key = GlyphKey::terminal(ch, bold, false, is_wide);
     let fg_u8 = [
         (fg[0] * 255.0) as u8,
         (fg[1] * 255.0) as u8,
@@ -536,6 +531,101 @@ pub(crate) fn add_char_verts(
         return;
     }
     let rect = atlas.get_or_insert(key, &pixels, gw, gh, queue);
+    let tx0 = px / sw * 2.0 - 1.0;
+    let ty0 = 1.0 - py / sh * 2.0;
+    let tx1 = (px + gw as f32) / sw * 2.0 - 1.0;
+    let ty1 = 1.0 - (py + gh as f32) / sh * 2.0;
+    let base = text_verts.len() as u16;
+    text_verts.extend_from_slice(&[
+        TextVertex {
+            position: [tx0, ty0],
+            uv: rect.uv_min,
+            color: fg,
+        },
+        TextVertex {
+            position: [tx1, ty0],
+            uv: [rect.uv_max[0], rect.uv_min[1]],
+            color: fg,
+        },
+        TextVertex {
+            position: [tx1, ty1],
+            uv: rect.uv_max,
+            color: fg,
+        },
+        TextVertex {
+            position: [tx0, ty1],
+            uv: [rect.uv_min[0], rect.uv_max[1]],
+            color: fg,
+        },
+    ]);
+    text_idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+}
+
+/// Compute where an icon bitmap sits inside the slot a caller reserved.
+///
+/// Pure so the placement rule is testable without a GPU: the icon is centred
+/// in the slot and rounded to whole pixels, because a half-pixel offset on a
+/// 16 px glyph is visible as a blur.
+#[allow(dead_code)] // P4a-1 ships the plumbing; P4a-2 moves the call sites onto it.
+pub(crate) fn icon_placement(
+    slot_x: f32,
+    slot_y: f32,
+    slot_w: f32,
+    slot_h: f32,
+    icon_w: f32,
+    icon_h: f32,
+) -> (f32, f32) {
+    (
+        (slot_x + (slot_w - icon_w) * 0.5).round(),
+        (slot_y + (slot_h - icon_h) * 0.5).round(),
+    )
+}
+
+/// Append a chrome icon to the text vertex buffer, centred in the given slot.
+///
+/// The icon is drawn from the bundled icon font at `size_px` — one of the
+/// 16/20/24 px steps — rather than at the terminal cell size, so it does not
+/// change weight when the user changes their font size. `slot_*` is the region
+/// the call site already reserved (a tab button square, a sidebar leading
+/// column); this function only decides where inside it the artwork lands, and
+/// never moves the slot, so adopting it cannot move a hit region.
+///
+/// Draws nothing when the codepoint is missing from the bundled subset, rather
+/// than emitting tofu.
+#[allow(clippy::too_many_arguments)]
+#[allow(dead_code)] // P4a-1 ships the plumbing; P4a-2 moves the call sites onto it.
+pub(crate) fn add_icon_verts(
+    icon: char,
+    slot_x: f32,
+    slot_y: f32,
+    slot_w: f32,
+    slot_h: f32,
+    size_px: f32,
+    fg: [f32; 4],
+    sw: f32,
+    sh: f32,
+    font: &mut FontManager,
+    atlas: &mut GlyphAtlas,
+    queue: &wgpu::Queue,
+    text_verts: &mut Vec<TextVertex>,
+    text_idx: &mut Vec<u16>,
+) {
+    let fg_u8 = [
+        (fg[0] * 255.0) as u8,
+        (fg[1] * 255.0) as u8,
+        (fg[2] * 255.0) as u8,
+        255u8,
+    ];
+    let (gw, gh, pixels) = font.rasterize_icon(icon, size_px, fg_u8);
+    if gw == 0 || gh == 0 || pixels.is_empty() {
+        return;
+    }
+    // Quantised to whole pixels: the cache key must not gain a new entry for
+    // every fractional size a DPI change can produce.
+    let key = GlyphKey::icon(icon, size_px.round().clamp(0.0, u16::MAX as f32) as u16);
+    let rect = atlas.get_or_insert(key, &pixels, gw, gh, queue);
+
+    let (px, py) = icon_placement(slot_x, slot_y, slot_w, slot_h, gw as f32, gh as f32);
     let tx0 = px / sw * 2.0 - 1.0;
     let ty0 = 1.0 - py / sh * 2.0;
     let tx1 = (px + gw as f32) / sw * 2.0 - 1.0;
@@ -645,6 +735,39 @@ mod tests {
 
     fn approx(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-3
+    }
+
+    // ---- icon_placement (UI/UX v3 P4a) ----
+
+    #[test]
+    fn an_icon_centres_in_its_slot() {
+        let (x, y) = icon_placement(100.0, 50.0, 20.0, 20.0, 16.0, 16.0);
+        assert_eq!((x, y), (102.0, 52.0));
+    }
+
+    #[test]
+    fn icon_placement_rounds_to_whole_pixels() {
+        // A 15 px glyph in a 20 px slot centres at +2.5; leaving that
+        // fractional would blur the artwork across two pixel columns.
+        let (x, y) = icon_placement(0.0, 0.0, 20.0, 20.0, 15.0, 15.0);
+        assert_eq!((x, y), (3.0, 3.0));
+        assert!(x.fract() == 0.0 && y.fract() == 0.0);
+    }
+
+    #[test]
+    fn an_icon_larger_than_its_slot_stays_centred() {
+        // Overflow is the call site's problem to size out of, but it must
+        // overflow symmetrically rather than hang off one edge.
+        let (x, y) = icon_placement(10.0, 10.0, 16.0, 16.0, 24.0, 24.0);
+        assert_eq!((x, y), (6.0, 6.0));
+    }
+
+    #[test]
+    fn icon_placement_is_independent_per_axis() {
+        // Slots are not always square (a caption button is wider than it is
+        // tall), so the two axes must not share a computation.
+        let (x, y) = icon_placement(0.0, 0.0, 46.0, 32.0, 16.0, 16.0);
+        assert_eq!((x, y), (15.0, 8.0));
     }
 
     // ---- draw_cursor_with_visibility ----

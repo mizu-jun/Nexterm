@@ -2,6 +2,8 @@
 
 use cosmic_text::{Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, SwashCache};
 
+use crate::icons;
+
 /// A rasterized glyph produced by ligature-aware rendering (per-row output).
 pub struct RenderedGlyph {
     /// Grid column index (0-origin).
@@ -163,6 +165,14 @@ impl FontManager {
             db.load_system_fonts();
         }
 
+        // UI/UX v3 P4a: the bundled chrome icon font. Loaded from memory rather
+        // than from a font directory so chrome icons render identically on a
+        // machine with no user-installed fonts, which is the phase's acceptance
+        // criterion. It is registered under its own family name (`ICON_FAMILY`,
+        // baked into the subset's name table) so it can only ever be selected
+        // deliberately — never as a fallback for terminal content.
+        db.load_font_data(icons::ICON_FONT.to_vec());
+
         tracing::debug!("font DB loaded {} faces", db.len());
 
         FontSystem::new_with_locale_and_db(locale, db)
@@ -307,6 +317,93 @@ impl FontManager {
         );
 
         (cell_w, cell_h, pixels)
+    }
+
+    /// Rasterise a chrome icon from the bundled icon font at an explicit size.
+    ///
+    /// Unlike [`Self::rasterize_char`], nothing here is tied to the terminal
+    /// cell: the size comes from the caller's 16/20/24 px step, so icon weight
+    /// stays put when the user changes their terminal font size.
+    ///
+    /// The result is **cropped to the glyph's ink bounds** and the caller
+    /// centres it in the slot it reserved. Cropping rather than returning a
+    /// fixed box is what keeps this independent of the icon font's ascent and
+    /// descent, which no call site should have to reason about; it also makes
+    /// "this codepoint is not in the subset" self-reporting, since a glyph that
+    /// draws nothing returns a zero-sized bitmap and the call site skips it
+    /// rather than drawing tofu.
+    ///
+    /// Returns `(width, height, rgba_pixels)`, premultiplied to match every
+    /// other producer feeding the glyph atlas.
+    // P4a-1 ships the plumbing; P4a-2 moves the call sites onto it.
+    #[allow(dead_code)]
+    pub fn rasterize_icon(&mut self, ch: char, size_px: f32, fg: [u8; 4]) -> (u32, u32, Vec<u8>) {
+        let size = size_px.max(1.0);
+        let metrics = Metrics::new(size, size);
+        // A generous box so ascent/descent cannot clip the artwork before the
+        // crop below measures it.
+        let box_side = (size * 2.0).ceil() as u32;
+
+        let attrs = Attrs::new().family(Family::Name(icons::ICON_FAMILY));
+        let mut buffer = Buffer::new(&mut self.font_system, metrics);
+        buffer.set_size(
+            &mut self.font_system,
+            Some(box_side as f32),
+            Some(box_side as f32),
+        );
+        let text = ch.to_string();
+        buffer.set_text(
+            &mut self.font_system,
+            &text,
+            &attrs,
+            Shaping::Advanced,
+            None,
+        );
+        buffer.shape_until_scroll(&mut self.font_system, false);
+
+        let mut scratch = vec![0u8; (box_side * box_side * 4) as usize];
+        let color = Color::rgba(fg[0], fg[1], fg[2], fg[3]);
+        let (mut min_x, mut min_y) = (box_side, box_side);
+        let (mut max_x, mut max_y) = (0u32, 0u32);
+
+        buffer.draw(
+            &mut self.font_system,
+            &mut self.swash_cache,
+            color,
+            |x, y, _w, _h, c| {
+                if x < 0 || y < 0 || c.a() == 0 {
+                    return;
+                }
+                let (px, py) = (x as u32, y as u32);
+                if px >= box_side || py >= box_side {
+                    return;
+                }
+                let idx = ((py * box_side + px) * 4) as usize;
+                scratch[idx] = (c.r() as u32 * c.a() as u32 / 255) as u8;
+                scratch[idx + 1] = (c.g() as u32 * c.a() as u32 / 255) as u8;
+                scratch[idx + 2] = (c.b() as u32 * c.a() as u32 / 255) as u8;
+                scratch[idx + 3] = c.a();
+                min_x = min_x.min(px);
+                min_y = min_y.min(py);
+                max_x = max_x.max(px);
+                max_y = max_y.max(py);
+            },
+        );
+
+        if min_x > max_x || min_y > max_y {
+            // Nothing was drawn: the codepoint is missing from the subset.
+            return (0, 0, Vec::new());
+        }
+
+        let (w, h) = (max_x - min_x + 1, max_y - min_y + 1);
+        let mut cropped = vec![0u8; (w * h * 4) as usize];
+        for row in 0..h {
+            let src = (((min_y + row) * box_side + min_x) * 4) as usize;
+            let dst = ((row * w) * 4) as usize;
+            cropped[dst..dst + (w * 4) as usize]
+                .copy_from_slice(&scratch[src..src + (w * 4) as usize]);
+        }
+        (w, h, cropped)
     }
 
     /// Rasterise multi-character text at a scaled font size (OSC 66 Text Sizing Protocol).
@@ -572,6 +669,60 @@ impl FontManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- bundled chrome icon font (UI/UX v3 P4a) ----
+
+    #[test]
+    fn every_bundled_icon_rasterises() {
+        // The acceptance criterion for P4a is that chrome icons render without
+        // any user-installed font. This is the closest a CPU test can get to
+        // it: the icons resolve out of the embedded subset by family name and
+        // produce ink, on whatever machine CI happens to run on. A codepoint
+        // missing from the subset returns a zero-sized bitmap, so this also
+        // catches `icon-set.txt` and the committed font drifting apart.
+        let mut fm = FontManager::new("monospace", 14.0, &[], 1.0, true);
+        for &icon in icons::ALL_ICONS {
+            let (w, h, pixels) = fm.rasterize_icon(icon, 16.0, [255, 255, 255, 255]);
+            assert!(
+                w > 0 && h > 0 && !pixels.is_empty(),
+                "icon U+{:04X} produced no ink; is it in the committed subset?",
+                icon as u32
+            );
+            assert_eq!(pixels.len(), (w * h * 4) as usize);
+        }
+    }
+
+    #[test]
+    fn an_icon_missing_from_the_subset_draws_nothing() {
+        // Tofu is worse than absence for chrome: a call site that asks for an
+        // icon we do not ship must render nothing at all.
+        let mut fm = FontManager::new("monospace", 14.0, &[], 1.0, true);
+        let (w, h, pixels) = fm.rasterize_icon('\u{f8ff}', 16.0, [255, 255, 255, 255]);
+        assert_eq!((w, h, pixels.len()), (0, 0, 0));
+    }
+
+    #[test]
+    fn icon_size_is_independent_of_the_terminal_cell() {
+        // The point of the 16/20/24 steps: two managers with very different
+        // cell sizes must rasterise the same icon at the same scale.
+        let mut small = FontManager::new("monospace", 9.0, &[], 1.0, true);
+        let mut large = FontManager::new("monospace", 24.0, &[], 1.0, true);
+        assert!(large.cell_width() > small.cell_width());
+
+        let icon = icons::ALL_ICONS[0];
+        let (sw, sh, _) = small.rasterize_icon(icon, 20.0, [255, 255, 255, 255]);
+        let (lw, lh, _) = large.rasterize_icon(icon, 20.0, [255, 255, 255, 255]);
+        assert_eq!((sw, sh), (lw, lh));
+    }
+
+    #[test]
+    fn a_larger_icon_step_rasterises_larger() {
+        let mut fm = FontManager::new("monospace", 14.0, &[], 1.0, true);
+        let icon = icons::ALL_ICONS[0];
+        let (w16, h16, _) = fm.rasterize_icon(icon, 16.0, [255, 255, 255, 255]);
+        let (w24, h24, _) = fm.rasterize_icon(icon, 24.0, [255, 255, 255, 255]);
+        assert!(w24 > w16 && h24 > h16, "{w16}x{h16} vs {w24}x{h24}");
+    }
 
     #[test]
     fn font_manager_constructs() {

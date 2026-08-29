@@ -198,12 +198,12 @@ impl WgpuState {
                     (fg[3] * 255.0) as u8,
                 ];
                 let is_wide = UnicodeWidthChar::width(cell.ch).unwrap_or(1) >= 2;
-                let key = GlyphKey {
-                    ch: cell.ch,
-                    bold: cell.attrs.is_bold(),
-                    italic: cell.attrs.is_italic(),
-                    wide: is_wide,
-                };
+                let key = GlyphKey::terminal(
+                    cell.ch,
+                    cell.attrs.is_bold(),
+                    cell.attrs.is_italic(),
+                    is_wide,
+                );
                 let (gw, gh, pixels) = font.rasterize_char(
                     cell.ch,
                     cell.attrs.is_bold(),
@@ -321,12 +321,7 @@ impl WgpuState {
                     (fg[3] * 255.0) as u8,
                 ];
                 let is_wide = UnicodeWidthChar::width(cell.ch).unwrap_or(1) >= 2;
-                let key = GlyphKey {
-                    ch: cell.ch,
-                    bold: cell.attrs.is_bold(),
-                    italic: false,
-                    wide: is_wide,
-                };
+                let key = GlyphKey::terminal(cell.ch, cell.attrs.is_bold(), false, is_wide);
                 let (gw, gh, pixels) =
                     font.rasterize_char(cell.ch, cell.attrs.is_bold(), false, fg_u8, is_wide);
                 if gw == 0 || gh == 0 || pixels.is_empty() {
@@ -697,12 +692,12 @@ impl WgpuState {
                 ];
                 // Full-width characters (CJK etc., Unicode width = 2) are rendered across two cells
                 let is_wide = UnicodeWidthChar::width(cell.ch).unwrap_or(1) >= 2;
-                let key = GlyphKey {
-                    ch: cell.ch,
-                    bold: cell.attrs.is_bold(),
-                    italic: cell.attrs.is_italic(),
-                    wide: is_wide,
-                };
+                let key = GlyphKey::terminal(
+                    cell.ch,
+                    cell.attrs.is_bold(),
+                    cell.attrs.is_italic(),
+                    is_wide,
+                );
                 let (gw, gh, pixels) = font.rasterize_char(
                     cell.ch,
                     cell.attrs.is_bold(),
@@ -821,12 +816,7 @@ impl WgpuState {
                     (fg[3] * 255.0) as u8,
                 ];
                 let is_wide = UnicodeWidthChar::width(cell.ch).unwrap_or(1) >= 2;
-                let key = GlyphKey {
-                    ch: cell.ch,
-                    bold: cell.attrs.is_bold(),
-                    italic: false,
-                    wide: is_wide,
-                };
+                let key = GlyphKey::terminal(cell.ch, cell.attrs.is_bold(), false, is_wide);
                 let (gw, gh, pixels) =
                     font.rasterize_char(cell.ch, cell.attrs.is_bold(), false, fg_u8, is_wide);
                 if gw == 0 || gh == 0 || pixels.is_empty() {
@@ -893,12 +883,7 @@ fn draw_badge_glyph(
     text_idx: &mut Vec<u16>,
 ) {
     let is_wide = UnicodeWidthChar::width(ch).unwrap_or(1) >= 2;
-    let key = GlyphKey {
-        ch,
-        bold: true,
-        italic: false,
-        wide: is_wide,
-    };
+    let key = GlyphKey::terminal(ch, true, false, is_wide);
     let (gw, gh, pixels) = font.rasterize_char(ch, true, false, color_u8, is_wide);
     if gw == 0 || gh == 0 || pixels.is_empty() {
         return;
