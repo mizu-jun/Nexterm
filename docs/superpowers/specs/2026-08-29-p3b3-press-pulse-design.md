@@ -56,7 +56,7 @@ Non-goals:
 - **No geometric scale-down.** Rejected: it moves the fill and the text
   independently and doubles the phase.
 - **No foreground colour change.** Fluent drops pressed text to a secondary
-  ramp; this client draws over eight schemes and an arbitrary terminal
+  ramp; this client draws over nine builtin schemes and an arbitrary terminal
   background, so the contrast floor is not knowable at design time. Only the
   background moves.
 - **No press on the Windows snap-layout path.** `snap_layout.rs` swallows
@@ -106,13 +106,45 @@ has moved.
 
 ## Colour composition
 
-Each draw site keeps computing its own appearance, as with hover. The press
-weight is applied *after* the hover lerp:
+Each draw site keeps computing its own appearance, as with hover. Two lines
+change at each site:
 
 ```rust
-let base = lerp_rgba(resting, hovered, hover_weight);
-let fill = apply_hsb_animated_rgba(base, 1.0, 1.0, PRESS_DIM, press_weight);
+let w = hover_weight.max(press_weight);   // press forces the fill on
+// ... the site builds its fill from `w`, unchanged ...
+let fill = apply_hsb_animated_rgba(fill, 1.0, 1.0, PRESS_DIM, press_weight);
 ```
+
+**Why `max` and not just the dim.** Only the tab composes its hover as an
+opaque `lerp_rgba(inactive_bg, hovered_bg, w)`. The other three sites draw
+the hover as an *additive layer* gated on `w > 0.0` — the window buttons
+(`ui_verts.rs`), the context-menu row and its accent (`overlay/dialog.rs`),
+and the settings row (`widgets/draw/mod.rs`) all emit no vertices at all
+when the weight is zero. Dimming a layer that is not being drawn is
+invisible, so press has to raise the weight before it dims it. Pressing
+implies the pointer is on the control, so `hover_weight` is normally already
+near 1 and the `max` only matters for a click that lands inside the hover
+fade's first 100 ms — but without it, that click renders nothing.
+
+**And the layer has to get stronger, not only darker.** The `max` above fixes
+the unhovered click, but the *normal* click lands on a control that is already
+fully hovered, where `max` changes nothing and only the dim is left to signal
+the press. A brightness multiplier scales HSV `v`, so on a scheme whose chrome
+is already near-black the absolute step is tiny and pressed would look
+identical to hovered. So the three additive sites also raise their layer's
+alpha while the pulse is live:
+
+```rust
+let a = base_alpha * (1.0 + press_weight * (PRESS_ALPHA_BOOST - 1.0));
+```
+
+`PRESS_ALPHA_BOOST` is one shared constant, provisionally 1.7, and the result
+is clamped to 1.0. The tab needs no boost: its hover is an opaque lerp with
+no alpha to raise, and the dim moves it directly.
+
+This was found by reading the four draw sites while planning; the maintainer
+approved the `max` amendment on 2026-08-29, and the alpha boost is its
+mechanical completion for the additive sites.
 
 `apply_hsb_animated_rgba` already lerps its multipliers toward identity by
 `t`, so `press_weight = 0` returns `base` byte-identical and no new
@@ -124,7 +156,7 @@ interpolation helper is needed.
 multiplier scales HSV `v`, so on a scheme whose resting chrome is already very
 dark the absolute step is small and the pulse may be imperceptible. The
 implementation must measure the pressed-vs-unpressed difference across all
-eight schemes and pin it with a test. If some scheme falls below perceptibility,
+nine builtin schemes and pin it with a test. If some scheme falls below perceptibility,
 the fallback is to compose the other way — pull the fill back *down the hover
 lerp* (`hover_weight * (1 - press_weight * k)`) so pressed reads as "less
 hovered", which is what Fluent's own subtle-button ramp does (rest <
@@ -183,10 +215,17 @@ Unit tests on `PressPulse` (`animations/press.rs`):
    instant. P3b2b shipped without this gate covered and had to add it in
    review; it is in the plan from the start here.
 
-Composition test in `color_util.rs`: for all eight schemes, the pressed fill
-keeps a contrast ratio ≥ 4.5:1 against the text drawn over it, and differs
-perceptibly from the unpressed fill (the measurement behind the open question
-above).
+Composition tests in `color_util.rs`, both across all nine builtin schemes:
+the pressed fill differs perceptibly from the merely hovered one (the
+measurement behind the open question above), and it does not cut the text
+contrast over it by more than 5%.
+
+That second one is deliberately relative rather than a flat ≥ 4.5:1
+assertion. Solarized and OneDark already carry contrast defects in their
+resting chrome — known since P2b and tracked for P5 — so an absolute
+assertion here would fail on those pre-existing defects instead of on
+anything P3b3 does. Press must not make legibility worse; fixing what it
+inherits is P5's job.
 
 Not covered by tests, and not claimed: whether the pulse *looks* right. GPU
 output is not CI-verifiable; this lands on the existing on-device verification
