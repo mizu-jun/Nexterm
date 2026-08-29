@@ -1278,6 +1278,26 @@ mod animation_frame_tests {
         assert!(!state.has_active_animation(done, 200));
     }
 
+    /// The wiring's own contract: a decaying pulse must keep the frame loop
+    /// awake, or a settings row would freeze mid-press until some other
+    /// event happened to request a redraw. The pulse's own timing is covered
+    /// by `animations::press`; this pins that `ClientState` consults it.
+    #[test]
+    fn a_settings_row_press_keeps_the_frame_loop_awake() {
+        use crate::renderer::overlay::widgets::spec::WidgetId;
+
+        let mut state = ClientState::new(80, 24, 1000);
+        let t0 = Instant::now();
+        let id = WidgetId::new(2, 0);
+        state.settings_panel.press_pulse.press(
+            id,
+            t0,
+            &nexterm_config::AnimationsConfig::default(),
+        );
+        assert!(state.has_active_animation(t0, 200));
+        assert!(!state.has_active_animation(t0 + Duration::from_millis(100), 200));
+    }
+
     /// Dismissing the settings panel (e.g. Esc) while a row is hovered must
     /// retarget the cross-fade to `None`, not just clear `hover_widget`.
     /// Otherwise the fade-out that should start immediately would instead
