@@ -788,13 +788,14 @@ impl WgpuState {
             ];
             for (i, &(button, glyph)) in buttons.iter().enumerate() {
                 let bx = sw - (3 - i) as f32 * window_button_w;
+                let hover = state.window_button_hover.weight(button, now);
                 // UI/UX v3 P3b3: the fill is additive, so press has to raise
                 // the weight before `press_fill` dims and strengthens it.
                 let press = state.window_button_press.weight(button, now);
-                let w = state.window_button_hover.weight(button, now).max(press);
+                let fill_w = hover.max(press);
                 // The fill is an additive layer — absent when not hovered —
                 // so its alpha carries the fade and nothing is emitted at 0.
-                if w > 0.0 {
+                if fill_w > 0.0 {
                     let bg = if button == WindowButton::Close {
                         tokens.semantic_error
                     } else {
@@ -811,7 +812,7 @@ impl WgpuState {
                         window_button_w,
                         bar_h,
                         radius,
-                        crate::color_util::press_fill([bg[0], bg[1], bg[2], bg[3] * w], press),
+                        crate::color_util::press_fill([bg[0], bg[1], bg[2], bg[3] * fill_w], press),
                         sw,
                         sh,
                         bg_verts,
@@ -819,9 +820,11 @@ impl WgpuState {
                     );
                 }
                 // The glyph is an opaque swap between two tokens, so the
-                // colour itself moves.
+                // colour itself moves. UI/UX v3 P3b3: this reads `hover`
+                // alone, never `fill_w` / `press` — see
+                // `window_button_glyph_color`'s own doc comment for why.
                 let fg =
-                    crate::color_util::lerp_rgba(tokens.text_secondary, tokens.text_primary, w);
+                    window_button_glyph_color(hover, tokens.text_secondary, tokens.text_primary);
                 let glyph_x =
                     bx + (window_button_w - glyph.chars().count() as f32 * cell_w).max(0.0) * 0.5;
                 add_string_verts(
@@ -1578,6 +1581,23 @@ impl WgpuState {
     }
 }
 
+/// Window-button glyph colour (UI/UX v3 P3b3). Pure so it can be
+/// unit-tested without a GPU.
+///
+/// Takes `hover` only, on purpose — there is no `press` parameter here to
+/// merge in by accident. The fill (`fill_w = hover.max(press)`, drawn
+/// separately) is allowed to move on press because it is an additive
+/// layer that is absent at weight 0; a foreground glyph swap is always
+/// drawn, so moving it on press would tint the glyph on every click
+/// regardless of hover, which the spec forbids.
+fn window_button_glyph_color(
+    hover: f32,
+    text_secondary: [f32; 4],
+    text_primary: [f32; 4],
+) -> [f32; 4] {
+    crate::color_util::lerp_rgba(text_secondary, text_primary, hover)
+}
+
 /// Maps an OSC 9;4 progress record to a tab-bar indicator `(color, width
 /// fraction)`. Returns `None` when no indicator should be drawn. Pure so it
 /// can be unit-tested without a GPU.
@@ -1599,6 +1619,31 @@ fn progress_indicator_style(
         3 => Some((with_alpha(tokens.text_muted, 0.60), 1.0)),
         4 => Some((with_alpha(tokens.semantic_warning, 0.90), frac)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod window_button_glyph_color_tests {
+    use super::window_button_glyph_color;
+    use nexterm_config::DesignTokens;
+
+    /// The regression this pins: a press must never move the window
+    /// buttons' glyph colour. `window_button_glyph_color` takes only
+    /// `hover`, so there is no `press` value to pass in even at full
+    /// press weight — at `hover == 0.0` the result must be exactly
+    /// `text_secondary`, the unhovered colour.
+    #[test]
+    fn hover_at_zero_keeps_the_unhovered_glyph_colour() {
+        let tokens = DesignTokens::default();
+        let fg = window_button_glyph_color(0.0, tokens.text_secondary, tokens.text_primary);
+        assert_eq!(fg, tokens.text_secondary);
+    }
+
+    #[test]
+    fn hover_at_one_reaches_the_hovered_glyph_colour() {
+        let tokens = DesignTokens::default();
+        let fg = window_button_glyph_color(1.0, tokens.text_secondary, tokens.text_primary);
+        assert_eq!(fg, tokens.text_primary);
     }
 }
 
