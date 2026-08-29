@@ -209,6 +209,12 @@ pub struct ClientState {
     /// (UI/UX v3 P3b2b). `hovered_window_button` above stays the truth for
     /// hit-testing; this is render-only.
     pub window_button_hover: crate::animations::HoverTransition<WindowButton>,
+    /// Press pulse for the custom title bar's window buttons (UI/UX v3 P3b3).
+    ///
+    /// Wired for all three even though Minimize and Close tear the window
+    /// down before the pulse can be seen: excluding them would leave an
+    /// untestable exception in the press chain for no visible gain.
+    pub window_button_press: crate::animations::PressPulse<WindowButton>,
     /// WSL distros detected at startup (`nexterm_config::wsl::detect_distros`),
     /// shown in the new-tab dropdown after the configured profiles. Cached
     /// once because detection shells out to `wsl.exe` on Windows.
@@ -747,6 +753,9 @@ impl ClientState {
         if self.window_button_hover.is_active(now) {
             return true;
         }
+        if self.window_button_press.is_active(now) {
+            return true;
+        }
         false
     }
 
@@ -918,6 +927,7 @@ impl ClientState {
             window_close_hit_rect: None,
             hovered_window_button: None,
             window_button_hover: Default::default(),
+            window_button_press: Default::default(),
             wsl_profiles: Vec::new(),
             hovered_tab_id: None,
             tab_hover: Default::default(),
@@ -1411,6 +1421,22 @@ mod animation_frame_tests {
         let done = t0 + Duration::from_millis(100);
         assert!((state.window_button_hover.weight(close, done) - 1.0).abs() < 1e-3);
         assert!(!state.has_active_animation(done, 200));
+    }
+
+    /// Maximize is the only one of the three whose pulse is ever seen —
+    /// Minimize and Close remove the window first — but all three are wired,
+    /// so all three must keep the frame loop awake while they decay.
+    #[test]
+    fn a_window_button_press_keeps_the_frame_loop_awake() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let t0 = Instant::now();
+        state.window_button_press.press(
+            crate::state::WindowButton::Maximize,
+            t0,
+            &nexterm_config::AnimationsConfig::default(),
+        );
+        assert!(state.has_active_animation(t0, 200));
+        assert!(!state.has_active_animation(t0 + Duration::from_millis(100), 200));
     }
 
     /// Moving between two buttons cross-fades them rather than snapping.

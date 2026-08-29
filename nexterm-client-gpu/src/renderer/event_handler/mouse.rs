@@ -1244,6 +1244,24 @@ impl EventHandler {
                     .settings_tab_rect
                     .map(|(x0, x1)| px_f32 >= x0 && px_f32 < x1)
                     .unwrap_or(false);
+                // UI/UX v3 P3b3: one pulse for whichever button was hit.
+                let pressed_button = if hit_minimize {
+                    Some(crate::state::WindowButton::Minimize)
+                } else if hit_maximize {
+                    Some(crate::state::WindowButton::Maximize)
+                } else if hit_close {
+                    Some(crate::state::WindowButton::Close)
+                } else {
+                    None
+                };
+                if let Some(button) = pressed_button {
+                    let now = std::time::Instant::now();
+                    self.app.state.window_button_press.press(
+                        button,
+                        now,
+                        &self.app.config.animations,
+                    );
+                }
                 if hit_minimize {
                     if let Some(w) = &self.window {
                         w.set_minimized(true);
