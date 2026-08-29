@@ -728,8 +728,9 @@ gated behind a spike.
         label clears 4.5:1 by construction. The invented purple is dropped for
         `accent_primary`; the SSH green becomes `semantic_success` (spec §8.4,
         2026-08-30)
-      - [ ] N-3 tab-bar labels — spec drafted 2026-08-30
-        (`2026-08-30-n3-tab-bar-labels.md`), awaiting sign-off. Measuring found
+      - [ ] N-3 tab-bar labels — spec approved 2026-08-30
+        (`2026-08-30-n3-tab-bar-labels.md`), §7 signed off; N-3a shipped
+        (`renderer/tab_layout.rs`), N-3b/N-3c open. Measuring found
         the roadmap's framing wrong in both directions: the hit computation
         does **not** need rebuilding (the renderer already publishes
         `tab_hit_rects` every frame), and there is a live defect underneath —

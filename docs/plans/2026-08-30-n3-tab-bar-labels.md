@@ -1,6 +1,6 @@
 # N-3 — Tab-bar labels on the chrome type ramp (design spec)
 
-Status: **draft 2026-08-30** — measured, not yet approved
+Status: **approved 2026-08-30** — §7 signed off by the maintainer; N-3a shipped
 Date: 2026-08-30
 Parent plan: [`ui-ux-modernization-v3.md`](./ui-ux-modernization-v3.md) § P4
 Predecessor: [`2026-08-29-p4-iconography-and-chrome-typography.md`](./2026-08-29-p4-iconography-and-chrome-typography.md) §§ 5.2, 8
@@ -236,7 +236,7 @@ though it looks tautological: today it fails.
 
 | PR | Scope | Gate |
 |---|---|---|
-| **N-3a** | `fit_tab_width` + the measured `tab_width`, with the pure tests. No call sites; the tab bar still counts characters. | G-fit |
+| **N-3a** | `fit_tab_width` + the measured `tab_width`, with the pure tests. No call sites; the tab bar still counts characters. **Shipped 2026-08-30** as `renderer/tab_layout.rs`. | G-fit |
 | **N-3b** | Adopt both in `build_tab_bar_verts`: measured width, width-budget truncation, ramp step, `line_h` centring. The seven consumers follow the corrected number. | G-width, G-hit, G-single, G-truncate |
 | **N-3c** | The process icon becomes its own run (D3). | G-icon |
 
@@ -264,22 +264,24 @@ like and where every tab click lands.
 
 ---
 
-## 7. Open questions
+## 7. Decisions taken (signed off 2026-08-30)
 
-Two, both for the maintainer:
+Both questions this spec opened are settled; no implementation PR is gated on
+further input. The reasoning is kept because a future change proposing the
+opposite should have to answer it.
 
-1. **Minimum tab width.** The loop stops drawing at `label_w < cell_w * 2.0`, a
-   cell-derived threshold. Measured text has no natural cell, so the floor
-   becomes either a fixed pixel minimum or "enough room for the ellipsis plus
-   padding". The second is self-describing; the first is easier to reason about
-   on a HiDPI display. Recommendation: the ellipsis rule, since it is the same
-   rule `truncate_run_to_width` already applies inside a budget.
-2. **What should a zero-advance glyph do?** Now that §1.3 has been checked, the
-   activity dot cannot overflow — measurement and drawing agree by
-   construction. The remaining case is a font with no `●`: `chrome_advance`
-   returns 0 deliberately, so the dot would occupy no space and draw on top of
-   the character beside it. The choice is between leaving that (the dot is a
-   hint, and its absence is survivable) and substituting a minimum advance when
-   a glyph measures zero. Recommendation: leave it, and revisit if a real font
-   stack is ever seen to drop it — a substituted width would put a guessed
-   number back into the one formula this phase exists to make honest.
+1. **Minimum tab width — the ellipsis rule.** The loop used to stop at
+   `label_w < cell_w * 2.0`, a threshold with no meaning once text stops being
+   measured in cells. The floor is now a measured ellipsis plus the padding
+   either side (`tab_layout::min_tab_width`): a tab too narrow to say "there was
+   more text here" is not worth the strip space. Chosen over a fixed pixel
+   minimum because it describes itself and cannot be falsified by a HiDPI
+   display, and because it is the rule `truncate_run_to_width` already applies
+   inside a budget.
+2. **A zero-advance glyph is left alone.** Once §1.3 was checked, the activity
+   dot turned out not to be able to overflow: measurement and drawing agree by
+   construction. The remaining case is a font with no `●`, where
+   `chrome_advance` returns 0 deliberately and the dot occupies no space. That
+   stands: the dot is a hint, its absence is survivable, and substituting a
+   width would put a guessed number back into the one formula this phase exists
+   to make honest. Revisit only if a real font stack is *seen* to drop it.
