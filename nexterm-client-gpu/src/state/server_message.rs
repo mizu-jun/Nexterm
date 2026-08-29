@@ -61,10 +61,14 @@ impl ClientState {
             }
             ServerToClient::Error { message } => {
                 tracing::error!("server error: {}", message);
-                // Sprint 5-12 Phase 1: reflect on the UI banner so the user can see it.
+                // Sprint 5-12 Phase 1: reflect on the UI so the user can see it.
                 // E.g. PTY spawn failure (PowerShell spawn failure etc.), config-load
-                // error, pane-split failure. Dismissed via the Esc key.
-                self.error_banner = Some(message);
+                // error, pane-split failure. Dismissed via the Esc key. The error
+                // slot holds the latest message only (UI/UX v3 P6).
+                self.push_info_bar(
+                    crate::renderer::overlay::infobar::InfoBarKind::ServerError { message },
+                    std::time::Instant::now(),
+                );
             }
             ServerToClient::SessionList { .. } => {}
             ServerToClient::ImagePlaced {
@@ -502,6 +506,24 @@ mod tests {
         });
         assert!(state.panes.contains_key(&1));
         assert_eq!(state.focused_pane_id, Some(1));
+    }
+
+    /// Sprint 5-12's error banner became the error slot of the InfoBar stack
+    /// (UI/UX v3 P6b); the message still has to reach the user.
+    #[test]
+    fn server_error_raises_the_error_bar() {
+        let mut state = ClientState::new(80, 24, 1000);
+        state.apply_server_message(ServerToClient::Error {
+            message: "failed to spawn pwsh".to_string(),
+        });
+
+        assert_eq!(state.info_bars.len(), 1);
+        assert_eq!(
+            state.info_bars[0].kind,
+            crate::renderer::overlay::infobar::InfoBarKind::ServerError {
+                message: "failed to spawn pwsh".to_string(),
+            }
+        );
     }
 
     #[test]

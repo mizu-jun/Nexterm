@@ -24,6 +24,7 @@ use crate::key_map::{
     config_key_matches, config_key_matches_token, format_key_event, physical_to_proto_key,
     proto_modifiers, winit_code_to_char,
 };
+use crate::renderer::overlay::infobar;
 use crate::vertex_util::grid_to_text;
 
 use super::EventHandler;
@@ -1069,26 +1070,33 @@ impl EventHandler {
             return true;
         }
 
-        // When the server-error banner is visible: Esc closes it (Sprint 5-12 Phase 1).
-        // Processed before update_banner so the overlapping banner clears first.
-        if self.app.state.error_banner.is_some()
-            && let WKeyCode::Escape = code
-        {
-            self.app.state.error_banner = None;
-            return true;
-        }
-
-        // While the update-notification banner is visible: Esc closes it, Enter opens the browser
-        if self.app.state.update_banner.is_some() {
+        // InfoBar stack (UI/UX v3 P6). `Esc` dismisses the loudest bar that can
+        // be dismissed at all — which keeps the previous ordering, where the
+        // error banner cleared before the update one, without either handler
+        // having to know the other exists. The offline bar is skipped rather
+        // than dismissed: it reports a condition that is still true.
+        if !self.app.state.info_bars.is_empty() {
+            let order = infobar::stack_order(self.app.state.info_bars.make_contiguous());
             match code {
                 WKeyCode::Escape => {
-                    self.app.state.update_banner = None;
-                    return true;
+                    if let Some(&index) = order
+                        .iter()
+                        .find(|&&index| self.app.state.info_bars[index].kind.is_dismissible())
+                    {
+                        self.app.state.info_bars.remove(index);
+                        return true;
+                    }
                 }
+                // D4: only the top bar carries an activation, so `Enter` does
+                // nothing while an error sits above the update notice.
                 WKeyCode::Enter => {
-                    crate::platform::open_releases_url();
-                    self.app.state.update_banner = None;
-                    return true;
+                    if let Some(&top) = order.first()
+                        && self.app.state.info_bars[top].kind.has_activation()
+                    {
+                        crate::platform::open_releases_url();
+                        self.app.state.info_bars.remove(top);
+                        return true;
+                    }
                 }
                 _ => {}
             }

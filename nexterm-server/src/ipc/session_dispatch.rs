@@ -219,8 +219,8 @@ pub(super) async fn handle_attach(ctx: &mut DispatchContext<'_>, session_name: &
                 .await;
 
             // Sprint 5-12 Phase 4: drain and forward startup warnings (e.g. config load failure).
-            // The client visualizes these as `error_banner`.
-            // Multiple warnings are joined with "; " (the banner has a single slot, so the latest overwrites).
+            // The client visualizes these on its InfoBar stack, in the error slot.
+            // Multiple warnings are joined with "; " (the slot holds one message, so the latest overwrites).
             let warnings = manager.take_startup_warnings();
             if !warnings.is_empty() {
                 let _ = tx

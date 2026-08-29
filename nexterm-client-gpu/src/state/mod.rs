@@ -21,6 +21,7 @@ use winit::window::WindowId;
 use crate::host_manager::HostManager;
 use crate::macro_picker::MacroPicker;
 use crate::palette::CommandPalette;
+use crate::renderer::overlay::infobar::{InfoBar, InfoBarKind, InfoBarSlot};
 use crate::settings_panel::SettingsPanel;
 
 mod blocks;
@@ -252,17 +253,14 @@ pub struct ClientState {
     /// style bindings; otherwise it falls through as a normal input. Reset to
     /// `None` on expiry or on a successful match.
     pub prefix_pending_until: Option<std::time::Instant>,
-    /// Update notification banner (Some(version) = visible, None = hidden)
-    pub update_banner: Option<String>,
-    /// Offline-mode banner timestamp (Sprint 5-14 / v1.7.8 — P2-1).
+    /// Non-blocking status messages, newest last (UI/UX v3 P6).
     ///
-    /// `Some(Instant)` indicates "offline since this time". The renderer
-    /// formats the banner with the elapsed seconds so the user can see
-    /// progress while the embedded server is starting up. Set by
-    /// `try_connect` once the connect-failure streak exceeds the threshold
-    /// (currently 1 s = ~5 attempts at the 200 ms cadence) and reset to
-    /// `None` on a successful connect.
-    pub offline_banner_since: Option<std::time::Instant>,
+    /// Replaces the three `Option` banner fields this used to be — update,
+    /// offline and server error — each of which had its own builder and its
+    /// own stacking arithmetic. Queue through [`ClientState::push_info_bar`]
+    /// and clear through [`ClientState::remove_info_bar`]; where a bar sits is
+    /// decided in one place, `overlay::infobar::bar_rects`.
+    pub info_bars: std::collections::VecDeque<InfoBar>,
     /// Consent dialog for sensitive operations (Sprint 4-1).
     /// While `Some`, the dialog consumes every key input.
     pub pending_consent: Option<ConsentDialog>,
@@ -364,13 +362,6 @@ pub struct ClientState {
     /// effectively impossible (around 5.84 hundred million years at 1000
     /// alerts/sec). This is the rationale for collision-free NodeIds.
     pub next_alert_seq: u64,
-    /// Banner used to surface non-fatal errors received from the server (Sprint 5-12 Phase 1).
-    ///
-    /// On `ServerToClient::Error` the message is stored here, and the renderer
-    /// paints a red banner at the bottom. `Esc` restores it to `None`. This is
-    /// a single slot overwritten by the latest error (never stacks). Coexists
-    /// independently with `update_banner`.
-    pub error_banner: Option<String>,
     /// Currently-selected command block, used by the block UI (Phase 2a).
     ///
     /// Lookup is `state.panes[pane_id].blocks` keyed by `BlockId`. `None` means
@@ -945,8 +936,7 @@ impl ClientState {
             os_dark_mode: None,
             key_hint_visible_until: None,
             prefix_pending_until: None,
-            update_banner: None,
-            offline_banner_since: None,
+            info_bars: std::collections::VecDeque::new(),
             pending_consent: None,
             pending_consent_opening: None,
             pending_consent_closing: None,
@@ -971,14 +961,42 @@ impl ClientState {
             // Sprint 5-11-5: AccessKit Role::Alert notification queue
             alerts: std::collections::VecDeque::new(),
             next_alert_seq: 0,
-            // Sprint 5-12 Phase 1: banner for server-error display
-            error_banner: None,
             // Command-blocks Phase 2a: per-session block UI state.
             selected_block: None,
             named_blocks: crate::named_blocks::NamedBlockStore::load(),
             // Command-blocks Phase 2c-4: block-name input modal.
             block_name_modal: blocks::BlockNameModal::default(),
         }
+    }
+
+    /// Queue an InfoBar, replacing any bar already in that slot (UI/UX v3 P6).
+    ///
+    /// Replacement rather than stacking is the behaviour the three `Option`
+    /// fields had: a second server error overwrote the first, and the update
+    /// checker only ever raised its banner while none was up. Returns whether
+    /// the stack changed, so the caller can decide to redraw.
+    pub fn push_info_bar(&mut self, kind: InfoBarKind, now: Instant) -> bool {
+        if self.info_bars.iter().any(|bar| bar.kind == kind) {
+            return false;
+        }
+        self.remove_info_bar(kind.slot());
+        // P6d gives the entrance a real duration; a zero-length `Timed` is
+        // born finished, which is also the reduced-motion path.
+        let entrance = crate::animations::Timed::new(now, 0, crate::animations::Curve::Linear);
+        self.info_bars.push_back(InfoBar::new(kind, now, entrance));
+        true
+    }
+
+    /// Drop the bar occupying `slot`, if any. Returns whether one was removed.
+    pub fn remove_info_bar(&mut self, slot: InfoBarSlot) -> bool {
+        let before = self.info_bars.len();
+        self.info_bars.retain(|bar| bar.kind.slot() != slot);
+        self.info_bars.len() != before
+    }
+
+    /// Whether a bar is occupying `slot`.
+    pub fn has_info_bar(&self, slot: InfoBarSlot) -> bool {
+        self.info_bars.iter().any(|bar| bar.kind.slot() == slot)
     }
 
     /// Push an SR-facing alert onto the queue (Sprint 5-11-5).
@@ -1759,5 +1777,86 @@ mod animation_frame_tests {
         state.retire_ghosts(done);
         assert!(state.pending_consent_closing.is_none());
         assert!(!state.has_active_animation(done, 200));
+    }
+}
+
+#[cfg(test)]
+mod info_bar_tests {
+    //! UI/UX v3 P6b: the three banner fields became one stack, so the
+    //! single-slot behaviour they each had by construction is now a property
+    //! of `push_info_bar` and has to be asserted.
+    use super::*;
+    use std::time::Duration;
+
+    fn error(message: &str) -> InfoBarKind {
+        InfoBarKind::ServerError {
+            message: message.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_second_error_replaces_the_first_rather_than_stacking() {
+        let now = Instant::now();
+        let mut state = ClientState::new(80, 24, 1000);
+
+        assert!(state.push_info_bar(error("pty launch failed"), now));
+        assert!(state.push_info_bar(error("config load failed"), now + Duration::from_secs(1)));
+
+        assert_eq!(state.info_bars.len(), 1);
+        assert_eq!(state.info_bars[0].kind, error("config load failed"));
+    }
+
+    /// Re-pushing an identical bar is what the update poller does on every
+    /// tick; it must not restart the bar's clock or report a change.
+    #[test]
+    fn re_pushing_the_same_bar_is_a_no_op() {
+        let now = Instant::now();
+        let mut state = ClientState::new(80, 24, 1000);
+        assert!(state.push_info_bar(error("boom"), now));
+
+        assert!(!state.push_info_bar(error("boom"), now + Duration::from_secs(5)));
+        assert_eq!(state.info_bars.len(), 1);
+        assert_eq!(state.info_bars[0].created_at, now);
+    }
+
+    #[test]
+    fn bars_of_different_slots_coexist() {
+        let now = Instant::now();
+        let mut state = ClientState::new(80, 24, 1000);
+        state.push_info_bar(error("boom"), now);
+        state.push_info_bar(InfoBarKind::Offline { since: now }, now);
+        state.push_info_bar(
+            InfoBarKind::UpdateAvailable {
+                version: "1.9.0".to_string(),
+            },
+            now,
+        );
+
+        assert_eq!(state.info_bars.len(), 3);
+        assert!(state.has_info_bar(InfoBarSlot::Update));
+        assert!(state.has_info_bar(InfoBarSlot::Offline));
+        assert!(state.has_info_bar(InfoBarSlot::ServerError));
+    }
+
+    /// The offline bar clears on a successful connect and must take nothing
+    /// else with it — the old code cleared a field, this clears a slot.
+    #[test]
+    fn removing_one_slot_leaves_the_others_standing() {
+        let now = Instant::now();
+        let mut state = ClientState::new(80, 24, 1000);
+        state.push_info_bar(InfoBarKind::Offline { since: now }, now);
+        state.push_info_bar(error("boom"), now);
+
+        assert!(state.remove_info_bar(InfoBarSlot::Offline));
+        assert!(!state.remove_info_bar(InfoBarSlot::Offline));
+        assert!(!state.has_info_bar(InfoBarSlot::Offline));
+        assert!(state.has_info_bar(InfoBarSlot::ServerError));
+    }
+
+    #[test]
+    fn a_fresh_state_has_no_bars() {
+        let state = ClientState::new(80, 24, 1000);
+        assert!(state.info_bars.is_empty());
+        assert!(!state.has_info_bar(InfoBarSlot::Update));
     }
 }

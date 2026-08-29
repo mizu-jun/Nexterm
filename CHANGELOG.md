@@ -39,6 +39,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   name table as TOML, so a scheme is reachable from both the moment it exists.
 
 ### Changed
+- The three top-of-screen banners — update notice, offline, server error — are
+  now one **InfoBar stack**. They were three state fields, three vertex
+  builders and three copies of the stacking arithmetic, with the error banner
+  re-deriving its own offset by testing the other two; they are now three kinds
+  of one surface, laid out by the single `bar_rects` function. Three visible
+  changes come with it: the stack draws **below the tab bar** instead of over
+  it, at most **two bars** are drawn at once (a third is queued but not drawn
+  until P6c gives it a count suffix), and `Enter` opens the release page only
+  while the update bar is the top one — an error bar above it now takes
+  priority. `Esc` still clears the error bar before the update bar, and the
+  offline bar still clears itself on connect and offers no `[Esc]` hint
+  (UI/UX v3 P6b).
 - The chrome surface ramp now picks its direction with the same predicate the
   text correction uses (WCAG relative luminance against the readability
   watershed) instead of BT.709 on undecoded sRGB channels, and is capped so no
