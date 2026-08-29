@@ -226,6 +226,14 @@ Addresses G8 (principles: Familiar, Personal).
   `FontManager`; the terminal grid keeps the single user-configured font.
 - Acceptance: all chrome icons render without any user-installed font.
 
+> **Design spec (2026-08-29):**
+> `plans/2026-08-29-p4-iconography-and-chrome-typography.md`. It splits the
+> phase into P4a (icon font) and P4b (type ramp) over four PRs, and corrects
+> this entry's **M** sizing: the ramp above has never had a reader, and the
+> chrome has no variable-size text path at all — every chrome string advances
+> by `cell_w`. P4b therefore adds a proportional run primitive and adopts it at
+> a bounded list of six surfaces, rather than "applying the ramp".
+
 ### P5 — Accessibility & high contrast (M)
 
 Addresses G10 (principle: Complete + Coherent).
