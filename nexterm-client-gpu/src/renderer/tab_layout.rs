@@ -13,15 +13,10 @@
 //! the clamp and the floor are testable without a device — decides whether what
 //! is left of the strip can hold it.
 //!
-//! N-3a ships the two functions and their tests; the tab bar adopts them in
-//! N-3b, which is when the seven consumers of the width start following a
-//! correct one.
-// Every item here is called for the first time in N-3b, when
-// `ui_verts::build_tab_bar_verts` stops counting characters. The allowance is
-// this module's whole reason for shipping early, and it goes with that change —
-// P4b's identical markers outlived their adoption and had to be cleaned up in
-// P4c, so this one names the PR that removes it.
-#![allow(dead_code)]
+//! N-3a shipped the two functions; N-3b made `ui_verts::build_tab_bar_verts`
+//! use them, which is when the seven consumers of the width — pill, click
+//! region, accent underline, top highlight, progress bar, close and tear-out
+//! buttons — started following a correct one.
 
 use crate::font::FontManager;
 use crate::vertex_util::measure_run;
@@ -178,6 +173,58 @@ mod tests {
                 "{label:?} is drawn {drawn} wide in a {width}-wide tab"
             );
         }
+    }
+
+    /// G-single: the tab bar takes its width from here and nowhere else. The
+    /// formula this phase removed — a character count times the cell width —
+    /// must not come back, and neither must a second call that could drift
+    /// from the first.
+    #[test]
+    fn the_tab_bar_computes_a_tab_width_in_exactly_one_place() {
+        let src = include_str!("ui_verts.rs");
+        assert_eq!(
+            src.matches("tab_layout::tab_width(").count(),
+            1,
+            "a tab's width is computed in exactly one place in ui_verts.rs"
+        );
+        assert!(
+            !tab_region(src).contains("chars().count() as f32 * cell_w"),
+            "the tab bar sizes something by counting characters again; \
+             tab_width owns a tab's width"
+        );
+    }
+
+    /// The part of the tab-bar builder that draws *tabs*: the per-tab loop
+    /// plus the drag ghost, which is a copy of one.
+    ///
+    /// Bounded deliberately. The same function also draws the `+`, `▾` and
+    /// Settings pills, which are fixed-width buttons sized from a config
+    /// constant rather than from their label, and the status bar next door is
+    /// column-oriented by design (P4 spec §5.2). A gate over the whole file —
+    /// or even the whole function — would trip on surfaces N-3 leaves on the
+    /// cell path on purpose.
+    fn tab_region(src: &str) -> &str {
+        let start = src
+            .find("for (i, &pane_id) in pane_ids.iter().enumerate()")
+            .expect("the per-tab loop exists");
+        let rest = &src[start..];
+        let end = rest
+            .find("new-tab `+` pill")
+            .expect("the `+` pill follows the tabs");
+        &rest[..end]
+    }
+
+    /// The 24-character cap went with it: 24 characters is 24 cells of Latin or
+    /// 48 of Japanese, so it never bounded the drawn width. Truncation is by
+    /// width budget now.
+    #[test]
+    fn the_tab_label_is_no_longer_capped_by_character_count() {
+        let src = include_str!("ui_verts.rs");
+        assert!(
+            !tab_region(src).contains("chars().take(24)"),
+            "the tab bar caps a title by character count again — the ghost \
+             tab carried the same cap and was migrated with it"
+        );
     }
 
     /// A process icon widens the tab it sits in — the icon is drawn beside the

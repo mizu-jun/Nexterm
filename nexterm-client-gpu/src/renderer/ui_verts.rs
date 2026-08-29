@@ -7,7 +7,8 @@ use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::state::ClientState;
 use crate::vertex_util::{
-    add_icon_verts, add_px_rect, add_px_rounded_rect_sdf, add_string_verts, icon_size_for_slot,
+    add_icon_verts, add_px_rect, add_px_rounded_rect_sdf, add_run_verts, add_string_verts,
+    icon_size_for_slot,
 };
 
 use super::WgpuState;
@@ -304,6 +305,13 @@ impl WgpuState {
 
         let mut x_offset = 0.0_f32;
         let text_y = bar_y + (bar_h - cell_h) / 2.0;
+        // UI/UX v3 N-3b: tab labels draw at the chrome ramp, and their width
+        // comes from `tab_layout` rather than from a character count. Body for
+        // an inactive tab, Body Strong for the active one — the distinction
+        // the cell path drew with its `bold` flag.
+        let tab_ramp = nexterm_config::MetricTokens::default().type_ramp;
+        let (_size, tab_line_h, _bold) = font.chrome_metrics(&tab_ramp.body);
+        let tab_text_y = bar_y + (bar_h - tab_line_h) / 2.0;
 
         for (i, &pane_id) in pane_ids.iter().enumerate() {
             let is_active = pane_id == focused_id;
@@ -323,17 +331,16 @@ impl WgpuState {
                 })
                 .unwrap_or((false, String::new(), None, None));
 
-            // Tab label: show the OSC title if any; otherwise the pane number
+            // Tab label: show the OSC title if any; otherwise the pane number.
+            //
+            // N-3b: the 24-character cap is gone. Twenty-four characters is 24
+            // cells of Latin or 48 of Japanese, so it never bounded the drawn
+            // width; the label is cut to the room the strip actually has,
+            // below, by `truncate_run_to_width`.
             let base_label = if raw_title.is_empty() {
                 format!("pane:{}", pane_id)
             } else {
-                // Trim titles that are too long (max 24 chars)
-                let truncated: String = raw_title.chars().take(24).collect();
-                if raw_title.chars().count() > 24 {
-                    format!("{}…", truncated)
-                } else {
-                    truncated
-                }
+                raw_title.clone()
             };
             // Phase 2c: prepend the Nerd Font glyph when (a) the user
             // opted in via `tab_bar.show_process_icon` and (b) the
@@ -354,17 +361,38 @@ impl WgpuState {
             } else {
                 iconified
             };
+            // The cell path wrapped every label in spaces because `padding`
+            // alone did not read as padding at cell precision. It does now, and
+            // measured spaces would be counted twice, so they go.
             let label = if has_activity && !is_active {
-                format!(" {} ● ", numbered)
+                format!("{} ●", numbered)
             } else {
-                format!(" {} ", numbered)
+                numbered
             };
-            let label_w =
-                (label.chars().count() as f32 * cell_w + padding * 2.0).min(tab_area_w - x_offset); // don't spill out of the tab area
 
-            if label_w < cell_w * 2.0 {
+            // N-3b: measure the label, never count it. The tab is cut to the
+            // room left, then sized from what is actually drawn, so the pill,
+            // the click region (`tab_hit_rects`), the accent underline, the
+            // progress bar and both hover buttons all follow one correct
+            // number instead of a character count that disagreed with the
+            // drawing pass for every full-width glyph.
+            let tab_style = if is_active {
+                tab_ramp.body_strong
+            } else {
+                tab_ramp.body
+            };
+            let room_left = tab_area_w - x_offset;
+            let label = crate::vertex_util::truncate_run_to_width(
+                &label,
+                &tab_style,
+                (room_left - padding * 2.0).max(0.0),
+                font,
+            );
+            let Some(label_w) = crate::renderer::tab_layout::tab_width(
+                &label, &tab_style, 0.0, padding, room_left, font,
+            ) else {
                 break; // no more room to draw additional tabs
-            }
+            };
 
             // Decide the tab background color:
             //   1. Active -> active_bg
@@ -463,17 +491,16 @@ impl WgpuState {
                 );
             }
 
-            // Tab label (vertically centered)
+            // Tab label (vertically centred on the run's own line box).
             let fg = if is_active { text_fg } else { inactive_fg };
-            add_string_verts(
+            add_run_verts(
                 &label,
+                &tab_style,
                 x_offset + padding,
-                text_y,
+                tab_text_y,
                 fg,
-                is_active,
                 sw,
                 sh,
-                cell_w,
                 font,
                 atlas,
                 &self.queue,
@@ -635,17 +662,25 @@ impl WgpuState {
                     .map(|p| p.title.clone())
                     .filter(|t| !t.is_empty())
                     .unwrap_or_else(|| format!("pane:{}", drag.pane_id));
-                let truncated: String = ghost_title.chars().take(24).collect();
-                let ghost_label = format!(" {} ", truncated);
-                add_string_verts(
+                // N-3b: the ghost carries the same defect its tab did — it
+                // was cut to 24 characters and drawn on the cell path inside a
+                // pill whose width comes from `tab_hit_rects`. It is cut to
+                // that pill now, and drawn as a run like the tab it copies.
+                let ghost_style = tab_ramp.body_strong;
+                let ghost_label = crate::vertex_util::truncate_run_to_width(
+                    &ghost_title,
+                    &ghost_style,
+                    (ghost_w - padding * 2.0).max(0.0),
+                    font,
+                );
+                add_run_verts(
                     &ghost_label,
+                    &ghost_style,
                     ghost_x + padding,
-                    text_y,
+                    tab_text_y,
                     text_fg,
-                    false,
                     sw,
                     sh,
-                    cell_w,
                     font,
                     atlas,
                     &self.queue,

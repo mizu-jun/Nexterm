@@ -237,13 +237,34 @@ though it looks tautological: today it fails.
 | PR | Scope | Gate |
 |---|---|---|
 | **N-3a** | `fit_tab_width` + the measured `tab_width`, with the pure tests. No call sites; the tab bar still counts characters. **Shipped 2026-08-30** as `renderer/tab_layout.rs`. | G-fit |
-| **N-3b** | Adopt both in `build_tab_bar_verts`: measured width, width-budget truncation, ramp step, `line_h` centring. The seven consumers follow the corrected number. | G-width, G-hit, G-single, G-truncate |
+| **N-3b** | Adopt both in `build_tab_bar_verts`: measured width, width-budget truncation, ramp step, `line_h` centring. The seven consumers follow the corrected number. **Shipped 2026-08-30.** | G-width, G-hit, G-single, G-truncate |
 | **N-3c** | The process icon becomes its own run (D3). | G-icon |
 
 N-3b is the risk concentration: it is the PR that changes what every tab looks
 like and where every tab click lands.
 
 ---
+
+### 5.5 As built (N-3b)
+
+Three things worth recording:
+
+- **The drag ghost carried the same defect and was migrated with the tabs.**
+  Its *pill* was always correct — the width comes from `tab_hit_rects` — but its
+  *label* had its own `chars().take(24)` cap and its own `add_string_verts`
+  call, so a CJK title overflowed the ghost exactly as it overflowed the tab.
+  It is cut to the ghost's own width now and drawn as a run.
+- **The label's decorative spaces are gone.** The cell path wrapped every label
+  in `" {} "` because `padding` alone did not read as padding at cell
+  precision. Measured spaces would be counted twice — once as glyphs, once as
+  padding — so the label is now `"{}"` and `"{} ●"`, with the spacing left to
+  `padding`.
+- **The G-single gate is bounded to the tabs.** The same builder also draws the
+  `+`, `▾` and Settings pills, which are fixed-width buttons sized from a config
+  constant rather than from their labels, so a gate over the whole function
+  would have tripped on surfaces this phase deliberately leaves on the cell
+  path. `tab_region` in `tab_layout`'s tests is that boundary, and it covers the
+  per-tab loop plus the ghost.
 
 ## 6. Verification
 

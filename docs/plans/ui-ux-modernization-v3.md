@@ -730,7 +730,10 @@ gated behind a spike.
         2026-08-30)
       - [ ] N-3 tab-bar labels — spec approved 2026-08-30
         (`2026-08-30-n3-tab-bar-labels.md`), §7 signed off; N-3a shipped
-        (`renderer/tab_layout.rs`), N-3b/N-3c open. Measuring found
+        (`renderer/tab_layout.rs`) and N-3b with it — tabs are measured, cut to
+        the room the strip has, and drawn at the ramp, so the CJK overflow and
+        the click region that belonged to the next tab are both fixed. N-3c
+        (the process icon as its own run, for clipping) is open. Measuring found
         the roadmap's framing wrong in both directions: the hit computation
         does **not** need rebuilding (the renderer already publishes
         `tab_hit_rects` every frame), and there is a live defect underneath —
