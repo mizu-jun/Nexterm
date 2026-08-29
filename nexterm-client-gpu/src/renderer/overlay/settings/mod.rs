@@ -21,6 +21,7 @@ use crate::state::ClientState;
 use crate::vertex_util::{add_px_rect, add_px_rounded_rect_sdf, add_run_verts, add_string_verts};
 
 use super::super::WgpuState;
+use nexterm_config::SurfaceLevel;
 
 mod blocks_tab;
 mod font_tab;
@@ -229,11 +230,7 @@ impl WgpuState {
 
         // hard-coding `text_primary`, so it still tracks the scheme's own
         // secondary-text tone wherever that already clears the bar.
-        let title_color = row::ensure_readable(
-            tokens.text_secondary,
-            tokens.surface_3,
-            row::MIN_TEXT_CONTRAST,
-        );
+        let title_color = tokens.text_on(SurfaceLevel::S3).secondary;
         // UI/UX v3 P4b: Title — `metrics.rs` names that step "dialog titles",
         // and the panel's own heading is the same kind of thing. Note the
         // ramp must arrive unscaled: `chrome_metrics` owns the DPI conversion.
@@ -607,9 +604,9 @@ impl WgpuState {
                 viewport_h_px,
                 bar_w * 0.5,
                 [
-                    tokens.text_muted[0],
-                    tokens.text_muted[1],
-                    tokens.text_muted[2],
+                    tokens.text_on(SurfaceLevel::S2).muted[0],
+                    tokens.text_on(SurfaceLevel::S2).muted[1],
+                    tokens.text_on(SurfaceLevel::S2).muted[2],
                     0.08,
                 ],
                 sw,
@@ -690,7 +687,7 @@ impl WgpuState {
             &nexterm_i18n::fl!("settings-panel-footer-hint"),
             px + cell_w * 0.5,
             bottom_y + cell_h * 0.3,
-            row::ensure_readable(tokens.text_muted, tokens.surface_0, row::MIN_TEXT_CONTRAST),
+            tokens.text_on(SurfaceLevel::S0).muted,
             false,
             sw,
             sh,

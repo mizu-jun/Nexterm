@@ -12,7 +12,8 @@ use super::super::widgets::geometry::TabGeometry;
 use crate::vertex_util::add_string_verts;
 
 use super::super::widgets::settings_blocks::{build_blocks_widgets, tip_y};
-use super::row::{MIN_TEXT_CONTRAST, ensure_readable};
+
+use nexterm_config::SurfaceLevel;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::renderer) fn draw_blocks_tab(
@@ -69,7 +70,7 @@ pub(in crate::renderer) fn draw_blocks_tab(
         &nexterm_i18n::fl!("settings-blocks-tip"),
         content_inner_x,
         tip_y(sp, &geometry),
-        ensure_readable(tokens.text_muted, tokens.surface_2, MIN_TEXT_CONTRAST),
+        tokens.text_on(SurfaceLevel::S2).muted,
         false,
         sw,
         sh,

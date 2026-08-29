@@ -21,6 +21,7 @@ use crate::vertex_util::{
 use super::super::util::shadow_params;
 use super::draw::{WidgetSink, WidgetTheme};
 use super::spec::WidgetRect;
+use nexterm_config::SurfaceLevel;
 
 /// Gap between the anchor widget and the tooltip, in character cells.
 const ANCHOR_GAP_CELLS: f32 = 0.4;
@@ -141,7 +142,7 @@ pub(crate) fn draw_tooltip(
         &style,
         rect.x + PAD_X_CELLS * theme.cell_w,
         rect.y + PAD_Y_CELLS * theme.cell_h,
-        theme.tokens.text_primary,
+        theme.tokens.text_on(SurfaceLevel::S3).primary,
         theme.sw,
         theme.sh,
         font,

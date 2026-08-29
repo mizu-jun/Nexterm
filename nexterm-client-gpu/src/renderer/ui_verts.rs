@@ -11,6 +11,7 @@ use crate::vertex_util::{
 };
 
 use super::WgpuState;
+use nexterm_config::SurfaceLevel;
 
 /// Shared chrome for the one-line notification banners (update / offline / error).
 ///
@@ -18,6 +19,12 @@ use super::WgpuState;
 /// 1. A full-width background: `surface_2` tinted 18 % toward `accent`.
 /// 2. A 1 px bottom divider using `border_subtle`.
 /// 3. A 4 px left accent bar in the full `accent` colour.
+///
+/// Returns the opaque ground it painted. UI/UX v3 P5b: a banner is the one
+/// piece of chrome whose ground is neither a surface token nor a plain fill —
+/// it is a tint between the two — so its labels cannot take a `text_on(..)`
+/// colour as-is. Callers correct against this value instead of approximating
+/// it with `S2`.
 #[allow(clippy::too_many_arguments)]
 fn draw_banner_bg(
     bx: f32,
@@ -30,7 +37,7 @@ fn draw_banner_bg(
     sh: f32,
     bg_verts: &mut Vec<BgVertex>,
     bg_idx: &mut Vec<u16>,
-) {
+) -> [f32; 3] {
     let [r2, g2, b2, _] = tokens.surface_2;
     let [ra, ga, ba, _] = accent;
     let bg = [
@@ -52,6 +59,10 @@ fn draw_banner_bg(
         bg_idx,
     );
     add_px_rect(bx, by, 4.0, bh, accent, sw, sh, bg_verts, bg_idx);
+    // The alpha is 0.97 over an already-opaque chrome layer; the 3 % of
+    // whatever is behind it cannot move the ratio meaningfully, and treating
+    // the tint as opaque keeps the correction independent of draw order.
+    [bg[0], bg[1], bg[2]]
 }
 
 impl WgpuState {
@@ -228,7 +239,7 @@ impl WgpuState {
             tokens.accent_primary,
         );
         // Text colors derived from tokens
-        let text_fg = tokens.text_primary;
+        let text_fg = tokens.text_on(SurfaceLevel::S2).primary;
         let dim = cfg.inactive_text_brightness.clamp(0.2, 1.0);
         let inactive_fg = [dim, dim, dim, 1.0];
 
@@ -676,7 +687,7 @@ impl WgpuState {
                 plus_label,
                 plus_text_x,
                 text_y,
-                tokens.text_secondary,
+                tokens.text_on(SurfaceLevel::S2).secondary,
                 true,
                 sw,
                 sh,
@@ -714,7 +725,7 @@ impl WgpuState {
                 dropdown_w,
                 cell_h,
                 icon_size_for_slot(font.icon_px(16.0), dropdown_w, cell_h, 0.2),
-                tokens.text_secondary,
+                tokens.text_on(SurfaceLevel::S2).secondary,
                 sw,
                 sh,
                 font,
@@ -757,7 +768,7 @@ impl WgpuState {
         let settings_fg = if settings_open {
             text_fg
         } else {
-            tokens.text_secondary
+            tokens.text_on(SurfaceLevel::S2).secondary
         };
         add_string_verts(
             settings_label,
@@ -842,8 +853,11 @@ impl WgpuState {
                 // colour itself moves. UI/UX v3 P3b3: this reads `hover`
                 // alone, never `fill_w` / `press` — see
                 // `window_button_glyph_color`'s own doc comment for why.
-                let fg =
-                    window_button_glyph_color(hover, tokens.text_secondary, tokens.text_primary);
+                let fg = window_button_glyph_color(
+                    hover,
+                    tokens.text_on(SurfaceLevel::S2).secondary,
+                    tokens.text_on(SurfaceLevel::S2).primary,
+                );
                 add_icon_verts(
                     glyph,
                     bx,
@@ -907,7 +921,7 @@ impl WgpuState {
                 &edit_text,
                 tx0 + padding,
                 text_y,
-                tokens.text_primary,
+                tokens.text_on(SurfaceLevel::S3).primary,
                 true,
                 sw,
                 sh,
@@ -1016,7 +1030,7 @@ impl WgpuState {
             &info,
             icon_zone_w,
             py,
-            tokens.text_secondary,
+            tokens.text_on(SurfaceLevel::S1).secondary,
             false,
             sw,
             sh,
@@ -1037,7 +1051,7 @@ impl WgpuState {
                 &left_text,
                 left_x,
                 py,
-                tokens.text_muted,
+                tokens.text_on(SurfaceLevel::S1).muted,
                 false,
                 sw,
                 sh,
@@ -1217,7 +1231,7 @@ impl WgpuState {
             &label,
             0.0,
             py,
-            tokens.text_primary,
+            tokens.text_on(SurfaceLevel::S2).primary,
             false,
             sw,
             sh,
@@ -1236,7 +1250,7 @@ impl WgpuState {
             hint,
             hint_x.max(0.0),
             py,
-            tokens.text_muted,
+            tokens.text_on(SurfaceLevel::S2).muted,
             false,
             sw,
             sh,
@@ -1273,7 +1287,7 @@ impl WgpuState {
         let bar_h = cell_h * 1.4;
         let bar_y = 0.0;
 
-        draw_banner_bg(
+        let banner_bg = draw_banner_bg(
             0.0,
             bar_y,
             sw,
@@ -1292,7 +1306,11 @@ impl WgpuState {
             &msg,
             cell_w * 1.2,
             bar_y + (bar_h - cell_h) * 0.5,
-            tokens.text_primary,
+            nexterm_config::contrast_correct(
+                tokens.text_on(SurfaceLevel::S2).primary,
+                banner_bg,
+                nexterm_config::MIN_TEXT_CONTRAST,
+            ),
             false,
             sw,
             sh,
@@ -1310,7 +1328,11 @@ impl WgpuState {
             hint,
             hint_x,
             bar_y + (bar_h - cell_h) * 0.5,
-            tokens.text_muted,
+            nexterm_config::contrast_correct(
+                tokens.text_on(SurfaceLevel::S2).muted,
+                banner_bg,
+                nexterm_config::MIN_TEXT_CONTRAST,
+            ),
             false,
             sw,
             sh,
@@ -1358,7 +1380,7 @@ impl WgpuState {
             0.0
         };
 
-        draw_banner_bg(
+        let banner_bg = draw_banner_bg(
             0.0,
             bar_y,
             sw,
@@ -1378,7 +1400,11 @@ impl WgpuState {
             &msg,
             cell_w * 1.2,
             bar_y + (bar_h - cell_h) * 0.5,
-            tokens.text_primary,
+            nexterm_config::contrast_correct(
+                tokens.text_on(SurfaceLevel::S2).primary,
+                banner_bg,
+                nexterm_config::MIN_TEXT_CONTRAST,
+            ),
             false,
             sw,
             sh,
@@ -1427,7 +1453,7 @@ impl WgpuState {
             bar_y += bar_h;
         }
 
-        draw_banner_bg(
+        let banner_bg = draw_banner_bg(
             0.0,
             bar_y,
             sw,
@@ -1451,7 +1477,11 @@ impl WgpuState {
             &msg_display,
             cell_w * 1.2,
             bar_y + (bar_h - cell_h) * 0.5,
-            tokens.text_primary,
+            nexterm_config::contrast_correct(
+                tokens.text_on(SurfaceLevel::S2).primary,
+                banner_bg,
+                nexterm_config::MIN_TEXT_CONTRAST,
+            ),
             false,
             sw,
             sh,
@@ -1468,7 +1498,11 @@ impl WgpuState {
             hint,
             hint_x,
             bar_y + (bar_h - cell_h) * 0.5,
-            tokens.text_muted,
+            nexterm_config::contrast_correct(
+                tokens.text_on(SurfaceLevel::S2).muted,
+                banner_bg,
+                nexterm_config::MIN_TEXT_CONTRAST,
+            ),
             false,
             sw,
             sh,
@@ -1634,7 +1668,10 @@ fn progress_indicator_style(
     match state {
         1 => Some((with_alpha(tokens.semantic_success, 0.90), frac)),
         2 => Some((with_alpha(tokens.semantic_error, 0.90), frac)),
-        3 => Some((with_alpha(tokens.text_muted, 0.60), 1.0)),
+        3 => Some((
+            with_alpha(tokens.text_on(SurfaceLevel::S1).muted, 0.60),
+            1.0,
+        )),
         4 => Some((with_alpha(tokens.semantic_warning, 0.90), frac)),
         _ => None,
     }
@@ -1643,7 +1680,7 @@ fn progress_indicator_style(
 #[cfg(test)]
 mod window_button_glyph_color_tests {
     use super::window_button_glyph_color;
-    use nexterm_config::DesignTokens;
+    use nexterm_config::{DesignTokens, SurfaceLevel};
 
     /// The regression this pins: a press must never move the window
     /// buttons' glyph colour. `window_button_glyph_color` takes only
@@ -1653,22 +1690,30 @@ mod window_button_glyph_color_tests {
     #[test]
     fn hover_at_zero_keeps_the_unhovered_glyph_colour() {
         let tokens = DesignTokens::default();
-        let fg = window_button_glyph_color(0.0, tokens.text_secondary, tokens.text_primary);
-        assert_eq!(fg, tokens.text_secondary);
+        let fg = window_button_glyph_color(
+            0.0,
+            tokens.text_on(SurfaceLevel::S2).secondary,
+            tokens.text_on(SurfaceLevel::S2).primary,
+        );
+        assert_eq!(fg, tokens.text_on(SurfaceLevel::S2).secondary);
     }
 
     #[test]
     fn hover_at_one_reaches_the_hovered_glyph_colour() {
         let tokens = DesignTokens::default();
-        let fg = window_button_glyph_color(1.0, tokens.text_secondary, tokens.text_primary);
-        assert_eq!(fg, tokens.text_primary);
+        let fg = window_button_glyph_color(
+            1.0,
+            tokens.text_on(SurfaceLevel::S2).secondary,
+            tokens.text_on(SurfaceLevel::S2).primary,
+        );
+        assert_eq!(fg, tokens.text_on(SurfaceLevel::S2).primary);
     }
 }
 
 #[cfg(test)]
 mod progress_indicator_tests {
     use super::progress_indicator_style;
-    use nexterm_config::DesignTokens;
+    use nexterm_config::{DesignTokens, SurfaceLevel};
 
     fn tokens() -> DesignTokens {
         DesignTokens::default()
@@ -1711,7 +1756,7 @@ mod progress_indicator_tests {
         for (state, expected) in [
             (1u8, t.semantic_success),
             (2, t.semantic_error),
-            (3, t.text_muted),
+            (3, t.text_on(SurfaceLevel::S1).muted),
             (4, t.semantic_warning),
         ] {
             let (color, _) = progress_indicator_style(Some((state, 50)), &t).expect("indicator");

@@ -15,7 +15,8 @@ use crate::vertex_util::add_string_verts;
 use super::super::widgets::draw::{WidgetSink, WidgetTheme, draw_widget};
 use super::super::widgets::geometry::TabGeometry;
 use super::super::widgets::settings_window::build_window_widgets;
-use super::row::{MIN_TEXT_CONTRAST, ensure_readable};
+
+use nexterm_config::SurfaceLevel;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::renderer) fn draw_window_tab(
@@ -42,7 +43,7 @@ pub(in crate::renderer) fn draw_window_tab(
         &nexterm_i18n::fl!("settings-window-hint-nav"),
         content_inner_x,
         content_top,
-        ensure_readable(tokens.text_muted, tokens.surface_2, MIN_TEXT_CONTRAST),
+        tokens.text_on(SurfaceLevel::S2).muted,
         false,
         sw,
         sh,

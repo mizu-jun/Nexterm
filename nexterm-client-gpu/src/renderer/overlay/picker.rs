@@ -10,6 +10,7 @@ use crate::vertex_util::{add_px_rect, add_string_verts};
 
 use super::super::WgpuState;
 use super::util::draw_overlay_panel;
+use nexterm_config::SurfaceLevel;
 
 impl WgpuState {
     /// Build vertices for the command palette (center floating)
@@ -98,9 +99,9 @@ impl WgpuState {
             let prefix = if i == palette.selected { "> " } else { "  " };
             let label = format!("{}{}", prefix, action.label);
             let fg = if i == palette.selected {
-                tokens.text_primary
+                tokens.text_on(SurfaceLevel::S2).primary
             } else {
-                tokens.text_muted
+                tokens.text_on(SurfaceLevel::S2).muted
             };
             add_string_verts(
                 &label,
@@ -226,9 +227,9 @@ impl WgpuState {
                 px + cell_w,
                 row_y,
                 if is_active {
-                    tokens.text_primary
+                    tokens.text_on(SurfaceLevel::S2).primary
                 } else {
-                    tokens.text_secondary
+                    tokens.text_on(SurfaceLevel::S2).secondary
                 },
                 is_active,
                 sw,
@@ -252,9 +253,9 @@ impl WgpuState {
                 px + cell_w * 8.5,
                 row_y,
                 if is_active {
-                    tokens.text_primary
+                    tokens.text_on(SurfaceLevel::S2).primary
                 } else {
-                    tokens.text_secondary
+                    tokens.text_on(SurfaceLevel::S2).secondary
                 },
                 false,
                 sw,
@@ -415,7 +416,7 @@ impl WgpuState {
                 "  (no macros in config)",
                 px + cell_w,
                 py + cell_h * 2.2,
-                tokens.text_muted,
+                tokens.text_on(SurfaceLevel::S2).muted,
                 false,
                 sw,
                 sh,
@@ -574,7 +575,7 @@ impl WgpuState {
                 "  (no hosts in config)",
                 px + cell_w,
                 py + cell_h * 2.2,
-                tokens.text_muted,
+                tokens.text_on(SurfaceLevel::S2).muted,
                 false,
                 sw,
                 sh,

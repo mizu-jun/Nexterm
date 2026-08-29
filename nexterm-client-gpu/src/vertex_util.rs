@@ -441,7 +441,7 @@ pub(crate) fn signed_rect_distance(
 /// `visible` is `false` the call is a no-op.
 ///
 /// `base_color` supplies the hue (UI/UX v3 G11: scheme-derived, typically
-/// `DesignTokens.text_primary`); its alpha channel is ignored because each
+/// `DesignTokens::text_on(..).primary`); its alpha channel is ignored because each
 /// cursor shape carries its own translucency — a Block covers the glyph so
 /// it stays see-through, while the thin Beam/Underline need to be nearly
 /// opaque to remain visible.

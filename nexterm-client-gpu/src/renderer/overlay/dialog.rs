@@ -13,6 +13,7 @@ use super::util::{
     SCRIM_ALPHA_FLOOR, caution_fill, danger_fill, draw_overlay_panel, pane_id_for, preview_text,
     scrim_color, wrap_text,
 };
+use nexterm_config::SurfaceLevel;
 
 impl WgpuState {
     /// Build vertices for the password input modal
@@ -89,7 +90,7 @@ impl WgpuState {
             &metrics.type_ramp.body,
             px + cell_w,
             py + cell_h * 1.3,
-            tokens.text_primary,
+            tokens.text_on(SurfaceLevel::S2).primary,
             sw,
             sh,
             font,
@@ -126,7 +127,7 @@ impl WgpuState {
         let remember_color = if view.remember {
             tokens.semantic_success
         } else {
-            tokens.text_muted
+            tokens.text_on(SurfaceLevel::S2).muted
         };
         add_run_verts(
             remember_label,
@@ -165,7 +166,7 @@ impl WgpuState {
             &metrics.type_ramp.body,
             px + cell_w,
             py + cell_h * 4.1,
-            tokens.text_secondary,
+            tokens.text_on(SurfaceLevel::S2).secondary,
             sw,
             sh,
             font,
@@ -302,8 +303,11 @@ impl WgpuState {
             // UI/UX v3 P3b3: deliberately reads only the hover weight, not
             // the press-boosted `w` above — press changes background fills
             // only, never a foreground colour.
-            let text_color =
-                crate::color_util::lerp_rgba(tokens.text_secondary, tokens.text_primary, hover_w);
+            let text_color = crate::color_util::lerp_rgba(
+                tokens.text_on(SurfaceLevel::S3).secondary,
+                tokens.text_on(SurfaceLevel::S3).primary,
+                hover_w,
+            );
             add_string_verts(
                 &item.label,
                 mx + cell_w * 0.9,
@@ -325,7 +329,7 @@ impl WgpuState {
                 let hint_visual_w = visual_width(&item.hint) as f32;
                 let hint_x = mx + menu_w - (hint_visual_w * cell_w + cell_w * 0.5);
                 let hint_color = {
-                    let [r, g, b, _] = tokens.text_muted;
+                    let [r, g, b, _] = tokens.text_on(SurfaceLevel::S3).muted;
                     [r, g, b, 0.80]
                 };
                 add_string_verts(
@@ -442,7 +446,7 @@ impl WgpuState {
                 &metrics.type_ramp.body,
                 px + cell_w,
                 content_y,
-                tokens.text_secondary,
+                tokens.text_on(SurfaceLevel::S2).secondary,
                 sw,
                 sh,
                 font,
@@ -462,7 +466,7 @@ impl WgpuState {
                 &metrics.type_ramp.body,
                 px + cell_w,
                 content_y + i as f32 * cell_h,
-                tokens.text_primary,
+                tokens.text_on(SurfaceLevel::S2).primary,
                 sw,
                 sh,
                 font,
@@ -508,7 +512,7 @@ impl WgpuState {
             let fg = if is_selected {
                 crate::color_util::on_surface_text(bg)
             } else {
-                tokens.text_primary
+                tokens.text_on(SurfaceLevel::S3).primary
             };
             add_string_verts(
                 btn,
@@ -535,7 +539,7 @@ impl WgpuState {
             &metrics.type_ramp.caption,
             px + cell_w,
             py + ph - cell_h * 1.0,
-            tokens.text_secondary,
+            tokens.text_on(SurfaceLevel::S2).secondary,
             sw,
             sh,
             font,
@@ -633,7 +637,7 @@ impl WgpuState {
                 &metrics.type_ramp.body,
                 px + cell_w,
                 content_y + i as f32 * cell_h * 1.1,
-                tokens.text_primary,
+                tokens.text_on(SurfaceLevel::S2).primary,
                 sw,
                 sh,
                 font,
@@ -684,7 +688,7 @@ impl WgpuState {
             let fg = if is_selected || i == 0 {
                 crate::color_util::on_surface_text(bg)
             } else {
-                tokens.text_primary
+                tokens.text_on(SurfaceLevel::S3).primary
             };
             // Center the label
             let label_w = visual_width(label) as f32 * cell_w;
@@ -715,7 +719,7 @@ impl WgpuState {
             &metrics.type_ramp.body,
             px + cell_w,
             py + ph - cell_h * 1.0,
-            tokens.text_secondary,
+            tokens.text_on(SurfaceLevel::S2).secondary,
             sw,
             sh,
             font,
@@ -815,7 +819,7 @@ impl WgpuState {
             &metrics.type_ramp.body,
             px + cell_w,
             py + cell_h * 1.3,
-            tokens.text_primary,
+            tokens.text_on(SurfaceLevel::S2).primary,
             sw,
             sh,
             font,
@@ -832,7 +836,7 @@ impl WgpuState {
             &metrics.type_ramp.body,
             px + cell_w,
             py + cell_h * 2.8,
-            tokens.text_muted,
+            tokens.text_on(SurfaceLevel::S2).muted,
             sw,
             sh,
             font,

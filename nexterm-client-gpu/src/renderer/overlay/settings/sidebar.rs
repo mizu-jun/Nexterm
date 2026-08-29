@@ -7,6 +7,7 @@ use crate::vertex_util::{
     add_icon_verts, add_px_rect, add_run_verts, add_string_verts, icon_size_for_slot,
     truncate_run_to_width, truncate_to_width,
 };
+use nexterm_config::SurfaceLevel;
 
 /// Draw the sidebar background, separator, category-search input, and the
 /// (possibly filtered) category list.
@@ -104,19 +105,19 @@ pub(in crate::renderer) fn draw_sidebar(
         if sp.search_focused {
             (
                 nexterm_i18n::fl!("settings-search-placeholder-typing"),
-                tokens.text_secondary,
+                tokens.text_on(SurfaceLevel::S2).secondary,
             )
         } else {
             (
                 nexterm_i18n::fl!("settings-search-placeholder-idle"),
-                tokens.text_secondary,
+                tokens.text_on(SurfaceLevel::S2).secondary,
             )
         }
     } else {
         let cursor = if sp.search_focused { "|" } else { "" };
         (
             format!("/ {}{}", sp.search_query, cursor),
-            tokens.text_primary,
+            tokens.text_on(SurfaceLevel::S2).primary,
         )
     };
     let search_max_w = sidebar_w - search_pad * 2.0 - cell_w * 0.3;
@@ -196,9 +197,9 @@ pub(in crate::renderer) fn draw_sidebar(
             cat.label()
         };
         let fg = if is_active {
-            tokens.text_primary
+            tokens.text_on(SurfaceLevel::S2).primary
         } else {
-            tokens.text_secondary
+            tokens.text_on(SurfaceLevel::S2).secondary
         };
         // UI/UX v3 P4a: the icon is drawn from the bundled icon font into a
         // fixed leading column rather than concatenated into the label. The

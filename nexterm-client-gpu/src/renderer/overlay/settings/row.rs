@@ -27,6 +27,7 @@ use crate::glyph_atlas::{GlyphAtlas, TextVertex};
 use crate::vertex_util::{add_run_verts, add_string_verts, truncate_run_to_width};
 
 use super::super::util::{danger_fill, wrap_text};
+use nexterm_config::SurfaceLevel;
 
 /// WCAG 2.x contrast floor used throughout the settings panel (project
 /// accessibility guideline: see `CLAUDE.md` "UI/UX Guidelines").
@@ -85,7 +86,11 @@ pub(in crate::renderer) fn danger_button_colors(
         let bg = danger_fill(tokens, 0.18);
         (
             bg,
-            ensure_readable(tokens.text_primary, bg, MIN_TEXT_CONTRAST),
+            ensure_readable(
+                tokens.text_on(SurfaceLevel::S2).primary,
+                bg,
+                MIN_TEXT_CONTRAST,
+            ),
         )
     }
 }
@@ -201,45 +206,16 @@ mod contrast_tests {
         crate::color_util::contrast_ratio(effective, bg_rgb)
     }
 
-    /// Regression guard: the raw `text_muted` token, unmodified, does NOT
-    /// clear the contrast floor against the panel's body-content surface;
-    /// this is the bug `ensure_readable` exists to fix. If this assertion
-    /// ever starts failing, `DesignTokens::text_muted` itself has changed
-    /// and `ensure_readable`'s premise should be re-checked.
-    #[test]
-    fn raw_text_muted_fails_contrast_on_content_surface() {
-        let tokens = tokyo_night_tokens();
-        let cr = contrast_of(tokens.text_muted, tokens.surface_2);
-        assert!(
-            cr < MIN_TEXT_CONTRAST,
-            "expected raw text_muted to fail, got {cr}"
-        );
-    }
-
-    /// The representative (text color, background) pairs actually used
-    /// throughout the settings panel must clear 4.5:1 once passed through
-    /// `ensure_readable`, for both a dark and a light default theme.
-    #[test]
-    fn settings_panel_text_pairs_meet_contrast_after_ensure_readable() {
-        for tokens in [tokyo_night_tokens(), gruvbox_light_tokens()] {
-            let pairs = [
-                (tokens.text_muted, tokens.surface_0),
-                (tokens.text_muted, tokens.surface_1),
-                (tokens.text_muted, tokens.surface_2),
-                (tokens.text_secondary, tokens.surface_3),
-            ];
-            for (color, bg) in pairs {
-                let adjusted = ensure_readable(color, bg, MIN_TEXT_CONTRAST);
-                let cr = contrast_of(adjusted, bg);
-                assert!(
-                    cr >= MIN_TEXT_CONTRAST - 0.01,
-                    "pair {:?} on {:?} only reached {cr}",
-                    color,
-                    bg
-                );
-            }
-        }
-    }
+    // UI/UX v3 P5b removed two tests from here. `raw_text_muted_fails_
+    // contrast_on_content_surface` asserted that the *uncorrected* muted
+    // token fails 4.5:1 on `surface_2` — the bug `ensure_readable` existed to
+    // paper over. That colour is no longer reachable: the token layer corrects
+    // per surface and the flat field is gone.
+    // `settings_panel_text_pairs_meet_contrast_after_ensure_readable` walked
+    // four (token, surface) pairs by hand; `nexterm-config`'s
+    // `every_builtin_scheme_meets_the_text_floor_on_every_surface` now covers
+    // all nine schemes × four surfaces × eight tokens, so keeping a hand-listed
+    // subset here would only be a second place to forget to update.
 
     /// UI/UX v3 (G11 follow-up): the Ssh and Keybindings delete dialogs used
     /// to hand-mix their own reds. Whatever the scheme, the confirmation
@@ -287,7 +263,7 @@ mod contrast_tests {
     #[test]
     fn ensure_readable_is_a_no_op_when_already_readable() {
         let tokens = tokyo_night_tokens();
-        let already_fine = tokens.text_primary;
+        let already_fine = tokens.text_on(SurfaceLevel::S2).primary;
         let adjusted = ensure_readable(already_fine, tokens.surface_2, MIN_TEXT_CONTRAST);
         assert_eq!(adjusted, already_fine);
     }

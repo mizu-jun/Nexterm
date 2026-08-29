@@ -11,6 +11,7 @@ use crate::glyph_atlas::{BgVertex, GlyphAtlas, GlyphKey, LigatureKey, TextVertex
 use crate::vertex_util::add_px_rect;
 
 use super::WgpuState;
+use nexterm_config::SurfaceLevel;
 
 impl WgpuState {
     /// Build the vertices for the grid contents.
@@ -259,7 +260,7 @@ impl WgpuState {
             cell_h,
             sw,
             sh,
-            tokens.text_primary,
+            tokens.text_on(SurfaceLevel::S0).primary,
             cursor_visible,
             bg_verts,
             bg_idx,
@@ -753,7 +754,7 @@ impl WgpuState {
                 cell_h,
                 sw,
                 sh,
-                tokens.text_primary,
+                tokens.text_on(SurfaceLevel::S0).primary,
                 cursor_visible,
                 bg_verts,
                 bg_idx,

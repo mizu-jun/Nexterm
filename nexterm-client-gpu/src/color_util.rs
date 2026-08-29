@@ -368,6 +368,7 @@ pub(crate) fn on_surface_text(fill: [f32; 4]) -> [f32; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nexterm_config::SurfaceLevel;
 
     #[test]
     fn lerp_rgba_hits_both_endpoints_exactly() {
@@ -850,9 +851,9 @@ mod tests {
             let s = tokens.surface_3;
             let hovered = [s[0], s[1], s[2], s[3] * 0.35];
             let fg = [
-                tokens.text_primary[0],
-                tokens.text_primary[1],
-                tokens.text_primary[2],
+                tokens.text_on(SurfaceLevel::S1).primary[0],
+                tokens.text_on(SurfaceLevel::S1).primary[1],
+                tokens.text_on(SurfaceLevel::S1).primary[2],
             ];
             let before = contrast_ratio(fg, composite_over(hovered, bg));
             let after = contrast_ratio(fg, composite_over(press_fill(hovered, 1.0), bg));
