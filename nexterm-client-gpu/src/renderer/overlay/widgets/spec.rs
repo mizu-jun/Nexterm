@@ -332,7 +332,6 @@ impl WidgetDesc {
             desc: self,
             rect,
             control_rect,
-            hovered: false,
         }
     }
 }
@@ -346,8 +345,6 @@ pub(crate) struct WidgetSpec {
     pub rect: WidgetRect,
     /// The interactive control itself, inside `rect`.
     pub control_rect: WidgetRect,
-    /// Whether the pointer is over this widget.
-    pub hovered: bool,
 }
 
 impl WidgetSpec {
@@ -369,12 +366,6 @@ impl WidgetSpec {
     /// Whether the widget accepts input right now.
     pub fn enabled(&self) -> bool {
         self.desc.enabled
-    }
-
-    /// Mark the widget hovered.
-    pub fn hovered(mut self, hovered: bool) -> Self {
-        self.hovered = hovered;
-        self
     }
 }
 
@@ -534,7 +525,7 @@ mod tests {
     }
 
     #[test]
-    fn builder_methods_set_the_interaction_flags() {
+    fn builder_methods_set_focused_and_tooltip() {
         let desc = WidgetDesc::new(
             WidgetId::new(1, 0),
             WidgetKind::Toggle { on: false },
@@ -542,11 +533,8 @@ mod tests {
         )
         .focused(true)
         .tooltip("hint");
-        let w = desc
-            .place(WidgetRect::default(), WidgetRect::default())
-            .hovered(true);
+        let w = desc.place(WidgetRect::default(), WidgetRect::default());
         assert!(w.focused());
-        assert!(w.hovered);
         assert_eq!(w.desc.tooltip.as_deref(), Some("hint"));
     }
 }

@@ -23,6 +23,7 @@
 
 mod curve;
 mod easing;
+mod hover;
 mod surface;
 mod timed;
 
@@ -30,6 +31,8 @@ mod timed;
 // settings panel (Task 6 of UI/UX v3 P3a) is the first consumer.
 pub use curve::{Curve, duration};
 pub use easing::{compute_progress, ease_out_cubic};
+// Consumed by the two overlay models in Tasks 3 and 4.
+pub use hover::HoverTransition;
 pub use surface::SurfaceMotion;
 pub use timed::Timed;
 

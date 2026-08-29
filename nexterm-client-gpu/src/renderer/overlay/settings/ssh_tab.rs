@@ -38,6 +38,7 @@ pub(in crate::renderer) fn draw_ssh_tab(
     sh: f32,
     cell_w: f32,
     cell_h: f32,
+    now: std::time::Instant,
     font: &mut FontManager,
     atlas: &mut GlyphAtlas,
     queue: &wgpu::Queue,
@@ -172,6 +173,8 @@ pub(in crate::renderer) fn draw_ssh_tab(
         sh,
         cell_w,
         cell_h,
+        hover: &sp.hover_transition,
+        now,
     };
     let mut sink = WidgetSink {
         bg_verts,

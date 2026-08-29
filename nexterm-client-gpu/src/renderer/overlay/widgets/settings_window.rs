@@ -212,10 +212,6 @@ const ROW_BLEED: f32 = 0.3;
 pub(crate) fn build_window_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<WidgetSpec> {
     let layout = super::super::settings::layout::compute_row_layout(g.content_w, g.cell_w);
     let visible = sp.visible_window_rows();
-    let hovered = sp
-        .hover_widget
-        .filter(|h| h.category == WINDOW_CATEGORY)
-        .map(|h| h.index);
     let rows_top = g.content_top + g.cell_h * ROWS_TOP;
 
     window_widget_descs(sp)
@@ -226,9 +222,7 @@ pub(crate) fn build_window_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<W
             let index = desc.id.index;
             let Some(slot) = crate::settings_panel::slot_of(&visible, index as usize) else {
                 // Collapsed by the search filter: no hit region, nothing drawn.
-                return desc
-                    .place(WidgetRect::default(), WidgetRect::default())
-                    .hovered(false);
+                return desc.place(WidgetRect::default(), WidgetRect::default());
             };
             let row_y = rows_top + g.cell_h * ROW_PITCH * slot as f32;
             let rect = WidgetRect::new(
@@ -243,7 +237,7 @@ pub(crate) fn build_window_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<W
                 layout.control_w,
                 g.cell_h * 1.2,
             );
-            desc.place(rect, control).hovered(hovered == Some(index))
+            desc.place(rect, control)
         })
         .collect()
 }

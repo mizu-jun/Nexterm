@@ -18,6 +18,17 @@ leave rather than appearing and vanishing.
 
 ### Hover exists in exactly two places
 
+> **Correction (2026-08-29): this heading is wrong.** There are four
+> pointer-hover models, not two — this survey missed the tab bar
+> (`ClientState.hovered_tab_id`, painted at `ui_verts.rs:363`) and the custom
+> title bar's window buttons (`ClientState.hovered_window_button`,
+> `ui_verts.rs:778-805`). The Scope section below is correspondingly too
+> narrow. The reasoning in this section about the two models it *did* find
+> still holds, and so does its argument for not extending `HoverDwell`. See
+> `2026-08-29-p3b2-hover-crossfade-design.md`, which corrects the survey and
+> carries P3b2's real scope. The rest of this document — including everything
+> P3b1 shipped — is unaffected.
+
 - **The widget layer.** Every migrated settings tab builds its specs with
   `desc.place(rect, control).hovered(hovered == Some(index))` — a single
   `Option<u16>` per frame. `draw/mod.rs:152` paints a hover row fill when

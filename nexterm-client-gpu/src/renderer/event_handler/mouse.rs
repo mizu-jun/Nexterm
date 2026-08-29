@@ -391,6 +391,8 @@ impl EventHandler {
                 SettingsPanelHit::KeybindingsRow(index) => Some((KEYBINDINGS_CATEGORY, index)),
                 _ => None,
             };
+            // Read before `sp` borrows `self.app.state` mutably below.
+            let anim = self.app.config.animations.clone();
             let sp = &mut self.app.state.settings_panel;
             sp.hover_widget = hovered.map(|(category, index)| {
                 crate::settings_panel::HoverDwell::enter(
@@ -400,6 +402,17 @@ impl EventHandler {
                     std::time::Instant::now(),
                 )
             });
+            // UI/UX v3 P3b2: the same pointer move drives the cross-fade. This
+            // is idempotent while the hovered row is unchanged, so a slow
+            // drag across one row does not restart the fade.
+            let now = std::time::Instant::now();
+            sp.hover_transition.retarget(
+                hovered.map(|(category, index)| {
+                    crate::renderer::overlay::widgets::spec::WidgetId::new(category, index)
+                }),
+                now,
+                &anim,
+            );
         } else if self.app.state.settings_panel.theme_hover_preview.is_some()
             || self.app.state.settings_panel.hover_widget.is_some()
         {
@@ -409,6 +422,16 @@ impl EventHandler {
             // panel reopens under a stationary cursor, skipping its delay.
             self.app.state.settings_panel.theme_hover_preview = None;
             self.app.state.settings_panel.hover_widget = None;
+            // Also retarget the cross-fade to `None`, or the fade-out that
+            // should start the instant the panel closes would instead wait
+            // for the next pointer move (up to 100 ms later), keeping
+            // `has_active_animation` true for a panel that draws nothing.
+            let anim = self.app.config.animations.clone();
+            self.app.state.settings_panel.hover_transition.retarget(
+                None,
+                std::time::Instant::now(),
+                &anim,
+            );
         }
 
         let col = (position.x / cell_w) as u16;
@@ -579,6 +602,12 @@ impl EventHandler {
             }
             if menu.hovered != new_hovered {
                 menu.hovered = new_hovered;
+                // UI/UX v3 P3b2: same value, same frame.
+                menu.hover_transition.retarget(
+                    new_hovered,
+                    std::time::Instant::now(),
+                    &self.app.config.animations,
+                );
                 if let Some(w) = &self.window {
                     w.request_redraw();
                 }

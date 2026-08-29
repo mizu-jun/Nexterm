@@ -101,10 +101,6 @@ pub(crate) fn startup_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
 /// Lay the Startup tab out for this frame.
 pub(crate) fn build_startup_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<WidgetSpec> {
     let layout = super::super::settings::layout::compute_row_layout(g.content_w, g.cell_w);
-    let hovered = sp
-        .hover_widget
-        .filter(|h| h.category == STARTUP_CATEGORY)
-        .map(|h| h.index);
 
     startup_widget_descs(sp)
         .into_iter()
@@ -125,7 +121,7 @@ pub(crate) fn build_startup_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<
                 layout.control_w,
                 rect.h,
             );
-            desc.place(rect, control).hovered(hovered == Some(index))
+            desc.place(rect, control)
         })
         .collect()
 }

@@ -197,10 +197,6 @@ pub(crate) fn ssh_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
 /// for `hit_test` and `draw_widget`, still described for the AccessKit tree.
 pub(crate) fn build_ssh_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<WidgetSpec> {
     let layout = super::super::settings::layout::compute_row_layout(g.content_w, g.cell_w);
-    let hovered = sp
-        .hover_widget
-        .filter(|h| h.category == SSH_CATEGORY)
-        .map(|h| h.index);
     let w = ssh_list_window(sp);
     let fields_top = ssh_fields_top(sp, g.content_top, g.cell_h);
     let btn_y = buttons_y(sp, g.content_top, g.cell_h);
@@ -246,7 +242,7 @@ pub(crate) fn build_ssh_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<Widg
                 );
                 (rect, control)
             };
-            desc.place(rect, control).hovered(hovered == Some(index))
+            desc.place(rect, control)
         })
         .collect()
 }

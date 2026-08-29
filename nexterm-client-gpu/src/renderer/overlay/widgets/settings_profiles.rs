@@ -76,10 +76,6 @@ pub(crate) fn profiles_widget_descs(sp: &SettingsPanel) -> Vec<WidgetDesc> {
 /// Lay the Profiles tab out for this frame.
 pub(crate) fn build_profiles_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec<WidgetSpec> {
     let layout = super::super::settings::layout::compute_row_layout(g.content_w, g.cell_w);
-    let hovered = sp
-        .hover_widget
-        .filter(|h| h.category == PROFILES_CATEGORY)
-        .map(|h| h.index);
 
     profiles_widget_descs(sp)
         .into_iter()
@@ -107,7 +103,7 @@ pub(crate) fn build_profiles_widgets(sp: &SettingsPanel, g: &TabGeometry) -> Vec
                 let rect = WidgetRect::new(x, y - g.cell_h * 0.1, row_w, g.cell_h);
                 (rect, rect)
             };
-            desc.place(rect, control).hovered(hovered == Some(index))
+            desc.place(rect, control)
         })
         .collect()
 }

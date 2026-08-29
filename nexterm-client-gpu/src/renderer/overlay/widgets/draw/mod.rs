@@ -47,6 +47,10 @@ pub(crate) struct WidgetTheme<'a> {
     pub cell_w: f32,
     /// Character cell height.
     pub cell_h: f32,
+    /// Hover cross-fade for the panel's rows (UI/UX v3 P3b2).
+    pub hover: &'a crate::animations::HoverTransition<super::spec::WidgetId>,
+    /// Frame time, for the hover weight.
+    pub now: std::time::Instant,
 }
 
 /// The vertex buffers a widget appends to.
@@ -147,11 +151,18 @@ pub(crate) fn draw_widget(
 
 /// Hover / focus fill behind the whole row.
 fn draw_row_background(spec: &WidgetSpec, theme: &WidgetTheme<'_>, sink: &mut WidgetSink<'_>) {
+    // UI/UX v3 P3b2: the hover fill now fades in and out. Focus still wins
+    // outright — it paints an opaque `surface_2`, so a hover fade underneath
+    // it would be invisible, and one over it would change a shipped
+    // appearance for reasons unrelated to motion.
     let fill = if spec.focused() {
         Some(theme.tokens.surface_2)
-    } else if spec.hovered && spec.enabled() && spec.kind().is_interactive() {
-        let s = theme.tokens.surface_3;
-        Some([s[0], s[1], s[2], s[3] * HOVER_ALPHA])
+    } else if spec.enabled() && spec.kind().is_interactive() {
+        let w = theme.hover.weight(spec.id(), theme.now);
+        (w > 0.0).then(|| {
+            let s = theme.tokens.surface_3;
+            [s[0], s[1], s[2], s[3] * HOVER_ALPHA * w]
+        })
     } else {
         None
     };
@@ -301,7 +312,23 @@ pub(super) mod test_support {
 
     /// Collect the background vertices a drawing closure emits, for the tests
     /// that assert on the SDF metadata rather than on the quad count alone.
+    ///
+    /// Uses a fresh, never-retargeted `HoverTransition` (UI/UX v3 P3b2), so
+    /// every id weighs 0 here — tests that need a non-zero hover weight use
+    /// [`bg_vertices_with_hover`] instead.
     pub(in crate::renderer::overlay::widgets::draw) fn bg_vertices(
+        f: impl FnOnce(&WidgetTheme<'_>, &mut WidgetSink<'_>),
+    ) -> Vec<BgVertex> {
+        let hover = crate::animations::HoverTransition::default();
+        bg_vertices_with_hover(&hover, std::time::Instant::now(), f)
+    }
+
+    /// Like [`bg_vertices`], but with a caller-supplied hover transition and
+    /// frame time — for the tests that need a specific hover weight rather
+    /// than the always-zero default.
+    pub(in crate::renderer::overlay::widgets::draw) fn bg_vertices_with_hover(
+        hover: &crate::animations::HoverTransition<WidgetId>,
+        now: std::time::Instant,
         f: impl FnOnce(&WidgetTheme<'_>, &mut WidgetSink<'_>),
     ) -> Vec<BgVertex> {
         let tokens = nexterm_config::DesignTokens::default();
@@ -313,6 +340,8 @@ pub(super) mod test_support {
             sh: 600.0,
             cell_w: 10.0,
             cell_h: 20.0,
+            hover,
+            now,
         };
         let (mut bv, mut bi, mut tv, mut ti) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let mut sink = WidgetSink {
@@ -328,8 +357,12 @@ pub(super) mod test_support {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use super::test_support::*;
     use super::*;
+    use crate::animations::HoverTransition;
+    use crate::renderer::overlay::widgets::spec::WidgetId;
 
     #[test]
     fn an_unfocused_unhovered_row_paints_no_background() {
@@ -342,15 +375,65 @@ mod tests {
     fn focus_and_hover_each_paint_one_row_fill() {
         let focused = focused(spec_at(WidgetKind::Toggle { on: false }));
         assert_eq!(bg_quads(|t, s| draw_row_background(&focused, t, s)), 1);
-        let hovered = spec_at(WidgetKind::Toggle { on: false }).hovered(true);
-        assert_eq!(bg_quads(|t, s| draw_row_background(&hovered, t, s)), 1);
+
+        // UI/UX v3 P3b2: hover is weight-driven, so a fully-settled hover
+        // transition is what marks this spec as hovered.
+        let spec = spec_at(WidgetKind::Toggle { on: false });
+        let mut hover: HoverTransition<WidgetId> = Default::default();
+        let now = Instant::now();
+        hover.retarget(
+            Some(spec.id()),
+            now,
+            &nexterm_config::AnimationsConfig::default(),
+        );
+        let settled = now + Duration::from_millis(100);
+        let verts =
+            bg_vertices_with_hover(&hover, settled, |t, s| draw_row_background(&spec, t, s));
+        assert_eq!(verts.len() / 4, 1);
     }
 
     #[test]
     fn a_hovered_label_paints_no_background() {
-        // Non-interactive rows must not appear clickable.
-        let spec = spec_at(WidgetKind::Label).hovered(true);
-        assert_eq!(bg_quads(|t, s| draw_row_background(&spec, t, s)), 0);
+        // Non-interactive rows must not appear clickable, however hovered.
+        let spec = spec_at(WidgetKind::Label);
+        let mut hover: HoverTransition<WidgetId> = Default::default();
+        let now = Instant::now();
+        hover.retarget(
+            Some(spec.id()),
+            now,
+            &nexterm_config::AnimationsConfig::default(),
+        );
+        let settled = now + Duration::from_millis(100);
+        let verts =
+            bg_vertices_with_hover(&hover, settled, |t, s| draw_row_background(&spec, t, s));
+        assert_eq!(verts.len() / 4, 0);
+    }
+
+    /// Focus outranks hover: a focused row paints an opaque `surface_2` and
+    /// no hover fill, whatever the hover weight says. This is pre-P3b2
+    /// behaviour and the cross-fade must not disturb it.
+    #[test]
+    fn a_focused_row_ignores_the_hover_weight() {
+        let mut hover: HoverTransition<WidgetId> = Default::default();
+        let now = Instant::now();
+        let spec = spec_at(WidgetKind::Toggle { on: false });
+        hover.retarget(
+            Some(spec.id()),
+            now,
+            &nexterm_config::AnimationsConfig::default(),
+        );
+        let settled = now + Duration::from_millis(100);
+        assert!((hover.weight(spec.id(), settled) - 1.0).abs() < 1e-3);
+
+        // Build the same spec focused, draw it, and assert the fill is the
+        // focus colour rather than a hover-tinted `surface_3`.
+        let focused_spec = focused(spec);
+        let tokens = nexterm_config::DesignTokens::default();
+        let verts = bg_vertices_with_hover(&hover, settled, |t, s| {
+            draw_row_background(&focused_spec, t, s)
+        });
+        assert_eq!(verts.len() / 4, 1);
+        assert_eq!(verts[0].color, tokens.surface_2);
     }
 
     #[test]
@@ -398,6 +481,7 @@ mod tests {
     fn text_is_vertically_centred_in_the_row() {
         let tokens = nexterm_config::DesignTokens::default();
         let metrics = nexterm_config::MetricTokens::default();
+        let hover = HoverTransition::default();
         let theme = WidgetTheme {
             tokens: &tokens,
             metrics: &metrics,
@@ -405,6 +489,8 @@ mod tests {
             sh: 600.0,
             cell_w: 10.0,
             cell_h: 20.0,
+            hover: &hover,
+            now: Instant::now(),
         };
         // A 24 px row with a 20 px cell leaves 2 px above and below.
         let y = text_baseline(WidgetRect::new(0.0, 100.0, 400.0, 24.0), &theme);

@@ -709,6 +709,20 @@ impl ClientState {
         if self.settings_panel.tooltip_motion.is_active(now) {
             return true;
         }
+        if self.settings_panel.hover_transition.is_active(now) {
+            return true;
+        }
+        if self
+            .context_menu
+            .as_ref()
+            .is_some_and(|m| m.hover_transition.is_active(now))
+            || self
+                .context_menu_closing
+                .as_ref()
+                .is_some_and(|(m, _)| m.hover_transition.is_active(now))
+        {
+            return true;
+        }
         false
     }
 
@@ -1189,6 +1203,101 @@ mod animation_frame_tests {
     fn an_idle_state_wants_no_animation_frames() {
         let state = ClientState::new(80, 24, 1000);
         assert!(!state.has_active_animation(std::time::Instant::now(), 250));
+    }
+
+    /// Hovering a settings row must ask for frames until the cross-fade
+    /// finishes, and stop afterwards.
+    #[test]
+    fn a_hovered_settings_row_wants_animation_frames_until_it_settles() {
+        use crate::renderer::overlay::widgets::spec::WidgetId;
+
+        let mut state = ClientState::new(80, 24, 1000);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+        let id = WidgetId::new(2, 0);
+
+        state
+            .settings_panel
+            .hover_transition
+            .retarget(Some(id), t0, &anim);
+        assert!(state.has_active_animation(t0, 200));
+        assert!(
+            state.settings_panel.hover_transition.weight(id, t0).abs() < 1e-3,
+            "the fade starts from nothing"
+        );
+
+        let done = t0 + Duration::from_millis(100);
+        assert!((state.settings_panel.hover_transition.weight(id, done) - 1.0).abs() < 1e-3);
+        assert!(!state.has_active_animation(done, 200));
+    }
+
+    /// Dismissing the settings panel (e.g. Esc) while a row is hovered must
+    /// retarget the cross-fade to `None`, not just clear `hover_widget`.
+    /// Otherwise the fade-out that should start immediately would instead
+    /// wait for the next pointer move, and `has_active_animation` would stay
+    /// true for a panel that is already closed and drawing nothing. This
+    /// pins the state-level property the closed-panel branch in
+    /// `renderer/event_handler/mouse.rs` relies on: retargeting to `None`
+    /// settles the transition on the normal schedule rather than leaving it
+    /// running forever.
+    #[test]
+    fn retargeting_settings_hover_to_none_settles_the_transition() {
+        use crate::renderer::overlay::widgets::spec::WidgetId;
+
+        let mut state = ClientState::new(80, 24, 1000);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+        let id = WidgetId::new(2, 0);
+
+        state
+            .settings_panel
+            .hover_transition
+            .retarget(Some(id), t0, &anim);
+        assert!(state.has_active_animation(t0, 200));
+
+        // Simulate the panel-closed retarget: point the transition at
+        // `None` while the previous item is still fading in.
+        let closed_at = t0 + Duration::from_millis(20);
+        state
+            .settings_panel
+            .hover_transition
+            .retarget(None, closed_at, &anim);
+        assert!(
+            state.has_active_animation(closed_at, 200),
+            "the outgoing item must still fade out, not vanish instantly"
+        );
+
+        let done = closed_at + Duration::from_millis(100);
+        assert!(state.settings_panel.hover_transition.weight(id, done).abs() < 1e-3);
+        assert!(
+            !state.has_active_animation(done, 200),
+            "a transition retargeted to None must settle, not run forever"
+        );
+    }
+
+    /// The menu's hover cross-fade is independent of the widget layer's:
+    /// moving the pointer from a settings row into a context menu runs both
+    /// at once, which is why each model owns its own transition.
+    #[test]
+    fn a_hovered_context_menu_item_wants_animation_frames_until_it_settles() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let anim = nexterm_config::AnimationsConfig::default();
+        let t0 = Instant::now();
+        state.context_menu = Some(ContextMenu::new_default(10.0, 10.0, &[]));
+
+        let menu = state
+            .context_menu
+            .as_mut()
+            .expect("the menu was just assigned");
+        menu.hovered = Some(1);
+        menu.hover_transition.retarget(Some(1), t0, &anim);
+        assert!(state.has_active_animation(t0, 200));
+
+        let done = t0 + Duration::from_millis(100);
+        let menu = state.context_menu.as_ref().expect("still open");
+        assert!((menu.hover_transition.weight(1, done) - 1.0).abs() < 1e-3);
+        assert!(menu.hover_transition.weight(0, done).abs() < 1e-4);
+        assert!(!state.has_active_animation(done, 200));
     }
 
     /// P3b's acceptance criterion: a state with nothing animating must not
