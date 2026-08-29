@@ -246,6 +246,18 @@ Addresses G10 (principle: Complete + Coherent).
 - AccessKit roles/status flow from `WidgetSpec` (P1) instead of per-control
   re-definition.
 
+> **Design spec (2026-08-29):**
+> `plans/2026-08-29-p5-contrast-and-high-contrast.md`. It corrects three of the
+> four bullets above. The AccessKit bullet **already shipped** in P1b/P1c
+> (`accessibility.rs:1450-1506` derives `Role` and state from `WidgetDesc`), so
+> it is dropped. The defect is **systemic rather than per-scheme**: `text_muted`
+> fails 4.5:1 on all nine built-ins at every surface level, and Light's semantic
+> green/yellow reach 1.18:1. And `ensure_readable` raises alpha only, so
+> relocating it — the first bullet — would not move a single number. The fix
+> moves into `DesignTokens` derivation (per-surface corrected text tokens; raw
+> semantic/accent tokens kept for their dominant fill role), over four PRs
+> P5a–P5d.
+
 ### P6 — Notification surfaces (M)
 
 Principles: Calm, Personal. Fluent surface model: Dialog = blocking
