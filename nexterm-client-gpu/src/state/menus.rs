@@ -122,6 +122,14 @@ pub struct ContextMenu {
     /// the exit ghost P3b1 clones on dismiss: the item the pointer left
     /// should keep fading rather than snap back as the menu leaves.
     pub hover_transition: crate::animations::HoverTransition<usize>,
+    /// Press pulse for this menu's items (UI/UX v3 P3b3).
+    ///
+    /// Unlike the other three models the menu commits on release, so this is
+    /// visible for as long as the button is held — press feedback that
+    /// happens to behave like a held state. It dies with the menu: the
+    /// closing ghost is a separate clone and does not carry it, because a
+    /// dismissed menu has nothing left to give feedback about.
+    pub press_pulse: crate::animations::PressPulse<usize>,
 }
 
 impl ContextMenu {
@@ -194,6 +202,7 @@ impl ContextMenu {
             items,
             hovered: None,
             hover_transition: Default::default(),
+            press_pulse: Default::default(),
         }
     }
 
@@ -288,6 +297,7 @@ impl ContextMenu {
             items,
             hovered: None,
             hover_transition: Default::default(),
+            press_pulse: Default::default(),
         }
     }
 
@@ -322,6 +332,7 @@ impl ContextMenu {
             items,
             hovered: None,
             hover_transition: Default::default(),
+            press_pulse: Default::default(),
         }
     }
 }

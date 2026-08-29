@@ -576,6 +576,26 @@ gated behind a spike.
           `AnimationManager::tick_by_dt`'s precedent: no production caller
           exists, but the method pins that `retarget` actually moved the
           target, a property the weight assertions alone do not cover
+    - [ ] P3b3 press pulse — a shared `PressPulse<Id>` (`animations/press.rs`)
+          fires a 100 ms one-shot on mouse-down across the four clickable
+          chrome models (window buttons, tab bar, settings rows, context menu
+          items) rather than a held state, because three of the four commit
+          their action on mouse-down and a held pulse would have nothing to
+          hold for. The context menu is the exception — it commits on
+          release — so its pulse is visible for as long as the button stays
+          down, without needing separate handling: the same one-shot timer
+          just keeps reporting non-zero weight while the press is recent.
+          Each site amends its existing hover weight read to
+          `hover.weight(id, now).max(press.weight(id, now))`, so a press
+          before the hover cross-fade has caught up still shows full
+          intensity, and threads the same `press` value into
+          `color_util::press_fill`, which dims and strengthens an *additive*
+          fill layer's alpha — the shape every one of the four sites already
+          had, since none of them recolours something that is always drawn.
+          Two non-goals: per-control elevation (a shadow or lift on press)
+          and any change to a foreground colour — press changes background
+          fills only, confirmed at each site by keeping the label/glyph
+          colour reading the hover weight alone, never the amended one
   - [ ] P3c OS reduced-motion detection
 - [ ] P4 icon font + chrome type ramp
 - [ ] P5 contrast everywhere + high-contrast scheme

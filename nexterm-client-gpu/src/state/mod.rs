@@ -747,6 +747,13 @@ impl ClientState {
         {
             return true;
         }
+        if self
+            .context_menu
+            .as_ref()
+            .is_some_and(|m| m.press_pulse.is_active(now))
+        {
+            return true;
+        }
         if self.tab_hover.is_active(now) {
             return true;
         }
@@ -1338,6 +1345,28 @@ mod animation_frame_tests {
         assert!((menu.hover_transition.weight(1, done) - 1.0).abs() < 1e-3);
         assert!(menu.hover_transition.weight(0, done).abs() < 1e-4);
         assert!(!state.has_active_animation(done, 200));
+    }
+
+    /// The context menu is the one model whose click commits on release, so its
+    /// pulse is what the user sees for as long as the button is held. It lives
+    /// inside `ContextMenu` and dies with it — P3b1's closing ghost is a
+    /// separate clone and deliberately does not carry it.
+    #[test]
+    fn a_context_menu_press_keeps_the_frame_loop_awake() {
+        let mut state = ClientState::new(80, 24, 1000);
+        let t0 = Instant::now();
+        // Assigned directly rather than through `show_context_menu`, which would
+        // also start the open animation and make the assertion below pass for
+        // the wrong reason. This is how the hover test beside it builds a menu.
+        state.context_menu = Some(ContextMenu::new_default(10.0, 10.0, &[]));
+        let menu = state
+            .context_menu
+            .as_mut()
+            .expect("the menu was just assigned");
+        menu.press_pulse
+            .press(1, t0, &nexterm_config::AnimationsConfig::default());
+        assert!(state.has_active_animation(t0, 200));
+        assert!(!state.has_active_animation(t0 + Duration::from_millis(100), 200));
     }
 
     /// Hovering a tab must ask for frames until the cross-fade finishes, and

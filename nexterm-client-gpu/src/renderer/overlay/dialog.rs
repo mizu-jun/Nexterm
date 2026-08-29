@@ -268,7 +268,12 @@ impl WgpuState {
             // properties move together — the row fill, the accent line and
             // the label — so the weight lerps each of them instead of an
             // extra layer being faded in.
-            let w = menu.hover_transition.weight(i, now);
+            // UI/UX v3 P3b3: press raises the weight before dimming it; both
+            // layers below carry the same treatment so the row and its accent
+            // stay one object.
+            let press = menu.press_pulse.weight(i, now);
+            let hover_w = menu.hover_transition.weight(i, now);
+            let w = hover_w.max(press);
             if w > 0.0 {
                 let hab = tokens.tab_active_bg;
                 add_px_rect(
@@ -276,7 +281,7 @@ impl WgpuState {
                     item_y + 1.0,
                     menu_w - 4.0,
                     cell_h - 2.0,
-                    [hab[0], hab[1], hab[2], 0.90 * w],
+                    crate::color_util::press_fill([hab[0], hab[1], hab[2], 0.90 * w], press),
                     sw,
                     sh,
                     bg_verts,
@@ -288,7 +293,7 @@ impl WgpuState {
                     item_y + 1.0,
                     3.0,
                     cell_h - 2.0,
-                    [ap[0], ap[1], ap[2], 0.90 * w],
+                    crate::color_util::press_fill([ap[0], ap[1], ap[2], 0.90 * w], press),
                     sw,
                     sh,
                     bg_verts,
@@ -297,8 +302,11 @@ impl WgpuState {
             }
 
             // Label text (left padding 0.9 cells)
+            // UI/UX v3 P3b3: deliberately reads only the hover weight, not
+            // the press-boosted `w` above — press changes background fills
+            // only, never a foreground colour.
             let text_color =
-                crate::color_util::lerp_rgba(tokens.text_secondary, tokens.text_primary, w);
+                crate::color_util::lerp_rgba(tokens.text_secondary, tokens.text_primary, hover_w);
             add_string_verts(
                 &item.label,
                 mx + cell_w * 0.9,

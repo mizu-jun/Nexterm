@@ -875,6 +875,18 @@ impl EventHandler {
 
     pub(super) fn on_mouse_left_pressed(&mut self) {
         if let Some((px, py)) = self.cursor_position {
+            // UI/UX v3 P3b3: pulse the menu item under the pointer. The menu
+            // commits on release, so this is purely additive — it does not
+            // consume the press, and every branch below runs exactly as
+            // before. `hovered` is already maintained by `on_cursor_moved`,
+            // so no second hit test is needed here.
+            let menu_anim = self.app.config.animations.clone();
+            if let Some(menu) = &mut self.app.state.context_menu
+                && let Some(i) = menu.hovered
+            {
+                menu.press_pulse
+                    .press(i, std::time::Instant::now(), &menu_anim);
+            }
             // Custom title bar: a press on the window outline starts an
             // OS-driven resize. Checked before every other hit test — the
             // grab band overlaps the tab bar's top edge and the settings
