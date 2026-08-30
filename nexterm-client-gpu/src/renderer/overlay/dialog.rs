@@ -5,6 +5,7 @@
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::host_manager::PasswordModalView;
+use crate::renderer::menu_layout;
 use crate::state::{ClientState, CloseWindowDialog, ConsentDialog, ContextMenu};
 use crate::vertex_util::{add_px_rect, add_run_verts, add_string_verts, measure_run, visual_width};
 
@@ -196,23 +197,11 @@ impl WgpuState {
         text_idx: &mut Vec<u16>,
         now: std::time::Instant,
     ) {
-        // Compute the menu width dynamically from the max visual width of labels and hints
-        let max_label_w = menu
-            .items
-            .iter()
-            .map(|item| visual_width(&item.label))
-            .max()
-            .unwrap_or(8);
-        let max_hint_w = menu
-            .items
-            .iter()
-            .map(|item| visual_width(&item.hint))
-            .max()
-            .unwrap_or(0);
-        // Left padding (0.9) + label + gap (2) + hint + right padding (1.5)
-        let min_cells = max_label_w + max_hint_w + 5;
-        let menu_w = (min_cells as f32).max(16.0) * cell_w;
-        let menu_h = menu.items.len() as f32 * cell_h;
+        // Geometry comes from `menu_layout` (UI/UX v3 N-4a) — the same
+        // functions both placement sites and both hit-tests call, so the panel
+        // drawn here and the region the mouse responds to are one number.
+        let menu_w = menu_layout::menu_width(&menu.items, cell_w);
+        let menu_h = menu_layout::menu_height(&menu.items, cell_h);
         let mx = menu.x;
         let my = menu.y;
 
@@ -239,7 +228,7 @@ impl WgpuState {
 
         for (i, item) in menu.items.iter().enumerate() {
             use crate::state::ContextMenuAction;
-            let item_y = my + i as f32 * cell_h;
+            let item_y = menu_layout::row_y(my, i, cell_h);
 
             if matches!(item.action, ContextMenuAction::Separator) {
                 // Separator: draw a horizontal line in the middle

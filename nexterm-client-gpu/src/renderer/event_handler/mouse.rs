@@ -15,8 +15,8 @@ use winit::event::MouseScrollDelta;
 
 use super::EventHandler;
 use super::settings_panel_hit::SettingsPanelHit;
+use crate::renderer::menu_layout;
 use crate::state::ContextMenu;
-use crate::vertex_util::visual_width;
 
 /// Compute the new tab order after a drag (Sprint 5-7 / Phase 2-3).
 ///
@@ -577,19 +577,8 @@ impl EventHandler {
         if let Some(menu) = &mut self.app.state.context_menu {
             let cw = self.app.font.cell_width();
             let ch = self.app.font.cell_height();
-            let menu_w = 18.0 * cw;
-            let fx = position.x as f32;
-            let fy = position.y as f32;
-            let mut new_hovered = None;
-            if fx >= menu.x && fx <= menu.x + menu_w {
-                for (i, _item) in menu.items.iter().enumerate() {
-                    let item_y = menu.y + i as f32 * ch;
-                    if fy >= item_y && fy < item_y + ch {
-                        new_hovered = Some(i);
-                        break;
-                    }
-                }
-            }
+            let new_hovered =
+                menu_layout::item_at(menu, position.x as f32, position.y as f32, cw, ch);
             if menu.hovered != new_hovered {
                 menu.hovered = new_hovered;
                 // UI/UX v3 P3b2: same value, same frame.
@@ -628,22 +617,12 @@ impl EventHandler {
                 .map(|p| (p.name.clone(), p.icon.clone())),
         );
 
+        // Measure a throwaway at the origin, then rebuild at the clamped
+        // position — the menu's size depends on its items, and its position
+        // depends on its size.
         let tmp = ContextMenu::new_tab_dropdown(0.0, 0.0, &profile_list);
-        let item_count = tmp.items.len();
-        let max_label = tmp
-            .items
-            .iter()
-            .map(|i| visual_width(&i.label))
-            .max()
-            .unwrap_or(8);
-        let max_hint = tmp
-            .items
-            .iter()
-            .map(|i| visual_width(&i.hint))
-            .max()
-            .unwrap_or(0);
-        let menu_w_px = ((max_label + max_hint + 5) as f64).max(16.0) * cell_w;
-        let menu_h_px = item_count as f64 * cell_h;
+        let menu_w_px = menu_layout::menu_width(&tmp.items, cell_w as f32) as f64;
+        let menu_h_px = menu_layout::menu_height(&tmp.items, cell_h as f32) as f64;
         let win_w = self
             .window
             .as_ref()
@@ -738,21 +717,8 @@ impl EventHandler {
             };
 
             let tmp = build(0.0, 0.0);
-            let item_count = tmp.items.len();
-            let max_label = tmp
-                .items
-                .iter()
-                .map(|i| visual_width(&i.label))
-                .max()
-                .unwrap_or(8);
-            let max_hint = tmp
-                .items
-                .iter()
-                .map(|i| visual_width(&i.hint))
-                .max()
-                .unwrap_or(0);
-            let menu_w_px = ((max_label + max_hint + 5) as f64).max(16.0) * cell_w_ctx;
-            let menu_h_px = item_count as f64 * cell_h_ctx;
+            let menu_w_px = menu_layout::menu_width(&tmp.items, cell_w_ctx as f32) as f64;
+            let menu_h_px = menu_layout::menu_height(&tmp.items, cell_h_ctx as f32) as f64;
 
             let win_w = self
                 .window
@@ -1721,24 +1687,11 @@ impl EventHandler {
         {
             let cell_w = self.app.font.cell_width();
             let cell_h = self.app.font.cell_height();
-            // Use the same value as the drawn width
-            // (changing this misaligns drawing and click detection).
-            let menu_w = 18.0 * cell_w;
-            let fx = px as f32;
-            let fy = py as f32;
-            let mut hit_action = None;
-            if let Some(menu) = &self.app.state.context_menu
-                && fx >= menu.x
-                && fx <= menu.x + menu_w
-            {
-                for (i, item) in menu.items.iter().enumerate() {
-                    let item_y = menu.y + i as f32 * cell_h;
-                    if fy >= item_y && fy < item_y + cell_h {
-                        hit_action = Some(item.action.clone());
-                        break;
-                    }
-                }
-            }
+            let hit_action = self.app.state.context_menu.as_ref().and_then(|menu| {
+                menu_layout::item_at(menu, px as f32, py as f32, cell_w, cell_h)
+                    .and_then(|i| menu.items.get(i))
+                    .map(|item| item.action.clone())
+            });
             // Any click while the menu is open dismisses it (UI/UX v3 P3b:
             // through the helper, so the exit animation always runs), then
             // the hit action — if any — is executed on a menu-less state.
