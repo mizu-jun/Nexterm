@@ -570,6 +570,36 @@ Three notes:
   scoping was duller: the test scans its own file, so the literals naming what
   must not return matched themselves.)
 
+### 5.5 As built (N-4d)
+
+`settings/delete_dialog.rs` owns the modal; each tab contributes a
+`DeleteDialogView` and nothing else. The four drifts resolved as D5 specified,
+and the de-duplication is visible in the line counts: `ssh_tab.rs` 386 → 233,
+`keybindings_tab.rs` 396 → 255, with 315 lines of shared modal replacing two
+copies totalling 326.
+
+- **The compiler confirmed the duplication was real.** Removing the two local
+  definitions left `add_px_rect`, `danger_button_colors`, `SCRIM_ALPHA_FLOOR`
+  and `scrim_color` unused in *both* tabs. Those imports existed only to draw
+  the modal — nothing else in either file needed a rectangle or a danger
+  colour.
+- **`fl!` resolves at the call site, not in the shared module.** `DeleteDialogView`
+  carries resolved `String`s rather than keys, so the shared file holds no
+  table of which key belongs to which tab. The one exception is
+  `settings-delete-confirm-message`, which was already shared and stays inside
+  the module that interpolates it.
+- **The decoration gate reads the locale files directly** rather than the Rust.
+  That is deliberate: the failure mode §1.4 describes is a *translation* PR
+  reintroducing `[ … ]`, and no amount of scanning `.rs` would catch it. It
+  asserts the two old keys are gone and that the surviving one is neither
+  padded nor bracketed, across all eight files.
+
+One thing this phase did not settle, and should not have: **whether the
+Keybindings modal ought to have a hint line.** SSH has one, Keybindings does
+not, and the shared modal takes an `Option` so both keep today's appearance.
+Making them agree is a UX decision; N-4d only removed the reason they *couldn't*
+agree. §8.
+
 ---
 
 ## 6. Verification
