@@ -8,7 +8,7 @@
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::settings_panel::SettingsPanel;
-use crate::vertex_util::{add_string_verts, truncate_to_cols};
+use crate::vertex_util::{add_run_verts, truncate_run_to_width};
 
 use super::super::widgets::draw::{WidgetSink, WidgetTheme, draw_widget};
 use super::super::widgets::geometry::TabGeometry;
@@ -74,7 +74,12 @@ pub(in crate::renderer) fn draw_theme_tab(
     // caption width, so a long scheme name never bleeds into the next chip.
     let gap = swatch_gap(&geometry);
     let name_y = swatch_y(&geometry) + cell_h * 1.3;
-    let max_cols = ((gap / cell_w).floor() as usize).max(1);
+    // UI/UX v3 N-6c: the caption is bounded by the swatch slot in *pixels*.
+    // `truncate_to_cols` converted that gap into a column count and then cut
+    // by display width, which only bounds the drawn caption if it is drawn at
+    // the cell — it is not. A scheme name is also the one string here that is
+    // not translated, so the count was never going to be checked by a locale.
+    let ramp = nexterm_config::MetricTokens::default().type_ramp;
     for (i, name) in swatch_names().iter().enumerate() {
         let is_sel = sp.scheme_index == i;
         let color = if is_sel {
@@ -82,20 +87,22 @@ pub(in crate::renderer) fn draw_theme_tab(
         } else {
             tokens.text_on(SurfaceLevel::S2).muted
         };
+        // The selected caption was drawn bold on the cell path; `body_strong`
+        // is the ramp's name for that (P4b D-2 maps its 600 to the bold flag).
+        let style = if is_sel { ramp.body_strong } else { ramp.body };
         let x = specs
             .iter()
             .find(|s| swatch_index_of(s.id()) == Some(i))
             .map(|s| s.rect.x)
             .unwrap_or(content_inner_x);
-        add_string_verts(
-            &truncate_to_cols(name, max_cols),
+        add_run_verts(
+            &truncate_run_to_width(name, &style, gap, font),
+            &style,
             x,
             name_y,
             color,
-            is_sel,
             sw,
             sh,
-            cell_w,
             font,
             atlas,
             queue,

@@ -7,7 +7,7 @@
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::settings_panel::SettingsPanel;
-use crate::vertex_util::add_string_verts;
+use crate::vertex_util::add_run_verts;
 
 use super::super::widgets::draw::{WidgetSink, WidgetTheme, draw_widget};
 use super::super::widgets::geometry::TabGeometry;
@@ -36,6 +36,9 @@ pub(in crate::renderer) fn draw_startup_tab(
     text_verts: &mut Vec<TextVertex>,
     text_idx: &mut Vec<u16>,
 ) {
+    // UI/UX v3 N-6c: the panel's own prose on the chrome ramp. Left-aligned
+    // at a fixed x, bounding no hit region — typography with no geometry.
+    let prose_style = nexterm_config::MetricTokens::default().type_ramp.caption;
     let geometry = TabGeometry {
         content_top,
         content_inner_x,
@@ -64,15 +67,14 @@ pub(in crate::renderer) fn draw_startup_tab(
         draw_widget(spec, &theme, font, atlas, queue, &mut sink);
     }
 
-    add_string_verts(
+    add_run_verts(
         &nexterm_i18n::fl!("settings-startup-language-note"),
+        &prose_style,
         content_inner_x,
         language_note_y(&geometry),
         tokens.text_on(SurfaceLevel::S2).muted,
-        false,
         sw,
         sh,
-        cell_w,
         font,
         atlas,
         queue,
