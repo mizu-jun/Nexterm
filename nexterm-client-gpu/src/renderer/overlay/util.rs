@@ -1,5 +1,6 @@
 //! Shared helpers used by overlay rendering.
 
+use crate::font::FontManager;
 use nexterm_config::MIN_TEXT_CONTRAST;
 
 /// Extract the requesting pane ID from a consent-dialog kind
@@ -38,19 +39,39 @@ pub(super) fn preview_text(kind: &crate::state::ConsentKind) -> String {
     }
 }
 
-/// Wrap text to multiple lines at the given column width (CJK full-width chars count as 2 columns)
-pub(super) fn wrap_text(s: &str, max_cols: usize) -> Vec<String> {
+/// Wrap text to lines that fit `max_w_px` when drawn at `style` (UI/UX v3 N-6b).
+///
+/// Replaces a column-counting `wrap_text`. Counting columns wraps correctly
+/// only if the text is drawn at the cell — and all three callers draw through
+/// `add_run_verts`, at a ramp step, which is a different size. Every one of
+/// them therefore wrapped against a budget that had nothing to do with the
+/// width it then drew.
+///
+/// The advance comes from the same `chrome_advance` the drawing pass uses, so
+/// a line this returns cannot be wider than the budget it was given, whatever
+/// the font reports for any glyph.
+///
+/// Breaks between characters, not at word boundaries — the same thing the
+/// column version did. Wrapping on words is a separate change and would alter
+/// what every caller looks like.
+pub(super) fn wrap_run(
+    s: &str,
+    style: &nexterm_config::TypeStyle,
+    max_w_px: f32,
+    font: &mut FontManager,
+) -> Vec<String> {
+    let (size_px, _line_h, bold) = font.chrome_metrics(style);
     let mut lines = Vec::new();
     let mut current = String::new();
-    let mut current_cols = 0usize;
+    let mut current_w = 0.0_f32;
     for c in s.chars() {
-        let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1);
-        if current_cols + w > max_cols && !current.is_empty() {
+        let w = font.chrome_advance(c, size_px, bold);
+        if current_w + w > max_w_px && !current.is_empty() {
             lines.push(std::mem::take(&mut current));
-            current_cols = 0;
+            current_w = 0.0;
         }
         current.push(c);
-        current_cols += w;
+        current_w += w;
     }
     if !current.is_empty() {
         lines.push(current);
@@ -513,6 +534,71 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// UI/UX v3 N-6b: a wrapped line fits the budget it was given.
+    ///
+    /// The property the column version could not offer: it counted display
+    /// columns while all three callers drew at a ramp step, so the budget it
+    /// enforced was not the width that got drawn. Asserted as an equality
+    /// between the wrap and the measurement, never as a claim about CJK
+    /// metrics — CI's font stack answers one advance for every character
+    /// (N-3 spec §6).
+    #[test]
+    fn every_wrapped_line_fits_the_budget() {
+        let mut font = FontManager::new("monospace", 14.0, &[], 1.0, true);
+        let style = nexterm_config::MetricTokens::default().type_ramp.body;
+        let budget = 120.0;
+
+        for text in [
+            "a short line",
+            "a much longer line that will certainly have to be broken somewhere",
+            "このウィンドウだけ閉じるかどうかを確認しています",
+            "mixed 日本語 and latin in one run",
+        ] {
+            let lines = wrap_run(text, &style, budget, &mut font);
+            assert!(!lines.is_empty(), "{text:?} produced no lines");
+            for line in &lines {
+                let w = crate::vertex_util::measure_run(line, &style, &mut font);
+                // A single character wider than the budget cannot be broken
+                // further, so the guarantee is "fits, or is one character".
+                assert!(
+                    w <= budget || line.chars().count() == 1,
+                    "{line:?} measures {w} against a {budget} budget"
+                );
+            }
+            assert_eq!(
+                lines.concat(),
+                text,
+                "wrapping must not add or drop characters"
+            );
+        }
+    }
+
+    /// A narrower budget never yields fewer lines.
+    #[test]
+    fn a_narrower_budget_never_wraps_into_fewer_lines() {
+        let mut font = FontManager::new("monospace", 14.0, &[], 1.0, true);
+        let style = nexterm_config::MetricTokens::default().type_ramp.body;
+        let text = "a line long enough to be broken at several different budgets";
+
+        let wide = wrap_run(text, &style, 400.0, &mut font).len();
+        let narrow = wrap_run(text, &style, 100.0, &mut font).len();
+        assert!(narrow >= wide, "{wide} lines at 400px, {narrow} at 100px");
+    }
+
+    /// No caller counts columns any more.
+    #[test]
+    fn no_overlay_wraps_text_by_column_count() {
+        for (name, src) in [
+            ("dialog.rs", include_str!("dialog.rs")),
+            ("settings/row.rs", include_str!("settings/row.rs")),
+        ] {
+            assert!(
+                !src.contains("wrap_text("),
+                "{name} wraps by column count again; wrap_run measures"
+            );
         }
     }
 }
