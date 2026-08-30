@@ -274,6 +274,32 @@ mod tests {
         }
     }
 
+    /// UI/UX v3 N-4e: the prose these two tabs own is on the ramp.
+    ///
+    /// The empty state, the list range-indicator and the edit-hint note were
+    /// the last `add_string_verts` calls in either file. They are left-aligned
+    /// at a fixed x and bound no hit region, so this was typography with no
+    /// geometry attached — the easy half of N-4, kept honest by a gate so the
+    /// next control added to these tabs does not quietly reintroduce the cell
+    /// path.
+    ///
+    /// Scoped to these two files on purpose. Other settings modules still draw
+    /// prose through `add_string_verts`, and widening this gate would fail on
+    /// code N-4 has not looked at (spec §8).
+    #[test]
+    fn neither_tab_draws_prose_on_the_cell_path() {
+        for (name, src) in [
+            ("ssh_tab.rs", include_str!("ssh_tab.rs")),
+            ("keybindings_tab.rs", include_str!("keybindings_tab.rs")),
+        ] {
+            assert!(
+                !src.contains("add_string_verts"),
+                "{name} draws text on the cell path again; its prose is on the \
+                 chrome ramp (N-4e)"
+            );
+        }
+    }
+
     /// G-decoration: a button's label is text, not a drawn border.
     ///
     /// `"[ Cancel (Esc) ]"` and `"  Cancel (Esc)"` put a border and an indent

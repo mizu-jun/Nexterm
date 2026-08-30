@@ -12,7 +12,7 @@
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::settings_panel::{KeyEditMode, SettingsPanel};
-use crate::vertex_util::add_string_verts;
+use crate::vertex_util::add_run_verts;
 
 use super::super::widgets::draw::{WidgetSink, WidgetTheme, draw_widget};
 use super::super::widgets::geometry::TabGeometry;
@@ -49,6 +49,12 @@ pub(in crate::renderer) fn draw_keybindings_tab(
     text_verts: &mut Vec<TextVertex>,
     text_idx: &mut Vec<u16>,
 ) {
+    // UI/UX v3 N-4e: the prose this file still owns — the empty
+    // state, the list range-indicator and the edit-hint note. All of
+    // it is left-aligned at a fixed x and bounds no hit region, so
+    // this is typography with no geometry attached. `caption` is the
+    // ramp step for secondary metadata, which is what these are.
+    let prose_style = nexterm_config::MetricTokens::default().type_ramp.caption;
     draw_section_header(
         &nexterm_i18n::fl!("settings-keybindings-header"),
         content_inner_x,
@@ -66,15 +72,14 @@ pub(in crate::renderer) fn draw_keybindings_tab(
     );
 
     if sp.keybindings.is_empty() {
-        add_string_verts(
+        add_run_verts(
             &nexterm_i18n::fl!("settings-keybindings-empty"),
+            &prose_style,
             content_inner_x,
             content_top + cell_h * 1.8,
             tokens.text_on(SurfaceLevel::S2).muted,
-            false,
             sw,
             sh,
-            cell_w,
             font,
             atlas,
             queue,
@@ -86,20 +91,19 @@ pub(in crate::renderer) fn draw_keybindings_tab(
         let w = key_list_window(sp);
         if w.clipped {
             let indicator_y = content_top + cell_h * (1.5 + w.visible as f32 * LIST_ROW_PITCH);
-            add_string_verts(
+            add_run_verts(
                 &nexterm_i18n::fl!(
                     "settings-list-window",
                     from = w.first + 1,
                     to = w.first + w.visible,
                     total = sp.keybindings.len()
                 ),
+                &prose_style,
                 content_inner_x,
                 indicator_y,
                 tokens.text_on(SurfaceLevel::S2).muted,
-                false,
                 sw,
                 sh,
-                cell_w,
                 font,
                 atlas,
                 queue,
@@ -171,15 +175,14 @@ pub(in crate::renderer) fn draw_keybindings_tab(
     } else {
         nexterm_i18n::fl!("settings-hint-edit-idle")
     };
-    add_string_verts(
+    add_run_verts(
         &hint,
+        &prose_style,
         content_inner_x,
         leader_y + cell_h * 1.3,
         muted,
-        false,
         sw,
         sh,
-        cell_w,
         font,
         atlas,
         queue,
@@ -197,15 +200,14 @@ pub(in crate::renderer) fn draw_keybindings_tab(
             "⚠ {}",
             nexterm_i18n::fl!("settings-key-conflict", action = other.action.clone())
         );
-        add_string_verts(
+        add_run_verts(
             &warn,
+            &prose_style,
             content_inner_x,
             leader_y + cell_h * 2.5,
             tokens.text_on(SurfaceLevel::S2).warning,
-            false,
             sw,
             sh,
-            cell_w,
             font,
             atlas,
             queue,
