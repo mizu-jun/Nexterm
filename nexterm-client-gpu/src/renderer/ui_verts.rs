@@ -1059,15 +1059,30 @@ impl WgpuState {
             bg_verts,
             bg_idx,
         );
-        add_string_verts(
-            " N ",
-            0.0,
-            py,
+        // UI/UX v3 N-7c: the status bar is chrome, so its widths are measured.
+        // Every zone below used to advance by a character count times the cell
+        // width — a *character* count against a *display-width* advance, which
+        // are the same number only in Latin. `status_bar_text` comes from a
+        // Lua widget, so it is arbitrary user text; a Japanese one overlapped
+        // the zone beside it on the left and slid off the screen on the right.
+        let ramp = nexterm_config::MetricTokens::default().type_ramp;
+        let (prose_style, badge_style) = (ramp.body, ramp.body_strong);
+        let (_, prose_line_h, _) = font.chrome_metrics(&prose_style);
+        let (_, badge_line_h, _) = font.chrome_metrics(&badge_style);
+        let prose_y = py + (cell_h - prose_line_h) * 0.5;
+        let badge_y = py + (cell_h - badge_line_h) * 0.5;
+
+        // The "N" is centred in the icon zone rather than padded to it with
+        // spaces; a space is text, and it centres nothing once measured.
+        let n_w = measure_run("N", &badge_style, font);
+        add_run_verts(
+            "N",
+            &badge_style,
+            (icon_zone_w - n_w) * 0.5,
+            badge_y,
             tokens.text_on_accent,
-            true,
             sw,
             sh,
-            cell_w,
             font,
             atlas,
             &self.queue,
@@ -1075,7 +1090,128 @@ impl WgpuState {
             text_idx,
         );
 
-        // Zone 3: pane info text, starting just after the icon zone.
+        // Zone 5 (right edge) is built first, because its total width is the
+        // budget the left side has to live within. It used to be drawn last
+        // and the left side had no budget at all, so the two simply ran into
+        // each other on a narrow window.
+        //
+        // Each indicator measures, claims its width off the right edge, then
+        // draws at `sw - right_offset` — one shape, four times, so a fifth
+        // indicator cannot invent a fifth way of stacking.
+        let mut right_offset = 0.0f32;
+        let mut right_run = |text: &str,
+                             style: &nexterm_config::TypeStyle,
+                             y: f32,
+                             fg: [f32; 4],
+                             font: &mut FontManager,
+                             atlas: &mut GlyphAtlas,
+                             text_verts: &mut Vec<TextVertex>,
+                             text_idx: &mut Vec<u16>| {
+            right_offset += measure_run(text, style, font);
+            add_run_verts(
+                text,
+                style,
+                sw - right_offset,
+                y,
+                fg,
+                sw,
+                sh,
+                font,
+                atlas,
+                &self.queue,
+                text_verts,
+                text_idx,
+            );
+        };
+
+        // The call order below is the stacking order, outermost first: each
+        // indicator claims its width off the edge and the next one lands to
+        // its left. It reproduces what the cell path drew — widget at the
+        // edge, then zoom, copy mode, and the scroll position furthest in.
+        // That order used to be an accident of which blocks incremented
+        // `right_offset`; the scroll indicator was the one that never did, so
+        // everything else stacked inside it. It is the call order now.
+
+        // Right widget. Source: prefer status_bar_right_text, fall back to
+        // status_bar_text when status_bar_text is not also shown on the left.
+        let right_widget_src = if !state.status_bar_right_text.is_empty() {
+            &state.status_bar_right_text
+        } else if state.status_bar_text.is_empty() {
+            &state.status_bar_text
+        } else {
+            // status_bar_text is already shown on the left; don't duplicate on the right.
+            ""
+        };
+        if !right_widget_src.is_empty() {
+            let widget_text = format!(" {} ", right_widget_src);
+            right_run(
+                &widget_text,
+                &prose_style,
+                prose_y,
+                tokens.accent_muted,
+                font,
+                atlas,
+                text_verts,
+                text_idx,
+            );
+        }
+
+        // Zoom indicator — semantic_warning colour.
+        if state.is_zoomed {
+            right_run(
+                " [Z] ",
+                &badge_style,
+                badge_y,
+                tokens.semantic_warning,
+                font,
+                atlas,
+                text_verts,
+                text_idx,
+            );
+        }
+
+        // Copy mode indicator — accent_primary colour.
+        if state.copy_mode.is_active {
+            use crate::state::ViMode;
+            let mode_label = match state.copy_mode.vi_mode {
+                ViMode::Normal => " COPY ",
+                ViMode::Visual => " VISUAL ",
+                ViMode::VisualLine => " V-LINE ",
+            };
+            right_run(
+                mode_label,
+                &badge_style,
+                badge_y,
+                tokens.accent_primary,
+                font,
+                atlas,
+                text_verts,
+                text_idx,
+            );
+        }
+
+        // Scrollback position indicator — semantic_warning colour.
+        if let Some(pane) = state.focused_pane()
+            && pane.scroll_offset > 0
+        {
+            let scroll_text = format!(" ↑{} ", pane.scroll_offset);
+            right_run(
+                &scroll_text,
+                &badge_style,
+                badge_y,
+                tokens.semantic_warning,
+                font,
+                atlas,
+                text_verts,
+                text_idx,
+            );
+        }
+
+        // Zone 3: pane info text, starting just after the icon zone. What is
+        // left of the bar after the right edge has claimed its share is the
+        // budget for this and Zone 4 together.
+        let mut left_x = icon_zone_w;
+        let mut left_budget = (sw - icon_zone_w - right_offset - cell_w).max(0.0);
         let pane_id = state.focused_pane_id.unwrap_or(0);
         let activity_ids = state.active_pane_ids();
         let pane_count = state.pane_layouts.len();
@@ -1090,143 +1226,39 @@ impl WgpuState {
                 ids.join(",")
             )
         };
-        add_string_verts(
+        let info = truncate_run_to_width(&info, &prose_style, left_budget, font);
+        let info_w = add_run_verts(
             &info,
-            icon_zone_w,
-            py,
+            &prose_style,
+            left_x,
+            prose_y,
             tokens.text_on(SurfaceLevel::S1).secondary,
-            false,
             sw,
             sh,
-            cell_w,
             font,
             atlas,
             &self.queue,
             text_verts,
             text_idx,
         );
+        left_x += info_w;
+        left_budget -= info_w;
 
-        // Zone 4: left widget (status_bar_text), rendered after the info block.
+        // Zone 4: left widget (status_bar_text), rendered after the info
+        // block. Its x is the width the info block actually consumed, taken
+        // from the drawing call itself, so there is no second width formula
+        // that could disagree with what was drawn.
         if !state.status_bar_text.is_empty() {
-            let info_w = (1 + info.chars().count()) as f32 * cell_w;
-            let left_x = icon_zone_w + info_w;
             let left_text = format!("│ {} ", state.status_bar_text);
-            add_string_verts(
+            let left_text = truncate_run_to_width(&left_text, &prose_style, left_budget, font);
+            add_run_verts(
                 &left_text,
+                &prose_style,
                 left_x,
-                py,
+                prose_y,
                 tokens.text_on(SurfaceLevel::S1).muted,
-                false,
                 sw,
                 sh,
-                cell_w,
-                font,
-                atlas,
-                &self.queue,
-                text_verts,
-                text_idx,
-            );
-        }
-
-        // Zone 5 (right edge): right widget, stacked indicators.
-        // Source: prefer status_bar_right_text, fall back to status_bar_text when
-        // status_bar_text is not also being shown on the left.
-        let right_widget_src = if !state.status_bar_right_text.is_empty() {
-            &state.status_bar_right_text
-        } else if state.status_bar_text.is_empty() {
-            &state.status_bar_text
-        } else {
-            // status_bar_text is already shown on the left; don't duplicate on the right.
-            ""
-        };
-        let right_widget_src = right_widget_src.to_owned();
-        let mut right_offset = 0.0f32;
-        if !right_widget_src.is_empty() {
-            let widget_text = format!(" {} ", right_widget_src);
-            let text_w = widget_text.chars().count() as f32 * cell_w;
-            right_offset = text_w;
-            let right_px = sw - text_w;
-            add_string_verts(
-                &widget_text,
-                right_px,
-                py,
-                tokens.accent_muted,
-                false,
-                sw,
-                sh,
-                cell_w,
-                font,
-                atlas,
-                &self.queue,
-                text_verts,
-                text_idx,
-            );
-        }
-
-        // Zoom indicator — semantic_warning colour.
-        if state.is_zoomed {
-            let zoom_text = " [Z] ";
-            right_offset += zoom_text.chars().count() as f32 * cell_w;
-            let right_px = sw - right_offset;
-            add_string_verts(
-                zoom_text,
-                right_px,
-                py,
-                tokens.semantic_warning,
-                true,
-                sw,
-                sh,
-                cell_w,
-                font,
-                atlas,
-                &self.queue,
-                text_verts,
-                text_idx,
-            );
-        }
-
-        // Copy mode indicator — accent_primary colour.
-        if state.copy_mode.is_active {
-            use crate::state::ViMode;
-            let mode_label = match state.copy_mode.vi_mode {
-                ViMode::Normal => " COPY ",
-                ViMode::Visual => " VISUAL ",
-                ViMode::VisualLine => " V-LINE ",
-            };
-            right_offset += mode_label.chars().count() as f32 * cell_w;
-            let right_px = sw - right_offset;
-            add_string_verts(
-                mode_label,
-                right_px,
-                py,
-                tokens.accent_primary,
-                true,
-                sw,
-                sh,
-                cell_w,
-                font,
-                atlas,
-                &self.queue,
-                text_verts,
-                text_idx,
-            );
-        }
-
-        // Scrollback position indicator — semantic_warning colour.
-        if let Some(pane) = state.focused_pane()
-            && pane.scroll_offset > 0
-        {
-            let scroll_text = format!(" ↑{} ", pane.scroll_offset);
-            let right_px = sw - scroll_text.chars().count() as f32 * cell_w - right_offset;
-            add_string_verts(
-                &scroll_text,
-                right_px,
-                py,
-                tokens.semantic_warning,
-                true,
-                sw,
-                sh,
-                cell_w,
                 font,
                 atlas,
                 &self.queue,
@@ -1777,6 +1809,34 @@ mod cell_path_gate_tests {
         assert!(
             !body.contains(".len() as f32 * cell_w"),
             "the InfoBar places text by a byte count again; use measure_run (N-7a)"
+        );
+    }
+
+    /// UI/UX v3 N-7c: no zone of the status bar advances by a character count.
+    ///
+    /// Every zone used to: the info block handed Zone 4 its `x` as
+    /// `(1 + info.chars().count()) * cell_w`, and the three right-edge
+    /// indicators stacked by adding the same product to `right_offset`. A
+    /// character count and a display-width advance are the same number only
+    /// in Latin, and `status_bar_text` comes from a Lua widget — arbitrary
+    /// user text, Japanese as often as not.
+    #[test]
+    fn the_status_bar_measures_every_zone() {
+        let body = builder_body("build_status_verts");
+        assert!(
+            body.contains("measure_run") && body.contains("add_run_verts"),
+            "builder_body did not return the status-bar builder; the gates \
+             below would pass vacuously"
+        );
+        assert!(
+            !body.contains("add_string_verts"),
+            "the status bar draws text on the cell path again (N-7c)"
+        );
+        assert!(
+            !body.contains("chars().count()"),
+            "a status-bar zone advances by a character count again; widths \
+             here come from measure_run or from what add_run_verts reports it \
+             drew (N-7c)"
         );
     }
 }
