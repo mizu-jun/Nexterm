@@ -34,9 +34,12 @@ use crate::state::{ContextMenu, CopyModeState, SearchState};
 // ---- Vertex-builder submodules (Sprint 2-1 Phase A) ----
 // Sprint 5-4 / A2: overlay_verts.rs (1,958 lines) was further split into the overlay/ subdirectory.
 mod grid_verts;
+// UI/UX v3 N-4a: where a context menu's rows are. Owns the width the builder,
+// both placement sites and both hit-tests had between them in five copies.
+mod menu_layout;
+pub(crate) mod overlay;
 // UI/UX v3 N-3a: how wide a tab is. Ships ahead of its call sites so the
 // width rule can be reviewed apart from the tab-bar migration that adopts it.
-pub(crate) mod overlay;
 mod tab_layout;
 mod ui_verts;
 

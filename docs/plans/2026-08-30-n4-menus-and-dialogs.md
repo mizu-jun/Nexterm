@@ -446,6 +446,37 @@ leave "CJK is wider" to the manual pass.
 N-4a before N-4b is the D2 split. N-4c, N-4d and N-4e are independent of the
 menu work and of each other; the order above is by decreasing user impact.
 
+### 5.1 As built (N-4a), and three corrections
+
+All five sites moved; the dead zone is gone; no pixel changed. Building it
+corrected three things this spec had asserted without checking:
+
+- **The padding is 5 cells, not the 4.4 §3.1 decomposed it into.** The builder's
+  own comment reads "left padding (0.9) + gap (2) + right padding (1.5)" and the
+  code then adds `5`. Every menu the app has ever drawn carries that extra 0.6 of
+  a cell. N-4a is the phase that changes no pixels, so `PAD_CELLS` preserves the
+  5 and names the discrepancy rather than quietly correcting it. Whether the
+  padding *should* be 4.4 is a design question, and answering it inside a defect
+  fix would have been the mistake P4e avoided by holding a colour change back a
+  PR.
+- **`menu_width` takes no `FontManager`, so D2's "touches no caller" is wrong.**
+  Counting display cells needs no font, and adding an unused parameter to keep a
+  future signature stable would be a worse module than one honest signature per
+  phase. N-4b therefore *does* touch the callers: it adds the font argument and
+  makes both mouse paths `&mut self`, the change P4c made to the settings
+  hit-test for the same reason. That is a small, mechanical diff and it belongs
+  to the phase that needs it.
+- **The module owns three more functions than §3 named.** `menu_height` and
+  `row_y` were transcribed alongside the width — the height in both placement
+  sites and the builder, the row offset in the builder and both hit-tests — so
+  leaving them out would have left the same defect's smaller siblings in place.
+  `item_at` also refuses separators outright, which stops the hover path
+  recording an index the renderer then ignores.
+
+The two gates that were RED before the conversion (`G-menu-width`,
+`both_mouse_paths_ask_this_module_which_row_was_hit`) are the two that prove it
+landed; the other eleven tests pinned the behaviour and passed throughout.
+
 ---
 
 ## 6. Verification
