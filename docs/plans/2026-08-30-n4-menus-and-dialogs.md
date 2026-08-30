@@ -608,24 +608,37 @@ fixed x and bound no hit region, so this was typography with no geometry
 attached, exactly as §5 predicted. A gate keeps them there.
 
 **But the cell path is not gone from `settings/`.** Grepping to confirm N-4e
-was complete found seven more calls, in files P4b's §5.2 lists as migrated:
+was complete found more calls, in files P4b's §5.2 lists as migrated.
+
+> **Corrected during N-6c.** This section originally said "seven", and named
+> three of them as carrying a counting assumption. Both numbers were wrong:
+> the grep behind them was truncated with `head -20`, hiding
+> `startup_tab.rs`, `theme_tab.rs` and `window_tab.rs`. There were **ten**
+> calls, and **four** counting assumptions — `theme_tab.rs` truncates a
+> scheme-name caption with `truncate_to_cols`, which the original list missed
+> entirely. The table below is the corrected one.
 
 | Site | Draws | Why it matters |
 |---|---|---|
 | `mod.rs:262` | the `Esc` close hint | Positions itself with `close_text.len() as f32 * cell_w` — a **character count**, the N-3 defect in miniature. Harmless only because `"Esc"` is ASCII and untranslated. |
 | `sidebar.rs:125` | the category search field | Truncates with `truncate_to_width(…, cell_w)`, which assumes every character is one or two cells. This one takes **user input**, so a CJK search string is the case it gets wrong. |
 | `row.rs:118` | wrapped body text | Wraps with `wrap_text(text, max_cols)` — a column count, same assumption. |
-| `mod.rs:693`, `blocks_tab.rs:69`, `profiles_tab.rs:59/74`, `font_tab.rs:89` | footer hint, tip line, empty state, hints | Plain prose; typography only. |
+| `theme_tab.rs:91` | the scheme-name captions | Truncates with `truncate_to_cols`, converting the swatch gap from pixels to columns. Missed by the original list. |
+| `mod.rs:693`, `blocks_tab.rs:69`, `profiles_tab.rs:59/74`, `font_tab.rs:89`, `startup_tab.rs:67`, `window_tab.rs:42` | footer hint, tip line, empty state, hints, notes | Plain prose; typography only. |
 
 P4b said "every text-bearing control in the widget layer moved together", and
 that was true of the *widget layer*. These are the panel's own furniture, which
-the sentence did not cover and nobody re-checked. Three of the seven carry a
+the sentence did not cover and nobody re-checked. Four of the ten carry a
 counting assumption rather than only a font size.
 
-**Not fixed here.** N-4's scope is the four surfaces §0 names, and the gate
-added in N-4e is deliberately scoped to the two tabs for the same reason —
-widening it would fail on code this phase has not looked at. Carried to §8 as
-its own piece of work.
+**Not fixed in N-4.** Its scope is the four surfaces §0 names, and the gate
+added in N-4e was deliberately scoped to the two tabs for the same reason —
+widening it would have failed on code that phase had not looked at.
+
+**Done as N-6** (#109, #110, #111): `sidebar.rs`'s search field, then
+`wrap_text` across its three callers, then the remaining nine calls plus the
+removal of `truncate_to_width` / `truncate_to_cols`. The gate now covers all
+twelve `settings/` modules.
 
 ---
 
@@ -697,20 +710,13 @@ Manual pass, once N-4e lands (no CI substitute exists for any of these):
   place this class of defect has ever been visible, and it took a property
   test to see it. Tab labels, the settings panel and the pickers should be
   looked at on a real macOS machine with a CJK locale before N-5.
-- **The settings panel's own furniture is still on the cell path** (§5.6):
-  seven calls across `mod.rs`, `sidebar.rs`, `row.rs`, `blocks_tab.rs`,
-  `profiles_tab.rs` and `font_tab.rs`. Four are plain prose. The other three
-  carry a counting assumption and should be done first, in this order:
-  1. **`sidebar.rs`'s search field** — truncates user input by cell count, so
-     a CJK search string is truncated at the wrong place today. The only one
-     of the seven with a live input path.
-  2. **`row.rs`'s `wrap_text(text, max_cols)`** — wrapping by columns is the
-     same assumption one level up, and it is shared by every wrapped row.
-  3. **`mod.rs`'s `Esc` hint** — positions itself by `str::len()`. Currently
-     safe because the string is ASCII and untranslated; it is a defect waiting
-     for someone to localise it.
-  Sized as one phase (N-6?), not folded into N-5: a chrome font family and a
-  cell-path migration are independently reviewable, which is the split that has
-  worked since P4c.
+- ~~**The settings panel's own furniture is still on the cell path**~~ —
+  **done as N-6** (#109, #110, #111). The three counting assumptions are gone
+  in the order this list proposed: the search field (user input, truncated at
+  the wrong character for CJK), `wrap_text` (which turned out to be shared with
+  two `dialog.rs` sites, so it moved as one), and the `Esc` hint. A fourth,
+  `theme_tab.rs`'s `truncate_to_cols`, was missing from the original list and
+  went with them. `truncate_to_width` and `truncate_to_cols` are deleted — the
+  chrome has one truncation now, and it measures.
 - **Whether the Keybindings delete modal should have a hint line** (§5.5). A
   UX question the shared modal now makes answerable either way.
