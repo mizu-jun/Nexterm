@@ -7,7 +7,7 @@ use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::host_manager::PasswordModalView;
 use crate::renderer::menu_layout;
 use crate::state::{ClientState, CloseWindowDialog, ConsentDialog, ContextMenu};
-use crate::vertex_util::{add_px_rect, add_run_verts, add_string_verts, measure_run, visual_width};
+use crate::vertex_util::{add_px_rect, add_run_verts, measure_run};
 
 use super::super::WgpuState;
 use super::util::{
@@ -200,7 +200,7 @@ impl WgpuState {
         // Geometry comes from `menu_layout` (UI/UX v3 N-4a) — the same
         // functions both placement sites and both hit-tests call, so the panel
         // drawn here and the region the mouse responds to are one number.
-        let menu_w = menu_layout::menu_width(&menu.items, cell_w);
+        let menu_w = menu_layout::menu_width(&menu.items, cell_w, font);
         let menu_h = menu_layout::menu_height(&menu.items, cell_h);
         let mx = menu.x;
         let my = menu.y;
@@ -297,15 +297,14 @@ impl WgpuState {
                 tokens.text_on(SurfaceLevel::S3).primary,
                 hover_w,
             );
-            add_string_verts(
+            add_run_verts(
                 &item.label,
+                &menu_layout::label_style(),
                 mx + cell_w * 0.9,
                 item_y + cell_h * 0.1,
                 text_color,
-                false,
                 sw,
                 sh,
-                cell_w,
                 font,
                 atlas,
                 &self.queue,
@@ -313,23 +312,27 @@ impl WgpuState {
                 text_idx,
             );
 
-            // Key hint text (right-aligned, muted)
+            // Key hint text (right-aligned, muted). Right-aligning needs the
+            // hint's own width, and it is measured at the step it is drawn at
+            // — `menu_layout::hint_style` — so the gap to the panel edge is
+            // the 0.5 cell it claims to be rather than whatever a cell count
+            // happened to produce.
             if !item.hint.is_empty() {
-                let hint_visual_w = visual_width(&item.hint) as f32;
-                let hint_x = mx + menu_w - (hint_visual_w * cell_w + cell_w * 0.5);
+                let hint_style = menu_layout::hint_style();
+                let hint_w = measure_run(&item.hint, &hint_style, font);
+                let hint_x = mx + menu_w - (hint_w + cell_w * 0.5);
                 let hint_color = {
                     let [r, g, b, _] = tokens.text_on(SurfaceLevel::S3).muted;
                     [r, g, b, 0.80]
                 };
-                add_string_verts(
+                add_run_verts(
                     &item.hint,
+                    &hint_style,
                     hint_x,
                     item_y + cell_h * 0.1,
                     hint_color,
-                    false,
                     sw,
                     sh,
-                    cell_w,
                     font,
                     atlas,
                     &self.queue,

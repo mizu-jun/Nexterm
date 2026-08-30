@@ -1,4 +1,4 @@
-//! Where a context menu's rows are, and how wide it is (UI/UX v3 N-4a).
+//! Where a context menu's rows are, and how wide it is (UI/UX v3 N-4a, N-4b).
 //!
 //! Five places needed one number and had three transcriptions of it plus two
 //! constants that were not it. The builder sized the panel from the widest
@@ -11,14 +11,24 @@
 //! its hint, or anywhere right of its label, dismissed the menu without acting.
 //! On the block menu that was the right 55 % of every row.
 //!
-//! This module is where the geometry comes from now. N-4a moves all five sites
-//! onto it while [`menu_width`] still counts display cells, so the fix is
-//! reviewable as a fix: nothing about the rendered menu changes, and the dead
-//! zone disappears. N-4b swaps the body of `menu_width` for `measure_run` and
-//! leaves the callers alone.
+//! This module is where the geometry comes from now. N-4a moved all five sites
+//! onto it while [`menu_width`] still counted display cells, so the fix was
+//! reviewable as a fix: nothing about the rendered menu changed, and the dead
+//! zone disappeared.
+//!
+//! N-4b then swapped counting for measuring. A label is measured at `body` and
+//! a hint at `caption` — the steps they are *drawn* at — so the panel is sized
+//! by the same numbers `add_run_verts` will advance by. This is what makes the
+//! menu correct for a proportional fallback face and for CJK, rather than
+//! merely self-consistent: `visual_width` answered 2 for every full-width
+//! character regardless of what the font actually did with it.
+//!
+//! Padding stays in cells (see [`PAD_CELLS`]). Only the text contribution is
+//! measured.
 
+use crate::font::FontManager;
 use crate::state::{ContextMenu, ContextMenuAction, ContextMenuItem};
-use crate::vertex_util::visual_width;
+use crate::vertex_util::measure_run;
 
 /// Horizontal padding around a row's text, in cells.
 ///
@@ -28,7 +38,11 @@ use crate::vertex_util::visual_width;
 /// is the phase that changes no pixels, so it is preserved exactly and named
 /// rather than quietly corrected. Whether the padding should be 4.4 is a
 /// design question for whoever wants to ask it.
-const PAD_CELLS: usize = 5;
+///
+/// Still in *cells* after N-4b: the text is measured, the spacing around it is
+/// not. Padding that tracked the ramp would change the menu's proportions,
+/// which is a design change rather than the measurement fix N-4 is.
+const PAD_CELLS: f32 = 5.0;
 
 /// Narrowest menu worth drawing, in cells.
 ///
@@ -39,23 +53,41 @@ const PAD_CELLS: usize = 5;
 /// fixes was one-directional.
 const MIN_CELLS: f32 = 16.0;
 
+/// The ramp step a row's label is drawn at (UI/UX v3 N-4b, spec §2 D6).
+pub(crate) fn label_style() -> nexterm_config::TypeStyle {
+    nexterm_config::MetricTokens::default().type_ramp.body
+}
+
+/// The ramp step a row's key hint is drawn at.
+///
+/// `caption` is specified as "key hints, secondary metadata" in `metrics.rs`,
+/// which is exactly what this column is.
+pub(crate) fn hint_style() -> nexterm_config::TypeStyle {
+    nexterm_config::MetricTokens::default().type_ramp.caption
+}
+
 /// Width of the menu panel in pixels.
 ///
 /// Takes items rather than a `ContextMenu` because both placement sites need
 /// the width *before* there is a menu to place: they build a throwaway at the
 /// origin, measure it, then rebuild it at the clamped position.
-pub(crate) fn menu_width(items: &[ContextMenuItem], cell_w: f32) -> f32 {
+///
+/// Labels and hints are measured at their **own** ramp steps because they are
+/// drawn at them. Measuring both as `body` would place the hint column off by
+/// the difference between the two sizes — the same class of mistake as
+/// measuring in cells and drawing in pixels, one level finer.
+pub(crate) fn menu_width(items: &[ContextMenuItem], cell_w: f32, font: &mut FontManager) -> f32 {
+    let label_style = label_style();
+    let hint_style = hint_style();
     let max_label = items
         .iter()
-        .map(|i| visual_width(&i.label))
-        .max()
-        .unwrap_or(8);
+        .map(|i| measure_run(&i.label, &label_style, font))
+        .fold(0.0_f32, f32::max);
     let max_hint = items
         .iter()
-        .map(|i| visual_width(&i.hint))
-        .max()
-        .unwrap_or(0);
-    ((max_label + max_hint + PAD_CELLS) as f32).max(MIN_CELLS) * cell_w
+        .map(|i| measure_run(&i.hint, &hint_style, font))
+        .fold(0.0_f32, f32::max);
+    (max_label + max_hint + PAD_CELLS * cell_w).max(MIN_CELLS * cell_w)
 }
 
 /// Height of the menu panel in pixels.
@@ -89,11 +121,12 @@ pub(crate) fn item_at(
     y: f32,
     cell_w: f32,
     cell_h: f32,
+    font: &mut FontManager,
 ) -> Option<usize> {
     if cell_h <= 0.0 || y < menu.y {
         return None;
     }
-    let w = menu_width(&menu.items, cell_w);
+    let w = menu_width(&menu.items, cell_w, font);
     if x < menu.x || x > menu.x + w {
         return None;
     }
@@ -111,6 +144,14 @@ mod tests {
 
     const CELL_W: f32 = 8.0;
     const CELL_H: f32 = 16.0;
+
+    /// CI's font stack answers the same advance for every character (N-3 spec
+    /// §6 — this devcontainer resolves `fc-list :lang=ja` to zero faces), so
+    /// nothing below may assert that CJK measures wider than Latin. The tests
+    /// assert font-independent properties instead.
+    fn font() -> FontManager {
+        FontManager::new("monospace", 14.0, &[], 1.0, true)
+    }
 
     fn item(label: &str, hint: &str) -> ContextMenuItem {
         ContextMenuItem {
@@ -139,38 +180,111 @@ mod tests {
         }
     }
 
-    /// The width is the widest label plus the widest hint plus the padding —
-    /// the two maxima are independent, so the widest row need not be one item.
+    /// The two maxima are independent: the widest label and the widest hint
+    /// need not belong to the same row, and the panel has to hold both.
     #[test]
     fn the_width_is_the_widest_label_plus_the_widest_hint() {
+        let mut f = font();
+        let label = measure_run("Set block name", &label_style(), &mut f);
+        let hint = measure_run("Ctrl+Shift+L", &hint_style(), &mut f);
+
         let items = vec![item("Copy", "Ctrl+Shift+L"), item("Set block name", "")];
-        // 14 (label) + 12 (hint) + 5 = 31 cells
-        assert_eq!(menu_width(&items, CELL_W), 31.0 * CELL_W);
+        assert!(
+            (menu_width(&items, CELL_W, &mut f) - (label + hint + PAD_CELLS * CELL_W)).abs() < 1e-3
+        );
     }
 
-    /// Preserved deliberately: see `PAD_CELLS`. N-4a changes no pixels, so this
-    /// pins the 5 rather than the 4.4 the padding comment implies.
+    /// N-4b measures the *text*; the spacing around it stays in cells, so the
+    /// menu's proportions do not shift with the ramp.
     #[test]
-    fn the_padding_is_five_cells_not_the_four_point_four_it_documents() {
-        let items = vec![item("aaaaaaaaaaaaaaaaaaaa", "")]; // 20 cells
-        assert_eq!(menu_width(&items, CELL_W), 25.0 * CELL_W);
+    fn the_padding_is_five_cells_and_scales_with_the_cell() {
+        let mut f = font();
+        // Long enough that neither call lands on the floor — two floored
+        // widths differ by the floor, not by the padding, which is what a
+        // short label measured here instead.
+        let items = vec![item("Copy this block to the clipboard", "")];
+        let narrow = menu_width(&items, 4.0, &mut f);
+        let wide = menu_width(&items, 8.0, &mut f);
+        assert!(
+            narrow > MIN_CELLS * 4.0 && wide > MIN_CELLS * 8.0,
+            "the label must clear the floor for this to measure padding: \
+             {narrow} / {wide}"
+        );
+        assert!(
+            (wide - narrow - PAD_CELLS * 4.0).abs() < 1e-3,
+            "doubling the cell adds exactly five cells of padding: {narrow} → {wide}"
+        );
+    }
+
+    /// A hint is drawn at `caption` and a label at `body`, so they must be
+    /// measured at those steps. Sizing the hint column as `body` would place
+    /// it off by the difference between the two.
+    #[test]
+    fn a_hint_is_measured_at_its_own_ramp_step() {
+        let mut f = font();
+        let text = "Ctrl+Shift+L";
+        let as_body = measure_run(text, &label_style(), &mut f);
+        let as_caption = measure_run(text, &hint_style(), &mut f);
+        assert!(
+            as_caption < as_body,
+            "caption (12px) must measure narrower than body (14px): {as_caption} vs {as_body}"
+        );
+
+        let items = vec![item("", text)];
+        let w = menu_width(&items, CELL_W, &mut f);
+        assert!(
+            (w - (as_caption + PAD_CELLS * CELL_W)).abs() < 1e-3 || w == MIN_CELLS * CELL_W,
+            "the hint contributes its caption width, not its body width"
+        );
+    }
+
+    /// G-width in the shape N-3 established: the width a menu is *sized* by
+    /// comes from the same `measure_run` the drawing pass uses, so the two
+    /// cannot disagree whatever the font reports for any glyph. Phrased as an
+    /// equality between paths, never as a claim about CJK metrics.
+    #[test]
+    fn the_panel_contains_the_runs_that_will_be_drawn_in_it() {
+        let mut f = font();
+        for (label, hint) in [
+            ("Copy", "Ctrl+C"),
+            ("Collapse / expand block", "Ctrl+Shift+L"),
+            ("このウィンドウだけ閉じる", ""),
+            ("Split Horizontal", "Ctrl+B  \""),
+        ] {
+            let items = vec![item(label, hint)];
+            let w = menu_width(&items, CELL_W, &mut f);
+            let drawn = measure_run(label, &label_style(), &mut f)
+                + measure_run(hint, &hint_style(), &mut f);
+            assert!(
+                w >= drawn,
+                "{label:?} + {hint:?} draw {drawn} wide in a {w}-wide panel"
+            );
+        }
+    }
+
+    /// No glyph measures zero, so a longer label is never a narrower menu —
+    /// the monotonicity `visual_width` gave for free and a measured path has
+    /// to be checked for.
+    #[test]
+    fn a_longer_label_never_narrows_the_menu() {
+        let mut f = font();
+        let short = menu_width(&[item("Copy", "")], CELL_W, &mut f);
+        let long = menu_width(
+            &[item("Copy this block to the clipboard", "")],
+            CELL_W,
+            &mut f,
+        );
+        assert!(long > short, "{short} → {long}");
     }
 
     #[test]
     fn a_narrow_menu_is_widened_to_the_floor() {
-        assert_eq!(menu_width(&[item("Ok", "")], CELL_W), MIN_CELLS * CELL_W);
-        assert_eq!(menu_width(&[], CELL_W), MIN_CELLS * CELL_W);
-    }
-
-    /// A full-width label costs two cells, as `add_string_verts` advances. The
-    /// old tab bar counted `chars()` here and overflowed on CJK (N-3 §1.2);
-    /// this path has always counted display width and keeps doing so until
-    /// N-4b measures it instead.
-    #[test]
-    fn a_full_width_label_costs_two_cells_per_character() {
-        let latin = menu_width(&[item("abcdefghijklmnopqrst", "")], CELL_W);
-        let cjk = menu_width(&[item("あいうえおかきくけこ", "")], CELL_W);
-        assert_eq!(latin, cjk, "ten CJK characters occupy twenty cells");
+        let mut f = font();
+        assert_eq!(
+            menu_width(&[item("Ok", "")], CELL_W, &mut f),
+            MIN_CELLS * CELL_W
+        );
+        assert_eq!(menu_width(&[], CELL_W, &mut f), MIN_CELLS * CELL_W);
     }
 
     /// G-menu-agree, the invariant `mouse.rs` claimed in a comment and broke on
@@ -178,20 +292,80 @@ mod tests {
     /// outside it does.
     #[test]
     fn the_region_that_responds_is_the_region_that_is_drawn() {
+        let mut f = font();
         for items in [
             vec![item("Copy", "Ctrl+C")],
             vec![item("Collapse / expand block", "Ctrl+Shift+L")],
             vec![item("このウィンドウだけ閉じる", "")],
             vec![item("Ok", "")], // hits the floor
         ] {
+            let label = items[0].label.clone();
             let m = menu(100.0, 50.0, items);
-            let w = menu_width(&m.items, CELL_W);
+            let w = menu_width(&m.items, CELL_W, &mut f);
             let mid_y = 50.0 + CELL_H * 0.5;
 
-            assert_eq!(item_at(&m, 100.0, mid_y, CELL_W, CELL_H), Some(0));
-            assert_eq!(item_at(&m, 100.0 + w, mid_y, CELL_W, CELL_H), Some(0));
-            assert_eq!(item_at(&m, 100.0 + w + 0.5, mid_y, CELL_W, CELL_H), None);
-            assert_eq!(item_at(&m, 99.5, mid_y, CELL_W, CELL_H), None);
+            assert_eq!(
+                item_at(&m, 100.0, mid_y, CELL_W, CELL_H, &mut f),
+                Some(0),
+                "{label:?}: the left edge is inside (w={w})"
+            );
+            assert_eq!(
+                item_at(&m, 100.0 + w, mid_y, CELL_W, CELL_H, &mut f),
+                Some(0),
+                "{label:?}: the right edge is inside (w={w})"
+            );
+            // Outside by a whole cell rather than by half a pixel. The point
+            // is that the panel bounds the hit region; probing the boundary
+            // itself to sub-pixel precision tests f32 rounding, not that.
+            assert_eq!(
+                item_at(&m, 100.0 + w + CELL_W, mid_y, CELL_W, CELL_H, &mut f),
+                None,
+                "{label:?}: a point a cell past the right edge is outside (w={w})"
+            );
+            assert_eq!(
+                item_at(&m, 100.0 - CELL_W, mid_y, CELL_W, CELL_H, &mut f),
+                None,
+                "{label:?}: a point a cell left of the panel is outside (w={w})"
+            );
+        }
+    }
+
+    /// Why the test above stopped probing the boundary at ±0.5 px: on macOS it
+    /// failed there, and a width that answers differently on its second call
+    /// would be exactly the defect N-4 exists to remove — the drawn panel and
+    /// the hit region disagreeing. So assert the property directly instead of
+    /// inferring it from a boundary probe.
+    ///
+    /// `chrome_advance` memoises per `(char, size, bold)`, so this should hold
+    /// by construction; it is pinned because "should" is what the comment in
+    /// `mouse.rs` said too.
+    #[test]
+    fn measuring_the_same_menu_twice_gives_the_same_width() {
+        let mut f = font();
+        for items in [
+            vec![item("Copy", "Ctrl+C")],
+            vec![item("Collapse / expand block", "Ctrl+Shift+L")],
+            vec![item("このウィンドウだけ閉じる", "")],
+            vec![item("Ok", "")],
+        ] {
+            let first = menu_width(&items, CELL_W, &mut f);
+            let second = menu_width(&items, CELL_W, &mut f);
+            let third = menu_width(&items, CELL_W, &mut f);
+            let label = &items[0].label;
+            assert!(
+                first.is_finite(),
+                "{label:?}: a menu width must be a real number, got {first}"
+            );
+            assert_eq!(
+                first.to_bits(),
+                second.to_bits(),
+                "{label:?}: {first} then {second}"
+            );
+            assert_eq!(
+                first.to_bits(),
+                third.to_bits(),
+                "{label:?}: {first} then {third}"
+            );
         }
     }
 
@@ -199,14 +373,15 @@ mod tests {
     /// answer `None` past that column while drawing rows all the way across.
     #[test]
     fn a_wide_menu_responds_past_the_eighteenth_cell() {
+        let mut f = font();
         let m = menu(
             0.0,
             0.0,
             vec![item("Collapse / expand block", "Ctrl+Shift+L")],
         );
-        assert!(menu_width(&m.items, CELL_W) > 18.0 * CELL_W);
+        assert!(menu_width(&m.items, CELL_W, &mut f) > 18.0 * CELL_W);
         assert_eq!(
-            item_at(&m, 30.0 * CELL_W, CELL_H * 0.5, CELL_W, CELL_H),
+            item_at(&m, 18.5 * CELL_W, CELL_H * 0.5, CELL_W, CELL_H, &mut f),
             Some(0),
             "the hint column has to be clickable; it is where the dead zone was"
         );
@@ -214,18 +389,25 @@ mod tests {
 
     #[test]
     fn rows_are_addressed_top_to_bottom_and_end_with_the_last_item() {
+        let mut f = font();
         let m = menu(
             0.0,
             100.0,
             vec![item("a", ""), item("b", ""), item("c", "")],
         );
-        assert_eq!(item_at(&m, 0.0, 100.0, CELL_W, CELL_H), Some(0));
-        assert_eq!(item_at(&m, 0.0, 100.0 + CELL_H, CELL_W, CELL_H), Some(1));
+        assert_eq!(item_at(&m, 0.0, 100.0, CELL_W, CELL_H, &mut f), Some(0));
         assert_eq!(
-            item_at(&m, 0.0, 100.0 + CELL_H * 2.9, CELL_W, CELL_H),
+            item_at(&m, 0.0, 100.0 + CELL_H, CELL_W, CELL_H, &mut f),
+            Some(1)
+        );
+        assert_eq!(
+            item_at(&m, 0.0, 100.0 + CELL_H * 2.9, CELL_W, CELL_H, &mut f),
             Some(2)
         );
-        assert_eq!(item_at(&m, 0.0, 100.0 + CELL_H * 3.0, CELL_W, CELL_H), None);
+        assert_eq!(
+            item_at(&m, 0.0, 100.0 + CELL_H * 3.0, CELL_W, CELL_H, &mut f),
+            None
+        );
     }
 
     /// A click above the menu must not wrap onto its last row — the failure a
@@ -233,25 +415,34 @@ mod tests {
     /// before it becomes a `usize`.
     #[test]
     fn a_point_above_the_menu_does_not_wrap_onto_a_row() {
+        let mut f = font();
         let m = menu(0.0, 100.0, vec![item("a", ""), item("b", "")]);
-        assert_eq!(item_at(&m, 0.0, 99.0, CELL_W, CELL_H), None);
-        assert_eq!(item_at(&m, 0.0, 0.0, CELL_W, CELL_H), None);
-        assert_eq!(item_at(&m, 0.0, -50.0, CELL_W, CELL_H), None);
+        assert_eq!(item_at(&m, 0.0, 99.0, CELL_W, CELL_H, &mut f), None);
+        assert_eq!(item_at(&m, 0.0, 0.0, CELL_W, CELL_H, &mut f), None);
+        assert_eq!(item_at(&m, 0.0, -50.0, CELL_W, CELL_H, &mut f), None);
     }
 
     #[test]
     fn a_separator_is_not_a_row_the_mouse_can_have() {
+        let mut f = font();
         let m = menu(0.0, 0.0, vec![item("a", ""), separator(), item("b", "")]);
-        assert_eq!(item_at(&m, 0.0, CELL_H * 0.5, CELL_W, CELL_H), Some(0));
-        assert_eq!(item_at(&m, 0.0, CELL_H * 1.5, CELL_W, CELL_H), None);
-        assert_eq!(item_at(&m, 0.0, CELL_H * 2.5, CELL_W, CELL_H), Some(2));
+        assert_eq!(
+            item_at(&m, 0.0, CELL_H * 0.5, CELL_W, CELL_H, &mut f),
+            Some(0)
+        );
+        assert_eq!(item_at(&m, 0.0, CELL_H * 1.5, CELL_W, CELL_H, &mut f), None);
+        assert_eq!(
+            item_at(&m, 0.0, CELL_H * 2.5, CELL_W, CELL_H, &mut f),
+            Some(2)
+        );
     }
 
     #[test]
     fn a_degenerate_cell_height_yields_no_row() {
+        let mut f = font();
         let m = menu(0.0, 0.0, vec![item("a", "")]);
-        assert_eq!(item_at(&m, 0.0, 0.0, CELL_W, 0.0), None);
-        assert_eq!(item_at(&m, 0.0, 0.0, CELL_W, -16.0), None);
+        assert_eq!(item_at(&m, 0.0, 0.0, CELL_W, 0.0, &mut f), None);
+        assert_eq!(item_at(&m, 0.0, 0.0, CELL_W, -16.0, &mut f), None);
     }
 
     #[test]
@@ -294,5 +485,30 @@ mod tests {
             2,
             "the hover path and the click path each call item_at exactly once"
         );
+    }
+
+    /// G-i18n (menu half): `new_default`'s eight hard-coded English labels are
+    /// gone. A menu that renders half in the user's language and half in
+    /// English reads as a rendering fault, and the width of a translated label
+    /// is not bounded by its source's.
+    #[test]
+    fn the_context_menu_holds_no_untranslated_label() {
+        let src = include_str!("../state/menus.rs");
+        for literal in [
+            "\"Copy\"",
+            "\"Paste\"",
+            "\"Select All\"",
+            "\"Split Vertical\"",
+            "\"Split Horizontal\"",
+            "\"Close Pane\"",
+            "\"Search...\"",
+            "\"Settings...\"",
+        ] {
+            assert!(
+                !src.contains(literal),
+                "menus.rs builds a menu item from the literal {literal}; \
+                 user-facing strings go through fl! and all eight locales"
+            );
+        }
     }
 }

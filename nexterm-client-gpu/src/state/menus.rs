@@ -137,21 +137,33 @@ impl ContextMenu {
     /// `profiles`: list of (profile name, icon) pairs
     pub fn new_default(x: f32, y: f32, profiles: &[(String, String)]) -> Self {
         let mut items = vec![
-            ContextMenuItem::with_hint("Copy", "Ctrl+C", ContextMenuAction::Copy),
-            ContextMenuItem::with_hint("Paste", "Ctrl+V", ContextMenuAction::Paste),
-            ContextMenuItem::with_hint("Select All", "Ctrl+A", ContextMenuAction::SelectAll),
+            ContextMenuItem::with_hint(fl!("context-menu-copy"), "Ctrl+C", ContextMenuAction::Copy),
+            ContextMenuItem::with_hint(
+                fl!("context-menu-paste"),
+                "Ctrl+V",
+                ContextMenuAction::Paste,
+            ),
+            ContextMenuItem::with_hint(
+                fl!("context-menu-select-all"),
+                "Ctrl+A",
+                ContextMenuAction::SelectAll,
+            ),
             ContextMenuItem::separator(),
             ContextMenuItem::with_hint(
-                "Split Vertical",
+                fl!("context-menu-split-vertical"),
                 "Ctrl+B  %",
                 ContextMenuAction::SplitVertical,
             ),
             ContextMenuItem::with_hint(
-                "Split Horizontal",
+                fl!("context-menu-split-horizontal"),
                 "Ctrl+B  \"",
                 ContextMenuAction::SplitHorizontal,
             ),
-            ContextMenuItem::with_hint("Close Pane", "Ctrl+B  x", ContextMenuAction::ClosePane),
+            ContextMenuItem::with_hint(
+                fl!("context-menu-close-pane"),
+                "Ctrl+B  x",
+                ContextMenuAction::ClosePane,
+            ),
         ];
 
         // Append a sub-section if any profiles are registered.
@@ -174,12 +186,12 @@ impl ContextMenu {
 
         items.push(ContextMenuItem::separator());
         items.push(ContextMenuItem::with_hint(
-            "Search...",
+            fl!("context-menu-search"),
             "Ctrl+F",
             ContextMenuAction::InlineSearch,
         ));
         items.push(ContextMenuItem::with_hint(
-            "Settings...",
+            fl!("context-menu-settings"),
             "Ctrl+,",
             ContextMenuAction::OpenSettings,
         ));
