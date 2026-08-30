@@ -12,7 +12,7 @@ use crate::vertex_util::{add_px_rect, add_run_verts, measure_run};
 use super::super::WgpuState;
 use super::util::{
     SCRIM_ALPHA_FLOOR, caution_fill, danger_fill, draw_overlay_panel, pane_id_for, preview_text,
-    scrim_color, wrap_text,
+    scrim_color, wrap_run,
 };
 use nexterm_config::SurfaceLevel;
 
@@ -450,9 +450,12 @@ impl WgpuState {
             content_y += cell_h * 1.3;
         }
 
-        // Payload preview (up to 2 lines, 56 chars each)
+        // Payload preview (up to 2 lines). The budget is the panel's own
+        // width now, measured at the step the preview is drawn at — the old
+        // literal 56 was a column count guessed from a 60-cell panel.
         let preview = preview_text(&dialog.kind);
-        for (i, line) in wrap_text(&preview, 56).iter().take(2).enumerate() {
+        let preview_lines = wrap_run(&preview, &metrics.type_ramp.body, pw - cell_w * 2.0, font);
+        for (i, line) in preview_lines.iter().take(2).enumerate() {
             add_run_verts(
                 line,
                 &metrics.type_ramp.body,
@@ -631,14 +634,15 @@ impl WgpuState {
         add_px_rect(px, py, pw, 3.0, err_color, sw, sh, bg_verts, bg_idx);
 
         // Title = render the confirmation message directly (short enough to skip a separate title).
-        // If it overflows the width, wrap_text breaks it to up to 2 lines.
+        // If it overflows the width, `wrap_run` breaks it to up to 3 lines.
         let content_y = py + cell_h * 1.2;
-        let max_cols = ((pw - cell_w * 2.0) / cell_w).max(20.0) as usize;
-        for (i, line) in wrap_text(&dialog.message, max_cols)
-            .iter()
-            .take(3)
-            .enumerate()
-        {
+        let message_lines = wrap_run(
+            &dialog.message,
+            &metrics.type_ramp.body,
+            pw - cell_w * 2.0,
+            font,
+        );
+        for (i, line) in message_lines.iter().take(3).enumerate() {
             add_run_verts(
                 line,
                 &metrics.type_ramp.body,

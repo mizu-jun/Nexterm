@@ -10,7 +10,7 @@
 //!     block below a row.
 //!
 //! All three truncate their text to the column widths in [`RowLayout`] via
-//! [`truncate_to_width`] / [`wrap_text`] so long labels/values/descriptions
+//! [`truncate_run_to_width`] / [`wrap_run`] so long labels/values/descriptions
 //! can no longer overflow the content area.
 //!
 //! UI/UX v3 P5d retired `ensure_readable` from here. It raised alpha and
@@ -23,9 +23,9 @@
 
 use crate::font::FontManager;
 use crate::glyph_atlas::{GlyphAtlas, TextVertex};
-use crate::vertex_util::{add_run_verts, add_string_verts, truncate_run_to_width};
+use crate::vertex_util::{add_run_verts, truncate_run_to_width};
 
-use super::super::util::{danger_fill, wrap_text};
+use super::super::util::{danger_fill, wrap_run};
 use nexterm_config::SurfaceLevel;
 
 /// Fill / label pair for a destructive-confirmation button.
@@ -93,37 +93,41 @@ pub(in crate::renderer) fn draw_section_header(
     );
 }
 
-/// Draw a word-wrapped description/hint block starting at `(x, y)`, one
-/// line per `line_h`. Returns the y position immediately below the last
-/// line, so callers can stack further content beneath it.
+/// Draw a wrapped description/hint block starting at `(x, y)`, one line per
+/// `line_h`. Returns the y position immediately below the last line, so
+/// callers can stack further content beneath it.
+///
+/// `max_w` is a pixel budget (UI/UX v3 N-6b). It used to be a column count,
+/// which only bounds the drawn width if the text is drawn at the cell — and it
+/// never was here: the block is prose at `body`, so the wrap and the draw were
+/// measuring different things.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::renderer) fn draw_description_rows(
     text: &str,
     x: f32,
     y: f32,
     line_h: f32,
-    max_cols: usize,
+    max_w: f32,
     color: [f32; 4],
     sw: f32,
     sh: f32,
-    cell_w: f32,
     font: &mut FontManager,
     atlas: &mut GlyphAtlas,
     queue: &wgpu::Queue,
     text_verts: &mut Vec<TextVertex>,
     text_idx: &mut Vec<u16>,
 ) -> f32 {
-    let lines = wrap_text(text, max_cols);
+    let style = nexterm_config::MetricTokens::default().type_ramp.body;
+    let lines = wrap_run(text, &style, max_w, font);
     for (i, line) in lines.iter().enumerate() {
-        add_string_verts(
+        add_run_verts(
             line,
+            &style,
             x,
             y + line_h * i as f32,
             color,
-            false,
             sw,
             sh,
-            cell_w,
             font,
             atlas,
             queue,
