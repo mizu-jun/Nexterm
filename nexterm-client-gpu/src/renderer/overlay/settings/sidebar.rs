@@ -4,8 +4,7 @@ use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::settings_panel::SettingsPanel;
 use crate::vertex_util::{
-    add_icon_verts, add_px_rect, add_run_verts, add_string_verts, icon_size_for_slot,
-    truncate_run_to_width, truncate_to_width,
+    add_icon_verts, add_px_rect, add_run_verts, icon_size_for_slot, truncate_run_to_width,
 };
 use nexterm_config::SurfaceLevel;
 
@@ -14,7 +13,7 @@ use nexterm_config::SurfaceLevel;
 ///
 /// Sidebar width is kept as a fixed `cell_w * 18.0` (wide enough to fit the
 /// longest translated category names); category labels are still truncated
-/// defensively via [`truncate_to_width`] in case a future locale overflows it.
+/// defensively via [`truncate_run_to_width`] in case a future locale overflows it.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::renderer) fn draw_sidebar(
     sp: &SettingsPanel,
@@ -120,17 +119,24 @@ pub(in crate::renderer) fn draw_sidebar(
             tokens.text_on(SurfaceLevel::S2).primary,
         )
     };
+    // UI/UX v3 N-6a. This was the last cell-path text in the sidebar, and the
+    // only one on a live input path: `truncate_to_width` divides by `cell_w`
+    // and then counts display columns, so a query typed in Japanese was cut at
+    // the wrong character — the field is not a grid, and the text was never
+    // drawn at the cell size to begin with. Measured now, like every other
+    // label in this file.
+    let search_style = metrics.type_ramp.body;
     let search_max_w = sidebar_w - search_pad * 2.0 - cell_w * 0.3;
-    let search_text = truncate_to_width(&search_text, search_max_w, cell_w);
-    add_string_verts(
+    let search_text = truncate_run_to_width(&search_text, &search_style, search_max_w, font);
+    let (_size, search_line_h, _bold) = font.chrome_metrics(&search_style);
+    add_run_verts(
         &search_text,
+        &search_style,
         px + search_pad + cell_w * 0.3,
-        search_box_y + cell_h * 0.05,
+        search_box_y + (cell_h - search_line_h) * 0.5,
         search_fg,
-        false,
         sw,
         sh,
-        cell_w,
         font,
         atlas,
         queue,
@@ -248,6 +254,36 @@ pub(in crate::renderer) fn draw_sidebar(
             queue,
             text_verts,
             text_idx,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// UI/UX v3 N-6a: the sidebar draws no text on the cell path.
+    ///
+    /// The search field was the last one, and the only one in the settings
+    /// panel fed by user input. `truncate_to_width` divides a pixel budget by
+    /// `cell_w` and then counts display columns, so a Japanese query was cut
+    /// at the wrong character — the field is not a grid and its text was never
+    /// drawn at the cell size.
+    ///
+    /// Scoped to this file. Other settings modules still draw prose on the
+    /// cell path; N-6b and N-6c take those.
+    #[test]
+    fn the_sidebar_draws_no_text_on_the_cell_path() {
+        let src = include_str!("sidebar.rs");
+        let body = src
+            .split("#[cfg(test)]")
+            .next()
+            .expect("the file has a body before its tests");
+        assert!(
+            !body.contains("add_string_verts"),
+            "the sidebar draws text on the cell path again"
+        );
+        assert!(
+            !body.contains("truncate_to_width("),
+            "the sidebar truncates by cell count again; it measures now"
         );
     }
 }
