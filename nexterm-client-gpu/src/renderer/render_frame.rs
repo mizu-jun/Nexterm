@@ -1318,7 +1318,6 @@ impl WgpuState {
             sw,
             sh,
             cell_w,
-            cell_h,
             font,
             atlas,
             &mut bg_verts,

@@ -64,6 +64,7 @@
   "palette-set-broadcast-on": "Activar difusión de entrada",
   "palette-set-broadcast-off": "Desactivar difusión de entrada",
   "update-available": "Actualización disponible: v{version}  — pulsa Intro para ver detalles",
+  "key-hint-header": "Leader: {leader} — pulse la siguiente tecla",
   "offline-banner-connecting": "Conectando al servidor… ({seconds}s)",
   "update-dismiss": "Cerrar notificación de actualización",
   "update-open-releases": "Abrir notas de versión",
