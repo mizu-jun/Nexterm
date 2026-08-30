@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.1] - 2026-08-30
+
 ### Security
 - **`russh` 0.61.2 → 0.62.7 (Dependabot alerts #8–#15)**: fixes four issues, all
   medium severity — a pre-auth remote panic via an all-zero Curve25519 peer
