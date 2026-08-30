@@ -547,6 +547,29 @@ damage; it does not explain the cause, and this devcontainer cannot reproduce it
 (`fc-list :lang=ja` resolves to zero faces here, so CJK never reaches a real CJK
 face). Carried to §8.
 
+### 5.4 As built (N-4c)
+
+The six keys landed, the panel derives its width, and the value truncates.
+Three notes:
+
+- **The title's ramp step forced the panel's height to be derived too.** §2 D6
+  put the title at `title` (28/36), which is nearly two terminal cells tall, so
+  a panel declared as `7.0` rows would have clipped it on a small font. Height
+  is now `title_lh + 3 rows + hint_lh + padding`, read from
+  `font.chrome_metrics`. The width was always going to be derived; the height
+  came along because the ramp made the old constant wrong.
+- **`picker.rs` left the cell path.** As with `dialog.rs` in N-4b, removing the
+  transfer dialog's `add_string_verts` calls made the import unused — the three
+  list pickers had moved in P4e, so SFTP was the file's last cell-path
+  consumer.
+- **The gates needed scoping twice**, and the second time is the interesting
+  one. A file-wide scan for `cell_w * 8.0` failed on a clean tree, because that
+  expression is a legitimate `min_detail_w` in the host-manager builder next
+  door. The gate now reads only `build_file_transfer_verts`, in the shape
+  `tab_layout`'s `tab_region` established for the same reason. (The first
+  scoping was duller: the test scans its own file, so the literals naming what
+  must not return matched themselves.)
+
 ---
 
 ## 6. Verification
