@@ -64,6 +64,7 @@
   "palette-set-broadcast-on": "Attiva broadcast input",
   "palette-set-broadcast-off": "Disattiva broadcast input",
   "update-available": "Aggiornamento disponibile: v{version}  — premi Invio per i dettagli",
+  "key-hint-header": "Leader: {leader} — premi il tasto successivo",
   "offline-banner-connecting": "Connessione al server… ({seconds}s)",
   "update-dismiss": "Chiudi notifica aggiornamento",
   "update-open-releases": "Apri note di rilascio",

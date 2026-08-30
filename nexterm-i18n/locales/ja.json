@@ -64,6 +64,7 @@
   "palette-set-broadcast-on": "入力ブロードキャストを有効化",
   "palette-set-broadcast-off": "入力ブロードキャストを無効化",
   "update-available": "アップデートあり: v{version}  — Enter で詳細を開く",
+  "key-hint-header": "Leader: {leader} — 次のキーを押してください",
   "offline-banner-connecting": "サーバーに接続中… ({seconds}秒)",
   "update-dismiss": "更新通知を閉じる",
   "update-open-releases": "リリースノートを開く",
