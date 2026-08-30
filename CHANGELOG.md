@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-08-30
+
 ### Added
 - New built-in **High Contrast** colour scheme (`colors = "highcontrast"`), the
   first scheme to target WCAG **AAA**: a pure black ground, pure white text, and
