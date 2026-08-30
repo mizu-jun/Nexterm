@@ -477,6 +477,36 @@ The two gates that were RED before the conversion (`G-menu-width`,
 `both_mouse_paths_ask_this_module_which_row_was_hit`) are the two that prove it
 landed; the other eleven tests pinned the behaviour and passed throughout.
 
+### 5.2 As built (N-4b)
+
+`menu_width` measures at `body`, hints at `caption`, and the eight labels are
+localised. Three notes:
+
+- **The signature change was the size §5.1 predicted.** `menu_width` and
+  `item_at` gained a `&mut FontManager`; four of the five call sites took it
+  from `self.app.font` unchanged. The fifth — the click path — had to stop
+  being a closure: `and_then(|menu| …)` captures through `self`, so measuring
+  inside it borrows `self.app.font` mutably while `self.app.state` is borrowed.
+  Spelled as an `if let`, the two field borrows are disjoint and the borrow
+  checker is satisfied. Recorded because the closure reads better and a future
+  edit will want to put it back.
+- **`dialog.rs` left the cell path entirely.** Removing the menu's two
+  `add_string_verts` calls made both `add_string_verts` and `visual_width`
+  unused in the file — the context menu was the last consumer of either. The
+  password modal, the consent dialog and the close-window dialog had all moved
+  in P4b/P4c, so the import line was the only thing still recording that this
+  file ever counted cells.
+- **The hint column's gap is now the 0.5 cell it always claimed.** The
+  right-alignment subtracted `visual_width(hint) * cell_w`, which is only the
+  drawn width if the hint is drawn at the cell. It is drawn at `caption`
+  (12 px against a 14 px body), so every hint sat slightly right of where the
+  builder's arithmetic put it. Measuring at `hint_style` closes that.
+
+One correction, and it is a test bug rather than a spec one: the first version
+of `the_padding_is_five_cells_and_scales_with_the_cell` used a short label, so
+both measurements landed on the 16-cell floor and it was comparing floors, not
+padding. It asserts the label clears the floor now.
+
 ---
 
 ## 6. Verification

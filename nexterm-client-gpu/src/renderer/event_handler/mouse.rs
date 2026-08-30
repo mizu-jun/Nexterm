@@ -577,8 +577,14 @@ impl EventHandler {
         if let Some(menu) = &mut self.app.state.context_menu {
             let cw = self.app.font.cell_width();
             let ch = self.app.font.cell_height();
-            let new_hovered =
-                menu_layout::item_at(menu, position.x as f32, position.y as f32, cw, ch);
+            let new_hovered = menu_layout::item_at(
+                menu,
+                position.x as f32,
+                position.y as f32,
+                cw,
+                ch,
+                &mut self.app.font,
+            );
             if menu.hovered != new_hovered {
                 menu.hovered = new_hovered;
                 // UI/UX v3 P3b2: same value, same frame.
@@ -621,7 +627,8 @@ impl EventHandler {
         // position — the menu's size depends on its items, and its position
         // depends on its size.
         let tmp = ContextMenu::new_tab_dropdown(0.0, 0.0, &profile_list);
-        let menu_w_px = menu_layout::menu_width(&tmp.items, cell_w as f32) as f64;
+        let menu_w_px =
+            menu_layout::menu_width(&tmp.items, cell_w as f32, &mut self.app.font) as f64;
         let menu_h_px = menu_layout::menu_height(&tmp.items, cell_h as f32) as f64;
         let win_w = self
             .window
@@ -717,7 +724,8 @@ impl EventHandler {
             };
 
             let tmp = build(0.0, 0.0);
-            let menu_w_px = menu_layout::menu_width(&tmp.items, cell_w_ctx as f32) as f64;
+            let menu_w_px =
+                menu_layout::menu_width(&tmp.items, cell_w_ctx as f32, &mut self.app.font) as f64;
             let menu_h_px = menu_layout::menu_height(&tmp.items, cell_h_ctx as f32) as f64;
 
             let win_w = self
@@ -1687,11 +1695,24 @@ impl EventHandler {
         {
             let cell_w = self.app.font.cell_width();
             let cell_h = self.app.font.cell_height();
-            let hit_action = self.app.state.context_menu.as_ref().and_then(|menu| {
-                menu_layout::item_at(menu, px as f32, py as f32, cell_w, cell_h)
-                    .and_then(|i| menu.items.get(i))
-                    .map(|item| item.action.clone())
-            });
+            // Not a closure: measuring borrows `self.app.font` mutably while
+            // the menu is borrowed from `self.app.state`. Split borrows of two
+            // fields are fine spelled out; a closure would capture both
+            // through `self`.
+            let hit_action = if let Some(menu) = &self.app.state.context_menu {
+                menu_layout::item_at(
+                    menu,
+                    px as f32,
+                    py as f32,
+                    cell_w,
+                    cell_h,
+                    &mut self.app.font,
+                )
+                .and_then(|i| menu.items.get(i))
+                .map(|item| item.action.clone())
+            } else {
+                None
+            };
             // Any click while the menu is open dismisses it (UI/UX v3 P3b:
             // through the helper, so the exit animation always runs), then
             // the hit action — if any — is executed on a menu-less state.
