@@ -37,6 +37,7 @@ mod profiles_tab;
 // `pub(super)` so the sibling `widgets` module can reuse the row builders. The
 // contrast helper that used to live here moved to `color_util::readable_on`
 // with UI/UX v3 P5d.
+mod delete_dialog;
 pub(super) mod row;
 mod security_tab;
 mod sidebar;
