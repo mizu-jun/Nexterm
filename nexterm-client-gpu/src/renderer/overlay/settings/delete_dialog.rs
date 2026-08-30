@@ -283,19 +283,33 @@ mod tests {
     /// next control added to these tabs does not quietly reintroduce the cell
     /// path.
     ///
-    /// Scoped to these two files on purpose. Other settings modules still draw
-    /// prose through `add_string_verts`, and widening this gate would fail on
-    /// code N-4 has not looked at (spec §8).
+    /// Widened in N-6c: **no** settings module draws text on the cell path
+    /// now. When this gate was written it covered these two files only,
+    /// because the rest of `settings/` still did.
     #[test]
-    fn neither_tab_draws_prose_on_the_cell_path() {
+    fn no_settings_module_draws_prose_on_the_cell_path() {
         for (name, src) in [
             ("ssh_tab.rs", include_str!("ssh_tab.rs")),
             ("keybindings_tab.rs", include_str!("keybindings_tab.rs")),
+            ("mod.rs", include_str!("mod.rs")),
+            ("sidebar.rs", include_str!("sidebar.rs")),
+            ("row.rs", include_str!("row.rs")),
+            ("blocks_tab.rs", include_str!("blocks_tab.rs")),
+            ("profiles_tab.rs", include_str!("profiles_tab.rs")),
+            ("font_tab.rs", include_str!("font_tab.rs")),
+            ("startup_tab.rs", include_str!("startup_tab.rs")),
+            ("theme_tab.rs", include_str!("theme_tab.rs")),
+            ("window_tab.rs", include_str!("window_tab.rs")),
+            ("security_tab.rs", include_str!("security_tab.rs")),
         ] {
+            let src = src
+                .split("#[cfg(test)]")
+                .next()
+                .expect("every file has a body before its tests");
             assert!(
                 !src.contains("add_string_verts"),
-                "{name} draws text on the cell path again; its prose is on the \
-                 chrome ramp (N-4e)"
+                "{name} draws text on the cell path again; the settings panel is \
+                 entirely on the chrome ramp (N-4e, N-6a-c)"
             );
         }
     }

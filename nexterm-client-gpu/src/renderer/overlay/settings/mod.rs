@@ -18,7 +18,7 @@ use super::util::{draw_overlay_panel, scrim_color};
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::state::ClientState;
-use crate::vertex_util::{add_px_rect, add_px_rounded_rect_sdf, add_run_verts, add_string_verts};
+use crate::vertex_util::{add_px_rect, add_px_rounded_rect_sdf, add_run_verts, measure_run};
 
 use super::super::WgpuState;
 use nexterm_config::SurfaceLevel;
@@ -98,6 +98,8 @@ impl WgpuState {
         text_verts: &mut Vec<TextVertex>,
         text_idx: &mut Vec<u16>,
     ) -> Option<SettingsPanelScrollMetrics> {
+        // UI/UX v3 N-6c: the panel's own prose on the chrome ramp.
+        let prose_style = nexterm_config::MetricTokens::default().type_ramp.caption;
         use crate::settings_panel::SettingsCategory;
 
         let sp = &state.settings_panel;
@@ -256,18 +258,24 @@ impl WgpuState {
             text_verts,
             text_idx,
         );
-        // Close-button hint
+        // Close-button hint, right-aligned against the panel edge.
+        //
+        // UI/UX v3 N-6c: the x used to come from `close_text.len()` — a count
+        // of *bytes*, standing in for a count of cells. It happens to be
+        // correct because `"Esc"` is three ASCII characters and is not
+        // localised; both of those are accidents rather than guarantees, and
+        // neither survives someone translating it. Measured now.
         let close_text = "Esc";
-        let close_x = px + panel_w - close_text.len() as f32 * cell_w - cell_w;
-        add_string_verts(
+        let close_w = measure_run(close_text, &prose_style, font);
+        let close_x = px + panel_w - close_w - cell_w;
+        add_run_verts(
             close_text,
+            &prose_style,
             close_x,
             py + cell_h * 0.2,
             tokens.accent_primary,
-            false,
             sw,
             sh,
-            cell_w,
             font,
             atlas,
             &self.queue,
@@ -690,15 +698,14 @@ impl WgpuState {
             bg_verts,
             bg_idx,
         );
-        add_string_verts(
+        add_run_verts(
             &nexterm_i18n::fl!("settings-panel-footer-hint"),
+            &prose_style,
             px + cell_w * 0.5,
             bottom_y + cell_h * 0.3,
             tokens.text_on(SurfaceLevel::S0).muted,
-            false,
             sw,
             sh,
-            cell_w,
             font,
             atlas,
             &self.queue,
