@@ -299,20 +299,73 @@ mod tests {
             vec![item("このウィンドウだけ閉じる", "")],
             vec![item("Ok", "")], // hits the floor
         ] {
+            let label = items[0].label.clone();
             let m = menu(100.0, 50.0, items);
             let w = menu_width(&m.items, CELL_W, &mut f);
             let mid_y = 50.0 + CELL_H * 0.5;
 
-            assert_eq!(item_at(&m, 100.0, mid_y, CELL_W, CELL_H, &mut f), Some(0));
+            assert_eq!(
+                item_at(&m, 100.0, mid_y, CELL_W, CELL_H, &mut f),
+                Some(0),
+                "{label:?}: the left edge is inside (w={w})"
+            );
             assert_eq!(
                 item_at(&m, 100.0 + w, mid_y, CELL_W, CELL_H, &mut f),
-                Some(0)
+                Some(0),
+                "{label:?}: the right edge is inside (w={w})"
+            );
+            // Outside by a whole cell rather than by half a pixel. The point
+            // is that the panel bounds the hit region; probing the boundary
+            // itself to sub-pixel precision tests f32 rounding, not that.
+            assert_eq!(
+                item_at(&m, 100.0 + w + CELL_W, mid_y, CELL_W, CELL_H, &mut f),
+                None,
+                "{label:?}: a point a cell past the right edge is outside (w={w})"
             );
             assert_eq!(
-                item_at(&m, 100.0 + w + 0.5, mid_y, CELL_W, CELL_H, &mut f),
-                None
+                item_at(&m, 100.0 - CELL_W, mid_y, CELL_W, CELL_H, &mut f),
+                None,
+                "{label:?}: a point a cell left of the panel is outside (w={w})"
             );
-            assert_eq!(item_at(&m, 99.5, mid_y, CELL_W, CELL_H, &mut f), None);
+        }
+    }
+
+    /// Why the test above stopped probing the boundary at ±0.5 px: on macOS it
+    /// failed there, and a width that answers differently on its second call
+    /// would be exactly the defect N-4 exists to remove — the drawn panel and
+    /// the hit region disagreeing. So assert the property directly instead of
+    /// inferring it from a boundary probe.
+    ///
+    /// `chrome_advance` memoises per `(char, size, bold)`, so this should hold
+    /// by construction; it is pinned because "should" is what the comment in
+    /// `mouse.rs` said too.
+    #[test]
+    fn measuring_the_same_menu_twice_gives_the_same_width() {
+        let mut f = font();
+        for items in [
+            vec![item("Copy", "Ctrl+C")],
+            vec![item("Collapse / expand block", "Ctrl+Shift+L")],
+            vec![item("このウィンドウだけ閉じる", "")],
+            vec![item("Ok", "")],
+        ] {
+            let first = menu_width(&items, CELL_W, &mut f);
+            let second = menu_width(&items, CELL_W, &mut f);
+            let third = menu_width(&items, CELL_W, &mut f);
+            let label = &items[0].label;
+            assert!(
+                first.is_finite(),
+                "{label:?}: a menu width must be a real number, got {first}"
+            );
+            assert_eq!(
+                first.to_bits(),
+                second.to_bits(),
+                "{label:?}: {first} then {second}"
+            );
+            assert_eq!(
+                first.to_bits(),
+                third.to_bits(),
+                "{label:?}: {first} then {third}"
+            );
         }
     }
 
