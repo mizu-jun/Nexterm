@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **`russh` 0.61.2 → 0.62.7 (Dependabot alerts #8–#15)**: fixes four issues, all
+  medium severity — a pre-auth remote panic via an all-zero Curve25519 peer
+  public value (`encode_mpint` OOB), a post-auth remote panic via a `pty-req`
+  carrying more than 130 terminal-mode records, a pre-auth panic from a
+  wrong-length X25519 key in `clone_from_slice`, and a channel-scoped
+  server callback reachable without an open channel. `nexterm-ssh` still
+  builds against the `ring` crypto backend (`default-features = false`,
+  `features = ["ring", "rsa", "flate2"]`); `aws-lc-rs` is not pulled in by
+  `russh` (it is a pre-existing, unrelated dependency of the update
+  checker's `rustls`/`reqwest` stack), so the NASM-free Windows build is
+  unaffected. `server_channel_open_forwarded_tcpip` gained a `reply:
+  ChannelOpenHandle` parameter that the handler must now call `.accept()`
+  on to admit the channel — `nexterm-ssh`'s remote-forwarding handler was
+  updated accordingly.
+
 ## [1.17.0] - 2026-08-30
 
 ### Added

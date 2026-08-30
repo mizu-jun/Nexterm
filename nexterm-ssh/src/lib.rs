@@ -114,8 +114,13 @@ impl client::Handler for SshHandler {
         connected_port: u32,
         _originator_address: &str,
         _originator_port: u32,
+        reply: russh::client::ChannelOpenHandle,
         _session: &mut russh::client::Session,
     ) -> Result<(), Self::Error> {
+        // russh 0.62 requires the handler to explicitly accept the channel;
+        // dropping `reply` unaccepted rejects it.
+        reply.accept().await;
+
         // Look up the local forwarding destination in forward_map.
         let dest = {
             let map = self.forward_map.lock().expect("forward_map mutex poisoned");
