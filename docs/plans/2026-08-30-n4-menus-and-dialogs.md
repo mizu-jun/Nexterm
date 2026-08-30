@@ -507,6 +507,46 @@ of `the_padding_is_five_cells_and_scales_with_the_cell` used a short label, so
 both measurements landed on the 16-cell floor and it was comparing floors, not
 padding. It asserts the label clears the floor now.
 
+### 5.3 What N-4b's tests found: `chrome_advance` can return `inf`
+
+macOS CI failed on a boundary probe — a point half a pixel past the panel's
+right edge answered "inside". The first response was to blame the probe (half a
+pixel is close enough to f32 rounding to be a fair suspicion) and widen it to a
+cell. That would have been wrong, and the thing that stopped it was adding a
+test for the property the probe was standing in for: *does `menu_width` return
+the same, finite number every time?*
+
+It does not, on macOS:
+
+```
+"このウィンドウだけ閉じる": a point a cell past the right edge is outside (w=inf)
+```
+
+`FontManager::chrome_advance` reads `line_w` from cosmic-text and applies
+`.max(0.0)`, which passes `inf` through unchanged. One infinite glyph poisons
+every sum it reaches. That is not cosmetic:
+
+- `menu_layout::item_at` takes the whole screen as the menu's hit region.
+- `tab_layout::fit_tab_width` clamps to `room_left`, so **one tab fills the
+  strip** — the N-3 defect returning through a different door, on the platform
+  N-3 could not test.
+- Any `truncate_run_to_width` budget becomes unbounded, so nothing truncates.
+
+**This is not an N-4 defect.** Every run path since P4b goes through
+`chrome_advance`: tab labels, the settings panel, the dialogs, the three
+pickers. N-4b is only where a test finally asked the question.
+
+Fixed here rather than deferred, because N-4b cannot pass CI without it: a
+non-finite advance is treated as unmeasurable and returns `0.0`, matching what
+the function already did for control characters and unmapped glyphs. A
+regression test asserts finiteness across twelve characters, four sizes and
+both weights.
+
+**Why cosmic-text answers `inf` is not understood.** The guard bounds the
+damage; it does not explain the cause, and this devcontainer cannot reproduce it
+(`fc-list :lang=ja` resolves to zero faces here, so CJK never reaches a real CJK
+face). Carried to §8.
+
 ---
 
 ## 6. Verification
@@ -556,3 +596,24 @@ Manual pass, once N-4e lands (no CI substitute exists for any of these):
   modal should have a hint line at all.
 - **The status bar** (cell-aligned by design) and **a chrome font family**
   (N-5), unchanged from P4f.
+- **Why `line_w` is `inf` for CJK on macOS** (§5.3). The guard makes those
+  glyphs measure zero, which is safe but not right — a Japanese menu on macOS
+  is now sized as if its label were empty, falling back to the 16-cell floor.
+  Needs a macOS machine to investigate; candidates are the `set_size` width
+  constraint (`size_px * 8.0`), the curated `/System/Library/Fonts` load in
+  `build_font_system`, and cosmic-text's fallback path for a face the primary
+  family lacks.
+- **`measure_char_width` has no finiteness guard either**, and it is worth
+  saying precisely what that does and does not mean. It reads
+  `glyph.x + glyph.w` rather than `line_w`, so it is not the same code path;
+  but its fallback test is `if advance > 1.0`, and `inf > 1.0` is true, so an
+  infinite measurement would be returned as `cell_w` and every cell in the
+  terminal would inherit it. It only ever measures `'0'`, so the CJK trigger
+  from §5.3 cannot reach it and there is no evidence it has ever misfired.
+  Left alone deliberately: N-4 fixed the guard it had proof was needed, and
+  hardening a second one on suspicion is the scope creep the phase discipline
+  exists to prevent.
+- **A macOS pass over every measured surface.** §5.3 shows CI is the only
+  place this class of defect has ever been visible, and it took a property
+  test to see it. Tab labels, the settings panel and the pickers should be
+  looked at on a real macOS machine with a CJK locale before N-5.
