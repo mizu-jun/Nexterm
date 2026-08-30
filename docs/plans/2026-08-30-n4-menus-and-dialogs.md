@@ -1,6 +1,6 @@
 # N-4 — The context menu, the SFTP dialog and the delete modals leave the cell path (design spec)
 
-Status: **draft** — §7 awaiting sign-off
+Status: **complete** — N-4a–e shipped 2026-08-30 (#104–#108); §7 signed off
 Date: 2026-08-30
 Parent plan: [`ui-ux-modernization-v3.md`](./ui-ux-modernization-v3.md) § P4
 Predecessors: [`2026-08-29-p4-iconography-and-chrome-typography.md`](./2026-08-29-p4-iconography-and-chrome-typography.md) §§ 5.2, 8–8.4 · [`2026-08-30-n3-tab-bar-labels.md`](./2026-08-30-n3-tab-bar-labels.md)
@@ -600,6 +600,33 @@ not, and the shared modal takes an `Option` so both keep today's appearance.
 Making them agree is a UX decision; N-4d only removed the reason they *couldn't*
 agree. §8.
 
+### 5.6 As built (N-4e), and what it turned up next door
+
+The eight remaining `add_string_verts` calls in the two tabs — empty state,
+range indicator, edit-hint note — moved to `caption`. All are left-aligned at a
+fixed x and bound no hit region, so this was typography with no geometry
+attached, exactly as §5 predicted. A gate keeps them there.
+
+**But the cell path is not gone from `settings/`.** Grepping to confirm N-4e
+was complete found seven more calls, in files P4b's §5.2 lists as migrated:
+
+| Site | Draws | Why it matters |
+|---|---|---|
+| `mod.rs:262` | the `Esc` close hint | Positions itself with `close_text.len() as f32 * cell_w` — a **character count**, the N-3 defect in miniature. Harmless only because `"Esc"` is ASCII and untranslated. |
+| `sidebar.rs:125` | the category search field | Truncates with `truncate_to_width(…, cell_w)`, which assumes every character is one or two cells. This one takes **user input**, so a CJK search string is the case it gets wrong. |
+| `row.rs:118` | wrapped body text | Wraps with `wrap_text(text, max_cols)` — a column count, same assumption. |
+| `mod.rs:693`, `blocks_tab.rs:69`, `profiles_tab.rs:59/74`, `font_tab.rs:89` | footer hint, tip line, empty state, hints | Plain prose; typography only. |
+
+P4b said "every text-bearing control in the widget layer moved together", and
+that was true of the *widget layer*. These are the panel's own furniture, which
+the sentence did not cover and nobody re-checked. Three of the seven carry a
+counting assumption rather than only a font size.
+
+**Not fixed here.** N-4's scope is the four surfaces §0 names, and the gate
+added in N-4e is deliberately scoped to the two tabs for the same reason —
+widening it would fail on code this phase has not looked at. Carried to §8 as
+its own piece of work.
+
 ---
 
 ## 6. Verification
@@ -670,3 +697,20 @@ Manual pass, once N-4e lands (no CI substitute exists for any of these):
   place this class of defect has ever been visible, and it took a property
   test to see it. Tab labels, the settings panel and the pickers should be
   looked at on a real macOS machine with a CJK locale before N-5.
+- **The settings panel's own furniture is still on the cell path** (§5.6):
+  seven calls across `mod.rs`, `sidebar.rs`, `row.rs`, `blocks_tab.rs`,
+  `profiles_tab.rs` and `font_tab.rs`. Four are plain prose. The other three
+  carry a counting assumption and should be done first, in this order:
+  1. **`sidebar.rs`'s search field** — truncates user input by cell count, so
+     a CJK search string is truncated at the wrong place today. The only one
+     of the seven with a live input path.
+  2. **`row.rs`'s `wrap_text(text, max_cols)`** — wrapping by columns is the
+     same assumption one level up, and it is shared by every wrapped row.
+  3. **`mod.rs`'s `Esc` hint** — positions itself by `str::len()`. Currently
+     safe because the string is ASCII and untranslated; it is a defect waiting
+     for someone to localise it.
+  Sized as one phase (N-6?), not folded into N-5: a chrome font family and a
+  cell-path migration are independently reviewable, which is the split that has
+  worked since P4c.
+- **Whether the Keybindings delete modal should have a hint line** (§5.5). A
+  UX question the shared modal now makes answerable either way.
