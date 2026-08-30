@@ -330,15 +330,28 @@ impl FontManager {
             None,
         );
         buf.shape_until_scroll(&mut self.font_system, false);
-        let advance = buf
+        let raw = buf
             .layout_runs()
             .next()
             .map(|run| run.line_w)
-            .unwrap_or(0.0)
-            .max(0.0);
+            .unwrap_or(0.0);
         // A control character or an unmapped glyph measures zero; keep it at
         // zero rather than substituting a width, so a run containing one does
         // not silently gain space the drawing pass will not fill.
+        //
+        // A *non-finite* advance gets the same treatment, and it is not a
+        // hypothetical: on macOS, `line_w` comes back `inf` for CJK characters
+        // (observed in CI on UI/UX v3 N-4b — a context menu labelled
+        // `このウィンドウだけ閉じる` measured `inf` wide). One `inf` poisons
+        // every sum it reaches, and a width of `inf` is not a cosmetic
+        // problem: `menu_layout::item_at` would take the entire screen as the
+        // menu's hit region, and `tab_layout::fit_tab_width` would clamp one
+        // tab to the whole strip. Treat it as unmeasurable rather than
+        // propagate it.
+        //
+        // Why cosmic-text answers `inf` there is not yet understood; this
+        // guard bounds the damage, it does not explain it.
+        let advance = if raw.is_finite() { raw.max(0.0) } else { 0.0 };
         self.chrome_advance_cache.insert(key, advance);
         advance
     }
@@ -1006,5 +1019,30 @@ mod tests {
         // 14 pt @ 96 dpi = 18.67 px; advance ≈ 0.6 × font_size ≈ 11 px.
         assert!(cell_w > 5.0, "cell_w should be > 5 px: {}", cell_w);
         assert!(cell_w < 40.0, "cell_w should be < 40 px: {}", cell_w);
+    }
+
+    /// A chrome advance is always a real, non-negative number.
+    ///
+    /// Regression cover for the `inf` observed on macOS (UI/UX v3 N-4b): CJK
+    /// characters measured infinitely wide, which propagated into every width
+    /// built on `measure_run` — menu panels, tab widths, dialog buttons. This
+    /// passes trivially on a font stack that never produced the value; it is
+    /// here so the one that does cannot do it silently.
+    #[test]
+    fn every_chrome_advance_is_finite() {
+        let mut font = FontManager::new("monospace", 14.0, &[], 1.0, true);
+        for ch in [
+            'a', 'W', ' ', '…', '→', 'あ', '漢', '한', '中', '\u{0}', '\u{7}', '\u{200b}',
+        ] {
+            for size in [10.0_f32, 12.0, 14.0, 28.0] {
+                for bold in [false, true] {
+                    let a = font.chrome_advance(ch, size, bold);
+                    assert!(
+                        a.is_finite() && a >= 0.0,
+                        "advance for {ch:?} at {size}px (bold={bold}) is {a}"
+                    );
+                }
+            }
+        }
     }
 }
