@@ -6,7 +6,7 @@
 use crate::font::FontManager;
 use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::state::ClientState;
-use crate::vertex_util::{add_px_rect, add_run_verts, add_string_verts, measure_run};
+use crate::vertex_util::{add_px_rect, add_run_verts, measure_run, truncate_run_to_width};
 
 use super::super::WgpuState;
 use super::util::{draw_overlay_panel, semantic_fill};
@@ -240,13 +240,43 @@ impl WgpuState {
         text_idx: &mut Vec<u16>,
     ) {
         let ft = &state.file_transfer;
-        let panel_cols: f32 = 56.0;
-        let panel_rows: f32 = 7.0; // title + host + local + remote + hint
+        let metrics = nexterm_config::MetricTokens::default();
+        let title_style = &metrics.type_ramp.title;
+        let body_style = &metrics.type_ramp.body;
+        let hint_style = &metrics.type_ramp.caption;
 
-        let pw = panel_cols * cell_w;
-        let ph = panel_rows * cell_h;
+        // UI/UX v3 N-4c. The panel used to declare its width in columns and
+        // put its fields at a fixed eight-cell offset, which fits `Remote:`
+        // (7 cells) and nothing longer. The labels are localised now —
+        // `Entfernt:`, `リモート:` — so the column is measured and the panel is
+        // derived from it rather than the other way round.
+        let labels = [
+            nexterm_i18n::fl!("sftp-field-host"),
+            nexterm_i18n::fl!("sftp-field-local"),
+            nexterm_i18n::fl!("sftp-field-remote"),
+        ];
+        let label_col_w = labels
+            .iter()
+            .map(|l| measure_run(l, body_style, font))
+            .fold(0.0_f32, f32::max);
+
+        let pad = cell_w;
+        let gap = cell_w * 0.5;
+        // A path field wants room; this is the floor, not the width. The panel
+        // grows past it whenever the label column does.
+        let field_min_w = cell_w * 40.0;
+        let (_, title_lh, _) = font.chrome_metrics(title_style);
+        let (_, hint_lh, _) = font.chrome_metrics(hint_style);
+        let row_pitch = cell_h * 1.5;
+
+        let pw = (pad + label_col_w + gap + field_min_w + pad).min(sw - cell_w * 4.0);
+        let ph = title_lh + cell_h * 0.4 + row_pitch * 3.0 + hint_lh + cell_h * 0.6;
         let px = (sw - pw) / 2.0;
         let py = (sh - ph) / 2.0;
+
+        let field_x = px + pad + label_col_w + gap;
+        let field_w = (px + pw - pad - field_x).max(cell_w);
+        let fields_top = py + title_lh + cell_h * 0.4;
 
         // Panel chrome: drop-shadow + border ring + rounded background.
         let elevation = nexterm_config::ElevationScale::default().flyout;
@@ -272,21 +302,23 @@ impl WgpuState {
         };
         add_px_rect(px, py, pw, 2.0, accent, sw, sh, bg_verts, bg_idx);
 
-        // Title
+        // Title. The keyboard shortcuts used to be concatenated onto the end of
+        // it; they are their own line now (`sftp-hint`, drawn at the bottom),
+        // because a title that also documents three shortcuts is not a title
+        // and the two belong at different steps of the ramp.
         let title = if ft.mode == "upload" {
-            "SFTP Upload  (Tab=next, Enter=send, Esc=cancel)"
+            nexterm_i18n::fl!("sftp-title-upload")
         } else {
-            "SFTP Download  (Tab=next, Enter=send, Esc=cancel)"
+            nexterm_i18n::fl!("sftp-title-download")
         };
-        add_string_verts(
-            title,
-            px + cell_w,
+        add_run_verts(
+            &title,
+            title_style,
+            px + pad,
             py + cell_h * 0.1,
             accent,
-            true,
             sw,
             sh,
-            cell_w,
             font,
             atlas,
             &self.queue,
@@ -294,11 +326,10 @@ impl WgpuState {
             text_idx,
         );
 
-        let field_labels = ["Host:", "Local:", "Remote:"];
         let field_values = [&ft.host_name, &ft.local_path, &ft.remote_path];
 
-        for (i, (label, value)) in field_labels.iter().zip(field_values.iter()).enumerate() {
-            let row_y = py + cell_h * (i as f32 * 1.5 + 1.3);
+        for (i, (label, value)) in labels.iter().zip(field_values.iter()).enumerate() {
+            let row_y = fields_top + row_pitch * i as f32;
             let is_active = i == ft.field;
 
             // Field background: surface_2 when active (highlighted), surface_1 otherwise.
@@ -308,31 +339,24 @@ impl WgpuState {
                 tokens.surface_1
             };
             add_px_rect(
-                px + cell_w * 8.0,
-                row_y,
-                pw - cell_w * 9.0,
-                cell_h,
-                field_bg,
-                sw,
-                sh,
-                bg_verts,
-                bg_idx,
+                field_x, row_y, field_w, cell_h, field_bg, sw, sh, bg_verts, bg_idx,
             );
 
+            let fg = if is_active {
+                tokens.text_on(SurfaceLevel::S2).primary
+            } else {
+                tokens.text_on(SurfaceLevel::S2).secondary
+            };
+
             // Label
-            add_string_verts(
+            add_run_verts(
                 label,
-                px + cell_w,
+                body_style,
+                px + pad,
                 row_y,
-                if is_active {
-                    tokens.text_on(SurfaceLevel::S2).primary
-                } else {
-                    tokens.text_on(SurfaceLevel::S2).secondary
-                },
-                is_active,
+                fg,
                 sw,
                 sh,
-                cell_w,
                 font,
                 atlas,
                 &self.queue,
@@ -340,25 +364,23 @@ impl WgpuState {
                 text_idx,
             );
 
-            // Input value + cursor
+            // Input value + cursor. A path is the one string here that has no
+            // bound, and it used to draw straight past the field and the panel.
+            // Truncation shares the measurement the field width came from.
             let display = if is_active {
                 format!("{}_", value)
             } else {
                 value.to_string()
             };
-            add_string_verts(
+            let display = truncate_run_to_width(&display, body_style, field_w - gap, font);
+            add_run_verts(
                 &display,
-                px + cell_w * 8.5,
+                body_style,
+                field_x + gap * 0.5,
                 row_y,
-                if is_active {
-                    tokens.text_on(SurfaceLevel::S2).primary
-                } else {
-                    tokens.text_on(SurfaceLevel::S2).secondary
-                },
-                false,
+                fg,
                 sw,
                 sh,
-                cell_w,
                 font,
                 atlas,
                 &self.queue,
@@ -366,6 +388,22 @@ impl WgpuState {
                 text_idx,
             );
         }
+
+        // Keyboard hint, on its own line at the foot of the panel.
+        add_run_verts(
+            &nexterm_i18n::fl!("sftp-hint"),
+            hint_style,
+            px + pad,
+            py + ph - hint_lh - cell_h * 0.3,
+            tokens.text_on(SurfaceLevel::S2).muted,
+            sw,
+            sh,
+            font,
+            atlas,
+            &self.queue,
+            text_verts,
+            text_idx,
+        );
     }
 
     /// Build vertices for the Lua macro picker (center floating list)
@@ -883,6 +921,79 @@ mod tests {
             !code.contains(&pad_spec),
             "picker.rs pads a column to a character count again; \
              name_column_width owns that alignment"
+        );
+    }
+
+    /// G-i18n (SFTP half): the transfer dialog's strings are localised.
+    ///
+    /// Five English literals used to be built into this builder with no key in
+    /// any of the eight locales — the title (both modes) and the three field
+    /// labels — while the panel put its fields at a fixed `cell_w * 8.0`, wide
+    /// enough for `Remote:` and nothing longer. Translating without measuring
+    /// would have overrun the field on the first non-English locale, so the
+    /// two landed together (UI/UX v3 N-4c, spec §1.3).
+    /// The file's own body, excluding this test module.
+    ///
+    /// The gates below scan `picker.rs` for literals that must not come back,
+    /// and the literals naming them live in this module — so a whole-file scan
+    /// would match itself and fail on a clean tree.
+    fn builder_src() -> &'static str {
+        include_str!("picker.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("the file has a body before its tests")
+    }
+
+    /// Just the transfer dialog's builder.
+    ///
+    /// Bounded deliberately: `cell_w * 8.0` is a legitimate `min_detail_w` in
+    /// the host-manager builder next door, so a file-wide scan for it would
+    /// fail on code N-4c has no quarrel with.
+    fn transfer_builder_src() -> &'static str {
+        let src = builder_src();
+        let start = src
+            .find("fn build_file_transfer_verts")
+            .expect("the transfer builder exists");
+        let rest = &src[start..];
+        let end = rest
+            .find("fn build_macro_picker_verts")
+            .expect("the macro picker follows it");
+        &rest[..end]
+    }
+
+    #[test]
+    fn the_transfer_dialog_holds_no_untranslated_string() {
+        let src = builder_src();
+        for literal in [
+            "\"SFTP Upload",
+            "\"SFTP Download",
+            "\"Host:\"",
+            "\"Local:\"",
+            "\"Remote:\"",
+            "Tab=next",
+        ] {
+            assert!(
+                !src.contains(literal),
+                "picker.rs draws the literal {literal}; SFTP strings go \
+                 through fl! and all eight locales"
+            );
+        }
+    }
+
+    /// The field column is measured, not declared. `cell_w * 8.0` fits
+    /// `Remote:` (7 cells) and overflows on `Entfernter Pfad:` or
+    /// `リモート:`; the panel derives its width from the widest label now.
+    #[test]
+    fn the_transfer_dialog_does_not_place_its_fields_at_a_fixed_column() {
+        let src = transfer_builder_src();
+        assert!(
+            !src.contains("cell_w * 8.0"),
+            "the transfer dialog pins its field column to a cell count again"
+        );
+        assert!(
+            !src.contains("panel_cols: f32 = 56.0"),
+            "the transfer dialog declares a panel width again; it is derived \
+             from the measured label column and clamped to the window"
         );
     }
 }
