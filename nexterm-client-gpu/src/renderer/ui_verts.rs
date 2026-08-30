@@ -8,7 +8,7 @@ use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::state::ClientState;
 use crate::vertex_util::{
     add_icon_verts, add_px_rect, add_px_rounded_rect_sdf, add_run_verts, add_string_verts,
-    icon_size_for_slot,
+    icon_size_for_slot, measure_run, truncate_run_to_width,
 };
 
 use super::WgpuState;
@@ -1378,7 +1378,16 @@ impl WgpuState {
                 bg_verts,
                 bg_idx,
             );
-            let baseline_y = rect.y + (rect.h - cell_h) * 0.5;
+            // UI/UX v3 N-7a: the bar's text is chrome, so it takes its size
+            // from the ramp and its line box from `chrome_metrics` rather than
+            // from `cell_h`. The message is body; the key hint is caption,
+            // which is what the ramp reserves for exactly that.
+            let ramp = nexterm_config::MetricTokens::default().type_ramp;
+            let (label_style, hint_style) = (ramp.body, ramp.caption);
+            let (_, label_line_h, _) = font.chrome_metrics(&label_style);
+            let (_, hint_line_h, _) = font.chrome_metrics(&hint_style);
+            let label_y = rect.y + (rect.h - label_line_h) * 0.5;
+            let hint_y = rect.y + (rect.h - hint_line_h) * 0.5;
 
             // The hint is drawn only for a bar `Esc` can actually dismiss, so
             // the offline bar no longer offers a key that does nothing.
@@ -1403,29 +1412,30 @@ impl WgpuState {
             // property of the text, not of the kind. The count is part of the
             // budget rather than appended after it, so a long message cannot
             // push it off the edge.
-            let max_chars = ((sw / cell_w) as usize)
-                .saturating_sub(hint.chars().count() + more.chars().count() + 4)
-                .max(8);
-            let label: String = bar
-                .kind
-                .label(now)
-                .chars()
-                .take(max_chars)
-                .chain(more.chars())
-                .collect();
-            add_string_verts(
+            //
+            // N-7a: the budget and the cut are now in the same unit. It used
+            // to divide a pixel width by `cell_w` to get a column budget and
+            // then spend it in *characters*, so every translated message —
+            // `label` is `fl!`-backed for all three kinds — bought twice the
+            // room it was allotted in Japanese and slid under the hint.
+            let text_x = cell_w * 1.2;
+            let hint_w = measure_run(hint, &hint_style, font);
+            let more_w = measure_run(&more, &label_style, font);
+            let budget = (sw - text_x - hint_w - more_w - cell_w).max(0.0);
+            let mut label = truncate_run_to_width(&bar.kind.label(now), &label_style, budget, font);
+            label.push_str(&more);
+            add_run_verts(
                 &label,
-                cell_w * 1.2,
-                baseline_y,
+                &label_style,
+                text_x,
+                label_y,
                 nexterm_config::contrast_correct(
                     tokens.text_on(SurfaceLevel::S2).primary,
                     banner_bg,
                     nexterm_config::MIN_TEXT_CONTRAST,
                 ),
-                false,
                 sw,
                 sh,
-                cell_w,
                 font,
                 atlas,
                 &self.queue,
@@ -1434,20 +1444,23 @@ impl WgpuState {
             );
 
             if !hint.is_empty() {
-                let hint_x = sw - hint.len() as f32 * cell_w - cell_w;
-                add_string_verts(
+                // Right-aligned off the measured width, not off `hint.len()` —
+                // that was a *byte* count, correct only because the string is
+                // ASCII. `[Esc]` is untranslated today; the measurement holds
+                // if that stops being true.
+                let hint_x = sw - hint_w - cell_w;
+                add_run_verts(
                     hint,
+                    &hint_style,
                     hint_x,
-                    baseline_y,
+                    hint_y,
                     nexterm_config::contrast_correct(
                         tokens.text_on(SurfaceLevel::S2).muted,
                         banner_bg,
                         nexterm_config::MIN_TEXT_CONTRAST,
                     ),
-                    false,
                     sw,
                     sh,
-                    cell_w,
                     font,
                     atlas,
                     &self.queue,
@@ -1711,5 +1724,59 @@ mod progress_indicator_tests {
             let (color, _) = progress_indicator_style(Some((state, 50)), &t).expect("indicator");
             assert_eq!(color[..3], expected[..3], "hue for state {state}");
         }
+    }
+}
+
+#[cfg(test)]
+mod cell_path_gate_tests {
+    /// One `pub(super) fn` builder's source, from its signature to the next
+    /// builder's.
+    ///
+    /// The gates below are per *builder* rather than per file, because
+    /// `ui_verts.rs` is the one chrome module that still draws on the cell
+    /// path on purpose — see [`super::Renderer::build_quick_select_verts`],
+    /// whose labels sit on real terminal cells at `m.col_start * cell_w` and
+    /// must keep advancing by `cell_w`. A file-wide `!contains` would either
+    /// fail on that or have to exempt it by name, and an exemption list is the
+    /// thing that quietly grows.
+    fn builder_body(name: &str) -> &'static str {
+        include_str!("ui_verts.rs")
+            .split("    pub(super) fn ")
+            .find(|seg| seg.starts_with(name))
+            .unwrap_or_else(|| panic!("{name} is no longer a `pub(super) fn` in ui_verts.rs"))
+    }
+
+    /// UI/UX v3 N-7a: the InfoBar's budget and its cut are in the same unit.
+    ///
+    /// It used to divide a pixel width by `cell_w` for a column budget and
+    /// then spend that budget in `chars().take(..)`. All three bar kinds get
+    /// their message from `fl!`, so every non-Latin locale bought twice the
+    /// room it was allotted and ran under the `[Esc]` hint. The hint's own `x`
+    /// came off `hint.len()` — a byte count that happened to be right only
+    /// because the string is ASCII.
+    #[test]
+    fn the_info_bar_measures_its_text_instead_of_counting_cells() {
+        let body = builder_body("build_info_bar_verts");
+        // Prove the extraction found a real body before trusting any
+        // `!contains` below it — a segment cut short would pass all three.
+        assert!(
+            body.contains("truncate_run_to_width") && body.contains("add_run_verts"),
+            "builder_body did not return the InfoBar builder; the gates below \
+             would pass vacuously"
+        );
+        assert!(
+            !body.contains("add_string_verts"),
+            "the InfoBar draws text on the cell path again; its text is chrome \
+             and belongs on the ramp (N-7a)"
+        );
+        assert!(
+            !body.contains("sw / cell_w"),
+            "the InfoBar budgets its text in columns again; the budget and the \
+             truncation must share a unit, which is pixels (N-7a)"
+        );
+        assert!(
+            !body.contains(".len() as f32 * cell_w"),
+            "the InfoBar places text by a byte count again; use measure_run (N-7a)"
+        );
     }
 }
