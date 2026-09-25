@@ -48,6 +48,51 @@ pub(super) enum SplitNode {
     },
 }
 
+/// Minimum extent (columns or rows) either child of a split may end up with when there
+/// is genuinely room for both. Below this, `split_extent` gives up on splitting at all
+/// and hands the whole available extent to the first child (see its doc comment for the
+/// full policy).
+const MIN_CHILD_EXTENT: u16 = 1;
+
+/// Split `total` (a column or row count) into `(first, separator, second)` for a
+/// left/top vs. right/bottom pair of children, honoring `ratio` for the first child.
+///
+/// Shared by the live BSP tree (`SplitNode::compute`) and the snapshot-restore path
+/// (`tiling::compute_pane_sizes`) — architecture-comparison audit follow-up (2026-09,
+/// item #8): the two call sites had independently drifted. `tiling::compute_pane_sizes`
+/// still carried the pre-round-4-fix clamp (`.max(1).min(total.saturating_sub(2))`) that
+/// could make `first + separator + second` exceed `total` for a tiny parent — the same
+/// class of bug already fixed here in `compute()` (round 4, #19) but never ported over.
+///
+/// Guarantees, for any `total` (including 0):
+/// - `first + separator + second == total` exactly (never overflows the parent).
+/// - `separator` is 1 when `total > 0`, else 0 (no room for a divider in an empty extent).
+/// - When there is room for both children plus the separator (`total >=
+///   2 * MIN_CHILD_EXTENT + 1`), both `first` and `second` are at least
+///   `MIN_CHILD_EXTENT`.
+///
+/// Explicit policy for the too-small case (architecture-comparison audit follow-up,
+/// item #7 — "no equivalent of tmux's outright refusal or sway's clamp-and-disable
+/// fix"): rather than reject the split outright (which would require plumbing the
+/// current pane size into every split call site) or letting rounding produce a
+/// zero-width *second* child asymmetrically, `total < 2 * MIN_CHILD_EXTENT + 1` hands
+/// the entire available extent to `first` and leaves `second` at 0. The rect is still
+/// exact and non-overflowing (per the invariant above); a 0-sized pane cannot be typed
+/// into, but it also cannot corrupt layout math for its siblings, and resizing the
+/// window back up immediately gives it a share of the newly available space again.
+pub(super) fn split_extent(total: u16, ratio: f32) -> (u16, u16, u16) {
+    let separator = if total == 0 { 0 } else { 1 };
+    let available = total - separator;
+    let first = if available < 2 * MIN_CHILD_EXTENT {
+        available
+    } else {
+        ((total as f32 * ratio).round() as u16)
+            .clamp(MIN_CHILD_EXTENT, available - MIN_CHILD_EXTENT)
+    };
+    let second = available - first;
+    (first, separator, second)
+}
+
 impl SplitNode {
     /// Split the specified pane and insert a new pane on the right/bottom side.
     pub(super) fn insert_after(&mut self, target_id: u32, new_id: u32, dir: SplitDir) -> bool {
@@ -96,26 +141,11 @@ impl SplitNode {
                 right,
             } => match dir {
                 SplitDir::Vertical => {
-                    // Left/right split (one column reserved for the separator).
-                    //
-                    // Audit round 4 (#19): the old `.max(1).min(cols.saturating_sub(2))`
-                    // clamp unconditionally gave each child a floor of 1 column, so for a
-                    // very small parent (cols <= 2) `left_cols + right_cols + 1` (the
-                    // separator) exceeded `cols` — not an arithmetic panic (`saturating_sub`
-                    // already prevented that), but the computed rects geometrically
-                    // overflowed the parent. `separator` only claims a column when one is
-                    // actually available (cols == 0 has room for neither a child nor a
-                    // separator); `available = cols - separator` is then split exactly
-                    // between the two children, so `left_cols + right_cols + separator`
-                    // always equals `cols` precisely, for any `cols` down to 0.
-                    let separator = if cols == 0 { 0 } else { 1 };
-                    let available = cols - separator;
-                    let left_cols = if available <= 1 {
-                        available
-                    } else {
-                        ((cols as f32 * ratio) as u16).clamp(1, available - 1)
-                    };
-                    let right_cols = available - left_cols;
+                    // Left/right split. `split_extent` (audit round 4 #19, plus its
+                    // rounding/dedup follow-up in items #5/#7/#8) guarantees
+                    // `left_cols + separator + right_cols == cols` exactly, for any
+                    // `cols` down to 0.
+                    let (left_cols, separator, right_cols) = split_extent(cols, *ratio);
                     left.compute(col_off, row_off, left_cols, rows, out);
                     right.compute(
                         col_off + left_cols + separator,
@@ -126,16 +156,8 @@ impl SplitNode {
                     );
                 }
                 SplitDir::Horizontal => {
-                    // Top/bottom split (one row reserved for the separator).
-                    // Same fix as the vertical case above (audit round 4, #19).
-                    let separator = if rows == 0 { 0 } else { 1 };
-                    let available = rows - separator;
-                    let top_rows = if available <= 1 {
-                        available
-                    } else {
-                        ((rows as f32 * ratio) as u16).clamp(1, available - 1)
-                    };
-                    let bot_rows = available - top_rows;
+                    // Top/bottom split — same helper as the vertical case above.
+                    let (top_rows, separator, bot_rows) = split_extent(rows, *ratio);
                     left.compute(col_off, row_off, cols, top_rows, out);
                     right.compute(col_off, row_off + top_rows + separator, cols, bot_rows, out);
                 }
