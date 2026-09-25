@@ -10,7 +10,7 @@ Guidance for working inside the PTY server crate. The repo-wide rules — langua
 - `ipc/` — IPC module:
   - `platform.rs` — Unix/Windows listeners; UID validation (SO_PEERCRED / getpeereid).
   - `dispatch.rs` — Dispatch logic for 40+ IPC commands.
-  - `key.rs` — Key code → VT escape sequence conversion (with 8 unit tests).
+  - `key.rs` — Key code → VT escape sequence conversion (with 18 unit tests).
   - `plugin_dispatch.rs` — Handlers for plugin IPC commands (`ListPlugins`/`LoadPlugin`/`UnloadPlugin`/`ReloadPlugin`).
-- `persist.rs` / `snapshot.rs` — Session persistence (JSON at `~/.local/state/nexterm/snapshot.json`). Schema v3 (`SNAPSHOT_VERSION = 3`, minimum supported v1; `workspace_name` added in Sprint 5-7 / Phase 2-1). Older v1/v2 snapshots are auto-migrated in `load_snapshot()`.
+- `persist.rs` / `snapshot.rs` — Session persistence (JSON at `~/.local/state/nexterm/snapshot.json`). Schema v5 (`SNAPSHOT_VERSION = 5`, minimum supported v1 via `SNAPSHOT_VERSION_MIN`). History: v2 added `session_title`; v3 (Sprint 5-7 / Phase 2-1) added `workspace_name`; v4 (Sprint 5-8 / Phase 4-5) added `client_os_windows` (client-side OS window placement); v5 (roadmap Phase 3) added `known_workspaces`. Older snapshots are auto-migrated in `load_snapshot()`.
 - `web/` — Web terminal feature (axum WebSocket + xterm.js), split into routing (`mod.rs`), token auth, OAuth, TOTP, TLS and access logging.

@@ -69,7 +69,7 @@ Auxiliary binaries:
 - `nexterm-server` — standalone server process (e.g. systemd).
 - `nexterm-ctl` — CLI tool (list/new/attach/kill/record).
 
-IPC uses a Unix socket (`$XDG_RUNTIME_DIR/nexterm.sock`) or a Windows named pipe (`\\.\pipe\nexterm-<USERNAME>`). Messages are postcard-serialized with a 4-byte little-endian length prefix (migrated from bincode 1.x in Sprint 5-1 / ADR-0006; see `nexterm-proto/src/codec.rs`). When `nexterm` runs as a single binary, the GUI and the embedded server task communicate through the same IPC channel, so `nexterm-ctl` and other clients connect identically.
+IPC uses a Unix socket (`$XDG_RUNTIME_DIR/nexterm.sock`) or a Windows named pipe (`\\.\pipe\nexterm-<USERNAME>`). Messages are postcard-serialized with a 4-byte little-endian length prefix (migrated from bincode 1.x in Sprint 5-1 / ADR-0006). The message-size cap and length-prefix validation (`MAX_MSG_LEN`, `validate_msg_len`) live in `nexterm-proto/src/lib.rs`; the actual framing I/O (writing/reading the length prefix around the postcard payload) is in `nexterm-client-core/src/lib.rs`. When `nexterm` runs as a single binary, the GUI and the embedded server task communicate through the same IPC channel, so `nexterm-ctl` and other clients connect identically.
 
 The legacy `nexterm-launcher` crate was removed in v1.4.0. Single-binary mode (the `nexterm` bin in `nexterm-client-gpu` spawns the server task internally) shipped in v0.9.3 and the launcher had been redundant ever since; leaving it around caused bin-name collisions. See the v1.4.0 release notes for details.
 
@@ -82,8 +82,8 @@ The legacy `nexterm-launcher` crate was removed in v1.4.0. Single-binary mode (t
 - `nexterm-config` — TOML + Lua config. Load order: defaults → `config.toml` → `config.lua`. Hot reload via the `notify` crate.
 - `nexterm-client-gpu` — wgpu renderer (winit 0.30 `ApplicationHandler`). Three-pass rendering: background quads → text → images.
 - `nexterm-client-tui` — TUI fallback using ratatui + crossterm.
-- `nexterm-ssh` — SSH client built on russh 0.60 (upgraded for GHSA-f5v4-2wr6-hqmg pre-auth DoS; uses the `ring` backend to avoid the NASM dependency).
-- `nexterm-plugin` — WASM plugin runtime on wasmi. `PLUGIN_API_VERSION = 1` identifies the stable ABI. `PluginManager::unload(path)` / `reload(path)` provide runtime unload/reload. Plugins may export `nexterm_meta` to publish name and version. The server holds it as `Arc<Mutex<Option<PluginManager>>>` on `SessionManager.plugin_manager`, and IPC commands (`ListPlugins`/`LoadPlugin`/`UnloadPlugin`/`ReloadPlugin`) operate on it.
+- `nexterm-ssh` — SSH client built on russh 0.62 (upgraded from 0.61.2 in a later Dependabot pass, itself originally upgraded for GHSA-f5v4-2wr6-hqmg pre-auth DoS; uses the `ring` backend to avoid the NASM dependency).
+- `nexterm-plugin` — WASM plugin runtime on wasmi. `PLUGIN_API_VERSION = 3` identifies the stable ABI. `PluginManager::unload(path)` / `reload(path)` provide runtime unload/reload. Plugins may export `nexterm_meta` to publish name and version. The server holds it as `Arc<Mutex<Option<PluginManager>>>` on `SessionManager.plugin_manager`, and IPC commands (`ListPlugins`/`LoadPlugin`/`UnloadPlugin`/`ReloadPlugin`) operate on it.
 - `nexterm-i18n` — 8-language support (en/ja/zh-CN/ko/de/fr/es/it). User-facing strings must use the `fl!` macro.
 
 ### Per-crate guidance
@@ -113,11 +113,11 @@ Use the `toml_edit` crate so existing comments and structure are preserved when 
 
 ### Language Selection
 
-`LANGUAGE_OPTIONS: &[(&str, &str)]` (display name, language code) in `settings_panel.rs` manages the picker. Changing it from the settings panel writes the `language` key back to `config.toml`, and `nexterm-i18n` applies it on next launch. When adding a new display string, add it to **all 8 JSON locale files** under `nexterm-i18n/locales/`.
+`LANGUAGE_OPTIONS: &[(&str, &str)]` (display name, language code) in `settings/startup.rs` (re-exported via `settings/mod.rs`; `settings_panel.rs` is now a compatibility shim, not where this lives) manages the picker. Changing it from the settings panel writes the `language` key back to `config.toml`, and `nexterm-i18n` applies it on next launch. When adding a new display string, add it to **all 8 JSON locale files** under `nexterm-i18n/locales/`.
 
 ### Context Menu Width
 
-`build_context_menu_verts` in `renderer.rs` computes the menu width dynamically from the text length. Do not hard-code a fixed width (translations in some languages overflow).
+`build_context_menu_verts` in `renderer/overlay/dialog.rs` computes the menu width dynamically from the text length. Do not hard-code a fixed width (translations in some languages overflow).
 
 ### Cursor Style, Window Padding, Present Mode
 
