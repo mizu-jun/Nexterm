@@ -572,6 +572,22 @@ impl EventHandler {
             // OS last reported.
             self.app.state.settings_panel.animations_os_reduced =
                 self.app.config.animations.os_reduced_motion();
+            // High severity fix: an external edit reloading `config.toml`
+            // would otherwise leave the settings panel's in-memory mirror
+            // stale — whether the panel is open right now or not, since
+            // `SettingsPanel::open()` does not resync either. The common
+            // case is actually the panel being *closed* at reload time and
+            // opened later via `Ctrl+,`; gating this on `is_open` left that
+            // case unfixed (only a reload landing in the brief window while
+            // the panel already happened to be open was covered). Always
+            // resyncing here — cheap, and `resync_from_config` preserves all
+            // UI/chrome state — keeps the mirror current no matter when the
+            // panel is next opened, so a subsequent save can't clobber the
+            // external change with stale values.
+            self.app
+                .state
+                .settings_panel
+                .resync_from_config(&self.app.config);
             if font_changed {
                 self.app.font = crate::font::FontManager::new(
                     &self.app.config.font.family,

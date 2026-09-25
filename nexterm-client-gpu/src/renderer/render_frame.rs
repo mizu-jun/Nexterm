@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use unicode_width::UnicodeWidthChar;
 use wgpu::util::DeviceExt;
 
 use crate::font::FontManager;
@@ -1334,7 +1335,15 @@ impl WgpuState {
             let py = (pane.cursor_row + 1) as f32 * cell_h;
             // Preedit backdrop: a raised surface floating over the grid
             // (UI/UX v3 G11: scheme-derived instead of a dark-only gray).
-            let text_width = preedit.chars().count() as f32 * cell_w;
+            // Measure by display width (unicode_width), not char count: CJK
+            // composition characters are 2 cells wide, so a raw character
+            // count under-measures the backdrop/underline for wide text
+            // (mirrors the per-char width used by `add_string_verts`).
+            let text_width = preedit
+                .chars()
+                .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(1) as f32)
+                .sum::<f32>()
+                * cell_w;
             add_px_rect(
                 px,
                 py,

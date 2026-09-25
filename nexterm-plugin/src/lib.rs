@@ -86,7 +86,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use tracing::{error, info, warn};
-use wasmi::{Config, Engine, Linker, Module, Store};
+use wasmi::{Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
 
 /// Fuel (an approximate instruction budget) supplied per plugin invocation.
 ///
@@ -261,6 +261,11 @@ struct HostState {
     /// API version of the plugin (needed to bypass `allowed_panes` for v1 and
     /// to gate the v3 read imports).
     api_version: u32,
+    /// Resource limits enforced by wasmi on every `memory.grow` /
+    /// `table.grow` (CRITICAL #10 mitigation, hardened). Installed via
+    /// [`Store::limiter`] so the cap is checked by the VM itself on every
+    /// growth request, not just once at load time.
+    limits: StoreLimits,
 }
 
 /// The default read callback installed until the server provides a real one:
@@ -389,8 +394,20 @@ impl PluginManager {
                 allowed_panes: HashSet::new(),
                 // Provisional value; finalized after reading `nexterm_api_version`.
                 api_version: MIN_SUPPORTED_API_VERSION,
+                // CRITICAL #10 mitigation (hardened): cap linear-memory growth in
+                // bytes. wasmi consults this via `memory_growing` both when the
+                // module's initial memory is created during instantiation AND on
+                // every subsequent `memory.grow` instruction, so a plugin cannot
+                // grow past the cap after loading by only checking size once.
+                limits: StoreLimitsBuilder::new()
+                    .memory_size(MAX_MEMORY_PAGES as usize * 64 * 1024)
+                    .build(),
             },
         );
+        // Install the limiter before instantiation: module-declared initial
+        // memory is itself allocated through `memory_growing`, so the cap must
+        // already be wired in when `linker.instantiate` runs below.
+        store.limiter(|state| &mut state.limits);
 
         let mut linker = Linker::<HostState>::new(&self.engine);
 
@@ -508,7 +525,10 @@ impl PluginManager {
             .with_context(|| "failed to start the plugin")?;
 
         // Memory-limit check (CRITICAL #10): reject if the initial memory size
-        // exceeds the cap.
+        // exceeds the cap. This is now a redundant backstop -- the
+        // `StoreLimits` installed above already reject an oversized initial
+        // memory (and every later `memory.grow`) at the wasmi VM level -- kept
+        // here so a load-time failure surfaces with this specific message.
         if let Some(mem) = instance.get_memory(&store, "memory")
             && mem.size(&store) > MAX_MEMORY_PAGES
         {

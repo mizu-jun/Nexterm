@@ -38,10 +38,17 @@ pub fn detect_urls_in_row(row_idx: u16, cells: &[nexterm_proto::Cell]) -> Vec<De
                 .map(|i| abs_start + i)
                 .unwrap_or(text.len());
             if end > abs_start {
+                // `abs_start`/`end` are byte offsets into `text`, not grid columns.
+                // `text` is built one `char` per cell, so counting chars up to each
+                // byte offset gives the actual column — using the byte offsets
+                // directly (as before) desyncs hit-testing from any multi-byte char
+                // earlier in the row (CJK output, emoji, accented Latin, …).
+                let col_start = text[..abs_start].chars().count() as u16;
+                let col_end = text[..end].chars().count() as u16;
                 urls.push(DetectedUrl {
                     row: row_idx,
-                    col_start: abs_start as u16,
-                    col_end: end as u16,
+                    col_start,
+                    col_end,
                     url: text[abs_start..end].to_string(),
                 });
             }

@@ -562,6 +562,12 @@ impl SshSession {
             let handle = self.handle.lock().await;
             handle.channel_open_session().await?
         };
+        // Request the "sftp" subsystem; without this the remote side never
+        // switches into SFTP mode and the client's INIT packet goes nowhere.
+        channel
+            .request_subsystem(true, "sftp")
+            .await
+            .context("failed to request the sftp subsystem")?;
 
         let sftp = SftpSession::new(channel.into_stream())
             .await
@@ -623,6 +629,12 @@ impl SshSession {
             let handle = self.handle.lock().await;
             handle.channel_open_session().await?
         };
+        // Request the "sftp" subsystem; without this the remote side never
+        // switches into SFTP mode and the client's INIT packet goes nowhere.
+        channel
+            .request_subsystem(true, "sftp")
+            .await
+            .context("failed to request the sftp subsystem")?;
 
         let sftp = SftpSession::new(channel.into_stream())
             .await

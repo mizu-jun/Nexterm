@@ -278,7 +278,8 @@ impl Session {
                 .ok_or_else(|| anyhow::anyhow!("cannot break out the last remaining pane"))?
         };
         let new_window_id = new_window_id();
-        let new_window = Window::new_with_pane(new_window_id, "window-broken".to_string(), pane)?;
+        let new_window =
+            Window::new_with_pane(new_window_id, "window-broken".to_string(), pane, cols, rows)?;
         self.windows.insert(new_window_id, new_window);
         self.focused_window_id = new_window_id;
         Ok(new_window_id)
@@ -375,7 +376,8 @@ impl Session {
         let new_window_id = if target_window_id == 0 {
             // Create a new window (same pattern as break_pane).
             let new_id = new_window_id();
-            let new_window = Window::new_with_pane(new_id, "window-torn".to_string(), pane)?;
+            let new_window =
+                Window::new_with_pane(new_id, "window-torn".to_string(), pane, cols, rows)?;
             self.windows.insert(new_id, new_window);
             new_id
         } else {

@@ -377,7 +377,11 @@ impl GlyphAtlas {
             self.cursor_x = 0;
             self.cursor_y = 0;
             self.row_height = 0;
+            // Both caches hand out UV rects into this same atlas texture, so
+            // resetting the cursor invalidates ligature entries too — clear
+            // both or a stale ligature UV will point into overwritten data.
             self.cache.clear();
+            self.ligature_cache.clear();
             self.cleared_this_frame = true;
             if self.size < self.size_max {
                 // Call `grow()` next frame to expand the texture.

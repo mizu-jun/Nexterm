@@ -10,6 +10,23 @@ use std::collections::HashMap;
 /// out of bounds to corrupt the heap.
 const MAX_IMAGE_BYTES: usize = 256 * 1024 * 1024;
 
+/// Maximum width/height (in pixels) the Sixel decoder will track while
+/// parsing, matching the `MAX_BACKGROUND_DIMENSION` convention used for
+/// background images in `nexterm-client-gpu`.
+///
+/// Sixel has no declared-size header field — width/height are derived
+/// incrementally from the column cursor (`x`) and band counter as the
+/// sequence is parsed, and the scratch buffer (`buf: Vec<Vec<Option<...>>>`)
+/// grows to match them *during* parsing, not just at the final RGBA
+/// allocation. A `!<count><char>` repeat can advance the column cursor by up
+/// to `u16::MAX` per handful of input bytes, so relying on the
+/// `checked_image_bytes` guard at the end (which only bounds the final
+/// `vec![0u8; total]` allocation) is not enough — the scratch buffer itself
+/// can already be pushed to gigabytes of `None` entries before that point is
+/// reached. This cap is enforced during parsing, before any such growth
+/// happens.
+const MAX_SIXEL_DIMENSION: usize = 4096;
+
 /// Computes `width × height × channels` safely as a `usize`.
 ///
 /// Detects overflow by routing through `u64` and returns `None` when the result
@@ -104,6 +121,11 @@ pub fn decode_sixel(data: &[u8]) -> Option<DecodedImage> {
                 // Graphics New Line — move to the next band (6 rows).
                 x = 0;
                 band += 1;
+                // Reject before `ensure_bands` grows the scratch buffer any
+                // further: `(band + 1) * 6` must stay within the pixel cap.
+                if (band + 1) * 6 > MAX_SIXEL_DIMENSION {
+                    return None;
+                }
                 max_band = max_band.max(band);
                 ensure_bands(&mut buf, band);
                 i += 1;
@@ -116,6 +138,13 @@ pub fn decode_sixel(data: &[u8]) -> Option<DecodedImage> {
                     let ch = data[i];
                     i += 1;
                     if matches!(ch, b'?'..=b'~') {
+                        // Reject before painting: a single repeat can request
+                        // up to `u16::MAX` columns from a handful of input
+                        // bytes, and `paint_col` grows `buf[row]` to `x`
+                        // entries on every call.
+                        if x.saturating_add(count) > MAX_SIXEL_DIMENSION {
+                            return None;
+                        }
                         let color = *palette.get(&current_color).unwrap_or(&[200, 200, 200]);
                         let bits = ch - b'?';
                         ensure_bands(&mut buf, band);
@@ -129,6 +158,9 @@ pub fn decode_sixel(data: &[u8]) -> Option<DecodedImage> {
             }
             b'?'..=b'~' => {
                 // Sixel pixel data (one character = 6 vertical bits).
+                if x >= MAX_SIXEL_DIMENSION {
+                    return None;
+                }
                 let color = *palette.get(&current_color).unwrap_or(&[200, 200, 200]);
                 let bits = data[i] - b'?';
                 ensure_bands(&mut buf, band);
@@ -442,6 +474,43 @@ mod tests {
     fn empty_sixel_returns_None() {
         let result = decode_sixel(b"");
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn rejects_a_sixel_repeat_declaring_an_oversized_width() {
+        // A single `!<count><char>` repeat can request up to `u16::MAX`
+        // columns from a handful of input bytes. Chain enough of these to
+        // request a width far beyond `MAX_SIXEL_DIMENSION`; the decoder must
+        // reject it during parsing (before the scratch buffer grows to
+        // match), not attempt to actually allocate gigabytes.
+        let mut data = Vec::new();
+        data.extend_from_slice(b"#0;2;0;0;0");
+        for _ in 0..20 {
+            data.extend_from_slice(b"!65535~");
+        }
+        let result = decode_sixel(&data);
+        assert!(
+            result.is_none(),
+            "a sequence requesting a width of 20 * 65535 columns must be rejected"
+        );
+    }
+
+    #[test]
+    fn rejects_a_sixel_sequence_declaring_an_oversized_height() {
+        // Each `-` (Graphics New Line) advances one band (6 rows) using a
+        // single input byte. Chain enough of them to exceed
+        // `MAX_SIXEL_DIMENSION` rows; the decoder must reject it during
+        // parsing rather than growing the scratch buffer unbounded.
+        let mut data = Vec::new();
+        data.extend_from_slice(b"#0;2;0;0;0~");
+        for _ in 0..2000 {
+            data.extend_from_slice(b"-~");
+        }
+        let result = decode_sixel(&data);
+        assert!(
+            result.is_none(),
+            "a sequence requesting 2000+ bands must be rejected"
+        );
     }
 
     #[test]

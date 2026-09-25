@@ -177,15 +177,20 @@ impl Window {
         })
     }
 
-    /// Construct a window from an existing pane (used by break-pane).
-    pub fn new_with_pane(id: u32, name: String, pane: Pane) -> Result<Self> {
+    /// Construct a window from an existing pane (used by break-pane and tab-tearing into a new
+    /// OS window).
+    ///
+    /// `cols`/`rows` are the new window's actual size. The incoming `pane` was still sized for
+    /// its *previous* window, so after assembling `Self` we resize it to match — otherwise the
+    /// PTY stays stuck at the old window's dimensions.
+    pub fn new_with_pane(id: u32, name: String, pane: Pane, cols: u16, rows: u16) -> Result<Self> {
         let focused_pane_id = pane.id;
         let layout = SplitNode::Pane {
             pane_id: focused_pane_id,
         };
         let mut panes = HashMap::new();
         panes.insert(pane.id, pane);
-        Ok(Self {
+        let mut window = Self {
             id,
             name,
             panes,
@@ -196,7 +201,9 @@ impl Window {
             layout_mode: LayoutMode::Bsp,
             floating_panes: HashMap::new(),
             pane_order: vec![focused_pane_id],
-        })
+        };
+        window.resize_all_panes(cols, rows);
+        Ok(window)
     }
 
     /// Return the focused pane ID.
@@ -234,7 +241,18 @@ impl Window {
     ) -> Result<u32> {
         // 1. Reserve a new ID up front and insert it into the tree.
         let new_id = crate::pane::new_pane_id();
-        self.layout.insert_after(self.focused_pane_id, new_id, dir);
+        if !self.layout.insert_after(self.focused_pane_id, new_id, dir) {
+            // The focused pane was not found in the BSP tree (state
+            // inconsistency). Bail out now, before spawning anything, so we
+            // never end up with a pane that exists in `self.panes` /
+            // `pane_order` but has no rect in the tree (a "ghost pane" that
+            // is never drawn).
+            return Err(anyhow::anyhow!(
+                "failed to insert pane {} into the BSP tree next to focused pane {}",
+                new_id,
+                self.focused_pane_id
+            ));
+        }
 
         // 2. Recompute the layout and look up the new pane's size.
         let layouts = self.compute_layouts(total_cols, total_rows);
@@ -973,6 +991,15 @@ impl Window {
         self.focused_pane_id = new_id;
         // Tab order: append at the end (Sprint 5-7 / Phase 2-3).
         self.pane_order.push(new_id);
+
+        // `SerialPane::spawn` above opened the port at the full window size,
+        // which is only correct when it ends up as the sole pane. Recompute
+        // the layout now that the tree has the new split and resize every
+        // pane (including the new one) to its actual rect — the same
+        // reserve -> insert -> recompute -> spawn -> resize sequence used by
+        // `add_pane_with_options`.
+        self.resize_all_panes(total_cols, total_rows);
+
         Ok(new_id)
     }
 

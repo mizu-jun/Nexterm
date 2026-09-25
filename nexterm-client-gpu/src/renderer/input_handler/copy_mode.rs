@@ -367,15 +367,19 @@ impl EventHandler {
         for dr in 0..rows_total {
             let r = ((start_row as usize) + dr) % rows_total;
             let cells = pane.grid.rows.get(r)?;
-            let row_str: String = cells.iter().map(|c| c.ch).collect();
             let col_start = if dr == 0 { start_col as usize } else { 0 };
-            let search_in = if col_start < row_str.len() {
-                &row_str[col_start..]
-            } else {
+            if col_start >= cells.len() {
                 continue;
-            };
-            if let Some(offset) = search_in.find(query) {
-                let found_col = (col_start + offset).min(max_col as usize) as u16;
+            }
+            // Slice the cell array (one char per cell) before building the search
+            // string, so `search_in` always starts at byte 0 — a column index can
+            // never land mid-character this way. Building the whole-row string first
+            // and byte-slicing it at `col_start` (a column count, not a byte offset)
+            // panics on any multi-byte char earlier in the row.
+            let search_in: String = cells[col_start..].iter().map(|c| c.ch).collect();
+            if let Some(byte_offset) = search_in.find(query) {
+                let char_offset = search_in[..byte_offset].chars().count();
+                let found_col = (col_start + char_offset).min(max_col as usize) as u16;
                 return Some((found_col, r as u16));
             }
         }
@@ -397,15 +401,19 @@ impl EventHandler {
         for dr in 0..rows_total {
             let r = (start_row as usize + rows_total - dr) % rows_total;
             let cells = pane.grid.rows.get(r)?;
-            let row_str: String = cells.iter().map(|c| c.ch).collect();
-            let search_in = if dr == 0 {
-                let end = (start_col as usize + query.len()).min(row_str.len());
-                &row_str[..end]
+            // Bound the cell slice by a column count (`end_col`), never a byte offset,
+            // then build the search string from that slice — same fix as
+            // `search_forward`: byte-slicing a whole-row string at a column index
+            // panics on any multi-byte char earlier in the row.
+            let end_col = if dr == 0 {
+                (start_col as usize + query.chars().count()).min(cells.len())
             } else {
-                &row_str[..]
+                cells.len()
             };
-            if let Some(offset) = search_in.rfind(query) {
-                return Some((offset.min(max_col as usize) as u16, r as u16));
+            let search_in: String = cells[..end_col].iter().map(|c| c.ch).collect();
+            if let Some(byte_offset) = search_in.rfind(query) {
+                let char_offset = search_in[..byte_offset].chars().count();
+                return Some((char_offset.min(max_col as usize) as u16, r as u16));
             }
         }
         None

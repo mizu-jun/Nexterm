@@ -63,8 +63,22 @@ pub(super) fn build_image_verts(
 
 impl WgpuState {
     /// Register the image texture in the cache (creates it only on first use).
+    ///
+    /// Decoded Sixel/Kitty images come straight from the terminal stream, so their
+    /// dimensions are attacker/remote-controlled. `wgpu::Device::create_texture` panics
+    /// (aborting the whole client, all panes) if either dimension exceeds the GPU's
+    /// `max_texture_dimension_2d` limit, so that must be checked before the call.
     pub(super) fn ensure_image_texture(&mut self, id: u32, img: &crate::state::PlacedImage) {
         if self.image_textures.contains_key(&id) {
+            return;
+        }
+        let max_dim = self.device.limits().max_texture_dimension_2d;
+        if img.width > max_dim || img.height > max_dim {
+            tracing::warn!(
+                "dropping oversized Sixel/Kitty image {id}: {}x{} exceeds GPU max_texture_dimension_2d ({max_dim})",
+                img.width,
+                img.height
+            );
             return;
         }
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {

@@ -474,6 +474,60 @@ impl SettingsPanel {
         }
     }
 
+    /// Re-populate this panel's config-derived fields from a freshly
+    /// hot-reloaded `Config`, keeping the panel's own UI/chrome state
+    /// (open/close animation, drag, hover, tooltip, scroll position,
+    /// in-flight text edits, confirmation dialogs, search) untouched.
+    ///
+    /// Without this, an externally edited `config.toml` reloaded while the
+    /// settings panel is open leaves the panel holding stale values; saving
+    /// from the panel afterwards would silently write those stale values
+    /// back over the external change. This reuses [`Self::new`] — the same
+    /// "build panel state from config" path used when the panel is first
+    /// opened — rather than re-deriving each field a second time.
+    pub fn resync_from_config(&mut self, config: &nexterm_config::Config) {
+        let mut fresh = Self::new(config);
+
+        // UI/chrome state has no representation in `Config`; carry it over
+        // so a hot-reload does not interrupt what the user is doing with
+        // the panel itself.
+        fresh.is_open = self.is_open;
+        fresh.motion = self.motion;
+        fresh.drag_slider = self.drag_slider.clone();
+        fresh.category = self.category.clone();
+        fresh.theme_hover_preview = self.theme_hover_preview;
+        fresh.hover_widget = self.hover_widget;
+        fresh.hover_transition = self.hover_transition;
+        fresh.press_pulse = self.press_pulse;
+        fresh.tooltip_motion = self.tooltip_motion;
+        fresh.tooltip_shown = self.tooltip_shown;
+        fresh.tooltip_snapshot = self.tooltip_snapshot;
+        fresh.font_family_editing = self.font_family_editing;
+        fresh.tab_rename_editing = self.tab_rename_editing;
+        fresh.tab_rename_text.clone_from(&self.tab_rename_text);
+        fresh.scroll = self.scroll;
+        fresh.security_field_editing = self.security_field_editing.clone();
+        fresh.ssh_field_editing = self.ssh_field_editing.clone();
+        fresh.ssh_delete_dialog_open = self.ssh_delete_dialog_open;
+        fresh.ssh_delete_dialog_confirm_focused = self.ssh_delete_dialog_confirm_focused;
+        fresh.key_editing = self.key_editing.clone();
+        fresh.key_delete_dialog_open = self.key_delete_dialog_open;
+        fresh.key_delete_dialog_confirm_focused = self.key_delete_dialog_confirm_focused;
+        fresh.drag_offset = self.drag_offset;
+        fresh.drag_anchor = self.drag_anchor;
+        fresh.search_query.clone_from(&self.search_query);
+        fresh.search_focused = self.search_focused;
+        fresh.font_fallbacks_editing = self.font_fallbacks_editing.clone();
+        fresh.leader_key_editing = self.leader_key_editing.clone();
+        fresh.shell_field_editing = self.shell_field_editing.clone();
+        fresh.focused_widget_index = self.focused_widget_index;
+        fresh.selected_profile = self.selected_profile;
+        fresh.selected_host_index = self.selected_host_index;
+        fresh.selected_key_index = self.selected_key_index;
+
+        *self = fresh;
+    }
+
     /// Open the panel and start its entrance animation.
     ///
     /// Fluent calls this a Direct Entrance: arrive quickly, settle gently.
