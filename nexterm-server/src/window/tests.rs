@@ -69,6 +69,68 @@ fn bsp_three_pane_layout() {
 }
 
 #[test]
+fn adjust_ratio_for_changes_split_closest_to_target_not_outer_split() {
+    // Architecture-comparison audit follow-up (2026-09, item #6): a 3-pane, 2-level
+    // layout where pane 3's enclosing split is the *inner* Horizontal split, not the
+    // outer Vertical one. Before the fix, `adjust_ratio_for` always mutated the
+    // outermost split's ratio (its `contains()` check is trivially true at the root),
+    // silently ignoring nesting depth entirely.
+    let mut tree = bsp::SplitNode::Pane { pane_id: 1 };
+    tree.insert_after(1, 2, SplitDir::Vertical); // root: Vertical(pane 1 | pane 2)
+    tree.insert_after(2, 3, SplitDir::Horizontal); // right becomes Horizontal(pane 2 / pane 3)
+
+    let outer_ratio_before = match &tree {
+        bsp::SplitNode::Split { ratio, .. } => *ratio,
+        _ => panic!("expected root Split"),
+    };
+
+    let changed = tree.adjust_ratio_for(3, 0.1);
+    assert!(
+        changed,
+        "adjust_ratio_for should report that a ratio changed"
+    );
+
+    match &tree {
+        bsp::SplitNode::Split { ratio, right, .. } => {
+            assert_eq!(
+                *ratio, outer_ratio_before,
+                "the outer split must stay untouched: pane 3 is not its direct child"
+            );
+            match right.as_ref() {
+                bsp::SplitNode::Split {
+                    ratio: inner_ratio, ..
+                } => {
+                    assert_eq!(
+                        *inner_ratio,
+                        (0.5f32 - 0.1).clamp(0.1, 0.9),
+                        "the inner split, which directly contains pane 3, must absorb the change"
+                    );
+                }
+                _ => panic!("expected inner Split"),
+            }
+        }
+        _ => panic!("expected root Split"),
+    }
+}
+
+#[test]
+fn adjust_ratio_for_unknown_pane_id_is_a_no_op() {
+    let mut tree = bsp::SplitNode::Pane { pane_id: 1 };
+    tree.insert_after(1, 2, SplitDir::Vertical);
+    let ratio_before = match &tree {
+        bsp::SplitNode::Split { ratio, .. } => *ratio,
+        _ => panic!("expected Split"),
+    };
+
+    let changed = tree.adjust_ratio_for(999, 0.1);
+    assert!(!changed, "an unknown target id must not report a change");
+    match &tree {
+        bsp::SplitNode::Split { ratio, .. } => assert_eq!(*ratio, ratio_before),
+        _ => panic!("expected Split"),
+    }
+}
+
+#[test]
 fn focus_navigation_boundary() {
     let ids = [10u32, 20, 30];
     let pos = ids.iter().position(|&id| id == 30).unwrap();

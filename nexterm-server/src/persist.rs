@@ -12,6 +12,15 @@ use tracing::{info, instrument, warn};
 
 use crate::snapshot::{SNAPSHOT_VERSION, SNAPSHOT_VERSION_MIN, ServerSnapshot};
 
+/// Upper bound on the snapshot file size we are willing to read back.
+///
+/// This is a resource guard, not a security boundary: a snapshot is JSON describing
+/// sessions/panes/windows, so a legitimate file is at most a few hundred KB even for a
+/// large number of sessions. 16 MiB gives generous headroom while still refusing to
+/// `read_to_string` an arbitrarily large (corrupted, or maliciously placed) file into
+/// memory before we've even validated it.
+const MAX_SNAPSHOT_BYTES: u64 = 16 * 1024 * 1024;
+
 // ---- atomic write helper ----
 
 /// Atomically write a file (via tempfile -> rename); on Unix, force owner-only R/W
@@ -123,6 +132,54 @@ fn snapshot_path() -> PathBuf {
     state_dir().join("snapshot.json")
 }
 
+/// Validate the snapshot file's size and (on Unix) permissions before reading it.
+///
+/// Architecture-comparison audit follow-up (2026-09, item #3): `write_atomic_secure`
+/// forces 0600 on every write, but the read path performed no equivalent check at
+/// all — an asymmetry. This mirrors OpenSSH's "permissions are too open" check on
+/// `known_hosts`-style files: on a shared host, a group/other-readable-or-writable
+/// snapshot means another local user could have read or tampered with session state
+/// (working directories, window titles, host lists) before Nexterm loads it. A size
+/// cap is checked first so we never `read_to_string` an unbounded file into memory.
+/// Returns `Some(metadata)` when the file passes both checks, or `None` (having
+/// already logged why) when it should be treated as absent — matching
+/// `load_snapshot`'s existing fail-closed pattern of degrading to a fresh session
+/// rather than propagating an error.
+fn validate_snapshot_metadata(path: &Path) -> Option<std::fs::Metadata> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(m) => m,
+        Err(e) => {
+            warn!("failed to stat snapshot file: {}", e);
+            return None;
+        }
+    };
+
+    if metadata.len() > MAX_SNAPSHOT_BYTES {
+        warn!(
+            "snapshot file ({} bytes) exceeds the {} byte cap; refusing to load",
+            metadata.len(),
+            MAX_SNAPSHOT_BYTES
+        );
+        return None;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = metadata.permissions().mode() & 0o777;
+        if mode & 0o077 != 0 {
+            warn!(
+                "snapshot file permissions are too open (mode {:o}, expected 0600); \
+                 refusing to load. Run `chmod 600` on the snapshot file to fix this.",
+                mode
+            );
+            return None;
+        }
+    }
+
+    Some(metadata)
+}
+
 // ---- Snapshot save / load ----
 
 /// Save the snapshot to a JSON file.
@@ -148,6 +205,7 @@ pub fn load_snapshot() -> Option<ServerSnapshot> {
     if !path.exists() {
         return None;
     }
+    validate_snapshot_metadata(&path)?;
     let json = match std::fs::read_to_string(&path) {
         Ok(j) => j,
         Err(e) => {
@@ -276,6 +334,106 @@ mod tests {
         );
 
         std::fs::remove_file(&tmp).ok();
+    }
+
+    #[test]
+    fn validate_snapshot_metadata_accepts_a_0600_file_within_the_size_cap() {
+        let tmp = std::env::temp_dir().join(format!(
+            "nexterm_test_validate_ok_{}.json",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&tmp);
+        write_atomic_secure(&tmp, b"{}").unwrap();
+
+        assert!(validate_snapshot_metadata(&tmp).is_some());
+
+        std::fs::remove_file(&tmp).ok();
+    }
+
+    #[test]
+    fn validate_snapshot_metadata_rejects_a_file_over_the_size_cap() {
+        let tmp = std::env::temp_dir().join(format!(
+            "nexterm_test_validate_toobig_{}.json",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&tmp);
+        // One byte over the cap is enough to trigger the rejection.
+        let oversized = vec![b'a'; (MAX_SNAPSHOT_BYTES + 1) as usize];
+        write_atomic_secure(&tmp, &oversized).unwrap();
+
+        assert!(
+            validate_snapshot_metadata(&tmp).is_none(),
+            "a file larger than MAX_SNAPSHOT_BYTES must be rejected"
+        );
+
+        std::fs::remove_file(&tmp).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_snapshot_metadata_rejects_a_group_readable_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = std::env::temp_dir().join(format!(
+            "nexterm_test_validate_perm_{}.json",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&tmp);
+        write_atomic_secure(&tmp, b"{}").unwrap();
+        // Widen permissions past 0600, simulating a shared host / careless `chmod`.
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(
+            validate_snapshot_metadata(&tmp).is_none(),
+            "a group/other-readable snapshot file must be rejected"
+        );
+
+        std::fs::remove_file(&tmp).ok();
+    }
+
+    #[test]
+    fn load_snapshot_returns_none_for_an_oversized_file() {
+        // Exercise the full `load_snapshot()` path (not just the metadata helper) by
+        // pointing XDG_STATE_HOME at an isolated tmpdir, matching the pattern used by
+        // the integration tests in `tests/snapshot_roundtrip.rs`.
+        let dir = std::env::temp_dir().join(format!(
+            "nexterm_test_load_oversized_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let nexterm_dir = dir.join("nexterm");
+        std::fs::create_dir_all(&nexterm_dir).unwrap();
+        let snapshot_file = nexterm_dir.join("snapshot.json");
+        let oversized = vec![b'a'; (MAX_SNAPSHOT_BYTES + 1) as usize];
+        std::fs::write(&snapshot_file, &oversized).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&snapshot_file, std::fs::Permissions::from_mode(0o600))
+                .unwrap();
+        }
+
+        // SAFETY: this test does not run concurrently with another test that reads
+        // XDG_STATE_HOME (no other test in this file's `#[cfg(test)] mod tests`
+        // touches it), and the value is restored before returning.
+        let old_xdg = std::env::var("XDG_STATE_HOME").ok();
+        unsafe {
+            std::env::set_var("XDG_STATE_HOME", &dir);
+        }
+
+        let loaded = load_snapshot();
+
+        unsafe {
+            match old_xdg {
+                Some(v) => std::env::set_var("XDG_STATE_HOME", v),
+                None => std::env::remove_var("XDG_STATE_HOME"),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert!(
+            loaded.is_none(),
+            "an oversized snapshot file must be rejected before parsing"
+        );
     }
 
     #[test]
