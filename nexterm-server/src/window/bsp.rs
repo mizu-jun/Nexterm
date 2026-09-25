@@ -178,6 +178,18 @@ impl SplitNode {
 
     /// Adjust by `delta` the ratio of the Split node closest to the focused pane.
     /// `delta > 0` enlarges the focused pane; `delta < 0` shrinks it.
+    ///
+    /// Architecture-comparison audit follow-up (2026-09, item #6): the previous
+    /// implementation checked `left.contains(target_id) || right.contains(target_id)`
+    /// at the *current* node before ever recursing. Because a root split's two
+    /// children cover the entire tree, that check is trivially true on the very
+    /// first call whenever `target_id` exists anywhere in the tree at all — so the
+    /// `else` branch (the actual recursive descent) was unreachable dead code, and
+    /// every resize silently landed on the outermost (root) split regardless of how
+    /// deeply nested the focused pane actually was. Fixed by recursing into the
+    /// containing child *first* and only adjusting this node's own ratio when that
+    /// recursive call bottoms out (returns `false`, i.e. the child is a `Pane` leaf,
+    /// not a further `Split`) — that is the split truly closest to the target pane.
     pub(super) fn adjust_ratio_for(&mut self, target_id: u32, delta: f32) -> bool {
         match self {
             SplitNode::Pane { .. } => false,
@@ -186,18 +198,24 @@ impl SplitNode {
             } => {
                 let in_left = left.contains(target_id);
                 let in_right = right.contains(target_id);
-                if in_left || in_right {
-                    let new_ratio = if in_left {
-                        (*ratio + delta).clamp(0.1, 0.9)
-                    } else {
-                        (*ratio - delta).clamp(0.1, 0.9)
-                    };
-                    *ratio = new_ratio;
-                    true
-                } else {
-                    left.adjust_ratio_for(target_id, delta)
-                        || right.adjust_ratio_for(target_id, delta)
+                if !in_left && !in_right {
+                    return false;
                 }
+                let handled_deeper = if in_left {
+                    left.adjust_ratio_for(target_id, delta)
+                } else {
+                    right.adjust_ratio_for(target_id, delta)
+                };
+                if handled_deeper {
+                    return true;
+                }
+                let new_ratio = if in_left {
+                    (*ratio + delta).clamp(0.1, 0.9)
+                } else {
+                    (*ratio - delta).clamp(0.1, 0.9)
+                };
+                *ratio = new_ratio;
+                true
             }
         }
     }

@@ -439,7 +439,19 @@ fn with_snapshot_json<F: FnOnce()>(json: &str, body: F) {
     }
     let nexterm_dir = dir.path().join("nexterm");
     std::fs::create_dir_all(&nexterm_dir).expect("mkdir");
-    std::fs::write(nexterm_dir.join("snapshot.json"), json).expect("write");
+    let snapshot_file = nexterm_dir.join("snapshot.json");
+    std::fs::write(&snapshot_file, json).expect("write");
+    // Match the permissions `save_snapshot`/`write_atomic_secure` always produce in
+    // production (0600). `std::fs::write` uses the process umask instead, which on
+    // most CI runners leaves the file group/other-readable — `load_snapshot`'s
+    // permission check (audit follow-up #3) would otherwise reject these
+    // hand-written fixture files for a reason unrelated to what each test verifies.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&snapshot_file, std::fs::Permissions::from_mode(0o600))
+            .expect("chmod 0600");
+    }
     body();
 }
 

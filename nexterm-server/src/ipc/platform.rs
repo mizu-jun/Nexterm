@@ -262,6 +262,45 @@ mod tests {
     mod unix_tests {
         use super::super::*;
 
+        // Architecture-comparison audit follow-up (2026-09, item #19): `verify_peer_uid`'s
+        // reject-on-mismatch branch had no test coverage at all. `UnixStream::pair()`
+        // creates two connected sockets in-process, so the "peer" is always this test
+        // process itself — real enough to exercise `SO_PEERCRED`/`getpeereid()` without
+        // needing root or a second real user account.
+        #[tokio::test]
+        async fn verify_peer_uid_accepts_the_actual_peer_uid() {
+            let (a, _b) = tokio::net::UnixStream::pair().expect("create UnixStream pair");
+            // SAFETY: getuid() always succeeds and is side-effect free.
+            let my_uid = unsafe { libc::getuid() };
+            assert!(
+                verify_peer_uid(&a, my_uid),
+                "the peer of a same-process UnixStream::pair() must match this process's own UID"
+            );
+        }
+
+        // Only meaningful on platforms where `peer_uid_impl` actually queries the OS
+        // (Linux SO_PEERCRED / BSD-family getpeereid()); everywhere else it returns
+        // `None` and `verify_peer_uid` fails open to `true` by design (see its doc
+        // comment), so a "wrong UID" assertion would be platform-dependent noise there.
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+        ))]
+        #[tokio::test]
+        async fn verify_peer_uid_rejects_a_mismatched_uid() {
+            let (a, _b) = tokio::net::UnixStream::pair().expect("create UnixStream pair");
+            // SAFETY: getuid() always succeeds and is side-effect free.
+            let my_uid = unsafe { libc::getuid() };
+            let wrong_uid = my_uid.wrapping_add(1);
+            assert!(
+                !verify_peer_uid(&a, wrong_uid),
+                "a UID that does not match the connecting peer must be rejected"
+            );
+        }
+
         #[test]
         fn unix_socket_path_contains_nexterm() {
             let path = unix_socket_path();
