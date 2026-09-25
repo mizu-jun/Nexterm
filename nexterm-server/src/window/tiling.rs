@@ -1,6 +1,6 @@
 //! Tiling layout computation.
 
-use super::bsp::PaneRect;
+use super::bsp::{PaneRect, split_extent};
 use crate::snapshot::{SplitDirSnapshot, SplitNodeSnapshot};
 
 /// Compute a tiling layout (auto-arrange panes into an even grid).
@@ -86,19 +86,19 @@ pub(super) fn compute_pane_sizes(
             left,
             right,
         } => match dir {
+            // Shares `bsp::split_extent` with the live-tree path (`SplitNode::compute`)
+            // — architecture-comparison audit follow-up (2026-09, item #8). This used
+            // to carry its own, independently-drifted clamp that still had the tiny-
+            // parent overflow bug fixed elsewhere in round 4 (#19); see `split_extent`'s
+            // doc comment for the full invariant and the too-small-to-split policy
+            // (item #7).
             SplitDirSnapshot::Vertical => {
-                let lc = ((cols as f32 * ratio) as u16)
-                    .max(1)
-                    .min(cols.saturating_sub(2));
-                let rc = cols.saturating_sub(lc + 1).max(1);
+                let (lc, _separator, rc) = split_extent(cols, *ratio);
                 compute_pane_sizes(left, lc, rows, out);
                 compute_pane_sizes(right, rc, rows, out);
             }
             SplitDirSnapshot::Horizontal => {
-                let lr = ((rows as f32 * ratio) as u16)
-                    .max(1)
-                    .min(rows.saturating_sub(2));
-                let rr = rows.saturating_sub(lr + 1).max(1);
+                let (lr, _separator, rr) = split_extent(rows, *ratio);
                 compute_pane_sizes(left, cols, lr, out);
                 compute_pane_sizes(right, cols, rr, out);
             }

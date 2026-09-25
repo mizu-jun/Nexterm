@@ -47,6 +47,81 @@ fn bsp_split_never_overflows_a_tiny_parent_rect() {
 }
 
 #[test]
+fn split_extent_rounds_instead_of_truncating() {
+    // Architecture-comparison audit follow-up (2026-09, item #5): the old
+    // `(cols as f32 * ratio) as u16` truncated toward zero, so the left/top child
+    // always lost the rounding error (sway fixed the identical bug in 2019). Pin the
+    // exact case named in the backlog: cols=81, ratio=0.5 -> 40.5, which must now
+    // round to 41, not truncate to 40.
+    let (left, separator, right) = bsp::split_extent(81, 0.5);
+    assert_eq!(left, 41, "40.5 must round to 41, not truncate to 40");
+    assert_eq!(separator, 1);
+    assert_eq!(right, 39);
+    assert_eq!(left + separator + right, 81);
+}
+
+#[test]
+fn split_extent_never_exceeds_total_across_all_small_sizes() {
+    // Exhaustively check the invariant `first + separator + second == total` for
+    // every total in the range where past bugs (#19, #5, #7) lived, across a spread
+    // of ratios.
+    for total in 0u16..=32 {
+        for ratio_pct in (10..=90).step_by(10) {
+            let ratio = ratio_pct as f32 / 100.0;
+            let (first, separator, second) = bsp::split_extent(total, ratio);
+            assert_eq!(
+                first + separator + second,
+                total,
+                "total={total} ratio={ratio}: {first}+{separator}+{second} != {total}"
+            );
+        }
+    }
+}
+
+#[test]
+fn split_extent_too_small_to_split_gives_everything_to_the_first_child() {
+    // Architecture-comparison audit follow-up (2026-09, item #7): explicit policy for
+    // a parent too small to give both children at least 1 unit — rather than an
+    // implicit, unstated gap, the whole available extent goes to the first child and
+    // the second stays at 0 (still exact, never overflowing).
+    assert_eq!(bsp::split_extent(0, 0.5), (0, 0, 0));
+    assert_eq!(bsp::split_extent(1, 0.5), (0, 1, 0));
+    assert_eq!(bsp::split_extent(2, 0.5), (1, 1, 0));
+}
+
+#[test]
+fn split_extent_matches_between_live_tree_and_snapshot_restore_path() {
+    // Architecture-comparison audit follow-up (2026-09, item #8): `SplitNode::compute`
+    // (live tree) and `tiling::compute_pane_sizes` (snapshot-restore path) used to
+    // duplicate the ratio->cell arithmetic independently and had drifted out of sync.
+    // Both now call the same `split_extent`; assert their per-pane sizes agree across
+    // a 3-pane, 2-level layout as a regression guard against a future re-divergence.
+    let mut tree = bsp::SplitNode::Pane { pane_id: 1 };
+    tree.insert_after(1, 2, SplitDir::Vertical);
+    tree.insert_after(2, 3, SplitDir::Horizontal);
+    let snap = tree.to_snapshot();
+
+    for (cols, rows) in [(80u16, 24u16), (81, 25), (7, 5), (3, 3)] {
+        let mut live_out = Vec::new();
+        tree.compute(0, 0, cols, rows, &mut live_out);
+        let mut live_sizes: Vec<(u32, u16, u16)> = live_out
+            .iter()
+            .map(|r| (r.pane_id, r.cols, r.rows))
+            .collect();
+        live_sizes.sort_by_key(|&(id, ..)| id);
+
+        let mut snap_sizes = Vec::new();
+        tiling::compute_pane_sizes(&snap, cols, rows, &mut snap_sizes);
+        snap_sizes.sort_by_key(|&(id, ..)| id);
+
+        assert_eq!(
+            live_sizes, snap_sizes,
+            "cols={cols} rows={rows}: live-tree and snapshot-restore sizes diverged"
+        );
+    }
+}
+
+#[test]
 fn bsp_horizontal_split_layout() {
     let mut tree = bsp::SplitNode::Pane { pane_id: 1 };
     tree.insert_after(1, 2, SplitDir::Horizontal);
