@@ -81,7 +81,7 @@ Each boundary is numbered (1)–(9) and analysed individually below.
 
 | Threat | Scenario | Existing mitigation | Residual risk |
 |--------|----------|---------------------|---------------|
-| **S** | Another user connects to someone else's socket/pipe and eavesdrops on a PTY | Unix: validate UID via `SO_PEERCRED` / `getpeereid` and reject other UIDs (`nexterm-server/src/ipc/platform.rs`). Windows: set the named-pipe DACL to allow only the creating user. The Hello message exchanges `client_kind` / `version` | Root can bypass these checks via OS features (the OS itself is trusted) |
+| **S** | Another user connects to someone else's socket/pipe and eavesdrops on a PTY | Unix: validate UID via `SO_PEERCRED` / `getpeereid` and reject other UIDs (`nexterm-server/src/ipc/platform.rs`). The Hello message exchanges `client_kind` / `version` | Root can bypass these checks via OS features (the OS itself is trusted). **Windows: no equivalent peer-identity check exists yet.** `serve_named_pipe()` only sets `first_pipe_instance(false)` / `reject_remote_clients(true)` — same-machine-only, but not same-user-only. This was previously miswritten in this document as an implemented "DACL restricted to the creating user"; no such code exists (architecture-comparison audit follow-up, item #18, `docs/plans/arch-comparison-followups-2026h2.md`). A fix (creator-SID DACL + `ImpersonateNamedPipeClient` peer check) is tracked there as blocked pending a Windows-verifiable redesign |
 | **T** | A postcard message is rewritten in transit | The channel is local UDS / named pipe within the same process boundary, so in-transit tampering is out of scope. Malicious clients sending invalid structs are handled under (E) | — |
 | **R** | Client-side commands are not recorded | Web-based access is logged to `access_log` in CSV with rotation (Sprint 3-3). Per-operation logs for local IPC are not collected | If a local-operation audit log is needed, it must be added separately |
 | **I** | PTY output leaks to other processes | UID validation only allows the same user. Tmpfs / `$XDG_RUNTIME_DIR` permissions are protected by the OS (typically 0700) | Leaks via swap / core dumps belong at the OS layer (mlock, etc.) |
@@ -89,6 +89,16 @@ Each boundary is numbered (1)–(9) and analysed individually below.
 | **E** | A client uses `RecordSession` to write to an arbitrary path | `dispatch_util::validate_recording_path()` only permits paths under `allowed_recording_dirs()` (Sprint 2-2 Phase A). `canonicalize` prevents symlink escapes | Assumes the recording directory itself is not writable by other users (OS permissions) |
 
 **Assessment**: the design boundary is reasonable. Processes under the same UID are treated as one trust domain (standard Unix model).
+
+*Why this boundary exists at all* (architecture-comparison audit follow-up, item #21):
+Windows Terminal's Monarch/Peasant model does not have an equivalent IPC trust boundary
+to defend, because it solves a different problem — window/command routing between GUI
+instances, not a PTY-holding daemon that a client can disconnect from and reattach to
+later. Nexterm accepts this boundary's attack surface (a local socket/pipe another
+process on the same machine could try to reach) specifically because a persistent,
+detachable session — the tmux-style workflow this boundary exists to support — is a
+product requirement Windows Terminal's architecture doesn't have and therefore doesn't
+need to defend.
 
 ---
 

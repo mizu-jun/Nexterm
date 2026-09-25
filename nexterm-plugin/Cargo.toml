@@ -13,7 +13,14 @@ tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
-# WASM runtime (pure-Rust implementation, cross-platform)
+# WASM runtime (pure-Rust implementation, cross-platform).
+# Architecture-comparison audit follow-up (2026-09, item #17): pinned two major
+# versions behind upstream (0.38 here vs. 2.0.0 upstream). Zellij moved
+# wasmer -> wasmtime -> wasmi (PR #4449, 2026-03-23) and now shares this same
+# interpreter family at a newer version — a larger, WASI-linked consumer
+# stress-testing the same interpreter is a leading indicator for where bugs
+# surface first. Tracked in the existing dependency-review rotation alongside
+# russh/lru rather than a one-off bump (see the `dependency-followups` memory).
 wasmi = "0.38"
 
 [dev-dependencies]

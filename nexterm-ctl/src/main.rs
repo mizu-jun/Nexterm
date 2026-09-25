@@ -36,7 +36,14 @@ fn build_cli() -> Command {
         .about(fl!("ctl-about"))
         .subcommand_required(true)
         .arg_required_else_help(true)
-        .subcommand(Command::new("list").about(fl!("ctl-list-about")))
+        .subcommand(
+            Command::new("list").about(fl!("ctl-list-about")).arg(
+                Arg::new("json")
+                    .long("json")
+                    .help(fl!("ctl-list-arg-json"))
+                    .action(clap::ArgAction::SetTrue),
+            ),
+        )
         .subcommand(
             Command::new("new")
                 .about(fl!("ctl-new-about"))
@@ -265,7 +272,7 @@ async fn main() -> Result<()> {
     let matches = build_cli().get_matches();
 
     match matches.subcommand() {
-        Some(("list", _)) => cmd::session::cmd_list().await,
+        Some(("list", sub)) => cmd::session::cmd_list(sub.get_flag("json")).await,
         Some(("new", sub)) => {
             let name = sub
                 .get_one::<String>("name")

@@ -3871,6 +3871,7 @@ dependencies = [
  "nexterm-proto",
  "postcard",
  "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",

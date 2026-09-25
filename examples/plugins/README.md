@@ -103,6 +103,18 @@ While `plugin_read` is `deny` (or `prompt`, currently treated as `deny`),
 
 Any language that compiles to `wasm32-unknown-unknown` works.
 
+### Why a sandbox at all
+
+The comparison that best explains the ABI's narrowness below is tmux's plugin manager
+(TPM), which has no sandbox: a tmux plugin is an unconditional shell script running with
+full account-level rights from the moment it's installed. Nexterm's WASM plugins run in
+wasmi under fuel and memory caps, and the entire host surface is the imports table
+below — exactly 6 functions, none of which touch the filesystem, network, or another
+process. That's the trade this ABI makes: a plugin here genuinely cannot do what a tmux
+plugin can (spawn a process, read an arbitrary file), in exchange for being safe to load
+from a source you haven't personally audited. See ADR-0004 for the sandboxing decision
+and ADR-0008 for the read-API consent model referenced below.
+
 ### Required exports
 
 | Export | Signature | Notes |

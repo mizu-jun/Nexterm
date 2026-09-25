@@ -31,6 +31,23 @@ pub(super) async fn serve_unix(
     use tokio::net::UnixListener;
 
     let socket_path = unix_socket_path();
+
+    // Architecture-comparison audit follow-up (2026-09, item #1): this used to
+    // unconditionally `remove_file` + `bind`, silently orphaning any server
+    // already listening on this path — accidental single-instance behavior
+    // rather than a designed one (unlike the Windows named-pipe path, a Unix
+    // domain socket cannot have two live listeners share one path at all, so
+    // the previous server simply vanished from under its own clients with no
+    // warning). Probe first: a stale socket file left by an unclean shutdown
+    // fails to connect and is safe to steal; a live listener answers, and in
+    // that case this process refuses to start a second server for the user
+    // rather than hijacking the path.
+    if socket_has_a_live_listener(&socket_path).await {
+        anyhow::bail!(
+            "another nexterm server is already listening on {} for this user; refusing to start a second instance",
+            socket_path
+        );
+    }
     let _ = std::fs::remove_file(&socket_path);
     let listener = UnixListener::bind(&socket_path)?;
 
@@ -85,6 +102,25 @@ pub(super) async fn serve_unix(
             Err(e) => error!("accept error: {}", e),
         }
     }
+}
+
+/// Return `true` if something is actively accepting connections on `path`.
+///
+/// A stale socket file left behind by an unclean shutdown refuses the
+/// connection (or the path is simply gone), which is the "safe to steal"
+/// case; a live listener accepts it. Either way the connection this function
+/// opens is dropped immediately — it exists only to probe liveness, not to
+/// exchange any protocol messages. Bounded by a short timeout so a socket
+/// stuck in some unusual half-open state cannot hang server startup.
+#[cfg(unix)]
+async fn socket_has_a_live_listener(path: &str) -> bool {
+    tokio::time::timeout(
+        std::time::Duration::from_millis(200),
+        tokio::net::UnixStream::connect(path),
+    )
+    .await
+    .map(|connect_result| connect_result.is_ok())
+    .unwrap_or(false)
 }
 
 /// Validate the peer UID on a Unix domain socket connection.
@@ -261,6 +297,52 @@ mod tests {
     #[cfg(unix)]
     mod unix_tests {
         use super::super::*;
+
+        // Architecture-comparison audit follow-up (2026-09, item #1): the single-instance
+        // probe added to `serve_unix` must tell a live listener apart from a stale socket
+        // file, since a false positive would make every real startup refuse to run and a
+        // false negative would silently reintroduce the socket-hijacking bug it fixes.
+        #[tokio::test]
+        async fn socket_has_a_live_listener_is_true_while_a_listener_is_bound() {
+            let path = std::env::temp_dir().join(format!(
+                "nexterm_test_live_listener_{}.sock",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_file(&path);
+            let path_str = path.to_str().unwrap().to_string();
+
+            let listener = tokio::net::UnixListener::bind(&path).expect("bind test listener");
+            assert!(
+                socket_has_a_live_listener(&path_str).await,
+                "a bound, listening socket must be detected as live"
+            );
+
+            drop(listener);
+            let _ = std::fs::remove_file(&path);
+        }
+
+        #[tokio::test]
+        async fn socket_has_a_live_listener_is_false_for_a_stale_or_missing_path() {
+            let path = std::env::temp_dir().join(format!(
+                "nexterm_test_stale_listener_{}.sock",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_file(&path);
+
+            // Case 1: no file at all (never bound, or already cleaned up).
+            assert!(!socket_has_a_live_listener(path.to_str().unwrap()).await);
+
+            // Case 2: a stale socket file left behind after its listener is gone —
+            // bind-then-drop leaves the file on disk but nothing accepts on it.
+            let listener = tokio::net::UnixListener::bind(&path).expect("bind test listener");
+            drop(listener);
+            assert!(
+                !socket_has_a_live_listener(path.to_str().unwrap()).await,
+                "a stale socket file with no listener must not be reported as live"
+            );
+
+            let _ = std::fs::remove_file(&path);
+        }
 
         // Architecture-comparison audit follow-up (2026-09, item #19): `verify_peer_uid`'s
         // reject-on-mismatch branch had no test coverage at all. `UnixStream::pair()`

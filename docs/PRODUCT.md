@@ -52,6 +52,15 @@ differentiators (do not regress these):
 Competitive tracking (feature matrix, gap analysis) is a planning activity — see
 [plans/gap-roadmap-2026h2.md](plans/gap-roadmap-2026h2.md) for the current roadmap.
 
+**Why the sandbox is worth its engineering cost.** The comparison that best quantifies
+this isn't against another sandboxed runtime — it's against tmux's plugin ecosystem
+(TPM), which has no sandbox at all: a tmux plugin is an unconditional shell script with
+full account-level execution rights the moment it's installed. Nexterm's WASM boundary
+(wasmi, fuel + memory caps, exactly 6 host functions with no file/network/process
+imports) buys freedom from that failure mode at the cost of a narrower plugin surface —
+see ADR-0004 for the sandboxing model itself and `examples/plugins/README.md` for what a
+plugin can and cannot do under it.
+
 ## Product requirements by area
 
 Requirements are stated at the capability level. Shipped capabilities are the current

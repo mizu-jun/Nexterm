@@ -17,6 +17,10 @@ nexterm-config = { path = "../nexterm-config" }
 tokio = { workspace = true }
 postcard = { workspace = true }
 serde = { workspace = true }
+# `--json` output mode (architecture-comparison audit follow-up, item #20):
+# gives tmux's "binary main line + scriptable text layer" split without
+# touching the hot IPC path (which stays postcard/binary end to end).
+serde_json = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

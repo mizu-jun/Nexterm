@@ -366,7 +366,33 @@ impl FontManager {
         //
         // Why cosmic-text answers `inf` there is not yet understood; this
         // guard bounds the damage, it does not explain it.
-        let advance = if raw.is_finite() { raw.max(0.0) } else { 0.0 };
+        //
+        // Architecture-comparison audit follow-up (2026-09, item #10): Ghostty
+        // (`#8712`), Alacritty (`PR #1029`) and WezTerm (`#614`) each hit a
+        // variation of the same macOS+CJK-fallback combination, all root-caused
+        // to fallback logic *estimating* rather than measuring the actual
+        // fallback face. Log which face cosmic-text actually resolved the glyph
+        // to when this fires, so the next macOS+CJK repro captures the culprit
+        // face immediately instead of restarting the investigation from zero.
+        let advance = if raw.is_finite() {
+            raw.max(0.0)
+        } else {
+            let resolved_face = buf
+                .layout_runs()
+                .next()
+                .and_then(|run| run.glyphs.first())
+                .and_then(|glyph| self.font_system.db().face(glyph.font_id))
+                .map(|face| format!("{:?}", face.families));
+            tracing::trace!(
+                ch = ?ch,
+                requested_family = %family_owned,
+                bold,
+                size_px,
+                resolved_face = resolved_face.as_deref().unwrap_or("<unresolved>"),
+                "chrome_advance: non-finite line_w from cosmic-text, falling back to 0.0"
+            );
+            0.0
+        };
         self.chrome_advance_cache.insert(key, advance);
         advance
     }

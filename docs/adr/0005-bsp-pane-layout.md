@@ -76,7 +76,13 @@ Getting this order wrong launches PTYs at the wrong size and later resizes fail 
 ## Alternatives
 
 - **Alternative A: grid layout (N×M)** — simple, but arbitrary ratios and nesting are hard.
-- **Alternative B: tiling array (Zellij-style)** — the flat representation is readable, but resize logic gets complex.
+- **Alternative B: tiling array (Zellij-style)** — the flat representation is readable, but
+  resize logic gets complex. *(Architecture-comparison audit follow-up, 2026-09:*
+  Zellij's actual complexity here is specifically the N-ary percentage-redistribution
+  problem — resizing one pane in a flat list of siblings has to redistribute the
+  remainder proportionally across every other sibling in that list. Nexterm's strictly
+  binary tree structurally sidesteps this: a resize only ever touches the two children
+  of one `Split` node, never an arbitrary-width sibling group.*)
 - **Alternative C: floating only** — maximum freedom, but loses tmux compatibility.
 
 ## References
