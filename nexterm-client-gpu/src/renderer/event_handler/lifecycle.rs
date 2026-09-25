@@ -75,6 +75,10 @@ impl EventHandler {
         let window = Arc::new(
             event_loop
                 .create_window(attrs)
+                // Fatal startup panic, printed to stderr/crash logs before any
+                // window exists — CLAUDE.md requires `expect()` messages stay
+                // English-only (crash-log/issue searchability over localized
+                // UI text, which doesn't apply here since there's no UI yet).
                 .expect("Failed to create window"),
         );
 
@@ -141,6 +145,8 @@ impl EventHandler {
             tokio::runtime::Handle::current()
                 .block_on(WgpuState::new(Arc::clone(&window), &self.app.config.gpu))
         })
+        // Same rationale as the window-create `expect()` above: English-only
+        // per CLAUDE.md, this fires before any UI exists.
         .expect("Failed to initialize wgpu");
 
         // Load the background image (Sprint 5-7 / Phase 3-1). On failure, a warn log is emitted internally.

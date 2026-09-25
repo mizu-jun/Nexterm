@@ -259,11 +259,26 @@ impl FontManager {
             metrics.font_size
         );
 
-        // Fall back to `line_height * 0.5` if the measurement failed.
-        if advance > 1.0 {
+        Self::resolve_measured_advance(advance, metrics.line_height)
+    }
+
+    /// Decide whether a measured advance is usable, falling back to
+    /// `line_height * 0.5` when it is not.
+    ///
+    /// Split out from [`Self::measure_char_width`] so the fallback check
+    /// itself — not just the shaping that feeds it — has a seam a test can
+    /// hit directly. `advance > 1.0` alone is not enough: under IEEE 754
+    /// `f32::INFINITY > 1.0` and even `f32::NAN > 1.0` are well-defined
+    /// comparisons (`inf` true, `NaN` false), so a `NaN` already fell
+    /// through to the fallback but an `inf` advance would have been
+    /// accepted as "measured" and propagated — the same class of bug as the
+    /// `chrome_advance` `inf` guard above, just unguarded here. Require
+    /// `is_finite()` first so both slip through to the fallback instead.
+    fn resolve_measured_advance(advance: f32, line_height: f32) -> f32 {
+        if advance.is_finite() && advance > 1.0 {
             advance
         } else {
-            metrics.line_height * 0.5
+            line_height * 0.5
         }
     }
 
@@ -1044,5 +1059,41 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// `measure_char_width`'s fallback must reject non-finite advances, not
+    /// just small ones.
+    ///
+    /// Regression cover for the sibling of the `chrome_advance` `inf` guard
+    /// (UI/UX v3 N-4b, see `every_chrome_advance_is_finite` above):
+    /// `advance > 1.0` alone is true for `f32::INFINITY`, so an `inf`
+    /// measurement — the same value observed for CJK glyphs on macOS — would
+    /// have been accepted as "measured" and handed straight to the cell
+    /// width instead of falling back. `f32::NAN` is included too, since
+    /// `NaN > 1.0` is `false` but `NaN.is_finite()` is also `false`; the
+    /// fallback logic is exercised directly via `resolve_measured_advance`
+    /// because `measure_char_width` itself only ever sees an `advance` it
+    /// computed from real font shaping, with no seam to inject a
+    /// pathological value into that path.
+    #[test]
+    fn measure_char_width_fallback_rejects_non_finite_advance() {
+        let line_height = 20.0_f32;
+        let expected_fallback = line_height * 0.5;
+
+        for bad in [f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+            let resolved = FontManager::resolve_measured_advance(bad, line_height);
+            assert_eq!(
+                resolved, expected_fallback,
+                "advance={bad} should fall back to line_height * 0.5"
+            );
+        }
+
+        // Sanity: a normal measured advance still passes through unchanged.
+        let good = FontManager::resolve_measured_advance(11.2, line_height);
+        assert_eq!(good, 11.2);
+
+        // Sanity: a too-small (but finite) advance still falls back, same as before.
+        let tiny = FontManager::resolve_measured_advance(0.5, line_height);
+        assert_eq!(tiny, expected_fallback);
     }
 }

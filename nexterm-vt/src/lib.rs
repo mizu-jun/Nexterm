@@ -203,6 +203,69 @@ mod tests {
     }
 
     #[test]
+    fn resize_during_alt_screen_keeps_primary_dimensions_synced() {
+        // Audit round 4, #15: resizing while the alternate screen is active
+        // (e.g. vim/less) must keep the saved primary screen's dimensions in
+        // lockstep with the new terminal size. Otherwise switching back to
+        // the primary screen hands back row data sized for the pre-resize
+        // terminal while `grid.width`/`height` already reflect the new size.
+        let mut parser = VtParser::new(80, 24);
+        parser.advance(b"primary-content");
+        parser.advance(b"\x1b[?1049h"); // enter the alt screen (DECSET 1049)
+        parser.screen_mut().resize(40, 10); // resize while alt screen is active
+        parser.advance(b"\x1b[?1049l"); // return to the primary screen (DECRST 1049)
+
+        let grid = parser.screen().grid();
+        assert_eq!(grid.width, 40, "grid width must reflect the new size");
+        assert_eq!(grid.height, 10, "grid height must reflect the new size");
+        assert_eq!(
+            grid.rows.len(),
+            10,
+            "restored primary row count must match the new height"
+        );
+        for (idx, row) in grid.rows.iter().enumerate() {
+            assert_eq!(
+                row.len(),
+                40,
+                "restored primary row {idx} must match the new width"
+            );
+        }
+    }
+
+    #[test]
+    fn kitty_final_chunk_rejects_payload_exceeding_max_len() {
+        // Audit round 4, #50: the Kitty graphics protocol's final chunk was
+        // appended to the accumulator without re-checking MAX_KITTY_CHUNK_LEN
+        // (64 MiB), letting a single transfer overshoot the cap. The final
+        // chunk must be rejected the same way intermediate chunks are.
+        let mut parser = VtParser::new(80, 24);
+        let screen = parser.screen_mut();
+
+        // First chunk: `m=1` (more data to come), small payload.
+        let mut first_data = Vec::new();
+        first_data.push(b'G');
+        first_data.extend_from_slice(b"a=t,f=100,m=1");
+        first_data.push(b';');
+        first_data.extend_from_slice(&vec![b'A'; 1024]);
+        screen.handle_kitty_apc(&first_data);
+
+        // Final chunk (`m=0` implied by the absence of `m=1`): its payload
+        // alone is already at the 64 MiB cap, so combined with the 1024
+        // bytes already accumulated it must overshoot and be rejected.
+        let mut final_data = Vec::new();
+        final_data.push(b'G');
+        final_data.extend_from_slice(b"a=t,f=100");
+        final_data.push(b';');
+        final_data.extend_from_slice(&vec![b'B'; 64 * 1024 * 1024]);
+        screen.handle_kitty_apc(&final_data);
+
+        assert!(
+            screen.take_pending_images().is_empty(),
+            "an oversized final chunk must not register an image"
+        );
+    }
+
+    #[test]
     fn bracketed_paste_mode_is_disabled_by_default() {
         let parser = VtParser::new(80, 24);
         assert!(!parser.bracketed_paste_mode());

@@ -387,15 +387,52 @@ fn test_v4_multiple_os_windows_roundtrip() {
 // JSON below is the wire shape that a v1.x server would have produced.
 // ---------------------------------------------------------------------------
 
+/// RAII guard that restores an environment variable to its pre-capture value
+/// (or removes it, if it was unset) when dropped. Unlike a manual
+/// save/restore at the end of a function body, this also fires while a panic
+/// is unwinding (e.g. a failed `assert!` inside the test), so a panicking
+/// test cannot leave `XDG_STATE_HOME` / `APPDATA` polluted for the next test
+/// sharing the process.
+struct EnvVarGuard {
+    key: &'static str,
+    original: Option<String>,
+}
+
+impl EnvVarGuard {
+    /// Captures the current value of `key`. The caller is responsible for
+    /// setting the new value afterwards (capture-then-set keeps the "what
+    /// was here before" snapshot honest even if setting fails).
+    fn capture(key: &'static str) -> Self {
+        Self {
+            key,
+            original: std::env::var(key).ok(),
+        }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        // SAFETY: callers hold ENV_LOCK for the duration of the guard, so no
+        // other test thread observes env vars mid-mutation.
+        unsafe {
+            match &self.original {
+                Some(v) => std::env::set_var(self.key, v),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+}
+
 /// Place a literal JSON string at `<state_dir>/snapshot.json` while swapping
 /// `XDG_STATE_HOME` / `APPDATA` to the tmpdir, then run the closure. Restores
-/// the original environment afterwards.
+/// the original environment afterwards, even if the closure panics.
 fn with_snapshot_json<F: FnOnce()>(json: &str, body: F) {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().expect("tmpdir");
-    let old_xdg = std::env::var("XDG_STATE_HOME").ok();
-    let old_appdata = std::env::var("APPDATA").ok();
-    // SAFETY: serialized via ENV_LOCK and restored at the end of the closure.
+    let _xdg_guard = EnvVarGuard::capture("XDG_STATE_HOME");
+    let _appdata_guard = EnvVarGuard::capture("APPDATA");
+    // SAFETY: serialized via ENV_LOCK; restored by EnvVarGuard::drop above,
+    // which also runs during panic unwinding.
     unsafe {
         std::env::set_var("XDG_STATE_HOME", dir.path());
         std::env::set_var("APPDATA", dir.path());
@@ -404,16 +441,6 @@ fn with_snapshot_json<F: FnOnce()>(json: &str, body: F) {
     std::fs::create_dir_all(&nexterm_dir).expect("mkdir");
     std::fs::write(nexterm_dir.join("snapshot.json"), json).expect("write");
     body();
-    unsafe {
-        match old_xdg {
-            Some(v) => std::env::set_var("XDG_STATE_HOME", v),
-            None => std::env::remove_var("XDG_STATE_HOME"),
-        }
-        match old_appdata {
-            Some(v) => std::env::set_var("APPDATA", v),
-            None => std::env::remove_var("APPDATA"),
-        }
-    }
 }
 
 #[test]

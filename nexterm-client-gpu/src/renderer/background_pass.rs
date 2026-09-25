@@ -63,7 +63,8 @@ pub(super) struct Quad {
 /// - `Cover` / `Contain` / `Stretch` / `Center`: a single rectangle.
 /// - `Tile`: as many tiles as needed to cover the screen.
 ///
-/// Returns an empty `Vec` for invalid input (surface = 0 / image = 0).
+/// Returns an empty `Vec` for invalid input (surface = 0 / image = 0, or
+/// either surface dimension is NaN / infinite).
 pub(super) fn compute_background_quad(
     surface_w: f32,
     surface_h: f32,
@@ -71,7 +72,16 @@ pub(super) fn compute_background_quad(
     img_h: u32,
     fit: &BackgroundFit,
 ) -> Vec<Quad> {
-    if surface_w <= 0.0 || surface_h <= 0.0 || img_w == 0 || img_h == 0 {
+    // `NaN <= 0.0` is always false, so a plain `<= 0.0` check alone lets a
+    // NaN (or infinite) surface size slip through and poison every quad's
+    // NDC coordinates with NaN downstream. Guard finiteness explicitly.
+    if !surface_w.is_finite()
+        || !surface_h.is_finite()
+        || surface_w <= 0.0
+        || surface_h <= 0.0
+        || img_w == 0
+        || img_h == 0
+    {
         return Vec::new();
     }
 
@@ -507,6 +517,41 @@ mod tests {
         assert!(compute_background_quad(800.0, 0.0, 100, 100, &BackgroundFit::Cover).is_empty());
         assert!(compute_background_quad(800.0, 600.0, 0, 100, &BackgroundFit::Cover).is_empty());
         assert!(compute_background_quad(800.0, 600.0, 100, 0, &BackgroundFit::Cover).is_empty());
+    }
+
+    #[test]
+    fn nan_or_infinite_surface_dimension_returns_empty_vec() {
+        // NaN compares false against `<= 0.0`, so a plain sign check alone
+        // would let it slip through and poison the resulting quad's NDC
+        // coordinates. Every fit mode must reject it up front.
+        for fit in [
+            BackgroundFit::Stretch,
+            BackgroundFit::Cover,
+            BackgroundFit::Contain,
+            BackgroundFit::Center,
+            BackgroundFit::Tile,
+        ] {
+            assert!(
+                compute_background_quad(f32::NAN, 600.0, 100, 100, &fit).is_empty(),
+                "NaN surface_w should be rejected for {:?}",
+                fit
+            );
+            assert!(
+                compute_background_quad(800.0, f32::NAN, 100, 100, &fit).is_empty(),
+                "NaN surface_h should be rejected for {:?}",
+                fit
+            );
+            assert!(
+                compute_background_quad(f32::INFINITY, 600.0, 100, 100, &fit).is_empty(),
+                "infinite surface_w should be rejected for {:?}",
+                fit
+            );
+            assert!(
+                compute_background_quad(800.0, f32::INFINITY, 100, 100, &fit).is_empty(),
+                "infinite surface_h should be rejected for {:?}",
+                fit
+            );
+        }
     }
 
     #[test]

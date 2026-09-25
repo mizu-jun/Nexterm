@@ -106,7 +106,15 @@ pub enum ClientToServer {
         /// Modifier keys held at the same time.
         modifiers: Modifiers,
         /// Kitty keyboard protocol event type: 1=press (default), 2=repeat, 3=release.
-        /// Older clients that do not send this field default to press (1).
+        ///
+        /// `#[serde(default = "default_key_event_type")]` only supplies a value when
+        /// this struct is deserialized from a self-describing format (e.g. JSON/TOML)
+        /// that omits the field. postcard is a positional wire format, not
+        /// self-describing: every field must still be present, in this exact position,
+        /// in the encoded bytes, or decoding fails outright (see audit round 4 #25).
+        /// This attribute does NOT give older client payloads forward compatibility
+        /// over the wire; it only affects non-postcard (de)serialization paths and
+        /// documents the intended default for readers.
         #[serde(default = "default_key_event_type")]
         event_type: u8,
     },
@@ -991,9 +999,18 @@ pub struct SessionInfo {
     pub attached: bool,
     /// Owning workspace name (Sprint 5-7 / Phase 2-1).
     ///
-    /// Added in PROTOCOL_VERSION 5. `#[serde(default)]` lets older clients decode
-    /// the structure with an empty string when the field is missing in the postcard
-    /// payload. The server always populates the field (defaulting to `"default"`).
+    /// Added in PROTOCOL_VERSION 5. `#[serde(default)]` here does NOT provide wire
+    /// forward/backward compatibility over postcard: postcard is a positional format,
+    /// so a payload from an older struct definition that is missing this trailing
+    /// field does not decode into "field defaulted" — it fails to decode at all (a
+    /// short/truncated buffer error), because there is nothing to mark where the
+    /// field would have been. `#[serde(default)]` only helps when the *same* struct
+    /// is deserialized from a self-describing format (JSON/TOML/etc.) that omits the
+    /// field, or when constructing the value in-process without serde. See audit
+    /// round 4 #25 and the `session_info_workspace_name_defaults_to_empty_via_serde_default`
+    /// test below, which demonstrates the truncated-postcard-payload case returning an
+    /// error rather than a defaulted value. Wire compatibility here is maintained by
+    /// convention instead: the server always populates the field.
     #[serde(default)]
     pub workspace_name: String,
 }
@@ -1359,6 +1376,525 @@ mod tests {
         let enc = postcard::to_stdvec(&req).unwrap();
         let dec: ServerToClient = postcard::from_bytes(&enc).unwrap();
         assert_eq!(req, dec);
+    }
+
+    /// Decode a postcard-encoded unsigned LEB128 varint from the start of `bytes`
+    /// and return its value. postcard encodes an enum's variant index (its wire
+    /// tag) as exactly this kind of varint, immediately followed by the variant's
+    /// field data, so this is what actually identifies "which variant" a decoder
+    /// sees on the wire.
+    fn read_leading_varint_u32(bytes: &[u8]) -> u32 {
+        let mut value: u32 = 0;
+        let mut shift = 0;
+        for &byte in bytes {
+            value |= u32::from(byte & 0x7f) << shift;
+            if byte & 0x80 == 0 {
+                return value;
+            }
+            shift += 7;
+        }
+        panic!("truncated varint in postcard output");
+    }
+
+    /// Maps each `ClientToServer` variant to its intended wire tag (0-based
+    /// declaration order). This match is exhaustive by construction: adding a new
+    /// variant to the enum without adding a corresponding arm here fails to
+    /// compile, which is the first line of defense against silent reordering.
+    fn client_to_server_expected_tag(msg: &ClientToServer) -> u32 {
+        match msg {
+            ClientToServer::KeyEvent { .. } => 0,
+            ClientToServer::Resize { .. } => 1,
+            ClientToServer::Detach => 2,
+            ClientToServer::Attach { .. } => 3,
+            ClientToServer::SplitVertical => 4,
+            ClientToServer::SplitHorizontal => 5,
+            ClientToServer::FocusNextPane => 6,
+            ClientToServer::FocusPrevPane => 7,
+            ClientToServer::FocusPane { .. } => 8,
+            ClientToServer::PasteText { .. } => 9,
+            ClientToServer::Ping => 10,
+            ClientToServer::ListSessions => 11,
+            ClientToServer::KillSession { .. } => 12,
+            ClientToServer::StartRecording { .. } => 13,
+            ClientToServer::StopRecording { .. } => 14,
+            ClientToServer::ClosePane => 15,
+            ClientToServer::ResizeSplit { .. } => 16,
+            ClientToServer::ConnectSsh { .. } => 17,
+            ClientToServer::NewWindow => 18,
+            ClientToServer::CloseWindow { .. } => 19,
+            ClientToServer::FocusWindow { .. } => 20,
+            ClientToServer::RenameWindow { .. } => 21,
+            ClientToServer::SetBroadcast { .. } => 22,
+            ClientToServer::DisplayPanes { .. } => 23,
+            ClientToServer::StartAsciicast { .. } => 24,
+            ClientToServer::StopAsciicast { .. } => 25,
+            ClientToServer::SaveTemplate { .. } => 26,
+            ClientToServer::LoadTemplate { .. } => 27,
+            ClientToServer::ListTemplates => 28,
+            ClientToServer::ToggleZoom => 29,
+            ClientToServer::SwapPane { .. } => 30,
+            ClientToServer::BreakPane => 31,
+            ClientToServer::JoinPane { .. } => 32,
+            ClientToServer::SftpUpload { .. } => 33,
+            ClientToServer::SftpDownload { .. } => 34,
+            ClientToServer::RunMacro { .. } => 35,
+            ClientToServer::MouseReport { .. } => 36,
+            ClientToServer::SetLayoutMode { .. } => 37,
+            ClientToServer::OpenFloatingPane => 38,
+            ClientToServer::CloseFloatingPane { .. } => 39,
+            ClientToServer::MoveFloatingPane { .. } => 40,
+            ClientToServer::ResizeFloatingPane { .. } => 41,
+            ClientToServer::ConnectSerial { .. } => 42,
+            ClientToServer::ListPlugins => 43,
+            ClientToServer::LoadPlugin { .. } => 44,
+            ClientToServer::UnloadPlugin { .. } => 45,
+            ClientToServer::ReloadPlugin { .. } => 46,
+            ClientToServer::ListWorkspaces => 47,
+            ClientToServer::CreateWorkspace { .. } => 48,
+            ClientToServer::SwitchWorkspace { .. } => 49,
+            ClientToServer::RenameWorkspace { .. } => 50,
+            ClientToServer::DeleteWorkspace { .. } => 51,
+            ClientToServer::QuakeToggle { .. } => 52,
+            ClientToServer::ReorderPanes { .. } => 53,
+            ClientToServer::MovePaneToWindow { .. } => 54,
+            ClientToServer::Hello { .. } => 55,
+            ClientToServer::QueryForegroundProcess { .. } => 56,
+            ClientToServer::SetThemeColors { .. } => 57,
+            ClientToServer::DndDrop { .. } => 58,
+            ClientToServer::SplitWithShell { .. } => 59,
+        }
+    }
+
+    /// Maps each `ServerToClient` variant to its intended wire tag (0-based
+    /// declaration order). Exhaustive for the same reason as
+    /// `client_to_server_expected_tag` above.
+    fn server_to_client_expected_tag(msg: &ServerToClient) -> u32 {
+        match msg {
+            ServerToClient::GridDiff { .. } => 0,
+            ServerToClient::FullRefresh { .. } => 1,
+            ServerToClient::SessionList { .. } => 2,
+            ServerToClient::Pong => 3,
+            ServerToClient::Error { .. } => 4,
+            ServerToClient::ImagePlaced { .. } => 5,
+            ServerToClient::TextSized { .. } => 6,
+            ServerToClient::LayoutChanged { .. } => 7,
+            ServerToClient::Bell { .. } => 8,
+            ServerToClient::RecordingStarted { .. } => 9,
+            ServerToClient::RecordingStopped { .. } => 10,
+            ServerToClient::WindowListChanged { .. } => 11,
+            ServerToClient::PaneClosed { .. } => 12,
+            ServerToClient::TitleChanged { .. } => 13,
+            ServerToClient::ProcessChanged { .. } => 14,
+            ServerToClient::DesktopNotification { .. } => 15,
+            ServerToClient::ClipboardWriteRequest { .. } => 16,
+            ServerToClient::BroadcastModeChanged { .. } => 17,
+            ServerToClient::AsciicastStarted { .. } => 18,
+            ServerToClient::AsciicastStopped { .. } => 19,
+            ServerToClient::TemplateSaved { .. } => 20,
+            ServerToClient::TemplateLoaded { .. } => 21,
+            ServerToClient::TemplateList { .. } => 22,
+            ServerToClient::ZoomChanged { .. } => 23,
+            ServerToClient::PaneBroken { .. } => 24,
+            ServerToClient::SerialConnected { .. } => 25,
+            ServerToClient::SftpProgress { .. } => 26,
+            ServerToClient::SftpDone { .. } => 27,
+            ServerToClient::SemanticMark { .. } => 28,
+            ServerToClient::CwdChanged { .. } => 29,
+            ServerToClient::FloatingPaneOpened { .. } => 30,
+            ServerToClient::FloatingPaneMoved { .. } => 31,
+            ServerToClient::FloatingPaneClosed { .. } => 32,
+            ServerToClient::PluginList { .. } => 33,
+            ServerToClient::PluginOk { .. } => 34,
+            ServerToClient::WorkspaceList { .. } => 35,
+            ServerToClient::WorkspaceSwitched { .. } => 36,
+            ServerToClient::QuakeToggleRequest { .. } => 37,
+            ServerToClient::HelloAck { .. } => 38,
+            ServerToClient::ForegroundProcessStatus { .. } => 39,
+            ServerToClient::PointerShapeChanged { .. } => 40,
+            ServerToClient::PaneColorsChanged { .. } => 41,
+            ServerToClient::ProgressChanged { .. } => 42,
+        }
+    }
+
+    /// Audit round 4 #11: postcard's enum wire tag is implicit declaration order,
+    /// not self-describing. Inserting a new variant anywhere but the end silently
+    /// changes every following variant's wire tag, breaking compatibility between
+    /// differently-versioned client/server builds without any compile error.
+    ///
+    /// This test pins each variant's actual serialized tag against the
+    /// hand-maintained, exhaustive `*_expected_tag` match above. The match's
+    /// exhaustiveness check catches *new* variants missing an arm; this loop
+    /// catches a variant having been *moved* (its real wire tag drifting away
+    /// from the tag recorded here) — together they make an accidental reorder a
+    /// CI failure instead of a silent wire-format break.
+    #[test]
+    fn client_to_server_wire_tags_are_pinned_to_declaration_order() {
+        let cases: Vec<ClientToServer> = vec![
+            ClientToServer::KeyEvent {
+                code: KeyCode::Char('a'),
+                modifiers: Modifiers::new(0),
+                event_type: 1,
+            },
+            ClientToServer::Resize { cols: 80, rows: 24 },
+            ClientToServer::Detach,
+            ClientToServer::Attach {
+                session_name: "s".to_string(),
+            },
+            ClientToServer::SplitVertical,
+            ClientToServer::SplitHorizontal,
+            ClientToServer::FocusNextPane,
+            ClientToServer::FocusPrevPane,
+            ClientToServer::FocusPane { pane_id: 1 },
+            ClientToServer::PasteText {
+                text: "t".to_string(),
+            },
+            ClientToServer::Ping,
+            ClientToServer::ListSessions,
+            ClientToServer::KillSession {
+                name: "s".to_string(),
+            },
+            ClientToServer::StartRecording {
+                session_name: "s".to_string(),
+                output_path: "p".to_string(),
+            },
+            ClientToServer::StopRecording {
+                session_name: "s".to_string(),
+            },
+            ClientToServer::ClosePane,
+            ClientToServer::ResizeSplit { delta: 0.1 },
+            ClientToServer::ConnectSsh {
+                host: "h".to_string(),
+                port: 22,
+                username: "u".to_string(),
+                auth_type: "password".to_string(),
+                password_keyring_account: None,
+                ephemeral_password: false,
+                key_path: None,
+                remote_forwards: vec![],
+                x11_forward: false,
+                x11_trusted: false,
+            },
+            ClientToServer::NewWindow,
+            ClientToServer::CloseWindow { window_id: 1 },
+            ClientToServer::FocusWindow { window_id: 1 },
+            ClientToServer::RenameWindow {
+                window_id: 1,
+                name: "n".to_string(),
+            },
+            ClientToServer::SetBroadcast { enabled: true },
+            ClientToServer::DisplayPanes { show: true },
+            ClientToServer::StartAsciicast {
+                session_name: "s".to_string(),
+                output_path: "p".to_string(),
+            },
+            ClientToServer::StopAsciicast {
+                session_name: "s".to_string(),
+            },
+            ClientToServer::SaveTemplate {
+                name: "n".to_string(),
+            },
+            ClientToServer::LoadTemplate {
+                name: "n".to_string(),
+            },
+            ClientToServer::ListTemplates,
+            ClientToServer::ToggleZoom,
+            ClientToServer::SwapPane { target_pane_id: 1 },
+            ClientToServer::BreakPane,
+            ClientToServer::JoinPane {
+                target_window_id: 1,
+            },
+            ClientToServer::SftpUpload {
+                host_name: "h".to_string(),
+                local_path: "l".to_string(),
+                remote_path: "r".to_string(),
+            },
+            ClientToServer::SftpDownload {
+                host_name: "h".to_string(),
+                remote_path: "r".to_string(),
+                local_path: "l".to_string(),
+            },
+            ClientToServer::RunMacro {
+                macro_fn: "f".to_string(),
+                display_name: "d".to_string(),
+            },
+            ClientToServer::MouseReport {
+                button: 0,
+                col: 0,
+                row: 0,
+                pressed: true,
+                motion: false,
+            },
+            ClientToServer::SetLayoutMode {
+                mode: "bsp".to_string(),
+            },
+            ClientToServer::OpenFloatingPane,
+            ClientToServer::CloseFloatingPane { pane_id: 1 },
+            ClientToServer::MoveFloatingPane {
+                pane_id: 1,
+                col_off: 0,
+                row_off: 0,
+            },
+            ClientToServer::ResizeFloatingPane {
+                pane_id: 1,
+                cols: 10,
+                rows: 10,
+            },
+            ClientToServer::ConnectSerial {
+                port: "p".to_string(),
+                baud_rate: 115200,
+                data_bits: 8,
+                stop_bits: 1,
+                parity: "none".to_string(),
+            },
+            ClientToServer::ListPlugins,
+            ClientToServer::LoadPlugin {
+                path: "p".to_string(),
+            },
+            ClientToServer::UnloadPlugin {
+                path: "p".to_string(),
+            },
+            ClientToServer::ReloadPlugin {
+                path: "p".to_string(),
+            },
+            ClientToServer::ListWorkspaces,
+            ClientToServer::CreateWorkspace {
+                name: "n".to_string(),
+            },
+            ClientToServer::SwitchWorkspace {
+                name: "n".to_string(),
+            },
+            ClientToServer::RenameWorkspace {
+                from: "a".to_string(),
+                to: "b".to_string(),
+            },
+            ClientToServer::DeleteWorkspace {
+                name: "n".to_string(),
+                force: false,
+            },
+            ClientToServer::QuakeToggle {
+                action: "toggle".to_string(),
+            },
+            ClientToServer::ReorderPanes { pane_ids: vec![1] },
+            ClientToServer::MovePaneToWindow {
+                pane_id: 1,
+                target_window_id: 1,
+                insert_at: None,
+            },
+            ClientToServer::Hello {
+                proto_version: 1,
+                client_kind: ClientKind::Gpu,
+                client_version: "1.0.0".to_string(),
+            },
+            ClientToServer::QueryForegroundProcess { window_id: 1 },
+            ClientToServer::SetThemeColors {
+                fg: [0, 0, 0],
+                bg: [0, 0, 0],
+            },
+            ClientToServer::DndDrop {
+                path: "p".to_string(),
+                paste_fallback: "f".to_string(),
+            },
+            ClientToServer::SplitWithShell {
+                program: "p".to_string(),
+                args: vec![],
+                cwd: None,
+                env: vec![],
+            },
+        ];
+
+        for msg in &cases {
+            let expected = client_to_server_expected_tag(msg);
+            let encoded = postcard::to_stdvec(msg).expect("serialize ClientToServer variant");
+            let actual_tag = read_leading_varint_u32(&encoded);
+            assert_eq!(
+                actual_tag, expected,
+                "ClientToServer::{msg:?} wire tag drifted from its expected \
+                 declaration-order position; the enum was likely reordered without \
+                 updating client_to_server_expected_tag (breaks wire compatibility \
+                 across client/server versions)"
+            );
+        }
+    }
+
+    /// Audit round 4 #11 — see
+    /// `client_to_server_wire_tags_are_pinned_to_declaration_order` for the
+    /// rationale. Same pinning check for `ServerToClient`.
+    #[test]
+    fn server_to_client_wire_tags_are_pinned_to_declaration_order() {
+        let cases: Vec<ServerToClient> = vec![
+            ServerToClient::GridDiff {
+                pane_id: 1,
+                dirty_rows: vec![],
+                cursor_col: 0,
+                cursor_row: 0,
+            },
+            ServerToClient::FullRefresh {
+                pane_id: 1,
+                grid: Grid::new(1, 1),
+            },
+            ServerToClient::SessionList { sessions: vec![] },
+            ServerToClient::Pong,
+            ServerToClient::Error {
+                message: "e".to_string(),
+            },
+            ServerToClient::ImagePlaced {
+                pane_id: 1,
+                image_id: 1,
+                col: 0,
+                row: 0,
+                width: 1,
+                height: 1,
+                rgba: vec![],
+            },
+            ServerToClient::TextSized {
+                pane_id: 1,
+                col: 0,
+                row: 0,
+                scale_num: 1,
+                scale_den: 1,
+                width_cells: 0,
+                valign: 0,
+                halign: 0,
+                text: "t".to_string(),
+            },
+            ServerToClient::LayoutChanged {
+                panes: vec![],
+                focused_pane_id: 0,
+            },
+            ServerToClient::Bell { pane_id: 1 },
+            ServerToClient::RecordingStarted {
+                pane_id: 1,
+                path: "p".to_string(),
+            },
+            ServerToClient::RecordingStopped { pane_id: 1 },
+            ServerToClient::WindowListChanged { windows: vec![] },
+            ServerToClient::PaneClosed { pane_id: 0 },
+            ServerToClient::TitleChanged {
+                pane_id: 1,
+                title: "t".to_string(),
+            },
+            ServerToClient::ProcessChanged {
+                pane_id: 1,
+                process_name: None,
+            },
+            ServerToClient::DesktopNotification {
+                pane_id: 1,
+                title: "t".to_string(),
+                body: "b".to_string(),
+            },
+            ServerToClient::ClipboardWriteRequest {
+                pane_id: 1,
+                text: "t".to_string(),
+            },
+            ServerToClient::BroadcastModeChanged { enabled: true },
+            ServerToClient::AsciicastStarted {
+                pane_id: 1,
+                path: "p".to_string(),
+            },
+            ServerToClient::AsciicastStopped { pane_id: 1 },
+            ServerToClient::TemplateSaved {
+                name: "n".to_string(),
+                path: "p".to_string(),
+            },
+            ServerToClient::TemplateLoaded {
+                name: "n".to_string(),
+            },
+            ServerToClient::TemplateList { names: vec![] },
+            ServerToClient::ZoomChanged { is_zoomed: true },
+            ServerToClient::PaneBroken {
+                new_window_id: 1,
+                pane_id: 1,
+            },
+            ServerToClient::SerialConnected {
+                pane_id: 1,
+                port: "p".to_string(),
+            },
+            ServerToClient::SftpProgress {
+                path: "p".to_string(),
+                transferred: 0,
+                total: 0,
+            },
+            ServerToClient::SftpDone {
+                path: "p".to_string(),
+                error: None,
+            },
+            ServerToClient::SemanticMark {
+                pane_id: 1,
+                row: 0,
+                kind: "A".to_string(),
+                exit_code: None,
+            },
+            ServerToClient::CwdChanged {
+                pane_id: 1,
+                cwd: "c".to_string(),
+            },
+            ServerToClient::FloatingPaneOpened {
+                pane_id: 1,
+                col_off: 0,
+                row_off: 0,
+                cols: 1,
+                rows: 1,
+            },
+            ServerToClient::FloatingPaneMoved {
+                pane_id: 1,
+                col_off: 0,
+                row_off: 0,
+                cols: 1,
+                rows: 1,
+            },
+            ServerToClient::FloatingPaneClosed { pane_id: 1 },
+            ServerToClient::PluginList { paths: vec![] },
+            ServerToClient::PluginOk {
+                path: "p".to_string(),
+                action: "loaded".to_string(),
+            },
+            ServerToClient::WorkspaceList {
+                current: "c".to_string(),
+                workspaces: vec![],
+            },
+            ServerToClient::WorkspaceSwitched {
+                name: "n".to_string(),
+            },
+            ServerToClient::QuakeToggleRequest {
+                action: "toggle".to_string(),
+            },
+            ServerToClient::HelloAck {
+                proto_version: 1,
+                server_version: "1.0.0".to_string(),
+            },
+            ServerToClient::ForegroundProcessStatus {
+                window_id: 1,
+                has_foreground: false,
+            },
+            ServerToClient::PointerShapeChanged {
+                pane_id: 1,
+                shape: "pointer".to_string(),
+            },
+            ServerToClient::PaneColorsChanged {
+                pane_id: 1,
+                fg: None,
+                bg: None,
+                palette: vec![],
+            },
+            ServerToClient::ProgressChanged {
+                pane_id: 1,
+                state: 0,
+                progress: 0,
+            },
+        ];
+
+        for msg in &cases {
+            let expected = server_to_client_expected_tag(msg);
+            let encoded = postcard::to_stdvec(msg).expect("serialize ServerToClient variant");
+            let actual_tag = read_leading_varint_u32(&encoded);
+            assert_eq!(
+                actual_tag, expected,
+                "ServerToClient::{msg:?} wire tag drifted from its expected \
+                 declaration-order position; the enum was likely reordered without \
+                 updating server_to_client_expected_tag (breaks wire compatibility \
+                 across client/server versions)"
+            );
+        }
     }
 
     #[test]

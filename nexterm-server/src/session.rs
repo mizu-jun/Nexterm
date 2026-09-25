@@ -569,10 +569,30 @@ impl Session {
             bail!("no window could be restored for session '{}'", snap.name);
         }
 
+        // The persisted `focused_window_id` can dangle: the window it pointed to
+        // may have failed to restore above (warned and skipped), leaving no entry
+        // in `windows` for that ID. Every other place that mutates focus
+        // (`add_window`, `remove_window`, `focus_window`) keeps the invariant that
+        // `focused_window_id` always refers to a live window, so re-establish it
+        // here too rather than let a dangling ID propagate into `focused_window()`.
+        let focused_window_id = if windows.contains_key(&snap.focused_window_id) {
+            snap.focused_window_id
+        } else {
+            let fallback = *windows
+                .keys()
+                .next()
+                .expect("windows is non-empty; verified above");
+            warn!(
+                "snapshot's focused_window_id {} not found in restored windows for session '{}'; falling back to window {}",
+                snap.focused_window_id, snap.name, fallback
+            );
+            fallback
+        };
+
         Ok(Self {
             name: snap.name.clone(),
             windows,
-            focused_window_id: snap.focused_window_id,
+            focused_window_id,
             broadcast_tx,
             shell: snap.shell.clone(),
             shell_args: snap.shell_args.clone(),
@@ -1343,6 +1363,46 @@ mod tests {
         let (current, _) = fresh.list_workspaces().await;
         // Unknown current falls back to default, exactly like v3/v4.
         assert_eq!(current, crate::snapshot::DEFAULT_WORKSPACE);
+    }
+
+    #[tokio::test]
+    #[ignore = "spawns a PTY; hangs on interactive shell close in regular CI"]
+    async fn restore_from_snapshot_falls_back_when_focused_window_id_dangles() {
+        // Audit round 4 (medium): a persisted `focused_window_id` can dangle if
+        // the window it pointed to failed to restore (see the `warn!` branch in
+        // `restore_from_snapshot` above) or was stale from before that window
+        // was closed. `focused_window()` / `focused_window_mut()` must never be
+        // left pointing at an ID absent from `windows`, or every operation that
+        // goes through them starts failing with "focused window not found".
+        let session = Session::new(
+            "dangling-focus-test".to_string(),
+            80,
+            24,
+            nexterm_config::ShellConfig::default().program,
+            Vec::new(),
+        )
+        .expect("session construction should succeed");
+
+        let mut snap = session.to_snapshot();
+        // Simulate stale/corrupt persisted state: point focus at a window ID
+        // that does not (and will not) exist in the restored session.
+        snap.focused_window_id = 999_999;
+
+        let restored = Session::restore_from_snapshot(&snap)
+            .expect("restore should succeed despite the dangling focused_window_id");
+
+        assert!(
+            restored.focused_window().is_some(),
+            "focused_window() must resolve to a real window, not dangle"
+        );
+        assert_ne!(
+            restored.focused_window_id, 999_999,
+            "the dangling ID must not survive restore"
+        );
+        assert!(
+            restored.windows.contains_key(&restored.focused_window_id),
+            "focused_window_id must always reference a live window"
+        );
     }
 
     #[tokio::test]

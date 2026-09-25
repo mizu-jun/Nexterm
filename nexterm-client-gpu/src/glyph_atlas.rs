@@ -185,6 +185,45 @@ pub(crate) struct GlyphRect {
     pub height: u32,
 }
 
+/// Pixel area (`width * height`) of a cached glyph rect, in `u64` so a run of
+/// wide-glyph insertions cannot overflow the running area tally.
+fn rect_area(rect: &GlyphRect) -> u64 {
+    (rect.width as u64) * (rect.height as u64)
+}
+
+/// Insert `(key, rect)` into `cache` while keeping `*area` an accurate
+/// footprint tally, then evict beyond `budget` — the area-based counterpart
+/// to the entry-count `cache.cap()`.
+///
+/// The entry-count LRU capacity assumes every cached slot costs one cell's
+/// worth of atlas area, but a wide (double-cell, e.g. CJK) glyph occupies
+/// roughly 2x that area. A cache full of wide glyphs can therefore consume
+/// far more atlas texture than the entry count implies without the
+/// entry-count cap ever noticing — this closes that gap by tracking the real
+/// footprint and evicting (LRU order) whenever it exceeds `budget`,
+/// independent of how many entries that takes.
+///
+/// A free function (rather than a `GlyphAtlas` method) so it is generic over
+/// the key type and can be unit-tested without a `wgpu::Device`.
+fn insert_with_area_budget<K: std::hash::Hash + Eq>(
+    cache: &mut LruCache<K, GlyphRect>,
+    area: &mut u64,
+    budget: u64,
+    key: K,
+    rect: GlyphRect,
+) {
+    if let Some((_, replaced)) = cache.push(key, rect) {
+        *area = area.saturating_sub(rect_area(&replaced));
+    }
+    *area += rect_area(&rect);
+    while *area > budget && cache.len() > 1 {
+        match cache.pop_lru() {
+            Some((_, evicted)) => *area = area.saturating_sub(rect_area(&evicted)),
+            None => break,
+        }
+    }
+}
+
 /// Glyph atlas (packs every glyph into a single texture).
 pub(crate) struct GlyphAtlas {
     pub texture: wgpu::Texture,
@@ -213,6 +252,17 @@ pub(crate) struct GlyphAtlas {
     cell_w_hint: u32,
     /// Font cell height hint for proportional LRU sizing (0 = use default 8×8).
     cell_h_hint: u32,
+    /// Sum of `width * height` (pixels) of every glyph currently in `cache`.
+    /// See [`insert_with_area_budget`] for why this exists alongside the
+    /// entry-count `cache.cap()`.
+    cache_area: u64,
+    /// Same tracking as `cache_area`, for `ligature_cache`.
+    ligature_area: u64,
+    /// Usable atlas texture area (pixels) that `cache_area` /
+    /// `ligature_area` are checked against: `size * size` minus the space
+    /// reserved for chrome icons. Recomputed whenever the atlas is
+    /// (re)constructed at a given `size`.
+    area_budget: u64,
 }
 
 impl GlyphAtlas {
@@ -286,6 +336,9 @@ impl GlyphAtlas {
             needs_grow: false,
             cell_w_hint: 0,
             cell_h_hint: 0,
+            cache_area: 0,
+            ligature_area: 0,
+            area_budget: atlas_sq.saturating_sub(ICON_RESERVED_AREA),
         }
     }
 
@@ -382,6 +435,8 @@ impl GlyphAtlas {
             // both or a stale ligature UV will point into overwritten data.
             self.cache.clear();
             self.ligature_cache.clear();
+            self.cache_area = 0;
+            self.ligature_area = 0;
             self.cleared_this_frame = true;
             if self.size < self.size_max {
                 // Call `grow()` next frame to expand the texture.
@@ -427,7 +482,13 @@ impl GlyphAtlas {
 
         self.cursor_x += width + 1;
         self.row_height = self.row_height.max(height);
-        self.cache.put(key, rect);
+        insert_with_area_budget(
+            &mut self.cache,
+            &mut self.cache_area,
+            self.area_budget,
+            key,
+            rect,
+        );
         rect
     }
 
@@ -456,6 +517,8 @@ impl GlyphAtlas {
             self.row_height = 0;
             self.cache.clear();
             self.ligature_cache.clear();
+            self.cache_area = 0;
+            self.ligature_area = 0;
             self.cleared_this_frame = true;
             if self.size < self.size_max {
                 self.needs_grow = true;
@@ -499,14 +562,27 @@ impl GlyphAtlas {
 
         self.cursor_x += width + 1;
         self.row_height = self.row_height.max(height);
-        self.ligature_cache.put(key, rect);
+        insert_with_area_budget(
+            &mut self.ligature_cache,
+            &mut self.ligature_area,
+            self.area_budget,
+            key,
+            rect,
+        );
         rect
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{FontRole, GlyphAtlas, GlyphKey, ICON_RESERVED_AREA};
+    use std::num::NonZeroUsize;
+
+    use lru::LruCache;
+
+    use super::{
+        FontRole, GlyphAtlas, GlyphKey, GlyphRect, ICON_RESERVED_AREA, insert_with_area_budget,
+        rect_area,
+    };
 
     #[test]
     fn lru_cap_default_formula_less_the_icon_reservation() {
@@ -612,5 +688,103 @@ mod tests {
         // Degenerate cell dimensions must not divide by zero.
         let cap = GlyphAtlas::lru_cap_from_cell(1024, 0, 0);
         assert!(cap.get() >= 256);
+    }
+
+    /// A narrow (single-cell) glyph rect for the area-accounting tests below:
+    /// an 8×16 cell, matching a typical monospace terminal font.
+    fn narrow_rect() -> GlyphRect {
+        GlyphRect {
+            uv_min: [0.0, 0.0],
+            uv_max: [0.0, 0.0],
+            width: 8,
+            height: 16,
+        }
+    }
+
+    /// A wide (double-cell) glyph rect — e.g. a CJK character — occupying
+    /// twice the width of `narrow_rect` at the same height, and therefore
+    /// twice the pixel area.
+    fn wide_rect() -> GlyphRect {
+        GlyphRect {
+            uv_min: [0.0, 0.0],
+            uv_max: [0.0, 0.0],
+            width: 16,
+            height: 16,
+        }
+    }
+
+    #[test]
+    fn wide_glyph_is_weighted_by_its_actual_footprint() {
+        assert_eq!(rect_area(&wide_rect()), 2 * rect_area(&narrow_rect()));
+    }
+
+    #[test]
+    fn area_accounting_evicts_purely_narrow_glyphs_only_at_the_entry_cap() {
+        // An entry-count cap of 4, sized so 4 narrow (8x16=128px) glyphs
+        // exactly fill the budget: nothing should be evicted early.
+        let narrow_area = rect_area(&narrow_rect());
+        let budget = narrow_area * 4;
+        let mut cache: LruCache<u32, GlyphRect> = LruCache::new(NonZeroUsize::new(4).unwrap());
+        let mut area = 0u64;
+
+        for k in 0..4 {
+            insert_with_area_budget(&mut cache, &mut area, budget, k, narrow_rect());
+        }
+
+        assert_eq!(cache.len(), 4, "all 4 narrow glyphs should still be cached");
+        assert_eq!(area, budget);
+    }
+
+    #[test]
+    fn area_accounting_evicts_wide_glyphs_before_the_entry_cap_is_reached() {
+        // Same entry-count cap (4) and the same budget as the narrow-only
+        // case above (4 narrow-glyph-equivalents), but every insert is a wide
+        // glyph (2x the area). The old entry-count-only LRU would happily
+        // hold all 4 wide glyphs since 4 <= cap; the area-aware accounting
+        // must evict down to 2 (2 wide glyphs = 4 narrow-equivalents) well
+        // before the entry-count cap is hit.
+        let narrow_area = rect_area(&narrow_rect());
+        let budget = narrow_area * 4;
+        let mut cache: LruCache<u32, GlyphRect> = LruCache::new(NonZeroUsize::new(4).unwrap());
+        let mut area = 0u64;
+
+        for k in 0..4 {
+            insert_with_area_budget(&mut cache, &mut area, budget, k, wide_rect());
+        }
+
+        assert!(
+            cache.len() < 4,
+            "wide glyphs should trigger eviction before the entry-count cap ({})",
+            cache.len()
+        );
+        assert!(
+            area <= budget,
+            "tracked area {area} must not exceed the budget {budget}"
+        );
+        // The most recently inserted entries (2 and 3) must survive; LRU
+        // evicts the oldest (0, then 1) first.
+        assert!(cache.contains(&3));
+        assert!(cache.contains(&2));
+        assert!(!cache.contains(&0));
+    }
+
+    #[test]
+    fn area_accounting_never_evicts_the_sole_remaining_entry() {
+        // A single glyph larger than the whole budget must still be cached
+        // (there is nothing smaller to fall back to); the eviction loop must
+        // stop at len() == 1 rather than spin or empty the cache entirely.
+        let mut cache: LruCache<u32, GlyphRect> = LruCache::new(NonZeroUsize::new(4).unwrap());
+        let mut area = 0u64;
+        let huge = GlyphRect {
+            uv_min: [0.0, 0.0],
+            uv_max: [0.0, 0.0],
+            width: 1000,
+            height: 1000,
+        };
+
+        insert_with_area_budget(&mut cache, &mut area, 1, 0, huge);
+
+        assert_eq!(cache.len(), 1);
+        assert!(cache.contains(&0));
     }
 }

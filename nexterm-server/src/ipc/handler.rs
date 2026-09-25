@@ -4,10 +4,26 @@ use anyhow::Result;
 use nexterm_proto::{ClientToServer, ServerToClient};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tokio::time::{Duration, timeout};
+use tracing::{error, info, warn};
 
 use crate::runtime_config::SharedRuntimeConfig;
 use crate::session::SessionManager;
+
+/// How long a connection may sit with no incoming message before we close it.
+///
+/// This is a local IPC channel (Unix socket / named pipe) for an interactive
+/// terminal client — a user can legitimately leave a session idle for a long
+/// stretch (lunch, a long-running remote command, a detached-but-not-closed
+/// GUI window) without sending any IPC traffic, since IPC traffic is driven
+/// by user input/output, not periodic heartbeats. 45 minutes is chosen to be
+/// well clear of normal idle gaps while still reclaiming resources from
+/// clients that vanished without a clean disconnect (e.g. killed process,
+/// network-mounted home directory hiccup). This is a resource-exhaustion
+/// guard, not an authentication timeout — the web UI's session TTL
+/// (`session_timeout_secs`, default 24h in `nexterm-server/src/web/mod.rs`)
+/// governs a different, much longer-lived credential and is not reused here.
+const IDLE_READ_TIMEOUT: Duration = Duration::from_secs(45 * 60);
 
 /// Handle reads and writes on a connected client.
 pub(super) async fn handle_client<S>(
@@ -52,9 +68,19 @@ where
     // Client -> server receive loop.
     loop {
         let mut len_buf = [0u8; 4];
-        if read_half.read_exact(&mut len_buf).await.is_err() {
-            info!("client disconnected");
-            break;
+        match timeout(IDLE_READ_TIMEOUT, read_half.read_exact(&mut len_buf)).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(_)) => {
+                info!("client disconnected");
+                break;
+            }
+            Err(_) => {
+                warn!(
+                    "client idle for over {}s with no message; closing connection",
+                    IDLE_READ_TIMEOUT.as_secs()
+                );
+                break;
+            }
         }
         let msg_len = u32::from_le_bytes(len_buf) as usize;
         // Defend against OOM attacks using a huge length prefix.

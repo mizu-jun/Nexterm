@@ -232,7 +232,37 @@ pub(super) async fn dispatch_inner(msg: &ClientToServer, ctx: &mut DispatchConte
         RunMacro {
             macro_fn,
             display_name,
-        } => file_dispatch::handle_run_macro(ctx, macro_fn, display_name).await,
+        } => {
+            // Plugin hook (audit finding #27): `RunMacro` is the wire message
+            // behind the command palette ("Lua function name inside
+            // nexterm.lua" / "Display name shown in the command palette" —
+            // see the field docs on `ClientToServer::RunMacro`), i.e. exactly
+            // the ":command" invocation `PluginManager::on_command` was built
+            // for (see docs/plugin-api.md: "Called when a user runs a
+            // `:command` via the command palette"). Forward it as a
+            // `:cmd`-style string before running the macro locally, honoring
+            // the "0 = handled, stop processing" contract.
+            //
+            // Locking: `plugin_manager` is a `std::sync::Mutex`, so the guard
+            // is dropped (this block ends) before the `.await` below — never
+            // held across an await point. When no plugin is loaded this is a
+            // single uncontended lock + `is_some_and` short-circuit with no
+            // allocation, so the hot path stays cheap.
+            let handled_by_plugin = {
+                let lock = crate::lock_recover(&ctx.manager.plugin_manager, "plugin_manager");
+                lock.as_ref().is_some_and(|pm| {
+                    let cmd = if display_name.is_empty() {
+                        format!(":{macro_fn}")
+                    } else {
+                        format!(":{display_name}")
+                    };
+                    pm.on_command(&cmd)
+                })
+            };
+            if !handled_by_plugin {
+                file_dispatch::handle_run_macro(ctx, macro_fn, display_name).await;
+            }
+        }
         ConnectSerial {
             port,
             baud_rate,

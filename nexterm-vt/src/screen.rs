@@ -602,6 +602,36 @@ impl Screen {
         self.cursor_row = self.cursor_row.min(new_rows.saturating_sub(1));
         self.scroll_top = 0;
         self.scroll_bottom = new_rows.saturating_sub(1);
+
+        // A real terminal has exactly one PTY size driving both buffers, so a
+        // resize while the alternate screen is active (vim/less) must also
+        // update the saved primary screen's dimensions. `ScreenBuffer` keeps
+        // no explicit width/height (they are implied by `rows` shape), so
+        // leaving it untouched here means `switch_to_primary` would later
+        // hand back row data sized for the pre-resize terminal while
+        // `self.grid.width`/`height` already reflect the new size — a
+        // primary/alt dimension desync that self-heals only by accident
+        // (audit round 4, #15).
+        if let Some(saved) = self.alt_screen.as_mut() {
+            let old_rows = saved.rows.len() as u16;
+            let old_cols = saved.rows.first().map(|r| r.len()).unwrap_or(0) as u16;
+            let mut resized_rows =
+                vec![vec![Cell::default(); new_cols as usize]; new_rows as usize];
+            let copy_rows = old_rows.min(new_rows) as usize;
+            let copy_cols = old_cols.min(new_cols) as usize;
+            for (dst_row, src_row) in resized_rows
+                .iter_mut()
+                .zip(saved.rows.iter())
+                .take(copy_rows)
+            {
+                for (dst_cell, src_cell) in dst_row.iter_mut().zip(src_row.iter()).take(copy_cols) {
+                    *dst_cell = src_cell.clone();
+                }
+            }
+            saved.rows = resized_rows;
+            saved.cursor_col = saved.cursor_col.min(new_cols.saturating_sub(1));
+            saved.cursor_row = saved.cursor_row.min(new_rows.saturating_sub(1));
+        }
     }
 
     /// Writes a character at the cursor and advances it.
@@ -922,16 +952,29 @@ impl Screen {
             self.kitty_chunk_payload.extend_from_slice(payload);
         } else {
             // Final chunk (or a single chunk): decode and register the image.
-            let (decode_params, full_payload) =
-                if let Some(first_params) = self.kitty_chunk_params.take() {
-                    // Final chunk of a chunked transfer — combine with the accumulator.
-                    self.kitty_chunk_payload.extend_from_slice(payload);
-                    let combined_payload = std::mem::take(&mut self.kitty_chunk_payload);
-                    (first_params, combined_payload)
-                } else {
-                    // Single chunk.
-                    (params_bytes.to_vec(), payload.to_vec())
-                };
+            let (decode_params, full_payload) = if let Some(first_params) =
+                self.kitty_chunk_params.take()
+            {
+                // Final chunk of a chunked transfer — combine with the accumulator.
+                // Apply the same MAX_KITTY_CHUNK_LEN bound check used for
+                // intermediate chunks; otherwise the final chunk could be
+                // appended unchecked and let a single transfer overshoot
+                // the cap by up to one chunk's size (audit round 4, #50).
+                if self.kitty_chunk_payload.len() + payload.len() > MAX_KITTY_CHUNK_LEN {
+                    tracing::warn!(
+                        "Kitty chunked transfer payload exceeded the limit ({} bytes) on the final chunk; discarding the sequence.",
+                        MAX_KITTY_CHUNK_LEN
+                    );
+                    self.kitty_chunk_payload.clear();
+                    return;
+                }
+                self.kitty_chunk_payload.extend_from_slice(payload);
+                let combined_payload = std::mem::take(&mut self.kitty_chunk_payload);
+                (first_params, combined_payload)
+            } else {
+                // Single chunk.
+                (params_bytes.to_vec(), payload.to_vec())
+            };
 
             // Assemble the form expected by `decode_kitty`: `G<params>;<payload>`.
             let mut full_apc = Vec::with_capacity(decode_params.len() + full_payload.len() + 2);

@@ -20,6 +20,33 @@ fn bsp_vertical_split_layout() {
 }
 
 #[test]
+fn bsp_split_never_overflows_a_tiny_parent_rect() {
+    // Audit round 4 (#19): a very small parent (cols/rows 0..=2) used to make
+    // the two children's computed sizes sum to more than the parent itself
+    // (left_cols + right_cols + 1-col separator > cols), because each child
+    // had an unconditional floor of 1. Verify every combination of a tiny
+    // parent size and split direction now stays within bounds.
+    for size in 0u16..=3 {
+        for dir in [SplitDir::Vertical, SplitDir::Horizontal] {
+            let mut tree = bsp::SplitNode::Pane { pane_id: 1 };
+            tree.insert_after(1, 2, dir.clone());
+            let mut out = Vec::new();
+            tree.compute(0, 0, size, size, &mut out);
+            for r in &out {
+                assert!(
+                    r.col_off + r.cols <= size,
+                    "size={size} dir={dir:?}: rect {r:?} exceeds col bound"
+                );
+                assert!(
+                    r.row_off + r.rows <= size,
+                    "size={size} dir={dir:?}: rect {r:?} exceeds row bound"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn bsp_horizontal_split_layout() {
     let mut tree = bsp::SplitNode::Pane { pane_id: 1 };
     tree.insert_after(1, 2, SplitDir::Horizontal);

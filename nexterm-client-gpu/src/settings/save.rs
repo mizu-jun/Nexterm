@@ -26,7 +26,10 @@ impl SettingsPanel {
             std::fs::create_dir_all(parent)?;
         }
 
-        std::fs::write(&path, updated)?;
+        // Write atomically (tempfile in the same directory + rename) so the
+        // `notify`-based hot-reload watcher in `nexterm-config` never observes
+        // a partially-written `config.toml` (Medium-severity audit finding).
+        write_atomic(&path, updated.as_bytes())?;
         Ok(())
     }
 
@@ -160,6 +163,69 @@ impl SettingsPanel {
 
         doc.to_string()
     }
+}
+
+/// Write `content` to `path` atomically: write to a tempfile in the same
+/// directory, `fsync` it, then `rename` it over `path`. A rename within the
+/// same directory is atomic on both Unix and Windows for files on the same
+/// volume, so the `notify` watcher in `nexterm-config` (which reloads
+/// `config.toml` on change) can never observe a half-written file.
+///
+/// Same tempfile-then-rename shape as `write_atomic_secure` in
+/// `host_manager.rs` / `palette.rs` / `named_blocks.rs`, minus the 0600
+/// permission enforcement (`config.toml` holds UI preferences, not secrets).
+fn write_atomic(path: &std::path::Path, content: &[u8]) -> anyhow::Result<()> {
+    use anyhow::Context;
+    use std::io::Write;
+
+    let parent = path
+        .parent()
+        .with_context(|| format!("could not obtain parent directory for {:?}", path))?;
+
+    let tmp_name = format!(
+        ".{}.tmp.{}",
+        path.file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("nexterm"),
+        std::process::id()
+    );
+    let tmp_path = parent.join(tmp_name);
+
+    let write_result = (|| -> anyhow::Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp_path)
+            .with_context(|| format!("failed to create temp file {:?}", tmp_path))?;
+        file.write_all(content)
+            .with_context(|| format!("failed to write temp file {:?}", tmp_path))?;
+        file.sync_all()
+            .with_context(|| format!("failed to sync temp file {:?}", tmp_path))?;
+        Ok(())
+    })();
+
+    if let Err(e) = write_result {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e);
+    }
+
+    // On Windows, `rename` can fail with "access denied" if the destination
+    // is open elsewhere (e.g. held by another process). Fall back to
+    // remove-then-rename, which is what the existing `write_atomic_secure`
+    // helpers in this crate do not need on Unix but Windows sometimes does.
+    if let Err(e) = std::fs::rename(&tmp_path, path) {
+        #[cfg(windows)]
+        {
+            let _ = std::fs::remove_file(path);
+            if std::fs::rename(&tmp_path, path).is_ok() {
+                return Ok(());
+            }
+        }
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e).with_context(|| format!("failed to rename temp file to {:?}", path));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

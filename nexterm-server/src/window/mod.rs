@@ -133,6 +133,16 @@ pub struct Window {
     pub layout_mode: LayoutMode,
     /// Floating panes (panes overlaid on top of the regular layout).
     floating_panes: HashMap<u32, (Pane, FloatRect)>,
+    /// Most recently seen total window size, in cells.
+    ///
+    /// `move_floating_pane`/`resize_floating_pane` take only the pane's own new rect over IPC
+    /// (see `nexterm-server/src/ipc/pane_dispatch.rs`), not the window's total size, so this
+    /// cached value is what lets them clamp a floating pane's rect to the window's actual bounds
+    /// via `FloatRect::clamp_to` — the same bounds `open_floating_pane` uses. Updated wherever a
+    /// total size is available (`new`, `new_with_pane`, `resize_all_panes`,
+    /// `restore_from_snapshot`).
+    last_cols: u16,
+    last_rows: u16,
     /// Tab display order (Sprint 5-7 / Phase 2-3).
     ///
     /// `panes`/`serial_panes` are `HashMap`s without a stable key order, so the logical order
@@ -173,6 +183,8 @@ impl Window {
             zoomed: false,
             layout_mode: LayoutMode::Bsp,
             floating_panes: HashMap::new(),
+            last_cols: cols,
+            last_rows: rows,
             pane_order: vec![focused_pane_id],
         })
     }
@@ -200,6 +212,8 @@ impl Window {
             zoomed: false,
             layout_mode: LayoutMode::Bsp,
             floating_panes: HashMap::new(),
+            last_cols: cols,
+            last_rows: rows,
             pane_order: vec![focused_pane_id],
         };
         window.resize_all_panes(cols, rows);
@@ -342,11 +356,21 @@ impl Window {
         shell: &str,
         args: &[String],
     ) -> Result<(u32, FloatRect)> {
+        self.last_cols = total_cols;
+        self.last_rows = total_rows;
+
         // Default size: 60% x 70% of the window, centered.
         let fp_cols = (total_cols as f32 * 0.6) as u16;
         let fp_rows = (total_rows as f32 * 0.7) as u16;
         let col_off = (total_cols.saturating_sub(fp_cols)) / 2;
         let row_off = (total_rows.saturating_sub(fp_rows)) / 2;
+        let mut rect = FloatRect {
+            col_off,
+            row_off,
+            cols: fp_cols,
+            rows: fp_rows,
+        };
+        rect.clamp_to(total_cols, total_rows);
 
         // Sprint 5-2 / B2: inherit the focused pane's CWD.
         let parent_cwd = self
@@ -355,22 +379,10 @@ impl Window {
             .and_then(|p| p.osc7_cwd().or_else(|| p.working_dir()));
         let pane_id = crate::pane::new_pane_id();
         let pane = match parent_cwd {
-            Some(ref cwd) => Pane::spawn_with_cwd(
-                pane_id,
-                fp_cols.max(10),
-                fp_rows.max(5),
-                tx,
-                shell,
-                args,
-                cwd,
-            )?,
-            None => Pane::spawn_with_id(pane_id, fp_cols.max(10), fp_rows.max(5), tx, shell, args)?,
-        };
-        let rect = FloatRect {
-            col_off,
-            row_off,
-            cols: fp_cols.max(10),
-            rows: fp_rows.max(5),
+            Some(ref cwd) => {
+                Pane::spawn_with_cwd(pane_id, rect.cols, rect.rows, tx, shell, args, cwd)?
+            }
+            None => Pane::spawn_with_id(pane_id, rect.cols, rect.rows, tx, shell, args)?,
         };
         self.floating_panes.insert(pane_id, (pane, rect.clone()));
         Ok((pane_id, rect))
@@ -382,15 +394,22 @@ impl Window {
     }
 
     /// Move a floating pane.
+    ///
+    /// Clamps the new position to the window's most recently known size (`last_cols`/
+    /// `last_rows`) via `FloatRect::clamp_to`, the same helper `open_floating_pane` uses, so a
+    /// drag can never leave the stored rect (and therefore what gets broadcast to clients)
+    /// outside the window.
     pub fn move_floating_pane(
         &mut self,
         pane_id: u32,
         col_off: u16,
         row_off: u16,
     ) -> Option<FloatRect> {
+        let (last_cols, last_rows) = (self.last_cols, self.last_rows);
         if let Some((_, rect)) = self.floating_panes.get_mut(&pane_id) {
             rect.col_off = col_off;
             rect.row_off = row_off;
+            rect.clamp_to(last_cols, last_rows);
             Some(rect.clone())
         } else {
             None
@@ -398,15 +417,21 @@ impl Window {
     }
 
     /// Resize a floating pane.
+    ///
+    /// Clamps the new size (and, if necessary, the offset) to the window's most recently known
+    /// size via `FloatRect::clamp_to` — see `move_floating_pane` for why this must be the same
+    /// helper `open_floating_pane` uses.
     pub fn resize_floating_pane(
         &mut self,
         pane_id: u32,
         cols: u16,
         rows: u16,
     ) -> Option<FloatRect> {
+        let (last_cols, last_rows) = (self.last_cols, self.last_rows);
         if let Some((pane, rect)) = self.floating_panes.get_mut(&pane_id) {
-            rect.cols = cols.max(10);
-            rect.rows = rows.max(5);
+            rect.cols = cols;
+            rect.rows = rows;
+            rect.clamp_to(last_cols, last_rows);
             let _ = pane.resize_pty(rect.cols, rect.rows);
             Some(rect.clone())
         } else {
@@ -958,6 +983,8 @@ impl Window {
 
     /// Resize every pane according to a new total size.
     pub fn resize_all_panes(&mut self, cols: u16, rows: u16) {
+        self.last_cols = cols;
+        self.last_rows = rows;
         let layouts = self.compute_layouts(cols, rows);
         for rect in &layouts {
             if let Some(pane) = self.panes.get_mut(&rect.pane_id) {
@@ -965,6 +992,14 @@ impl Window {
             } else if let Some(sp) = self.serial_panes.get_mut(&rect.pane_id) {
                 let _ = sp.resize_pty(rect.cols, rect.rows);
             }
+        }
+        // Re-clamp floating panes too: a window that has shrunk since a floating pane was
+        // placed/moved could otherwise leave it stored (and thus later broadcast) partly or
+        // fully outside the new bounds. Same `FloatRect::clamp_to` helper as the open/move/resize
+        // paths above, so the invariant "stored rect is always inside the window" holds here too.
+        for (pane, rect) in self.floating_panes.values_mut() {
+            rect.clamp_to(cols, rows);
+            let _ = pane.resize_pty(rect.cols, rect.rows);
         }
     }
 
@@ -1075,6 +1110,20 @@ impl Window {
         cols: u16,
         rows: u16,
     ) -> Result<Self> {
+        // Reject a corrupt snapshot outright rather than silently loading it: two BSP leaves
+        // sharing a `pane_id` would collide when inserted into `panes: HashMap<u32, Pane>` below,
+        // leaking one pane's PTY resources while both leaves end up pointing at the survivor. The
+        // caller (`Session::restore_from_snapshot`) already treats an `Err` here as "skip this
+        // window, warn, and keep restoring the rest" — see `session.rs` — so this doesn't need to
+        // do anything more than refuse.
+        if let Some(dup_id) = SplitNode::find_duplicate_pane_id(&snap.layout) {
+            anyhow::bail!(
+                "window '{}': snapshot's BSP tree references pane_id {} more than once; refusing to restore corrupt state",
+                snap.name,
+                dup_id
+            );
+        }
+
         // Reconstruct the BSP tree.
         let layout = SplitNode::from_snapshot(&snap.layout);
 
@@ -1131,6 +1180,8 @@ impl Window {
             zoomed: false,
             layout_mode: LayoutMode::Bsp,
             floating_panes: HashMap::new(),
+            last_cols: cols,
+            last_rows: rows,
             pane_order,
         })
     }

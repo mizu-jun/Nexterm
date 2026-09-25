@@ -8,7 +8,7 @@ use crate::glyph_atlas::{BgVertex, GlyphAtlas, TextVertex};
 use crate::state::ClientState;
 use crate::vertex_util::{
     add_icon_verts, add_px_rect, add_px_rounded_rect_sdf, add_run_verts, add_string_verts,
-    icon_size_for_slot, measure_run, truncate_run_to_width,
+    icon_size_for_slot, measure_run, truncate_run_to_width, visual_width,
 };
 
 use super::WgpuState;
@@ -258,9 +258,12 @@ impl WgpuState {
         } else {
             0.0
         };
-        // Reserve the right-edge settings-button width first (fixed width to avoid emoji width drift)
+        // Reserve the right-edge settings-button width first. Measured from the
+        // label's actual display width (UnicodeWidthChar, the same advance
+        // `add_string_verts` uses below) rather than a hardcoded cell count, so
+        // a longer translated label cannot overflow the pill it is drawn in.
         let settings_label = " * Settings ";
-        let settings_w = 12.0 * cell_w;
+        let settings_w = visual_width(settings_label) as f32 * cell_w;
         // Sprint 5-15 / Phase 2b: optional `+` new-tab button left of Settings.
         let new_tab_w = if cfg.show_new_tab_button {
             4.0 * cell_w
@@ -1339,9 +1342,11 @@ impl WgpuState {
             text_idx,
         );
 
-        // Key hint at the far right.
+        // Key hint at the far right. Positioned from the label's display width
+        // (the same advance `add_string_verts` sums below), not a character
+        // count, so the two cannot disagree for a CJK translation.
         let hint = "Enter/↑ next  Shift+Enter/↑ prev  Esc close ";
-        let hint_x = sw - hint.chars().count() as f32 * cell_w;
+        let hint_x = sw - visual_width(hint) as f32 * cell_w;
         add_string_verts(
             hint,
             hint_x.max(0.0),

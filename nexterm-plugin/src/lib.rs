@@ -82,7 +82,9 @@ pub const MIN_SUPPORTED_API_VERSION: u32 = 1;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tracing::{error, info, warn};
@@ -94,6 +96,24 @@ use wasmi::{Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuild
 /// computation from stalling the host. CRITICAL #10 mitigation: wasmi does
 /// not enforce a fuel limit by default.
 const FUEL_PER_CALL: u64 = 10_000_000;
+
+/// Wall-clock ceiling on a single plugin load (parse + instantiate + `start`
+/// + `nexterm_init` + `nexterm_meta`).
+///
+/// Medium #47 mitigation. wasmi's fuel metering (see [`FUEL_PER_CALL`]) only
+/// bounds *instruction execution inside a `Store`* — that covers the plugin's
+/// `start` section, `nexterm_init`, and `nexterm_meta`. `Module::new` (parsing
+/// and validating the raw WASM bytecode) runs *before* any `Store` exists, so
+/// it is never fuel-metered, and wasmi 0.38 has no epoch-interruption
+/// mechanism (that API is wasmtime-only) to bound it another way. A
+/// pathological or adversarial module can therefore make parsing alone take
+/// an unbounded amount of time. Since `LoadPlugin` is reachable via IPC, this
+/// wall-clock timeout is a second, independent bound: [`PluginManager::load`]
+/// runs the whole load on a dedicated thread and gives up waiting for it
+/// after this duration, so a slow/hanging load can never block the caller
+/// indefinitely (the abandoned thread keeps running to completion in the
+/// background, but its result is simply discarded).
+const PLUGIN_LOAD_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Maximum number of plugin memory pages (1 page = 64 KiB).
 ///
@@ -260,6 +280,22 @@ struct HostState {
     allowed_panes: HashSet<u32>,
     /// API version of the plugin (needed to bypass `allowed_panes` for v1 and
     /// to gate the v3 read imports).
+    ///
+    /// Medium #26 mitigation: this starts (and stays, until explicitly
+    /// committed post-instantiation) at [`PLUGIN_API_VERSION`] — the *most
+    /// restrictive* value, not the permissive v1 default. A WASM module's
+    /// `start` section runs during `linker.instantiate()`, before the host
+    /// has had a chance to call `nexterm_api_version` and learn the plugin's
+    /// real declared version. If this field defaulted to the permissive v1
+    /// value, the `write_pane` check (`api_version < 2` bypasses
+    /// `allowed_panes` entirely) would treat *every* plugin as legacy/v1
+    /// during `start`, letting a plugin write to any pane straight from its
+    /// `start` section regardless of its real version or `allowed_panes`
+    /// (which is empty at that point anyway). Defaulting to the newest
+    /// version instead means the `allowed_panes` gate is always enforced
+    /// during `start`, and since `allowed_panes` is empty then, every write
+    /// is denied. See [`PluginManager::load`] for where the real version is
+    /// committed once it is known.
     api_version: u32,
     /// Resource limits enforced by wasmi on every `memory.grow` /
     /// `table.grow` (CRITICAL #10 mitigation, hardened). Installed via
@@ -376,258 +412,56 @@ impl PluginManager {
     }
 
     /// Load a WASM file and register it as a plugin.
+    ///
+    /// Medium #47 mitigation: the actual parse/instantiate/start work happens
+    /// on a dedicated thread via [`load_blocking`], bounded by
+    /// [`PLUGIN_LOAD_TIMEOUT`]. See that constant's doc comment for why fuel
+    /// metering alone (which already covers `start`/`nexterm_init`) is not
+    /// sufficient — it cannot bound `Module::new`'s parsing/validation time.
+    /// If the timeout fires, the spawned thread is abandoned (it will finish
+    /// on its own and its result is simply dropped); the caller — reachable
+    /// via the `LoadPlugin` IPC handler — gets a prompt error instead of
+    /// hanging indefinitely.
     pub fn load(&self, path: &Path) -> Result<()> {
-        let wasm_bytes = std::fs::read(path)
-            .with_context(|| format!("failed to read plugin file: {}", path.display()))?;
-
-        let module = Module::new(&self.engine, &wasm_bytes[..])
-            .with_context(|| format!("failed to compile WASM module: {}", path.display()))?;
-
+        let engine = self.engine.clone();
         let write_pane = Arc::clone(&self.write_pane);
         let read_fn = Arc::clone(&self.read_fn);
-        let mut store = Store::new(
-            &self.engine,
-            HostState {
-                write_pane,
-                read_fn,
-                log_buf: Vec::new(),
-                allowed_panes: HashSet::new(),
-                // Provisional value; finalized after reading `nexterm_api_version`.
-                api_version: MIN_SUPPORTED_API_VERSION,
-                // CRITICAL #10 mitigation (hardened): cap linear-memory growth in
-                // bytes. wasmi consults this via `memory_growing` both when the
-                // module's initial memory is created during instantiation AND on
-                // every subsequent `memory.grow` instruction, so a plugin cannot
-                // grow past the cap after loading by only checking size once.
-                limits: StoreLimitsBuilder::new()
-                    .memory_size(MAX_MEMORY_PAGES as usize * 64 * 1024)
-                    .build(),
-            },
-        );
-        // Install the limiter before instantiation: module-declared initial
-        // memory is itself allocated through `memory_growing`, so the cap must
-        // already be wired in when `linker.instantiate` runs below.
-        store.limiter(|state| &mut state.limits);
+        let path_owned = path.to_path_buf();
 
-        let mut linker = Linker::<HostState>::new(&self.engine);
+        let (tx, rx) = mpsc::channel();
+        std::thread::Builder::new()
+            .name("nexterm-plugin-load".to_string())
+            .spawn(move || {
+                let result = load_blocking(&engine, write_pane, read_fn, &path_owned);
+                // If the receiver already timed out and was dropped, there is
+                // nothing left to notify; the load still completes harmlessly
+                // in the background and its result is discarded.
+                let _ = tx.send(result);
+            })
+            .with_context(|| "failed to spawn the plugin load thread")?;
 
-        // Host import: nexterm.api_version() -> i32
-        linker.func_wrap(
-            "nexterm",
-            "api_version",
-            |_: wasmi::Caller<'_, HostState>| PLUGIN_API_VERSION as i32,
-        )?;
-
-        // Host import: nexterm.log(ptr: i32, len: i32)
-        linker.func_wrap(
-            "nexterm",
-            "log",
-            |mut caller: wasmi::Caller<'_, HostState>, ptr: i32, len: i32| {
-                if let Some(mem) = caller.get_export("memory").and_then(|e| e.into_memory()) {
-                    let data = mem.data(&caller);
-                    let start = ptr as usize;
-                    let end = start.saturating_add(len as usize);
-                    if end <= data.len() {
-                        let s = String::from_utf8_lossy(&data[start..end]).into_owned();
-                        info!("[plugin] {}", s);
-                        caller.data_mut().log_buf.push(s);
-                    }
-                }
-            },
-        )?;
-
-        // Host import: nexterm.write_pane(pane_id: i32, ptr: i32, len: i32)
-        //
-        // v2 plugin: if `pane_id` is not in `allowed_panes`, ignore the call
-        //   and emit a warn log (to surface the denial explicitly).
-        // v1 plugin: always permit (legacy behavior).
-        linker.func_wrap(
-            "nexterm",
-            "write_pane",
-            |caller: wasmi::Caller<'_, HostState>, pane_id: i32, ptr: i32, len: i32| {
-                let pane_u = pane_id as u32;
-                let allowed = {
-                    let state = caller.data();
-                    state.api_version < 2 || state.allowed_panes.contains(&pane_u)
-                };
-                if !allowed {
-                    warn!(
-                        "[plugin] write_pane denied: pane_id={} is not in the allow list (API v2)",
-                        pane_u
-                    );
-                    return;
-                }
-                if let Some(mem) = caller.get_export("memory").and_then(|e| e.into_memory()) {
-                    let data = mem.data(&caller);
-                    let start = ptr as usize;
-                    let end = start.saturating_add(len as usize);
-                    if end <= data.len() {
-                        let bytes = data[start..end].to_vec();
-                        (caller.data().write_pane)(pane_u, &bytes);
-                    }
-                }
-            },
-        )?;
-
-        // Host imports: v3 read API (F3 / ADR-0008).
-        //
-        // read_pane(pane_id, out_ptr, out_max) -> i32
-        // read_grid(pane_id, out_ptr, out_max) -> i32
-        // read_scrollback(pane_id, start_line, max_lines, out_ptr, out_max) -> i32
-        //
-        // Return: bytes written (>= 0), or a negative error code
-        // (-1 wrong ABI, -2 unknown/out-of-scope pane, -3 buffer too small,
-        // -4 disabled by policy). v1/v2 plugins do not import these.
-        linker.func_wrap(
-            "nexterm",
-            "read_pane",
-            |caller: wasmi::Caller<'_, HostState>, pane_id: i32, out_ptr: i32, out_max: i32| {
-                perform_plugin_read(caller, pane_id, ReadKind::PaneText, out_ptr, out_max)
-            },
-        )?;
-        linker.func_wrap(
-            "nexterm",
-            "read_grid",
-            |caller: wasmi::Caller<'_, HostState>, pane_id: i32, out_ptr: i32, out_max: i32| {
-                perform_plugin_read(caller, pane_id, ReadKind::Grid, out_ptr, out_max)
-            },
-        )?;
-        linker.func_wrap(
-            "nexterm",
-            "read_scrollback",
-            |caller: wasmi::Caller<'_, HostState>,
-             pane_id: i32,
-             start_line: i32,
-             max_lines: i32,
-             out_ptr: i32,
-             out_max: i32| {
-                // Clamp negatives to 0: a hostile/buggy plugin passing e.g.
-                // i32::MIN reads from the start with an empty window rather than
-                // wrapping to a huge u32. `max_lines` is further clamped to the
-                // configured scrollback retention inside the read callback.
-                let kind = ReadKind::Scrollback {
-                    start_line: start_line.max(0) as u32,
-                    max_lines: max_lines.max(0) as u32,
-                };
-                perform_plugin_read(caller, pane_id, kind, out_ptr, out_max)
-            },
-        )?;
-
-        // Provide initial fuel (consumed by instantiation, nexterm_init, and nexterm_meta).
-        store
-            .set_fuel(FUEL_PER_CALL)
-            .with_context(|| "failed to set fuel")?;
-
-        let instance = linker
-            .instantiate(&mut store, &module)
-            .with_context(|| "failed to instantiate the plugin")?
-            .start(&mut store)
-            .with_context(|| "failed to start the plugin")?;
-
-        // Memory-limit check (CRITICAL #10): reject if the initial memory size
-        // exceeds the cap. This is now a redundant backstop -- the
-        // `StoreLimits` installed above already reject an oversized initial
-        // memory (and every later `memory.grow`) at the wasmi VM level -- kept
-        // here so a load-time failure surfaces with this specific message.
-        if let Some(mem) = instance.get_memory(&store, "memory")
-            && mem.size(&store) > MAX_MEMORY_PAGES
-        {
-            anyhow::bail!(
-                "plugin memory exceeds the limit: {} pages > {} pages (cap {} MiB)",
-                mem.size(&store),
-                MAX_MEMORY_PAGES,
-                MAX_MEMORY_PAGES * 64 / 1024
-            );
-        }
-
-        // API version detection + compatibility check.
-        // - Export present → adopt the value; reject if it exceeds `PLUGIN_API_VERSION`.
-        // - Export present, call failed → continue loading (treat as v1).
-        // - Export absent → treat as v1.
-        let mut api_version = MIN_SUPPORTED_API_VERSION;
-        if let Ok(version_fn) = instance.get_typed_func::<(), i32>(&store, "nexterm_api_version") {
-            store
-                .set_fuel(FUEL_PER_CALL)
-                .with_context(|| "failed to set fuel")?;
-            match version_fn.call(&mut store, ()) {
-                Ok(v) => {
-                    let v_u = v as u32;
-                    if v_u > PLUGIN_API_VERSION {
-                        anyhow::bail!(
-                            "plugin API version is newer than the host: plugin={}, host={}",
-                            v_u,
-                            PLUGIN_API_VERSION
-                        );
-                    }
-                    if v_u < MIN_SUPPORTED_API_VERSION {
-                        anyhow::bail!(
-                            "plugin API version is too old: plugin={}, min={}",
-                            v_u,
-                            MIN_SUPPORTED_API_VERSION
-                        );
-                    }
-                    api_version = v_u;
-                }
-                Err(e) => {
-                    warn!(
-                        "failed to obtain plugin API version (continuing as v1): {}: {}",
-                        path.display(),
-                        e
-                    );
-                }
+        let plugin = match rx.recv_timeout(PLUGIN_LOAD_TIMEOUT) {
+            Ok(result) => result?,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                anyhow::bail!(
+                    "plugin load timed out after {:?} (parsing/instantiation took too long): {}",
+                    PLUGIN_LOAD_TIMEOUT,
+                    path.display()
+                );
             }
-        }
-
-        // Commit the resolved API version back into the HostState.
-        store.data_mut().api_version = api_version;
-
-        // Emit a one-shot deprecation warning for v1 plugins.
-        if api_version < PLUGIN_API_VERSION {
-            warn!(
-                "plugin is running under API v{} (current v{}): {} — \
-                 running with the legacy behavior (no sanitization, no PaneId check). \
-                 v1 support will be removed in a future release.",
-                api_version,
-                PLUGIN_API_VERSION,
-                path.display()
-            );
-        }
-
-        // Call `nexterm_init` if present (optional).
-        if let Ok(init_fn) = instance.get_typed_func::<(), ()>(&store, "nexterm_init") {
-            store
-                .set_fuel(FUEL_PER_CALL)
-                .with_context(|| "failed to set fuel")?;
-            init_fn.call(&mut store, ()).ok();
-        }
-
-        // Read metadata from `nexterm_meta` if present (optional).
-        store
-            .set_fuel(FUEL_PER_CALL)
-            .with_context(|| "failed to set fuel")?;
-        let (meta_name, meta_version) = read_plugin_meta(&mut store, &instance);
-
-        info!(
-            "plugin loaded: {} (api=v{} name={:?} version={:?})",
-            path.display(),
-            api_version,
-            meta_name,
-            meta_version
-        );
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                anyhow::bail!(
+                    "plugin load thread terminated unexpectedly: {}",
+                    path.display()
+                );
+            }
+        };
 
         let mut plugins = self.plugins.lock().unwrap_or_else(|poisoned| {
             tracing::warn!("plugins mutex is poisoned; recovering and continuing");
             poisoned.into_inner()
         });
-        plugins.push(PluginInstance {
-            path: path.to_path_buf(),
-            api_version,
-            meta_name,
-            meta_version,
-            store,
-            instance,
-        });
-
+        plugins.push(plugin);
         Ok(())
     }
 
@@ -818,6 +652,285 @@ impl PluginManager {
             .map(|p| p.path.clone())
             .collect()
     }
+}
+
+// ---- Blocking plugin load (runs on a dedicated thread; see PLUGIN_LOAD_TIMEOUT) --
+
+/// Parse, instantiate, start, and initialize a single WASM plugin, returning
+/// the completed [`PluginInstance`] on success.
+///
+/// This is the actual (synchronous, potentially slow) work behind
+/// [`PluginManager::load`]; it is always run on a dedicated thread so the
+/// caller can bound it with a wall-clock timeout (Medium #47 mitigation).
+/// It takes owned/cloned handles rather than `&PluginManager` so it can be
+/// moved into a `'static` thread closure.
+fn load_blocking(
+    engine: &Engine,
+    write_pane: WritePaneFn,
+    read_fn: ReadFn,
+    path: &Path,
+) -> Result<PluginInstance> {
+    let wasm_bytes = std::fs::read(path)
+        .with_context(|| format!("failed to read plugin file: {}", path.display()))?;
+
+    let module = Module::new(engine, &wasm_bytes[..])
+        .with_context(|| format!("failed to compile WASM module: {}", path.display()))?;
+
+    let mut store = Store::new(
+        engine,
+        HostState {
+            write_pane,
+            read_fn,
+            log_buf: Vec::new(),
+            allowed_panes: HashSet::new(),
+            // Medium #26 mitigation: default to the most restrictive (newest)
+            // API version, not the permissive v1 default. See the doc
+            // comment on `HostState::api_version` for the full rationale —
+            // in short, the WASM `start` section runs during
+            // `linker.instantiate()` below, before the plugin's real
+            // declared version is known, so this field must already be at
+            // its most-gated value when `start` executes.
+            api_version: PLUGIN_API_VERSION,
+            // CRITICAL #10 mitigation (hardened): cap linear-memory growth in
+            // bytes. wasmi consults this via `memory_growing` both when the
+            // module's initial memory is created during instantiation AND on
+            // every subsequent `memory.grow` instruction, so a plugin cannot
+            // grow past the cap after loading by only checking size once.
+            limits: StoreLimitsBuilder::new()
+                .memory_size(MAX_MEMORY_PAGES as usize * 64 * 1024)
+                .build(),
+        },
+    );
+    // Install the limiter before instantiation: module-declared initial
+    // memory is itself allocated through `memory_growing`, so the cap must
+    // already be wired in when `linker.instantiate` runs below.
+    store.limiter(|state| &mut state.limits);
+
+    let mut linker = Linker::<HostState>::new(engine);
+
+    // Host import: nexterm.api_version() -> i32
+    linker.func_wrap(
+        "nexterm",
+        "api_version",
+        |_: wasmi::Caller<'_, HostState>| PLUGIN_API_VERSION as i32,
+    )?;
+
+    // Host import: nexterm.log(ptr: i32, len: i32)
+    linker.func_wrap(
+        "nexterm",
+        "log",
+        |mut caller: wasmi::Caller<'_, HostState>, ptr: i32, len: i32| {
+            if let Some(mem) = caller.get_export("memory").and_then(|e| e.into_memory()) {
+                let data = mem.data(&caller);
+                let start = ptr as usize;
+                let end = start.saturating_add(len as usize);
+                if end <= data.len() {
+                    let s = String::from_utf8_lossy(&data[start..end]).into_owned();
+                    info!("[plugin] {}", s);
+                    caller.data_mut().log_buf.push(s);
+                }
+            }
+        },
+    )?;
+
+    // Host import: nexterm.write_pane(pane_id: i32, ptr: i32, len: i32)
+    //
+    // v2 plugin: if `pane_id` is not in `allowed_panes`, ignore the call
+    //   and emit a warn log (to surface the denial explicitly).
+    // v1 plugin: always permit (legacy behavior).
+    //
+    // Medium #26: during `start()` (below) `api_version` is still the
+    // restrictive default set above, so this check denies every write until
+    // the real version is committed and a hook explicitly populates
+    // `allowed_panes`.
+    linker.func_wrap(
+        "nexterm",
+        "write_pane",
+        |caller: wasmi::Caller<'_, HostState>, pane_id: i32, ptr: i32, len: i32| {
+            let pane_u = pane_id as u32;
+            let allowed = {
+                let state = caller.data();
+                state.api_version < 2 || state.allowed_panes.contains(&pane_u)
+            };
+            if !allowed {
+                warn!(
+                    "[plugin] write_pane denied: pane_id={} is not in the allow list (API v2)",
+                    pane_u
+                );
+                return;
+            }
+            if let Some(mem) = caller.get_export("memory").and_then(|e| e.into_memory()) {
+                let data = mem.data(&caller);
+                let start = ptr as usize;
+                let end = start.saturating_add(len as usize);
+                if end <= data.len() {
+                    let bytes = data[start..end].to_vec();
+                    (caller.data().write_pane)(pane_u, &bytes);
+                }
+            }
+        },
+    )?;
+
+    // Host imports: v3 read API (F3 / ADR-0008).
+    //
+    // read_pane(pane_id, out_ptr, out_max) -> i32
+    // read_grid(pane_id, out_ptr, out_max) -> i32
+    // read_scrollback(pane_id, start_line, max_lines, out_ptr, out_max) -> i32
+    //
+    // Return: bytes written (>= 0), or a negative error code
+    // (-1 wrong ABI, -2 unknown/out-of-scope pane, -3 buffer too small,
+    // -4 disabled by policy). v1/v2 plugins do not import these.
+    linker.func_wrap(
+        "nexterm",
+        "read_pane",
+        |caller: wasmi::Caller<'_, HostState>, pane_id: i32, out_ptr: i32, out_max: i32| {
+            perform_plugin_read(caller, pane_id, ReadKind::PaneText, out_ptr, out_max)
+        },
+    )?;
+    linker.func_wrap(
+        "nexterm",
+        "read_grid",
+        |caller: wasmi::Caller<'_, HostState>, pane_id: i32, out_ptr: i32, out_max: i32| {
+            perform_plugin_read(caller, pane_id, ReadKind::Grid, out_ptr, out_max)
+        },
+    )?;
+    linker.func_wrap(
+        "nexterm",
+        "read_scrollback",
+        |caller: wasmi::Caller<'_, HostState>,
+         pane_id: i32,
+         start_line: i32,
+         max_lines: i32,
+         out_ptr: i32,
+         out_max: i32| {
+            // Clamp negatives to 0: a hostile/buggy plugin passing e.g.
+            // i32::MIN reads from the start with an empty window rather than
+            // wrapping to a huge u32. `max_lines` is further clamped to the
+            // configured scrollback retention inside the read callback.
+            let kind = ReadKind::Scrollback {
+                start_line: start_line.max(0) as u32,
+                max_lines: max_lines.max(0) as u32,
+            };
+            perform_plugin_read(caller, pane_id, kind, out_ptr, out_max)
+        },
+    )?;
+
+    // Provide initial fuel (consumed by instantiation, nexterm_init, and
+    // nexterm_meta). This bounds the `start` section's execution once it is
+    // running; it does not bound the `Module::new` parse/validate step above
+    // that step is bounded instead by the caller's wall-clock timeout
+    // (PLUGIN_LOAD_TIMEOUT, Medium #47).
+    store
+        .set_fuel(FUEL_PER_CALL)
+        .with_context(|| "failed to set fuel")?;
+
+    let instance = linker
+        .instantiate(&mut store, &module)
+        .with_context(|| "failed to instantiate the plugin")?
+        .start(&mut store)
+        .with_context(|| "failed to start the plugin")?;
+
+    // Memory-limit check (CRITICAL #10): reject if the initial memory size
+    // exceeds the cap. This is now a redundant backstop -- the
+    // `StoreLimits` installed above already reject an oversized initial
+    // memory (and every later `memory.grow`) at the wasmi VM level -- kept
+    // here so a load-time failure surfaces with this specific message.
+    if let Some(mem) = instance.get_memory(&store, "memory")
+        && mem.size(&store) > MAX_MEMORY_PAGES
+    {
+        anyhow::bail!(
+            "plugin memory exceeds the limit: {} pages > {} pages (cap {} MiB)",
+            mem.size(&store),
+            MAX_MEMORY_PAGES,
+            MAX_MEMORY_PAGES * 64 / 1024
+        );
+    }
+
+    // API version detection + compatibility check.
+    // - Export present → adopt the value; reject if it exceeds `PLUGIN_API_VERSION`.
+    // - Export present, call failed → continue loading (treat as v1).
+    // - Export absent → treat as v1.
+    let mut api_version = MIN_SUPPORTED_API_VERSION;
+    if let Ok(version_fn) = instance.get_typed_func::<(), i32>(&store, "nexterm_api_version") {
+        store
+            .set_fuel(FUEL_PER_CALL)
+            .with_context(|| "failed to set fuel")?;
+        match version_fn.call(&mut store, ()) {
+            Ok(v) => {
+                let v_u = v as u32;
+                if v_u > PLUGIN_API_VERSION {
+                    anyhow::bail!(
+                        "plugin API version is newer than the host: plugin={}, host={}",
+                        v_u,
+                        PLUGIN_API_VERSION
+                    );
+                }
+                if v_u < MIN_SUPPORTED_API_VERSION {
+                    anyhow::bail!(
+                        "plugin API version is too old: plugin={}, min={}",
+                        v_u,
+                        MIN_SUPPORTED_API_VERSION
+                    );
+                }
+                api_version = v_u;
+            }
+            Err(e) => {
+                warn!(
+                    "failed to obtain plugin API version (continuing as v1): {}: {}",
+                    path.display(),
+                    e
+                );
+            }
+        }
+    }
+
+    // Commit the resolved API version back into the HostState. Before this
+    // point (including throughout `start()` above) the field held the
+    // restrictive default installed at `Store::new` time (Medium #26).
+    store.data_mut().api_version = api_version;
+
+    // Emit a one-shot deprecation warning for v1 plugins.
+    if api_version < PLUGIN_API_VERSION {
+        warn!(
+            "plugin is running under API v{} (current v{}): {} — \
+             running with the legacy behavior (no sanitization, no PaneId check). \
+             v1 support will be removed in a future release.",
+            api_version,
+            PLUGIN_API_VERSION,
+            path.display()
+        );
+    }
+
+    // Call `nexterm_init` if present (optional).
+    if let Ok(init_fn) = instance.get_typed_func::<(), ()>(&store, "nexterm_init") {
+        store
+            .set_fuel(FUEL_PER_CALL)
+            .with_context(|| "failed to set fuel")?;
+        init_fn.call(&mut store, ()).ok();
+    }
+
+    // Read metadata from `nexterm_meta` if present (optional).
+    store
+        .set_fuel(FUEL_PER_CALL)
+        .with_context(|| "failed to set fuel")?;
+    let (meta_name, meta_version) = read_plugin_meta(&mut store, &instance);
+
+    info!(
+        "plugin loaded: {} (api=v{} name={:?} version={:?})",
+        path.display(),
+        api_version,
+        meta_name,
+        meta_version
+    );
+
+    Ok(PluginInstance {
+        path: path.to_path_buf(),
+        api_version,
+        meta_name,
+        meta_version,
+        store,
+        instance,
+    })
 }
 
 // ---- Metadata helpers -----------------------------------------------------

@@ -97,21 +97,47 @@ impl SplitNode {
             } => match dir {
                 SplitDir::Vertical => {
                     // Left/right split (one column reserved for the separator).
-                    let left_cols = ((cols as f32 * ratio) as u16)
-                        .max(1)
-                        .min(cols.saturating_sub(2));
-                    let right_cols = cols.saturating_sub(left_cols + 1).max(1);
+                    //
+                    // Audit round 4 (#19): the old `.max(1).min(cols.saturating_sub(2))`
+                    // clamp unconditionally gave each child a floor of 1 column, so for a
+                    // very small parent (cols <= 2) `left_cols + right_cols + 1` (the
+                    // separator) exceeded `cols` — not an arithmetic panic (`saturating_sub`
+                    // already prevented that), but the computed rects geometrically
+                    // overflowed the parent. `separator` only claims a column when one is
+                    // actually available (cols == 0 has room for neither a child nor a
+                    // separator); `available = cols - separator` is then split exactly
+                    // between the two children, so `left_cols + right_cols + separator`
+                    // always equals `cols` precisely, for any `cols` down to 0.
+                    let separator = if cols == 0 { 0 } else { 1 };
+                    let available = cols - separator;
+                    let left_cols = if available <= 1 {
+                        available
+                    } else {
+                        ((cols as f32 * ratio) as u16).clamp(1, available - 1)
+                    };
+                    let right_cols = available - left_cols;
                     left.compute(col_off, row_off, left_cols, rows, out);
-                    right.compute(col_off + left_cols + 1, row_off, right_cols, rows, out);
+                    right.compute(
+                        col_off + left_cols + separator,
+                        row_off,
+                        right_cols,
+                        rows,
+                        out,
+                    );
                 }
                 SplitDir::Horizontal => {
                     // Top/bottom split (one row reserved for the separator).
-                    let top_rows = ((rows as f32 * ratio) as u16)
-                        .max(1)
-                        .min(rows.saturating_sub(2));
-                    let bot_rows = rows.saturating_sub(top_rows + 1).max(1);
+                    // Same fix as the vertical case above (audit round 4, #19).
+                    let separator = if rows == 0 { 0 } else { 1 };
+                    let available = rows - separator;
+                    let top_rows = if available <= 1 {
+                        available
+                    } else {
+                        ((rows as f32 * ratio) as u16).clamp(1, available - 1)
+                    };
+                    let bot_rows = available - top_rows;
                     left.compute(col_off, row_off, cols, top_rows, out);
-                    right.compute(col_off, row_off + top_rows + 1, cols, bot_rows, out);
+                    right.compute(col_off, row_off + top_rows + separator, cols, bot_rows, out);
                 }
             },
         }
@@ -255,6 +281,35 @@ impl SplitNode {
                 right: Box::new(right.to_snapshot()),
             },
         }
+    }
+
+    /// Collect every `pane_id` referenced by a BSP snapshot's leaves, in DFS order, without
+    /// deduplicating — used by [`find_duplicate_pane_id`] to detect a corrupt snapshot before any
+    /// pane is spawned from it.
+    fn collect_pane_ids_in_snapshot(node: &SplitNodeSnapshot, out: &mut Vec<u32>) {
+        match node {
+            SplitNodeSnapshot::Pane { pane_id, .. } => out.push(*pane_id),
+            SplitNodeSnapshot::Split { left, right, .. } => {
+                Self::collect_pane_ids_in_snapshot(left, out);
+                Self::collect_pane_ids_in_snapshot(right, out);
+            }
+        }
+    }
+
+    /// Return the first `pane_id` that appears more than once among a BSP snapshot's leaves, if
+    /// any.
+    ///
+    /// A restored snapshot's `panes: HashMap<u32, Pane>` is keyed by `pane_id`, so two leaves
+    /// sharing an ID would silently collide on insert: the second `Pane::spawn_with_id` call
+    /// overwrites the first entry, leaking the first pane's PTY/reader-thread resources while
+    /// both BSP leaves keep pointing at the surviving pane (and `pane_order` ends up with a
+    /// duplicate entry too). `Window::restore_from_snapshot` calls this before spawning anything
+    /// so a corrupt snapshot is rejected outright rather than silently loaded into this state.
+    pub(super) fn find_duplicate_pane_id(snap: &SplitNodeSnapshot) -> Option<u32> {
+        let mut ids = Vec::new();
+        Self::collect_pane_ids_in_snapshot(snap, &mut ids);
+        let mut seen = std::collections::HashSet::with_capacity(ids.len());
+        ids.into_iter().find(|id| !seen.insert(*id))
     }
 
     /// Reconstruct a BSP tree from a snapshot.

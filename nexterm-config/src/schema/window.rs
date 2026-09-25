@@ -163,9 +163,27 @@ impl BackgroundImageConfig {
     }
 
     /// Returns `opacity` clamped to the range `[0.0, 1.0]`.
+    ///
+    /// Non-finite input (`NaN`, `+∞`, `-∞`) is replaced with the documented
+    /// default (0.3) before clamping. `f32::clamp` alone is not enough: its
+    /// range check is `self < min` / `self > max`, and both comparisons are
+    /// `false` for `NaN` (IEEE 754 total ordering has no relation between
+    /// `NaN` and any other value), so `clamp` falls through its `else`
+    /// branch and returns `self` — i.e. `NaN` unchanged.
     pub fn clamped_opacity(&self) -> f32 {
-        self.opacity.clamp(0.0, 1.0)
+        finite_or(self.opacity, default_image_opacity()).clamp(0.0, 1.0)
     }
+}
+
+/// Replaces a non-finite (`NaN`, `+∞`, `-∞`) float with `fallback`.
+///
+/// Used at both the config-schema validation boundary (deserialization) and
+/// in [`BackgroundImageConfig::clamped_opacity`] so a malformed or hostile
+/// `config.toml` can never hand a `NaN`/`±∞` opacity to the renderer, where
+/// it would propagate through alpha-blending arithmetic (`NaN * x == NaN`)
+/// or produce an undefined GPU blend result.
+fn finite_or(value: f32, fallback: f32) -> f32 {
+    if value.is_finite() { value } else { fallback }
 }
 
 #[cfg(test)]
@@ -211,6 +229,35 @@ mod background_image_tests {
             ..BackgroundImageConfig::default()
         };
         assert!((cfg.clamped_opacity() - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn nan_opacity_is_replaced_with_the_default_not_propagated() {
+        let cfg = BackgroundImageConfig {
+            opacity: f32::NAN,
+            ..BackgroundImageConfig::default()
+        };
+        let clamped = cfg.clamped_opacity();
+        assert!(!clamped.is_nan(), "NaN must not survive clamped_opacity()");
+        assert!((clamped - default_image_opacity()).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn positive_infinity_opacity_is_replaced_with_the_default() {
+        let cfg = BackgroundImageConfig {
+            opacity: f32::INFINITY,
+            ..BackgroundImageConfig::default()
+        };
+        assert!((cfg.clamped_opacity() - default_image_opacity()).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn negative_infinity_opacity_is_replaced_with_the_default() {
+        let cfg = BackgroundImageConfig {
+            opacity: f32::NEG_INFINITY,
+            ..BackgroundImageConfig::default()
+        };
+        assert!((cfg.clamped_opacity() - default_image_opacity()).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -269,7 +316,10 @@ pub enum CloseAction {
 #[serde(default)]
 pub struct WindowConfig {
     /// Window opacity (0.0 = fully transparent, 1.0 = opaque).
-    #[serde(default = "default_background_opacity")]
+    #[serde(
+        default = "default_background_opacity",
+        deserialize_with = "deserialize_background_opacity"
+    )]
     pub background_opacity: f32,
     /// OS-native backdrop material (UI/UX v3 P2c). Replaces the never-wired
     /// `macos_window_background_blur`, which was removed in the same change.
@@ -324,6 +374,21 @@ fn default_background_opacity() -> f32 {
     0.95
 }
 
+/// Deserializes `background_opacity`, sanitizing non-finite values
+/// (`NaN`, `+∞`, `-∞`) at the config-load boundary instead of letting them
+/// reach the renderer. `background_opacity` is consumed directly (not
+/// through a `clamped_*` accessor like [`BackgroundImageConfig::opacity`]
+/// is) — e.g. compared with `< 1.0` and cast to `f64` for the clear-color
+/// alpha — so a `NaN`/`±∞` value in `config.toml` would otherwise survive
+/// unchanged into GPU-facing arithmetic.
+fn deserialize_background_opacity<'de, D>(deserializer: D) -> Result<f32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = f32::deserialize(deserializer)?;
+    Ok(finite_or(value, default_background_opacity()))
+}
+
 fn default_layout_mode() -> String {
     "bsp".to_string()
 }
@@ -347,6 +412,57 @@ impl Default for WindowConfig {
             in_app_blur_enabled: false,
             in_app_blur_strength: default_in_app_blur_strength(),
         }
+    }
+}
+
+#[cfg(test)]
+mod background_opacity_validation_tests {
+    //! `window.background_opacity` is read directly by the renderer
+    //! (`background_opacity < 1.0`, and cast to `f64` for the clear-color
+    //! alpha) rather than through a `clamped_*` accessor, so non-finite
+    //! values must be sanitized at the deserialization boundary — see
+    //! `deserialize_background_opacity`.
+    use super::*;
+
+    #[test]
+    fn nan_in_toml_is_replaced_with_the_default_not_parsed_as_nan() {
+        let toml_str = "[window]\nbackground_opacity = nan\n";
+        let parsed: super::super::Config =
+            toml::from_str(toml_str).expect("nan is a valid TOML float and must still parse");
+        assert!(
+            !parsed.window.background_opacity.is_nan(),
+            "NaN must not reach WindowConfig"
+        );
+        assert!(
+            (parsed.window.background_opacity - default_background_opacity()).abs() < f32::EPSILON
+        );
+    }
+
+    #[test]
+    fn positive_infinity_in_toml_is_replaced_with_the_default() {
+        let toml_str = "[window]\nbackground_opacity = inf\n";
+        let parsed: super::super::Config =
+            toml::from_str(toml_str).expect("inf is a valid TOML float and must still parse");
+        assert!(
+            (parsed.window.background_opacity - default_background_opacity()).abs() < f32::EPSILON
+        );
+    }
+
+    #[test]
+    fn negative_infinity_in_toml_is_replaced_with_the_default() {
+        let toml_str = "[window]\nbackground_opacity = -inf\n";
+        let parsed: super::super::Config =
+            toml::from_str(toml_str).expect("-inf is a valid TOML float and must still parse");
+        assert!(
+            (parsed.window.background_opacity - default_background_opacity()).abs() < f32::EPSILON
+        );
+    }
+
+    #[test]
+    fn an_ordinary_value_still_round_trips_unchanged() {
+        let toml_str = "[window]\nbackground_opacity = 0.42\n";
+        let parsed: super::super::Config = toml::from_str(toml_str).expect("parse ordinary value");
+        assert!((parsed.window.background_opacity - 0.42).abs() < f32::EPSILON);
     }
 }
 

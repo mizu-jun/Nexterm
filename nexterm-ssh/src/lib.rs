@@ -59,6 +59,41 @@ struct SshHandler {
     forward_map: ForwardMap,
 }
 
+/// Outcome of checking a server's host key against `~/.ssh/known_hosts`.
+///
+/// This is kept separate from `SshHandler::check_server_key` so the classification
+/// logic (which result maps to accept/reject) can be unit-tested without touching
+/// the filesystem or the network — `check_known_hosts` itself does real I/O.
+#[derive(Debug)]
+enum HostKeyDecision {
+    /// The key matches a recorded known_hosts entry.
+    Accept,
+    /// No known_hosts entry exists for this host yet — first connection (TOFU).
+    /// The caller is expected to record the key via `learn_known_hosts`.
+    AcceptAndLearn,
+    /// The key differs from the one recorded for this host — likely MITM.
+    Reject(russh::Error),
+    /// Verification could not complete for any reason other than an explicit
+    /// match/mismatch (I/O error, corrupt entry, missing home directory, ...).
+    /// Must be treated as a rejection, never as an implicit accept.
+    RejectOnError(russh::Error),
+}
+
+/// Classify the result of `check_known_hosts` into an accept/reject decision.
+///
+/// Verification is mandatory in this project (see `docs/THREAT_MODEL.md`), so any
+/// outcome that is not an explicit "matched" or "no entry yet" must fail CLOSED.
+fn classify_known_hosts_result(result: Result<bool, russh::keys::Error>) -> HostKeyDecision {
+    match result {
+        Ok(true) => HostKeyDecision::Accept,
+        Ok(false) => HostKeyDecision::AcceptAndLearn,
+        Err(russh::keys::Error::KeyChanged { line }) => {
+            HostKeyDecision::Reject(russh::Error::KeyChanged { line })
+        }
+        Err(e) => HostKeyDecision::RejectOnError(russh::Error::Keys(e)),
+    }
+}
+
 impl client::Handler for SshHandler {
     type Error = russh::Error;
 
@@ -68,15 +103,19 @@ impl client::Handler for SshHandler {
     ) -> Result<bool, Self::Error> {
         use russh::keys::known_hosts::{check_known_hosts, learn_known_hosts};
 
-        match check_known_hosts(&self.host, self.port, server_public_key) {
-            Ok(true) => {
+        match classify_known_hosts_result(check_known_hosts(
+            &self.host,
+            self.port,
+            server_public_key,
+        )) {
+            HostKeyDecision::Accept => {
                 debug!(
                     "known_hosts: host key matched ({}:{})",
                     self.host, self.port
                 );
                 Ok(true)
             }
-            Ok(false) => {
+            HostKeyDecision::AcceptAndLearn => {
                 // No entry present — treat as first connection and learn the key.
                 warn!(
                     "known_hosts has no entry; auto-adding host key: {}:{}",
@@ -87,21 +126,28 @@ impl client::Handler for SshHandler {
                 }
                 Ok(true)
             }
-            Err(russh::keys::Error::KeyChanged { line }) => {
+            HostKeyDecision::Reject(err) => {
                 // Host key changed — possible MITM, reject the connection.
                 warn!(
-                    "known_hosts: host key has changed ({}:{}, line {}) — rejecting connection",
-                    self.host, self.port, line
+                    "known_hosts: host key has changed ({}:{}) — rejecting connection",
+                    self.host, self.port
                 );
-                Err(russh::Error::WrongServerSig)
+                Err(err)
             }
-            Err(e) => {
-                // Any other error: log a warning and proceed.
+            HostKeyDecision::RejectOnError(err) => {
+                // Verification could not complete for any reason other than an explicit
+                // match/mismatch (I/O error reading an existing known_hosts file, a
+                // corrupt entry, a missing home directory, etc.). Host-key verification
+                // is mandatory (see docs/THREAT_MODEL.md), so fail CLOSED here: reject
+                // the connection rather than silently proceeding with an unverified key.
+                // This is distinct from `AcceptAndLearn` above, which only fires when
+                // verification genuinely ran and found no recorded entry (first
+                // connection / TOFU), not when verification itself failed.
                 warn!(
-                    "error while verifying known_hosts: {} — skipping verification",
-                    e
+                    "error while verifying known_hosts ({}:{}): {} — rejecting connection (fail-closed)",
+                    self.host, self.port, err
                 );
-                Ok(true)
+                Err(err)
             }
         }
     }
@@ -368,11 +414,30 @@ impl SshSession {
         let mut channel = handle.channel_open_session().await?;
         drop(handle);
 
+        // want_reply=false here (the first argument): per RFC 4254 §6.2 this is standard
+        // practice for pty-req — the request is fire-and-forget rather than a synchronous
+        // round trip. Failure to open the PTY is not surfaced as an explicit error message;
+        // instead it is observed indirectly, either via the channel closing or via the
+        // subsequent `request_shell`/read/write calls erroring out. Waiting for an explicit
+        // reply here would add a round trip for no benefit in the common (success) case.
         channel
             .request_pty(false, "xterm-256color", cols as u32, rows as u32, 0, 0, &[])
             .await?;
 
         // Request X11 forwarding (after the PTY request, before the shell is started).
+        //
+        // TODO: docs/plans/audit-round4-2026h2.md #23 - this opens an X11-forwarding
+        // channel on the SSH connection but nothing on the local side ever bridges it to
+        // a real X11 socket, so enabling X11 forwarding currently does nothing useful.
+        // As of this comment `x11_forward`/`x11_trusted` are plumbed through the client
+        // config and the IPC `ConnectSsh` message, but the server's dispatch handler
+        // (`nexterm-server/src/ipc/dispatch.rs`) discards both fields before they ever
+        // reach `open_shell` (shell integration itself is still in development — see
+        // `handle_connect_ssh` in `nexterm-server/src/ipc/file_dispatch.rs`), so this
+        // code path is currently unreachable from any shipped UI. Before wiring
+        // `x11_forward`/`x11_trusted` through to a live `open_shell` call, either
+        // implement the local X11 socket bridge or remove this dead channel-open code —
+        // do not let a user-facing X11 toggle silently no-op.
         if x11_forward {
             // want_reply: false (do not wait for a reply).
             // single_connection: false for trusted forwarding (-Y), true for untrusted (-X).
@@ -396,6 +461,9 @@ impl SshSession {
             }
         }
 
+        // want_reply=false here too: per RFC 4254 §6.5 this is the standard fire-and-forget
+        // pattern for "shell" channel requests — see the pty-req comment above for the
+        // rationale (failure surfaces via the channel closing rather than a reply message).
         channel.request_shell(false).await?;
 
         // Spawn the I/O loop.
@@ -1130,6 +1198,54 @@ mod tests {
         let err = parse_forward_spec("8080:host:abc").expect_err("bad remote port");
         let msg = format!("{:#}", err);
         assert!(msg.contains("remote port"));
+    }
+
+    // ---- classify_known_hosts_result (host-key verification, #41) ---------
+    //
+    // The real `check_known_hosts` call does filesystem I/O, so these tests
+    // exercise the classification logic in isolation by constructing the
+    // `Result<bool, russh::keys::Error>` values it would receive.
+
+    #[test]
+    fn classify_known_hosts_match_accepts() {
+        let decision = classify_known_hosts_result(Ok(true));
+        assert!(matches!(decision, HostKeyDecision::Accept));
+    }
+
+    #[test]
+    fn classify_known_hosts_no_entry_accepts_and_learns() {
+        // No recorded entry (first connection) is a legitimate TOFU case, not an error.
+        let decision = classify_known_hosts_result(Ok(false));
+        assert!(matches!(decision, HostKeyDecision::AcceptAndLearn));
+    }
+
+    #[test]
+    fn classify_known_hosts_key_changed_rejects() {
+        let decision =
+            classify_known_hosts_result(Err(russh::keys::Error::KeyChanged { line: 42 }));
+        assert!(matches!(decision, HostKeyDecision::Reject(_)));
+    }
+
+    #[test]
+    fn classify_known_hosts_io_error_fails_closed() {
+        // This is the regression case for #41: an I/O error while verifying an
+        // *existing* known_hosts file (e.g. permission denied) must never be
+        // silently treated as "accept" — it must reject the connection.
+        let io_err = std::io::Error::other("permission denied");
+        let decision = classify_known_hosts_result(Err(russh::keys::Error::from(io_err)));
+        assert!(
+            matches!(decision, HostKeyDecision::RejectOnError(_)),
+            "an I/O error during verification must fail closed (reject), not accept"
+        );
+    }
+
+    #[test]
+    fn classify_known_hosts_no_home_dir_fails_closed() {
+        let decision = classify_known_hosts_result(Err(russh::keys::Error::NoHomeDir));
+        assert!(
+            matches!(decision, HostKeyDecision::RejectOnError(_)),
+            "a home-directory lookup failure must fail closed (reject), not accept"
+        );
     }
 
     // ---- SshConfig / SshAuth ----------------------------------------------

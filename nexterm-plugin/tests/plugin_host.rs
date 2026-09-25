@@ -97,6 +97,24 @@ const INFINITE_LOOP_V2: &str = r#"
     (i32.const 0)))
 "#;
 
+/// Declares an API version (999) newer than the host's [`nexterm_plugin::PLUGIN_API_VERSION`]
+/// (currently 3). Used to exercise the API-version-rejection path at load time.
+const MISMATCHED_API_VERSION: &str = r#"
+(module
+  (memory (export "memory") 2)
+  (func (export "nexterm_api_version") (result i32) (i32.const 999)))
+"#;
+
+/// Declares an initial linear memory of 300 pages (300 * 64 KiB = 18.75 MiB),
+/// which exceeds `MAX_MEMORY_PAGES` (256 pages = 16 MiB). The `StoreLimits`
+/// resource limiter must reject this during instantiation, since the
+/// module-declared initial memory is itself allocated through
+/// `memory_growing`.
+const OVERSIZED_INITIAL_MEMORY: &str = r#"
+(module
+  (memory (export "memory") 300))
+"#;
+
 /// v2 plugin that publishes name "demo" / version "1.0" via `nexterm_meta`.
 /// The host zeroes the buffers before the call, so no trailing NUL is written.
 const META_V2: &str = r#"
@@ -525,4 +543,53 @@ fn v3_read_callback_receives_the_invoked_pane_id() {
 
     mgr.on_output(42, b"x");
     assert_eq!(*seen.lock().unwrap(), vec![42]);
+}
+
+// ── Regression: API-version rejection / memory-cap bypass (audit #12) ────────
+
+/// A plugin declaring an ABI version newer than the host's
+/// `PLUGIN_API_VERSION` must be rejected at `load()` time with a clear error,
+/// not silently accepted or truncated to a supported version.
+#[test]
+fn rejects_plugin_declaring_a_mismatched_api_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_wasm(dir.path(), "future.wasm", MISMATCHED_API_VERSION);
+
+    let mgr = PluginManager::new(noop_write_pane());
+    let result = mgr.load(&path);
+
+    let err =
+        result.expect_err("a plugin declaring a newer-than-host API version must be rejected");
+    let message = format!("{err:#}");
+    assert!(
+        message.contains("plugin API version is newer than the host"),
+        "error should name the version mismatch, got: {message}"
+    );
+
+    // The rejected plugin must not end up registered.
+    assert_eq!(mgr.plugin_count(), 0);
+}
+
+/// A plugin whose module-declared initial linear memory exceeds
+/// `MAX_MEMORY_PAGES` must be rejected at `load()` time. The `StoreLimits`
+/// resource limiter (installed via `store.limiter()` before
+/// `linker.instantiate()`) is consulted by wasmi for the module's initial
+/// memory allocation, not just for later `memory.grow` calls, so the
+/// oversized declaration must fail instantiation itself.
+#[test]
+fn rejects_memory_grow_past_configured_cap() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_wasm(dir.path(), "oversized.wasm", OVERSIZED_INITIAL_MEMORY);
+
+    let mgr = PluginManager::new(noop_write_pane());
+    let result = mgr.load(&path);
+
+    assert!(
+        result.is_err(),
+        "a module whose initial memory exceeds MAX_MEMORY_PAGES must fail to load"
+    );
+
+    // The rejected plugin must not end up registered, proving the cap holds
+    // rather than merely warning after the fact.
+    assert_eq!(mgr.plugin_count(), 0);
 }

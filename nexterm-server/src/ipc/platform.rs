@@ -4,12 +4,21 @@
 //! - Windows: Named Pipe (`\\.\pipe\nexterm-<USERNAME>`).
 
 use anyhow::Result;
-#[cfg(unix)]
-use tracing::warn;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::runtime_config::SharedRuntimeConfig;
 use crate::session::SessionManager;
+
+/// Upper bound on concurrently connected IPC clients.
+///
+/// Nexterm's IPC channel is a local Unix socket / named pipe already gated by
+/// UID (Unix) / DACL (Windows), so this is not an authentication boundary —
+/// it exists purely to keep a runaway or misbehaving local client (e.g. a
+/// script that opens connections in a loop) from exhausting file descriptors
+/// / threads on the host. 128 is generous for realistic usage (one GUI
+/// client + a handful of `nexterm-ctl` invocations + attached TUI sessions)
+/// while still bounding worst-case resource use.
+const MAX_CONCURRENT_CONNECTIONS: usize = 128;
 
 // ---- Unix Domain Socket implementation ----
 
@@ -34,6 +43,9 @@ pub(super) async fn serve_unix(
 
     info!("listening on Unix socket: {}", socket_path);
 
+    let connection_limit =
+        std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_CONNECTIONS));
+
     loop {
         match listener.accept().await {
             Ok((stream, _addr)) => {
@@ -45,6 +57,18 @@ pub(super) async fn serve_unix(
                     );
                     continue;
                 }
+                // Resource-exhaustion guard: the peer is already UID-gated above, so this
+                // is not an auth check — it just caps how many client tasks can run at once.
+                let permit = match std::sync::Arc::clone(&connection_limit).try_acquire_owned() {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        warn!(
+                            "rejected connection: concurrent connection limit ({}) reached",
+                            MAX_CONCURRENT_CONNECTIONS
+                        );
+                        continue;
+                    }
+                };
                 let manager = std::sync::Arc::clone(&manager);
                 let runtime_cfg = std::sync::Arc::clone(&runtime_cfg);
                 let lua = std::sync::Arc::clone(&lua);
@@ -54,6 +78,8 @@ pub(super) async fn serve_unix(
                     {
                         error!("client handling error: {}", e);
                     }
+                    // Held for the task's lifetime; drop releases the slot back to the pool.
+                    drop(permit);
                 });
             }
             Err(e) => error!("accept error: {}", e),
@@ -162,6 +188,9 @@ pub(super) async fn serve_named_pipe(
     let pipe_name = named_pipe_name();
     info!("listening on named pipe: {}", pipe_name);
 
+    let connection_limit =
+        std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_CONNECTIONS));
+
     let mut iteration: u64 = 0;
     loop {
         // P1-A diagnostic: surface the underlying error when `create` fails.
@@ -191,6 +220,22 @@ pub(super) async fn serve_named_pipe(
 
         server.connect().await?;
 
+        // Resource-exhaustion guard, not an auth check (see MAX_CONCURRENT_CONNECTIONS doc
+        // comment) — same-machine-only access is already enforced by `reject_remote_clients`
+        // and the pipe's DACL.
+        let permit = match std::sync::Arc::clone(&connection_limit).try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                warn!(
+                    "rejected connection: concurrent connection limit ({}) reached",
+                    MAX_CONCURRENT_CONNECTIONS
+                );
+                // Dropping `server` here closes the just-connected pipe instance,
+                // disconnecting the client cleanly instead of spawning unboundedly.
+                continue;
+            }
+        };
+
         let manager = std::sync::Arc::clone(&manager);
         let runtime_cfg = std::sync::Arc::clone(&runtime_cfg);
         let lua = std::sync::Arc::clone(&lua);
@@ -198,6 +243,7 @@ pub(super) async fn serve_named_pipe(
             if let Err(e) = super::handler::handle_client(server, manager, runtime_cfg, lua).await {
                 error!("client handling error: {}", e);
             }
+            drop(permit);
         });
     }
 }
